@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetRequest};
 
 /// Client to use to interact with the engine.
-#[cfg_attr(test, mockall::automock(type SafeL2Signal = OpAttributesWithParent;))]
+#[cfg_attr(test, mockall::automock(type SafeL2Signal = AttributesWithParent;))]
 #[async_trait]
 pub trait DerivationEngineClient: Debug + Send + Sync {
     /// Resets the engine's forkchoice.

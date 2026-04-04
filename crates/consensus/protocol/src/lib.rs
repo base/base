@@ -25,7 +25,7 @@ mod brotli;
 pub use brotli::{BrotliDecompressionError, decompress_brotli};
 
 mod attributes;
-pub use attributes::OpAttributesWithParent;
+pub use attributes::AttributesWithParent;
 
 mod errors;
 pub use errors::BaseBlockConversionError;

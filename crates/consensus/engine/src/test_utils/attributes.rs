@@ -1,9 +1,9 @@
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, b256};
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{BlockInfo, L2BlockInfo, AttributesWithParent};
 
-/// Builder for creating test `OpAttributesWithParent` instances with sensible defaults
+/// Builder for creating test `AttributesWithParent` instances with sensible defaults
 #[derive(Debug)]
 pub struct TestAttributesBuilder {
     timestamp: u64,
@@ -78,8 +78,8 @@ impl TestAttributesBuilder {
         self
     }
 
-    /// Builds the `OpAttributesWithParent`
-    pub fn build(self) -> OpAttributesWithParent {
+    /// Builds the `AttributesWithParent`
+    pub fn build(self) -> AttributesWithParent {
         let attributes = OpPayloadAttributes {
             payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
                 timestamp: self.timestamp,
@@ -95,7 +95,7 @@ impl TestAttributesBuilder {
             min_base_fee: self.min_base_fee,
         };
 
-        OpAttributesWithParent::new(
+        AttributesWithParent::new(
             attributes,
             self.parent,
             self.derived_from,

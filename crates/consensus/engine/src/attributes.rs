@@ -7,7 +7,7 @@ use alloy_rpc_types_eth::{Block, BlockTransactions, Withdrawals};
 use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData, OpTxEnvelope};
 use base_alloy_rpc_types::Transaction;
 use base_consensus_genesis::RollupConfig;
-use base_protocol::OpAttributesWithParent;
+use base_protocol::AttributesWithParent;
 
 /// Result of validating payload attributes against an execution layer block.
 ///
@@ -20,7 +20,7 @@ use base_protocol::OpAttributesWithParent;
 /// ```rust,ignore
 /// use base_consensus_engine::AttributesMatch;
 /// use base_consensus_genesis::RollupConfig;
-/// use base_protocol::OpAttributesWithParent;
+/// use base_protocol::AttributesWithParent;
 ///
 /// let config = RollupConfig::default();
 /// let match_result = AttributesMatch::check_withdrawals(&config, &attributes, &block);
@@ -51,7 +51,7 @@ impl AttributesMatch {
     /// Checks that withdrawals for a block and attributes match.
     pub fn check_withdrawals(
         config: &RollupConfig,
-        attributes: &OpAttributesWithParent,
+        attributes: &AttributesWithParent,
         block: &Block<Transaction>,
     ) -> Self {
         let attr_withdrawals = attributes.attributes().payload_attributes.withdrawals.as_ref();
@@ -170,7 +170,7 @@ impl AttributesMatch {
     /// Validates and compares EIP1559 parameters for consolidation.
     fn check_eip1559(
         config: &RollupConfig,
-        attributes: &OpAttributesWithParent,
+        attributes: &AttributesWithParent,
         block: &Block<Transaction>,
     ) -> Self {
         // We can assume that the EIP-1559 params are set iff holocene is active.
@@ -251,12 +251,12 @@ impl AttributesMatch {
         Self::Match
     }
 
-    /// Checks if the specified [`OpAttributesWithParent`] matches the specified [`Block`].
+    /// Checks if the specified [`AttributesWithParent`] matches the specified [`Block`].
     /// Returns [`AttributesMatch::Match`] if they match, otherwise returns
     /// [`AttributesMatch::Mismatch`].
     pub fn check(
         config: &RollupConfig,
-        attributes: &OpAttributesWithParent,
+        attributes: &AttributesWithParent,
         block: &Block<Transaction>,
     ) -> Self {
         if attributes.parent.block_info.hash != block.header.inner.parent_hash {
@@ -334,7 +334,7 @@ impl AttributesMatch {
     }
 }
 
-/// An enum over the type of mismatch between [`OpAttributesWithParent`]
+/// An enum over the type of mismatch between [`AttributesWithParent`]
 /// and a [`Block`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttributesMismatch {
@@ -354,7 +354,7 @@ pub enum AttributesMismatch {
     TransactionLen(usize, usize),
     /// A mismatch in the content of some transactions contained in the attributes and the block.
     TransactionContent(B256, B256),
-    /// The EIP1559 payload for the [`OpAttributesWithParent`] is missing when holocene is active.
+    /// The EIP1559 payload for the [`AttributesWithParent`] is missing when holocene is active.
     MissingAttributesEIP1559,
     /// The EIP1559 payload for the block is missing when holocene is active.
     MissingBlockEIP1559,
@@ -370,7 +370,7 @@ pub enum AttributesMismatch {
     Transactions(u64, u64),
     /// The gas limit of the block does not match the gas limit of the attributes.
     GasLimit(u64, u64),
-    /// The gas limit for the [`OpAttributesWithParent`] is missing.
+    /// The gas limit for the [`AttributesWithParent`] is missing.
     MissingAttributesGasLimit,
     /// The fee recipient of the block does not match the fee recipient of the attributes.
     FeeRecipient(Address, Address),
@@ -407,8 +407,8 @@ mod tests {
     use super::*;
     use crate::AttributesMismatch::EIP1559Parameters;
 
-    fn default_attributes() -> OpAttributesWithParent {
-        OpAttributesWithParent {
+    fn default_attributes() -> AttributesWithParent {
+        AttributesWithParent {
             attributes: OpPayloadAttributes::default(),
             parent: L2BlockInfo::default(),
             derived_from: Some(BlockInfo::default()),
@@ -553,7 +553,7 @@ mod tests {
             .collect()
     }
 
-    fn test_transactions_match_helper() -> (OpAttributesWithParent, Block<Transaction>) {
+    fn test_transactions_match_helper() -> (AttributesWithParent, Block<Transaction>) {
         const NUM_TXS: usize = 10;
 
         let transactions = generate_txs(NUM_TXS);
@@ -739,7 +739,7 @@ mod tests {
         assert_eq!(check, expected);
     }
 
-    fn eip1559_test_setup() -> (RollupConfig, OpAttributesWithParent, Block<Transaction>) {
+    fn eip1559_test_setup() -> (RollupConfig, AttributesWithParent, Block<Transaction>) {
         let mut cfg = default_rollup_config().clone();
 
         // We need to activate holocene to make sure it works! We set the activation time to zero to
