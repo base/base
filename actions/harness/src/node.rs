@@ -375,6 +375,11 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         {
             self.finalized_head = l2;
         }
+        // Prune entries whose L1 origin is strictly below the finalized L1 block
+        // number — they can never contribute to a future finalization decision.
+        // This keeps `safe_head_history` bounded in long-running tests.
+        self.safe_head_history
+            .retain(|(_, l1_origin_number)| *l1_origin_number >= self.finalized_l1_number);
     }
 
     /// Reset the pipeline to a new L1 origin and L2 safe head after a reorg.
