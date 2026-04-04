@@ -70,7 +70,7 @@ base-node-runner = { workspace = true, features = ["test-utils"] }
 # reth
 base-node-core.workspace = true
 reth-db-common.workspace = true
-base-execution-primitives.workspace = true
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 

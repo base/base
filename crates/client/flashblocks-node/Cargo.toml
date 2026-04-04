@@ -24,7 +24,6 @@ reth-chainspec = { workspace = true, optional = true }
 reth-provider = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true, optional = true }
-base-execution-primitives = { workspace = true, optional = true }
 reth-transaction-pool = { workspace = true, features = ["test-utils"], optional = true }
 
 # alloy
@@ -34,7 +33,7 @@ alloy-consensus = { workspace = true, features = ["std"], optional = true }
 alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 
 # base-alloy
-base-alloy-consensus = { workspace = true, optional = true }
+base-alloy-consensus = { workspace = true, optional = true, features = ["reth"] }
 
 # tokio
 tokio.workspace = true
@@ -108,7 +107,6 @@ test-utils = [
 	"dep:base-alloy-consensus",
 	"dep:base-alloy-flashblocks",
 	"dep:base-execution-chainspec",
-	"dep:base-execution-primitives",
 	"dep:derive_more",
 	"dep:eyre",
 	"dep:reth-chainspec",

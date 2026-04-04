@@ -6,7 +6,7 @@ use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
 use alloy_rpc_client::RpcClient;
 use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use base_builder_core::BuilderApiExtension;
-use base_execution_primitives::OpTransactionSigned;
+use base_alloy_consensus::OpTransactionSigned;
 use base_node_runner::test_utils::{Account, TestHarness};
 use base_txpool::ValidatedTransaction;
 

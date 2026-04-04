@@ -12,7 +12,7 @@ use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_alloy_chains::BaseUpgrades;
 pub use base_execution_chainspec::decode_holocene_base_fee;
-use base_execution_primitives::DepositReceipt;
+use base_alloy_consensus::DepositReceipt;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};

@@ -137,7 +137,7 @@ where
 mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_primitives::{Address, Signature};
-    use base_execution_primitives::{BaseBlockBody, OpTransactionSigned};
+    use base_alloy_consensus::{BaseBlockBody, OpTransactionSigned};
     use base_node_runner::test_utils::{Account, TestHarness};
     use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;

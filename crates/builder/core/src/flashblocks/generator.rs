@@ -528,7 +528,7 @@ mod tests {
     use base_execution_payload_builder::{
         OpPayloadPrimitives, payload::OpPayloadBuilderAttributes,
     };
-    use base_execution_primitives::OpPrimitives;
+    use base_alloy_consensus::OpPrimitives;
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_primitives::SealedBlock;

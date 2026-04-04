@@ -21,7 +21,7 @@ use base_alloy_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
 };
 use base_execution_chainspec::OpChainSpec;
-use base_execution_primitives::{DepositReceipt, OpPrimitives};
+use base_alloy_consensus::{DepositReceipt, OpPrimitives};
 use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
@@ -350,7 +350,7 @@ mod tests {
     };
     use base_alloy_consensus::{BaseBlock, OpReceipt};
     use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
-    use base_execution_primitives::OpPrimitives;
+    use base_alloy_consensus::OpPrimitives;
     use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;
     use reth_evm::execute::ProviderError;

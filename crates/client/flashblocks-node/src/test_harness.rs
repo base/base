@@ -23,7 +23,7 @@ use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_execution_chainspec::OpChainSpec;
-use base_execution_primitives::OpTransactionSigned;
+use base_alloy_consensus::OpTransactionSigned;
 use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksAPI,
     FlashblocksReceiver, FlashblocksState, PendingBlocksAPI,

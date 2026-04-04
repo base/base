@@ -38,7 +38,6 @@ base-txpool.workspace = true
 base-execution-evm.workspace = true
 base-execution-trie.workspace = true
 base-execution-payload-builder.workspace = true
-base-execution-primitives = { workspace = true, features = ["reth-codec", "serde-bincode-compat", "serde"] }
 
 # ethereum
 revm.workspace = true
@@ -57,7 +56,7 @@ alloy-transport-http.workspace = true
 alloy-rpc-types-engine.workspace = true
 base-alloy-chains.workspace = true
 base-alloy-flz.workspace = true
-base-alloy-consensus.workspace = true
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 base-alloy-rpc-jsonrpsee.workspace = true
 base-alloy-network = { workspace = true, features = ["reth"] }
 base-alloy-rpc-types = { workspace = true, features = ["reth"] }

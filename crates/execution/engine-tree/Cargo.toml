@@ -27,13 +27,12 @@ reth-chain-state.workspace = true
 reth-node-builder.workspace = true
 reth-trie-parallel.workspace = true
 base-execution-evm.workspace = true
-base-alloy-consensus.workspace = true
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 reth-engine-tree = { workspace = true }
 reth-payload-primitives.workspace = true
 reth-primitives-traits.workspace = true
 base-execution-chainspec.workspace = true
 reth-engine-primitives.workspace = true
-base-execution-primitives.workspace = true
 
 revm.workspace = true
 revm-primitives.workspace = true

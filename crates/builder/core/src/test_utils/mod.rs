@@ -14,7 +14,7 @@ pub use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
 use base_alloy_consensus::OpTypedTransaction;
 use base_execution_chainspec::OpChainSpec;
-use base_execution_primitives::OpTransactionSigned;
+use base_alloy_consensus::OpTransactionSigned;
 pub use contracts::*;
 pub use driver::*;
 pub use external::*;

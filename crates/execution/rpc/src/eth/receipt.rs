@@ -350,7 +350,7 @@ mod tests {
     use base_alloy_chains::BaseChainConfig;
     use base_alloy_consensus::OpTypedTransaction;
     use base_execution_chainspec::BASE_MAINNET;
-    use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
+    use base_alloy_consensus::{OpPrimitives, OpTransactionSigned};
     use reth_primitives_traits::Recovered;
 
     use super::*;

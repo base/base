@@ -30,7 +30,6 @@ reth-trie-common.workspace = true
 base-execution-evm.workspace = true
 base-execution-rpc.workspace = true
 reth-rpc-eth-types.workspace = true
-base-execution-primitives.workspace = true
 
 # revm
 revm.workspace = true
@@ -54,7 +53,7 @@ base-alloy-rpc-types-engine.workspace = true
 base-alloy-flz.workspace = true
 base-alloy-chains.workspace = true
 base-alloy-network.workspace = true
-base-alloy-consensus.workspace = true
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 base-alloy-rpc-types.workspace = true
 
 # tokio

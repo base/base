@@ -452,7 +452,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::SolCall;
     use base_bundles::{Bundle, ParsedBundle};
-    use base_execution_primitives::OpTransactionSigned;
+    use base_alloy_consensus::OpTransactionSigned;
     use base_node_runner::test_utils::{Account, SimpleStorage, TestHarness};
     use eyre::Context;
     use reth_provider::StateProviderFactory;

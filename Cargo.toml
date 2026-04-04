@@ -232,7 +232,6 @@ base-execution-forks = { path = "crates/execution/hardforks" }
 base-execution-storage = { path = "crates/execution/storage" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
-base-execution-primitives = { path = "crates/execution/primitives" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-revm = { path = "crates/execution/revm", default-features = false }
 

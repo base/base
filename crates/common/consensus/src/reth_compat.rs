@@ -8,7 +8,7 @@
 use alloc::{borrow::Cow, vec::Vec};
 
 use alloy_consensus::{
-    Receipt, Sealed, Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy, TxReceipt,
+    Header, Receipt, Sealed, Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy, TxReceipt,
     constants::EIP7702_TX_TYPE_ID,
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
@@ -23,8 +23,8 @@ use reth_codecs::{
 use reth_ethereum_primitives as _;
 
 use crate::{
-    DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpPooledTransaction, OpReceipt, OpTxEnvelope, OpTxType,
-    OpTypedTransaction, TxDeposit,
+    BaseBlock, DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpPooledTransaction, OpReceipt, OpTxEnvelope,
+    OpTxType, OpTypedTransaction, TxDeposit,
 };
 
 // ---------------------------------------------------------------------------
@@ -501,4 +501,53 @@ impl reth_db_api::table::Decompress for OpReceipt {
         let (obj, _) = Compact::from_compact(value, value.len());
         Ok(obj)
     }
+}
+
+// ---------------------------------------------------------------------------
+// DepositReceipt trait
+// ---------------------------------------------------------------------------
+
+/// Trait for accessing deposit receipt fields on a [`reth_primitives_traits::Receipt`].
+pub trait DepositReceipt: reth_primitives_traits::Receipt {
+    /// Returns a mutable reference to the inner deposit receipt, if this is a deposit.
+    fn as_deposit_receipt_mut(&mut self) -> Option<&mut OpDepositReceipt>;
+
+    /// Returns a reference to the inner deposit receipt, if this is a deposit.
+    fn as_deposit_receipt(&self) -> Option<&OpDepositReceipt>;
+}
+
+impl DepositReceipt for OpReceipt {
+    fn as_deposit_receipt_mut(&mut self) -> Option<&mut OpDepositReceipt> {
+        match self {
+            Self::Deposit(receipt) => Some(receipt),
+            _ => None,
+        }
+    }
+
+    fn as_deposit_receipt(&self) -> Option<&OpDepositReceipt> {
+        match self {
+            Self::Deposit(receipt) => Some(receipt),
+            _ => None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BaseBlockBody / OpPrimitives
+// ---------------------------------------------------------------------------
+
+/// Base-specific block body type.
+pub type BaseBlockBody = <BaseBlock as reth_primitives_traits::Block>::Body;
+
+/// Primitive types for the Base node.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OpPrimitives;
+
+impl reth_primitives_traits::NodePrimitives for OpPrimitives {
+    type Block = BaseBlock;
+    type BlockHeader = Header;
+    type BlockBody = BaseBlockBody;
+    type SignedTx = OpTxEnvelope;
+    type Receipt = OpReceipt;
 }

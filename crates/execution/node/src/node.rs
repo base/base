@@ -15,7 +15,7 @@ use base_execution_payload_builder::{
     builder::OpPayloadTransactions,
     config::{OpBuilderConfig, OpDAConfig, OpGasLimitConfig},
 };
-use base_execution_primitives::{DepositReceipt, OpPrimitives};
+use base_alloy_consensus::{DepositReceipt, OpPrimitives};
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::OpEthApiBuilder,

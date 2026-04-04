@@ -1,5 +1,5 @@
 use base_alloy_rpc_types_engine::OpExecutionData;
-use base_execution_primitives::OpPrimitives;
+use base_alloy_consensus::OpPrimitives;
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};
 use reth_primitives_traits::{Block, NodePrimitives, SealedBlock};
 

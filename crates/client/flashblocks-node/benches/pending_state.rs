@@ -12,7 +12,7 @@ use base_alloy_consensus::BaseBlock;
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_execution_primitives::OpTransactionSigned;
+use base_alloy_consensus::OpTransactionSigned;
 use base_flashblocks::{FlashblocksAPI, FlashblocksReceiver, FlashblocksState};
 use base_node_runner::test_utils::{Account, LocalNodeProvider, TestHarness};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};

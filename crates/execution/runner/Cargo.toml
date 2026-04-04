@@ -41,7 +41,6 @@ base-node-core.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
 base-execution-storage.workspace = true
 base-execution-chainspec.workspace = true
-base-execution-primitives.workspace = true
 base-execution-payload-builder.workspace = true
 
 # alloy
@@ -57,7 +56,7 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = ["std"]
 # base-alloy
 base-alloy-chains.workspace = true
 base-alloy-network = { workspace = true, optional = true }
-base-alloy-consensus = { workspace = true, optional = true }
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 base-alloy-rpc-types-engine = { workspace = true, optional = true }
 
 # tokio
@@ -87,7 +86,6 @@ test-utils = [
 	"dep:alloy-rpc-types",
 	"dep:alloy-rpc-types-engine",
 	"dep:alloy-signer",
-	"dep:base-alloy-consensus",
 	"dep:base-alloy-network",
 	"dep:base-alloy-rpc-types-engine",
 	"dep:base-test-utils",

@@ -24,7 +24,7 @@ use base_alloy_evm::{
 use base_alloy_rpc_types_engine::OpExecutionData;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::OpRethReceiptBuilder;
-use base_execution_primitives::{OpPrimitives, OpTransactionSigned};
+use base_alloy_consensus::{OpPrimitives, OpTransactionSigned};
 use base_flashblocks::FlashblocksState;
 use base_node_core::OpEngineTypes;
 use base_revm::OpHaltReason;

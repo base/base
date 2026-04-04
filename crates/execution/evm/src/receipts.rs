@@ -2,7 +2,7 @@ use alloy_consensus::{Eip658Value, Receipt};
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
 use base_alloy_consensus::{OpReceipt, OpTxType};
 use base_alloy_evm::OpReceiptBuilder;
-use base_execution_primitives::OpTransactionSigned;
+use base_alloy_consensus::OpTransactionSigned;
 use reth_evm::Evm;
 
 /// A builder that operates on op-reth primitive types, specifically [`OpTransactionSigned`] and
