@@ -201,7 +201,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // Poll in-flight proof sessions before scanning for new candidates.
         self.poll_pending_proofs().await;
 
-        // Advance bond lifecycle for tracked games.
         self.poll_bond_claims().await;
 
         let (candidates, new_last_scanned) = self.scanner.scan(self.last_scanned).await?;
@@ -600,10 +599,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             PendingProof::awaiting(session_id, invalid_index, expected_root, request, intent);
         self.pending_proofs.insert(game_address, pending);
 
-        if let Err(e) = self.poll_or_submit(game_address).await {
-            warn!(error = %e, game = %game_address, "initial poll failed, will retry next tick");
-        }
-
         Ok(())
     }
 
@@ -614,7 +609,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     ///     submission.
     ///   - `Failed` → transitions to `NeedsRetry` so `prove_block` is
     ///     re-initiated.
-    ///   - Intermediate (`Created`/`Pending`/`Running`) → returns early.
+    ///   - Intermediate (`Created`/`Pending`/`Running`) → returns early
+    ///     without any contract calls.
     /// - **`ReadyToSubmit`** — submits the dispute tx based on the entry's
     ///   [`DisputeIntent`]:
     ///   - [`DisputeIntent::Nullify`] → calls `nullify()`.
@@ -631,55 +627,53 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 None => return Ok(()),
             };
 
-        // Check if the game is still actionable before doing any work.
-        // For Challenge intents, also verify that the TEE proof still exists
-        // and no ZK proof has been submitted yet — fetch in parallel with
-        // status to avoid an extra round-trip.
-        if intent == DisputeIntent::Challenge {
-            let (status, zk_prover, tee_prover) = tokio::try_join!(
-                self.verifier_client.status(game_address),
-                self.verifier_client.zk_prover(game_address),
-                self.verifier_client.tee_prover(game_address),
-            )?;
-            if status != GameScanner::STATUS_IN_PROGRESS {
-                debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
-                self.pending_proofs.remove(&game_address);
+        // Poll proof status first — if still pending, skip the contract
+        // calls that check game liveness. This avoids 3 RPC round-trips
+        // per tick for proofs that are not yet ready.
+        let proof_update = self.pending_proofs.poll(game_address, &*self.zk_prover).await?;
+        match &proof_update {
+            Some(ProofUpdate::Pending) => {
+                debug!(game = %game_address, "proof not ready, will retry next tick");
                 return Ok(());
             }
+            None => return Ok(()),
+            _ => {}
+        }
+
+        // The proof is ready or needs retry — verify the game is still
+        // actionable before doing any work.
+        let (status, tee_prover, zk_prover) = tokio::try_join!(
+            self.verifier_client.status(game_address),
+            self.verifier_client.tee_prover(game_address),
+            self.verifier_client.zk_prover(game_address),
+        )?;
+
+        if status != GameScanner::STATUS_IN_PROGRESS {
+            debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
+            self.pending_proofs.remove(&game_address);
+            return Ok(());
+        }
+
+        // Check whether the targeted prover slot has already been acted on.
+        //
+        // For Nullify intents, nullification zeroes only the targeted prover
+        // (TEE or ZK) but does NOT change the game status (it stays
+        // IN_PROGRESS), so checking status alone would cause infinite
+        // retries after a successful nullification. Checking only the
+        // relevant prover avoids an infinite revert-retry loop in Path 2
+        // (fraudulent ZK challenge on a valid TEE proposal), where
+        // nullification zeroes `zkProver` but leaves `teeProver` intact.
+        let already_resolved = if intent == DisputeIntent::Challenge {
             if zk_prover != Address::ZERO {
                 debug!(game = %game_address, zk_prover = %zk_prover, "game already challenged, dropping pending proof");
-                self.pending_proofs.remove(&game_address);
-                return Ok(());
-            }
-            if tee_prover == Address::ZERO {
+                true
+            } else if tee_prover == Address::ZERO {
                 debug!(game = %game_address, "game already nullified (both provers zeroed), dropping pending proof");
-                self.pending_proofs.remove(&game_address);
-                return Ok(());
+                true
+            } else {
+                false
             }
         } else {
-            // For Nullify intents, check status AND whether the targeted
-            // prover has been zeroed. Nullification zeroes only the
-            // specific prover (TEE or ZK) but does NOT change the game
-            // status (it stays IN_PROGRESS), so checking status alone
-            // would cause infinite retries after a successful
-            // nullification.
-            //
-            // TEE proofs (ProofKind::Tee) target `teeProver`;
-            // ZK proofs (ProofKind::Zk) target `zkProver`. Checking only the relevant
-            // prover avoids an infinite revert-retry loop in Path 2
-            // (fraudulent ZK challenge on a valid TEE proposal), where
-            // nullification zeroes `zkProver` but leaves `teeProver`
-            // intact.
-            let (status, tee_prover, zk_prover) = tokio::try_join!(
-                self.verifier_client.status(game_address),
-                self.verifier_client.tee_prover(game_address),
-                self.verifier_client.zk_prover(game_address),
-            )?;
-            if status != GameScanner::STATUS_IN_PROGRESS {
-                debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
-                self.pending_proofs.remove(&game_address);
-                return Ok(());
-            }
             let target_prover_zeroed =
                 if targets_tee { tee_prover == Address::ZERO } else { zk_prover == Address::ZERO };
             if target_prover_zeroed {
@@ -690,14 +684,19 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                     zk_prover = %zk_prover,
                     "game already nullified (target prover zeroed), dropping pending proof"
                 );
-                self.pending_proofs.remove(&game_address);
-                return Ok(());
+                true
+            } else {
+                false
             }
+        };
+
+        if already_resolved {
+            self.pending_proofs.remove(&game_address);
+            return Ok(());
         }
 
-        // Resolve the proof bytes — either by polling the ZK service or
-        // extracting them from an already-obtained proof.
-        let proof_bytes = match self.pending_proofs.poll(game_address, &*self.zk_prover).await? {
+        // Dispatch based on proof status.
+        let proof_bytes = match proof_update {
             Some(ProofUpdate::Ready(proof_bytes)) => {
                 info!(
                     game = %game_address,
@@ -710,11 +709,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             Some(ProofUpdate::NeedsRetry) => {
                 return self.handle_proof_retry(game_address).await;
             }
-            Some(ProofUpdate::Pending) => {
-                debug!(game = %game_address, "proof not ready, will retry next tick");
-                return Ok(());
-            }
-            None => return Ok(()),
+            // Pending and None already handled above.
+            _ => return Ok(()),
         };
 
         // ── Submit dispute transaction ────────────────────────────────────
