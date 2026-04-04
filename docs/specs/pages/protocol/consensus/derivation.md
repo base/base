@@ -220,7 +220,7 @@ Channels might be too large to fit in a single [batcher transaction][g-batcher-t
 into chunks known as [channel frames][g-channel-frame]. A single batcher transaction can also carry multiple frames
 (belonging to the same or to different channels).
 
-This design gives use the maximum flexibility in how we aggregate batches into channels, and split channels over batcher
+This design gives us the maximum flexibility in how we aggregate batches into channels, and split channels over batcher
 transactions. It notably allows us to maximize data utilization in a batcher transaction: for instance it allows us to
 pack the final (small) frame of one channel with one or more frames from the next channel.
 
@@ -247,7 +247,7 @@ Each colored chunk within the boxes represents a [channel frame][g-channel-frame
 
 In the next line, the rounded boxes represent individual [sequencer batches][g-sequencer-batch] that were extracted from
 the channels. The four blue/purple/pink were derived from channel `A` while the other were derived from channel `B`.
-These batches are here represented in the order they were decoded from batches (in this case `B` is decoded first).
+These batches are here represented in the order they were decoded from channels (in this case `B` is decoded first).
 
 > **Note** The caption here says "Channel B was seen first and will be decoded into batches first", but this is not a
 > requirement. For instance, it would be equally acceptable for an implementation to peek into the channels and decode
