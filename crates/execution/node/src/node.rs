@@ -5,7 +5,7 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256};
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::OpPooledTransaction;
+use base_alloy_consensus::{DepositReceipt, OpPooledTransaction, OpPrimitives};
 use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadAttributes};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
@@ -15,7 +15,6 @@ use base_execution_payload_builder::{
     builder::OpPayloadTransactions,
     config::{OpBuilderConfig, OpDAConfig, OpGasLimitConfig},
 };
-use base_alloy_consensus::{DepositReceipt, OpPrimitives};
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::OpEthApiBuilder,

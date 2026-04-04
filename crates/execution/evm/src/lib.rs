@@ -16,12 +16,11 @@ use core::fmt::Debug;
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::EIP1559ParamError;
+use base_alloy_consensus::{DepositReceipt, EIP1559ParamError, OpPrimitives};
 use base_alloy_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
 };
 use base_execution_chainspec::OpChainSpec;
-use base_alloy_consensus::{DepositReceipt, OpPrimitives};
 use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
@@ -348,9 +347,8 @@ mod tests {
         Address, B256, LogData, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_alloy_consensus::{BaseBlock, OpReceipt};
+    use base_alloy_consensus::{BaseBlock, OpPrimitives, OpReceipt};
     use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
-    use base_alloy_consensus::OpPrimitives;
     use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;
     use reth_evm::execute::ProviderError;

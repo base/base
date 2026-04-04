@@ -390,8 +390,8 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Bytes, hex_literal::hex, keccak256};
     use base_alloy_chains::BaseUpgrades;
-    use base_execution_chainspec::BASE_MAINNET;
     use base_alloy_consensus::OpTransactionSigned;
+    use base_execution_chainspec::BASE_MAINNET;
 
     use super::*;
 

@@ -348,9 +348,8 @@ mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_alloy_chains::BaseChainConfig;
-    use base_alloy_consensus::OpTypedTransaction;
+    use base_alloy_consensus::{OpPrimitives, OpTransactionSigned, OpTypedTransaction};
     use base_execution_chainspec::BASE_MAINNET;
-    use base_alloy_consensus::{OpPrimitives, OpTransactionSigned};
     use reth_primitives_traits::Recovered;
 
     use super::*;

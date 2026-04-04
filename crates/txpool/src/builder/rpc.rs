@@ -104,8 +104,7 @@ mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
-    use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
-    use base_alloy_consensus::OpTransactionSigned;
+    use base_alloy_consensus::{OpTransactionSigned, OpTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;

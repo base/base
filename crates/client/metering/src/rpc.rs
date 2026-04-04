@@ -604,12 +604,11 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{B256, Bloom, Bytes, address};
     use alloy_rpc_client::RpcClient;
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_consensus::{OpTransactionSigned, OpTxEnvelope};
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_bundles::{Bundle, MeterBundleResponse};
-    use base_alloy_consensus::OpTransactionSigned;
     use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
     use base_node_runner::test_utils::{Account, TestHarness};
     use reth_transaction_pool::test_utils::TransactionBuilder;

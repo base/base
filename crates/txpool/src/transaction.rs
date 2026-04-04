@@ -425,10 +425,9 @@ mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
-    use base_alloy_consensus::TxDeposit;
+    use base_alloy_consensus::{OpPrimitives, OpTransactionSigned, TxDeposit};
     use base_execution_chainspec::BASE_MAINNET;
     use base_execution_evm::OpEvmConfig;
-    use base_alloy_consensus::{OpPrimitives, OpTransactionSigned};
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
