@@ -225,7 +225,7 @@ where
 ///
 /// Successful deposits must be emitted by the deposit contract and have the correct event
 /// signature. So the receipt address must equal the specified deposit contract and the first topic
-/// must be the [`DEPOSIT_EVENT_ABI_HASH`].
+/// must be the [`Deposits::EVENT_ABI_HASH`].
 async fn derive_deposits(
     block_hash: B256,
     receipts: &[Receipt],
@@ -297,7 +297,7 @@ mod tests {
             address: deposit_contract,
             data: LogData::new_unchecked(
                 vec![
-                    DEPOSIT_EVENT_ABI_HASH,
+                    Deposits::EVENT_ABI_HASH,
                     B256::from_slice(&from_bytes),
                     B256::from_slice(&to_bytes),
                     B256::default(),
@@ -352,7 +352,7 @@ mod tests {
         let deposit_contract = address!("1111111111111111111111111111111111111111");
         let mut invalid = generate_valid_receipt();
         invalid.logs[0].data =
-            LogData::new_unchecked(vec![DEPOSIT_EVENT_ABI_HASH], Bytes::default());
+            LogData::new_unchecked(vec![Deposits::EVENT_ABI_HASH], Bytes::default());
         let receipts = vec![generate_valid_receipt(), generate_valid_receipt(), invalid];
         let result = derive_deposits(B256::default(), &receipts, deposit_contract).await;
         let downcasted = result.unwrap_err();
