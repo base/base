@@ -13,7 +13,7 @@ use alloy_transport_http::{
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use async_trait::async_trait;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_network::Base;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_consensus_genesis::{RollupConfig, SystemConfig};
@@ -35,7 +35,7 @@ pub struct AlloyL2ChainProvider {
     /// The rollup configuration.
     rollup_config: Arc<RollupConfig>,
     /// The `block_by_number` LRU cache.
-    block_by_number_cache: LruCache<u64, OpBlock>,
+    block_by_number_cache: LruCache<u64, BaseBlock>,
 }
 
 impl AlloyL2ChainProvider {
@@ -225,7 +225,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
             .map_err(|_| AlloyL2ChainProviderError::L2BlockInfoConstruction(number))
     }
 
-    async fn block_by_number(&mut self, number: u64) -> Result<OpBlock, Self::Error> {
+    async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
         if let Some(block) = self.block_by_number_cache.get(&number) {
             return Ok(block.clone());
         }

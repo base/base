@@ -10,7 +10,7 @@ use base_proof_contracts::{
 };
 use base_proof_primitives::Proposal;
 use base_proof_rpc::{
-    L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OpBlock, OutputAtBlock,
+    BaseBlock, L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OutputAtBlock,
     RollupProvider, RpcError, RpcResult, SyncStatus,
 };
 
@@ -69,14 +69,14 @@ impl L2Provider for MockL2 {
         let hash = self.canonical_hash.unwrap_or(B256::repeat_byte(0x30));
         Ok(alloy_rpc_types_eth::Header { hash, ..Default::default() })
     }
-    async fn block_by_number(&self, _: Option<u64>) -> RpcResult<OpBlock> {
+    async fn block_by_number(&self, _: Option<u64>) -> RpcResult<BaseBlock> {
         if self.block_not_found {
             Err(RpcError::BlockNotFound("mock: no blocks".into()))
         } else {
             unimplemented!()
         }
     }
-    async fn block_by_hash(&self, _: B256) -> RpcResult<OpBlock> {
+    async fn block_by_hash(&self, _: B256) -> RpcResult<BaseBlock> {
         unimplemented!()
     }
 }

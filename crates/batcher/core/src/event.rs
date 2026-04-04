@@ -1,6 +1,6 @@
 //! Internal driver event type produced by the `tokio::select!` I/O phase.
 
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_batcher_encoder::SubmissionId;
 use base_protocol::L2BlockInfo;
 
@@ -12,7 +12,7 @@ pub enum DriverEvent {
     /// Cancellation token fired, or L2 source signalled exhausted.
     Shutdown,
     /// New L2 unsafe block from the source.
-    Block(Box<OpBlock>),
+    Block(Box<BaseBlock>),
     /// Source requested a force-flush of the current channel.
     Flush,
     /// L2 reorganisation; new safe head provided.

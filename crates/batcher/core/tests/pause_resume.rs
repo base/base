@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_batcher_core::{
     AdminHandle, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
     ThrottleController,
@@ -138,7 +138,7 @@ fn test_paused_drops_block_and_flush_events() {
             inner: TrackingPipeline,
         }
         impl BatchPipeline for CountingPipeline {
-            fn add_block(&mut self, block: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
+            fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
                 *self.calls.lock().unwrap() += 1;
                 self.inner.add_block(block)
             }
@@ -195,7 +195,7 @@ fn test_paused_drops_block_and_flush_events() {
         // Pause, then send a block — it must be dropped.
         admin_handle.pause().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        source_tx.send(L2BlockEvent::Block(Box::new(OpBlock::default()))).unwrap();
+        source_tx.send(L2BlockEvent::Block(Box::new(BaseBlock::default()))).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
 

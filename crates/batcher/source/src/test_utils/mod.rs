@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 
 use async_trait::async_trait;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_protocol::L2BlockInfo;
 
 pub use crate::{ChannelBlockSource, ChannelL1HeadSource};
@@ -26,7 +26,7 @@ impl InMemoryBlockSource {
     }
 
     /// Push a block event into the queue.
-    pub fn push_block(&mut self, block: OpBlock) {
+    pub fn push_block(&mut self, block: BaseBlock) {
         self.queue.push_back(L2BlockEvent::Block(Box::new(block)));
     }
 
@@ -91,8 +91,8 @@ mod tests {
 
     use super::*;
 
-    fn make_block(number: u64, parent_hash: B256) -> OpBlock {
-        OpBlock {
+    fn make_block(number: u64, parent_hash: B256) -> BaseBlock {
+        BaseBlock {
             header: alloy_consensus::Header { number, parent_hash, ..Default::default() },
             body: Default::default(),
         }

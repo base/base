@@ -1,7 +1,7 @@
 //! Contains the [`BatchComposer`] type.
 
 use alloy_eips::eip2718::Encodable2718;
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_protocol::{L1BlockInfoTx, SingleBatch};
 
 /// Errors returned by [`BatchComposer::block_to_single_batch`].
@@ -26,7 +26,7 @@ pub enum BatchComposeError {
 pub struct BatchComposer;
 
 impl BatchComposer {
-    /// Convert an L2 [`OpBlock`] into a [`SingleBatch`] and the decoded
+    /// Convert an L2 [`BaseBlock`] into a [`SingleBatch`] and the decoded
     /// [`L1BlockInfoTx`].
     ///
     /// Mirrors op-batcher's `BlockToSingularBatch`:
@@ -40,7 +40,7 @@ impl BatchComposer {
     /// access the sequence number for span batch construction without
     /// re-decoding the deposit.
     pub fn block_to_single_batch(
-        block: &OpBlock,
+        block: &BaseBlock,
     ) -> Result<(SingleBatch, L1BlockInfoTx), BatchComposeError> {
         if block.body.transactions.is_empty() {
             return Err(BatchComposeError::EmptyBlock);
@@ -82,14 +82,14 @@ mod tests {
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{B256, Bytes, Sealed, Signature};
-    use base_alloy_consensus::{OpBlock, OpTxEnvelope, TxDeposit};
+    use base_alloy_consensus::{BaseBlock, OpTxEnvelope, TxDeposit};
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 
     use super::{BatchComposeError, BatchComposer};
 
-    fn make_block(transactions: Vec<OpTxEnvelope>) -> OpBlock {
-        OpBlock {
+    fn make_block(transactions: Vec<OpTxEnvelope>) -> BaseBlock {
+        BaseBlock {
             header: Header::default(),
             body: BlockBody { transactions, ..Default::default() },
         }
@@ -113,7 +113,7 @@ mod tests {
     #[case::empty_block(make_block(vec![]), BatchComposeError::EmptyBlock)]
     #[case::not_deposit(make_block(vec![non_deposit_tx()]), BatchComposeError::NotDepositTx)]
     #[case::bad_calldata(make_block(vec![deposit_tx(Bytes::new())]), BatchComposeError::L1InfoDecode)]
-    fn test_errors(#[case] block: OpBlock, #[case] expected: BatchComposeError) {
+    fn test_errors(#[case] block: BaseBlock, #[case] expected: BatchComposeError) {
         assert_eq!(BatchComposer::block_to_single_batch(&block).unwrap_err(), expected);
     }
 

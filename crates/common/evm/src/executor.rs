@@ -23,7 +23,7 @@ use revm::{
     database::DatabaseCommitExt,
 };
 
-use crate::{OpBlockExecutionCtx, OpBlockExecutionError, OpReceiptBuilder, OpTxEnv, canyon};
+use crate::{BaseBlockExecutionCtx, BaseBlockExecutionError, OpReceiptBuilder, OpTxEnv, canyon};
 
 /// The result of executing an OP transaction.
 #[derive(Debug)]
@@ -46,13 +46,13 @@ impl<H, T> TxResult for OpTxResult<H, T> {
 
 /// Block executor for Base.
 #[derive(Debug)]
-pub struct OpBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
+pub struct BaseBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
     /// Spec.
     pub spec: Spec,
     /// Receipt builder.
     pub receipt_builder: R,
     /// Context for block execution.
-    pub ctx: OpBlockExecutionCtx,
+    pub ctx: BaseBlockExecutionCtx,
     /// The EVM used by executor.
     pub evm: Evm,
     /// Receipts of executed transactions.
@@ -70,14 +70,14 @@ pub struct OpBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
     pub system_caller: SystemCaller<Spec>,
 }
 
-impl<E, R, Spec> OpBlockExecutor<E, R, Spec>
+impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
     E: Evm,
     R: OpReceiptBuilder,
     Spec: BaseUpgrades + Clone,
 {
-    /// Creates a new [`OpBlockExecutor`].
-    pub fn new(evm: E, ctx: OpBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
+    /// Creates a new [`BaseBlockExecutor`].
+    pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
         Self {
             is_regolith: spec
                 .is_regolith_active_at_timestamp(evm.block().timestamp().saturating_to()),
@@ -93,7 +93,7 @@ where
     }
 }
 
-impl<E, R, Spec> OpBlockExecutor<E, R, Spec>
+impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
     E: Evm<
             DB: Database + DatabaseCommit + StateDB,
@@ -128,7 +128,7 @@ where
     }
 }
 
-impl<E, R, Spec> BlockExecutor for OpBlockExecutor<E, R, Spec>
+impl<E, R, Spec> BlockExecutor for BaseBlockExecutor<E, R, Spec>
 where
     E: Evm<
             DB: Database + DatabaseCommit + StateDB,
@@ -196,7 +196,7 @@ where
 
             if tx_da_footprint > da_footprint_available {
                 return Err(BlockExecutionError::Validation(BlockValidationError::Other(
-                    Box::new(OpBlockExecutionError::TransactionDaFootprintAboveGasLimit {
+                    Box::new(BaseBlockExecutionError::TransactionDaFootprintAboveGasLimit {
                         transaction_da_footprint: tx_da_footprint,
                         available_block_da_footprint: da_footprint_available,
                     }),
@@ -373,11 +373,11 @@ mod tests {
     };
 
     use super::*;
-    use crate::{OpAlloyReceiptBuilder, OpBlockExecutorFactory, OpEvm, OpEvmFactory};
+    use crate::{BaseBlockExecutorFactory, OpAlloyReceiptBuilder, OpEvm, OpEvmFactory};
 
     #[test]
     fn test_with_encoded() {
-        let executor_factory = OpBlockExecutorFactory::new(
+        let executor_factory = BaseBlockExecutorFactory::new(
             OpAlloyReceiptBuilder::default(),
             BaseChainUpgrades::mainnet(),
             OpEvmFactory::default(),
@@ -385,7 +385,7 @@ mod tests {
         let mut db =
             revm::database::State::builder().with_database(CacheDB::<EmptyDB>::default()).build();
         let evm = executor_factory.evm_factory().create_evm(&mut db, EvmEnv::default());
-        let mut executor = executor_factory.create_executor(evm, OpBlockExecutionCtx::default());
+        let mut executor = executor_factory.create_executor(evm, BaseBlockExecutionCtx::default());
         let tx = Recovered::new_unchecked(
             OpTxEnvelope::Legacy(TxLegacy::default().into_signed(Signature::new(
                 Default::default(),
@@ -449,7 +449,7 @@ mod tests {
         op_chain_hardforks: &'a BaseChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
-    ) -> OpBlockExecutor<
+    ) -> BaseBlockExecutor<
         OpEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector>,
         &'a OpAlloyReceiptBuilder,
         &'a BaseChainUpgrades,
@@ -470,9 +470,9 @@ mod tests {
 
         let evm = OpEvm::new(ctx.build_op_with_inspector(NoOpInspector {}), true);
 
-        OpBlockExecutor::new(
+        BaseBlockExecutor::new(
             evm,
-            OpBlockExecutionCtx::default(),
+            BaseBlockExecutionCtx::default(),
             op_chain_hardforks,
             receipt_builder,
         )
@@ -569,7 +569,7 @@ mod tests {
             BlockExecutionError::Validation(BlockValidationError::Other(err)) => {
                 assert_eq!(
                     err.to_string(),
-                    OpBlockExecutionError::TransactionDaFootprintAboveGasLimit {
+                    BaseBlockExecutionError::TransactionDaFootprintAboveGasLimit {
                         transaction_da_footprint: expected_da_footprint,
                         available_block_da_footprint: GAS_LIMIT,
                     }

@@ -155,7 +155,7 @@ where
     /// Applies EIP-4788, EIP-2935, and Canyon create2 deployer pre-execution changes to the EVM.
     ///
     /// Must be called once per block, before executing any transactions. This mirrors the
-    /// `apply_pre_execution_changes` behavior of [`base_alloy_evm::OpBlockExecutor`] to ensure
+    /// `apply_pre_execution_changes` behavior of [`base_alloy_evm::BaseBlockExecutor`] to ensure
     /// that the cached execution results match what the validator computes.
     pub fn apply_pre_execution_changes(
         &mut self,

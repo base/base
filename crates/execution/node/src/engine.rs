@@ -4,7 +4,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_rpc_types_engine::{
     OpExecutionData, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
     OpExecutionPayloadEnvelopeV5, OpPayloadAttributes,
@@ -53,7 +53,7 @@ impl<T: PayloadTypes<ExecutionData = OpExecutionData>> PayloadTypes for OpEngine
 
 impl<T: PayloadTypes<ExecutionData = OpExecutionData>> EngineTypes for OpEngineTypes<T>
 where
-    T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = OpBlock>>
+    T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = BaseBlock>>
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
         + TryInto<OpExecutionPayloadEnvelopeV3>

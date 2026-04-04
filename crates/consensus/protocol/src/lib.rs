@@ -28,7 +28,7 @@ mod attributes;
 pub use attributes::OpAttributesWithParent;
 
 mod errors;
-pub use errors::OpBlockConversionError;
+pub use errors::BaseBlockConversionError;
 
 mod block;
 pub use block::{BlockInfo, FromBlockError, L2BlockInfo};

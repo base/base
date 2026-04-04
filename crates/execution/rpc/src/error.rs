@@ -6,7 +6,7 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_execution_evm::OpBlockExecutionError;
+use base_execution_evm::BaseBlockExecutionError;
 use base_revm::{OpHaltReason, OpTransactionError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_evm::execute::ProviderError;
@@ -26,7 +26,7 @@ pub enum OpEthApiError {
     Eth(#[from] EthApiError),
     /// EVM error originating from invalid Base data.
     #[error(transparent)]
-    Evm(#[from] OpBlockExecutionError),
+    Evm(#[from] BaseBlockExecutionError),
     /// Thrown when calculating L1 gas fee.
     #[error("failed to calculate l1 gas fee")]
     L1BlockFeeError,

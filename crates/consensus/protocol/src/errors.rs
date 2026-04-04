@@ -7,7 +7,7 @@ use crate::DecodeError;
 
 /// An error encountered during OP [`Block`](alloy_consensus::Block) conversion.
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
-pub enum OpBlockConversionError {
+pub enum BaseBlockConversionError {
     /// Invalid genesis hash.
     #[error("Invalid genesis hash. Expected {0}, got {1}")]
     InvalidGenesisHash(B256, B256),

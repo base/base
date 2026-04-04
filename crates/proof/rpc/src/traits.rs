@@ -7,7 +7,7 @@ use base_consensus_genesis::RollupConfig;
 
 use super::{
     error::RpcResult,
-    types::{OpBlock, OutputAtBlock, SyncStatus},
+    types::{BaseBlock, OutputAtBlock, SyncStatus},
 };
 
 /// L1 RPC provider trait for interacting with Ethereum.
@@ -62,10 +62,10 @@ pub trait L2Provider: Send + Sync {
 
     /// Gets a block by number with full transactions.
     /// If `number` is `None`, returns the latest block.
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock>;
+    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<BaseBlock>;
 
     /// Gets a block by hash with full transactions.
-    async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock>;
+    async fn block_by_hash(&self, hash: B256) -> RpcResult<BaseBlock>;
 }
 
 /// Rollup RPC provider trait for interacting with Base rollup nodes.

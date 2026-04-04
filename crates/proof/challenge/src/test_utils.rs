@@ -391,11 +391,11 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::HeaderNotFound(format!("no header for block {block_number}")))
     }
 
-    async fn block_by_number(&self, _number: Option<u64>) -> RpcResult<base_proof_rpc::OpBlock> {
+    async fn block_by_number(&self, _number: Option<u64>) -> RpcResult<base_proof_rpc::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 
-    async fn block_by_hash(&self, _hash: B256) -> RpcResult<base_proof_rpc::OpBlock> {
+    async fn block_by_hash(&self, _hash: B256) -> RpcResult<base_proof_rpc::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 }

@@ -8,7 +8,7 @@ use std::{
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, bytes, hex::FromHex};
 use alloy_rpc_types_engine::PayloadId;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
@@ -33,7 +33,7 @@ const BLOCK_INFO_TXN: Bytes = bytes!(
 
 struct BenchSetup {
     provider: LocalNodeProvider,
-    canonical_block: RecoveredBlock<OpBlock>,
+    canonical_block: RecoveredBlock<BaseBlock>,
     flashblocks: Vec<(String, Vec<Flashblock>)>,
     target_block: BlockNumber,
     _harness: Arc<TestHarness>,
@@ -74,7 +74,7 @@ impl BenchSetup {
 
 struct BenchInput {
     provider: LocalNodeProvider,
-    canonical_block: RecoveredBlock<OpBlock>,
+    canonical_block: RecoveredBlock<BaseBlock>,
     flashblocks: Vec<Flashblock>,
     target_block: BlockNumber,
     last_index: u64,
@@ -172,7 +172,7 @@ async fn wait_for_pending_state(
 }
 
 fn build_flashblocks(
-    canonical_block: &RecoveredBlock<OpBlock>,
+    canonical_block: &RecoveredBlock<BaseBlock>,
     transactions: &[OpTransactionSigned],
 ) -> Vec<Flashblock> {
     let mut flashblocks = Vec::new();
@@ -195,7 +195,7 @@ fn build_flashblocks(
 }
 
 fn base_flashblock(
-    canonical_block: &RecoveredBlock<OpBlock>,
+    canonical_block: &RecoveredBlock<BaseBlock>,
     block_number: BlockNumber,
 ) -> Flashblock {
     Flashblock {

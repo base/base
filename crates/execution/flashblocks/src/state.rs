@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_flashblocks::Flashblock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives::RecoveredBlock;
@@ -95,7 +95,7 @@ impl FlashblocksState {
     }
 
     /// Handles a canonical block being received.
-    pub fn on_canonical_block_received(&self, block: RecoveredBlock<OpBlock>) {
+    pub fn on_canonical_block_received(&self, block: RecoveredBlock<BaseBlock>) {
         let block_number = block.number;
         match self.queue.send(StateUpdate::Canonical(block)) {
             Ok(_) => {

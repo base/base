@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_batcher_encoder::{BatchPipeline, StepResult};
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
@@ -244,7 +244,7 @@ where
     /// discards in-flight submissions, resets the pipeline, and restarts
     /// sequential catchup from `safe_head + 1`. The triggering block will be
     /// re-delivered by the sequential poller.
-    fn on_block(&mut self, block: Box<OpBlock>) {
+    fn on_block(&mut self, block: Box<BaseBlock>) {
         let number = block.header.number;
         match self.pipeline.add_block(*block) {
             Ok(()) => {

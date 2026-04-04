@@ -1,5 +1,5 @@
 //! Abstraction over receipt building logic to allow plugging different primitive types into
-//! [`super::OpBlockExecutor`].
+//! [`super::BaseBlockExecutor`].
 
 use core::fmt::Debug;
 

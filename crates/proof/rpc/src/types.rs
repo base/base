@@ -17,7 +17,7 @@ pub type L2HttpProvider = RootProvider<Base>;
 /// Base block type with Base-specific transactions.
 ///
 /// Uses `base_alloy_rpc_types::Transaction` which can deserialize deposit transactions (type 0x7E).
-pub type OpBlock = alloy_rpc_types_eth::Block<base_alloy_rpc_types::Transaction>;
+pub type BaseBlock = alloy_rpc_types_eth::Block<base_alloy_rpc_types::Transaction>;
 
 /// L1 block reference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

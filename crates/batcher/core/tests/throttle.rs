@@ -7,7 +7,7 @@ use std::{
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, DaThrottle, ThrottleConfig, ThrottleController,
     ThrottleStrategy,
@@ -214,7 +214,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
     }
 
     impl BatchPipeline for DynamicPipeline {
-        fn add_block(&mut self, _: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
+        fn add_block(&mut self, _: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
             Ok(())
         }
 

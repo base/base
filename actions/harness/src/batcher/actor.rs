@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
@@ -321,7 +321,7 @@ impl Batcher<ActionL2Source> {
     /// Push a block into the L2 source for the next [`advance`] call.
     ///
     /// [`advance`]: Batcher::advance
-    pub fn push_block(&mut self, block: OpBlock) {
+    pub fn push_block(&mut self, block: BaseBlock) {
         self.l2_source.push(block);
     }
 }

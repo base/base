@@ -18,7 +18,7 @@ use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::EIP1559ParamError;
 use base_alloy_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
+    BaseBlockExecutionCtx, BaseBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
 };
 use base_execution_chainspec::OpChainSpec;
 use base_execution_primitives::{DepositReceipt, OpPrimitives};
@@ -52,10 +52,10 @@ pub use l1::*;
 mod receipts;
 pub use receipts::*;
 mod build;
-pub use build::OpBlockAssembler;
+pub use build::BaseBlockAssembler;
 
 mod error;
-pub use error::{L1BlockInfoError, OpBlockExecutionError};
+pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
 /// Builds an [`EvmEnv`] for a given block header using [`base_alloy_evm`]'s spec resolution.
 fn op_evm_env(
@@ -127,10 +127,10 @@ pub struct OpEvmConfig<
     R = OpRethReceiptBuilder,
     EvmFactory = OpEvmFactory,
 > {
-    /// Inner [`OpBlockExecutorFactory`].
-    pub executor_factory: OpBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
+    /// Inner [`BaseBlockExecutorFactory`].
+    pub executor_factory: BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
     /// Base block assembler.
-    pub block_assembler: OpBlockAssembler<ChainSpec>,
+    pub block_assembler: BaseBlockAssembler<ChainSpec>,
     #[doc(hidden)]
     pub _pd: core::marker::PhantomData<N>,
 }
@@ -158,8 +158,8 @@ impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> OpEvmConfig<ChainSpec, N, R>
     /// Creates a new [`OpEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
         Self {
-            block_assembler: OpBlockAssembler::new(Arc::clone(&chain_spec)),
-            executor_factory: OpBlockExecutorFactory::new(
+            block_assembler: BaseBlockAssembler::new(Arc::clone(&chain_spec)),
+            executor_factory: BaseBlockExecutorFactory::new(
                 receipt_builder,
                 chain_spec,
                 OpEvmFactory::default(),
@@ -206,8 +206,8 @@ where
     type Primitives = N;
     type Error = EIP1559ParamError;
     type NextBlockEnvCtx = OpNextBlockEnvAttributes;
-    type BlockExecutorFactory = OpBlockExecutorFactory<R, Arc<ChainSpec>, EvmF>;
-    type BlockAssembler = OpBlockAssembler<ChainSpec>;
+    type BlockExecutorFactory = BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmF>;
+    type BlockAssembler = BaseBlockAssembler<ChainSpec>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
         &self.executor_factory
@@ -235,8 +235,8 @@ where
     fn context_for_block(
         &self,
         block: &'_ SealedBlock<N::Block>,
-    ) -> Result<OpBlockExecutionCtx, Self::Error> {
-        Ok(OpBlockExecutionCtx {
+    ) -> Result<BaseBlockExecutionCtx, Self::Error> {
+        Ok(BaseBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),
             parent_beacon_block_root: block.header().parent_beacon_block_root(),
             extra_data: block.header().extra_data().clone(),
@@ -247,8 +247,8 @@ where
         &self,
         parent: &SealedHeader<N::BlockHeader>,
         attributes: Self::NextBlockEnvCtx,
-    ) -> Result<OpBlockExecutionCtx, Self::Error> {
-        Ok(OpBlockExecutionCtx {
+    ) -> Result<BaseBlockExecutionCtx, Self::Error> {
+        Ok(BaseBlockExecutionCtx {
             parent_hash: parent.hash(),
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             extra_data: attributes.extra_data,
@@ -313,7 +313,7 @@ where
         &self,
         payload: &'a OpExecutionData,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
-        Ok(OpBlockExecutionCtx {
+        Ok(BaseBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             extra_data: payload.payload.as_v1().extra_data.clone(),
@@ -348,7 +348,7 @@ mod tests {
         Address, B256, LogData, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_alloy_consensus::{OpBlock, OpReceipt};
+    use base_alloy_consensus::{BaseBlock, OpReceipt};
     use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
     use base_execution_primitives::OpPrimitives;
     use base_revm::OpSpecId;
@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn receipts_by_block_hash() {
         // Create a default recovered block
-        let block: RecoveredBlock<OpBlock> = Default::default();
+        let block: RecoveredBlock<BaseBlock> = Default::default();
 
         // Define block hashes for block1 and block2
         let block1_hash = B256::new([0x01; 32]);

@@ -10,7 +10,7 @@
 
 // Used in submodule transaction::signed and receipt.
 use alloy_primitives as _;
-use base_alloy_consensus::{OpBlock, OpReceipt};
+use base_alloy_consensus::{BaseBlock, OpReceipt};
 
 pub mod transaction;
 pub use transaction::*;
@@ -20,7 +20,7 @@ mod receipt;
 pub use receipt::DepositReceipt;
 
 /// Base-specific block body type.
-pub type OpBlockBody = <OpBlock as reth_primitives_traits::Block>::Body;
+pub type BaseBlockBody = <BaseBlock as reth_primitives_traits::Block>::Body;
 
 /// Primitive types for Base Node.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -28,9 +28,9 @@ pub type OpBlockBody = <OpBlock as reth_primitives_traits::Block>::Body;
 pub struct OpPrimitives;
 
 impl reth_primitives_traits::NodePrimitives for OpPrimitives {
-    type Block = OpBlock;
+    type Block = BaseBlock;
     type BlockHeader = alloy_consensus::Header;
-    type BlockBody = OpBlockBody;
+    type BlockBody = BaseBlockBody;
     type SignedTx = OpTransactionSigned;
     type Receipt = OpReceipt;
 }

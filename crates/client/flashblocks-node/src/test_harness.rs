@@ -18,7 +18,7 @@ use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
-use base_alloy_consensus::{OpBlock, OpDepositReceipt, OpReceipt};
+use base_alloy_consensus::{BaseBlock, OpDepositReceipt, OpReceipt};
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
@@ -462,7 +462,7 @@ impl FlashblocksBuilderTestHarness {
     pub async fn new_canonical_block_without_processing(
         &mut self,
         user_transactions: Vec<OpTransactionSigned>,
-    ) -> RecoveredBlock<OpBlock> {
+    ) -> RecoveredBlock<BaseBlock> {
         let previous_tip =
             self.provider.best_block_number().expect("able to read best block number");
         let txs: Vec<Bytes> =

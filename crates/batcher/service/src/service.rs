@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_network::Base;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
@@ -60,7 +60,7 @@ enum Subscription {
 }
 
 impl BlockSubscription for Subscription {
-    fn take_stream(&mut self) -> BoxStream<'static, Result<OpBlock, SourceError>> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
         match self {
             Self::Ws(ws) => ws.take_stream(),
             Self::Null(null) => null.take_stream(),

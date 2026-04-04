@@ -10,7 +10,7 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     PraguePayloadFields,
 };
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4,
@@ -23,7 +23,7 @@ use crate::{ExecutionError, ProtocolError, Result};
 #[derive(Debug, Clone)]
 pub struct AssembledBlock {
     /// The reconstructed OP block.
-    pub block: OpBlock,
+    pub block: BaseBlock,
     /// The base payload data from the first flashblock.
     pub base: ExecutionPayloadBaseV1,
     /// The flashblocks used to assemble this block.
@@ -120,7 +120,7 @@ impl BlockAssembler {
             PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
         );
 
-        let block: OpBlock = OpExecutionPayload::V4(execution_payload)
+        let block: BaseBlock = OpExecutionPayload::V4(execution_payload)
             .try_into_block_with_sidecar(&sidecar)
             .map_err(|e| ExecutionError::BlockConversion(e.to_string()))?;
 

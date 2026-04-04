@@ -4,7 +4,7 @@ use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
 
 use alloy_primitives::hex;
 use async_trait::async_trait;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use spin::Mutex;
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::{Layer, layer::Context};
@@ -48,12 +48,12 @@ pub struct TestBatchValidator {
     /// Short circuit the block return to be the first block.
     pub short_circuit: bool,
     /// Blocks
-    pub op_blocks: Vec<OpBlock>,
+    pub op_blocks: Vec<BaseBlock>,
 }
 
 impl TestBatchValidator {
     /// Creates a new [`TestBatchValidator`] with the given origin and batches.
-    pub const fn new(blocks: Vec<L2BlockInfo>, op_blocks: Vec<OpBlock>) -> Self {
+    pub const fn new(blocks: Vec<L2BlockInfo>, op_blocks: Vec<BaseBlock>) -> Self {
         Self { blocks, short_circuit: false, op_blocks }
     }
 }
@@ -77,7 +77,7 @@ impl BatchValidationProvider for TestBatchValidator {
             .ok_or_else(|| TestBatchValidatorError::BlockNotFound)
     }
 
-    async fn block_by_number(&mut self, number: u64) -> Result<OpBlock, Self::Error> {
+    async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
         self.op_blocks
             .iter()
             .find(|p| p.header.number == number)

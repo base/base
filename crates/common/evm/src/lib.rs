@@ -18,10 +18,10 @@ mod tx_env;
 pub use tx_env::OpTxEnv;
 
 mod ctx;
-pub use ctx::OpBlockExecutionCtx;
+pub use ctx::BaseBlockExecutionCtx;
 
 mod error;
-pub use error::OpBlockExecutionError;
+pub use error::BaseBlockExecutionError;
 
 mod receipt_builder;
 pub use receipt_builder::{OpAlloyReceiptBuilder, OpReceiptBuilder};
@@ -30,7 +30,7 @@ mod canyon;
 pub use canyon::ensure_create2_deployer;
 
 mod executor;
-pub use executor::{OpBlockExecutor, OpTxResult};
+pub use executor::{BaseBlockExecutor, OpTxResult};
 
 mod executor_factory;
-pub use executor_factory::OpBlockExecutorFactory;
+pub use executor_factory::BaseBlockExecutorFactory;

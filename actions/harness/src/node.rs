@@ -7,7 +7,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     ForkchoiceState,
 };
-use base_alloy_consensus::{OpBlock, OpTxEnvelope, TxDeposit};
+use base_alloy_consensus::{BaseBlock, OpTxEnvelope, TxDeposit};
 use base_alloy_provider::OpEngineApi;
 use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use base_consensus_derive::{
@@ -422,7 +422,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// # Panics
     ///
     /// Panics if the first transaction is not a valid L1 info deposit.
-    pub fn act_l2_unsafe_gossip_receive(&mut self, block: &OpBlock) {
+    pub fn act_l2_unsafe_gossip_receive(&mut self, block: &BaseBlock) {
         if block.header.number != self.unsafe_head.block_info.number + 1 {
             return;
         }
@@ -803,8 +803,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         self.l1_origin_from_transactions(txs)
     }
 
-    /// Decode the L1 epoch from the first deposit transaction in an [`OpBlock`].
-    fn l1_origin_from_block(&self, block: &OpBlock) -> Option<BlockNumHash> {
+    /// Decode the L1 epoch from the first deposit transaction in an [`BaseBlock`].
+    fn l1_origin_from_block(&self, block: &BaseBlock) -> Option<BlockNumHash> {
         let first = block.body.transactions.first()?;
         let deposit = match first {
             OpTxEnvelope::Deposit(d) => d,

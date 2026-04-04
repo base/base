@@ -757,7 +757,7 @@ mod tests {
     use alloy_consensus::{Header, constants::EIP1559_TX_TYPE_ID};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, b256};
-    use base_alloy_consensus::OpBlock;
+    use base_alloy_consensus::BaseBlock;
     use base_consensus_genesis::{ChainGenesis, HardForkConfig};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
@@ -1092,7 +1092,7 @@ mod tests {
         };
         let inclusion_block = BlockInfo::default();
         let mut fetcher: TestBatchValidator = TestBatchValidator {
-            op_blocks: vec![OpBlock {
+            op_blocks: vec![BaseBlock {
                 header: Header { number: 9, ..Default::default() },
                 body: alloy_consensus::BlockBody {
                     transactions: Vec::new(),
@@ -1158,7 +1158,7 @@ mod tests {
         };
         let inclusion_block = BlockInfo::default();
         let mut fetcher: TestBatchValidator = TestBatchValidator {
-            op_blocks: vec![OpBlock {
+            op_blocks: vec![BaseBlock {
                 header: Header { number: 9, ..Default::default() },
                 body: alloy_consensus::BlockBody {
                     transactions: vec![base_alloy_consensus::OpTxEnvelope::Eip1559(
@@ -2140,7 +2140,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 9, ..Default::default() },
             ..Default::default()
         };
-        let block = OpBlock {
+        let block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
             body: alloy_consensus::BlockBody {
                 transactions: Vec::new(),
@@ -2215,7 +2215,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 9, ..Default::default() },
             ..Default::default()
         };
-        let block = OpBlock {
+        let block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
             body: alloy_consensus::BlockBody {
                 transactions: Vec::new(),
@@ -2284,7 +2284,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 9, ..Default::default() },
             ..Default::default()
         };
-        let block = OpBlock {
+        let block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
             body: alloy_consensus::BlockBody {
                 transactions: Vec::new(),
@@ -2362,7 +2362,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 9, ..Default::default() },
             ..Default::default()
         };
-        let block = OpBlock {
+        let block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
             body: alloy_consensus::BlockBody {
                 transactions: Vec::new(),

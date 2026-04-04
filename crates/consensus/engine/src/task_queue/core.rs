@@ -3,7 +3,7 @@
 use std::{collections::BinaryHeap, sync::Arc};
 
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{L2BlockInfo, OpBlockConversionError};
+use base_protocol::{BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
 use tokio::sync::watch::Sender;
 
@@ -197,7 +197,7 @@ pub enum EngineResetError {
     SyncStart(#[from] SyncStartError),
     /// An error occurred while constructing the `SystemConfig` for the new safe head.
     #[error(transparent)]
-    SystemConfigConversion(#[from] OpBlockConversionError),
+    SystemConfigConversion(#[from] BaseBlockConversionError),
 }
 
 #[cfg(test)]

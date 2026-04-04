@@ -18,7 +18,7 @@ use super::{
     config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
     traits::L2Provider,
-    types::OpBlock,
+    types::BaseBlock,
 };
 
 /// Cache key for account proofs (address + block hash).
@@ -103,7 +103,7 @@ pub struct L2Client {
     /// The underlying HTTP provider (Base network for deposit tx support).
     provider: L2HttpProvider,
     /// Cache for blocks by hash.
-    blocks_cache: MeteredCache<B256, OpBlock>,
+    blocks_cache: MeteredCache<B256, BaseBlock>,
     /// Cache for headers by hash.
     headers_cache: MeteredCache<B256, Header>,
     /// Cache for account proofs.
@@ -163,7 +163,7 @@ impl L2Client {
     }
 
     /// Returns the blocks cache.
-    pub const fn blocks_cache(&self) -> &MeteredCache<B256, OpBlock> {
+    pub const fn blocks_cache(&self) -> &MeteredCache<B256, BaseBlock> {
         &self.blocks_cache
     }
 
@@ -265,7 +265,7 @@ impl L2Provider for L2Client {
         Ok(header)
     }
 
-    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<OpBlock> {
+    async fn block_by_number(&self, number: Option<u64>) -> RpcResult<BaseBlock> {
         let block_id: BlockId =
             number.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number).into();
 
@@ -289,7 +289,7 @@ impl L2Provider for L2Client {
         Ok(block)
     }
 
-    async fn block_by_hash(&self, hash: B256) -> RpcResult<OpBlock> {
+    async fn block_by_hash(&self, hash: B256) -> RpcResult<BaseBlock> {
         // Check cache first
         if let Some(block) = self.blocks_cache.get(&hash).await {
             return Ok(block);

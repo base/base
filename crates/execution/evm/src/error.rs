@@ -48,7 +48,7 @@ pub enum L1BlockInfoError {
 
 /// Base Block Executor Errors
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum OpBlockExecutionError {
+pub enum BaseBlockExecutionError {
     /// Error when trying to parse L1 block info
     #[error(transparent)]
     L1BlockInfo(#[from] L1BlockInfoError),
@@ -60,8 +60,8 @@ pub enum OpBlockExecutionError {
     AccountLoadFailed(alloy_primitives::Address),
 }
 
-impl From<OpBlockExecutionError> for BlockExecutionError {
-    fn from(err: OpBlockExecutionError) -> Self {
+impl From<BaseBlockExecutionError> for BlockExecutionError {
+    fn from(err: BaseBlockExecutionError) -> Self {
         Self::other(err)
     }
 }

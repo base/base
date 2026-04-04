@@ -41,7 +41,7 @@ pub use source::*;
 mod size;
 
 mod block;
-pub use block::OpBlock;
+pub use block::BaseBlock;
 #[cfg(feature = "serde")]
 pub use transaction::serde_deposit_tx_rpc;
 

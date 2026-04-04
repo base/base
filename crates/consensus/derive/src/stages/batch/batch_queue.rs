@@ -483,7 +483,7 @@ mod tests {
     use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256};
     use alloy_rlp::{BytesMut, Encodable};
-    use base_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType, TxDeposit};
+    use base_alloy_consensus::{BaseBlock, OpTxEnvelope, OpTxType, TxDeposit};
     use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
     use tracing::Level;
@@ -1072,7 +1072,7 @@ mod tests {
             .into_iter()
             .map(|tx| OpTxEnvelope::decode_2718(&mut &tx[..]).unwrap())
             .collect();
-        let block = OpBlock {
+        let block = BaseBlock {
             header: Header { number: 8, ..Default::default() },
             body: alloy_consensus::BlockBody {
                 transactions: batch_txs,
@@ -1080,7 +1080,7 @@ mod tests {
                 withdrawals: None,
             },
         };
-        let second = OpBlock {
+        let second = BaseBlock {
             header: Header { number: 9, ..Default::default() },
             body: alloy_consensus::BlockBody {
                 transactions: second_batch_txs,
