@@ -28,6 +28,7 @@ base-consensus-rpc = { workspace = true, features = ["client"] }
 
 # alloy
 alloy-signer.workspace = true
+alloy-genesis.workspace = true
 alloy-transport.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-client.workspace = true

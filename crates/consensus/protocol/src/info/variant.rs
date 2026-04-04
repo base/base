@@ -3,9 +3,10 @@
 
 use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
+use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
 use base_alloy_consensus::{DepositSourceDomain, L1InfoDepositSource, TxDeposit};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
@@ -42,7 +43,7 @@ impl L1BlockInfoTx {
     /// Creates a new [`L1BlockInfoTx`] from the given information.
     pub fn try_new(
         rollup_config: &RollupConfig,
-        l1_config: &L1ChainConfig,
+        l1_config: &ChainConfig,
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
@@ -182,7 +183,7 @@ impl L1BlockInfoTx {
     /// to include at the top of a block.
     pub fn try_new_with_deposit_tx(
         rollup_config: &RollupConfig,
-        l1_config: &L1ChainConfig,
+        l1_config: &ChainConfig,
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
@@ -813,7 +814,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut l1_genesis: L1ChainConfig = L1Config::sepolia().into();
+        let mut l1_genesis: ChainConfig = L1Config::sepolia().into();
         l1_genesis.prague_time = Some(2);
 
         let system_config = SystemConfig::default();

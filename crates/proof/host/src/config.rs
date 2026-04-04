@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
+use alloy_genesis::ChainConfig;
 use alloy_provider::RootProvider;
 use base_alloy_network::Base;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof_primitives::ProofRequest;
 use serde::Serialize;
@@ -34,7 +35,7 @@ pub struct ProverConfig {
     /// Rollup configuration.
     pub rollup_config: RollupConfig,
     /// L1 chain configuration.
-    pub l1_config: L1ChainConfig,
+    pub l1_config: ChainConfig,
     /// Enables `debug_executePayload` for execution witness collection.
     pub enable_experimental_witness_endpoint: bool,
 }

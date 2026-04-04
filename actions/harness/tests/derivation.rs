@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumHash;
+use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, Bytes, U256};
 use base_action_harness::{
     ActionDataSource, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
@@ -12,7 +13,6 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
 use base_consensus_derive::{PipelineBuilder, StatefulAttributesBuilder};
-use base_consensus_genesis::L1ChainConfig;
 use base_protocol::{BlockInfo, DERIVATION_VERSION_0, L2BlockInfo};
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
@@ -1601,7 +1601,7 @@ async fn derive_chain_from_near_l1_genesis() {
     // Build the node components manually to anchor derivation at L1 block #5.
     let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let rollup_arc = Arc::new(rollup_cfg.clone());
-    let l1_chain_config = Arc::new(L1ChainConfig::default());
+    let l1_chain_config = Arc::new(ChainConfig::default());
     let l1_provider = ActionL1ChainProvider::new(chain.clone());
     let dap_source = ActionDataSource::new(chain.clone(), rollup_cfg.batch_inbox_address);
     let l2_provider = ActionL2ChainProvider::from_genesis(&rollup_cfg);

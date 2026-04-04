@@ -6,9 +6,10 @@
 //! - Batcher (in-process, submits L2 transaction batches to L1)
 //! - Client execution layer (in-process, follows the L2 and builds pending state using Flashblocks)
 
+use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
@@ -97,7 +98,7 @@ impl L2Stack {
 
         let rollup_config: RollupConfig = serde_json::from_slice(&config.rollup_config)
             .wrap_err("Failed to parse rollup config")?;
-        let l1_chain_config: L1ChainConfig = serde_json::from_slice(&config.l1_genesis)
+        let l1_chain_config: ChainConfig = serde_json::from_slice(&config.l1_genesis)
             .wrap_err("Failed to parse L1 chain config")?;
 
         // 1. Start the builder (in-process EL).

@@ -6,7 +6,8 @@
 use std::{fs::File, path::PathBuf};
 
 use alloy_chains::Chain;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use alloy_genesis::ChainConfig;
+use base_consensus_genesis::RollupConfig;
 use base_consensus_registry::{L1Config, Registry};
 use serde_json::from_reader;
 use tracing::debug;
@@ -52,7 +53,7 @@ impl L1ConfigFile {
     ///
     /// If a file path is set, loads the configuration from the JSON file.
     /// Otherwise, falls back to the known chains registry using the provided chain ID.
-    pub fn load(&self, l1_chain_id: u64) -> Result<L1ChainConfig, ConfigError> {
+    pub fn load(&self, l1_chain_id: u64) -> Result<ChainConfig, ConfigError> {
         match &self.l1_config_file {
             Some(path) => {
                 debug!(path = ?path, "Loading l1 config from file");

@@ -1,8 +1,9 @@
 //! Rollup and L1 chain configuration registry.
 
+use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, map::HashMap};
 use base_alloy_chains::BaseChainConfig;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use spin::Lazy;
 
 use crate::L1Config;
@@ -17,7 +18,7 @@ static ROLLUP_CONFIGS: Lazy<HashMap<u64, RollupConfig>> = Lazy::new(|| {
 });
 
 /// L1 chain configurations built from known L1 genesis data.
-static L1_CONFIGS: Lazy<HashMap<u64, L1ChainConfig>> = Lazy::new(L1Config::build_l1_configs);
+static L1_CONFIGS: Lazy<HashMap<u64, ChainConfig>> = Lazy::new(L1Config::build_l1_configs);
 
 /// A registry of chain configurations for Base networks.
 ///
@@ -38,8 +39,8 @@ impl Registry {
         ROLLUP_CONFIGS.get(&chain.id())
     }
 
-    /// Returns an [`L1ChainConfig`] for the given L1 chain ID.
-    pub fn l1_config(chain_id: u64) -> Option<&'static L1ChainConfig> {
+    /// Returns an [`ChainConfig`] for the given L1 chain ID.
+    pub fn l1_config(chain_id: u64) -> Option<&'static ChainConfig> {
         L1_CONFIGS.get(&chain_id)
     }
 

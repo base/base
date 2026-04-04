@@ -3,9 +3,6 @@
 mod addresses;
 pub use addresses::AddressList;
 
-mod config;
-pub use config::{ChainConfig, L1ChainConfig};
-
 mod hardfork;
 pub use hardfork::{BaseHardforkConfig, HardForkConfig};
 

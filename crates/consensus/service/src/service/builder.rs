@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use alloy_genesis::ChainConfig;
 use alloy_primitives::Bytes;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
@@ -10,7 +11,7 @@ use alloy_transport_http::{
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use base_alloy_network::Base;
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_providers::OnlineBeaconClient;
 use base_consensus_rpc::RpcBuilder;
 use http_body_util::Full;
@@ -40,7 +41,7 @@ impl Default for DerivationDelegateConfig {
 #[derive(Debug)]
 pub struct L1ConfigBuilder {
     /// The L1 chain configuration.
-    pub chain_config: L1ChainConfig,
+    pub chain_config: ChainConfig,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
     /// The L1 beacon API.

@@ -33,14 +33,25 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Free Disk Space (fast pre-clean)
+      if: inputs.free-disk == 'true'
+      shell: bash
+      run: |
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        df -h
+
     - name: Free Disk Space
       if: inputs.free-disk == 'true'
       continue-on-error: true
       uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
       with:
         tool-cache: false
-        android: true
-        dotnet: true
+        android: false
+        dotnet: false
         haskell: true
         large-packages: false
         swap-storage: true
