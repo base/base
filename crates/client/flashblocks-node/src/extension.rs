@@ -59,11 +59,8 @@ impl BaseNodeExtension for FlashblocksExtension {
 
         // Start state processor, subscriber, and canonical subscription after node is started
         let hooks = hooks.add_node_started_hook(move |ctx| {
-            info!(
-                message = "Starting Flashblocks state processor",
-                simulate_state_root = cfg.simulate_state_root
-            );
-            state_for_start.start_with_options(ctx.provider().clone(), cfg.simulate_state_root);
+            info!(message = "Starting Flashblocks state processor");
+            state_for_start.start(ctx.provider().clone());
             subscriber.start();
 
             let mut canonical_stream =

@@ -550,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_execute_transaction_preserves_execution_time_from_prev_pending_blocks() {
+    fn cached_execute_transaction_preserves_timing_from_prev_pending_blocks() {
         let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
         let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
 

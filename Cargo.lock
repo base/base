@@ -4042,7 +4042,6 @@ dependencies = [
  "reth-rpc-convert",
  "reth-rpc-eth-api",
  "reth-rpc-eth-types",
- "reth-trie-common",
  "revm",
  "revm-database",
  "rstest",

@@ -15,8 +15,6 @@ pub struct FlashblocksConfig {
     pub cached_execution: bool,
     /// Shared Flashblocks state.
     pub state: Arc<FlashblocksState>,
-    /// Whether to compute per-transaction state roots during flashblock processing.
-    pub simulate_state_root: bool,
 }
 
 impl FlashblocksConfig {
@@ -28,13 +26,6 @@ impl FlashblocksConfig {
             max_pending_blocks_depth,
             cached_execution: false,
             state,
-            simulate_state_root: false,
         }
-    }
-
-    /// Enables per-transaction state root simulation during flashblock processing.
-    pub const fn with_simulate_state_root(mut self, enabled: bool) -> Self {
-        self.simulate_state_root = enabled;
-        self
     }
 }
