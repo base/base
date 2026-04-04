@@ -94,7 +94,9 @@ impl Deposits {
         // The next 32 bytes indicate the length of the opaqueData content.
         let opaque_content_len: U256 = U256::from_be_slice(&log.data.data[32..64]);
         let opaque_content_len: u64 = opaque_content_len.try_into().map_err(|_| {
-            DepositDecodeError::OpaqueContentOverflow(Bytes::copy_from_slice(&log.data.data[32..64]))
+            DepositDecodeError::OpaqueContentOverflow(Bytes::copy_from_slice(
+                &log.data.data[32..64],
+            ))
         })?;
 
         let opaque_data_ceil_32: u64 =
@@ -283,7 +285,10 @@ mod tests {
             ),
         };
         let err: DepositDecodeError = Deposits::decode(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositDecodeError::InvalidSelector(Deposits::EVENT_ABI_HASH, B256::default()));
+        assert_eq!(
+            err,
+            DepositDecodeError::InvalidSelector(Deposits::EVENT_ABI_HASH, B256::default())
+        );
     }
 
     #[test]
@@ -471,7 +476,9 @@ mod tests {
         let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
         assert_eq!(
             err,
-            DepositDecodeError::OpaqueContentOverflow(Bytes::from(data.get(32..64).unwrap().to_vec()))
+            DepositDecodeError::OpaqueContentOverflow(Bytes::from(
+                data.get(32..64).unwrap().to_vec()
+            ))
         );
     }
 
@@ -596,7 +603,9 @@ mod tests {
         let err = Deposits::decode(B256::default(), 0, &log).unwrap_err();
         assert_eq!(
             err,
-            DepositDecodeError::InvalidOpaqueDataPadding(Bytes::from(data.get(191..).unwrap().to_vec()))
+            DepositDecodeError::InvalidOpaqueDataPadding(Bytes::from(
+                data.get(191..).unwrap().to_vec()
+            ))
         );
     }
 

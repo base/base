@@ -428,7 +428,8 @@ mod tests {
 
     #[test]
     fn test_pipeline_encoding_error_source() {
-        let err = PipelineEncodingError::DepositDecodeError(DepositDecodeError::UnexpectedTopicsLen(0));
+        let err =
+            PipelineEncodingError::DepositDecodeError(DepositDecodeError::UnexpectedTopicsLen(0));
         assert!(err.source().is_some());
 
         let err = SpanBatchError::TooBigSpanBatchSize;
