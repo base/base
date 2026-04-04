@@ -654,43 +654,27 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
             return Ok(());
         }
 
-        // Check whether the targeted prover slot has already been acted on.
-        //
-        // For Nullify intents, nullification zeroes only the targeted prover
-        // (TEE or ZK) but does NOT change the game status (it stays
-        // IN_PROGRESS), so checking status alone would cause infinite
-        // retries after a successful nullification. Checking only the
-        // relevant prover avoids an infinite revert-retry loop in Path 2
-        // (fraudulent ZK challenge on a valid TEE proposal), where
-        // nullification zeroes `zkProver` but leaves `teeProver` intact.
-        let already_resolved = if intent == DisputeIntent::Challenge {
-            if zk_prover != Address::ZERO {
-                debug!(game = %game_address, zk_prover = %zk_prover, "game already challenged, dropping pending proof");
-                true
-            } else if tee_prover == Address::ZERO {
-                debug!(game = %game_address, "game already nullified (both provers zeroed), dropping pending proof");
-                true
-            } else {
-                false
+        // Nullification zeroes only the targeted prover (TEE or ZK) but
+        // does NOT change the game status (it stays IN_PROGRESS), so
+        // checking status alone would cause infinite retries. Check the
+        // relevant prover slot to detect prior resolution.
+        let already_resolved = match intent {
+            DisputeIntent::Challenge => {
+                zk_prover != Address::ZERO || tee_prover == Address::ZERO
             }
-        } else {
-            let target_prover_zeroed =
-                if targets_tee { tee_prover == Address::ZERO } else { zk_prover == Address::ZERO };
-            if target_prover_zeroed {
-                debug!(
-                    game = %game_address,
-                    targets_tee = targets_tee,
-                    tee_prover = %tee_prover,
-                    zk_prover = %zk_prover,
-                    "game already nullified (target prover zeroed), dropping pending proof"
-                );
-                true
-            } else {
-                false
+            DisputeIntent::Nullify => {
+                if targets_tee { tee_prover == Address::ZERO } else { zk_prover == Address::ZERO }
             }
         };
 
         if already_resolved {
+            debug!(
+                game = %game_address,
+                intent = ?intent,
+                tee_prover = %tee_prover,
+                zk_prover = %zk_prover,
+                "game already resolved, dropping pending proof"
+            );
             self.pending_proofs.remove(&game_address);
             return Ok(());
         }
