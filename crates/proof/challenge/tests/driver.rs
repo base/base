@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     BondManager, ChallengeSubmitter, DisputeIntent, Driver, DriverComponents, DriverConfig,
     GameScanner, L1HeadProvider, OutputValidator, PendingProof, ProofPhase, ScannerConfig,
-    TeeConfig, derive_session_id,
+    TeeConfig,
     test_utils::{
         MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState,
         MockL1HeadProvider, MockL2Provider, MockTeeProofProvider, MockTxManager,
@@ -82,7 +82,7 @@ fn default_tx_manager() -> MockTxManager {
 }
 
 fn default_prove_request() -> ProveBlockRequest {
-    let session_id = derive_session_id(addr(0), 1);
+    let session_id = PendingProof::derive_session_id(addr(0), 1);
 
     ProveBlockRequest {
         start_block_number: 15,
@@ -267,9 +267,19 @@ async fn test_step_invalid_game_proof_succeeded() {
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
+    // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();
-    // The tx_manager response was consumed → nullification was submitted.
-    // If it wasn't consumed, the next call would panic.
+    assert!(
+        driver.pending_proofs.contains_key(&addr(0)),
+        "proof should be pending after initiation"
+    );
+
+    // Step 2: proof polled → Succeeded → nullification submitted → entry removed.
+    driver.step().await.unwrap();
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "entry should be removed after successful nullification"
+    );
 }
 
 #[tokio::test]
@@ -288,7 +298,15 @@ async fn test_step_invalid_game_proof_failed() {
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
-    // step succeeds — proof failure triggers re-initiation via handle_proof_retry
+    // Step 1: proof initiated but not yet polled (deferred to next tick).
+    driver.step().await.unwrap();
+    assert!(
+        driver.pending_proofs.contains_key(&addr(0)),
+        "proof should be pending after initiation"
+    );
+
+    // Step 2: poll discovers Failed → NeedsRetry → handle_proof_retry
+    // re-initiates with retry_count == 1.
     driver.step().await.unwrap();
 
     // Entry should be retained in AwaitingProof phase (re-initiated) with retry_count == 1.
@@ -443,7 +461,7 @@ async fn test_step_pending_proof_skips_prove_block() {
 
 #[tokio::test]
 async fn test_step_nullification_failure_preserves_proof() {
-    // Proof succeeds on first step but nullification tx fails.
+    // Proof succeeds on the second step but nullification tx fails.
     // The entry should stay in pending_proofs as ReadyToSubmit.
     // On the next step the tx succeeds without re-proving.
     let (l2, factory, verifier) = invalid_game_mocks();
@@ -463,16 +481,21 @@ async fn test_step_nullification_failure_preserves_proof() {
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
-    // Step 1: proof succeeds, but dispute tx fails.
-    // initiate_proof catches the poll_or_submit error and logs a warning,
-    // so the error does not propagate up through process_candidate → step.
+    // Step 1: proof initiated but not yet polled.
+    driver.step().await.unwrap();
+    assert!(
+        driver.pending_proofs.contains_key(&addr(0)),
+        "proof should be pending after initiation"
+    );
+
+    // Step 2: proof polled → Succeeded → ReadyToSubmit → dispute tx fails.
     driver.step().await.unwrap();
 
     // Entry must still be in pending_proofs as ReadyToSubmit.
     let entry = driver.pending_proofs.get(&addr(0)).expect("proof should be preserved");
     assert!(entry.is_ready(), "phase should be ReadyToSubmit after tx failure");
 
-    // Step 2: poll_pending_proofs re-submits the challenge tx, now it succeeds.
+    // Step 3: poll_pending_proofs re-submits the challenge tx, now it succeeds.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -562,9 +585,9 @@ async fn test_run_cancellation() {
 
 #[tokio::test]
 async fn test_step_proof_retry_succeeds() {
-    // Proof fails on first tick (NeedsRetry), then re-initiated prove_block
-    // returns a new session. On the next tick the proof succeeds and
-    // challenge tx is submitted.
+    // Proof is initiated on the first tick, fails on the second tick
+    // (NeedsRetry), then re-initiated prove_block returns a new session.
+    // On the third tick the proof succeeds and challenge tx is submitted.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -579,8 +602,15 @@ async fn test_step_proof_retry_succeeds() {
 
     let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), tx_manager);
 
-    // Step 1: proof initiated then immediately fails → NeedsRetry.
-    // Then handle_proof_retry re-initiates prove_block → AwaitingProof.
+    // Step 1: proof initiated, not yet polled.
+    driver.step().await.unwrap();
+    assert!(
+        driver.pending_proofs.contains_key(&addr(0)),
+        "proof should be pending after initiation"
+    );
+
+    // Step 2: proof polled → Failed → NeedsRetry → handle_proof_retry
+    // re-initiates prove_block → AwaitingProof with retry_count == 1.
     driver.step().await.unwrap();
     let entry = driver.pending_proofs.get(&addr(0)).expect("entry should exist");
     assert!(
@@ -592,7 +622,7 @@ async fn test_step_proof_retry_succeeds() {
     // Simulate proof succeeding on the retry session.
     *zk.proof_status.lock().unwrap() = ProofJobStatus::Succeeded as i32;
 
-    // Step 2: proof succeeds, challenge tx submitted, entry removed.
+    // Step 3: proof succeeds, challenge tx submitted, entry removed.
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -614,9 +644,13 @@ async fn test_step_proof_exceeds_max_retries() {
     let tx_manager = default_tx_manager();
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
-    // Each step: poll returns Failed → NeedsRetry (retry_count increments),
-    // then handle_proof_retry re-initiates → AwaitingProof.
-    // After MAX_PROOF_RETRIES + 1 total failures the entry is dropped.
+    // Step 1: proof initiated, not yet polled.
+    driver.step().await.unwrap();
+    let entry = driver.pending_proofs.get(&addr(0)).expect("entry should exist after initiation");
+    assert_eq!(entry.retry_count, 0);
+
+    // Each subsequent step: poll returns Failed → NeedsRetry (retry_count
+    // increments), then handle_proof_retry re-initiates → AwaitingProof.
     let max_retries =
         Driver::<MockL2Provider, MockZkProofProvider, MockTxManager>::MAX_PROOF_RETRIES;
     for i in 0..max_retries {
@@ -705,7 +739,7 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
 #[tokio::test]
 async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     // Game has a TEE prover, TEE proof attempt fails, driver falls back to
-    // ZK, ZK proof succeeds immediately, challenge tx submitted.
+    // ZK, ZK proof succeeds on the next poll, challenge tx submitted.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let tee = Arc::new(MockTeeProofProvider::failure("L1 unreachable"));
@@ -732,11 +766,16 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
         }),
     );
 
-    // Step: TEE path is attempted (fails due to provider error), falls back to
-    // ZK, proof succeeds immediately, challenge tx submitted.
+    // Step 1: TEE path is attempted (fails due to provider error), falls back
+    // to ZK, proof session initiated (polled on next tick).
     driver.step().await.unwrap();
+    assert!(
+        driver.pending_proofs.contains_key(&addr(0)),
+        "ZK proof should be pending after TEE fallback"
+    );
 
-    // Proof was submitted and removed from pending.
+    // Step 2: proof polled → Succeeded → challenge tx submitted → entry removed.
+    driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
         "entry should be removed after successful ZK challenge submission"
@@ -1521,6 +1560,14 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
         },
     );
 
+    // Step 1: proof initiated, not yet polled.
+    driver.step().await.unwrap();
+    assert!(
+        driver.pending_proofs.contains_key(&addr(0)),
+        "proof should be pending after initiation"
+    );
+
+    // Step 2: proof polled → Succeeded → challenge tx submitted → bond tracked.
     driver.step().await.unwrap();
 
     // After a successful challenge, the bond_manager should be tracking the game.

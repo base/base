@@ -171,7 +171,7 @@ impl<T: TransactionTrait + Encodable2718> alloy_network_primitives::TransactionR
 /// Base chain-specific transaction fields
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpTransactionFields {
+pub struct BaseTransactionFields {
     /// The ETH value to mint on L2
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub mint: Option<u128>,
@@ -187,10 +187,10 @@ pub struct OpTransactionFields {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl TryFrom<OpTransactionFields> for OtherFields {
+impl TryFrom<BaseTransactionFields> for OtherFields {
     type Error = serde_json::Error;
 
-    fn try_from(value: OpTransactionFields) -> Result<Self, Self::Error> {
+    fn try_from(value: BaseTransactionFields) -> Result<Self, Self::Error> {
         serde_json::to_value(value)?.try_into()
     }
 }

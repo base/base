@@ -17,7 +17,7 @@
 //! };
 //! use base_execution_chainspec::BASE_SEPOLIA;
 //! use base_execution_evm::OpEvmConfig;
-//! use base_node_core::{OpExecutorBuilder, OpNetworkPrimitives, OpNode};
+//! use base_node_core::{BaseNetworkPrimitives, OpExecutorBuilder, OpNode};
 //! use base_execution_rpc::OpEthApiBuilder;
 //! use base_txpool::BasePooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;
@@ -54,7 +54,7 @@
 //!                 .noop_pool::<BasePooledTransaction>()
 //!                 .executor(OpExecutorBuilder::default())
 //!                 .noop_consensus()
-//!                 .noop_network::<OpNetworkPrimitives>()
+//!                 .noop_network::<BaseNetworkPrimitives>()
 //!                 .noop_payload(),
 //!             Box::new(()) as Box<dyn OnComponentInitializedHook<_>>,
 //!         )

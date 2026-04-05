@@ -9,7 +9,7 @@ use base_consensus_derive::{
     SignalReceiver, StepResult,
 };
 use base_consensus_safedb::SafeHeadListener;
-use base_protocol::{BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo};
 use thiserror::Error;
 use tokio::{select, sync::mpsc};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
@@ -132,7 +132,7 @@ where
 
     /// Attempts to step the derivation pipeline forward as much as possible in order to produce the
     /// next safe payload.
-    async fn produce_next_attributes(&mut self) -> Result<OpAttributesWithParent, DerivationError> {
+    async fn produce_next_attributes(&mut self) -> Result<AttributesWithParent, DerivationError> {
         // As we start the safe head at the disputed block's parent, we step the pipeline until the
         // first attributes are produced. All batches at and before the safe head will be
         // dropped, so the first payload will always be the disputed one.

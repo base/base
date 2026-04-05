@@ -20,7 +20,7 @@ base-txpool = { workspace = true }
 ```
 
 ```rust,ignore
-use base_txpool::{OpTransactionPool, OpTransactionValidator, BaseOrdering};
+use base_txpool::{BaseTransactionPool, OpTransactionValidator, BaseOrdering};
 
 let pool = Pool::new(
     OpTransactionValidator::new(client, evm),

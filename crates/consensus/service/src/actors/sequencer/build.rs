@@ -9,7 +9,7 @@ use std::{sync::Arc, time::Instant};
 use alloy_rpc_types_engine::PayloadId;
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{
     Metrics, PoolActivation,
@@ -27,8 +27,8 @@ use crate::{
 pub struct UnsealedPayloadHandle {
     /// The [`PayloadId`] of the unsealed payload.
     pub payload_id: PayloadId,
-    /// The [`OpAttributesWithParent`] used to start block building.
-    pub attributes_with_parent: OpAttributesWithParent,
+    /// The [`AttributesWithParent`] used to start block building.
+    pub attributes_with_parent: AttributesWithParent,
 }
 
 /// Drives payload attribute preparation and block build initiation.
@@ -144,7 +144,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         Ok(Some(l1_origin))
     }
 
-    /// Builds the `OpAttributesWithParent` for the next block.
+    /// Builds the `AttributesWithParent` for the next block.
     ///
     /// Returns `Ok(None)` if no attributes could be built at this time but future
     /// attempts may succeed.
@@ -152,7 +152,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         &mut self,
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,
-    ) -> Result<Option<OpAttributesWithParent>, SequencerActorError> {
+    ) -> Result<Option<AttributesWithParent>, SequencerActorError> {
         let mut attributes = match self
             .attributes_builder
             .prepare_payload_attributes(unsafe_head, l1_origin.id())
@@ -197,7 +197,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         attributes.no_tx_pool =
             Some(!activator.is_enabled(self.recovery_mode.get(), l1_origin, &attributes));
 
-        let attrs_with_parent = OpAttributesWithParent::new(attributes, unsafe_head, None, false);
+        let attrs_with_parent = AttributesWithParent::new(attributes, unsafe_head, None, false);
         Ok(Some(attrs_with_parent))
     }
 }

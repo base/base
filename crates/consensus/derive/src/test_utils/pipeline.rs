@@ -5,7 +5,7 @@ use alloc::{boxed::Box, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 // Re-export these types used internally to the test pipeline.
 use crate::{
@@ -22,8 +22,8 @@ use crate::{
 /// A fully custom [`NextAttributes`].
 #[derive(Default, Debug, Clone)]
 pub struct TestNextAttributes {
-    /// The next [`OpAttributesWithParent`] to return.
-    pub next_attributes: Option<OpAttributesWithParent>,
+    /// The next [`AttributesWithParent`] to return.
+    pub next_attributes: Option<AttributesWithParent>,
 }
 
 #[async_trait::async_trait]
@@ -63,8 +63,8 @@ impl OriginAdvancer for TestNextAttributes {
 
 #[async_trait::async_trait]
 impl NextAttributes for TestNextAttributes {
-    /// Returns the next valid [`OpAttributesWithParent`].
-    async fn next_attributes(&mut self, _: L2BlockInfo) -> PipelineResult<OpAttributesWithParent> {
+    /// Returns the next valid [`AttributesWithParent`].
+    async fn next_attributes(&mut self, _: L2BlockInfo) -> PipelineResult<AttributesWithParent> {
         self.next_attributes.take().ok_or(PipelineError::Eof.temp())
     }
 }

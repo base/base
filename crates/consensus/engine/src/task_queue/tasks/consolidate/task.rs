@@ -6,7 +6,7 @@ use alloy_rpc_types_eth::Block;
 use async_trait::async_trait;
 use base_alloy_rpc_types::Transaction;
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 
 use crate::{
     ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, SynchronizeTask,
@@ -17,7 +17,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum ConsolidateInput {
     /// Consolidate based on derived attributes.
-    Attributes(Box<OpAttributesWithParent>),
+    Attributes(Box<AttributesWithParent>),
     /// Derivation Delegation: consolidate based on safe L2 block info.
     BlockInfo(L2BlockInfo),
 }
@@ -28,8 +28,8 @@ impl From<L2BlockInfo> for ConsolidateInput {
     }
 }
 
-impl From<OpAttributesWithParent> for ConsolidateInput {
-    fn from(v: OpAttributesWithParent) -> Self {
+impl From<AttributesWithParent> for ConsolidateInput {
+    fn from(v: AttributesWithParent) -> Self {
         Self::Attributes(Box::new(v))
     }
 }
@@ -89,7 +89,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
     async fn execute_build_and_seal_tasks(
         &self,
         state: &mut EngineState,
-        attributes: &OpAttributesWithParent,
+        attributes: &AttributesWithParent,
     ) -> Result<(), ConsolidateTaskError> {
         build_and_seal(
             state,

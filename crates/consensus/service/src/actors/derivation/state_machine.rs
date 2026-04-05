@@ -1,4 +1,4 @@
-use base_protocol::{L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::PartialEq;
 use thiserror::Error;
 use tracing::info;
@@ -12,7 +12,7 @@ pub enum DerivationState {
     AwaitingELSyncCompletion,
     /// The [`crate::DerivationActor`] is idle awaiting data.
     AwaitingL1Data,
-    /// [`base_protocol::OpAttributesWithParent`] were sent to the [`crate::EngineActor`], and the
+    /// [`base_protocol::AttributesWithParent`] were sent to the [`crate::EngineActor`], and the
     /// [`crate::DerivationActor`] is waiting for confirmation that they were processed into a safe
     /// head.
     AwaitingSafeHeadConfirmation,
@@ -37,9 +37,9 @@ pub enum DerivationStateUpdate {
     L1DataReceived,
     /// Further derivation is not possible without additional L1 data becoming available.
     MoreDataNeeded,
-    /// Derivation has produced new [`base_protocol::OpAttributesWithParent`].
-    NewAttributesDerived(Box<OpAttributesWithParent>),
-    /// The EL has confirmed the derived [`base_protocol::OpAttributesWithParent`] as the new safe
+    /// Derivation has produced new [`base_protocol::AttributesWithParent`].
+    NewAttributesDerived(Box<AttributesWithParent>),
+    /// The EL has confirmed the derived [`base_protocol::AttributesWithParent`] as the new safe
     /// head.
     NewAttributesConfirmed(Box<L2BlockInfo>),
     /// A [`base_consensus_derive::Signal`] is necessary to update the derivation pipeline in order to
@@ -149,9 +149,9 @@ fn transition(
 /// 2. Derivation may not happen until the Engine L2 safe head is known
 ///
 /// ## Derive -> Message EL -> Receive confirmation
-/// When new [`base_protocol::OpAttributesWithParent`] are derived, they must be sent to the EL,
+/// When new [`base_protocol::AttributesWithParent`] are derived, they must be sent to the EL,
 /// and the EL must confirm them by creating a new L2 safe head from them prior to further
-/// derivation. There will be at most one [`base_protocol::OpAttributesWithParent`] awaiting
+/// derivation. There will be at most one [`base_protocol::AttributesWithParent`] awaiting
 /// confirmation at any given time.
 ///
 /// ## Signal handling
@@ -222,7 +222,7 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{BlockHash, b256};
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
-    use base_protocol::{BlockInfo, OpAttributesWithParent};
+    use base_protocol::{AttributesWithParent, BlockInfo};
     use rstest::rstest;
 
     use super::{
@@ -244,9 +244,9 @@ mod tests {
         }
     }
 
-    /// Creates a dummy `OpAttributesWithParent` for testing
-    fn dummy_op_attributes() -> OpAttributesWithParent {
-        OpAttributesWithParent {
+    /// Creates a dummy `AttributesWithParent` for testing
+    fn dummy_op_attributes() -> AttributesWithParent {
+        AttributesWithParent {
             attributes: OpPayloadAttributes::default(),
             parent: dummy_l2_block_info(),
             derived_from: None,
@@ -255,7 +255,7 @@ mod tests {
     }
 
     // This is just here to shrink the #[case(...)] statements below for readability.
-    fn attrs() -> Box<OpAttributesWithParent> {
+    fn attrs() -> Box<AttributesWithParent> {
         Box::new(dummy_op_attributes())
     }
 

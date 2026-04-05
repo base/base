@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
 use async_trait::async_trait;
 use base_consensus_genesis::RollupConfig;
-use base_protocol::OpAttributesWithParent;
+use base_protocol::AttributesWithParent;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
@@ -32,8 +32,8 @@ pub struct BuildTask<EngineClient_: EngineClient> {
     pub engine: Arc<EngineClient_>,
     /// The [`RollupConfig`].
     pub cfg: Arc<RollupConfig>,
-    /// The [`OpAttributesWithParent`] to instruct the execution layer to build.
-    pub attributes: OpAttributesWithParent,
+    /// The [`AttributesWithParent`] to instruct the execution layer to build.
+    pub attributes: AttributesWithParent,
     /// The optional sender through which [`PayloadId`] will be sent after the
     /// block build has been started.
     pub payload_id_tx: Option<mpsc::Sender<PayloadId>>,
@@ -88,7 +88,7 @@ impl<EngineClient_: EngineClient> BuildTask<EngineClient_> {
         &self,
         state: &EngineState,
         engine_client: &EngineClient_,
-        attributes_envelope: OpAttributesWithParent,
+        attributes_envelope: AttributesWithParent,
     ) -> Result<PayloadId, BuildTaskError> {
         // Sanity check if the head is behind the finalized head. If it is, this is a critical
         // error.

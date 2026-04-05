@@ -5,7 +5,7 @@ Base chain JSON-RPC server and client implementations.
 ## Overview
 
 Provides jsonrpsee-based JSON-RPC trait definitions for Base chain admin and miner APIs.
-`MinerApiExtServer` and `MinerApiExtClient` expose miner-side endpoints, while `OpAdminApiServer`
+`MinerApiExtServer` and `MinerApiExtClient` expose miner-side endpoints, while `BaseAdminApiServer`
 exposes admin-side RPC methods. These traits are implemented by node components to expose Base-specific
 JSON-RPC functionality over HTTP or WebSocket transports.
 
@@ -19,7 +19,7 @@ base-alloy-rpc-jsonrpsee = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_rpc_jsonrpsee::{MinerApiExtServer, OpAdminApiServer};
+use base_alloy_rpc_jsonrpsee::{BaseAdminApiServer, MinerApiExtServer};
 
 #[async_trait]
 impl MinerApiExtServer for MyHandler {

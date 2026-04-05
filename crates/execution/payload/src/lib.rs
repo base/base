@@ -20,6 +20,6 @@ pub use payload::{
 mod traits;
 pub use traits::*;
 mod types;
-pub use types::OpPayloadTypes;
+pub use types::BasePayloadTypes;
 pub mod validator;
 pub use validator::OpExecutionPayloadValidator;

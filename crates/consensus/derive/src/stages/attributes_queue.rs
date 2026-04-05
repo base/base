@@ -7,7 +7,7 @@ use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo, SingleBatch};
 
 use crate::{
     Metrics,
@@ -70,11 +70,11 @@ where
         self.batch.as_ref().cloned().ok_or(PipelineError::Eof.temp())
     }
 
-    /// Returns the next [`OpAttributesWithParent`] from the current batch.
+    /// Returns the next [`AttributesWithParent`] from the current batch.
     pub async fn next_attributes(
         &mut self,
         parent: L2BlockInfo,
-    ) -> PipelineResult<OpAttributesWithParent> {
+    ) -> PipelineResult<AttributesWithParent> {
         let batch = match self.load_batch(parent).await {
             Ok(batch) => batch,
             Err(e) => {
@@ -92,7 +92,7 @@ where
         };
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         let populated_attributes =
-            OpAttributesWithParent::new(attributes, parent, Some(origin), self.is_last_in_span);
+            AttributesWithParent::new(attributes, parent, Some(origin), self.is_last_in_span);
         timer.stop();
 
         // Clear out the local state once payload attributes are prepared.
@@ -163,7 +163,7 @@ where
     async fn next_attributes(
         &mut self,
         parent: L2BlockInfo,
-    ) -> PipelineResult<OpAttributesWithParent> {
+    ) -> PipelineResult<AttributesWithParent> {
         self.next_attributes(parent).await
     }
 }
@@ -412,7 +412,7 @@ mod tests {
         // It should also reset the last in span flag and clear the batch.
         let attributes = aq.next_attributes(L2BlockInfo::default()).await.unwrap();
         pa.no_tx_pool = Some(true);
-        let populated_attributes = OpAttributesWithParent {
+        let populated_attributes = AttributesWithParent {
             attributes: pa,
             parent: L2BlockInfo::default(),
             derived_from: Some(BlockInfo::default()),

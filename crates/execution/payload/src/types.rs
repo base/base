@@ -8,9 +8,9 @@ use crate::{OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilderAttributes};
 /// ZST that aggregates Base [`PayloadTypes`].
 #[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
-pub struct OpPayloadTypes<N: NodePrimitives = OpPrimitives>(core::marker::PhantomData<N>);
+pub struct BasePayloadTypes<N: NodePrimitives = OpPrimitives>(core::marker::PhantomData<N>);
 
-impl<N: NodePrimitives> PayloadTypes for OpPayloadTypes<N>
+impl<N: NodePrimitives> PayloadTypes for BasePayloadTypes<N>
 where
     OpBuiltPayload<N>: BuiltPayload,
 {
