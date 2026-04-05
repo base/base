@@ -228,7 +228,11 @@ fn current_unix_timestamp() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_PREFUND_BALANCE, DeployerConfig};
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::{ChainIds, DEFAULT_PREFUND_BALANCE, DeployerConfig};
 
     #[test]
     fn parses_toml_config() {
@@ -272,5 +276,24 @@ l2_base_v1_block = 20
         assert!((84_530_000..=84_539_999).contains(&resolved.l2_chain_id));
         assert_ne!(resolved.l1_chain_id, resolved.l2_chain_id);
         assert_eq!(format!("{:#x}", resolved.prefund_balance), DEFAULT_PREFUND_BALANCE);
+    }
+
+    #[test]
+    fn reuses_existing_chain_ids_when_present() {
+        let tempdir = TempDir::new().expect("tempdir should be created");
+        let output_dir = tempdir.path().to_path_buf();
+        let existing = ChainIds { l1_chain_id: 1337, l2_chain_id: 84538453 };
+        fs::write(
+            output_dir.join("chain-ids.json"),
+            serde_json::to_string_pretty(&existing).expect("chain ids should serialize"),
+        )
+        .expect("chain ids should be written");
+
+        let resolved = DeployerConfig::default()
+            .resolve_with_l1_chain_id(Some(output_dir.clone()), existing.l1_chain_id)
+            .expect("config should resolve");
+
+        assert_eq!(resolved.l1_chain_id, existing.l1_chain_id);
+        assert_eq!(resolved.l2_chain_id, existing.l2_chain_id);
     }
 }

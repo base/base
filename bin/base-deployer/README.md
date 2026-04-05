@@ -103,6 +103,9 @@ Then extract the L2 genesis and rollup config:
 cargo run -p base-deployer -- deploy-l2 --l1-rpc https://your-l1.example
 ```
 
+`deploy-l2` reuses the `chain-ids.json` and live `op-deployer` workdir created by
+`deploy-l1`, so repeated commands must point at the same `--output-dir`.
+
 For external-L1 preparation in one step:
 
 ```bash

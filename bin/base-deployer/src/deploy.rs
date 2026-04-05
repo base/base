@@ -132,22 +132,16 @@ pub(crate) async fn deploy_l2(
     output_dir_override: Option<PathBuf>,
     l1_rpc: Option<&str>,
 ) -> Result<DeployL2Output> {
-    let resolved = match l1_rpc {
-        Some(url) => {
-            let l1 = inspect_l1_rpc(url).await?;
-            config
-                .clone()
-                .resolve_with_l1_chain_id(output_dir_override.clone(), l1.chain_id)?
-        }
-        None => config.clone().resolve(output_dir_override.clone())?,
+    let output_dir = output_dir_for(&config, output_dir_override.clone());
+    let paths = DeploymentPaths::new(&output_dir);
+    let l1 = match l1_rpc {
+        Some(url) => Some(inspect_l1_rpc(url).await?),
+        None => None,
     };
-
-    let paths = DeploymentPaths::new(&resolved.output_dir);
-    paths.create_directories()?;
 
     if !paths.live_state.exists() {
         if let Some(url) = l1_rpc {
-            deploy_l1(config, output_dir_override, url).await?;
+            deploy_l1(config.clone(), output_dir_override.clone(), url).await?;
         } else {
             bail!(
                 "No live deployment state found at {}. Run `base-deployer deploy-l1 --l1-rpc <url>` first.",
@@ -155,6 +149,13 @@ pub(crate) async fn deploy_l2(
             );
         }
     }
+
+    let resolved = match l1 {
+        Some(l1) => config.resolve_with_l1_chain_id(output_dir_override.clone(), l1.chain_id)?,
+        None => config.resolve(output_dir_override.clone())?,
+    };
+
+    paths.create_directories()?;
 
     capture_stdout_to_path(
         Command::new("op-deployer")
@@ -199,6 +200,12 @@ pub(crate) async fn deploy_l2(
         rollup_conductor_path: paths.l2_rollup_conductor,
         l1_addresses_path: paths.l1_addresses,
     })
+}
+
+fn output_dir_for(config: &DeployerConfig, output_dir_override: Option<PathBuf>) -> PathBuf {
+    output_dir_override
+        .or_else(|| config.output_dir.clone())
+        .unwrap_or_else(|| PathBuf::from("devnet"))
 }
 
 #[derive(Debug, Clone)]
