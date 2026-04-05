@@ -5,7 +5,7 @@ use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::{Block, BlockTransactions, Withdrawals};
 use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData, OpTxEnvelope};
-use base_alloy_rpc_types::Transaction;
+use base_common_rpc_types::Transaction;
 use base_consensus_genesis::RollupConfig;
 use base_protocol::OpAttributesWithParent;
 

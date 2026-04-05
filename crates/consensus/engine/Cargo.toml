@@ -31,7 +31,7 @@ alloy-provider = { workspace = true, features = ["ipc", "reqwest", "reqwest-rust
 # base-alloy
 base-alloy-network.workspace = true
 base-alloy-provider.workspace = true
-base-alloy-rpc-types.workspace = true
+base-common-rpc-types.workspace = true
 base-alloy-consensus = { workspace = true, features = ["std"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 
@@ -56,7 +56,7 @@ arbitrary.workspace = true
 base-consensus-registry.workspace = true
 metrics-exporter-prometheus.workspace = true
 rand = {workspace = true, features = ["thread_rng"]}
-base-alloy-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
+base-common-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}
 
 [features]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

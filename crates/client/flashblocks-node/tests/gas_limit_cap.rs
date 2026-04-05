@@ -11,7 +11,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::Bytes;
 use alloy_provider::Provider;
-use base_alloy_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::OpTransactionRequest;
 use base_execution_chainspec::OpChainSpec;
 use base_node_runner::test_utils::{
     Account, DEVNET_CHAIN_ID, SignerSync, TestHarnessBuilder, build_test_genesis,

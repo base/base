@@ -79,7 +79,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base-alloy
 base-alloy-network.workspace = true
-base-alloy-rpc-types.workspace = true
+base-common-rpc-types.workspace = true
 
 # tokio
 tokio-tungstenite.workspace = true

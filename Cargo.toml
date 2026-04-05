@@ -178,7 +178,7 @@ base-alloy-signer = { path = "crates/common/signer" }
 base-alloy-network = { path = "crates/common/network" }
 base-alloy-provider = { path = "crates/common/provider" }
 base-alloy-chains = { path = "crates/common/chains" }
-base-alloy-rpc-types = { path = "crates/common/rpc-types" }
+base-common-rpc-types = { path = "crates/common/rpc-types" }
 base-access-lists = { path = "crates/common/access-lists" }
 base-alloy-flashblocks = { path = "crates/common/flashblocks" }
 base-alloy-rpc-jsonrpsee = { path = "crates/common/rpc-jsonrpsee" }

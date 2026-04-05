@@ -87,7 +87,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-sol-types.workspace = true
 
 # base-alloy
-base-alloy-rpc-types.workspace = true
+base-common-rpc-types.workspace = true
 
 # misc
 url.workspace = true

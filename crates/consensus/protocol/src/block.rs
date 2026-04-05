@@ -298,7 +298,7 @@ mod tests {
             effective_gas_price: Some(1),
             transaction_index: Some(0),
         };
-        let block: alloy_rpc_types_eth::Block<base_alloy_rpc_types::Transaction> =
+        let block: alloy_rpc_types_eth::Block<base_common_rpc_types::Transaction> =
             alloy_rpc_types_eth::Block {
                 header: alloy_rpc_types_eth::Header {
                     hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
@@ -313,7 +313,7 @@ mod tests {
                     ..Default::default()
                 },
                 transactions: alloy_rpc_types_eth::BlockTransactions::Full(vec![
-                    base_alloy_rpc_types::Transaction {
+                    base_common_rpc_types::Transaction {
                         inner: tx_env,
                         deposit_nonce: None,
                         deposit_receipt_version: None,

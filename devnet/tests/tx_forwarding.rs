@@ -13,7 +13,7 @@ use alloy_provider::Provider;
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::OpTransactionRequest;
 use base_tx_forwarding::TxForwardingConfig;
 use base_txpool::ValidatedTransaction;
 use devnet::{

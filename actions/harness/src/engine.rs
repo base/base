@@ -25,11 +25,11 @@ use async_trait::async_trait;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_network::Base;
 use base_alloy_provider::OpEngineApi;
-use base_alloy_rpc_types::Transaction as OpTransaction;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadEnvelopeV5,
     OpExecutionPayloadV4, OpPayloadAttributes,
 };
+use base_common_rpc_types::Transaction as OpTransaction;
 use base_consensus_engine::{EngineClient, EngineClientError, HyperAuthClient};
 use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L2BlockInfo};

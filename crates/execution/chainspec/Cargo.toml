@@ -32,7 +32,7 @@ alloy-consensus.workspace = true
 alloy-hardforks.workspace = true
 
 # op
-base-alloy-rpc-types.workspace = true
+base-common-rpc-types.workspace = true
 
 serde_json.workspace = true
 serde = { workspace = true, optional = true }
@@ -53,7 +53,7 @@ std = [
 	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"base-alloy-consensus/std",
-	"base-alloy-rpc-types/std",
+	"base-common-rpc-types/std",
 	"base-execution-forks/std",
 	"base-protocol/std",
 	"derive_more/std",
@@ -72,7 +72,7 @@ serde = [
 	"alloy-primitives/serde",
 	"base-alloy-chains/serde",
 	"base-alloy-consensus/serde",
-	"base-alloy-rpc-types/serde",
+	"base-common-rpc-types/serde",
 	"base-execution-forks/serde",
 	"base-protocol/serde",
 	"reth-ethereum-forks/serde",

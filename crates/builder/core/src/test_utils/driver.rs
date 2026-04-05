@@ -7,7 +7,7 @@ use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadAttributes, PayloadStatus
 use alloy_rpc_types_eth::Block;
 use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use base_alloy_network::Base;
-use base_alloy_rpc_types::Transaction;
+use base_common_rpc_types::Transaction;
 use base_execution_payload_builder::OpPayloadAttributes;
 use chrono::Utc;
 

@@ -8,7 +8,7 @@ use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpReceipt, OpTransaction};
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
-use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
+use base_common_rpc_types::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
 use base_execution_evm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::NodePrimitives;

@@ -8,7 +8,7 @@ use alloy_provider::{
 };
 use alloy_rpc_types::BlockNumberOrTag;
 use base_alloy_network::Base;
-use base_alloy_rpc_types::OpTransactionReceipt;
+use base_common_rpc_types::OpTransactionReceipt;
 use tracing::instrument;
 use url::Url;
 

@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-rpc-types"
+name = "base-common-rpc-types"
 description = "Base RPC types"
 
 version.workspace = true

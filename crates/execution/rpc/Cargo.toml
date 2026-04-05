@@ -59,7 +59,7 @@ base-alloy-flz.workspace = true
 base-alloy-consensus = { workspace = true, features = ["reth"] }
 base-alloy-rpc-jsonrpsee.workspace = true
 base-alloy-network = { workspace = true, features = ["reth"] }
-base-alloy-rpc-types = { workspace = true, features = ["reth"] }
+base-common-rpc-types = { workspace = true, features = ["reth"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 
 # async

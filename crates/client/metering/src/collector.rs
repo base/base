@@ -282,7 +282,7 @@ mod tests {
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
-    use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, Transaction};
+    use base_common_rpc_types::{L1BlockInfo, OpTransactionReceipt, Transaction};
     use base_flashblocks::PendingBlocksBuilder;
     use revm::context_interface::result::ExecutionResult;
 

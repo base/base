@@ -61,7 +61,7 @@ use alloy_rpc_types::{
 };
 use alloy_rpc_types_eth::{Filter, Log};
 use base_alloy_network::Base;
-use base_alloy_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::OpTransactionRequest;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,

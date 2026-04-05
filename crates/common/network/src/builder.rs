@@ -3,7 +3,7 @@ use alloy_network::{BuildResult, TransactionBuilder, TransactionBuilderError};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_rpc_types_eth::AccessList;
 use base_alloy_consensus::{OpTxType, OpTypedTransaction};
-use base_alloy_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::OpTransactionRequest;
 
 use crate::Base;
 

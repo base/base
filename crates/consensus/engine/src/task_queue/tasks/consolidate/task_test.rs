@@ -6,7 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{FixedBytes, b256};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block as RpcBlock;
-use base_alloy_rpc_types::Transaction as OpTransaction;
+use base_common_rpc_types::Transaction as OpTransaction;
 use base_consensus_genesis::RollupConfig;
 
 use crate::{
