@@ -16,10 +16,10 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObject},
 };
 
-use crate::{OpP2PApiServer, net::P2pRpc};
+use crate::{BaseP2PApiServer, net::P2pRpc};
 
 #[async_trait]
-impl OpP2PApiServer for P2pRpc {
+impl BaseP2PApiServer for P2pRpc {
     async fn opp2p_self(&self) -> RpcResult<PeerInfo> {
         Metrics::rpc_calls("opp2p_self").increment(1.0);
         let (tx, rx) = tokio::sync::oneshot::channel();

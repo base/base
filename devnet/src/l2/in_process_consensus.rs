@@ -20,7 +20,7 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
-use base_consensus_rpc::{AdminApiClient, OpP2PApiClient, RollupNodeApiClient, RpcBuilder};
+use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_sources::BlockSigner;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;

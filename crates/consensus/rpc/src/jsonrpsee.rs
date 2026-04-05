@@ -55,7 +55,7 @@ pub trait RollupNodeApi {
 /// The opp2p namespace handles peer interactions.
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "opp2p"))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "opp2p"))]
-pub trait OpP2PApi {
+pub trait BaseP2PApi {
     /// Returns information of node
     #[method(name = "self")]
     async fn opp2p_self(&self) -> RpcResult<PeerInfo>;

@@ -7,7 +7,7 @@ type P2pReqSender = tokio::sync::mpsc::Sender<P2pRpcRequest>;
 
 /// `P2pRpc`
 ///
-/// This is a server implementation of [`crate::OpP2PApiServer`].
+/// This is a server implementation of [`crate::BaseP2PApiServer`].
 #[derive(Debug)]
 pub struct P2pRpc {
     /// The channel to send [`P2pRpcRequest`]s.
