@@ -267,9 +267,19 @@ async fn test_step_invalid_game_proof_succeeded() {
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
+    // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();
-    // The tx_manager response was consumed → nullification was submitted.
-    // If it wasn't consumed, the next call would panic.
+    assert!(
+        driver.pending_proofs.contains_key(&addr(0)),
+        "proof should be pending after initiation"
+    );
+
+    // Step 2: proof polled → Succeeded → nullification submitted → entry removed.
+    driver.step().await.unwrap();
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "entry should be removed after successful nullification"
+    );
 }
 
 #[tokio::test]

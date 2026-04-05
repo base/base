@@ -696,7 +696,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
                 return self.handle_proof_retry(game_address).await;
             }
             // Pending and None already handled above.
-            _ => return Ok(()),
+            Some(ProofUpdate::Pending) | None => unreachable!("handled above"),
         };
 
         let result = self
