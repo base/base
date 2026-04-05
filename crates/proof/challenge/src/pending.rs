@@ -14,6 +14,7 @@ use base_zk_client::{
     GetProofRequest, ProofJobStatus, ProveBlockRequest, ReceiptType, ZkProofProvider,
 };
 use tracing::warn;
+use uuid::Uuid;
 
 /// Proof type byte for ZK proofs (matches `AggregateVerifier.nullify` discriminator: `0` = TEE, `1` = ZK).
 const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
@@ -91,6 +92,17 @@ pub struct PendingProof {
 }
 
 impl PendingProof {
+    /// Derives a deterministic session ID from a game address and invalid index.
+    ///
+    /// Uses UUID v5 (SHA-1 namespace hash) over `game_address || invalid_index`
+    /// to produce an idempotency key that is stable across retries.
+    pub fn derive_session_id(game_address: Address, invalid_index: u64) -> String {
+        let mut bytes = [0u8; 28];
+        bytes[..20].copy_from_slice(game_address.as_slice());
+        bytes[20..].copy_from_slice(&invalid_index.to_be_bytes());
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, &bytes).to_string()
+    }
+
     /// Creates a new `PendingProof` in the `AwaitingProof` phase.
     pub const fn awaiting(
         session_id: String,

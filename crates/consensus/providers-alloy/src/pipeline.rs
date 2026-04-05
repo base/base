@@ -11,7 +11,7 @@ use base_consensus_derive::{
     Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider};
 
@@ -170,7 +170,7 @@ impl OriginProvider for OnlinePipeline {
 }
 
 impl Iterator for OnlinePipeline {
-    type Item = OpAttributesWithParent;
+    type Item = AttributesWithParent;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -182,8 +182,8 @@ impl Iterator for OnlinePipeline {
 
 #[async_trait]
 impl Pipeline for OnlinePipeline {
-    /// Peeks at the next [`OpAttributesWithParent`] from the pipeline.
-    fn peek(&self) -> Option<&OpAttributesWithParent> {
+    /// Peeks at the next [`AttributesWithParent`] from the pipeline.
+    fn peek(&self) -> Option<&AttributesWithParent> {
         match self {
             Self::Polled(pipeline) => pipeline.peek(),
             Self::Managed(pipeline) => pipeline.peek(),

@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_protocol::{L2BlockInfo, OpAttributesWithParent, SingleBatch};
+use base_protocol::{AttributesWithParent, L2BlockInfo, SingleBatch};
 
 use crate::PipelineResult;
 
@@ -26,11 +26,11 @@ pub trait AttributesProvider {
 /// the top level `AttributesQueue` stage of the pipeline.
 #[async_trait]
 pub trait NextAttributes {
-    /// Returns the next [`OpAttributesWithParent`] from the current batch.
+    /// Returns the next [`AttributesWithParent`] from the current batch.
     async fn next_attributes(
         &mut self,
         parent: L2BlockInfo,
-    ) -> PipelineResult<OpAttributesWithParent>;
+    ) -> PipelineResult<AttributesWithParent>;
 }
 
 /// The [`AttributesBuilder`] is responsible for preparing [`OpPayloadAttributes`]

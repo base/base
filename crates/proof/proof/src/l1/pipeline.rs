@@ -16,7 +16,7 @@ use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, FlushableCache};
-use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 use spin::RwLock;
 
 use crate::{
@@ -202,7 +202,7 @@ where
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    type Item = OpAttributesWithParent;
+    type Item = AttributesWithParent;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.pipeline.next()
@@ -217,8 +217,8 @@ where
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    /// Peeks at the next [`OpAttributesWithParent`] from the pipeline.
-    fn peek(&self) -> Option<&OpAttributesWithParent> {
+    /// Peeks at the next [`AttributesWithParent`] from the pipeline.
+    fn peek(&self) -> Option<&AttributesWithParent> {
         self.pipeline.peek()
     }
 

@@ -8,7 +8,7 @@ use crate::{BlockInfo, L2BlockInfo};
 /// Base Payload Attributes with parent block reference and the L1 origin block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct OpAttributesWithParent {
+pub struct AttributesWithParent {
     /// The payload attributes.
     pub attributes: OpPayloadAttributes,
     /// The parent block reference.
@@ -19,8 +19,8 @@ pub struct OpAttributesWithParent {
     pub is_last_in_span: bool,
 }
 
-impl OpAttributesWithParent {
-    /// Create a new [`OpAttributesWithParent`] instance.
+impl AttributesWithParent {
+    /// Create a new [`AttributesWithParent`] instance.
     pub const fn new(
         attributes: OpPayloadAttributes,
         parent: L2BlockInfo,
@@ -69,7 +69,7 @@ impl OpAttributesWithParent {
             .all(|tx| tx.first().is_some_and(|tx| tx[0] == OpTxType::Deposit as u8))
     }
 
-    /// Converts the [`OpAttributesWithParent`] into a deposits-only payload.
+    /// Converts the [`AttributesWithParent`] into a deposits-only payload.
     pub fn as_deposits_only(&self) -> Self {
         let mut attributes = self.attributes.clone();
 
@@ -104,7 +104,7 @@ mod tests {
         let parent = L2BlockInfo::default();
         let is_last_in_span = true;
         let op_attributes_with_parent =
-            OpAttributesWithParent::new(attributes.clone(), parent, None, is_last_in_span);
+            AttributesWithParent::new(attributes.clone(), parent, None, is_last_in_span);
 
         assert_eq!(op_attributes_with_parent.attributes(), &attributes);
         assert_eq!(op_attributes_with_parent.parent(), &parent);
@@ -112,7 +112,7 @@ mod tests {
         assert_eq!(op_attributes_with_parent.derived_from(), None);
     }
 
-    /// Test that the [`OpAttributesWithParent::as_deposits_only`] method strips out all
+    /// Test that the [`AttributesWithParent::as_deposits_only`] method strips out all
     /// transactions that are not deposits.
     #[test]
     fn test_op_attributes_with_parent_as_deposits_only() {
@@ -130,7 +130,7 @@ mod tests {
         let parent = L2BlockInfo::default();
         let is_last_in_span = true;
         let op_attributes_with_parent =
-            OpAttributesWithParent::new(attributes, parent, None, is_last_in_span);
+            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
         let deposits_only_attributes = op_attributes_with_parent.as_deposits_only();
 
         assert_eq!(
@@ -157,7 +157,7 @@ mod tests {
         let parent = L2BlockInfo::default();
         let is_last_in_span = true;
         let op_attributes_with_parent =
-            OpAttributesWithParent::new(attributes, parent, None, is_last_in_span);
+            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
         let deposits_only_attributes = op_attributes_with_parent.as_deposits_only();
 
         assert_eq!(
@@ -170,7 +170,7 @@ mod tests {
         );
     }
 
-    /// Test that the [`OpAttributesWithParent::as_deposits_only`] method strips out all
+    /// Test that the [`AttributesWithParent::as_deposits_only`] method strips out all
     /// transactions that are not deposits.
     #[test]
     fn test_op_attributes_with_parent_as_deposits_no_deposits() {
@@ -187,7 +187,7 @@ mod tests {
         let parent = L2BlockInfo::default();
         let is_last_in_span = true;
         let op_attributes_with_parent =
-            OpAttributesWithParent::new(attributes, parent, None, is_last_in_span);
+            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
         let deposits_only_attributes = op_attributes_with_parent.as_deposits_only();
 
         assert_eq!(deposits_only_attributes.attributes().transactions, Some(vec![]));
@@ -207,7 +207,7 @@ mod tests {
         let parent = L2BlockInfo::default();
         let is_last_in_span = true;
         let op_attributes_with_parent =
-            OpAttributesWithParent::new(attributes, parent, None, is_last_in_span);
+            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
         let deposits_only_attributes = op_attributes_with_parent.as_deposits_only();
 
         assert_eq!(
@@ -227,7 +227,7 @@ mod tests {
         let parent = L2BlockInfo::default();
         let is_last_in_span = true;
         let op_attributes_with_parent =
-            OpAttributesWithParent::new(attributes, parent, None, is_last_in_span);
+            AttributesWithParent::new(attributes, parent, None, is_last_in_span);
         let deposits_only_attributes = op_attributes_with_parent.as_deposits_only();
 
         assert_eq!(deposits_only_attributes.attributes().transactions, None);

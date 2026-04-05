@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 
 use crate::{
     ActivationSignal, L2ChainProvider, Metrics, NextAttributes, OriginAdvancer, OriginProvider,
@@ -24,9 +24,9 @@ where
     /// A handle to the next attributes.
     pub attributes: S,
     /// Reset provider for the pipeline.
-    /// A list of prepared [`OpAttributesWithParent`] to be used by the derivation pipeline
+    /// A list of prepared [`AttributesWithParent`] to be used by the derivation pipeline
     /// consumer.
-    pub prepared: VecDeque<OpAttributesWithParent>,
+    pub prepared: VecDeque<AttributesWithParent>,
     /// The rollup config.
     pub rollup_config: Arc<RollupConfig>,
     /// The L2 Chain Provider used to fetch the system config on reset.
@@ -104,7 +104,7 @@ where
     S: NextAttributes + StageReset + OriginProvider + OriginAdvancer + Debug + Send + Sync,
     P: L2ChainProvider + Send + Sync + Debug,
 {
-    type Item = OpAttributesWithParent;
+    type Item = AttributesWithParent;
 
     fn next(&mut self) -> Option<Self::Item> {
         Metrics::pipeline_payload_attributes_buffer()
@@ -177,8 +177,8 @@ where
     S: NextAttributes + StageReset + OriginProvider + OriginAdvancer + Debug + Send + Sync,
     P: L2ChainProvider + Send + Sync + Debug,
 {
-    /// Peeks at the next prepared [`OpAttributesWithParent`] from the pipeline.
-    fn peek(&self) -> Option<&OpAttributesWithParent> {
+    /// Peeks at the next prepared [`AttributesWithParent`] from the pipeline.
+    fn peek(&self) -> Option<&AttributesWithParent> {
         self.prepared.front()
     }
 
@@ -257,7 +257,7 @@ mod tests {
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use base_consensus_genesis::{RollupConfig, SystemConfig};
-    use base_protocol::{L2BlockInfo, OpAttributesWithParent};
+    use base_protocol::{AttributesWithParent, L2BlockInfo};
 
     use super::*;
     use crate::{
@@ -265,8 +265,8 @@ mod tests {
         test_utils::{TestL2ChainProvider, TestNextAttributes, new_test_pipeline},
     };
 
-    fn default_test_payload_attributes() -> OpAttributesWithParent {
-        OpAttributesWithParent {
+    fn default_test_payload_attributes() -> AttributesWithParent {
+        AttributesWithParent {
             attributes: OpPayloadAttributes {
                 payload_attributes: PayloadAttributes {
                     timestamp: 0,

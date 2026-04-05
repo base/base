@@ -17,7 +17,7 @@ use base_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope, 
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_execution_evm::OpEvmConfig;
-use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use base_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm as _, FromRecoveredTx};
 use revm::{
@@ -642,7 +642,7 @@ impl StatefulL2Executor {
     /// mirror the sequencer's block-by-block execution.
     pub fn execute_attrs(
         &mut self,
-        attrs: &OpAttributesWithParent,
+        attrs: &AttributesWithParent,
         block_number: u64,
         parent_hash: B256,
     ) -> Result<B256, L2SequencerError> {
