@@ -23,7 +23,7 @@ use base_execution_rpc::{
 };
 use base_execution_storage::OpStorage;
 use base_txpool::{
-    BaseOrdering, BasePooledTransaction, OpPooledTx, OpTransactionPool, OpTransactionValidator,
+    BaseOrdering, BasePooledTransaction, BaseTransactionPool, OpPooledTx, OpTransactionValidator,
     TimestampedTransaction,
 };
 use reth_chainspec::{
@@ -897,7 +897,7 @@ where
     T: EthPoolTransaction<Consensus = TxTy<Node::Types>> + OpPooledTx + TimestampedTransaction,
     Evm: ConfigureEvm<Primitives = PrimitivesTy<Node::Types>> + Clone + 'static,
 {
-    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
+    type Pool = BaseTransactionPool<Node::Provider, DiskFileBlobStore, Evm, T, BaseOrdering<T>>;
 
     async fn build_pool(
         self,
