@@ -17,7 +17,7 @@ mod receipt;
 pub use receipt::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
 
 mod transaction;
-pub use transaction::{OpTransactionFields, OpTransactionRequest, Transaction};
+pub use transaction::{BaseTransactionFields, OpTransactionRequest, Transaction};
 
 #[cfg(feature = "reth")]
 mod reth;
