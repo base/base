@@ -5,7 +5,7 @@ Single source of truth for Base chain configuration and network upgrade bindings
 ## Overview
 
 Defines `BaseChainConfig` — a compile-time struct containing all chain parameters (chain IDs,
-hardfork timestamps, genesis data, base fee params, contract addresses, and embedded genesis JSON).
+upgrade timestamps, genesis data, base fee params, contract addresses, and embedded genesis JSON).
 Const instances `BASE_MAINNET`, `BASE_SEPOLIA`, and `BASE_DEVNET_0_SEPOLIA_DEV_0` eliminate
 duplicated configuration across the workspace.
 

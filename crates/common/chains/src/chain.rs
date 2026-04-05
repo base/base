@@ -4,7 +4,7 @@ use core::ops::Index;
 use BaseUpgrade::{
     Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
 };
-// Production imports for hardfork implementations
+// Production imports for upgrade implementations
 use EthereumHardfork::{
     Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Cancun,
     Constantinople, Dao, Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Osaka,
@@ -28,7 +28,7 @@ use crate::{BaseUpgrade, BaseUpgrades};
 /// around.
 #[derive(Debug, Clone)]
 pub struct BaseChainUpgrades {
-    /// Ordered list of hardfork activations.
+    /// Ordered list of upgrade activations.
     forks: Vec<(BaseUpgrade, ForkCondition)>,
 }
 

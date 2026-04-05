@@ -5,7 +5,7 @@ use crate::BaseChainConfig;
 hardfork!(
     /// The name of a Base network upgrade.
     ///
-    /// When building a list of hardforks for a chain, it's still expected to zip with
+    /// When building a list of upgrades for a chain, it's still expected to zip with
     /// [`EthereumHardfork`](alloy_hardforks::EthereumHardfork).
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     #[derive(Default)]
@@ -35,7 +35,7 @@ hardfork!(
 );
 
 impl BaseUpgrade {
-    /// Returns the list of hardforks with their activation conditions for the given chain config.
+    /// Returns the list of upgrades with their activation conditions for the given chain config.
     pub const fn forks_for(cfg: &BaseChainConfig) -> [(Self, ForkCondition); 10] {
         let v1 = match cfg.base_v1_timestamp {
             Some(ts) => ForkCondition::Timestamp(ts),
@@ -55,27 +55,27 @@ impl BaseUpgrade {
         ]
     }
 
-    /// Base mainnet list of hardforks.
+    /// Base mainnet list of upgrades.
     pub const fn mainnet() -> [(Self, ForkCondition); 10] {
         Self::forks_for(BaseChainConfig::mainnet())
     }
 
-    /// Base Sepolia list of hardforks.
+    /// Base Sepolia list of upgrades.
     pub const fn sepolia() -> [(Self, ForkCondition); 10] {
         Self::forks_for(BaseChainConfig::sepolia())
     }
 
-    /// Devnet list of hardforks.
+    /// Devnet list of upgrades.
     pub const fn devnet() -> [(Self, ForkCondition); 10] {
         Self::forks_for(BaseChainConfig::devnet())
     }
 
-    /// Base devnet-0-sepolia-dev-0 list of hardforks.
+    /// Base devnet-0-sepolia-dev-0 list of upgrades.
     pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
         Self::forks_for(BaseChainConfig::alpha())
     }
 
-    /// Base Zeronet list of hardforks.
+    /// Base Zeronet list of upgrades.
     pub const fn zeronet() -> [(Self, ForkCondition); 10] {
         Self::forks_for(BaseChainConfig::zeronet())
     }
@@ -97,12 +97,12 @@ mod tests {
     extern crate alloc;
 
     #[test]
-    fn check_base_hardfork_from_str() {
-        let hardfork_str = [
+    fn check_base_upgrade_from_str() {
+        let upgrade_str = [
             "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
             "jOvIaN", "v1",
         ];
-        let expected_hardforks = [
+        let expected_upgrades = [
             BaseUpgrade::Bedrock,
             BaseUpgrade::Regolith,
             BaseUpgrade::Canyon,
@@ -115,15 +115,15 @@ mod tests {
             BaseUpgrade::V1,
         ];
 
-        let hardforks: alloc::vec::Vec<BaseUpgrade> =
-            hardfork_str.iter().map(|h| BaseUpgrade::from_str(h).unwrap()).collect();
+        let upgrades: alloc::vec::Vec<BaseUpgrade> =
+            upgrade_str.iter().map(|h| BaseUpgrade::from_str(h).unwrap()).collect();
 
-        assert_eq!(hardforks, expected_hardforks);
+        assert_eq!(upgrades, expected_upgrades);
     }
 
     #[test]
-    fn check_nonexistent_hardfork_from_str() {
-        assert!(BaseUpgrade::from_str("not a hardfork").is_err());
+    fn check_nonexistent_upgrade_from_str() {
+        assert!(BaseUpgrade::from_str("not an upgrade").is_err());
     }
 
     /// Reverse lookup to find the upgrade given a chain ID and block timestamp.

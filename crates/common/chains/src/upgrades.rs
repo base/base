@@ -2,7 +2,7 @@ use alloy_hardforks::{EthereumHardforks, ForkCondition};
 
 use crate::BaseUpgrade;
 
-/// Extends [`EthereumHardforks`] with Base hardfork helper methods.
+/// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]
 pub trait BaseUpgrades: EthereumHardforks {
     /// Retrieves [`ForkCondition`] by a [`BaseUpgrade`]. If `fork` is not present, returns

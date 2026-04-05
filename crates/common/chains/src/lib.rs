@@ -8,11 +8,11 @@ extern crate alloc;
 mod config;
 pub use config::BaseChainConfig;
 
-mod hardfork;
-pub use hardfork::BaseUpgrade;
+mod upgrade;
+pub use upgrade::BaseUpgrade;
 
-mod hardforks;
-pub use hardforks::BaseUpgrades;
+mod upgrades;
+pub use upgrades::BaseUpgrades;
 
 mod chain;
 pub use chain::BaseChainUpgrades;
