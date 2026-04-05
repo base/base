@@ -220,7 +220,7 @@ mod tests {
     use alloc::{sync::Arc, vec};
 
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_consensus_genesis::{HardForkConfig, LegacyHardforkConfig, RollupConfig, SystemConfig};
     use base_protocol::BlockInfo;
 
     use super::BatchProvider;
@@ -235,7 +235,7 @@ mod tests {
         let provider = TestNextBatchProvider::new(vec![]);
         let l2_provider = TestL2ChainProvider::default();
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let mut batch_provider = BatchProvider::new(cfg, provider, l2_provider);
@@ -264,7 +264,7 @@ mod tests {
         let provider = TestNextBatchProvider::new(vec![]);
         let l2_provider = TestL2ChainProvider::default();
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(2), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(2), ..Default::default() }.into(),
             ..Default::default()
         });
         let mut batch_provider = BatchProvider::new(cfg, provider, l2_provider);
@@ -290,7 +290,7 @@ mod tests {
         let provider = TestNextBatchProvider::new(vec![]);
         let l2_provider = TestL2ChainProvider::default();
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(10), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(10), ..Default::default() }.into(),
             ..Default::default()
         });
         let mut batch_provider = BatchProvider::new(cfg, provider, l2_provider);
@@ -323,7 +323,7 @@ mod tests {
         let provider = TestNextBatchProvider::new(vec![]);
         let l2_provider = TestL2ChainProvider::default();
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(2), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(2), ..Default::default() }.into(),
             ..Default::default()
         });
         let mut batch_provider = BatchProvider::new(cfg, provider, l2_provider);
@@ -373,7 +373,7 @@ mod tests {
         let provider = TestNextBatchProvider::new(vec![]);
         let l2_provider = TestL2ChainProvider::default();
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
         let mut batch_provider = BatchProvider::new(cfg, provider, l2_provider);

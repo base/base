@@ -182,7 +182,7 @@ mod tests {
             BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize);
         reader
             .next_batch(&RollupConfig {
-                hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+                hardforks: LegacyHardforkConfig { fjord_time: Some(0), ..Default::default() }.into(),
                 ..Default::default()
             })
             .unwrap();

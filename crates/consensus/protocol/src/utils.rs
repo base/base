@@ -307,7 +307,7 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         };
         assert!(rollup_config.is_holocene_active(block.header.timestamp));
@@ -356,11 +356,10 @@ mod tests {
                 l2: BlockNumHash { hash: block_hash, ..Default::default() },
                 ..Default::default()
             },
-            hardforks: HardForkConfig {
+            hardforks: LegacyHardforkConfig {
                 holocene_time: Some(0),
                 isthmus_time: Some(0),
-                ..Default::default()
-            },
+                ..Default::default() }.into(),
             ..Default::default()
         };
         assert!(rollup_config.is_holocene_active(block.header.timestamp));

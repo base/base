@@ -5,7 +5,7 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
 use base_alloy_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
 
-use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig};
+use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig, LegacyHardforkConfig};
 
 /// The Rollup configuration.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn test_base_v1_active() {
-        use crate::BaseHardforkConfig;
+        use crate::{BaseHardforkConfig, LegacyHardforkConfig};
         let mut config = RollupConfig::default();
         assert!(!config.is_base_v1_active(0));
         config.hardforks.base = BaseHardforkConfig { v1: Some(10) };
@@ -619,19 +619,21 @@ mod tests {
 
     #[test]
     fn test_is_first_fork_block() {
-        use crate::BaseHardforkConfig;
+        use crate::{BaseHardforkConfig, LegacyHardforkConfig};
         let cfg = RollupConfig {
             hardforks: HardForkConfig {
-                regolith_time: Some(10),
-                canyon_time: Some(20),
-                delta_time: Some(30),
-                ecotone_time: Some(40),
-                fjord_time: Some(50),
-                granite_time: Some(60),
-                holocene_time: Some(70),
-                pectra_blob_schedule_time: Some(80),
-                isthmus_time: Some(90),
-                jovian_time: Some(100),
+                legacy: LegacyHardforkConfig {
+                    regolith_time: Some(10),
+                    canyon_time: Some(20),
+                    delta_time: Some(30),
+                    ecotone_time: Some(40),
+                    fjord_time: Some(50),
+                    granite_time: Some(60),
+                    holocene_time: Some(70),
+                    pectra_blob_schedule_time: Some(80),
+                    isthmus_time: Some(90),
+                    jovian_time: Some(100),
+                },
                 base: BaseHardforkConfig { v1: Some(110) },
             },
             block_time: 2,
@@ -698,7 +700,7 @@ mod tests {
     fn test_granite_channel_timeout() {
         let mut config = RollupConfig {
             channel_timeout: 100,
-            hardforks: HardForkConfig { granite_time: Some(10), ..Default::default() },
+            hardforks: LegacyHardforkConfig { granite_time: Some(10), ..Default::default() }.into(),
             ..Default::default()
         };
         assert_eq!(config.channel_timeout(0), 100);
@@ -805,11 +807,14 @@ mod tests {
             l1_chain_id: 3151908,
             l2_chain_id: Chain::from_id(1337),
             hardforks: HardForkConfig {
-                regolith_time: Some(0),
-                canyon_time: Some(0),
-                delta_time: Some(0),
-                ecotone_time: Some(0),
-                fjord_time: Some(0),
+                legacy: LegacyHardforkConfig {
+                    regolith_time: Some(0),
+                    canyon_time: Some(0),
+                    delta_time: Some(0),
+                    ecotone_time: Some(0),
+                    fjord_time: Some(0),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             batch_inbox_address: address!("ff00000000000000000000000000000000042069"),

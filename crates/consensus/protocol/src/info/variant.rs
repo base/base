@@ -748,7 +748,7 @@ mod tests {
     #[test]
     fn test_try_new_ecotone() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { ecotone_time: Some(1), ..Default::default() },
+            hardforks: LegacyHardforkConfig { ecotone_time: Some(1), ..Default::default() }.into(),
             ..Default::default()
         };
         let l1_config = L1Config::sepolia();
@@ -807,11 +807,10 @@ mod tests {
         #[case] use_wrong_params: bool,
     ) {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig {
+            hardforks: LegacyHardforkConfig {
                 ecotone_time: Some(1),
                 pectra_blob_schedule_time: Some(2),
-                ..Default::default()
-            },
+                ..Default::default() }.into(),
             ..Default::default()
         };
         let mut l1_genesis: ChainConfig = L1Config::sepolia().into();
@@ -878,11 +877,10 @@ mod tests {
     #[test]
     fn test_try_new_isthmus_before_pectra_blob_schedule() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig {
+            hardforks: LegacyHardforkConfig {
                 isthmus_time: Some(1),
                 pectra_blob_schedule_time: Some(1713121140),
-                ..Default::default()
-            },
+                ..Default::default() }.into(),
             ..Default::default()
         };
         let l1_config = L1Config::sepolia();
@@ -951,7 +949,7 @@ mod tests {
     #[test]
     fn test_try_new_isthmus() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { isthmus_time: Some(1), ..Default::default() },
+            hardforks: LegacyHardforkConfig { isthmus_time: Some(1), ..Default::default() }.into(),
             ..Default::default()
         };
         let l1_config = L1Config::sepolia();
@@ -1016,7 +1014,7 @@ mod tests {
     #[test]
     fn test_try_new_with_deposit_tx() {
         let rollup_config = RollupConfig {
-            hardforks: HardForkConfig { isthmus_time: Some(1), ..Default::default() },
+            hardforks: LegacyHardforkConfig { isthmus_time: Some(1), ..Default::default() }.into(),
             ..Default::default()
         };
         let l1_config = L1Config::sepolia();

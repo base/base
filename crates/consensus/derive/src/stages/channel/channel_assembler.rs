@@ -223,7 +223,7 @@ where
 mod tests {
     use alloc::{sync::Arc, vec};
 
-    use base_consensus_genesis::{HardForkConfig, RollupConfig};
+    use base_consensus_genesis::{HardForkConfig, LegacyHardforkConfig, RollupConfig};
     use base_protocol::BlockInfo;
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
@@ -385,7 +385,7 @@ mod tests {
         frames[1].data = vec![0; RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize];
         let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { fjord_time: Some(0), ..Default::default() }.into(),
             ..Default::default()
         });
 

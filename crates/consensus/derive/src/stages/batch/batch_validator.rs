@@ -333,7 +333,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
-    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_consensus_genesis::{HardForkConfig, LegacyHardforkConfig, RollupConfig, SystemConfig};
     use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
@@ -493,7 +493,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_validator_next_batch_valid() {
         let cfg = Arc::new(RollupConfig {
-            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            hardforks: LegacyHardforkConfig { holocene_time: Some(0), ..Default::default() }.into(),
             block_time: 2,
             max_sequencer_drift: 700,
             ..Default::default()
