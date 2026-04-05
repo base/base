@@ -2,7 +2,7 @@ use std::{fmt, sync::Arc};
 
 use base_execution_chainspec::OpChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
-use base_execution_evm::OpExecutorProvider;
+use base_execution_evm::BaseExecutorProvider;
 use base_node_core::OpNode;
 use eyre::{Result, eyre};
 use reth_cli::chainspec::ChainSpecParser;
@@ -74,7 +74,7 @@ where
 
         let components = |spec: Arc<OpChainSpec>| {
             (
-                OpExecutorProvider::optimism(Arc::clone(&spec)),
+                BaseExecutorProvider::optimism(Arc::clone(&spec)),
                 Arc::new(OpBeaconConsensus::new(spec)),
             )
         };
