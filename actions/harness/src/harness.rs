@@ -4,7 +4,7 @@ use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
 use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_consensus_derive::{DataAvailabilityProvider, PipelineBuilder, StatefulAttributesBuilder};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_node::L1OriginSelector;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
@@ -264,7 +264,7 @@ impl ActionTestHarness {
     /// alongside the verifier so the sequencer sees the updated epochs.
     pub fn create_l2_sequencer(&self, l1_chain: SharedL1Chain) -> L2Sequencer {
         let rollup_config = Arc::new(self.rollup_config.clone());
-        let l1_chain_config = Arc::new(L1ChainConfig::default());
+        let l1_chain_config = Arc::new(ChainConfig::default());
 
         let genesis_head = self.l2_genesis();
 

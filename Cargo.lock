@@ -2535,7 +2535,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-evm",
  "base-execution-payload-builder",
- "base-execution-primitives",
  "base-node-core",
  "base-protocol",
  "base-revm",

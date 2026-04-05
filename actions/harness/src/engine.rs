@@ -22,6 +22,7 @@ use alloy_rpc_types_eth::{
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use alloy_transport_http::Http;
 use async_trait::async_trait;
+use base_alloy_consensus::OpPrimitives;
 use base_alloy_network::Base;
 use base_alloy_provider::OpEngineApi;
 use base_alloy_rpc_types_engine::{
@@ -38,7 +39,6 @@ use base_execution_evm::OpEvmConfig;
 use base_execution_payload_builder::{
     OpBuiltPayload, OpPayloadBuilder, OpPayloadBuilderAttributes,
 };
-use base_execution_primitives::OpPrimitives;
 use base_node_core::OpNode;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use base_test_utils::build_test_genesis;

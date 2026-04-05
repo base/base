@@ -16,7 +16,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_chains::BaseUpgrade;
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpNetworkPayloadEnvelope, PayloadHash,
 };
@@ -262,7 +262,7 @@ impl SharedBlockHashRegistry {
     }
 }
 
-/// Builds real [`OpBlock`]s for use in action tests using production components.
+/// Builds real [`BaseBlock`]s for use in action tests using production components.
 ///
 /// Uses:
 /// - [`L1OriginSelector`] for epoch selection (same as the production sequencer)
@@ -432,12 +432,12 @@ impl L2Sequencer {
     /// # Panics
     ///
     /// Panics if the block cannot be built (e.g. missing L1 block data).
-    pub async fn build_empty_block(&mut self) -> OpBlock {
+    pub async fn build_empty_block(&mut self) -> BaseBlock {
         self.build_next_block_with_transactions(vec![]).await
     }
 
     /// Build the next L2 block with a single transaction.
-    pub async fn build_next_block_with_single_transaction(&mut self) -> OpBlock {
+    pub async fn build_next_block_with_single_transaction(&mut self) -> BaseBlock {
         let tx = {
             let mut account = self.test_account.lock().expect("test account lock poisoned");
             account.create_eip1559_tx(self.rollup_config.l2_chain_id.id())
@@ -447,7 +447,7 @@ impl L2Sequencer {
 
     /// Build the next L2 block and advance the internal head.
     ///
-    /// Returns a fully-formed [`OpBlock`] containing the L1-info deposit and
+    /// Returns a fully-formed [`BaseBlock`] containing the L1-info deposit and
     /// any provided user transactions, built by the production engine.
     ///
     /// # Panics
@@ -475,7 +475,7 @@ impl L2Sequencer {
     pub async fn try_build_next_block_with_transactions(
         &mut self,
         user_txs: Vec<OpTxEnvelope>,
-    ) -> Result<OpBlock, L2SequencerError> {
+    ) -> Result<BaseBlock, L2SequencerError> {
         use base_consensus_node::OriginSelector;
 
         // 1. Origin selection: use pinned origin if set, otherwise production L1OriginSelector.
@@ -530,7 +530,7 @@ impl L2Sequencer {
             .await
             .map_err(|e| L2SequencerError::Engine(format!("insert: {e}")))?;
 
-        // 6. Convert OpExecutionPayload to OpBlock.
+        // 6. Convert OpExecutionPayload to BaseBlock.
         // Use try_into_block_with_sidecar so PBBR and requests_hash are restored on the
         // returned header. try_into_block() omits these fields, making hash_slow() return a
         // different value than the sealed block hash. BatchEncoder::add_block tracks self.tip
@@ -558,7 +558,7 @@ impl L2Sequencer {
                 })
             }),
         };
-        let block: OpBlock = envelope
+        let block: BaseBlock = envelope
             .execution_payload
             .try_into_block_with_sidecar(&sidecar)
             .map_err(|e| L2SequencerError::PayloadConversion(format!("{e}")))?;
