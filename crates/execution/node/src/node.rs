@@ -87,7 +87,7 @@ impl<N> OpNodeTypes for N where
 
 /// Helper trait for Base node types with full configuration including storage and execution
 /// data.
-pub trait OpFullNodeTypes:
+pub trait BaseFullNodeTypes:
     NodeTypes<
         ChainSpec: BaseUpgrades,
         Primitives: OpPayloadPrimitives,
@@ -97,7 +97,7 @@ pub trait OpFullNodeTypes:
 {
 }
 
-impl<N> OpFullNodeTypes for N where
+impl<N> BaseFullNodeTypes for N where
     N: NodeTypes<
             ChainSpec: BaseUpgrades,
             Primitives: OpPayloadPrimitives,
@@ -307,7 +307,7 @@ impl OpNode {
 
 impl<N> Node<N> for OpNode
 where
-    N: FullNodeTypes<Types: OpFullNodeTypes + OpNodeTypes>,
+    N: FullNodeTypes<Types: BaseFullNodeTypes + OpNodeTypes>,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
@@ -1197,4 +1197,4 @@ where
 }
 
 /// Network primitive types used by Base networks.
-pub type OpNetworkPrimitives = BasicNetworkPrimitives<OpPrimitives, OpPooledTransaction>;
+pub type BaseNetworkPrimitives = BasicNetworkPrimitives<OpPrimitives, OpPooledTransaction>;
