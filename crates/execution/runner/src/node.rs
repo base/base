@@ -131,7 +131,7 @@ impl BaseNode {
 
 impl<N> Node<N> for BaseNode
 where
-    N: FullNodeTypes<Types: OpNodeTypes<ChainSpec = OpChainSpec>>,
+    N: FullNodeTypes<Types: OpNodeTypes>,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,

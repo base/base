@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use base_builder_core::{BuilderApiExtension, FlashblocksServiceBuilder};
 use base_builder_metering::MeteringStoreExtension;
-use base_execution_cli::{Cli, chainspec::OpChainSpecParser};
+use base_execution_cli::Cli;
 use base_node_runner::BaseNodeRunner;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 
-type BuilderCli = Cli<OpChainSpecParser, cli::Args>;
+type BuilderCli = Cli<cli::Args>;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();

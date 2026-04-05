@@ -13,9 +13,8 @@ use base_alloy_network::Base;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_execution_chainspec::OpChainSpec;
 use eyre::{Result, eyre};
-use reth_chainspec::ChainSpecProvider;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use reth_provider::{BlockNumReader, BlockReader};
+use reth_provider::{BlockNumReader, BlockReader, ChainSpecProvider};
 use tokio::time::sleep;
 
 use crate::{

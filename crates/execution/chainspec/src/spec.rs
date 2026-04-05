@@ -123,6 +123,11 @@ impl OpChainSpec {
             _ => None,
         }
     }
+
+    /// Activates or updates the given hardfork condition in-place.
+    pub fn set_fork<H: Hardfork>(&mut self, fork: H, condition: ForkCondition) {
+        self.inner.hardforks.insert(fork, condition);
+    }
 }
 
 impl EthChainSpec for OpChainSpec {

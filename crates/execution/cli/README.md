@@ -18,10 +18,10 @@ base-execution-cli = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_cli::{Cli, OpChainSpecParser};
+use base_execution_cli::Cli;
 
 fn main() {
-    let cli = Cli::<OpChainSpecParser, _>::parse_args();
+    let cli = Cli::parse_args();
     cli.run(|builder, args| async move {
         // launch node
     });

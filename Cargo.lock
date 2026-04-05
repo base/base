@@ -4279,6 +4279,7 @@ dependencies = [
 name = "base-node-runner"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
  "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
@@ -4287,7 +4288,6 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-signer",
- "base-alloy-chains",
  "base-alloy-consensus",
  "base-alloy-network",
  "base-alloy-rpc-types-engine",
@@ -4304,7 +4304,6 @@ dependencies = [
  "eyre",
  "futures",
  "jsonrpsee",
- "reth-chainspec",
  "reth-db",
  "reth-evm",
  "reth-exex",
