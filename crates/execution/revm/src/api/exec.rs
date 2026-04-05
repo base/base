@@ -45,7 +45,7 @@ impl<T> OpContextTr for T where
 }
 
 /// Type alias for the error type of the `OpEvm`.
-pub type OpError<CTX> = EVMError<<<CTX as ContextTr>::Db as Database>::Error, OpTransactionError>;
+pub type BaseError<CTX> = EVMError<<<CTX as ContextTr>::Db as Database>::Error, OpTransactionError>;
 
 impl<CTX, INSP, PRECOMPILE> ExecuteEvm
     for OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, PRECOMPILE>
@@ -56,7 +56,7 @@ where
     type Tx = <CTX as ContextTr>::Tx;
     type Block = <CTX as ContextTr>::Block;
     type State = EvmState;
-    type Error = OpError<CTX>;
+    type Error = BaseError<CTX>;
     type ExecutionResult = ExecutionResult<OpHaltReason>;
 
     fn set_block(&mut self, block: Self::Block) {
