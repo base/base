@@ -659,11 +659,13 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         // checking status alone would cause infinite retries. Check the
         // relevant prover slot to detect prior resolution.
         let already_resolved = match intent {
-            DisputeIntent::Challenge => {
-                zk_prover != Address::ZERO || tee_prover == Address::ZERO
-            }
+            DisputeIntent::Challenge => zk_prover != Address::ZERO || tee_prover == Address::ZERO,
             DisputeIntent::Nullify => {
-                if targets_tee { tee_prover == Address::ZERO } else { zk_prover == Address::ZERO }
+                if targets_tee {
+                    tee_prover == Address::ZERO
+                } else {
+                    zk_prover == Address::ZERO
+                }
             }
         };
 
