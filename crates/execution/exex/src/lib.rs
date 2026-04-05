@@ -49,7 +49,7 @@ const DEFAULT_VERIFICATION_INTERVAL: u64 = 0; // disabled
 
 /// Builder for [`OpProofsExEx`].
 #[derive(Debug)]
-pub struct OpProofsExExBuilder<Node, Storage>
+pub struct BaseProofsExExBuilder<Node, Storage>
 where
     Node: FullNodeComponents,
 {
@@ -60,7 +60,7 @@ where
     verification_interval: u64,
 }
 
-impl<Node, Storage> OpProofsExExBuilder<Node, Storage>
+impl<Node, Storage> BaseProofsExExBuilder<Node, Storage>
 where
     Node: FullNodeComponents,
 {
@@ -198,15 +198,15 @@ where
 {
     /// Create a new `OpProofsExEx` instance.
     pub fn new(ctx: ExExContext<Node>, storage: OpProofsStorage<Storage>) -> Self {
-        OpProofsExExBuilder::new(ctx, storage).build()
+        BaseProofsExExBuilder::new(ctx, storage).build()
     }
 
     /// Create a new builder for `OpProofsExEx`.
     pub const fn builder(
         ctx: ExExContext<Node>,
         storage: OpProofsStorage<Storage>,
-    ) -> OpProofsExExBuilder<Node, Storage> {
-        OpProofsExExBuilder::new(ctx, storage)
+    ) -> BaseProofsExExBuilder<Node, Storage> {
+        BaseProofsExExBuilder::new(ctx, storage)
     }
 }
 
