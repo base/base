@@ -9,10 +9,5 @@ edition = "2024"
 risc0-zkvm = { version = "^3.0", default-features = false, features = ["std"] }
 base-proof-tee-nitro-verifier = { path = "../../nitro-verifier" }
 
-[lints.rust]
-missing-docs = "warn"
-unused-must-use = "deny"
-rust-2018-idioms = "deny"
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
+[lints]
+workspace = true
