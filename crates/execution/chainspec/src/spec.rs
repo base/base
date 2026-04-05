@@ -31,7 +31,7 @@ pub const SUPPORTED_CHAINS: &[&str] =
 #[derive(Default, Debug)]
 pub struct OpGenesisInfo {
     /// Base chain info extracted from genesis extra fields.
-    pub optimism_chain_info: base_alloy_rpc_types::OpChainInfo,
+    pub optimism_chain_info: base_common_rpc_types::BaseChainInfo,
     /// Base fee params derived from the genesis config.
     pub base_fee_params: BaseFeeParamsKind,
 }
@@ -40,7 +40,7 @@ impl OpGenesisInfo {
     /// Extracts Base genesis info from an [`alloy_genesis::Genesis`].
     pub fn extract_from(genesis: &Genesis) -> Self {
         let mut info = Self {
-            optimism_chain_info: base_alloy_rpc_types::OpChainInfo::extract_from(
+            optimism_chain_info: base_common_rpc_types::BaseChainInfo::extract_from(
                 &genesis.config.extra_fields,
             )
             .unwrap_or_default(),
@@ -122,6 +122,11 @@ impl OpChainSpec {
             "base-zeronet" => Some(BASE_ZERONET.clone()),
             _ => None,
         }
+    }
+
+    /// Activates or updates the given hardfork condition in-place.
+    pub fn set_fork<H: Hardfork>(&mut self, fork: H, condition: ForkCondition) {
+        self.inner.hardforks.insert(fork, condition);
     }
 }
 
@@ -341,7 +346,7 @@ mod tests {
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{B256, U256, b256, hex};
     use base_alloy_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
-    use base_alloy_rpc_types::OpBaseFeeInfo;
+    use base_common_rpc_types::BaseFeeInfo;
     use reth_chainspec::{
         BaseFeeParams, BaseFeeParamsKind, EthChainSpec, EthereumHardforks, test_fork_ids,
     };
@@ -745,11 +750,11 @@ mod tests {
 
         let optimism_object = genesis.config.extra_fields.get("optimism").unwrap();
         let optimism_base_fee_info =
-            serde_json::from_value::<OpBaseFeeInfo>(optimism_object.clone()).unwrap();
+            serde_json::from_value::<BaseFeeInfo>(optimism_object.clone()).unwrap();
 
         assert_eq!(
             optimism_base_fee_info,
-            OpBaseFeeInfo {
+            BaseFeeInfo {
                 eip1559_elasticity: Some(6),
                 eip1559_denominator: Some(50),
                 eip1559_denominator_canyon: None,

@@ -15,7 +15,7 @@ use base_alloy_consensus::OpTxType;
 use base_alloy_evm::OpTxResult;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
-use base_alloy_rpc_types::{OpTransactionReceipt, Transaction};
+use base_common_rpc_types::{OpTransactionReceipt, Transaction};
 use base_revm::OpHaltReason;
 use reth_evm::eth::EthTxResult;
 use reth_revm::db::BundleState;
@@ -599,7 +599,7 @@ mod tests {
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
-    use base_alloy_rpc_types::{L1BlockInfo, OpTransactionReceipt, Transaction};
+    use base_common_rpc_types::{L1BlockInfo, OpTransactionReceipt, Transaction};
     use revm::context_interface::result::ExecutionResult;
 
     use super::*;

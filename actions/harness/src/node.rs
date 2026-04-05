@@ -7,7 +7,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     ForkchoiceState,
 };
-use base_alloy_consensus::{OpBlock, OpTxEnvelope, TxDeposit};
+use base_alloy_consensus::{BaseBlock, OpTxEnvelope, TxDeposit};
 use base_alloy_provider::OpEngineApi;
 use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use base_consensus_derive::{
@@ -19,7 +19,7 @@ use base_consensus_genesis::RollupConfig;
 use base_consensus_safedb::{
     SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
 };
-use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
     ActionBlobDataSource, ActionDataSource, ActionEngineClient, ActionL1ChainProvider,
@@ -422,7 +422,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// # Panics
     ///
     /// Panics if the first transaction is not a valid L1 info deposit.
-    pub fn act_l2_unsafe_gossip_receive(&mut self, block: &OpBlock) {
+    pub fn act_l2_unsafe_gossip_receive(&mut self, block: &BaseBlock) {
         if block.header.number != self.unsafe_head.block_info.number + 1 {
             return;
         }
@@ -643,7 +643,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     /// the call returns.
     ///
     /// [`derived_block`]: TestRollupNode::derived_block
-    async fn execute_and_advance(&mut self, attrs: OpAttributesWithParent) {
+    async fn execute_and_advance(&mut self, attrs: AttributesWithParent) {
         let block_number = attrs.block_number();
         let parent_hash = self.safe_head.block_info.hash;
         let timestamp = attrs.attributes.payload_attributes.timestamp;
@@ -798,13 +798,13 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     }
 
     /// Decode the L1 epoch from the first deposit transaction in derived attributes.
-    pub fn l1_origin_from_attrs(&self, attrs: &OpAttributesWithParent) -> Option<BlockNumHash> {
+    pub fn l1_origin_from_attrs(&self, attrs: &AttributesWithParent) -> Option<BlockNumHash> {
         let txs = attrs.attributes.transactions.as_ref()?;
         self.l1_origin_from_transactions(txs)
     }
 
-    /// Decode the L1 epoch from the first deposit transaction in an [`OpBlock`].
-    fn l1_origin_from_block(&self, block: &OpBlock) -> Option<BlockNumHash> {
+    /// Decode the L1 epoch from the first deposit transaction in an [`BaseBlock`].
+    fn l1_origin_from_block(&self, block: &BaseBlock) -> Option<BlockNumHash> {
         let first = block.body.transactions.first()?;
         let deposit = match first {
             OpTxEnvelope::Deposit(d) => d,
@@ -815,8 +815,8 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
     }
 
     /// Decode the full [`L1BlockInfoTx`] from the first deposit transaction in
-    /// derived [`OpAttributesWithParent`].
-    fn l1_info_from_attrs(&self, attrs: &OpAttributesWithParent) -> Option<L1BlockInfoTx> {
+    /// derived [`AttributesWithParent`].
+    fn l1_info_from_attrs(&self, attrs: &AttributesWithParent) -> Option<L1BlockInfoTx> {
         let txs = attrs.attributes.transactions.as_ref()?;
         Self::decode_deposit_l1_info(txs.first()?)
     }

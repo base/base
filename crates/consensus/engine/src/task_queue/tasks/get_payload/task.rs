@@ -5,7 +5,7 @@ use alloy_rpc_types_engine::{ExecutionPayload, PayloadId};
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 use base_consensus_genesis::RollupConfig;
-use base_protocol::OpAttributesWithParent;
+use base_protocol::AttributesWithParent;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
@@ -29,8 +29,8 @@ pub struct GetPayloadTask<EngineClient_: EngineClient> {
     pub cfg: Arc<RollupConfig>,
     /// The [`PayloadId`] to fetch.
     pub payload_id: PayloadId,
-    /// The [`OpAttributesWithParent`] used for version selection and parent validation.
-    pub attributes: OpAttributesWithParent,
+    /// The [`AttributesWithParent`] used for version selection and parent validation.
+    pub attributes: AttributesWithParent,
     /// An optional sender to convey the sealed [`OpExecutionPayloadEnvelope`]
     /// or the [`SealTaskError`] that occurred during fetching.
     pub result_tx: Option<mpsc::Sender<Result<OpExecutionPayloadEnvelope, SealTaskError>>>,
@@ -46,7 +46,7 @@ impl<EngineClient_: EngineClient> GetPayloadTask<EngineClient_> {
         cfg: &RollupConfig,
         engine: &EngineClient_,
         payload_id: PayloadId,
-        payload_attrs: &OpAttributesWithParent,
+        payload_attrs: &AttributesWithParent,
     ) -> Result<OpExecutionPayloadEnvelope, SealTaskError> {
         let payload_timestamp = payload_attrs.attributes().payload_attributes.timestamp;
 

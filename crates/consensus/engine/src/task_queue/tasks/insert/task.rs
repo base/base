@@ -7,7 +7,7 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, PayloadStatusEnum, PraguePayloadFields,
 };
 use async_trait::async_trait;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadEnvelope, OpExecutionPayloadSidecar,
 };
@@ -63,7 +63,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         // Form the new unsafe block ref from the execution payload.
         let parent_beacon_block_root = self.envelope.parent_beacon_block_root.unwrap_or_default();
         let insert_time_start = Instant::now();
-        let (response, block): (_, OpBlock) = match self.envelope.execution_payload.clone() {
+        let (response, block): (_, BaseBlock) = match self.envelope.execution_payload.clone() {
             OpExecutionPayload::V1(payload) => (
                 self.client.new_payload_v1(payload).await,
                 self.envelope

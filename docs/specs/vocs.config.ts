@@ -107,6 +107,14 @@ function sectionItem(section: string, text: string): SidebarItem {
   }
 }
 
+const bcpsSection: SidebarItem = {
+  text: 'Base Change Proposals',
+  items: [
+    { text: 'BCP List', link: '/bcps' },
+    { text: 'BCP Process', link: '/bcps/bcp-0000' },
+  ],
+}
+
 const bridgingSection: SidebarItem = {
   text: 'Bridging',
   items: [
@@ -154,6 +162,7 @@ const sidebar: SidebarItem[] = [
       { ...sectionItem('protocol/fault-proof', 'Proofs'), collapsed: true },
     ],
   },
+  bcpsSection,
   {
     text: 'Upgrades',
     items: [

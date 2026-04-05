@@ -1,12 +1,12 @@
-# `base-alloy-rpc-types`
+# `base-common-rpc-types`
 
 Base chain RPC types.
 
 ## Overview
 
 Defines the JSON-RPC request and response types specific to Base chains, including genesis and
-chain info types (`OpGenesisInfo`, `OpChainInfo`, `OpBaseFeeInfo`), transaction types
-(`OpTransactionFields`, `OpTransactionRequest`, `Transaction`), receipt types
+chain info types (`BaseGenesisInfo`, `BaseChainInfo`, `BaseFeeInfo`), transaction types
+(`BaseTransactionFields`, `OpTransactionRequest`, `Transaction`), receipt types
 (`OpTransactionReceipt`, `OpTransactionReceiptFields`), and `L1BlockInfo` for fee data. These
 types are used to serialize and deserialize Base-specific RPC payloads.
 
@@ -16,11 +16,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-rpc-types = { workspace = true }
+base-common-rpc-types = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_rpc_types::{OpTransactionReceipt, L1BlockInfo};
+use base_common_rpc_types::{OpTransactionReceipt, L1BlockInfo};
 
 let receipt: OpTransactionReceipt = provider.get_transaction_receipt(hash).await?;
 let l1_fee = receipt.l1_block_info.l1_fee;

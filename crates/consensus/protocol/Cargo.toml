@@ -18,6 +18,7 @@ base-consensus-genesis.workspace = true
 # alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
+alloy-genesis.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
@@ -51,7 +52,7 @@ spin.workspace = true
 rstest.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
-base-alloy-rpc-types.workspace = true
+base-common-rpc-types.workspace = true
 base-consensus-registry.workspace = true
 brotli = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }

@@ -5,15 +5,15 @@ use core::iter::Iterator;
 
 use async_trait::async_trait;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
-use base_protocol::{L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 
 use crate::{OriginProvider, PipelineErrorKind, StepResult};
 
 /// This trait defines the interface for interacting with the derivation pipeline.
 #[async_trait]
-pub trait Pipeline: OriginProvider + Iterator<Item = OpAttributesWithParent> {
-    /// Peeks at the next [`OpAttributesWithParent`] from the pipeline.
-    fn peek(&self) -> Option<&OpAttributesWithParent>;
+pub trait Pipeline: OriginProvider + Iterator<Item = AttributesWithParent> {
+    /// Peeks at the next [`AttributesWithParent`] from the pipeline.
+    fn peek(&self) -> Option<&AttributesWithParent>;
 
     /// Attempts to progress the pipeline.
     async fn step(&mut self, cursor: L2BlockInfo) -> StepResult;

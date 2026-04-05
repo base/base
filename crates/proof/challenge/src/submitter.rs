@@ -15,7 +15,7 @@ use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 use base_tx_manager::{TxCandidate, TxManager};
 use tracing::info;
 
-use crate::{ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
+use crate::{BondTransactionSubmitter, ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
 
 /// Submits dispute transactions (nullify or challenge) to game contracts on L1.
 #[derive(Debug)]
@@ -110,6 +110,40 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         }
 
         info!(tx_hash = %tx_hash, game = %game_address, action = intent.label(), "dispute transaction confirmed");
+
+        Ok(tx_hash)
+    }
+}
+
+#[async_trait::async_trait]
+impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
+    async fn send_bond_tx(
+        &self,
+        game_address: Address,
+        calldata: Bytes,
+    ) -> Result<B256, ChallengeSubmitError> {
+        let candidate = TxCandidate {
+            tx_data: calldata,
+            to: Some(game_address),
+            value: U256::ZERO,
+            ..Default::default()
+        };
+
+        info!(
+            game = %game_address,
+            calldata_len = candidate.tx_data.len(),
+            "sending bond transaction"
+        );
+
+        let start = Instant::now();
+        let receipt = self.tx_manager.send(candidate).await?;
+        let latency = start.elapsed();
+        ChallengerMetrics::bond_tx_latency_seconds().record(latency.as_secs_f64());
+        let tx_hash = receipt.transaction_hash;
+
+        if !receipt.inner.status() {
+            return Err(ChallengeSubmitError::TxReverted { tx_hash });
+        }
 
         Ok(tx_hash)
     }

@@ -12,8 +12,8 @@ extern crate alloc;
 mod registry;
 pub use registry::Registry;
 
-mod l1;
-pub use l1::{L1Config, L1GenesisGetterErrors};
+mod ethereum;
+pub use ethereum::{Holesky, Hoodi, Mainnet, Sepolia};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

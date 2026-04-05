@@ -1,7 +1,7 @@
 //! Base block execution strategy.
 
 /// Helper type with backwards compatible methods to obtain executor providers.
-pub type OpExecutorProvider = crate::OpEvmConfig;
+pub type BaseExecutorProvider = crate::OpEvmConfig;
 
 #[cfg(test)]
 mod tests {
@@ -10,9 +10,8 @@ mod tests {
 
     use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
     use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, b256};
-    use base_alloy_consensus::{OpReceipt, TxDeposit};
+    use base_alloy_consensus::{OpReceipt, OpTransactionSigned, TxDeposit};
     use base_execution_chainspec::{OpChainSpec, OpChainSpecBuilder};
-    use base_execution_primitives::OpTransactionSigned;
     use base_revm::L1_BLOCK_CONTRACT;
     use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_evm::execute::{BasicBlockExecutor, Executor};

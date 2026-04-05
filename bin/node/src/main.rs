@@ -6,7 +6,7 @@
 pub mod cli;
 
 use base_bundle_extension::BundleExtension;
-use base_execution_cli::{Cli, chainspec::OpChainSpecParser};
+use base_execution_cli::Cli;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteringConfig, MeteringExtension, MeteringResourceLimits};
@@ -16,7 +16,7 @@ use base_tx_forwarding::TxForwardingExtension;
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 
-type NodeCli = Cli<OpChainSpecParser, cli::Args>;
+type NodeCli = Cli<cli::Args>;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();

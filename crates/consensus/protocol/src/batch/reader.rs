@@ -148,9 +148,7 @@ impl BatchReader {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::{
-        HardForkConfig, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD,
-    };
+    use base_consensus_genesis::{HardForkConfig, RollupConfig};
     use miniz_oxide::{
         deflate::{CompressionLevel, compress_to_vec_zlib},
         inflate::decompress_to_vec_zlib,
@@ -170,7 +168,8 @@ mod tests {
     fn test_batch_reader() {
         let raw = new_compressed_batch_data();
         let decompressed_len = decompress_to_vec_zlib(&raw).unwrap().len();
-        let mut reader = BatchReader::new(raw, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK as usize);
+        let mut reader =
+            BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK as usize);
         reader.next_batch(&RollupConfig::default()).unwrap();
         assert_eq!(reader.cursor, decompressed_len);
     }
@@ -179,7 +178,8 @@ mod tests {
     fn test_batch_reader_fjord() {
         let raw = new_compressed_batch_data();
         let decompressed_len = decompress_to_vec_zlib(&raw).unwrap().len();
-        let mut reader = BatchReader::new(raw, MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize);
+        let mut reader =
+            BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize);
         reader
             .next_batch(&RollupConfig {
                 hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },

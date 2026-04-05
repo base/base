@@ -8,8 +8,7 @@ use std::{
 
 use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_eth::TransactionInfo;
-use base_alloy_consensus::{OpDepositInfo, OpTransaction, OpTransactionInfo};
-use base_execution_primitives::DepositReceipt;
+use base_alloy_consensus::{DepositReceipt, OpDepositInfo, OpTransaction, OpTransactionInfo};
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{Recovered, SignedTransaction, SignerRecoverable, WithEncoded};

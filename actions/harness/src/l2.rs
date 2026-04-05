@@ -5,18 +5,19 @@ use std::{
 
 use alloy_consensus::{Header, SignableTransaction};
 use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
+use alloy_genesis::ChainConfig;
 use alloy_hardforks::ForkCondition;
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_chains::BaseUpgrade;
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope, PayloadHash};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_execution_evm::OpEvmConfig;
-use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use base_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm as _, FromRecoveredTx};
 use revm::{
@@ -140,13 +141,13 @@ pub enum L2SequencerError {
     Evm(String),
 }
 
-/// A pre-built queue of [`OpBlock`]s for the batcher to drain.
+/// A pre-built queue of [`BaseBlock`]s for the batcher to drain.
 ///
 /// Tests push fully-formed blocks into the source, which the batcher
 /// consumes one at a time via [`L2BlockProvider::next_block`].
 #[derive(Debug, Default)]
 pub struct ActionL2Source {
-    blocks: VecDeque<OpBlock>,
+    blocks: VecDeque<BaseBlock>,
 }
 
 impl ActionL2Source {
@@ -156,7 +157,7 @@ impl ActionL2Source {
     }
 
     /// Push a block to the back of the queue.
-    pub fn push(&mut self, block: OpBlock) {
+    pub fn push(&mut self, block: BaseBlock) {
         self.blocks.push_back(block);
     }
 
@@ -172,7 +173,7 @@ impl ActionL2Source {
 }
 
 impl L2BlockProvider for ActionL2Source {
-    fn next_block(&mut self) -> Option<OpBlock> {
+    fn next_block(&mut self) -> Option<BaseBlock> {
         self.blocks.pop_front()
     }
 }
@@ -240,7 +241,7 @@ impl SharedBlockHashRegistry {
     }
 }
 
-/// Builds real [`OpBlock`]s for use in action tests.
+/// Builds real [`BaseBlock`]s for use in action tests.
 ///
 /// Each block contains:
 /// - A correct L1-info deposit transaction (type `0x7E`) as the first
@@ -269,7 +270,7 @@ pub struct L2Sequencer {
     /// Rollup configuration.
     rollup_config: RollupConfig,
     /// L1 chain config (needed for [`L1BlockInfoTx`]).
-    l1_chain_config: L1ChainConfig,
+    l1_chain_config: ChainConfig,
     /// Current system config (updated on epoch changes or key rotation).
     system_config: SystemConfig,
     /// Test account used for signing user transactions.
@@ -300,7 +301,7 @@ impl L2Sequencer {
             head,
             l1_chain,
             rollup_config,
-            l1_chain_config: L1ChainConfig::default(),
+            l1_chain_config: ChainConfig::default(),
             system_config,
             test_account,
             executor,
@@ -373,7 +374,7 @@ impl L2Sequencer {
     /// validation.
     ///
     /// [`set_supervised_p2p`]: L2Sequencer::set_supervised_p2p
-    pub fn broadcast_unsafe_block(&self, block: &OpBlock) {
+    pub fn broadcast_unsafe_block(&self, block: &BaseBlock) {
         let Some(p2p) = &self.supervised_p2p else { return };
         let block_hash = block.header.hash_slow();
         let (execution_payload, _) = OpExecutionPayload::from_block_unchecked(block_hash, block);
@@ -397,12 +398,12 @@ impl L2Sequencer {
     /// Panics if the block cannot be built (e.g. missing L1 block data).
     ///
     /// [`build_next_block`]: L2Sequencer::build_next_block
-    pub fn build_empty_block(&mut self) -> OpBlock {
+    pub fn build_empty_block(&mut self) -> BaseBlock {
         self.build_next_block_with_transactions(vec![])
     }
 
     /// Build the next L2 block with a single transaction.
-    pub fn build_next_block_with_single_transaction(&mut self) -> OpBlock {
+    pub fn build_next_block_with_single_transaction(&mut self) -> BaseBlock {
         let tx = {
             let mut account = self.test_account.lock().expect("test account lock poisoned");
             account.create_eip1559_tx(self.rollup_config.l2_chain_id.id())
@@ -412,7 +413,7 @@ impl L2Sequencer {
 
     /// Build the next L2 block and advance the internal head.
     ///
-    /// Returns a fully-formed [`OpBlock`] containing the L1-info deposit and
+    /// Returns a fully-formed [`BaseBlock`] containing the L1-info deposit and
     /// any configured user transactions, with a real state root and block hash.
     ///
     /// # Panics
@@ -425,7 +426,7 @@ impl L2Sequencer {
     pub fn build_next_block_with_transactions(
         &mut self,
         transactions: Vec<OpTxEnvelope>,
-    ) -> OpBlock {
+    ) -> BaseBlock {
         self.try_build_next_block_with_transactions(transactions)
             .unwrap_or_else(|e| panic!("L2Sequencer::build_next_block failed: {e}"))
     }
@@ -439,7 +440,7 @@ impl L2Sequencer {
     pub fn try_build_next_block_with_transactions(
         &mut self,
         transactions: Vec<OpTxEnvelope>,
-    ) -> Result<OpBlock, L2SequencerError> {
+    ) -> Result<BaseBlock, L2SequencerError> {
         let mut transactions = transactions;
         let next_number = self.head.block_info.number + 1;
         let next_timestamp = self.head.block_info.timestamp + self.rollup_config.block_time;
@@ -508,7 +509,7 @@ impl L2Sequencer {
 
         let block_hash = header.hash_slow();
 
-        let block = OpBlock {
+        let block = BaseBlock {
             header,
             body: alloy_consensus::BlockBody { transactions, ommers: vec![], withdrawals: None },
         };
@@ -578,7 +579,7 @@ pub fn compute_state_root(db: &InMemoryDB) -> B256 {
 }
 
 impl L2BlockProvider for L2Sequencer {
-    fn next_block(&mut self) -> Option<OpBlock> {
+    fn next_block(&mut self) -> Option<BaseBlock> {
         Some(self.build_next_block_with_single_transaction())
     }
 }
@@ -641,7 +642,7 @@ impl StatefulL2Executor {
     /// mirror the sequencer's block-by-block execution.
     pub fn execute_attrs(
         &mut self,
-        attrs: &OpAttributesWithParent,
+        attrs: &AttributesWithParent,
         block_number: u64,
         parent_hash: B256,
     ) -> Result<B256, L2SequencerError> {

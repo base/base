@@ -187,7 +187,7 @@ echo "Rollup.json L1 hash:    $ROLLUP_L1_HASH"
 
 if [ "$L1_HASH" != "$ROLLUP_L1_HASH" ]; then
   echo "WARNING: L1 genesis hash mismatch!"
-  echo "This might cause issues with the op-node."
+  echo "This might cause issues with the consensus node."
 else
   echo "L1 genesis hash matches!"
 fi

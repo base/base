@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
-use base_protocol::{L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
 use tokio::sync::{mpsc, watch};
 
@@ -26,7 +26,7 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
     /// Returns a `PayloadId` that can be used to seal the block later.
     async fn start_build_block(
         &self,
-        attributes: OpAttributesWithParent,
+        attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId>;
 
     /// Fetches the sealed payload envelope from the engine WITHOUT inserting it.
@@ -34,7 +34,7 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
     async fn get_sealed_payload(
         &self,
         payload_id: PayloadId,
-        attributes: OpAttributesWithParent,
+        attributes: AttributesWithParent,
     ) -> EngineClientResult<OpExecutionPayloadEnvelope>;
 
     /// Fire-and-forget: submits the sealed payload to the engine for insertion (`new_payload` + FCU).
@@ -61,7 +61,7 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
 
     async fn start_build_block(
         &self,
-        attributes: OpAttributesWithParent,
+        attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId> {
         (**self).start_build_block(attributes).await
     }
@@ -69,7 +69,7 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
     async fn get_sealed_payload(
         &self,
         payload_id: PayloadId,
-        attributes: OpAttributesWithParent,
+        attributes: AttributesWithParent,
     ) -> EngineClientResult<OpExecutionPayloadEnvelope> {
         (**self).get_sealed_payload(payload_id, attributes).await
     }
@@ -123,7 +123,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
 
     async fn start_build_block(
         &self,
-        attributes: OpAttributesWithParent,
+        attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId> {
         let (payload_id_tx, mut payload_id_rx) = mpsc::channel(1);
 
@@ -152,7 +152,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
     async fn get_sealed_payload(
         &self,
         payload_id: PayloadId,
-        attributes: OpAttributesWithParent,
+        attributes: AttributesWithParent,
     ) -> EngineClientResult<OpExecutionPayloadEnvelope> {
         let (result_tx, mut result_rx) = mpsc::channel(1);
 

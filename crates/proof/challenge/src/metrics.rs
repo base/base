@@ -62,6 +62,26 @@ base_metrics::define_metrics! {
 
     #[describe("Total number of invalid ZK proposals detected (Path 3)")]
     invalid_zk_proposal_detected_total: counter,
+
+    #[describe("Total number of resolve transaction outcomes")]
+    #[label(status)]
+    resolve_tx_outcome_total: counter,
+
+    #[describe("Total number of claimCredit transactions submitted")]
+    claim_credit_tx_submitted_total: counter,
+
+    #[describe("Total number of claimCredit transaction outcomes")]
+    #[label(status)]
+    claim_credit_tx_outcome_total: counter,
+
+    #[describe("Latency in seconds for bond transaction confirmation")]
+    bond_tx_latency_seconds: histogram,
+
+    #[describe("Number of games currently tracked for bond claiming")]
+    bonds_tracked: gauge,
+
+    #[describe("Total number of bonds successfully claimed")]
+    bonds_completed_total: counter,
 }
 
 impl ChallengerMetrics {
@@ -73,4 +93,8 @@ impl ChallengerMetrics {
 
     /// Label value for a transaction that failed to send.
     pub const STATUS_ERROR: &str = "error";
+
+    /// Label value when a resolve was skipped because the game was already
+    /// resolved on-chain (e.g. by another actor).
+    pub const STATUS_ALREADY_RESOLVED: &str = "already_resolved";
 }

@@ -287,8 +287,8 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> OpEthApiInner<N, Rpc> {
     }
 }
 
-/// Converter for OP RPC types.
-pub type OpRpcConvert<N, NetworkT> = RpcConverter<
+/// Converter for Base RPC types.
+pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
     NetworkT,
     <N as FullNodeComponents>::Evm,
     OpReceiptConverter<<N as FullNodeTypes>::Provider>,
@@ -358,11 +358,11 @@ where
             Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
         >,
     NetworkT: RpcTypes,
-    OpRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
-    OpEthApi<N, OpRpcConvert<N, NetworkT>>:
+    BaseRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
+    OpEthApi<N, BaseRpcConvert<N, NetworkT>>:
         FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
-    type EthApi = OpEthApi<N, OpRpcConvert<N, NetworkT>>;
+    type EthApi = OpEthApi<N, BaseRpcConvert<N, NetworkT>>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;

@@ -28,17 +28,17 @@ serde = { workspace = true, features = ["std", "derive"] }
 
 # test-utils (optional)
 alloy-signer-local = { workspace = true, optional = true }
-base-alloy-rpc-types = { workspace = true, features = ["std"], optional = true }
+base-common-rpc-types = { workspace = true, features = ["std"], optional = true }
 
 [dev-dependencies]
 # alloy
 alloy-signer-local.workspace = true
 
 # base-alloy
-base-alloy-rpc-types = { workspace = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, features = ["std"] }
 
 # misc
 serde_json = { workspace = true, features = ["std"] }
 
 [features]
-test-utils = [ "dep:alloy-signer-local", "dep:base-alloy-rpc-types" ]
+test-utils = [ "dep:alloy-signer-local", "dep:base-common-rpc-types" ]

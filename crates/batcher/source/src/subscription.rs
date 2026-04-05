@@ -1,6 +1,6 @@
 //! Block subscription trait for keepalive-aware streaming.
 
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use futures::stream::BoxStream;
 
 use crate::SourceError;
@@ -19,5 +19,5 @@ pub trait BlockSubscription: Send {
     /// Extract the block stream from this subscription.
     ///
     /// Must be called at most once; implementors may panic on a second call.
-    fn take_stream(&mut self) -> BoxStream<'static, Result<OpBlock, SourceError>>;
+    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>>;
 }

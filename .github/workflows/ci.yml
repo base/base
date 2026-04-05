@@ -29,8 +29,6 @@ jobs:
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup
-        with:
-          rust-cache-shared-key: "stable"
       - name: Validate Cargo.lock is up to date
         run: cargo metadata --format-version 1 --no-deps --locked >/dev/null
 
@@ -99,8 +97,6 @@ jobs:
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup
-        with:
-          rust-cache-shared-key: "stable"
       - name: Install musl toolchain
         run: |
           sudo apt-get update && sudo apt-get install -y musl-tools
@@ -240,6 +236,7 @@ jobs:
           fetch-depth: 1
       - uses: ./.github/actions/setup
         with:
+          free-disk: "true"
           toolchain: nightly
           native-deps: "true"
           mold: "true"
@@ -274,9 +271,6 @@ jobs:
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup
-        with:
-          free-disk: "true"
-          rust-cache-shared-key: "stable"
       - run: just check-deny
 
   devnet-tests:
@@ -293,6 +287,7 @@ jobs:
           fetch-depth: 1
       - uses: ./.github/actions/setup
         with:
+          free-disk: "true"
           native-deps: "true"
           mold: "true"
           foundry: "true"

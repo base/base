@@ -32,7 +32,6 @@ base-txpool.workspace = true
 base-revm.workspace = true
 base-protocol.workspace = true
 base-execution-evm.workspace = true
-base-execution-primitives.workspace = true
 
 # ethereum
 revm.workspace = true
@@ -44,7 +43,7 @@ alloy-consensus.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-debug.workspace = true
 base-alloy-chains.workspace = true
-base-alloy-consensus.workspace = true
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
 
 # misc

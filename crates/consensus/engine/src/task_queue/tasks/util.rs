@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_consensus_genesis::RollupConfig;
-use base_protocol::OpAttributesWithParent;
+use base_protocol::AttributesWithParent;
 
 use super::{BuildTask, BuildTaskError, EngineTaskExt, SealTask, SealTaskError};
 use crate::{EngineClient, EngineState};
@@ -39,7 +39,7 @@ pub(in crate::task_queue) async fn build_and_seal<EngineClient_: EngineClient>(
     state: &mut EngineState,
     engine: Arc<EngineClient_>,
     cfg: Arc<RollupConfig>,
-    attributes: OpAttributesWithParent,
+    attributes: AttributesWithParent,
     is_attributes_derived: bool,
 ) -> Result<(), BuildAndSealError> {
     // Execute the build task

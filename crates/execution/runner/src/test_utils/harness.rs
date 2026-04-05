@@ -8,14 +8,13 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_network::Base;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_execution_chainspec::OpChainSpec;
 use eyre::{Result, eyre};
-use reth_chainspec::ChainSpecProvider;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use reth_provider::{BlockNumReader, BlockReader};
+use reth_provider::{BlockNumReader, BlockReader, ChainSpecProvider};
 use tokio::time::sleep;
 
 use crate::{
@@ -222,7 +221,7 @@ impl TestHarness {
     }
 
     /// Return the latest recovered block as seen by the local blockchain provider.
-    pub fn latest_block(&self) -> RecoveredBlock<OpBlock> {
+    pub fn latest_block(&self) -> RecoveredBlock<BaseBlock> {
         let provider = self.blockchain_provider();
         let best_number = provider.best_block_number().expect("able to read best block number");
         let block = provider

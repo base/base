@@ -485,6 +485,6 @@ For the Ecotone upgrade, this entails that:
 
 ## P2P Modifications
 
-The Ethereum Node Record (ENR) for an Optimism execution node must contain an `opel` key-value pair where the key is
+The Ethereum Node Record (ENR) for a Base execution node must contain an `opel` key-value pair where the key is
 `opel` and the value is a [EIP-2124](https://eips.ethereum.org/EIPS/eip-2124) fork id.
 The EL uses a different key from the CL in order to stop EL and CL nodes from connecting to each other.

@@ -6,19 +6,8 @@ use alloy_primitives::{Bytes, map::HashMap};
 
 use crate::{BlockInfo, Frame};
 
-/// [`CHANNEL_ID_LENGTH`] is the length of the channel ID.
-pub const CHANNEL_ID_LENGTH: usize = 16;
-
 /// [`ChannelId`] is an opaque identifier for a channel.
-pub type ChannelId = [u8; CHANNEL_ID_LENGTH];
-
-/// [`MAX_RLP_BYTES_PER_CHANNEL`] is the maximum amount of bytes that will be read from
-/// a channel. This limit is set when decoding the RLP.
-pub const MAX_RLP_BYTES_PER_CHANNEL: u64 = 10_000_000;
-
-/// [`FJORD_MAX_RLP_BYTES_PER_CHANNEL`] is the maximum amount of bytes that will be read from
-/// a channel when the Fjord Hardfork is activated. This limit is set when decoding the RLP.
-pub const FJORD_MAX_RLP_BYTES_PER_CHANNEL: u64 = 100_000_000;
+pub type ChannelId = [u8; Channel::ID_LENGTH];
 
 /// An error returned when adding a frame to a channel.
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq, Hash)]
@@ -64,6 +53,17 @@ pub struct Channel {
 }
 
 impl Channel {
+    /// Length of the channel ID in bytes.
+    pub const ID_LENGTH: usize = 16;
+
+    /// Maximum amount of bytes that will be read from a channel. This limit is set when decoding
+    /// the RLP.
+    pub const MAX_RLP_BYTES: u64 = 10_000_000;
+
+    /// Maximum amount of bytes that will be read from a channel when the Fjord hardfork is
+    /// activated. This limit is set when decoding the RLP.
+    pub const FJORD_MAX_RLP_BYTES: u64 = 100_000_000;
+
     /// Create a new [`Channel`] with the given [`ChannelId`] and [`BlockInfo`].
     pub fn new(id: ChannelId, open_block: BlockInfo) -> Self {
         Self { id, open_block, inputs: HashMap::default(), ..Default::default() }

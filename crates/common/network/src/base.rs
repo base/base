@@ -22,11 +22,11 @@ impl Network for Base {
 
     type Header = alloy_consensus::Header;
 
-    type TransactionRequest = base_alloy_rpc_types::OpTransactionRequest;
+    type TransactionRequest = base_common_rpc_types::OpTransactionRequest;
 
-    type TransactionResponse = base_alloy_rpc_types::Transaction;
+    type TransactionResponse = base_common_rpc_types::Transaction;
 
-    type ReceiptResponse = base_alloy_rpc_types::OpTransactionReceipt;
+    type ReceiptResponse = base_common_rpc_types::OpTransactionReceipt;
 
     type HeaderResponse = alloy_rpc_types_eth::Header;
 

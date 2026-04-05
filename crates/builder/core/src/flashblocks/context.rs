@@ -11,12 +11,11 @@ use alloy_primitives::{B256, BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTxType};
+use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTransactionSigned, OpTxType};
 use base_alloy_evm::OpReceiptBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::OpPayloadBuilderError};
-use base_execution_primitives::OpTransactionSigned;
 use base_revm::{L1BlockInfo, OpSpecId};
 use base_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
@@ -1146,5 +1145,52 @@ mod tests {
 
         assert_eq!(diag.txs_considered, 5);
         assert_eq!(diag.txs_included, 2);
+    }
+
+    /// [`FlashblocksExtraCtx::next`] must increment the flashblock index,
+    /// update all per-batch target fields to the new values, and preserve
+    /// the per-batch *limit* fields and the target flashblock count.
+    #[test]
+    fn extra_ctx_next_advances_index_and_updates_targets() {
+        let ctx = FlashblocksExtraCtx {
+            flashblock_index: 2,
+            target_flashblock_count: 10,
+            target_gas_for_batch: 1_000_000,
+            target_da_for_batch: Some(500),
+            target_da_footprint_for_batch: Some(200),
+            target_execution_time_for_batch_us: Some(100_000),
+            target_state_root_gas_for_batch: Some(50_000),
+            gas_per_batch: 3_000_000,
+            da_per_batch: Some(1_500),
+            da_footprint_per_batch: Some(600),
+            execution_time_per_batch_us: Some(300_000),
+            state_root_gas_per_batch: Some(150_000),
+        };
+
+        let next = ctx.next(
+            2_000_000,     // new gas target
+            Some(800),     // new DA target
+            Some(350),     // new DA footprint target
+            Some(200_000), // new execution time target
+            Some(80_000),  // new state root gas target
+        );
+
+        // Index incremented
+        assert_eq!(next.flashblock_index, 3);
+
+        // Target fields updated to the supplied values
+        assert_eq!(next.target_gas_for_batch, 2_000_000);
+        assert_eq!(next.target_da_for_batch, Some(800));
+        assert_eq!(next.target_da_footprint_for_batch, Some(350));
+        assert_eq!(next.target_execution_time_for_batch_us, Some(200_000));
+        assert_eq!(next.target_state_root_gas_for_batch, Some(80_000));
+
+        // Per-batch limits and target count are preserved (..self)
+        assert_eq!(next.target_flashblock_count, 10);
+        assert_eq!(next.gas_per_batch, 3_000_000);
+        assert_eq!(next.da_per_batch, Some(1_500));
+        assert_eq!(next.da_footprint_per_batch, Some(600));
+        assert_eq!(next.execution_time_per_batch_us, Some(300_000));
+        assert_eq!(next.state_root_gas_per_batch, Some(150_000));
     }
 }

@@ -12,7 +12,7 @@ use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_alloy_flashblocks::Flashblock;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use rayon::prelude::*;
@@ -39,7 +39,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum StateUpdate {
     /// New canonical block to reconcile against pending state.
-    Canonical(RecoveredBlock<OpBlock>),
+    Canonical(RecoveredBlock<BaseBlock>),
     /// Incoming flashblock payload to extend pending state.
     Flashblock(Flashblock),
 }
@@ -186,7 +186,7 @@ where
     fn process_canonical_block(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        block: &RecoveredBlock<OpBlock>,
+        block: &RecoveredBlock<BaseBlock>,
     ) -> Result<Option<Arc<PendingBlocks>>> {
         let pending_blocks = match &prev_pending_blocks {
             Some(pb) => pb,

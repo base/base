@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use alloy_primitives::B256;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
 };
@@ -53,7 +53,7 @@ impl TrackingPipeline {
 }
 
 impl BatchPipeline for TrackingPipeline {
-    fn add_block(&mut self, _: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
+    fn add_block(&mut self, _: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
         Ok(())
     }
 
@@ -112,7 +112,7 @@ impl ReorgPipeline {
 }
 
 impl BatchPipeline for ReorgPipeline {
-    fn add_block(&mut self, block: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
+    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
         Err((
             ReorgError::ParentMismatch { expected: B256::ZERO, got: B256::with_last_byte(1) },
             Box::new(block),
@@ -164,7 +164,7 @@ impl OneReorgPipeline {
 }
 
 impl BatchPipeline for OneReorgPipeline {
-    fn add_block(&mut self, block: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
+    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
         if self.fail_next {
             self.fail_next = false;
             return Err((

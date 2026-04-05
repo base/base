@@ -4,13 +4,13 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_rpc_types_engine::{
     OpExecutionData, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
     OpExecutionPayloadEnvelopeV5, OpPayloadAttributes,
 };
 use base_execution_consensus::isthmus;
-use base_execution_payload_builder::{OpExecutionPayloadValidator, OpPayloadTypes};
+use base_execution_payload_builder::{BasePayloadTypes, OpExecutionPayloadValidator};
 use base_protocol::Predeploys;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
@@ -29,7 +29,7 @@ use reth_trie_common::{HashedPostState, KeyHasher};
 /// The types used in the Base beacon consensus engine.
 #[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
-pub struct OpEngineTypes<T: PayloadTypes = OpPayloadTypes> {
+pub struct OpEngineTypes<T: PayloadTypes = BasePayloadTypes> {
     _marker: PhantomData<T>,
 }
 
@@ -53,7 +53,7 @@ impl<T: PayloadTypes<ExecutionData = OpExecutionData>> PayloadTypes for OpEngine
 
 impl<T: PayloadTypes<ExecutionData = OpExecutionData>> EngineTypes for OpEngineTypes<T>
 where
-    T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = OpBlock>>
+    T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = BaseBlock>>
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
         + TryInto<OpExecutionPayloadEnvelopeV3>

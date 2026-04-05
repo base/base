@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 
 use crate::{BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 
@@ -13,7 +13,7 @@ use crate::{BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, S
 #[derive(Debug, Default)]
 pub struct MockBatchPipeline {
     /// Blocks that were added via [`add_block`](BatchPipeline::add_block).
-    pub blocks_added: Vec<OpBlock>,
+    pub blocks_added: Vec<BaseBlock>,
     /// Number of times [`step`](BatchPipeline::step) was called.
     pub steps_taken: usize,
     /// Submissions to return from [`next_submission`](BatchPipeline::next_submission).
@@ -31,7 +31,7 @@ pub struct MockBatchPipeline {
 }
 
 impl BatchPipeline for MockBatchPipeline {
-    fn add_block(&mut self, block: OpBlock) -> Result<(), (ReorgError, Box<OpBlock>)> {
+    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
         self.blocks_added.push(block);
         Ok(())
     }

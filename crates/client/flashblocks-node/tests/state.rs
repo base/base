@@ -521,7 +521,7 @@ async fn test_eth_call_sees_flashblock_state_changes() {
     use alloy_eips::BlockNumberOrTag;
     use alloy_provider::Provider;
     use alloy_rpc_types_eth::TransactionInput;
-    use base_alloy_rpc_types::OpTransactionRequest;
+    use base_common_rpc_types::OpTransactionRequest;
 
     let test = FlashblocksBuilderTestHarness::new().await;
     let provider = test.node.provider();

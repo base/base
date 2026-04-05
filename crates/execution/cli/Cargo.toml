@@ -25,7 +25,6 @@ reth-node-metrics.workspace = true
 ## optimism
 base-execution-evm.workspace = true
 base-execution-trie.workspace = true
-base-execution-primitives.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 
@@ -43,7 +42,7 @@ tracing.workspace = true
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
-base-alloy-consensus = { workspace = true, optional = true }
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -73,16 +72,11 @@ jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
 dev = [
-	"base-alloy-consensus?/arbitrary",
-	"dep:base-alloy-consensus",
+	"base-alloy-consensus/arbitrary",
 	"dep:proptest",
 	"reth-cli-commands/arbitrary",
 ]
 
-serde = [
-	"base-alloy-consensus?/serde",
-	"base-execution-chainspec/serde",
-	"base-execution-primitives/serde",
-]
+serde = [ "base-alloy-consensus/serde", "base-execution-chainspec/serde" ]
 
 edge = [ "reth-cli-commands/edge", "reth-node-core/edge" ]

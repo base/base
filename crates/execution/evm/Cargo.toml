@@ -28,12 +28,11 @@ alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 base-alloy-chains.workspace = true
 base-alloy-evm = { workspace = true, features = ["std", "reth"] }
-base-alloy-consensus = { workspace = true, features = ["evm"] }
+base-alloy-consensus = { workspace = true, features = ["evm", "reth"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
-base-execution-primitives.workspace = true
 
 # revm
 revm.workspace = true
@@ -46,7 +45,7 @@ thiserror.workspace = true
 alloy-genesis.workspace = true
 reth-evm = { workspace = true, features = ["test-utils"] }
 reth-revm = { workspace = true, features = ["test-utils"] }
-base-execution-primitives = { workspace = true, features = ["arbitrary"] }
+base-alloy-consensus = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = [ "std" ]
@@ -61,7 +60,6 @@ std = [
 	"base-alloy-rpc-types-engine/std",
 	"base-execution-chainspec/std",
 	"base-execution-consensus/std",
-	"base-execution-primitives/std",
 	"base-revm/std",
 	"reth-chainspec/std",
 	"reth-evm/std",
@@ -74,9 +72,4 @@ std = [
 	"thiserror/std",
 ]
 portable = [ "base-revm/portable", "reth-revm/portable", "revm/portable" ]
-rpc = [
-	"alloy-evm/rpc",
-	"base-execution-primitives/reth-codec",
-	"base-execution-primitives/serde",
-	"reth-rpc-eth-api",
-]
+rpc = [ "alloy-evm/rpc", "reth-rpc-eth-api" ]

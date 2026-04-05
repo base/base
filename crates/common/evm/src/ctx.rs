@@ -2,7 +2,7 @@ use alloy_primitives::{B256, Bytes};
 
 /// Context for OP block execution.
 #[derive(Debug, Default, Clone)]
-pub struct OpBlockExecutionCtx {
+pub struct BaseBlockExecutionCtx {
     /// Parent block hash.
     pub parent_hash: B256,
     /// Parent beacon block root.

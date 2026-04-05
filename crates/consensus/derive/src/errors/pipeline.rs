@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use base_consensus_genesis::SystemConfigUpdateError;
-use base_protocol::{DepositError, SpanBatchError};
+use base_protocol::{DepositDecodeError, SpanBatchError};
 use thiserror::Error;
 
 use crate::BuilderError;
@@ -380,7 +380,7 @@ pub enum PipelineEncodingError {
     EmptyBuffer,
     /// Deposit decoding error.
     #[error("Error decoding deposit: {0}")]
-    DepositError(#[from] DepositError),
+    DepositDecodeError(#[from] DepositDecodeError),
     /// Alloy RLP Encoding Error.
     #[error("RLP error: {0}")]
     AlloyRlpError(alloy_rlp::Error),
@@ -428,7 +428,8 @@ mod tests {
 
     #[test]
     fn test_pipeline_encoding_error_source() {
-        let err = PipelineEncodingError::DepositError(DepositError::UnexpectedTopicsLen(0));
+        let err =
+            PipelineEncodingError::DepositDecodeError(DepositDecodeError::UnexpectedTopicsLen(0));
         assert!(err.source().is_some());
 
         let err = SpanBatchError::TooBigSpanBatchSize;

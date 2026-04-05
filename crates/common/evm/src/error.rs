@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 
 /// Custom errors that can occur during OP block execution.
 #[derive(Debug, thiserror::Error)]
-pub enum OpBlockExecutionError {
+pub enum BaseBlockExecutionError {
     /// Failed to load cache account.
     #[error("failed to load cache account")]
     LoadCacheAccount,

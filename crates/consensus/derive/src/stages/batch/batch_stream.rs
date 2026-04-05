@@ -264,7 +264,7 @@ mod tests {
     use alloy_consensus::{BlockBody, Header};
     use alloy_eips::{BlockNumHash, NumHash};
     use alloy_primitives::{FixedBytes, b256};
-    use base_alloy_consensus::OpBlock;
+    use base_alloy_consensus::BaseBlock;
     use base_consensus_genesis::{ChainGenesis, HardForkConfig, SystemConfig};
     use base_protocol::{SingleBatch, SpanBatchElement};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -473,7 +473,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 9, ..Default::default() },
             ..Default::default()
         };
-        let op_block = OpBlock {
+        let op_block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
             body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None },
         };

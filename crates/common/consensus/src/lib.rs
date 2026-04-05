@@ -19,7 +19,7 @@ mod evm_compat;
 #[cfg(feature = "reth")]
 mod reth_compat;
 #[cfg(feature = "reth")]
-pub use reth_compat::CompactTxDeposit;
+pub use reth_compat::{BaseBlockBody, CompactTxDeposit, DepositReceipt, OpPrimitives};
 
 mod receipts;
 pub use receipts::{
@@ -41,7 +41,10 @@ pub use source::*;
 mod size;
 
 mod block;
-pub use block::OpBlock;
+pub use block::BaseBlock;
+
+/// Signed transaction type alias for [`OpTxEnvelope`].
+pub type OpTransactionSigned = OpTxEnvelope;
 #[cfg(feature = "serde")]
 pub use transaction::serde_deposit_tx_rpc;
 

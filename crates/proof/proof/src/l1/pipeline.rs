@@ -3,6 +3,7 @@
 use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
+use alloy_genesis::ChainConfig;
 use alloy_primitives::Sealable;
 use async_trait::async_trait;
 use base_consensus_derive::{
@@ -11,11 +12,11 @@ use base_consensus_derive::{
     PolledAttributesQueueStage, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder,
     StepResult,
 };
-use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, FlushableCache};
-use base_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 use spin::RwLock;
 
 use crate::{
@@ -59,7 +60,7 @@ where
     /// Constructs a new oracle-backed derivation pipeline.
     pub async fn new(
         cfg: Arc<RollupConfig>,
-        l1_cfg: Arc<L1ChainConfig>,
+        l1_cfg: Arc<ChainConfig>,
         sync_start: Arc<RwLock<PipelineCursor>>,
         caching_oracle: Arc<O>,
         da_provider: DA,
@@ -201,7 +202,7 @@ where
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    type Item = OpAttributesWithParent;
+    type Item = AttributesWithParent;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.pipeline.next()
@@ -216,8 +217,8 @@ where
     L2: L2ChainProvider + Send + Sync + Debug + Clone,
     DA: DataAvailabilityProvider + Send + Sync + Debug + Clone,
 {
-    /// Peeks at the next [`OpAttributesWithParent`] from the pipeline.
-    fn peek(&self) -> Option<&OpAttributesWithParent> {
+    /// Peeks at the next [`AttributesWithParent`] from the pipeline.
+    fn peek(&self) -> Option<&AttributesWithParent> {
         self.pipeline.peek()
     }
 

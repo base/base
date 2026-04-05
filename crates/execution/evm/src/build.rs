@@ -8,9 +8,9 @@ use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutorFactory;
 use alloy_primitives::logs_bloom;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_evm::OpBlockExecutionCtx;
+use base_alloy_consensus::DepositReceipt;
+use base_alloy_evm::BaseBlockExecutionCtx;
 use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
-use base_execution_primitives::DepositReceipt;
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
@@ -19,22 +19,22 @@ use revm::context::Block as _;
 
 /// Block builder for Base.
 #[derive(Debug)]
-pub struct OpBlockAssembler<ChainSpec> {
+pub struct BaseBlockAssembler<ChainSpec> {
     chain_spec: Arc<ChainSpec>,
 }
 
-impl<ChainSpec> OpBlockAssembler<ChainSpec> {
-    /// Creates a new [`OpBlockAssembler`].
+impl<ChainSpec> BaseBlockAssembler<ChainSpec> {
+    /// Creates a new [`BaseBlockAssembler`].
     pub const fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self { chain_spec }
     }
 }
 
-impl<ChainSpec: BaseUpgrades> OpBlockAssembler<ChainSpec> {
+impl<ChainSpec: BaseUpgrades> BaseBlockAssembler<ChainSpec> {
     /// Builds a block for `input` without any bounds on header `H`.
     pub fn assemble_block<
         F: for<'a> BlockExecutorFactory<
-                ExecutionCtx<'a>: Into<OpBlockExecutionCtx>,
+                ExecutionCtx<'a>: Into<BaseBlockExecutionCtx>,
                 Transaction: SignedTransaction,
                 Receipt: Receipt + DepositReceipt,
             >,
@@ -131,17 +131,17 @@ impl<ChainSpec: BaseUpgrades> OpBlockAssembler<ChainSpec> {
     }
 }
 
-impl<ChainSpec> Clone for OpBlockAssembler<ChainSpec> {
+impl<ChainSpec> Clone for BaseBlockAssembler<ChainSpec> {
     fn clone(&self) -> Self {
         Self { chain_spec: Arc::clone(&self.chain_spec) }
     }
 }
 
-impl<F, ChainSpec> BlockAssembler<F> for OpBlockAssembler<ChainSpec>
+impl<F, ChainSpec> BlockAssembler<F> for BaseBlockAssembler<ChainSpec>
 where
     ChainSpec: BaseUpgrades,
     F: for<'a> BlockExecutorFactory<
-            ExecutionCtx<'a> = OpBlockExecutionCtx,
+            ExecutionCtx<'a> = BaseBlockExecutionCtx,
             Transaction: SignedTransaction,
             Receipt: Receipt + DepositReceipt,
         >,

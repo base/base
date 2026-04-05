@@ -16,7 +16,7 @@ The `docker-compose.yml` orchestrates a complete local devnet environment with b
 
 - An L1 execution client (Reth) and consensus client (Lighthouse) with a validator
 - The Base builder and client nodes on L2
-- Base consensus layer nodes (`op-node`) for both builder and client
+- Base consensus layer nodes (`base-consensus`) for both builder and client
 - The `base-batcher` for submitting L2 data to L1
 
 All services read configuration from `devnet-env` in this directory. The devnet stores chain data in `.devnet/` which is created on first run.

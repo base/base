@@ -8,7 +8,7 @@ use std::sync::{
 use alloy_consensus::{BlockHeader, Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, TxHash, U256};
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_alloy_flz::flz_compress_len;
 use base_bundles::{Bundle, MeterBundleResponse, ParsedBundle};
 use base_execution_chainspec::OpChainSpec;
@@ -57,7 +57,7 @@ where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
-        + BlockReader<Block = OpBlock>
+        + BlockReader<Block = BaseBlock>
         + HeaderProvider<Header = Header>
         + Clone,
     FB: FlashblocksAPI,
@@ -98,7 +98,7 @@ where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
-        + BlockReader<Block = OpBlock>
+        + BlockReader<Block = BaseBlock>
         + HeaderProvider<Header = Header>
         + Clone
         + Send
@@ -530,7 +530,7 @@ where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
-        + BlockReader<Block = OpBlock>
+        + BlockReader<Block = BaseBlock>
         + HeaderProvider<Header = Header>
         + Clone
         + Send
@@ -584,7 +584,7 @@ where
     }
 
     /// Internal helper to meter a block's execution
-    fn meter_block_internal(&self, block: &OpBlock) -> RpcResult<MeterBlockResponse> {
+    fn meter_block_internal(&self, block: &BaseBlock) -> RpcResult<MeterBlockResponse> {
         meter_block(self.provider.clone(), self.provider.chain_spec(), block).map_err(|e| {
             error!(error = %e, "Block metering failed");
             jsonrpsee::types::ErrorObjectOwned::owned(
@@ -604,12 +604,11 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{B256, Bloom, Bytes, address};
     use alloy_rpc_client::RpcClient;
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_consensus::{OpTransactionSigned, OpTxEnvelope};
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_bundles::{Bundle, MeterBundleResponse};
-    use base_execution_primitives::OpTransactionSigned;
     use base_flashblocks::{FlashblocksConfig, PendingBlocksBuilder};
     use base_node_runner::test_utils::{Account, TestHarness};
     use reth_transaction_pool::test_utils::TransactionBuilder;

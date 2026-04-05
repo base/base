@@ -1,9 +1,9 @@
 //! Base Node types config.
 
+use base_alloy_consensus::OpPrimitives;
 use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
-use base_execution_primitives::OpPrimitives;
 use base_execution_rpc::eth::OpEthApiBuilder;
 use base_execution_storage::OpStorage;
 use base_node_core::{
@@ -131,7 +131,7 @@ impl BaseNode {
 
 impl<N> Node<N> for BaseNode
 where
-    N: FullNodeTypes<Types: OpNodeTypes<ChainSpec = OpChainSpec>>,
+    N: FullNodeTypes<Types: OpNodeTypes>,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,

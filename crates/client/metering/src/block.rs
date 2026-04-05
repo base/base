@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
 use alloy_primitives::B256;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
@@ -37,7 +37,7 @@ use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 pub fn meter_block<P>(
     provider: P,
     chain_spec: Arc<OpChainSpec>,
-    block: &OpBlock,
+    block: &BaseBlock,
 ) -> EyreResult<MeterBlockResponse>
 where
     P: StateProviderFactory + HeaderProvider<Header = Header>,
@@ -137,7 +137,7 @@ where
 mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_primitives::{Address, Signature};
-    use base_execution_primitives::{OpBlockBody, OpTransactionSigned};
+    use base_alloy_consensus::{BaseBlockBody, OpTransactionSigned};
     use base_node_runner::test_utils::{Account, TestHarness};
     use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;
@@ -147,7 +147,7 @@ mod tests {
     fn create_block_with_transactions(
         harness: &TestHarness,
         transactions: Vec<OpTransactionSigned>,
-    ) -> OpBlock {
+    ) -> BaseBlock {
         let latest = harness.latest_block();
         let header = Header {
             parent_hash: latest.hash(),
@@ -161,9 +161,9 @@ mod tests {
             ..Default::default()
         };
 
-        let body = OpBlockBody { transactions, ommers: vec![], withdrawals: None };
+        let body = BaseBlockBody { transactions, ommers: vec![], withdrawals: None };
 
-        OpBlock::new(header, body)
+        BaseBlock::new(header, body)
     }
 
     #[tokio::test]
@@ -384,8 +384,8 @@ mod tests {
             ..Default::default()
         };
 
-        let body = OpBlockBody { transactions: vec![], ommers: vec![], withdrawals: None };
-        let block = OpBlock::new(header, body);
+        let body = BaseBlockBody { transactions: vec![], ommers: vec![], withdrawals: None };
+        let block = BaseBlock::new(header, body);
 
         let result = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block);
 

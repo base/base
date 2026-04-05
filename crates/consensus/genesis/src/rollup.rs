@@ -7,23 +7,6 @@ use base_alloy_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
 
 use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig};
 
-/// The max rlp bytes per channel for the Bedrock hardfork.
-pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
-
-/// The max rlp bytes per channel for the Fjord hardfork.
-pub const MAX_RLP_BYTES_PER_CHANNEL_FJORD: u64 = 100_000_000;
-
-/// The max sequencer drift when the Fjord hardfork is active.
-pub const FJORD_MAX_SEQUENCER_DRIFT: u64 = 1800;
-
-/// The channel timeout once the Granite hardfork is active.
-pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
-
-#[cfg(feature = "serde")]
-const fn default_granite_channel_timeout() -> u64 {
-    GRANITE_CHANNEL_TIMEOUT
-}
-
 /// The Rollup configuration.
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -46,7 +29,10 @@ pub struct RollupConfig {
     /// Number of L1 blocks between when a channel can be opened and when it can be closed.
     pub channel_timeout: u64,
     /// The channel timeout after the Granite hardfork.
-    #[cfg_attr(feature = "serde", serde(default = "default_granite_channel_timeout"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(default = "RollupConfig::default_granite_channel_timeout")
+    )]
     pub granite_channel_timeout: u64,
     /// The L1 chain ID
     pub l1_chain_id: u64,
@@ -113,7 +99,7 @@ impl Default for RollupConfig {
             max_sequencer_drift: 0,
             seq_window_size: 0,
             channel_timeout: 0,
-            granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
+            granite_channel_timeout: Self::GRANITE_CHANNEL_TIMEOUT,
             l1_chain_id: 0,
             l2_chain_id: Chain::from_id(0),
             hardforks: HardForkConfig::default(),
@@ -260,7 +246,7 @@ impl RollupConfig {
     /// Returns the max sequencer drift for the given timestamp.
     pub fn max_sequencer_drift(&self, timestamp: u64) -> u64 {
         if self.is_fjord_active(timestamp) {
-            FJORD_MAX_SEQUENCER_DRIFT
+            Self::FJORD_MAX_SEQUENCER_DRIFT
         } else {
             self.max_sequencer_drift
         }
@@ -269,9 +255,9 @@ impl RollupConfig {
     /// Returns the max rlp bytes per channel for the given timestamp.
     pub fn max_rlp_bytes_per_channel(&self, timestamp: u64) -> u64 {
         if self.is_fjord_active(timestamp) {
-            MAX_RLP_BYTES_PER_CHANNEL_FJORD
+            Self::MAX_RLP_BYTES_PER_CHANNEL_FJORD
         } else {
-            MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
+            Self::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
         }
     }
 
@@ -394,6 +380,25 @@ impl BaseUpgrades for RollupConfig {
 }
 
 impl RollupConfig {
+    /// The max rlp bytes per channel for the Bedrock hardfork.
+    pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
+
+    /// The max rlp bytes per channel for the Fjord hardfork.
+    pub const MAX_RLP_BYTES_PER_CHANNEL_FJORD: u64 = 100_000_000;
+
+    /// The max sequencer drift when the Fjord hardfork is active.
+    pub const FJORD_MAX_SEQUENCER_DRIFT: u64 = 1800;
+
+    /// The channel timeout once the Granite hardfork is active.
+    pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
+
+    /// Helper method for deserializing a default granite channel timeout.
+    #[cfg(feature = "serde")]
+    pub const fn default_granite_channel_timeout() -> u64 {
+        Self::GRANITE_CHANNEL_TIMEOUT
+    }
+
+    /// The activation banner for the Base V1 hardfork, printed when the first block of the fork is built or processed.
     const BASE_V1_ACTIVATION_BANNER: &str = include_str!("../static/base_v1_activation_banner.txt");
 
     /// Logs hardfork activation when building or processing the first block of a fork.
@@ -427,7 +432,7 @@ impl From<&BaseChainConfig> for RollupConfig {
             max_sequencer_drift: cfg.max_sequencer_drift,
             seq_window_size: cfg.seq_window_size,
             channel_timeout: cfg.channel_timeout,
-            granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
+            granite_channel_timeout: Self::GRANITE_CHANNEL_TIMEOUT,
             l1_chain_id: cfg.l1_chain_id,
             l2_chain_id: Chain::from_id(cfg.chain_id),
             hardforks: HardForkConfig::from(cfg),
@@ -697,7 +702,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.channel_timeout(0), 100);
-        assert_eq!(config.channel_timeout(10), GRANITE_CHANNEL_TIMEOUT);
+        assert_eq!(config.channel_timeout(10), RollupConfig::GRANITE_CHANNEL_TIMEOUT);
         config.hardforks.granite_time = None;
         assert_eq!(config.channel_timeout(10), 100);
     }
@@ -708,7 +713,7 @@ mod tests {
         assert_eq!(config.max_sequencer_drift(0), 100);
         config.hardforks.fjord_time = Some(10);
         assert_eq!(config.max_sequencer_drift(0), 100);
-        assert_eq!(config.max_sequencer_drift(10), FJORD_MAX_SEQUENCER_DRIFT);
+        assert_eq!(config.max_sequencer_drift(10), RollupConfig::FJORD_MAX_SEQUENCER_DRIFT);
     }
 
     #[test]
@@ -796,7 +801,7 @@ mod tests {
             max_sequencer_drift: 600,
             seq_window_size: 3600,
             channel_timeout: 300,
-            granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
+            granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
             l1_chain_id: 3151908,
             l2_chain_id: Chain::from_id(1337),
             hardforks: HardForkConfig {

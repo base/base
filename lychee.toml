@@ -8,7 +8,6 @@ cache_exclude_status = [429]
 accept = [200, 403, 429, 502, 503] # 403 is often returned by private repos instead of 404; 429 is rate limiting; 502/503 is transient GitHub unavailability
 exclude_path = [
     "crates/utilities/test-utils/contracts/",
-    "crates/shared/primitives/contracts/",
     "docs/specs/",
     "README\\.md",
 ]
@@ -31,9 +30,6 @@ exclude = [
     'https://patreon\.com',
     'https://www\.patreon\.com',
     'https://tidelift\.com',
-
-    # Links to paths that don't exist on main yet (pending merges)
-    'https://github\.com/base/base/blob/main/crates/common/',
 
     # Internal / staging sites not meant for link checking
     'https://rustup\.rs/',

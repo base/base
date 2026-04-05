@@ -2,10 +2,9 @@ use std::{fmt, sync::Arc};
 
 use base_execution_chainspec::OpChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
-use base_execution_evm::OpExecutorProvider;
+use base_execution_evm::BaseExecutorProvider;
 use base_node_core::OpNode;
 use eyre::{Result, eyre};
-use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::launcher::Launcher;
 use reth_cli_runner::CliRunner;
 use reth_node_core::args::{OtlpInitStatus, OtlpLogsStatus};
@@ -18,20 +17,19 @@ use crate::{Cli, Commands};
 
 /// A wrapper around a parsed CLI that handles command execution.
 #[derive(Debug)]
-pub struct CliApp<Spec: ChainSpecParser, Ext: clap::Args + fmt::Debug, Rpc: RpcModuleValidator> {
-    cli: Cli<Spec, Ext, Rpc>,
+pub struct CliApp<Ext: clap::Args + fmt::Debug, Rpc: RpcModuleValidator> {
+    cli: Cli<Ext, Rpc>,
     runner: Option<CliRunner>,
     layers: Option<Layers>,
     guard: Option<FileWorkerGuard>,
 }
 
-impl<C, Ext, Rpc> CliApp<C, Ext, Rpc>
+impl<Ext, Rpc> CliApp<Ext, Rpc>
 where
-    C: ChainSpecParser<ChainSpec = OpChainSpec>,
     Ext: clap::Args + fmt::Debug,
     Rpc: RpcModuleValidator,
 {
-    pub(crate) fn new(cli: Cli<C, Ext, Rpc>) -> Self {
+    pub(crate) fn new(cli: Cli<Ext, Rpc>) -> Self {
         Self { cli, runner: None, layers: Some(Layers::new()), guard: None }
     }
 
@@ -54,7 +52,10 @@ where
     ///
     /// This accepts a closure that is used to launch the node via the
     /// [`NodeCommand`](reth_cli_commands::node::NodeCommand).
-    pub fn run(mut self, launcher: impl Launcher<C, Ext>) -> Result<()> {
+    pub fn run(
+        mut self,
+        launcher: impl Launcher<crate::chainspec::OpChainSpecParser, Ext>,
+    ) -> Result<()> {
         let runner = match self.runner.take() {
             Some(runner) => runner,
             None => CliRunner::try_default_runtime()?,
@@ -74,7 +75,7 @@ where
 
         let components = |spec: Arc<OpChainSpec>| {
             (
-                OpExecutorProvider::optimism(Arc::clone(&spec)),
+                BaseExecutorProvider::optimism(Arc::clone(&spec)),
                 Arc::new(OpBeaconConsensus::new(spec)),
             )
         };

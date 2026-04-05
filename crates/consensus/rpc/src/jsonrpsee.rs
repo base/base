@@ -5,7 +5,7 @@ use core::net::IpAddr;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 // Re-export apis defined in `base-alloy-rpc-jsonrpsee`
-pub use base_alloy_rpc_jsonrpsee::{MinerApiExtServer, OpAdminApiServer};
+pub use base_alloy_rpc_jsonrpsee::{BaseAdminApiServer, MinerApiExtServer};
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
@@ -55,7 +55,7 @@ pub trait RollupNodeApi {
 /// The opp2p namespace handles peer interactions.
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "opp2p"))]
 #[cfg_attr(feature = "client", rpc(server, client, namespace = "opp2p"))]
-pub trait OpP2PApi {
+pub trait BaseP2PApi {
     /// Returns information of node
     #[method(name = "self")]
     async fn opp2p_self(&self) -> RpcResult<PeerInfo>;

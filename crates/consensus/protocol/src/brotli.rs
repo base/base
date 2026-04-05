@@ -86,7 +86,7 @@ pub fn decompress_brotli(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::hex;
-    use base_consensus_genesis::MAX_RLP_BYTES_PER_CHANNEL_FJORD;
+    use base_consensus_genesis::RollupConfig;
 
     use super::*;
 
@@ -96,7 +96,8 @@ mod tests {
         let compressed = hex!("8b048075ed184249e9bc19675e03");
 
         let decompressed =
-            decompress_brotli(&compressed, MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize).unwrap();
+            decompress_brotli(&compressed, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
+                .unwrap();
         assert_eq!(decompressed, expected);
     }
 
@@ -110,7 +111,8 @@ mod tests {
         );
 
         let decompressed =
-            decompress_brotli(&raw_batch, MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize).unwrap();
+            decompress_brotli(&raw_batch, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
+                .unwrap();
         assert_eq!(decompressed, raw_batch_decompressed);
     }
 

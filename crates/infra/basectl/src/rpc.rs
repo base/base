@@ -10,7 +10,7 @@ use anyhow::Result;
 use base_alloy_consensus::OpTxEnvelope;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
-use base_consensus_rpc::{ConductorApiClient, OpP2PApiClient, RollupNodeApiClient};
+use base_consensus_rpc::{BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient};
 use futures::{StreamExt, stream};
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
 use tokio::sync::{mpsc, watch};
@@ -875,13 +875,13 @@ pub(crate) async fn pause_sequencer_node(
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         // Snapshot connected CL peers before disconnecting so we can restore them.
-        let dump = OpP2PApiClient::opp2p_peers(&cl_client, true)
+        let dump = BaseP2PApiClient::opp2p_peers(&cl_client, true)
             .await
             .map_err(|e| anyhow::anyhow!("opp2p_peers: {e}"))?;
 
         let mut cl_addrs = Vec::new();
         for (peer_id, info) in dump.peers {
-            let _ = OpP2PApiClient::opp2p_disconnect_peer(&cl_client, peer_id).await;
+            let _ = BaseP2PApiClient::opp2p_disconnect_peer(&cl_client, peer_id).await;
             if let Some(addr) = info.addresses.into_iter().next() {
                 cl_addrs.push(addr);
             }
@@ -939,7 +939,7 @@ pub(crate) async fn unpause_sequencer_node(
 
         let mut cl_ok = 0usize;
         for addr in &peers.cl_addrs {
-            if OpP2PApiClient::opp2p_connect_peer(&cl_client, addr.clone()).await.is_ok() {
+            if BaseP2PApiClient::opp2p_connect_peer(&cl_client, addr.clone()).await.is_ok() {
                 cl_ok += 1;
             }
         }
@@ -1038,7 +1038,7 @@ pub(crate) async fn run_conductor_poller(
                     ConductorApiClient::conductor_leader(conductor_client),
                     ConductorApiClient::conductor_active(conductor_client),
                     RollupNodeApiClient::op_sync_status(cl_client),
-                    OpP2PApiClient::opp2p_peer_stats(cl_client),
+                    BaseP2PApiClient::opp2p_peer_stats(cl_client),
                     async {
                         if let Some(el) = el_client {
                             let r: Result<alloy_primitives::U64, _> =
@@ -1169,7 +1169,7 @@ pub(crate) async fn run_validator_poller(
             |(name, cl_client, el_client)| async move {
                 let (sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) = tokio::join!(
                     RollupNodeApiClient::op_sync_status(cl_client),
-                    OpP2PApiClient::opp2p_peer_stats(cl_client),
+                    BaseP2PApiClient::opp2p_peer_stats(cl_client),
                     async {
                         if let Some(el) = el_client {
                             let r: Result<alloy_primitives::U64, _> =

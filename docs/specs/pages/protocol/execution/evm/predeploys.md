@@ -2,7 +2,7 @@
 
 ## Overview
 
-[Predeployed smart contracts](../../../reference/glossary.md#predeployed-contract-predeploy) exist on Optimism
+[Predeployed smart contracts](../../../reference/glossary.md#predeployed-contract-predeploy) exist on Base
 at predetermined addresses in the genesis state. They are similar to precompiles but instead run
 directly in the EVM instead of running native code outside of the EVM.
 
@@ -122,9 +122,9 @@ This contract is deprecated and its usage should be avoided.
 
 Address: `0x4200000000000000000000000000000000000006`
 
-`WETH9` is the standard implementation of Wrapped Ether on Optimism. It is a
+`WETH9` is the standard implementation of Wrapped Ether on Base. It is a
 commonly used contract and is placed as a predeploy so that it is at a
-deterministic address across Optimism based networks.
+deterministic address across Base networks.
 
 ## L2CrossDomainMessenger
 

@@ -1,9 +1,10 @@
 use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use alloy_genesis::ChainConfig;
+use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_consensus_derive::{DataAvailabilityProvider, PipelineBuilder, StatefulAttributesBuilder};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
@@ -166,7 +167,7 @@ impl ActionTestHarness {
         D: DataAvailabilityProvider + Send + Sync + Debug,
     {
         let rollup_config = Arc::new(self.rollup_config.clone());
-        let l1_chain_config = Arc::new(L1ChainConfig::default());
+        let l1_chain_config = Arc::new(ChainConfig::default());
 
         let l1_provider = ActionL1ChainProvider::new(l1_chain.clone());
         let l2_provider = ActionL2ChainProvider::from_genesis(&self.rollup_config);
@@ -233,7 +234,7 @@ impl ActionTestHarness {
     /// Create an [`L2Sequencer`] starting from L2 genesis, wired to a
     /// snapshot of the current L1 chain.
     ///
-    /// The returned sequencer generates real [`OpBlock`]s with a proper
+    /// The returned sequencer generates real [`BaseBlock`]s with a proper
     /// L1-info deposit transaction (first tx) and signed EIP-1559 user
     /// transactions. Call `build_next_block_with_single_transaction()` once per L2 block to advance
     /// the sequencer.
@@ -260,7 +261,7 @@ impl ActionTestHarness {
     }
 
     /// Decode the [`L1BlockInfoTx`] from the first deposit transaction of an
-    /// [`OpBlock`].
+    /// [`BaseBlock`].
     ///
     /// Every L2 block begins with an L1 info deposit whose calldata encodes the
     /// active [`L1BlockInfoTx`] variant (Bedrock / Ecotone / Isthmus / Jovian).
@@ -270,7 +271,7 @@ impl ActionTestHarness {
     ///
     /// Panics if the first transaction is not a deposit or if the calldata
     /// cannot be decoded.
-    pub fn l1_info_from_block(block: &OpBlock) -> L1BlockInfoTx {
+    pub fn l1_info_from_block(block: &BaseBlock) -> L1BlockInfoTx {
         let OpTxEnvelope::Deposit(sealed) = &block.body.transactions[0] else {
             panic!("first transaction must be a deposit");
         };
@@ -278,13 +279,13 @@ impl ActionTestHarness {
             .expect("L1 info calldata must decode")
     }
 
-    /// Build an [`ActionL2Source`] pre-populated with `n` real [`OpBlock`]s
+    /// Build an [`ActionL2Source`] pre-populated with `n` real [`BaseBlock`]s
     /// starting from L2 genesis.
     ///
     /// Use this when a test needs a ready-made block source and does not
     /// require direct access to the underlying [`L2Sequencer`].
     ///
-    /// [`OpBlock`]: base_alloy_consensus::OpBlock
+    /// [`BaseBlock`]: base_alloy_consensus::BaseBlock
     pub fn create_l2_source(&self, n: u64) -> ActionL2Source {
         let chain = SharedL1Chain::from_blocks(self.l1.chain().to_vec());
         let mut sequencer = self.create_l2_sequencer(chain);

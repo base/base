@@ -18,7 +18,7 @@ base_tx_manager::define_signer_cli!("BASE_CHALLENGER");
 base_tx_manager::define_tx_manager_cli!("BASE_CHALLENGER");
 
 /// Challenger - ZK-proof dispute game challenger for Base.
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(name = "challenger")]
 #[command(version, about, long_about = None)]
 #[command(styles = CliStyles::init())]
@@ -40,19 +40,8 @@ pub struct Cli {
     pub health: HealthArgs,
 }
 
-impl std::fmt::Debug for Cli {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Cli")
-            .field("challenger", &self.challenger)
-            .field("logging", &self.logging)
-            .field("metrics", &self.metrics)
-            .field("health", &self.health)
-            .finish()
-    }
-}
-
 /// Core challenger configuration arguments.
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(next_help_heading = "Challenger")]
 pub struct ChallengerArgs {
     /// URL of the L1 Ethereum RPC endpoint.
@@ -124,23 +113,17 @@ pub struct ChallengerArgs {
     /// Number of past games to scan on startup.
     #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
     pub lookback_games: u64,
-}
 
-impl std::fmt::Debug for ChallengerArgs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ChallengerArgs")
-            .field("l1_eth_rpc", &self.l1_eth_rpc)
-            .field("l2_eth_rpc", &self.l2_eth_rpc)
-            .field("dispute_game_factory_addr", &self.dispute_game_factory_addr)
-            .field("poll_interval", &self.poll_interval)
-            .field("zk_rpc_url", &self.zk_rpc_url)
-            .field("zk_connect_timeout", &self.zk_connect_timeout)
-            .field("zk_request_timeout", &self.zk_request_timeout)
-            .field("tee_rpc_url", &self.tee_rpc_url)
-            .field("tee_request_timeout", &self.tee_request_timeout)
-            .field("signer", &self.signer)
-            .field("tx_manager", &self.tx_manager)
-            .field("lookback_games", &self.lookback_games)
-            .finish()
-    }
+    /// Comma-separated list of addresses to claim bonds on behalf of.
+    ///
+    /// When set, the challenger will automatically resolve games and claim
+    /// bond credits for games where the `bondRecipient` matches any of
+    /// these addresses. Requires two `claimCredit()` calls per game with
+    /// a `DelayedWETH` delay in between.
+    #[arg(
+        long = "bond-claim-addresses",
+        env = cli_env!("BOND_CLAIM_ADDRESSES"),
+        value_delimiter = ','
+    )]
+    pub bond_claim_addresses: Vec<Address>,
 }

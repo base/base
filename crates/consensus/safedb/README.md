@@ -1,6 +1,6 @@
 # base-consensus-safedb
 
-Persistent safe head tracking for the OP Stack derivation pipeline.
+Persistent safe head tracking for the Base derivation pipeline.
 
 This crate provides traits and a [redb](https://docs.rs/redb)-backed implementation for recording
 which L2 safe head was derived from each L1 block. The RPC layer queries this store to answer

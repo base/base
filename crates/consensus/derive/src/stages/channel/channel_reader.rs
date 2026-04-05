@@ -6,9 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_consensus_genesis::{
-    MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD, RollupConfig, SystemConfig,
-};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{Batch, BatchReader, BlockInfo};
 use tracing::{debug, warn};
 
@@ -66,9 +64,9 @@ where
 
             let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
             let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin.timestamp) {
-                MAX_RLP_BYTES_PER_CHANNEL_FJORD
+                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
             } else {
-                MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
+                RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
             };
 
             self.next_batch =
@@ -223,7 +221,7 @@ mod tests {
         let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
         reader.next_batch = Some(BatchReader::new(
             new_compressed_batch_data(),
-            MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+            RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
         ));
         reader.flush_channel().await.unwrap();
         assert!(reader.next_batch.is_none());
@@ -235,7 +233,7 @@ mod tests {
         let mut reader = ChannelReader::new(mock, Arc::new(RollupConfig::default()));
         reader.next_batch = Some(BatchReader::new(
             vec![0x00, 0x01, 0x02],
-            MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+            RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
         ));
         assert!(!reader.prev.reset);
         reader.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();

@@ -9,7 +9,7 @@ no_std_packages=(
   base-alloy-consensus
   base-alloy-evm
   base-alloy-chains
-  base-alloy-rpc-types
+  base-common-rpc-types
   base-alloy-rpc-types-engine
 
   # consensus protocol crates

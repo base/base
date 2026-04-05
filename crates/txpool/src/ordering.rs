@@ -105,7 +105,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
-    use base_execution_primitives::OpTransactionSigned;
+    use base_alloy_consensus::OpTransactionSigned;
     use base_test_utils::Account;
     use reth_primitives_traits::Recovered;
     use reth_transaction_pool::{TransactionOrdering, test_utils::TransactionBuilder};

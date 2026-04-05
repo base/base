@@ -7,7 +7,7 @@ use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HA
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
-use base_alloy_consensus::{OpBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadSidecar, OpPayloadError};
 use base_consensus_genesis::ChainGenesis;
 use derive_more::Display;
@@ -147,7 +147,7 @@ pub enum FromBlockError {
     /// Failed to decode the [`L1BlockInfoTx`] from the deposit transaction.
     #[error("Failed to decode the L1BlockInfoTx from the deposit transaction: {0}")]
     BlockInfoDecodeError(#[from] DecodeError),
-    /// Failed to convert [`OpExecutionPayload`] to [`OpBlock`].
+    /// Failed to convert [`OpExecutionPayload`] to [`BaseBlock`].
     #[error(transparent)]
     OpPayload(#[from] OpPayloadError),
 }
@@ -214,7 +214,7 @@ impl L2BlockInfo {
         parent_beacon_block_root: Option<B256>,
         genesis: &ChainGenesis,
     ) -> Result<Self, FromBlockError> {
-        let block: OpBlock = match payload {
+        let block: BaseBlock = match payload {
             OpExecutionPayload::V4(_) => {
                 let sidecar = OpExecutionPayloadSidecar::v4(
                     CancunPayloadFields::new(
@@ -244,7 +244,7 @@ mod tests {
 
     use alloy_consensus::{Header, TxEnvelope};
     use alloy_primitives::b256;
-    use base_alloy_consensus::OpBlock;
+    use base_alloy_consensus::BaseBlock;
 
     use super::*;
     use crate::test_utils::RAW_BEDROCK_INFO_TX;
@@ -298,7 +298,7 @@ mod tests {
             effective_gas_price: Some(1),
             transaction_index: Some(0),
         };
-        let block: alloy_rpc_types_eth::Block<base_alloy_rpc_types::Transaction> =
+        let block: alloy_rpc_types_eth::Block<base_common_rpc_types::Transaction> =
             alloy_rpc_types_eth::Block {
                 header: alloy_rpc_types_eth::Header {
                     hash: b256!("04d6fefc87466405ba0e5672dcf5c75325b33e5437da2a42423080aab8be889b"),
@@ -313,7 +313,7 @@ mod tests {
                     ..Default::default()
                 },
                 transactions: alloy_rpc_types_eth::BlockTransactions::Full(vec![
-                    base_alloy_rpc_types::Transaction {
+                    base_common_rpc_types::Transaction {
                         inner: tx_env,
                         deposit_nonce: None,
                         deposit_receipt_version: None,
@@ -371,7 +371,7 @@ mod tests {
             l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },
             ..Default::default()
         };
-        let op_block = OpBlock {
+        let op_block = BaseBlock {
             header: Header {
                 number: 1,
                 parent_hash: B256::from([2; 32]),

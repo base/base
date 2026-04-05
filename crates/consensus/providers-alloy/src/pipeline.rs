@@ -3,14 +3,15 @@
 use core::fmt::Debug;
 use std::sync::Arc;
 
+use alloy_genesis::ChainConfig;
 use async_trait::async_trait;
 use base_consensus_derive::{
     DerivationPipeline, EthereumDataSource, IndexedAttributesQueueStage, OriginProvider, Pipeline,
     PipelineBuilder, PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, ResetSignal,
     Signal, SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
-use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider};
 
@@ -57,7 +58,7 @@ impl OnlinePipeline {
     /// Constructs a new polled derivation pipeline that is initialized.
     pub async fn new(
         cfg: Arc<RollupConfig>,
-        l1_cfg: Arc<L1ChainConfig>,
+        l1_cfg: Arc<ChainConfig>,
         l2_safe_head: L2BlockInfo,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
@@ -87,7 +88,7 @@ impl OnlinePipeline {
     /// constructs a new online pipeline and sends the reset signal.
     pub fn new_polled(
         cfg: Arc<RollupConfig>,
-        l1_cfg: Arc<L1ChainConfig>,
+        l1_cfg: Arc<ChainConfig>,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
         l2_chain_provider: AlloyL2ChainProvider,
@@ -121,7 +122,7 @@ impl OnlinePipeline {
     /// constructs a new online pipeline and sends the reset signal.
     pub fn new_indexed(
         cfg: Arc<RollupConfig>,
-        l1_cfg: Arc<L1ChainConfig>,
+        l1_cfg: Arc<ChainConfig>,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
         l2_chain_provider: AlloyL2ChainProvider,
@@ -169,7 +170,7 @@ impl OriginProvider for OnlinePipeline {
 }
 
 impl Iterator for OnlinePipeline {
-    type Item = OpAttributesWithParent;
+    type Item = AttributesWithParent;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -181,8 +182,8 @@ impl Iterator for OnlinePipeline {
 
 #[async_trait]
 impl Pipeline for OnlinePipeline {
-    /// Peeks at the next [`OpAttributesWithParent`] from the pipeline.
-    fn peek(&self) -> Option<&OpAttributesWithParent> {
+    /// Peeks at the next [`AttributesWithParent`] from the pipeline.
+    fn peek(&self) -> Option<&AttributesWithParent> {
         match self {
             Self::Polled(pipeline) => pipeline.peek(),
             Self::Managed(pipeline) => pipeline.peek(),

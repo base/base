@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 # reth
 reth-consensus.workspace = true
-reth-chainspec.workspace = true
 reth-storage-api.workspace = true
 reth-trie-common.workspace = true
 reth-execution-types.workspace = true
@@ -25,7 +24,7 @@ reth-primitives-traits.workspace = true
 # op-reth
 base-protocol.workspace = true
 base-alloy-chains.workspace = true
-base-execution-primitives.workspace = true
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 
 # ethereum
 revm.workspace = true
@@ -40,6 +39,7 @@ thiserror.workspace = true
 base-execution-chainspec.workspace = true
 
 [dev-dependencies]
+reth-chainspec.workspace = true
 reth-trie.workspace = true
 reth-revm.workspace = true
 base-node-core.workspace = true
@@ -48,7 +48,6 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 
 alloy-chains.workspace = true
 
-base-alloy-consensus.workspace = true
 base-execution-forks.workspace = true
 
 [features]
@@ -61,9 +60,7 @@ std = [
 	"alloy-trie/std",
 	"base-alloy-consensus/std",
 	"base-execution-chainspec/std",
-	"base-execution-primitives/std",
 	"base-protocol/std",
-	"reth-chainspec/std",
 	"reth-consensus-common/std",
 	"reth-consensus/std",
 	"reth-execution-types/std",

@@ -5,7 +5,7 @@ use alloy_rpc_types_engine::{ExecutionPayload, PayloadId};
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
@@ -37,8 +37,8 @@ pub struct SealTask<EngineClient_: EngineClient> {
     pub cfg: Arc<RollupConfig>,
     /// The [`PayloadId`] being sealed.
     pub payload_id: PayloadId,
-    /// The [`OpAttributesWithParent`] to instruct the execution layer to build.
-    pub attributes: OpAttributesWithParent,
+    /// The [`AttributesWithParent`] to instruct the execution layer to build.
+    pub attributes: AttributesWithParent,
     /// Whether or not the payload was derived, or created by the sequencer.
     pub is_attributes_derived: bool,
     /// An optional sender to convey success/failure result of the built
@@ -63,7 +63,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         cfg: &RollupConfig,
         engine: &EngineClient_,
         payload_id: PayloadId,
-        payload_attrs: OpAttributesWithParent,
+        payload_attrs: AttributesWithParent,
     ) -> Result<OpExecutionPayloadEnvelope, SealTaskError> {
         let payload_timestamp = payload_attrs.attributes().payload_attributes.timestamp;
 

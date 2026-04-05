@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use alloy_sol_types::SolCall;
 use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
-use base_alloy_rpc_types::Transaction;
+use base_common_rpc_types::Transaction;
 use base_execution_chainspec::OpChainSpec;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,

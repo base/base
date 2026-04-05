@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use base_protocol::{BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo};
 
 /// An internal type alias for L1 block numbers.
 type L1BlockNumber = u64;
@@ -18,17 +18,17 @@ type L2BlockNumber = u64;
 #[derive(Debug, Default)]
 pub struct L2Finalizer {
     /// A map of `L1 block number -> highest derived L2 block number` within the L1 epoch, used to
-    /// track derived [`OpAttributesWithParent`] awaiting finalization. When a new finalized L1
+    /// track derived [`AttributesWithParent`] awaiting finalization. When a new finalized L1
     /// block is received, the highest L2 block whose inputs are contained within the finalized
     /// L1 chain is finalized.
     awaiting_finalization: BTreeMap<L1BlockNumber, L2BlockNumber>,
 }
 
 impl L2Finalizer {
-    /// Enqueues a derived [`OpAttributesWithParent`] for finalization. When a new finalized L1
-    /// block is observed that is `>=` the height of [`OpAttributesWithParent::derived_from`], the
+    /// Enqueues a derived [`AttributesWithParent`] for finalization. When a new finalized L1
+    /// block is observed that is `>=` the height of [`AttributesWithParent::derived_from`], the
     /// L2 block associated with the payload attributes will be finalized.
-    pub(crate) fn enqueue_for_finalization(&mut self, attributes: &OpAttributesWithParent) {
+    pub(crate) fn enqueue_for_finalization(&mut self, attributes: &AttributesWithParent) {
         self.awaiting_finalization
             .entry(
                 attributes.derived_from.map(|b| b.number).expect(
@@ -75,25 +75,20 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use base_alloy_rpc_types_engine::OpPayloadAttributes;
-    use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+    use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::L2Finalizer;
 
-    /// Build a minimal [`OpAttributesWithParent`] whose derived L2 block number is
+    /// Build a minimal [`AttributesWithParent`] whose derived L2 block number is
     /// `l2_parent_number + 1` and whose L1 origin is `l1_origin_number`.
-    fn attrs(l2_parent_number: u64, l1_origin_number: u64) -> OpAttributesWithParent {
+    fn attrs(l2_parent_number: u64, l1_origin_number: u64) -> AttributesWithParent {
         let parent = L2BlockInfo {
             block_info: BlockInfo { number: l2_parent_number, ..Default::default() },
             l1_origin: BlockNumHash::default(),
             seq_num: 0,
         };
         let derived_from = BlockInfo { number: l1_origin_number, ..Default::default() };
-        OpAttributesWithParent::new(
-            OpPayloadAttributes::default(),
-            parent,
-            Some(derived_from),
-            false,
-        )
+        AttributesWithParent::new(OpPayloadAttributes::default(), parent, Some(derived_from), false)
     }
 
     /// Build a [`BlockInfo`] representing a finalized L1 block at `number`.

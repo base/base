@@ -20,7 +20,7 @@ Upgrade activation flows through three layers:
 
 ### 1. Add the variant to the `BaseUpgrade` enum
 
-**File:** [`crates/common/chains/src/hardfork.rs`](../../crates/common/chains/src/hardfork.rs)
+**File:** [`crates/common/chains/src/upgrade.rs`](../../crates/common/chains/src/upgrade.rs)
 
 Inside the `hardfork!` macro, append the new variant after the current last entry:
 
@@ -196,7 +196,7 @@ For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition:
 
 ### 5. Add the trait method
 
-**File:** [`crates/common/chains/src/hardforks.rs`](../../crates/common/chains/src/hardforks.rs)
+**File:** [`crates/common/chains/src/upgrades.rs`](../../crates/common/chains/src/upgrades.rs)
 
 ```rust
 /// Returns `true` if [`V1`](BaseUpgrade::V1) is active at given block timestamp.
@@ -210,7 +210,7 @@ fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
 ### 6. Update timestamp constants and test fixtures
 
 **Files:**
-- [`crates/common/chains/src/hardfork.rs`](../../crates/common/chains/src/hardfork.rs) (mainnet, sepolia, devnet constants)
+- [`crates/common/chains/src/upgrade.rs`](../../crates/common/chains/src/upgrade.rs) (mainnet, sepolia, devnet constants)
 - [`crates/common/chains/src/lib.rs`](../../crates/common/chains/src/lib.rs)
 - [`crates/consensus/registry/src/test_utils/mod.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod.rs)
 
@@ -378,9 +378,9 @@ forks.push((BaseUpgrade::V1.boxed(), self[BaseUpgrade::V1]));  // <-- add
 
 ### Always required
 
-- [ ] `BaseUpgrade` variant added in `hardfork.rs`; all four chain arrays updated
+- [ ] `BaseUpgrade` variant added in `upgrade.rs`; all four chain arrays updated
 - [ ] `Index<BaseUpgrade>` arm added in `chain.rs`
-- [ ] Config field (flat or nested struct) added to `HardForkConfig` in `hardfork.rs`; `iter()` updated; new types re-exported
+- [ ] Config field (flat or nested struct) added to `HardForkConfig` in `upgrade.rs`; `iter()` updated; new types re-exported
 - [ ] `is_X_active` + `is_first_X_block` added to `RollupConfig`; `upgrade_activation` arm added; previous terminal upgrade cascades to new one (unless standalone)
 - [ ] `is_X_active_at_timestamp` added to `BaseUpgrades` trait
 - [ ] Timestamp constants added to `mainnet.rs`, `sepolia.rs`, `devnet_0_sepolia_dev_0.rs`; re-exported from `lib.rs`

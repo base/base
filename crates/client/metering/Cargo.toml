@@ -70,7 +70,7 @@ base-node-runner = { workspace = true, features = ["test-utils"] }
 # reth
 base-node-core.workspace = true
 reth-db-common.workspace = true
-base-execution-primitives.workspace = true
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
@@ -87,7 +87,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-sol-types.workspace = true
 
 # base-alloy
-base-alloy-rpc-types.workspace = true
+base-common-rpc-types.workspace = true
 
 # misc
 url.workspace = true

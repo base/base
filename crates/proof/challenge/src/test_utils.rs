@@ -47,6 +47,48 @@ pub struct MockGameState {
     pub intermediate_output_roots: Vec<B256>,
     /// 1-based index of the challenged intermediate root (`0` = unchallenged).
     pub countered_index: u64,
+    /// Whether the game's dispute period has elapsed.
+    pub game_over: bool,
+    /// Timestamp at which the game was resolved (`0` if unresolved).
+    pub resolved_at: u64,
+    /// Address that will receive the bond.
+    pub bond_recipient: Address,
+    /// Whether the bond has been unlocked.
+    pub bond_unlocked: bool,
+    /// Whether the bond has been claimed.
+    pub bond_claimed: bool,
+    /// Expected resolution timestamp.
+    pub expected_resolution: u64,
+    /// Number of verified proofs.
+    pub proof_count: u8,
+    /// Timestamp at which the game was created.
+    pub created_at: u64,
+    /// Address of the `DelayedWETH` contract.
+    pub delayed_weth: Address,
+}
+
+impl Default for MockGameState {
+    fn default() -> Self {
+        Self {
+            status: 0,
+            zk_prover: Address::ZERO,
+            tee_prover: Address::ZERO,
+            game_info: GameInfo { root_claim: B256::ZERO, l2_block_number: 0, parent_index: 0 },
+            starting_block_number: 0,
+            l1_head: B256::ZERO,
+            intermediate_output_roots: vec![],
+            countered_index: 0,
+            game_over: false,
+            resolved_at: 0,
+            bond_recipient: Address::ZERO,
+            bond_unlocked: false,
+            bond_claimed: false,
+            expected_resolution: u64::MAX,
+            proof_count: 0,
+            created_at: 0,
+            delayed_weth: Address::ZERO,
+        }
+    }
 }
 
 /// Mock dispute game factory with configurable per-index game data.
@@ -85,48 +127,43 @@ pub struct MockAggregateVerifier {
     pub games: HashMap<Address, MockGameState>,
 }
 
+impl MockAggregateVerifier {
+    fn get<T>(
+        &self,
+        game_address: Address,
+        f: impl FnOnce(&MockGameState) -> T,
+    ) -> Result<T, ContractError> {
+        self.games
+            .get(&game_address)
+            .map(f)
+            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+    }
+}
+
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError> {
-        self.games
-            .get(&game_address)
-            .map(|s| s.game_info.clone())
-            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+        self.get(game_address, |s| s.game_info.clone())
     }
 
     async fn status(&self, game_address: Address) -> Result<u8, ContractError> {
-        self.games
-            .get(&game_address)
-            .map(|s| s.status)
-            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+        self.get(game_address, |s| s.status)
     }
 
     async fn zk_prover(&self, game_address: Address) -> Result<Address, ContractError> {
-        self.games
-            .get(&game_address)
-            .map(|s| s.zk_prover)
-            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+        self.get(game_address, |s| s.zk_prover)
     }
 
     async fn tee_prover(&self, game_address: Address) -> Result<Address, ContractError> {
-        self.games
-            .get(&game_address)
-            .map(|s| s.tee_prover)
-            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+        self.get(game_address, |s| s.tee_prover)
     }
 
     async fn starting_block_number(&self, game_address: Address) -> Result<u64, ContractError> {
-        self.games
-            .get(&game_address)
-            .map(|s| s.starting_block_number)
-            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+        self.get(game_address, |s| s.starting_block_number)
     }
 
     async fn l1_head(&self, game_address: Address) -> Result<B256, ContractError> {
-        self.games
-            .get(&game_address)
-            .map(|s| s.l1_head)
-            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+        self.get(game_address, |s| s.l1_head)
     }
 
     async fn read_block_interval(&self, _impl_address: Address) -> Result<u64, ContractError> {
@@ -144,17 +181,47 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         &self,
         game_address: Address,
     ) -> Result<Vec<B256>, ContractError> {
-        self.games
-            .get(&game_address)
-            .map(|s| s.intermediate_output_roots.clone())
-            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+        self.get(game_address, |s| s.intermediate_output_roots.clone())
     }
 
     async fn countered_index(&self, game_address: Address) -> Result<u64, ContractError> {
-        self.games
-            .get(&game_address)
-            .map(|s| s.countered_index)
-            .ok_or_else(|| ContractError::Validation(format!("unknown game {game_address}")))
+        self.get(game_address, |s| s.countered_index)
+    }
+
+    async fn game_over(&self, game_address: Address) -> Result<bool, ContractError> {
+        self.get(game_address, |s| s.game_over)
+    }
+
+    async fn resolved_at(&self, game_address: Address) -> Result<u64, ContractError> {
+        self.get(game_address, |s| s.resolved_at)
+    }
+
+    async fn bond_recipient(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.get(game_address, |s| s.bond_recipient)
+    }
+
+    async fn bond_unlocked(&self, game_address: Address) -> Result<bool, ContractError> {
+        self.get(game_address, |s| s.bond_unlocked)
+    }
+
+    async fn bond_claimed(&self, game_address: Address) -> Result<bool, ContractError> {
+        self.get(game_address, |s| s.bond_claimed)
+    }
+
+    async fn expected_resolution(&self, game_address: Address) -> Result<u64, ContractError> {
+        self.get(game_address, |s| s.expected_resolution)
+    }
+
+    async fn proof_count(&self, game_address: Address) -> Result<u8, ContractError> {
+        self.get(game_address, |s| s.proof_count)
+    }
+
+    async fn created_at(&self, game_address: Address) -> Result<u64, ContractError> {
+        self.get(game_address, |s| s.created_at)
+    }
+
+    async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.get(game_address, |s| s.delayed_weth)
     }
 }
 
@@ -208,6 +275,15 @@ pub const fn mock_state_with_tee(
         l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![],
         countered_index: 0,
+        game_over: false,
+        resolved_at: 0,
+        bond_recipient: Address::ZERO,
+        bond_unlocked: false,
+        bond_claimed: false,
+        expected_resolution: u64::MAX,
+        proof_count: 0,
+        created_at: 0,
+        delayed_weth: Address::ZERO,
     }
 }
 
@@ -315,11 +391,11 @@ impl L2Provider for MockL2Provider {
             .ok_or_else(|| RpcError::HeaderNotFound(format!("no header for block {block_number}")))
     }
 
-    async fn block_by_number(&self, _number: Option<u64>) -> RpcResult<base_proof_rpc::OpBlock> {
+    async fn block_by_number(&self, _number: Option<u64>) -> RpcResult<base_proof_rpc::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 
-    async fn block_by_hash(&self, _hash: B256) -> RpcResult<base_proof_rpc::OpBlock> {
+    async fn block_by_hash(&self, _hash: B256) -> RpcResult<base_proof_rpc::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 }
@@ -529,6 +605,52 @@ pub fn build_test_header_and_account(
         storage_proof: vec![],
     };
     (header, account_result)
+}
+
+/// Mock bond transaction submitter for testing the [`BondManager`](crate::BondManager).
+///
+/// Records all submitted transactions and returns pre-configured responses.
+#[derive(Debug)]
+pub struct MockBondTransactionSubmitter {
+    /// Queue of results returned by [`send_bond_tx`](crate::BondTransactionSubmitter::send_bond_tx).
+    pub responses: Mutex<VecDeque<Result<B256, crate::ChallengeSubmitError>>>,
+    /// Recorded `(game_address, calldata)` pairs for each submitted transaction.
+    pub calls: Mutex<Vec<(Address, Bytes)>>,
+}
+
+impl MockBondTransactionSubmitter {
+    /// Creates a mock that returns a single successful transaction hash.
+    pub fn success(tx_hash: B256) -> Self {
+        let mut q = VecDeque::new();
+        q.push_back(Ok(tx_hash));
+        Self { responses: Mutex::new(q), calls: Mutex::new(Vec::new()) }
+    }
+
+    /// Creates a mock with multiple responses returned in order.
+    pub fn with_responses(responses: Vec<Result<B256, crate::ChallengeSubmitError>>) -> Self {
+        Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(Vec::new()) }
+    }
+
+    /// Returns the recorded calls.
+    pub fn recorded_calls(&self) -> Vec<(Address, Bytes)> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
+    async fn send_bond_tx(
+        &self,
+        game_address: Address,
+        calldata: Bytes,
+    ) -> Result<B256, crate::ChallengeSubmitError> {
+        self.calls.lock().unwrap().push((game_address, calldata));
+        self.responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("MockBondTransactionSubmitter has no more responses")
+    }
 }
 
 #[cfg(test)]

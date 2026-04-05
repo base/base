@@ -2,8 +2,8 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use base_alloy_consensus::OpPrimitives;
 use base_execution_chainspec::OpChainSpec;
-use base_execution_primitives::OpPrimitives;
 use base_execution_trie::{
     OpProofStoragePruner, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
 };

@@ -11,7 +11,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_network::Base;
-use base_alloy_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::OpTransactionRequest;
 use base_tx_forwarding::TxForwardingConfig;
 use base_txpool::{MAX_BUNDLE_ADVANCE_BLOCKS, unix_time_millis};
 use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};

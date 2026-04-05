@@ -21,11 +21,11 @@ use reth_provider::providers::BlockchainProvider;
 use reth_tasks::Runtime;
 
 use crate::{
-    BaseNodeExtension, NodeHooks, OpProvider, node::BaseNode, test_utils::engine::EngineApi,
+    BaseNodeExtension, BaseProvider, NodeHooks, node::BaseNode, test_utils::engine::EngineApi,
 };
 
 /// Convenience alias for the local blockchain provider type.
-pub type LocalNodeProvider = OpProvider;
+pub type LocalNodeProvider = BaseProvider;
 
 /// Handle to a launched local node along with the resources required to keep it alive.
 pub struct LocalNode {

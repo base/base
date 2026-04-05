@@ -7,7 +7,7 @@ use base_alloy_rpc_types_engine::{
 };
 use base_consensus_derive::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
 use base_consensus_engine::SealTaskError;
-use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use jsonrpsee::core::ClientError;
 use rstest::rstest;
 
@@ -48,8 +48,8 @@ fn conductor_rpc_error() -> ConductorError {
     ConductorError::Rpc(ClientError::Custom("test conductor error".to_string()))
 }
 
-fn dummy_attributes_with_parent() -> OpAttributesWithParent {
-    OpAttributesWithParent::new(OpPayloadAttributes::default(), L2BlockInfo::default(), None, false)
+fn dummy_attributes_with_parent() -> AttributesWithParent {
+    AttributesWithParent::new(OpPayloadAttributes::default(), L2BlockInfo::default(), None, false)
 }
 
 fn handle_with_parent_number(number: u64) -> UnsealedPayloadHandle {
@@ -63,7 +63,7 @@ fn handle_with_parent(number: u64, hash: B256) -> UnsealedPayloadHandle {
     };
     UnsealedPayloadHandle {
         payload_id: Default::default(),
-        attributes_with_parent: OpAttributesWithParent::new(
+        attributes_with_parent: AttributesWithParent::new(
             OpPayloadAttributes::default(),
             parent,
             None,

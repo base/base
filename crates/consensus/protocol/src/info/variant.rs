@@ -3,9 +3,10 @@
 
 use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
+use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
 use base_alloy_consensus::{DepositSourceDomain, L1InfoDepositSource, TxDeposit};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
@@ -42,7 +43,7 @@ impl L1BlockInfoTx {
     /// Creates a new [`L1BlockInfoTx`] from the given information.
     pub fn try_new(
         rollup_config: &RollupConfig,
-        l1_config: &L1ChainConfig,
+        l1_config: &ChainConfig,
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
@@ -182,7 +183,7 @@ impl L1BlockInfoTx {
     /// to include at the top of a block.
     pub fn try_new_with_deposit_tx(
         rollup_config: &RollupConfig,
-        l1_config: &L1ChainConfig,
+        l1_config: &ChainConfig,
         system_config: &SystemConfig,
         sequence_number: u64,
         l1_header: &Header,
@@ -390,7 +391,7 @@ mod tests {
 
     use alloy_primitives::{address, b256};
     use base_consensus_genesis::HardForkConfig;
-    use base_consensus_registry::L1Config;
+    use base_consensus_registry::Sepolia;
     use rstest::rstest;
 
     use super::*;
@@ -714,7 +715,7 @@ mod tests {
     #[test]
     fn test_try_new_bedrock() {
         let rollup_config = RollupConfig::default();
-        let l1_config = L1Config::sepolia();
+        let l1_config = Sepolia::l1_config();
         let system_config = SystemConfig::default();
         let sequence_number = 0;
         let l1_header = Header::default();
@@ -750,7 +751,7 @@ mod tests {
             hardforks: HardForkConfig { ecotone_time: Some(1), ..Default::default() },
             ..Default::default()
         };
-        let l1_config = L1Config::sepolia();
+        let l1_config = Sepolia::l1_config();
         let system_config = SystemConfig::default();
         let sequence_number = 0;
         let l1_header = Header::default();
@@ -813,7 +814,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let mut l1_genesis: L1ChainConfig = L1Config::sepolia().into();
+        let mut l1_genesis: ChainConfig = Sepolia::l1_config();
         l1_genesis.prague_time = Some(2);
 
         let system_config = SystemConfig::default();
@@ -884,7 +885,7 @@ mod tests {
             },
             ..Default::default()
         };
-        let l1_config = L1Config::sepolia();
+        let l1_config = Sepolia::l1_config();
         let system_config = SystemConfig {
             batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
             operator_fee_scalar: Some(0xabcd),
@@ -953,7 +954,7 @@ mod tests {
             hardforks: HardForkConfig { isthmus_time: Some(1), ..Default::default() },
             ..Default::default()
         };
-        let l1_config = L1Config::sepolia();
+        let l1_config = Sepolia::l1_config();
         let system_config = SystemConfig {
             batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
             operator_fee_scalar: Some(0xabcd),
@@ -1018,7 +1019,7 @@ mod tests {
             hardforks: HardForkConfig { isthmus_time: Some(1), ..Default::default() },
             ..Default::default()
         };
-        let l1_config = L1Config::sepolia();
+        let l1_config = Sepolia::l1_config();
         let system_config = SystemConfig {
             batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
             operator_fee_scalar: Some(0xabcd),

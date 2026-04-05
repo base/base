@@ -9,7 +9,7 @@ impl TryFromTransactionResponse<Base> for OpTxEnvelope {
     type Error = Infallible;
 
     fn from_transaction_response(
-        transaction_response: base_alloy_rpc_types::Transaction,
+        transaction_response: base_common_rpc_types::Transaction,
     ) -> Result<Self, Self::Error> {
         Ok(transaction_response.inner.into_inner())
     }
@@ -19,7 +19,7 @@ impl TryFromReceiptResponse<Base> for OpReceipt {
     type Error = Infallible;
 
     fn from_receipt_response(
-        receipt_response: base_alloy_rpc_types::OpTransactionReceipt,
+        receipt_response: base_common_rpc_types::OpTransactionReceipt,
     ) -> Result<Self, Self::Error> {
         Ok(receipt_response.inner.inner.into_components().0.map_logs(Into::into))
     }

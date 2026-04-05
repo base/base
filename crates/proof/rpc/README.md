@@ -14,7 +14,7 @@ Provides async client traits and concrete Alloy-backed implementations for:
 - **`RollupClient`**: Querying rollup configuration and sync status from op-node.
 
 Also provides a `MeteredCache` with hit/miss tracking, `RetryConfig` for exponential
-backoff, shared RPC types (`OpBlock`, `L1BlockRef`, `L2BlockRef`, `SyncStatus`), and
+backoff, shared RPC types (`BaseBlock`, `L1BlockRef`, `L2BlockRef`, `SyncStatus`), and
 an `RpcError` type for error handling.
 
 These abstractions are used by both [`base-proposer`](../proposer/) and the challenger.

@@ -6,7 +6,7 @@ use base_action_harness::{
     SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
-use base_consensus_genesis::{GRANITE_CHANNEL_TIMEOUT, HardForkConfig};
+use base_consensus_genesis::{HardForkConfig, RollupConfig};
 
 // ---------------------------------------------------------------------------
 // A. Span batch with non-empty hardfork transition block is rejected
@@ -257,8 +257,10 @@ async fn granite_channel_timeout_enforced() {
 
     // Verify the config has the expected timeout values.
     assert_eq!(
-        rollup_cfg.granite_channel_timeout, GRANITE_CHANNEL_TIMEOUT,
-        "granite_channel_timeout must be {GRANITE_CHANNEL_TIMEOUT}"
+        rollup_cfg.granite_channel_timeout,
+        RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+        "granite_channel_timeout must be {}",
+        RollupConfig::GRANITE_CHANNEL_TIMEOUT
     );
     assert_eq!(
         rollup_cfg.channel_timeout, 300,

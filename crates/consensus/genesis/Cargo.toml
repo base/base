@@ -17,7 +17,6 @@ workspace = true
 # Alloy
 alloy-eips.workspace = true
 alloy-chains.workspace = true
-alloy-genesis.workspace = true
 alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
 alloy-hardforks.workspace = true
@@ -48,7 +47,6 @@ std = [
 	"alloy-chains/std",
 	"alloy-consensus/std",
 	"alloy-eips/std",
-	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"derive_more/std",

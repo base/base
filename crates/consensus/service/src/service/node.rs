@@ -2,12 +2,13 @@
 use std::{ops::Not as _, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
+use alloy_genesis::ChainConfig;
 use alloy_provider::RootProvider;
 use base_alloy_chains::BaseChainConfig;
 use base_alloy_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState};
-use base_consensus_genesis::{L1ChainConfig, RollupConfig};
+use base_consensus_genesis::RollupConfig;
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,
@@ -37,7 +38,7 @@ pub(crate) const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
 #[derive(Debug, Clone)]
 pub struct L1Config {
     /// The L1 chain configuration.
-    pub chain_config: Arc<L1ChainConfig>,
+    pub chain_config: Arc<ChainConfig>,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
     /// The L1 beacon client.

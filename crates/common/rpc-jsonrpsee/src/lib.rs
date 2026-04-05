@@ -13,5 +13,5 @@ pub use traits::EthSignerApiClient;
 #[cfg(feature = "signer")]
 pub use traits::EthSignerApiServer;
 #[cfg(feature = "client")]
-pub use traits::{MinerApiExtClient, OpAdminApiClient};
-pub use traits::{MinerApiExtServer, OpAdminApiServer};
+pub use traits::{BaseAdminApiClient, MinerApiExtClient};
+pub use traits::{BaseAdminApiServer, MinerApiExtServer};

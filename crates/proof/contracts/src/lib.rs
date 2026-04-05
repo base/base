@@ -9,8 +9,11 @@
 mod aggregate_verifier;
 pub use aggregate_verifier::{
     AggregateVerifierClient, AggregateVerifierContractClient, GameInfo, encode_challenge_calldata,
-    encode_nullify_calldata,
+    encode_claim_credit_calldata, encode_nullify_calldata, encode_resolve_calldata,
 };
+
+mod delayed_weth;
+pub use delayed_weth::{DelayedWETHClient, DelayedWETHContractClient};
 
 mod anchor_state_registry;
 pub use anchor_state_registry::{

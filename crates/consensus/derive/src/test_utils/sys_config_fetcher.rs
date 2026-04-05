@@ -4,7 +4,7 @@ use alloc::{boxed::Box, string::ToString, sync::Arc};
 
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
-use base_alloy_consensus::OpBlock;
+use base_alloy_consensus::BaseBlock;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, L2BlockInfo};
 use thiserror::Error;
@@ -51,7 +51,7 @@ impl From<TestSystemConfigL2FetcherError> for PipelineErrorKind {
 impl BatchValidationProvider for TestSystemConfigL2Fetcher {
     type Error = TestSystemConfigL2FetcherError;
 
-    async fn block_by_number(&mut self, _: u64) -> Result<OpBlock, Self::Error> {
+    async fn block_by_number(&mut self, _: u64) -> Result<BaseBlock, Self::Error> {
         unimplemented!()
     }
 

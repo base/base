@@ -42,11 +42,6 @@ base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
-base-execution-primitives = { workspace = true, features = [
-	"serde",
-	"serde-bincode-compat",
-	"reth-codec",
-] }
 base-execution-evm = { workspace = true, features = ["std", "rpc"] }
 base-execution-consensus = { workspace = true, features = ["std"] }
 
@@ -65,7 +60,7 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
 base-alloy-chains.workspace = true
-base-alloy-consensus.workspace = true
+base-alloy-consensus = { workspace = true, features = ["reth"] }
 alloy-rpc-types-engine.workspace = true
 base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 
@@ -123,8 +118,8 @@ js-tracer = [
 ]
 test-utils = [
 	"alloy-genesis",
+	"base-alloy-consensus/arbitrary",
 	"base-execution-exex/test-utils",
-	"base-execution-primitives/arbitrary",
 	"base-node-core/test-utils",
 	"base-protocol/test-utils",
 	"reth-chainspec/test-utils",
@@ -147,7 +142,7 @@ test-utils = [
 	"reth-trie-db/test-utils",
 	"serde_json",
 ]
-reth-codec = [ "base-execution-primitives/reth-codec" ]
+reth-codec = []
 
 [[test]]
 name = "e2e_testsuite"
