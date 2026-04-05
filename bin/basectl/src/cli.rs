@@ -37,4 +37,7 @@ pub(crate) enum Commands {
     /// HA conductor cluster monitor
     #[command(visible_alias = "co")]
     Conductor,
+    /// Network upgrade activation countdown and history
+    #[command(visible_alias = "u")]
+    Upgrades,
 }

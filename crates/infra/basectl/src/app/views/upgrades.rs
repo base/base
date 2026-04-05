@@ -1,0 +1,1098 @@
+//! Network upgrade activation countdown and history view.
+
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use base_alloy_chains::BaseChainConfig;
+use chrono::{DateTime, Utc};
+use crossterm::event::{KeyCode, KeyEvent};
+use jsonrpsee::{
+    core::client::ClientT,
+    http_client::{HttpClient, HttpClientBuilder},
+    rpc_params,
+};
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    prelude::*,
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+};
+use serde_json::json;
+use tokio::{sync::mpsc, task::JoinHandle};
+
+use crate::{
+    app::{Action, Resources, View},
+    commands::common::COLOR_BASE_BLUE,
+    tui::Keybinding,
+};
+
+// ── Segment display (7-char wide × 7-row tall per digit) ─────────────────────
+
+const SEG: [[&str; 7]; 10] = [
+    [" ═════ ", "║     ║", "║     ║", "       ", "║     ║", "║     ║", " ═════ "], // 0
+    ["       ", "      ║", "      ║", "       ", "      ║", "      ║", "       "], // 1
+    [" ═════ ", "      ║", "      ║", " ═════ ", "║      ", "║      ", " ═════ "], // 2
+    [" ═════ ", "      ║", "      ║", " ═════ ", "      ║", "      ║", " ═════ "], // 3
+    ["       ", "║     ║", "║     ║", " ═════ ", "      ║", "      ║", "       "], // 4
+    [" ═════ ", "║      ", "║      ", " ═════ ", "      ║", "      ║", " ═════ "], // 5
+    [" ═════ ", "║      ", "║      ", " ═════ ", "║     ║", "║     ║", " ═════ "], // 6
+    [" ═════ ", "      ║", "      ║", "       ", "      ║", "      ║", "       "], // 7
+    [" ═════ ", "║     ║", "║     ║", " ═════ ", "║     ║", "║     ║", " ═════ "], // 8
+    [" ═════ ", "║     ║", "║     ║", " ═════ ", "      ║", "      ║", " ═════ "], // 9
+];
+
+const SEG_ROWS: usize = 7;
+const SEG_DIGIT_W: usize = 7;
+const SEG_GROUP_W: usize = SEG_DIGIT_W + 1 + SEG_DIGIT_W; // digit + gap + digit = 15
+const SEP_W: usize = 3;
+
+const fn colon_row(r: usize) -> &'static str {
+    if r == 2 || r == 4 { " ▪ " } else { "   " }
+}
+
+// ── Upgrade data ──────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+struct UpgradeSpec {
+    name: &'static str,
+    timestamp: Option<u64>,
+}
+
+#[derive(Debug)]
+struct ChainUpgrades {
+    display_name: &'static str,
+    /// Default RPC URL used when the loaded config doesn't match this chain.
+    default_rpc: &'static str,
+    specs: Vec<UpgradeSpec>,
+}
+
+fn specs_from_config(cfg: &BaseChainConfig) -> Vec<UpgradeSpec> {
+    vec![
+        UpgradeSpec { name: "Delta", timestamp: Some(cfg.delta_timestamp) },
+        UpgradeSpec { name: "Canyon", timestamp: Some(cfg.canyon_timestamp) },
+        UpgradeSpec { name: "Ecotone", timestamp: Some(cfg.ecotone_timestamp) },
+        UpgradeSpec { name: "Fjord", timestamp: Some(cfg.fjord_timestamp) },
+        UpgradeSpec { name: "Granite", timestamp: Some(cfg.granite_timestamp) },
+        UpgradeSpec { name: "Holocene", timestamp: Some(cfg.holocene_timestamp) },
+        UpgradeSpec { name: "Isthmus", timestamp: Some(cfg.isthmus_timestamp) },
+        UpgradeSpec { name: "Jovian", timestamp: Some(cfg.jovian_timestamp) },
+        UpgradeSpec { name: "V1", timestamp: cfg.base_v1_timestamp },
+    ]
+}
+
+fn all_chains() -> [ChainUpgrades; 4] {
+    [
+        ChainUpgrades {
+            display_name: "Devnet",
+            default_rpc: "http://localhost:7545",
+            specs: specs_from_config(BaseChainConfig::alpha()),
+        },
+        ChainUpgrades {
+            display_name: "Zeronet",
+            default_rpc: "https://base-zeronet.cbhq.net",
+            specs: specs_from_config(BaseChainConfig::zeronet()),
+        },
+        ChainUpgrades {
+            display_name: "Sepolia",
+            default_rpc: "https://sepolia.base.org",
+            specs: specs_from_config(BaseChainConfig::sepolia()),
+        },
+        ChainUpgrades {
+            display_name: "Mainnet",
+            default_rpc: "https://mainnet.base.org",
+            specs: specs_from_config(BaseChainConfig::mainnet()),
+        },
+    ]
+}
+
+// ── Check types ───────────────────────────────────────────────────────────────
+
+/// Expected check names for V1, in execution order.
+const V1_CHECK_NAMES: &[&str] = &[
+    "CLZ zero",
+    "CLZ one",
+    "CLZ high-bit",
+    "CLZ four-bits",
+    "MODEXP size limit",
+    "MODEXP min gas",
+    "P256VERIFY gas",
+    "eth_config",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckMode {
+    Before,
+    After,
+}
+
+#[derive(Debug, Clone)]
+struct CheckResult {
+    passed: Option<bool>,
+    detail: String,
+}
+
+/// Streaming update sent from the background check task to the view.
+#[derive(Debug)]
+enum CheckUpdate {
+    /// A check is about to run.
+    Starting(String),
+    /// A check completed.
+    Completed { name: String, result: CheckResult },
+}
+
+/// State for the checks panel. Tracks streaming results per chain.
+#[derive(Debug, Default)]
+struct ChecksPanel {
+    /// Chain index these checks were (or are being) run for.
+    chain_idx: Option<usize>,
+    mode: Option<CheckMode>,
+    rpc_url: String,
+    /// Name of the check currently executing.
+    current: Option<String>,
+    /// Completed results keyed by check name.
+    results: HashMap<String, CheckResult>,
+    running: bool,
+    rx: Option<mpsc::Receiver<CheckUpdate>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl ChecksPanel {
+    fn start(&mut self, chain_idx: usize, rpc_url: String, mode: CheckMode) {
+        let (tx, rx) = mpsc::channel(64);
+        self.chain_idx = Some(chain_idx);
+        self.mode = Some(mode);
+        self.rpc_url = rpc_url.clone();
+        self.current = None;
+        self.results.clear();
+        self.running = true;
+        self.rx = Some(rx);
+        self.handle = Some(tokio::spawn(run_v1_checks_streaming(rpc_url, mode, tx)));
+    }
+
+    fn reset(&mut self) {
+        if let Some(h) = self.handle.take() {
+            h.abort();
+        }
+        self.chain_idx = None;
+        self.mode = None;
+        self.rpc_url.clear();
+        self.current = None;
+        self.results.clear();
+        self.running = false;
+        self.rx = None;
+    }
+
+    fn poll(&mut self) {
+        let Some(ref mut rx) = self.rx else { return };
+        loop {
+            match rx.try_recv() {
+                Ok(CheckUpdate::Starting(name)) => {
+                    self.current = Some(name);
+                }
+                Ok(CheckUpdate::Completed { name, result }) => {
+                    self.results.insert(name, result);
+                    self.current = None;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.running = false;
+                    self.current = None;
+                    self.rx = None;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// ── Color zones ───────────────────────────────────────────────────────────────
+
+const fn zone_color(remaining_secs: i64) -> Color {
+    match remaining_secs {
+        s if s > 30 * 86400 => Color::DarkGray,
+        s if s > 14 * 86400 => COLOR_BASE_BLUE,
+        s if s > 7 * 86400 => Color::Cyan,
+        s if s > 3 * 86400 => Color::Green,
+        s if s > 86400 => Color::Yellow,
+        s if s > 3600 => Color::Rgb(255, 140, 0),
+        s if s > 600 => Color::Red,
+        _ => Color::Magenta,
+    }
+}
+
+const fn zone_message(remaining_secs: i64) -> &'static str {
+    match remaining_secs {
+        s if s > 30 * 86400 => "standing by...",
+        s if s > 14 * 86400 => "less than 30 days to go",
+        s if s > 7 * 86400 => "under two weeks",
+        s if s > 3 * 86400 => "less than a week",
+        s if s > 86400 => "under 3 days",
+        s if s > 3600 => "final 24 hours — all hands on deck",
+        s if s > 600 => "under an hour — stand by your terminals",
+        _ => "under 10 minutes — THIS IS IT",
+    }
+}
+
+const CYCLE_COLORS: &[Color] =
+    &[Color::LightGreen, Color::Green, Color::Cyan, Color::Yellow, Color::LightGreen];
+
+const CONFETTI: &[&str] =
+    &["✦", "✧", "✨", "⚡", "★", "☆", "◆", "◇", "▲", "△", "●", "○", "♦", "♢", "❋", "✿", "❊", "✺"];
+
+// ── Time helpers ──────────────────────────────────────────────────────────────
+
+fn now_unix() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+fn fmt_timestamp(ts: u64) -> String {
+    if ts == 0 {
+        return "genesis".to_string();
+    }
+    DateTime::<Utc>::from_timestamp(ts as i64, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn fmt_elapsed(elapsed_secs: u64) -> String {
+    let days = elapsed_secs / 86400;
+    let hours = (elapsed_secs % 86400) / 3600;
+    let minutes = (elapsed_secs % 3600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m ago")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m ago")
+    } else {
+        format!("{minutes}m ago")
+    }
+}
+
+// ── View ──────────────────────────────────────────────────────────────────────
+
+const KEYBINDINGS: &[Keybinding] = &[
+    Keybinding { key: "←/→", description: "Switch chain" },
+    Keybinding { key: "1-4", description: "Jump to chain" },
+    Keybinding { key: "r", description: "Run checks" },
+    Keybinding { key: "Esc", description: "Back to home" },
+    Keybinding { key: "?", description: "Toggle help" },
+];
+
+/// Network upgrade activation countdown and history view.
+#[derive(Debug)]
+pub(crate) struct UpgradesView {
+    chains: [ChainUpgrades; 4],
+    selected_chain: usize,
+    tick_count: u64,
+    checks: ChecksPanel,
+}
+
+impl Default for UpgradesView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UpgradesView {
+    /// Creates a new upgrades view.
+    pub(crate) fn new() -> Self {
+        Self {
+            chains: all_chains(),
+            selected_chain: 0,
+            tick_count: 0,
+            checks: ChecksPanel {
+                chain_idx: None,
+                mode: None,
+                rpc_url: String::new(),
+                current: None,
+                results: HashMap::new(),
+                running: false,
+                rx: None,
+                handle: None,
+            },
+        }
+    }
+
+    fn rpc_for_selected(&self, resources: &Resources) -> String {
+        let chain = &self.chains[self.selected_chain];
+        let loaded = resources.config.name.to_lowercase();
+        let selected = chain.display_name.to_lowercase();
+        if loaded == selected || (selected == "devnet" && loaded.contains("devnet")) {
+            resources.config.rpc.to_string()
+        } else {
+            chain.default_rpc.to_string()
+        }
+    }
+}
+
+impl View for UpgradesView {
+    fn keybindings(&self) -> &'static [Keybinding] {
+        KEYBINDINGS
+    }
+
+    fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
+        match key.code {
+            KeyCode::Left | KeyCode::Char('h') => {
+                let prev = self.selected_chain.saturating_sub(1);
+                if prev != self.selected_chain {
+                    self.selected_chain = prev;
+                    self.checks.reset();
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Tab => {
+                if self.selected_chain < self.chains.len() - 1 {
+                    self.selected_chain += 1;
+                    self.checks.reset();
+                }
+            }
+            KeyCode::Char(c @ '1'..='4') => {
+                let idx = (c as usize) - ('1' as usize);
+                if idx < self.chains.len() && idx != self.selected_chain {
+                    self.selected_chain = idx;
+                    self.checks.reset();
+                }
+            }
+            KeyCode::Char('r') if !self.checks.running => {
+                let now = now_unix();
+                let chain = &self.chains[self.selected_chain];
+                // Derive mode from V1's own timestamp so that a chain where V1 is
+                // active but a later fork is upcoming still runs checks in After mode.
+                if let Some(v1_ts) =
+                    chain.specs.iter().find(|s| s.name == "V1").and_then(|s| s.timestamp)
+                {
+                    let rpc = self.rpc_for_selected(resources);
+                    let mode = if v1_ts > now { CheckMode::Before } else { CheckMode::After };
+                    self.checks.start(self.selected_chain, rpc, mode);
+                }
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
+    fn tick(&mut self, _resources: &mut Resources) -> Action {
+        self.tick_count = self.tick_count.wrapping_add(1);
+        self.checks.poll();
+        Action::None
+    }
+
+    fn render(&mut self, frame: &mut Frame<'_>, area: Rect, _resources: &Resources) {
+        let now = now_unix();
+        let chain = &self.chains[self.selected_chain];
+
+        let upcoming = chain
+            .specs
+            .iter()
+            .filter_map(|s| s.timestamp.filter(|&ts| ts > 0).map(|ts| (s.name, ts)))
+            .filter(|(_, ts)| *ts > now)
+            .min_by_key(|(_, ts)| *ts);
+
+        let latest_activated = chain
+            .specs
+            .iter()
+            .filter_map(|s| s.timestamp.filter(|&ts| ts > 0).map(|ts| (s.name, ts)))
+            .filter(|(_, ts)| *ts <= now)
+            .max_by_key(|(_, ts)| *ts);
+
+        // Layout: chain tabs | main display | bottom (history + checks) | footer
+        let outer = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(16),
+                Constraint::Min(6),
+                Constraint::Length(1),
+            ])
+            .split(area);
+
+        render_chain_tabs(frame, outer[0], &self.chains, self.selected_chain);
+
+        match upcoming {
+            Some((name, ts)) => {
+                let remaining = ts as i64 - now as i64;
+                render_countdown(frame, outer[1], name, ts, remaining, now, self.tick_count);
+            }
+            None => match latest_activated {
+                Some((name, ts)) => {
+                    render_activated(
+                        frame,
+                        outer[1],
+                        name,
+                        ts,
+                        now.saturating_sub(ts),
+                        self.tick_count,
+                    );
+                }
+                None => render_tbd(frame, outer[1]),
+            },
+        }
+
+        let bottom = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .split(outer[2]);
+
+        render_history(frame, bottom[0], chain, now);
+        render_checks_panel(frame, bottom[1], &self.checks, self.tick_count);
+        render_footer(frame, outer[3], self.checks.running);
+    }
+}
+
+// ── Rendering helpers ─────────────────────────────────────────────────────────
+
+fn render_chain_tabs(frame: &mut Frame<'_>, area: Rect, chains: &[ChainUpgrades], selected: usize) {
+    let block =
+        Block::default().borders(Borders::ALL).border_style(Style::default().fg(COLOR_BASE_BLUE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut spans = vec![Span::raw("  ")];
+    for (i, chain) in chains.iter().enumerate() {
+        let label = format!(" {} ", chain.display_name);
+        if i == selected {
+            spans.push(Span::styled(
+                label,
+                Style::default().fg(Color::Black).bg(COLOR_BASE_BLUE).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(label, Style::default().fg(Color::DarkGray)));
+        }
+        spans.push(Span::raw("  "));
+    }
+    spans.push(Span::styled("  ←/→  1·2·3·4", Style::default().fg(Color::DarkGray)));
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
+}
+
+fn render_countdown(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    name: &'static str,
+    ts: u64,
+    remaining: i64,
+    now: u64,
+    _tick: u64,
+) {
+    let color = zone_color(remaining);
+    let msg = zone_message(remaining);
+
+    let secs = remaining.max(0) as u64;
+    let (days, hours, minutes, seconds) =
+        (secs / 86400, (secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
+
+    let start_ts = ts.saturating_sub(90 * 86400);
+    let total = ts.saturating_sub(start_ts) as f64;
+    let elapsed = now.saturating_sub(start_ts) as f64;
+    let pct = if total > 0.0 { (elapsed / total).clamp(0.0, 1.0) } else { 1.0 };
+    let bar_w = 50usize;
+    let filled = (bar_w as f64 * pct) as usize;
+    let bar =
+        format!("|{}{}|  {:.1}%", "█".repeat(filled), "░".repeat(bar_w - filled), pct * 100.0);
+
+    let mut lines: Vec<Line<'static>> = vec![Line::from("")];
+    lines.extend(clock_lines(days, hours, minutes, seconds, color));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(bar, Style::default().fg(color))));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        msg,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("target {}  ·  ts {ts}", fmt_timestamp(ts)),
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let block = Block::default()
+        .title(format!(" ⚡  BASE {name} UPGRADE  ⚡ "))
+        .title_style(Style::default().fg(color).add_modifier(Modifier::BOLD))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(color));
+
+    frame.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+}
+
+fn render_activated(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    name: &'static str,
+    ts: u64,
+    elapsed_secs: u64,
+    tick: u64,
+) {
+    let cycle_color = CYCLE_COLORS[(tick / 4) as usize % CYCLE_COLORS.len()];
+    let n = CONFETTI.len();
+    let phase = (tick / 4) as usize;
+    let conf_fwd: String = (0..n).map(|i| format!("{}  ", CONFETTI[(phase + i) % n])).collect();
+    let conf_bwd: String =
+        (0..n).map(|i| format!("{}  ", CONFETTI[(phase + n - 1 - i) % n])).collect();
+
+    let lines: Vec<Line<'static>> = vec![
+        Line::from(""),
+        Line::from(Span::styled(conf_fwd, Style::default().fg(Color::Yellow))),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  A C T I V A T E D  ",
+            Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("{name} is LIVE"),
+            Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            format!("activated {}  ·  {}", fmt_timestamp(ts), fmt_elapsed(elapsed_secs)),
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(conf_bwd, Style::default().fg(Color::Cyan))),
+        Line::from(""),
+    ];
+
+    let block = Block::default()
+        .title(format!(" ⚡  BASE {name} UPGRADE  ⚡ "))
+        .title_style(Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(cycle_color));
+
+    frame.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+}
+
+fn render_tbd(frame: &mut Frame<'_>, area: Rect) {
+    let lines: Vec<Line<'static>> = vec![
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
+            "T B D",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled("upgrade not yet scheduled", Style::default().fg(Color::DarkGray))),
+    ];
+    let block = Block::default()
+        .title(" Upcoming Upgrade ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+}
+
+fn render_history(frame: &mut Frame<'_>, area: Rect, chain: &ChainUpgrades, now: u64) {
+    let block = Block::default()
+        .title(" Upgrade History ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(COLOR_BASE_BLUE));
+
+    let rows: Vec<Row<'static>> = chain
+        .specs
+        .iter()
+        .rev()
+        .map(|spec| {
+            let (date_str, status_str, status_color) = match spec.timestamp {
+                None => ("-".to_string(), "− TBD".to_string(), Color::DarkGray),
+                Some(ts) if ts <= now => {
+                    (fmt_timestamp(ts), "✓ Active".to_string(), Color::LightGreen)
+                }
+                Some(ts) => (fmt_timestamp(ts), "⏳ Upcoming".to_string(), Color::Yellow),
+            };
+            Row::new([
+                Cell::from(spec.name).style(Style::default().fg(Color::White)),
+                Cell::from(date_str).style(Style::default().fg(Color::Gray)),
+                Cell::from(status_str)
+                    .style(Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+            ])
+        })
+        .collect();
+
+    let header = Row::new(["UPGRADE", "DATE", "STATUS"])
+        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
+
+    let widths = [Constraint::Length(10), Constraint::Min(20), Constraint::Length(11)];
+    frame.render_widget(Table::new(rows, widths).block(block).header(header), area);
+}
+
+fn render_checks_panel(frame: &mut Frame<'_>, area: Rect, panel: &ChecksPanel, tick: u64) {
+    let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+    // Panel is idle and has never been run.
+    if panel.chain_idx.is_none() {
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "Press [r] to run post-upgrade checks",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Checks: CLZ opcode · MODEXP size/gas · P256VERIFY gas · eth_config",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        let block = Block::default()
+            .title(" V1 Checks ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+        return;
+    }
+
+    let mode_str = match panel.mode {
+        Some(CheckMode::Before) => "before",
+        Some(CheckMode::After) => "after",
+        None => "?",
+    };
+
+    let passed = panel.results.values().filter(|r| r.passed == Some(true)).count();
+    let failed = panel.results.values().filter(|r| r.passed == Some(false)).count();
+
+    let (title, border_color) = if panel.running {
+        let spin = spinner[(tick / 2) as usize % spinner.len()];
+        (format!(" V1 Checks ({mode_str})  {spin} running… "), Color::Yellow)
+    } else if failed > 0 {
+        (format!(" V1 Checks ({mode_str})  ✓ {passed}  ✗ {failed} "), Color::Red)
+    } else {
+        (format!(" V1 Checks ({mode_str})  ✓ {passed} passed "), Color::LightGreen)
+    };
+
+    let rows: Vec<Row<'static>> = V1_CHECK_NAMES
+        .iter()
+        .map(|&name| {
+            panel.results.get(name).map_or_else(
+                || {
+                    if panel.current.as_deref() == Some(name) {
+                        let spin = spinner[(tick / 2) as usize % spinner.len()];
+                        Row::new([
+                            Cell::from(name).style(Style::default().fg(Color::White)),
+                            Cell::from(spin.to_string()).style(Style::default().fg(Color::Yellow)),
+                            Cell::from("").style(Style::default()),
+                        ])
+                    } else {
+                        // Not yet started.
+                        Row::new([
+                            Cell::from(name).style(Style::default().fg(Color::DarkGray)),
+                            Cell::from(""),
+                            Cell::from(""),
+                        ])
+                    }
+                },
+                |result| {
+                    let (status_str, status_color) = match result.passed {
+                        None => ("SKIP".to_string(), Color::DarkGray),
+                        Some(true) => ("PASS".to_string(), Color::LightGreen),
+                        Some(false) => ("FAIL".to_string(), Color::Red),
+                    };
+                    Row::new([
+                        Cell::from(name).style(Style::default().fg(Color::White)),
+                        Cell::from(status_str)
+                            .style(Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+                        Cell::from(result.detail.clone())
+                            .style(Style::default().fg(Color::DarkGray)),
+                    ])
+                },
+            )
+        })
+        .collect();
+
+    let header = Row::new(["CHECK", "", "DETAIL"])
+        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD));
+
+    let widths = [Constraint::Length(20), Constraint::Length(5), Constraint::Min(8)];
+
+    let block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(border_color))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    // Show the RPC URL below the table as a subtitle via a footer line.
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let (table_area, rpc_area) = {
+        let s = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(inner);
+        (s[0], s[1])
+    };
+
+    frame.render_widget(Table::new(rows, widths).header(header), table_area);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            panel.rpc_url.clone(),
+            Style::default().fg(Color::DarkGray),
+        )))
+        .alignment(Alignment::Right),
+        rpc_area,
+    );
+}
+
+fn render_footer(frame: &mut Frame<'_>, area: Rect, checks_running: bool) {
+    let key_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
+    let sep = Span::styled("  │  ", Style::default().fg(Color::DarkGray));
+
+    let mut spans = vec![
+        Span::styled("[Esc]", key_style),
+        Span::raw(" "),
+        Span::styled("back", desc_style),
+        sep.clone(),
+        Span::styled("[←/→]", key_style),
+        Span::raw(" "),
+        Span::styled("switch chain", desc_style),
+        sep.clone(),
+        Span::styled("[1-4]", key_style),
+        Span::raw(" "),
+        Span::styled("jump to chain", desc_style),
+        sep.clone(),
+    ];
+
+    if checks_running {
+        spans.push(Span::styled("checks running…", Style::default().fg(Color::Yellow)));
+    } else {
+        spans.push(Span::styled("[r]", key_style));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled("run checks", desc_style));
+    }
+
+    spans.push(sep);
+    spans.push(Span::styled("[?]", key_style));
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled("help", desc_style));
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+// ── 7-segment clock ───────────────────────────────────────────────────────────
+
+fn clock_lines(
+    days: u64,
+    hours: u64,
+    minutes: u64,
+    seconds: u64,
+    color: Color,
+) -> Vec<Line<'static>> {
+    let pairs: Vec<String> = if days > 0 {
+        vec![
+            format!("{:02}", days.min(99)),
+            format!("{hours:02}"),
+            format!("{minutes:02}"),
+            format!("{seconds:02}"),
+        ]
+    } else {
+        vec![format!("{hours:02}"), format!("{minutes:02}"), format!("{seconds:02}")]
+    };
+    let labels: &[&str] =
+        if days > 0 { &["DAYS", "HRS", "MIN", "SEC"] } else { &["HRS", "MIN", "SEC"] };
+    let n = pairs.len();
+
+    let mut lines = Vec::with_capacity(SEG_ROWS + 1);
+    lines.extend((0..SEG_ROWS).map(|r| {
+        let mut row = String::new();
+        for (i, pair) in pairs.iter().enumerate() {
+            let d0 = usize::from(pair.as_bytes()[0].wrapping_sub(b'0').min(9));
+            let d1 = usize::from(pair.as_bytes()[1].wrapping_sub(b'0').min(9));
+            row.push_str(SEG[d0][r]);
+            row.push(' ');
+            row.push_str(SEG[d1][r]);
+            if i < n - 1 {
+                row.push_str(colon_row(r));
+            }
+        }
+        Line::from(Span::styled(row, Style::default().fg(color)))
+    }));
+
+    let mut label_row = String::new();
+    for (i, label) in labels.iter().enumerate() {
+        let pad_total = SEG_GROUP_W.saturating_sub(label.len());
+        let pad_l = pad_total / 2;
+        let pad_r = pad_total - pad_l;
+        label_row.push_str(&" ".repeat(pad_l));
+        label_row.push_str(label);
+        label_row.push_str(&" ".repeat(pad_r));
+        if i < n - 1 {
+            label_row.push_str(&" ".repeat(SEP_W));
+        }
+    }
+    lines.push(Line::from(Span::styled(label_row, Style::default().fg(Color::DarkGray))));
+    lines
+}
+
+// ── V1 activation checks (ported from v1.py run_v1_checks) ───────────────────
+
+const CLZ_PROBE_ADDR: &str = "0x000000000000000000000000000000000000001e";
+const CLZ_RUNTIME: &str = "0x6000351e60005260206000f3";
+const MODEXP_ADDR: &str = "0x0000000000000000000000000000000000000005";
+const MODEXP_GAS_PROBE_ADDR: &str = "0x000000000000000000000000000000000000001d";
+const MODEXP_GAS_PROBE_RUNTIME: &str = "0x600060006060600060006005610190f160005260206000f3";
+const P256_GAS_PROBE_ADDR: &str = "0x000000000000000000000000000000000000001f";
+const P256_GAS_PROBE_RUNTIME: &str = "0x60006000600060006000610100611388f160005260206000f3";
+
+const CLZ_ZERO_INPUT: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
+const CLZ_ONE_INPUT: &str = "0x0000000000000000000000000000000000000000000000000000000000000001";
+const CLZ_HIBIT_INPUT: &str = "0x8000000000000000000000000000000000000000000000000000000000000000";
+const CLZ_4BITS_INPUT: &str = "0x0f00000000000000000000000000000000000000000000000000000000000000";
+
+const CLZ_ZERO_RES: &str = "0x0000000000000000000000000000000000000000000000000000000000000100";
+const CLZ_ONE_RES: &str = "0x00000000000000000000000000000000000000000000000000000000000000ff";
+const CLZ_HIBIT_RES: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
+const CLZ_4BITS_RES: &str = "0x0000000000000000000000000000000000000000000000000000000000000004";
+const PROBE_SUCCESS: &str = "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+const MODEXP_OVERSIZED: &str = concat!(
+    "0x",
+    "0000000000000000000000000000000000000000000000000000000000000401",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000001",
+);
+
+fn not_activated(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("notactivated")
+        || m.contains("invalid opcode")
+        || m.contains("undefined opcode")
+        || m.contains("opcode 0x1e")
+        || m.contains("unsupported opcode")
+}
+
+fn norm(h: &str) -> String {
+    h.trim().trim_matches('"').to_lowercase()
+}
+
+fn make_rpc_client(rpc_url: &str) -> Result<HttpClient, String> {
+    HttpClientBuilder::default()
+        .request_timeout(Duration::from_secs(12))
+        .build(rpc_url)
+        .map_err(|e| e.to_string())
+}
+
+async fn eth_call(client: &HttpClient, to: &str, data: &str) -> Result<String, String> {
+    ClientT::request::<String, _>(
+        client,
+        "eth_call",
+        rpc_params![json!({"to": to, "data": data}), "latest"],
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn eth_call_override(
+    client: &HttpClient,
+    to: &str,
+    data: &str,
+    override_addr: &str,
+    override_code: &str,
+) -> Result<String, String> {
+    ClientT::request::<String, _>(
+        client,
+        "eth_call",
+        rpc_params![
+            json!({"to": to, "data": data}),
+            "latest",
+            json!({override_addr: {"code": override_code}})
+        ],
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+fn evaluate_opcode_check(
+    _name: &str,
+    result: &Result<String, String>,
+    expected: &str,
+    mode: CheckMode,
+) -> CheckResult {
+    let (passed, detail) = match (mode, result) {
+        (CheckMode::Before, Err(e)) if not_activated(e) => {
+            (true, "opcode unavailable (expected before V1)".to_string())
+        }
+        (CheckMode::Before, Err(e)) => (false, format!("unexpected error: {e}")),
+        (CheckMode::Before, Ok(actual)) => {
+            (false, format!("unexpectedly succeeded before V1: {actual}"))
+        }
+        (CheckMode::After, Err(e)) => (false, format!("call failed: {e}")),
+        (CheckMode::After, Ok(actual)) => {
+            if norm(actual) == norm(expected) {
+                (true, format!("→ {}", actual.get(..20).unwrap_or(&actual)))
+            } else {
+                (false, format!("got {}", actual.get(..20).unwrap_or(&actual)))
+            }
+        }
+    };
+    CheckResult { passed: Some(passed), detail }
+}
+
+fn evaluate_gas_probe(
+    result: &Result<String, String>,
+    mode: CheckMode,
+    gas_label: &str,
+    before_desc: &str,
+    after_desc: &str,
+) -> CheckResult {
+    let actual = match result {
+        Err(e) => return CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
+        Ok(v) => norm(v),
+    };
+    let success_val = norm(PROBE_SUCCESS);
+
+    let (passed, detail) = if actual == success_val {
+        match mode {
+            CheckMode::Before => {
+                (true, format!("{gas_label} CALL succeeded ({before_desc} before V1)"))
+            }
+            CheckMode::After => (
+                false,
+                format!("{gas_label} CALL succeeded — expected OOG ({after_desc} after V1)"),
+            ),
+        }
+    } else {
+        match mode {
+            CheckMode::After => (true, format!("{gas_label} CALL OOG ({after_desc} after V1)")),
+            CheckMode::Before => {
+                (false, format!("{gas_label} CALL OOG — expected success ({before_desc})"))
+            }
+        }
+    };
+    CheckResult { passed: Some(passed), detail }
+}
+
+async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sender<CheckUpdate>) {
+    macro_rules! send_start {
+        ($name:expr) => {
+            if tx.send(CheckUpdate::Starting($name.to_string())).await.is_err() {
+                return;
+            }
+        };
+    }
+    macro_rules! send_result {
+        ($name:expr, $result:expr) => {
+            if tx
+                .send(CheckUpdate::Completed { name: $name.to_string(), result: $result })
+                .await
+                .is_err()
+            {
+                return;
+            }
+        };
+    }
+
+    let client = match make_rpc_client(&rpc_url) {
+        Ok(c) => c,
+        Err(e) => {
+            let conn_result = CheckResult {
+                passed: Some(false),
+                detail: format!("cannot build client for {rpc_url}: {e}"),
+            };
+            send_result!("CLZ zero", conn_result);
+            for &name in &V1_CHECK_NAMES[1..] {
+                send_result!(
+                    name,
+                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
+                );
+            }
+            return;
+        }
+    };
+
+    // Verify the RPC is reachable with a quick eth_blockNumber call.
+    send_start!("RPC connection");
+    match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
+        Ok(_) => {}
+        Err(e) => {
+            let conn_result =
+                CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
+            send_result!("CLZ zero", conn_result);
+            for &name in &V1_CHECK_NAMES[1..] {
+                send_result!(
+                    name,
+                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
+                );
+            }
+            return;
+        }
+    }
+
+    // ── CLZ opcode (0x1e) ─────────────────────────────────────────────────────
+    let clz_cases: &[(&str, &str, &str)] = &[
+        ("CLZ zero", CLZ_ZERO_INPUT, CLZ_ZERO_RES),
+        ("CLZ one", CLZ_ONE_INPUT, CLZ_ONE_RES),
+        ("CLZ high-bit", CLZ_HIBIT_INPUT, CLZ_HIBIT_RES),
+        ("CLZ four-bits", CLZ_4BITS_INPUT, CLZ_4BITS_RES),
+    ];
+    for (name, calldata, expected) in clz_cases {
+        send_start!(name);
+        let r =
+            eth_call_override(&client, CLZ_PROBE_ADDR, calldata, CLZ_PROBE_ADDR, CLZ_RUNTIME).await;
+        send_result!(name, evaluate_opcode_check(name, &r, expected, mode));
+    }
+
+    // ── MODEXP size limit ──────────────────────────────────────────────────────
+    send_start!("MODEXP size limit");
+    let r = eth_call(&client, MODEXP_ADDR, MODEXP_OVERSIZED).await;
+    let modexp_size = match (mode, r) {
+        (CheckMode::Before, Ok(_)) => CheckResult {
+            passed: Some(true),
+            detail: "oversized input accepted (expected before V1)".to_string(),
+        },
+        (CheckMode::Before, Err(e)) => {
+            CheckResult { passed: Some(false), detail: format!("unexpectedly rejected: {e}") }
+        }
+        (CheckMode::After, Err(_)) => CheckResult {
+            passed: Some(true),
+            detail: "oversized input rejected (correct)".to_string(),
+        },
+        (CheckMode::After, Ok(v)) => {
+            CheckResult { passed: Some(false), detail: format!("unexpectedly accepted: {v}") }
+        }
+    };
+    send_result!("MODEXP size limit", modexp_size);
+
+    // ── MODEXP min gas (200 → 500) ─────────────────────────────────────────────
+    send_start!("MODEXP min gas");
+    let r = eth_call_override(
+        &client,
+        MODEXP_GAS_PROBE_ADDR,
+        "0x",
+        MODEXP_GAS_PROBE_ADDR,
+        MODEXP_GAS_PROBE_RUNTIME,
+    )
+    .await;
+    send_result!("MODEXP min gas", evaluate_gas_probe(&r, mode, "400-gas", "min=200", "min=500"));
+
+    // ── P256VERIFY gas (3450 → 6900) ───────────────────────────────────────────
+    send_start!("P256VERIFY gas");
+    let r = eth_call_override(
+        &client,
+        P256_GAS_PROBE_ADDR,
+        "0x",
+        P256_GAS_PROBE_ADDR,
+        P256_GAS_PROBE_RUNTIME,
+    )
+    .await;
+    send_result!(
+        "P256VERIFY gas",
+        evaluate_gas_probe(&r, mode, "5000-gas", "cost=3450", "cost=6900")
+    );
+
+    // ── eth_config RPC method ──────────────────────────────────────────────────
+    send_start!("eth_config");
+    let cfg_result: Result<serde_json::Value, String> =
+        ClientT::request::<serde_json::Value, _>(&client, "eth_config", rpc_params![])
+            .await
+            .map_err(|e| e.to_string());
+    let eth_config_check = match (mode, cfg_result) {
+        (CheckMode::Before, Ok(_)) => CheckResult {
+            passed: Some(false),
+            detail: "unexpectedly available before V1".to_string(),
+        },
+        (CheckMode::Before, Err(_)) => CheckResult {
+            passed: Some(true),
+            detail: "unavailable before V1 (expected)".to_string(),
+        },
+        (CheckMode::After, Ok(_)) => {
+            CheckResult { passed: Some(true), detail: "available after V1".to_string() }
+        }
+        (CheckMode::After, Err(e)) => {
+            CheckResult { passed: Some(false), detail: format!("unavailable after V1: {e}") }
+        }
+    };
+    send_result!("eth_config", eth_config_check);
+}
