@@ -235,3 +235,7 @@ test-utils = [
 	"rlimit",
 	"testcontainers",
 ]
+
+[[bench]]
+name = "state_root"
+harness = false

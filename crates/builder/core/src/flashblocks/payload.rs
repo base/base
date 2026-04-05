@@ -914,22 +914,6 @@ where
     Ok(info)
 }
 
-/// Computes the state root from a [`HashedPostState`].
-///
-/// When `prev_trie_updates` is `None`, a full (cold) state root computation is
-/// performed via [`StateRootProvider::state_root_with_updates`].
-///
-/// When `prev_trie_updates` is `Some`, an incremental computation reuses cached
-/// trie nodes from the previous flashblock via
-/// [`StateRootProvider::state_root_from_nodes_with_updates`].
-pub fn compute_state_root(
-    provider: &(impl StateRootProvider + ?Sized),
-    hashed_state: HashedPostState,
-    _prev_trie_updates: Option<&TrieUpdates>,
-) -> Result<(B256, TrieUpdates), ProviderError> {
-    provider.state_root_with_updates(hashed_state)
-}
-
 pub(crate) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx,
@@ -978,8 +962,8 @@ where
     if calculate_state_root {
         let state_provider = state.database.as_ref();
         hashed_state = state_provider.hashed_post_state(&state.bundle_state);
-        (state_root, trie_output) = compute_state_root(state_provider, hashed_state.clone(), None)
-            .inspect_err(|err| {
+        (state_root, trie_output) =
+            state_provider.state_root_with_updates(hashed_state.clone()).inspect_err(|err| {
                 warn!(target: "payload_builder",
                     parent_header=%ctx.parent().hash(),
                     %err,
