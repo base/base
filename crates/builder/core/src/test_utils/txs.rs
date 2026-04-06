@@ -7,7 +7,7 @@ use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use base_alloy_network::Base;
-use base_txpool::BasePooledTransaction;
+use base_execution_txpool::BasePooledTransaction;
 use dashmap::DashMap;
 use futures::StreamExt;
 use reth_primitives::Recovered;

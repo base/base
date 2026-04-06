@@ -11,9 +11,9 @@ use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
 use base_execution_chainspec::OpChainSpec;
+use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
 use base_node_core::{args::RollupArgs, node::OpPoolBuilder};
 use base_node_runner::BaseNode;
-use base_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
 use reth_db::{

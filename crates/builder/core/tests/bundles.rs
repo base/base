@@ -8,7 +8,7 @@ use base_builder_core::test_utils::{
     ChainDriver, ChainDriverExt, ExternalTransactionPool, ONE_ETH, PrivateKeySigner, Protocol,
     TransactionBuilderExt, setup_test_instance,
 };
-use base_txpool::{BasePooledTransaction, unix_time_millis};
+use base_execution_txpool::{BasePooledTransaction, unix_time_millis};
 
 async fn insert_bundle_transaction<P: Protocol>(
     pool: &Arc<dyn ExternalTransactionPool>,

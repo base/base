@@ -34,7 +34,7 @@ reth-basic-payload-builder.workspace = true
 reth-tasks = { workspace = true, features = ["rayon"] }
 
 # op-reth
-base-txpool.workspace = true
+base-execution-txpool.workspace = true
 base-execution-evm.workspace = true
 base-execution-trie.workspace = true
 base-execution-payload-builder.workspace = true

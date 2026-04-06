@@ -82,6 +82,7 @@ skip = [
     # Crypto crates - version differences from different crypto stacks
     "block-buffer",
     "const-oid",
+    "cpufeatures",
     "crypto-common",
     "digest",
     "sha1",

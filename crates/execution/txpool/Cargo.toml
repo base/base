@@ -1,5 +1,5 @@
 [package]
-name = "base-txpool"
+name = "base-execution-txpool"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

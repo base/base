@@ -1,8 +1,8 @@
 //! Contains the [`TxForwardingExtension`] which wires up the transaction
 //! forwarding pipeline on the Base node builder.
 
+use base_execution_txpool::{SpawnedConsumer, SpawnedForwarder};
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_txpool::{SpawnedConsumer, SpawnedForwarder};
 use tracing::info;
 
 use crate::TxForwardingConfig;

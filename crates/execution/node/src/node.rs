@@ -22,7 +22,7 @@ use base_execution_rpc::{
     witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
 };
 use base_execution_storage::OpStorage;
-use base_txpool::{
+use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BaseTransactionPool, OpPooledTx, OpTransactionValidator,
     TimestampedTransaction,
 };

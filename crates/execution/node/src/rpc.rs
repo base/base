@@ -19,7 +19,7 @@
 //! use base_execution_evm::OpEvmConfig;
 //! use base_node_core::{BaseNetworkPrimitives, OpExecutorBuilder, OpNode};
 //! use base_execution_rpc::OpEthApiBuilder;
-//! use base_txpool::BasePooledTransaction;
+//! use base_execution_txpool::BasePooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;
 //! use reth_rpc::TraceApi;
 //! use reth_rpc_eth_types::{EthConfig, EthStateCache};

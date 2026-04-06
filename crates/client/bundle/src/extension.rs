@@ -5,8 +5,8 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+use base_execution_txpool::{SendBundleApiImpl, SendBundleApiServer, maintain_bundle_transactions};
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
-use base_txpool::{SendBundleApiImpl, SendBundleApiServer, maintain_bundle_transactions};
 use reth_chain_state::CanonStateSubscriptions;
 use reth_provider::BlockNumReader;
 use tokio_stream::wrappers::BroadcastStream;

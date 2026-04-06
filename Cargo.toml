@@ -64,7 +64,6 @@ members = [
   "crates/infra/load-tests",
   "crates/common/*",
   "crates/execution/*",
-  "crates/txpool",
   "etc/tools/*",
   "devnet",
   "actions/harness",
@@ -230,13 +229,11 @@ base-engine-tree = { path = "crates/execution/engine-tree" }
 base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-forks = { path = "crates/execution/hardforks" }
 base-execution-storage = { path = "crates/execution/storage" }
+base-execution-txpool = { path = "crates/execution/txpool" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
 base-revm = { path = "crates/execution/revm", default-features = false }
-
-# Txpool
-base-txpool = { path = "crates/txpool" }
 
 # Infra
 based = { path = "crates/infra/based" }

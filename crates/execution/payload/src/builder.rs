@@ -8,9 +8,9 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::OpTransaction;
+use base_execution_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
 use base_protocol::Predeploys;
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo};
-use base_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,

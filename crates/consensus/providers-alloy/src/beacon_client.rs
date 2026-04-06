@@ -169,12 +169,14 @@ impl OnlineBeaconClient {
         blob_hashes: &[B256],
     ) -> Result<Vec<BoxedBlob>, BeaconClientError> {
         let params = blob_hashes.iter().map(|hash| hash.to_string()).collect::<Vec<_>>();
-        let response = self
-            .inner
-            .get(format!("{}/{}/{}", self.base, BLOBS_METHOD_PREFIX, slot))
-            .query(&[("versioned_hashes", &params.join(","))])
-            .send()
-            .await?;
+        let url = format!(
+            "{}/{}/{}?versioned_hashes={}",
+            self.base,
+            BLOBS_METHOD_PREFIX,
+            slot,
+            params.join(",")
+        );
+        let response = self.inner.get(url).send().await?;
 
         // A 404 means the beacon slot was missed or orphaned. Blobs for such slots will never
         // become available, so surface this as a distinct error rather than a generic HTTP error

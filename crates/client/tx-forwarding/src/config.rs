@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_txpool::{
+use base_execution_txpool::{
     ConsumerConfig as TxpoolConsumerConfig, ForwarderConfig as TxpoolForwarderConfig,
 };
 use url::Url;

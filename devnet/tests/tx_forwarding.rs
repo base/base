@@ -14,8 +14,8 @@ use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_rpc_types::OpTransactionRequest;
+use base_execution_txpool::ValidatedTransaction;
 use base_tx_forwarding::TxForwardingConfig;
-use base_txpool::ValidatedTransaction;
 use devnet::{
     DevnetBuilder,
     config::{ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4},

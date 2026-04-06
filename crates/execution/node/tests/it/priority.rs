@@ -8,6 +8,7 @@ use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, ChainId, TxKind};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_execution_payload_builder::builder::OpPayloadTransactions;
+use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
     OpNode,
     args::RollupArgs,
@@ -17,7 +18,6 @@ use base_node_core::{
     },
     utils::optimism_payload_attributes,
 };
-use base_txpool::BasePooledTransaction;
 use reth_chainspec::EthChainSpec;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
