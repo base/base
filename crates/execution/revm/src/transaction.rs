@@ -1,7 +1,7 @@
 //! Contains the `[OpTransaction]` type and its implementation.
 
 mod abstraction;
-pub use abstraction::{BuildError, BaseTransactionBuilder, OpTransaction, OpTxTr};
+pub use abstraction::{BaseTransactionBuilder, BuildError, OpTransaction, OpTxTr};
 
 mod deposit;
 pub use deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
