@@ -175,9 +175,10 @@ impl Confirmer {
 
     /// Returns `None` if the receipt arrived before the flashblock WS message.
     fn get_flashblocks_latency(&self, tx_hash: &TxHash, pending: &PendingTx) -> Option<Duration> {
-        self.flashblock_times.read().get(tx_hash).and_then(|&fb_time| {
-            fb_time.checked_duration_since(pending.submit_time)
-        })
+        self.flashblock_times
+            .read()
+            .get(tx_hash)
+            .and_then(|&fb_time| fb_time.checked_duration_since(pending.submit_time))
     }
 
     fn get_block_latency(
@@ -185,9 +186,10 @@ impl Confirmer {
         block_number: u64,
         pending_submit_time: Instant,
     ) -> Option<Duration> {
-        self.block_first_seen.read().get(&block_number).and_then(|&block_time| {
-            block_time.checked_duration_since(pending_submit_time)
-        })
+        self.block_first_seen
+            .read()
+            .get(&block_number)
+            .and_then(|&block_time| block_time.checked_duration_since(pending_submit_time))
     }
 
     /// Creates a handle for submitting transactions.

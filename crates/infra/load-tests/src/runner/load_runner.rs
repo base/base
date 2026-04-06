@@ -696,8 +696,20 @@ impl LoadRunner {
             warn!("confirmer did not shut down in time");
         }
 
-        let _ = tokio::time::timeout(Duration::from_secs(2), flashblock_tracker_task).await;
-        let _ = tokio::time::timeout(Duration::from_secs(2), block_watcher_task).await;
+        // Collect any metrics the confirmer sent during its graceful shutdown
+        // (e.g. deferred block latencies resolved after the main drain loop).
+        while let Ok(metrics) = metrics_rx.try_recv() {
+            self.collector.record_confirmed(metrics);
+        }
+
+        match tokio::time::timeout(Duration::from_secs(2), flashblock_tracker_task).await {
+            Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock tracker panicked"),
+            _ => {}
+        }
+        match tokio::time::timeout(Duration::from_secs(2), block_watcher_task).await {
+            Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
+            _ => {}
+        }
 
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
