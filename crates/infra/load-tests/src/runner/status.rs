@@ -40,6 +40,10 @@ pub struct DisplaySnapshot {
     pub min_eth: Option<String>,
     /// Whether any account is below the low-balance threshold.
     pub funds_low: bool,
+    /// Checksummed address of the funder wallet (set after `fund_accounts` runs).
+    pub funder_address: Option<String>,
+    /// Checksummed addresses of all sender accounts.
+    pub sender_addresses: Vec<String>,
 }
 
 /// Live progress-bar display for a running load test.

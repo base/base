@@ -7,6 +7,9 @@ pub use config::{
     OsakaTarget, PrecompileTarget, TestConfig, TxTypeConfig, WeightedTxType, WorkloadConfig,
 };
 
+mod devnet;
+pub use devnet::{HARDHAT_TEST_KEYS, devnet_funder, ensure_funder_balance, is_local_rpc};
+
 mod utils;
 pub use utils::{BaselineError, Result, init_tracing};
 

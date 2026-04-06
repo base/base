@@ -1,4 +1,4 @@
-use std::io::Stdout;
+use std::{collections::HashMap, io::Stdout};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -11,17 +11,22 @@ use crate::{
 };
 
 /// Main TUI application that manages views, routing, and the event loop.
-#[derive(Debug)]
 pub(crate) struct App {
     router: Router,
     resources: Resources,
     show_help: bool,
+    view_cache: HashMap<ViewId, Box<dyn View>>,
 }
 
 impl App {
     /// Creates a new application with the given resources and initial view.
-    pub(crate) const fn new(resources: Resources, initial_view: ViewId) -> Self {
-        Self { router: Router::new(initial_view), resources, show_help: false }
+    pub(crate) fn new(resources: Resources, initial_view: ViewId) -> Self {
+        Self {
+            router: Router::new(initial_view),
+            resources,
+            show_help: false,
+            view_cache: HashMap::new(),
+        }
     }
 
     /// Runs the application event loop using the given view factory.
@@ -133,8 +138,12 @@ impl App {
             Action::None => false,
             Action::Quit => true,
             Action::SwitchView(view_id) => {
+                let old_view_id = self.router.current();
                 self.router.switch_to(view_id);
-                *current_view = view_factory(view_id);
+                let new_view =
+                    self.view_cache.remove(&view_id).unwrap_or_else(|| view_factory(view_id));
+                let old_view = std::mem::replace(current_view, new_view);
+                self.view_cache.insert(old_view_id, old_view);
                 self.show_help = false;
                 false
             }

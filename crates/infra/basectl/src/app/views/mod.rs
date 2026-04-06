@@ -21,6 +21,9 @@ pub(crate) use flashblocks::FlashblocksView;
 mod home;
 pub(crate) use home::HomeView;
 
+mod load_test;
+pub(crate) use load_test::LoadTestView;
+
 mod proofs;
 pub(crate) use proofs::ProofsView;
 

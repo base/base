@@ -63,6 +63,12 @@ const MENU_ITEMS: &[MenuItem] = &[
         description: "Monitor dispute games and anchor state",
         view_id: Some(ViewId::Proofs),
     },
+    MenuItem {
+        key: 'l',
+        label: "Load Test",
+        description: "Run load tests and view live metrics",
+        view_id: Some(ViewId::LoadTest),
+    },
     MenuItem { key: 'q', label: "Quit", description: "Exit basectl", view_id: None },
 ];
 
@@ -72,6 +78,7 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "d", description: "DA Monitor" },
     Keybinding { key: "f", description: "Flashblocks" },
     Keybinding { key: "h", description: "HA Conductor" },
+    Keybinding { key: "l", description: "Load Test" },
     Keybinding { key: "p", description: "Proofs" },
     Keybinding { key: "j/k", description: "Navigate" },
     Keybinding { key: "Enter", description: "Select" },
@@ -103,6 +110,7 @@ impl View for HomeView {
             KeyCode::Char('d') => Action::SwitchView(ViewId::DaMonitor),
             KeyCode::Char('f') => Action::SwitchView(ViewId::Flashblocks),
             KeyCode::Char('h') => Action::SwitchView(ViewId::Conductor),
+            KeyCode::Char('l') => Action::SwitchView(ViewId::LoadTest),
             KeyCode::Char('p') => Action::SwitchView(ViewId::Proofs),
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected_index = self.selected_index.saturating_sub(1);

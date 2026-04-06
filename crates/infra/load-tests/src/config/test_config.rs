@@ -258,12 +258,29 @@ impl TestConfig {
 
     /// Returns the funder key from the `FUNDER_KEY` environment variable.
     pub fn funder_key() -> Result<PrivateKeySigner> {
-        let key = std::env::var("FUNDER_KEY").map_err(|_| {
-            BaselineError::Config("FUNDER_KEY environment variable is required".into())
-        })?;
-        key.parse().map_err(|e| {
-            BaselineError::Config(format!("invalid FUNDER_KEY (expected 0x-prefixed hex): {e}"))
+        Self::resolve_funder_key(None)
+    }
+
+    /// Resolves the funder key from an explicit override string, falling back to the
+    /// `FUNDER_KEY` environment variable when no override is provided.
+    pub fn resolve_funder_key(override_key: Option<&str>) -> Result<PrivateKeySigner> {
+        let key_str = if let Some(s) = override_key {
+            s.to_string()
+        } else {
+            std::env::var("FUNDER_KEY").map_err(|_| {
+                BaselineError::Config("FUNDER_KEY environment variable is required".into())
+            })?
+        };
+        key_str.parse().map_err(|e| {
+            BaselineError::Config(format!("invalid funder key (expected 0x-prefixed hex): {e}"))
         })
+    }
+
+    /// Returns the checksummed funder address string, if the key resolves successfully.
+    ///
+    /// Checks the override first, then falls back to `FUNDER_KEY` env var.
+    pub fn funder_key_address(override_key: Option<&str>) -> Option<String> {
+        Self::resolve_funder_key(override_key).ok().map(|s| s.address().to_string())
     }
 
     /// Parses the duration string into a Duration.

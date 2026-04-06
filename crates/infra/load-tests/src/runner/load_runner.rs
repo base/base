@@ -18,7 +18,7 @@ use base_tx_manager::NonceManager;
 /// `NonceManager` only calls `get_transaction_count`, which returns the same
 /// response for both Ethereum and Base networks.
 type NonceProvider = RootProvider<Ethereum>;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, instrument, warn};
 
 use super::{
@@ -62,12 +62,18 @@ pub struct LoadRunner {
     gas_price: u128,
     /// Optional live status display for TTY terminals.
     display: Option<LoadTestDisplay>,
+    /// Optional watch channel for pushing live display snapshots to a TUI view.
+    snapshot_tx: Option<watch::Sender<DisplaySnapshot>>,
     /// Last observed total ETH across all sender accounts (formatted).
     last_total_eth: Option<String>,
     /// Last observed minimum ETH in any single sender account (formatted).
     last_min_eth: Option<String>,
     /// Whether any account was below the low-balance threshold on the last check.
     last_funds_low: bool,
+    /// Checksummed address of the funder wallet; set by the caller after `fund_accounts`.
+    funder_address: Option<String>,
+    /// Pre-computed checksummed addresses of all sender accounts for snapshot inclusion.
+    sender_addresses: Vec<String>,
 }
 
 impl LoadRunner {
@@ -96,6 +102,7 @@ impl LoadRunner {
         };
 
         let providers = Self::build_providers(&config.rpc_url, &accounts);
+        let sender_addresses = accounts.accounts().iter().map(|a| a.address.to_string()).collect();
 
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
         let generator = Self::create_generator(workload_config, &config)?;
@@ -117,10 +124,18 @@ impl LoadRunner {
             providers,
             gas_price: 0,
             display: None,
+            snapshot_tx: None,
             last_total_eth: None,
             last_min_eth: None,
             last_funds_low: false,
+            funder_address: None,
+            sender_addresses,
         })
+    }
+
+    /// Sets the funder wallet address for inclusion in live snapshots.
+    pub fn set_funder_address(&mut self, addr: String) {
+        self.funder_address = Some(addr);
     }
 
     fn build_providers(
@@ -253,8 +268,12 @@ impl LoadRunner {
         );
 
         let gas_price = self.client.get_gas_price().await?;
-        let max_fee = gas_price.saturating_mul(2).min(self.config.max_gas_price);
         let max_priority_fee = (gas_price / 10).max(1);
+        // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
+        // When gas_price is 0 (e.g. a fresh devnet), `gas_price * 2` would be 0
+        // while max_priority_fee=1, causing the transaction to be rejected.
+        let max_fee =
+            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
 
         let replacement_max_fee = max_fee.saturating_mul(3);
         let replacement_priority_fee = max_priority_fee.saturating_mul(3);
@@ -440,9 +459,10 @@ impl LoadRunner {
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(10);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
-        const BALANCE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+        const BALANCE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
+        let use_snapshot_tx = self.snapshot_tx.is_some();
 
         self.check_account_balances().await;
 
@@ -529,7 +549,7 @@ impl LoadRunner {
                 self.collector.record_confirmed(metrics);
             }
 
-            if use_live_display {
+            if use_live_display || use_snapshot_tx {
                 if last_progress_report.elapsed() >= DISPLAY_RENDER_INTERVAL {
                     let (p50, p99) = self.collector.rolling_p50_p99();
                     let snap = DisplaySnapshot {
@@ -550,8 +570,15 @@ impl LoadRunner {
                         total_eth: self.last_total_eth.clone(),
                         min_eth: self.last_min_eth.clone(),
                         funds_low: self.last_funds_low,
+                        funder_address: self.funder_address.clone(),
+                        sender_addresses: self.sender_addresses.clone(),
                     };
-                    self.display.as_ref().unwrap().update(&snap);
+                    if let Some(ref d) = self.display {
+                        d.update(&snap);
+                    }
+                    if let Some(ref tx) = self.snapshot_tx {
+                        let _ = tx.send(snap);
+                    }
                     last_progress_report = Instant::now();
                 }
             } else if last_progress_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
@@ -756,8 +783,10 @@ impl LoadRunner {
     pub async fn drain_accounts(&self, funding_key: PrivateKeySigner) -> Result<U256> {
         let funder_address = funding_key.address();
         let gas_price = self.client.get_gas_price().await?;
-        let max_fee = gas_price.saturating_mul(2).min(self.config.max_gas_price);
         let max_priority_fee = (gas_price / 10).max(1);
+        // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
+        let max_fee =
+            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
         let drain_gas_limit = 21_000u128;
         // L1 data fee on OP Stack can be significant (0.0001-0.001 ETH depending on L1 gas prices).
         // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.
@@ -857,12 +886,18 @@ impl LoadRunner {
     /// Checks account balances, stores the results for the live display, and
     /// logs a warning when any account is running low.
     async fn check_account_balances(&mut self) {
+        let addresses: Vec<Address> = self.accounts.accounts().iter().map(|a| a.address).collect();
+
+        let results =
+            futures::future::join_all(addresses.iter().map(|&addr| self.client.get_balance(addr)))
+                .await;
+
         let mut total = U256::ZERO;
         let mut min = U256::MAX;
         let mut below_threshold = 0usize;
 
-        for account in self.accounts.accounts() {
-            match self.client.get_balance(account.address).await {
+        for (&address, result) in addresses.iter().zip(results) {
+            match result {
                 Ok(balance) => {
                     total = total.saturating_add(balance);
                     if balance < min {
@@ -873,7 +908,7 @@ impl LoadRunner {
                     }
                 }
                 Err(e) => {
-                    warn!(address = %account.address, error = %e, "failed to check account balance");
+                    warn!(address = %address, error = %e, "failed to check account balance");
                 }
             }
         }
@@ -923,6 +958,24 @@ impl LoadRunner {
     /// every 500 ms instead of emitting 5-second progress log lines.
     pub fn set_display(&mut self, display: LoadTestDisplay) {
         self.display = Some(display);
+    }
+
+    /// Replaces the internal stop flag with an externally-owned one.
+    ///
+    /// Call this before [`run`] when the caller needs to share the flag across threads
+    /// (e.g. a TUI view pre-creates the flag so it can stop the test without waiting
+    /// for the runner to be fully initialised).
+    pub fn replace_stop_flag(&mut self, flag: Arc<AtomicBool>) {
+        self.stop_flag = flag;
+    }
+
+    /// Attaches a watch channel for streaming live [`DisplaySnapshot`] updates to a TUI view.
+    ///
+    /// When set, the runner publishes a snapshot every 500 ms during the run loop,
+    /// regardless of whether a TTY display is also attached. The TUI view polls
+    /// the corresponding [`watch::Receiver`] on each tick.
+    pub fn set_snapshot_tx(&mut self, tx: watch::Sender<DisplaySnapshot>) {
+        self.snapshot_tx = Some(tx);
     }
 }
 
