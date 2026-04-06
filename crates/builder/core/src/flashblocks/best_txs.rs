@@ -1,10 +1,40 @@
 //! An adapter over `BestPayloadTransactions`
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, TxHash};
+use moka::sync::Cache;
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+
+/// Shared, cross-block cache of permanently rejected transaction hashes.
+///
+/// Backed by [`moka::sync::Cache`] with a TTL so entries expire if metering
+/// predictions or operator limits change.
+#[derive(Clone, Debug)]
+pub struct RejectionCache(Cache<TxHash, ()>);
+
+impl RejectionCache {
+    /// Creates a new [`RejectionCache`] with the given capacity and TTL.
+    pub fn new(max_capacity: u64, ttl: Duration) -> Self {
+        Self(Cache::builder().max_capacity(max_capacity).time_to_live(ttl).build())
+    }
+
+    /// Checks if a transaction hash is in the cache.
+    pub fn contains_key(&self, hash: &TxHash) -> bool {
+        self.0.contains_key(hash)
+    }
+
+    /// Adds a transaction hash to the cache.
+    pub fn insert(&self, hash: TxHash) {
+        self.0.insert(hash, ());
+    }
+
+    /// Returns the number of cached entries.
+    pub fn entry_count(&self) -> u64 {
+        self.0.entry_count()
+    }
+}
 
 /// An adapter over `BestPayloadTransactions` that allows to skip transactions that were already
 /// committed to the state. It also allows to refresh inner iterator on each flashblock building, to
@@ -18,6 +48,8 @@ where
     // Transactions that were already committed to the state. Using them again would cause NonceTooLow
     // so we skip them
     committed_transactions: HashSet<TxHash>,
+    // Shared cross-block rejection cache (survives across blocks, TTL-bounded)
+    rejection_cache: RejectionCache,
 }
 
 impl<T, I> std::fmt::Debug for BestFlashblocksTxs<T, I>
@@ -28,6 +60,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BestFlashblocksTxs")
             .field("committed_transactions", &self.committed_transactions)
+            .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .finish_non_exhaustive()
     }
 }
@@ -38,8 +71,11 @@ where
     I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     /// Creates a new [`BestFlashblocksTxs`] wrapping the given payload transaction iterator.
-    pub fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
-        Self { inner, committed_transactions: Default::default() }
+    pub fn new(
+        inner: reth_payload_util::BestPayloadTransactions<T, I>,
+        rejection_cache: RejectionCache,
+    ) -> Self {
+        Self { inner, committed_transactions: Default::default(), rejection_cache }
     }
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
@@ -51,6 +87,15 @@ where
     /// Remove transaction from next iteration since it is already in the state
     pub fn mark_committed(&mut self, txs: &[TxHash]) {
         self.committed_transactions.extend(txs);
+    }
+
+    /// Mark transactions as permanently rejected. They will be skipped in all
+    /// subsequent flashblocks within this block and across future blocks via
+    /// the shared rejection cache.
+    pub fn mark_rejected(&mut self, tx_hashes: &[TxHash]) {
+        for hash in tx_hashes {
+            self.rejection_cache.insert(*hash);
+        }
     }
 }
 
@@ -64,8 +109,13 @@ where
     fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
         loop {
             let tx = self.inner.next(ctx)?;
-            // Skip transaction we already included
-            if self.committed_transactions.contains(tx.hash()) {
+            let hash = *tx.hash();
+
+            if self.committed_transactions.contains(&hash) {
+                continue;
+            }
+
+            if self.rejection_cache.contains_key(&hash) {
                 continue;
             }
 
@@ -81,7 +131,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::Transaction;
     use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
@@ -92,7 +142,11 @@ mod tests {
         test_utils::{MockTransaction, MockTransactionFactory},
     };
 
-    use crate::flashblocks::best_txs::BestFlashblocksTxs;
+    use crate::flashblocks::best_txs::{BestFlashblocksTxs, RejectionCache};
+
+    fn test_rejection_cache() -> RejectionCache {
+        RejectionCache::new(1000, Duration::from_secs(60))
+    }
 
     #[test]
     fn test_simple_case() {
@@ -108,7 +162,10 @@ mod tests {
         pool.add_transaction(Arc::new(tx_3), 0);
 
         // Create iterator
-        let mut iterator = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()));
+        let mut iterator = BestFlashblocksTxs::new(
+            BestPayloadTransactions::new(pool.best()),
+            test_rejection_cache(),
+        );
         // ### First flashblock
         iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));
         // Accept first tx
@@ -190,7 +247,10 @@ mod tests {
         pool.add_transaction(Arc::new(f.validated(tx_a.clone())), 0);
 
         // === FLASHBLOCK 1 ===
-        let mut iterator = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()));
+        let mut iterator = BestFlashblocksTxs::new(
+            BestPayloadTransactions::new(pool.best()),
+            test_rejection_cache(),
+        );
 
         // Simulate: Flashblock 1 starts building
         // Start consuming txns from the txpool
@@ -303,5 +363,76 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, 3);
+    }
+
+    /// Rejected transactions are skipped across flashblock boundaries within the same block.
+    #[test]
+    fn test_rejected_txs_persist_across_refresh() {
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
+        let mut f = MockTransactionFactory::default();
+
+        let tx_1 = f.create_eip1559();
+        let tx_2 = f.create_eip1559();
+        let tx_3 = f.create_eip1559();
+        let tx_2_hash = *tx_2.hash();
+        pool.add_transaction(Arc::new(tx_1), 0);
+        pool.add_transaction(Arc::new(tx_2), 0);
+        pool.add_transaction(Arc::new(tx_3), 0);
+
+        let mut iterator = BestFlashblocksTxs::new(
+            BestPayloadTransactions::new(pool.best()),
+            test_rejection_cache(),
+        );
+
+        // FB1: consume first tx, reject second permanently
+        let _tx1 = iterator.next(()).unwrap();
+        let _tx2 = iterator.next(()).unwrap();
+        iterator.mark_rejected(&[tx_2_hash]);
+        let _tx3 = iterator.next(()).unwrap();
+        assert!(iterator.next(()).is_none());
+
+        // FB2: refresh iterator — tx2 should still be skipped
+        iterator.refresh_iterator(BestPayloadTransactions::new(pool.best()));
+        let mut seen_hashes = Vec::new();
+        while let Some(tx) = iterator.next(()) {
+            seen_hashes.push(*tx.hash());
+        }
+        assert!(!seen_hashes.contains(&tx_2_hash), "rejected tx should not reappear after refresh");
+        assert_eq!(seen_hashes.len(), 2, "only non-rejected txs should appear");
+    }
+
+    /// Rejected transactions in the shared cache are skipped by a new iterator instance
+    /// (simulating cross-block persistence).
+    #[test]
+    fn test_rejection_cache_persists_across_blocks() {
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
+        let mut f = MockTransactionFactory::default();
+
+        let tx_1 = f.create_eip1559();
+        let tx_2 = f.create_eip1559();
+        let tx_2_hash = *tx_2.hash();
+        pool.add_transaction(Arc::new(tx_1), 0);
+        pool.add_transaction(Arc::new(tx_2), 0);
+
+        let cache = test_rejection_cache();
+
+        // Block 1: reject tx_2
+        let mut iter1 =
+            BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache.clone());
+        let _tx1 = iter1.next(()).unwrap();
+        let _tx2 = iter1.next(()).unwrap();
+        iter1.mark_rejected(&[tx_2_hash]);
+
+        // Block 2: new iterator, same cache — tx_2 should be skipped
+        let mut iter2 = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache);
+        let mut seen_hashes = Vec::new();
+        while let Some(tx) = iter2.next(()) {
+            seen_hashes.push(*tx.hash());
+        }
+        assert!(
+            !seen_hashes.contains(&tx_2_hash),
+            "tx rejected in block 1 should be skipped in block 2"
+        );
+        assert_eq!(seen_hashes.len(), 1, "only non-rejected tx should appear");
     }
 }

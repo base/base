@@ -7,7 +7,7 @@ use std::{
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_primitives::{B256, BlockHash, Bytes, U256};
+use alloy_primitives::{B256, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
 use base_alloy_chains::BaseUpgrades;
@@ -124,6 +124,10 @@ pub struct FlashblockDiagnostics {
     pub txs_rejected_other: u64,
     /// Minimum effective priority fee (tip per gas) among included transactions.
     pub min_priority_fee: Option<u64>,
+    /// Transaction hashes permanently rejected due to per-tx intrinsic limits
+    /// (e.g. tx DA size exceeded, tx execution time exceeded). These will never
+    /// be includable and should be evicted from the pool.
+    pub permanently_rejected_txs: Vec<TxHash>,
 }
 
 impl FlashblockDiagnostics {
@@ -761,6 +765,9 @@ impl OpPayloadBuilderCtx {
                     if !dry_run {
                         diag.record_rejection(&err);
                         record_rejected_tx_priority_fee(&err, priority_fee);
+                        if err.is_permanent() {
+                            diag.permanently_rejected_txs.push(tx_hash);
+                        }
                         log_txn(Err(err));
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;
@@ -773,6 +780,9 @@ impl OpPayloadBuilderCtx {
                     let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                     record_rejected_tx_priority_fee(&err, priority_fee);
 
+                    if err.is_permanent() {
+                        diag.permanently_rejected_txs.push(tx_hash);
+                    }
                     log_txn(Err(err));
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
