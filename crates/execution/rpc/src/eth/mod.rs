@@ -17,7 +17,7 @@ use std::{
 use alloy_primitives::U256;
 use base_alloy_network::Base;
 use eyre::WrapErr;
-pub use receipt::{OpReceiptBuilder, OpReceiptFieldsBuilder};
+pub use receipt::{OpReceiptBuilder, ReceiptFieldsBuilder};
 use reth_chainspec::{EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes};
@@ -40,7 +40,7 @@ use reth_tasks::{
 
 use crate::{
     OpEthApiError, SequencerClient,
-    eth::{receipt::OpReceiptConverter, transaction::OpTxInfoMapper},
+    eth::{receipt::BaseReceiptConverter, transaction::OpTxInfoMapper},
 };
 
 /// Adapter for [`EthApiInner`], which holds all the data required to serve core `eth_` API.
@@ -291,7 +291,7 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> OpEthApiInner<N, Rpc> {
 pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
     NetworkT,
     <N as FullNodeComponents>::Evm,
-    OpReceiptConverter<<N as FullNodeTypes>::Provider>,
+    BaseReceiptConverter<<N as FullNodeTypes>::Provider>,
     (),
     OpTxInfoMapper<<N as FullNodeTypes>::Provider>,
 >;
@@ -367,7 +367,7 @@ where
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let rpc_converter =
-            RpcConverter::new(OpReceiptConverter::new(ctx.components.provider().clone()))
+            RpcConverter::new(BaseReceiptConverter::new(ctx.components.provider().clone()))
                 .with_mapper(OpTxInfoMapper::new(ctx.components.provider().clone()));
 
         let sequencer_client = if let Some(url) = sequencer_url {

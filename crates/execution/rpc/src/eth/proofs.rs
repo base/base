@@ -14,7 +14,7 @@ use jsonrpsee_types::error::ErrorObject;
 use reth_provider::StateProofProvider;
 use reth_rpc_api::eth::helpers::FullEthApi;
 
-use crate::{metrics::EthApiExtMetrics, state::OpStateProviderFactory};
+use crate::{metrics::EthApiExtMetrics, state::BaseStateProviderFactory};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -33,7 +33,7 @@ pub trait EthApiOverride {
 #[derive(Debug)]
 /// Overrides applied to the `eth_` namespace of the RPC API for historical proofs `ExEx`.
 pub struct EthApiExt<Eth, P> {
-    state_provider_factory: OpStateProviderFactory<Eth, P>,
+    state_provider_factory: BaseStateProviderFactory<Eth, P>,
 }
 
 impl<Eth, P> EthApiExt<Eth, P>
@@ -44,7 +44,7 @@ where
 {
     /// Creates a new instance of the `EthApiExt`.
     pub const fn new(eth_api: Eth, preimage_store: OpProofsStorage<P>) -> Self {
-        Self { state_provider_factory: OpStateProviderFactory::new(eth_api, preimage_store) }
+        Self { state_provider_factory: BaseStateProviderFactory::new(eth_api, preimage_store) }
     }
 }
 

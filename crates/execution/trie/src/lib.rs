@@ -54,6 +54,6 @@ pub use error::{OpProofsStorageError, OpProofsStorageResult};
 
 mod prune;
 pub use prune::{
-    OpProofStoragePruner, OpProofStoragePrunerResult, OpProofStoragePrunerTask, PrunerError,
+    BaseProofStoragePrunerTask, OpProofStoragePruner, OpProofStoragePrunerResult, PrunerError,
     PrunerOutput,
 };

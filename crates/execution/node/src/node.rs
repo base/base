@@ -12,7 +12,7 @@ use base_execution_consensus::OpBeaconConsensus;
 use base_execution_evm::{OpEvmConfig, OpRethReceiptBuilder};
 use base_execution_payload_builder::{
     Attributes, OpBuiltPayload, PayloadPrimitives,
-    builder::OpPayloadTransactions,
+    builder::BasePayloadTransactions,
     config::{BaseBuilderConfig, GasLimitConfig, OpDAConfig},
 };
 use base_execution_rpc::{
@@ -997,7 +997,7 @@ where
             >,
         > + 'static,
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
+    Txs: BasePayloadTransactions<Pool::Transaction>,
     Attrs: Attributes<Transaction = TxTy<Node::Types>>,
 {
     type PayloadBuilder =

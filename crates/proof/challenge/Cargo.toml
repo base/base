@@ -37,8 +37,8 @@ eyre.workspace = true
 thiserror.workspace = true
 
 # CLI
-clap.workspace = true
 base-cli-utils.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
 
 # Contracts
 base-proof-contracts.workspace = true
@@ -73,6 +73,9 @@ tokio-util.workspace = true
 
 # Health
 base-health = { workspace = true, features = ["axum-server"] }
+
+# Derive
+derive_more = { workspace = true, features = ["debug"] }
 
 # Misc
 url.workspace = true

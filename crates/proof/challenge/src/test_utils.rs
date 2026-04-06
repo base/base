@@ -3,7 +3,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use alloy_consensus::{
@@ -235,6 +235,11 @@ pub fn addr(index: u64) -> Address {
 /// Helper to build a factory game entry.
 pub fn factory_game(index: u64, game_type: u32) -> GameAtIndex {
     GameAtIndex { game_type, timestamp: 1_000_000 + index, proxy: addr(index) }
+}
+
+/// Helper to create an empty [`MockDisputeGameFactory`] behind an `Arc`.
+pub fn empty_factory() -> Arc<dyn DisputeGameFactoryClient> {
+    Arc::new(MockDisputeGameFactory { games: vec![] })
 }
 
 /// Default TEE prover address used by [`mock_state`].
@@ -655,7 +660,6 @@ impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use super::*;
     use crate::scanner::{GameScanner, ScannerConfig};

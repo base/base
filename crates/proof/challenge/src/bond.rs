@@ -27,6 +27,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -98,7 +99,12 @@ pub struct TrackedGame {
 /// After a successful `challenge()` submission, games are registered here.
 /// On each [`poll`](Self::poll) tick the manager checks each tracked game's
 /// onchain state and submits the next transaction in the lifecycle.
-#[derive(Debug)]
+///
+/// When bond claim addresses are configured, the manager also continuously
+/// discovers claimable games via [`discover_claimable_games`](Self::discover_claimable_games),
+/// scanning both newly created games and periodically rescanning the
+/// lookback window to catch games challenged or resolved by other actors.
+#[derive(derive_more::Debug)]
 pub struct BondManager {
     /// Games being tracked, keyed by proxy address.
     tracked: HashMap<Address, TrackedGame>,
@@ -113,7 +119,18 @@ pub struct BondManager {
     /// Injectable clock for obtaining the current Unix timestamp. Defaults
     /// to [`unix_now`] in production; tests can substitute a controlled
     /// clock.
+    #[debug(skip)]
     clock: ClockFn,
+    /// Factory client for querying game indices during bond discovery.
+    #[debug(skip)]
+    factory_client: Arc<dyn DisputeGameFactoryClient>,
+    /// Highest game index scanned for bond discovery. Incremental scans
+    /// start from this index; periodic full rescans reset it backward.
+    bond_scan_head: u64,
+    /// Unix timestamp (seconds) of the last full rescan completion.
+    last_full_scan: u64,
+    /// Number of games to look back during periodic full rescans.
+    lookback: u64,
 }
 
 impl BondManager {
@@ -122,8 +139,17 @@ impl BondManager {
     /// succeed earlier; if longer, the attempt reverts and is retried.
     const DEFAULT_WETH_DELAY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
+    /// How often a full rescan of the lookback window is performed to catch
+    /// state transitions (games challenged or resolved by other actors).
+    const BOND_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
+
     /// Creates a new bond manager for the given set of claim addresses.
-    pub fn new(claim_addresses: Vec<Address>, l1_rpc_url: url::Url) -> Self {
+    pub fn new(
+        claim_addresses: Vec<Address>,
+        l1_rpc_url: url::Url,
+        factory_client: Arc<dyn DisputeGameFactoryClient>,
+        lookback: u64,
+    ) -> Self {
         let set: HashSet<Address> = claim_addresses.into_iter().collect();
         info!(count = set.len(), "bond manager initialized with claim addresses");
         Self {
@@ -132,6 +158,10 @@ impl BondManager {
             weth_delay: None,
             l1_rpc_url,
             clock: unix_now,
+            factory_client,
+            bond_scan_head: 0,
+            last_full_scan: unix_now(),
+            lookback,
         }
     }
 
@@ -200,6 +230,113 @@ impl BondManager {
         }
     }
 
+    /// Evaluates a single game for bond tracking eligibility.
+    ///
+    /// Fetches the game's `bondRecipient` and `zkProver`, matches them
+    /// against `claim_addresses`, determines the onchain lifecycle phase,
+    /// and returns the game address, matched address, and phase if the game
+    /// is eligible for tracking. Returns `None` when the game is not
+    /// relevant, already claimed, or an RPC error occurs.
+    async fn evaluate_game_for_bonds(
+        index: u64,
+        factory_client: &dyn DisputeGameFactoryClient,
+        verifier_client: &dyn AggregateVerifierClient,
+        claim_addresses: &HashSet<Address>,
+    ) -> Option<(Address, Address, Option<BondPhase>)> {
+        let game_at = match factory_client.game_at_index(index).await {
+            Ok(g) => g,
+            Err(e) => {
+                warn!(index, error = %e, "failed to fetch game at index");
+                return None;
+            }
+        };
+
+        let game_address = game_at.proxy;
+
+        let (bond_recipient, zk_prover) = match futures::try_join!(
+            verifier_client.bond_recipient(game_address),
+            verifier_client.zk_prover(game_address),
+        ) {
+            Ok(pair) => pair,
+            Err(e) => {
+                debug!(
+                    game = %game_address,
+                    error = %e,
+                    "failed to read bondRecipient/zkProver"
+                );
+                return None;
+            }
+        };
+
+        // Check both `bondRecipient` and `zkProver` against the claim
+        // addresses. Before `resolve()`, `bondRecipient` is the game
+        // creator while `zkProver` is the address that called
+        // `challenge()`. After `resolve()`, `bondRecipient` is updated
+        // to the `zkProver`. Checking both ensures we recover pre-resolve
+        // challenged games.
+        let matched_address = if claim_addresses.contains(&bond_recipient) {
+            bond_recipient
+        } else if zk_prover != Address::ZERO && claim_addresses.contains(&zk_prover) {
+            zk_prover
+        } else {
+            return None;
+        };
+
+        let phase = match Self::determine_phase(verifier_client, game_address).await {
+            Ok(phase) => phase,
+            Err(e) => {
+                warn!(
+                    game = %game_address,
+                    error = %e,
+                    "failed to determine bond phase"
+                );
+                return None;
+            }
+        };
+
+        // For already-resolved games, verify the current onchain
+        // `bondRecipient` is in our claim addresses. Games matched via
+        // `zkProver` may have a `bondRecipient` that is not in our
+        // claim set (e.g. a game where our challenge was nullified and
+        // the bond goes to the game creator). Pre-resolve games are
+        // kept — `bondRecipient` will be re-verified after resolve in
+        // `try_resolve`.
+        if let Some(ref p) = phase
+            && !matches!(p, BondPhase::NeedsResolve)
+            && !claim_addresses.contains(&bond_recipient)
+        {
+            debug!(
+                game = %game_address,
+                recipient = %bond_recipient,
+                "onchain bondRecipient not in claim addresses \
+                 for resolved game, skipping"
+            );
+            return None;
+        }
+
+        Some((game_address, matched_address, phase))
+    }
+
+    /// Evaluates all games in `range` concurrently for bond tracking
+    /// eligibility, returning one entry per evaluated game.
+    async fn evaluate_bond_range(
+        range: std::ops::Range<u64>,
+        factory_client: &Arc<dyn DisputeGameFactoryClient>,
+        verifier_client: &dyn AggregateVerifierClient,
+        claim_addresses: &HashSet<Address>,
+    ) -> Vec<Option<(Address, Address, Option<BondPhase>)>> {
+        stream::iter(range)
+            .map(|i| {
+                let fc = &**factory_client;
+                async move {
+                    Self::evaluate_game_for_bonds(i, fc, verifier_client, claim_addresses).await
+                }
+            })
+            .buffer_unordered(GameScanner::SCAN_CONCURRENCY)
+            .collect()
+            .await
+    }
+
     /// Scans recent games at startup to recover bond tracking state after a
     /// restart.
     ///
@@ -211,122 +348,46 @@ impl BondManager {
     /// already fully claimed are skipped.
     ///
     /// Also reads the `DelayedWETH` delay from the first game found, if the
-    /// delay has not been set yet.
+    /// delay has not been set yet. Sets the bond discovery watermark to the
+    /// current `game_count` so that subsequent
+    /// [`discover_claimable_games`](Self::discover_claimable_games) calls
+    /// start scanning from where startup left off.
     pub async fn startup_scan(
         &mut self,
-        factory_client: &dyn DisputeGameFactoryClient,
         verifier_client: &dyn AggregateVerifierClient,
-        lookback: u64,
     ) -> eyre::Result<()> {
         if !self.is_enabled() {
             return Ok(());
         }
 
+        let factory_client = Arc::clone(&self.factory_client);
         let game_count = factory_client.game_count().await?;
         if game_count == 0 {
             info!("no games in factory, skipping bond startup scan");
             return Ok(());
         }
 
-        let start_index = game_count.saturating_sub(lookback);
+        let start_index = game_count.saturating_sub(self.lookback);
         info!(start = start_index, end = game_count, "scanning recent games for bond recovery");
 
-        // Evaluate all games concurrently using the same pattern as the
-        // game scanner (`buffer_unordered`).
-        let claim_addresses = &self.claim_addresses;
-        let results: Vec<Option<(Address, Address, Option<BondPhase>)>> =
-            stream::iter(start_index..game_count)
-                .map(|i| async move {
-                    let game_at = match factory_client.game_at_index(i).await {
-                        Ok(g) => g,
-                        Err(e) => {
-                            warn!(index = i, error = %e, "failed to fetch game at index");
-                            return None;
-                        }
-                    };
-
-                    let game_address = game_at.proxy;
-
-                    let (bond_recipient, zk_prover) = match futures::try_join!(
-                        verifier_client.bond_recipient(game_address),
-                        verifier_client.zk_prover(game_address),
-                    ) {
-                        Ok(pair) => pair,
-                        Err(e) => {
-                            debug!(
-                                game = %game_address,
-                                error = %e,
-                                "failed to read bondRecipient/zkProver"
-                            );
-                            return None;
-                        }
-                    };
-
-                    // Check both `bondRecipient` and `zkProver` against our
-                    // claim addresses. Before `resolve()`, `bondRecipient`
-                    // is the game creator while `zkProver` is the address
-                    // that called `challenge()`. After `resolve()`,
-                    // `bondRecipient` is updated to the `zkProver`. Checking
-                    // both ensures we recover pre-resolve challenged games
-                    // after a restart.
-                    let matched_address = if claim_addresses.contains(&bond_recipient) {
-                        bond_recipient
-                    } else if zk_prover != Address::ZERO && claim_addresses.contains(&zk_prover) {
-                        zk_prover
-                    } else {
-                        return None;
-                    };
-
-                    let phase = match Self::determine_phase(verifier_client, game_address).await {
-                        Ok(phase) => phase,
-                        Err(e) => {
-                            warn!(
-                                game = %game_address,
-                                error = %e,
-                                "failed to determine bond phase"
-                            );
-                            return None;
-                        }
-                    };
-
-                    // For already-resolved games, verify the current onchain
-                    // `bondRecipient` is in our claim addresses. Games matched
-                    // via `zkProver` may have a `bondRecipient` that is not in
-                    // our claim set (e.g. a game where our challenge was
-                    // nullified and the bond goes to the game creator).
-                    // Pre-resolve games are kept — `bondRecipient` will be
-                    // re-verified after resolve in `try_resolve`.
-                    if let Some(ref p) = phase
-                        && !matches!(p, BondPhase::NeedsResolve)
-                        && !claim_addresses.contains(&bond_recipient)
-                    {
-                        debug!(
-                            game = %game_address,
-                            recipient = %bond_recipient,
-                            "onchain bondRecipient not in claim addresses \
-                             for resolved game, skipping"
-                        );
-                        return None;
-                    }
-
-                    Some((game_address, matched_address, phase))
-                })
-                .buffer_unordered(GameScanner::SCAN_CONCURRENCY)
-                .collect()
-                .await;
+        let results = Self::evaluate_bond_range(
+            start_index..game_count,
+            &factory_client,
+            verifier_client,
+            &self.claim_addresses,
+        )
+        .await;
 
         // Process results sequentially: insert tracked games and resolve the
         // WETH delay from the first relevant game.
-        let mut weth_delay_resolved = self.weth_delay.is_some();
-
         for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
-            // Read the WETH delay from the first relevant game if not yet set.
-            if !weth_delay_resolved {
-                if let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await {
-                    warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
-                } else {
-                    weth_delay_resolved = true;
-                }
+            // Resolve the WETH delay from the first available game,
+            // including already-claimed ones, so that the delay is
+            // bootstrapped as early as possible.
+            if self.weth_delay.is_none()
+                && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
+            {
+                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
             }
 
             let Some(phase) = phase else {
@@ -342,8 +403,126 @@ impl BondManager {
             self.tracked.insert(game_address, TrackedGame { phase, bond_recipient });
         }
 
+        // Set the discovery watermark so continuous scanning starts from
+        // where startup left off.
+        self.bond_scan_head = game_count;
+        self.last_full_scan = (self.clock)();
+
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         info!(count = self.tracked.len(), "bond startup scan complete");
+        Ok(())
+    }
+
+    /// Discovers claimable games via two-tier scanning.
+    ///
+    /// **Incremental** (every call): scans from `bond_scan_head` to
+    /// `game_count`, catching newly created games. Typically zero to a
+    /// handful of games per tick, costing a single `game_count()` RPC
+    /// when idle.
+    ///
+    /// **Periodic full rescan** (every [`BOND_DISCOVERY_INTERVAL`](Self::BOND_DISCOVERY_INTERVAL)):
+    /// resets the watermark backward by `lookback` to re-evaluate games
+    /// whose state may have changed (e.g. challenged or resolved by
+    /// another actor since the last scan).
+    pub async fn discover_claimable_games(
+        &mut self,
+        verifier_client: &dyn AggregateVerifierClient,
+    ) -> eyre::Result<()> {
+        if !self.is_enabled() {
+            warn!("bond manager is disabled, skipping discovery scan");
+            return Ok(());
+        }
+
+        let factory_client = Arc::clone(&self.factory_client);
+        let game_count = factory_client.game_count().await?;
+        if game_count == 0 {
+            debug!("no games found, skipping bond discovery scan");
+            return Ok(());
+        }
+
+        // Periodic full rescan: reset watermark to re-evaluate the
+        // lookback window and catch state transitions on older games.
+        let elapsed = (self.clock)().saturating_sub(self.last_full_scan);
+        let is_full_rescan = elapsed >= Self::BOND_DISCOVERY_INTERVAL.as_secs();
+        if is_full_rescan {
+            let new_head = game_count.saturating_sub(self.lookback);
+            debug!(
+                new_head,
+                game_count,
+                lookback = self.lookback,
+                "performing periodic full bond rescan"
+            );
+            self.bond_scan_head = new_head;
+        }
+
+        let scan_start = self.bond_scan_head;
+        if scan_start >= game_count {
+            return Ok(());
+        }
+
+        let span = game_count - scan_start;
+        let scan_type = if is_full_rescan { "full" } else { "incremental" };
+        debug!(
+            scan_type,
+            scan_start,
+            game_count,
+            span,
+            tracked = self.tracked.len(),
+            "bond discovery scan"
+        );
+
+        ChallengerMetrics::bond_discovery_scans_total(scan_type).increment(1);
+
+        let results = Self::evaluate_bond_range(
+            scan_start..game_count,
+            &factory_client,
+            verifier_client,
+            &self.claim_addresses,
+        )
+        .await;
+
+        let mut discovered = 0u64;
+
+        for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
+            // Skip games already being tracked.
+            if self.tracked.contains_key(&game_address) {
+                continue;
+            }
+
+            let Some(phase) = phase else {
+                continue;
+            };
+
+            if self.weth_delay.is_none()
+                && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
+            {
+                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
+            }
+
+            info!(
+                game = %game_address,
+                recipient = %bond_recipient,
+                phase = ?phase,
+                scan_type,
+                "discovered claimable game"
+            );
+            self.tracked.insert(game_address, TrackedGame { phase, bond_recipient });
+            discovered += 1;
+        }
+
+        // Advance watermark past the scanned range.
+        self.bond_scan_head = game_count;
+
+        if is_full_rescan {
+            self.last_full_scan = (self.clock)();
+        }
+
+        if discovered > 0 {
+            ChallengerMetrics::bond_discovery_games_found_total().increment(discovered);
+            ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
+            info!(discovered, tracked = self.tracked.len(), scan_type, "bond discovery complete");
+        }
+
         Ok(())
     }
 
@@ -721,13 +900,14 @@ pub trait BondTransactionSubmitter: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{MockDisputeGameFactory, empty_factory};
 
     fn test_l1_rpc_url() -> url::Url {
         "http://localhost:8545".parse().unwrap()
     }
 
     fn make_manager(addresses: Vec<Address>) -> BondManager {
-        let mut mgr = BondManager::new(addresses, test_l1_rpc_url());
+        let mut mgr = BondManager::new(addresses, test_l1_rpc_url(), empty_factory(), 1000);
         mgr.set_weth_delay(Duration::from_secs(60));
         mgr
     }
@@ -772,7 +952,7 @@ mod tests {
         let addr = Address::repeat_byte(0x01);
         let game = Address::repeat_byte(0xAA);
 
-        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url());
+        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000);
         mgr.set_weth_delay(Duration::from_secs(60));
         mgr.set_clock(fixed_clock(1000));
 
@@ -792,7 +972,7 @@ mod tests {
         let addr = Address::repeat_byte(0x01);
         let game = Address::repeat_byte(0xAA);
 
-        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url());
+        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000);
         mgr.set_weth_delay(Duration::from_secs(3600));
         mgr.set_clock(fixed_clock(1000));
 
@@ -809,13 +989,205 @@ mod tests {
 
     #[test]
     fn empty_claim_addresses_means_disabled() {
-        let mgr = BondManager::new(vec![], test_l1_rpc_url());
+        let mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000);
         assert!(!mgr.is_enabled());
     }
 
     #[test]
     fn non_empty_claim_addresses_means_enabled() {
-        let mgr = BondManager::new(vec![Address::repeat_byte(0x01)], test_l1_rpc_url());
+        let mgr = BondManager::new(
+            vec![Address::repeat_byte(0x01)],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+        );
         assert!(mgr.is_enabled());
+    }
+
+    // ---- discover_claimable_games tests ----
+
+    use crate::test_utils::{MockAggregateVerifier, addr, factory_game, mock_state};
+
+    /// Builds a factory and verifier pair where each game has the given
+    /// `bond_recipient` and `zk_prover`. All games are `IN_PROGRESS` (status 0)
+    /// unless overridden.
+    fn discovery_mocks(
+        game_count: u64,
+        bond_recipient: Address,
+        zk_prover: Address,
+    ) -> (Arc<dyn DisputeGameFactoryClient>, Arc<MockAggregateVerifier>) {
+        let games: Vec<_> = (0..game_count).map(|i| factory_game(i, 0)).collect();
+        let mut verifier_games = HashMap::new();
+        for i in 0..game_count {
+            let mut state = mock_state(0, zk_prover, 100 + i);
+            state.bond_recipient = bond_recipient;
+            verifier_games.insert(addr(i), state);
+        }
+        let factory: Arc<dyn DisputeGameFactoryClient> = Arc::new(MockDisputeGameFactory { games });
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        (factory, verifier)
+    }
+
+    #[tokio::test]
+    async fn discover_incremental_picks_up_new_games_by_recipient() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let (factory, verifier) = discovery_mocks(3, claim_addr, Address::ZERO);
+
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        // bond_scan_head defaults to 0, so the first call should scan all 3.
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 3);
+        assert_eq!(mgr.bond_scan_head, 3);
+    }
+
+    #[tokio::test]
+    async fn discover_incremental_picks_up_new_games_by_zk_prover() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let other_recipient = Address::repeat_byte(0xDD);
+        // bond_recipient is someone else, but zkProver matches our address.
+        // Status 0 = IN_PROGRESS, so the game should match via zkProver.
+        let (factory, verifier) = discovery_mocks(2, other_recipient, claim_addr);
+
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn discover_skips_already_tracked_games() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let (factory, verifier) = discovery_mocks(2, claim_addr, Address::ZERO);
+
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        // Pre-track game 0.
+        mgr.track_game(addr(0), claim_addr);
+        assert_eq!(mgr.tracked_count(), 1);
+
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        // Game 0 was already tracked, so only game 1 should be new.
+        assert_eq!(mgr.tracked_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn discover_skips_already_claimed_games() {
+        let claim_addr = Address::repeat_byte(0xCC);
+
+        let games = vec![factory_game(0, 0)];
+        let mut verifier_games = HashMap::new();
+        let mut state = mock_state(1, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.bond_claimed = true; // already claimed
+        state.resolved_at = 500;
+        verifier_games.insert(addr(0), state);
+
+        let factory: Arc<dyn DisputeGameFactoryClient> = Arc::new(MockDisputeGameFactory { games });
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 0, "claimed game should not be tracked");
+    }
+
+    #[tokio::test]
+    async fn discover_advances_watermark() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let (factory, verifier) = discovery_mocks(5, claim_addr, Address::ZERO);
+
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        // Start from index 3 so only indices 3 and 4 are scanned.
+        mgr.bond_scan_head = 3;
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.bond_scan_head, 5);
+        assert_eq!(mgr.tracked_count(), 2, "only games 3 and 4 should be discovered");
+    }
+
+    #[tokio::test]
+    async fn discover_noop_when_watermark_equals_game_count() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let (factory, verifier) = discovery_mocks(5, claim_addr, Address::ZERO);
+
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        // Watermark already at game_count — nothing new to scan.
+        mgr.bond_scan_head = 5;
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 0);
+        assert_eq!(mgr.bond_scan_head, 5);
+    }
+
+    #[tokio::test]
+    async fn discover_full_rescan_resets_watermark() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let (factory, verifier) = discovery_mocks(10, claim_addr, Address::ZERO);
+
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            5, // lookback = 5
+        );
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        // Simulate that the previous scan already covered everything.
+        mgr.bond_scan_head = 10;
+
+        // Force the full rescan by backdating `last_full_scan`.
+        mgr.last_full_scan =
+            unix_now().saturating_sub(BondManager::BOND_DISCOVERY_INTERVAL.as_secs());
+
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        // Full rescan should have reset watermark to 10 - 5 = 5
+        // and then scanned indices 5..10, discovering 5 new games.
+        assert_eq!(mgr.bond_scan_head, 10);
+        assert_eq!(mgr.tracked_count(), 5);
+    }
+
+    #[tokio::test]
+    async fn discover_disabled_when_no_claim_addresses() {
+        let (_, verifier) = discovery_mocks(5, Address::repeat_byte(0xCC), Address::ZERO);
+
+        let mut mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000);
+
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn discover_skips_unmatched_recipients() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let other = Address::repeat_byte(0xDD);
+        // Neither bondRecipient nor zkProver match our claim address.
+        let (factory, verifier) = discovery_mocks(3, other, Address::ZERO);
+
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 0);
+        // Watermark should still advance past the scanned range.
+        assert_eq!(mgr.bond_scan_head, 3);
+    }
+
+    #[tokio::test]
+    async fn discover_handles_empty_factory() {
+        let claim_addr = Address::repeat_byte(0xCC);
+
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), empty_factory(), 1000);
+
+        let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.tracked_count(), 0);
+        assert_eq!(mgr.bond_scan_head, 0);
     }
 }

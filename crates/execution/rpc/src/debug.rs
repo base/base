@@ -37,7 +37,7 @@ use tokio::sync::{Semaphore, oneshot};
 
 use crate::{
     metrics::{DebugApiExtMetrics, DebugApis},
-    state::OpStateProviderFactory,
+    state::BaseStateProviderFactory,
 };
 
 /// Represents the current proofs sync status.
@@ -109,7 +109,7 @@ pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs
     provider: Provider,
     eth_api: Eth,
     storage: OpProofsStorage<Storage>,
-    state_provider_factory: OpStateProviderFactory<Eth, Storage>,
+    state_provider_factory: BaseStateProviderFactory<Eth, Storage>,
     evm_config: EvmConfig,
     task_spawner: Box<dyn TaskSpawner>,
     semaphore: Semaphore,
@@ -133,7 +133,7 @@ where
         Self {
             provider,
             storage: storage.clone(),
-            state_provider_factory: OpStateProviderFactory::new(eth_api.clone(), storage),
+            state_provider_factory: BaseStateProviderFactory::new(eth_api.clone(), storage),
             eth_api,
             evm_config,
             task_spawner,
