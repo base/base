@@ -109,7 +109,12 @@ impl<'a> CertChain<'a> {
 
             // Extract notAfter as seconds since epoch for on-chain expiry tracking.
             let not_after = parsed.cert.validity().not_after.timestamp();
-            expiries.push(not_after as u64);
+            let not_after_secs = u64::try_from(not_after).map_err(|_| {
+                VerifierError::CertificateVerification(format!(
+                    "certificate {i}: notAfter timestamp is negative ({not_after})"
+                ))
+            })?;
+            expiries.push(not_after_secs);
 
             // Skip validation for trusted prefix certs.
             if i < trusted_prefix_len {
