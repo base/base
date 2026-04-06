@@ -187,7 +187,7 @@ mod tests {
         database::{InMemoryDB, State},
     };
 
-    use crate::{DefaultOp, Builder, OpContext};
+    use crate::{Builder, DefaultOp, OpContext};
 
     /// Verifies that the system call caller is loaded into the EVM state cache so it appears in the
     /// execution witness.

@@ -2,7 +2,7 @@
 
 use alloy_primitives::U64;
 pub use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
-use base_execution_payload_builder::config::{OpDAConfig, GasLimitConfig};
+use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
 use jsonrpsee_core::{RpcResult, async_trait};
 use tracing::debug;
 

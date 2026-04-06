@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
-    config::{OpDAConfig, GasLimitConfig},
+    config::{GasLimitConfig, OpDAConfig},
 };
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},

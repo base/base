@@ -20,7 +20,7 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::{DefaultOp, Builder, OpTransaction};
+    use crate::{Builder, DefaultOp, OpTransaction};
 
     #[rstest]
     #[case::short_hex(bytes!("FACADE"))]

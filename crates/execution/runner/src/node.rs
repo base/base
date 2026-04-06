@@ -3,7 +3,7 @@
 use base_alloy_consensus::OpPrimitives;
 use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::OpChainSpec;
-use base_execution_payload_builder::config::{OpDAConfig, GasLimitConfig};
+use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
 use base_execution_rpc::eth::OpEthApiBuilder;
 use base_execution_storage::OpStorage;
 use base_node_core::{
@@ -44,11 +44,7 @@ pub struct BaseNode {
 impl BaseNode {
     /// Creates a new instance of the Base node type.
     pub fn new(args: RollupArgs) -> Self {
-        Self {
-            args,
-            da_config: OpDAConfig::default(),
-            gas_limit_config: GasLimitConfig::default(),
-        }
+        Self { args, da_config: OpDAConfig::default(), gas_limit_config: GasLimitConfig::default() }
     }
 
     /// Configure the data availability configuration for the OP builder.

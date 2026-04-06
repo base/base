@@ -526,9 +526,7 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
     use base_alloy_consensus::OpPrimitives;
-    use base_execution_payload_builder::{
-        PayloadPrimitives, payload::OpPayloadBuilderAttributes,
-    };
+    use base_execution_payload_builder::{PayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_primitives::SealedBlock;

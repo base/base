@@ -6,7 +6,7 @@ use core::{
 };
 use std::sync::Arc;
 
-use base_execution_payload_builder::config::{OpDAConfig, GasLimitConfig};
+use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
 
 use crate::{ExecutionMeteringMode, NoopMeteringProvider, SharedMeteringProvider};
 
