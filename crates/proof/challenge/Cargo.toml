@@ -68,6 +68,9 @@ metrics = { workspace = true, optional = true }
 # TLS
 rustls = { workspace = true, features = ["ring"] }
 
+# Runtime
+base-runtime = { workspace = true, features = ["tokio"] }
+
 # Shutdown
 tokio-util.workspace = true
 

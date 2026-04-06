@@ -26,6 +26,7 @@ use base_proof_primitives::{
     ProofEncoder, ProofRequest as TeeProofRequest, ProofResult, ProverClient,
 };
 use base_proof_rpc::L2Provider;
+use base_runtime::{Clock, TokioRuntime};
 use base_tx_manager::TxManager;
 use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
 use tokio::select;
@@ -61,7 +62,12 @@ pub struct TeeConfig {
 }
 
 /// Service-layer dependencies injected into the [`Driver`].
-pub struct DriverComponents<L2: L2Provider, P: ZkProofProvider, T: TxManager> {
+pub struct DriverComponents<
+    L2: L2Provider,
+    P: ZkProofProvider,
+    T: TxManager,
+    C: Clock = TokioRuntime,
+> {
     /// Scans for new dispute games on L1.
     pub scanner: GameScanner,
     /// Validates L2 output roots against the local node.
@@ -75,11 +81,11 @@ pub struct DriverComponents<L2: L2Provider, P: ZkProofProvider, T: TxManager> {
     /// Client for the aggregate verifier contract.
     pub verifier_client: Arc<dyn AggregateVerifierClient>,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
-    pub bond_manager: Option<BondManager>,
+    pub bond_manager: Option<BondManager<C>>,
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug
-    for DriverComponents<L2, P, T>
+impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
+    for DriverComponents<L2, P, T, C>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DriverComponents")
@@ -91,7 +97,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug
 }
 
 /// Orchestrates the challenger pipeline: scan, validate, prove, submit.
-pub struct Driver<L2, P, T>
+pub struct Driver<L2, P, T, C: Clock = TokioRuntime>
 where
     L2: L2Provider,
     P: ZkProofProvider,
@@ -112,7 +118,7 @@ where
     /// In-flight proof sessions keyed by game address.
     pub pending_proofs: PendingProofs,
     /// Bond lifecycle manager (optional; enabled when claim addresses are configured).
-    pub bond_manager: Option<BondManager>,
+    pub bond_manager: Option<BondManager<C>>,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
     /// Token used to signal graceful shutdown.
@@ -123,7 +129,9 @@ where
     pub last_scanned: Option<u64>,
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug for Driver<L2, P, T> {
+impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
+    for Driver<L2, P, T, C>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Driver")
             .field("pending_proofs", &self.pending_proofs.len())
@@ -133,12 +141,12 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> std::fmt::Debug for Drive
     }
 }
 
-impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
+impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T, C> {
     /// Maximum number of times a failed proof job will be retried before being dropped.
     pub const MAX_PROOF_RETRIES: u32 = 3;
 
     /// Creates a new driver with the given components.
-    pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T>) -> Self {
+    pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T, C>) -> Self {
         Self {
             scanner: components.scanner,
             validator: components.validator,

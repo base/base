@@ -45,9 +45,7 @@ mod verify;
 pub use verify::{AccountProofError, verify_account_proof};
 
 mod bond;
-pub use bond::{
-    BondManager, BondPhase, BondTransactionSubmitter, ClockFn, RemovalReason, TrackedGame,
-};
+pub use bond::{BondManager, BondPhase, BondTransactionSubmitter, RemovalReason, TrackedGame};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

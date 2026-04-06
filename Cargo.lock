@@ -3080,6 +3080,7 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-rpc",
  "base-protocol",
+ "base-runtime",
  "base-tx-manager",
  "base-zk-client",
  "clap",

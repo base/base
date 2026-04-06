@@ -13,6 +13,7 @@ use base_proof_contracts::{
     DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{L2Client, L2ClientConfig};
+use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use base_zk_client::{ZkProofClient, ZkProofClientConfig};
 use eyre::Result;
@@ -149,6 +150,7 @@ impl ChallengerService {
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
                 config.lookback_games,
+                TokioRuntime::new(),
             );
             info!("starting bond recovery scan");
             if let Err(e) = bm.startup_scan(&*verifier_client).await {

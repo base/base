@@ -36,24 +36,11 @@ use base_proof_contracts::{
     AggregateVerifierClient, DelayedWETHClient, DelayedWETHContractClient,
     DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
 };
+use base_runtime::Clock;
 use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 
 use crate::{ChallengerMetrics, GameScanner};
-
-/// Returns the current Unix timestamp in seconds.
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("system clock before UNIX epoch")
-        .as_secs()
-}
-
-/// A function that returns the current Unix timestamp in seconds.
-///
-/// Used as an injectable clock in [`BondManager`] so that tests can
-/// control time without relying on the real wall clock.
-pub type ClockFn = fn() -> u64;
 
 /// Reason a game was removed from tracking after [`BondManager::advance_game`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,8 +62,8 @@ pub enum BondPhase {
     /// The unlock has been submitted; waiting for the `DelayedWETH` delay
     /// to elapse before the second `claimCredit()` call.
     AwaitingDelay {
-        /// Unix timestamp (seconds) at which the unlock occurred.
-        unlocked_at: u64,
+        /// Monotonic timestamp at which the unlock occurred.
+        unlocked_at: Duration,
     },
     /// The delay has elapsed; needs the second `claimCredit()` call to
     /// complete the withdrawal.
@@ -105,7 +92,7 @@ pub struct TrackedGame {
 /// scanning both newly created games and periodically rescanning the
 /// lookback window to catch games challenged or resolved by other actors.
 #[derive(derive_more::Debug)]
-pub struct BondManager {
+pub struct BondManager<C: Clock> {
     /// Games being tracked, keyed by proxy address.
     tracked: HashMap<Address, TrackedGame>,
     /// Addresses we are authorized to claim bonds on behalf of.
@@ -116,24 +103,24 @@ pub struct BondManager {
     /// L1 RPC URL used to instantiate the `DelayedWETH` contract client
     /// when lazily resolving the withdrawal delay.
     l1_rpc_url: url::Url,
-    /// Injectable clock for obtaining the current Unix timestamp. Defaults
-    /// to [`unix_now`] in production; tests can substitute a controlled
-    /// clock.
+    /// Injectable clock providing monotonic time. In production this is
+    /// backed by [`TokioRuntime`](base_runtime::TokioRuntime); tests can
+    /// substitute a deterministic clock.
     #[debug(skip)]
-    clock: ClockFn,
+    clock: C,
     /// Factory client for querying game indices during bond discovery.
     #[debug(skip)]
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     /// Highest game index scanned for bond discovery. Incremental scans
     /// start from this index; periodic full rescans reset it backward.
     bond_scan_head: u64,
-    /// Unix timestamp (seconds) of the last full rescan completion.
-    last_full_scan: u64,
+    /// Monotonic timestamp of the last full rescan completion.
+    last_full_scan: Duration,
     /// Number of games to look back during periodic full rescans.
     lookback: u64,
 }
 
-impl BondManager {
+impl<C: Clock> BondManager<C> {
     /// Conservative fallback when the onchain `DelayedWETH` delay has not
     /// been read yet. If the real delay is shorter the withdraw will simply
     /// succeed earlier; if longer, the attempt reverts and is retried.
@@ -149,7 +136,9 @@ impl BondManager {
         l1_rpc_url: url::Url,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         lookback: u64,
+        clock: C,
     ) -> Self {
+        let last_full_scan = clock.now();
         let set: HashSet<Address> = claim_addresses.into_iter().collect();
         info!(count = set.len(), "bond manager initialized with claim addresses");
         Self {
@@ -157,10 +146,10 @@ impl BondManager {
             claim_addresses: set,
             weth_delay: None,
             l1_rpc_url,
-            clock: unix_now,
+            clock,
             factory_client,
             bond_scan_head: 0,
-            last_full_scan: unix_now(),
+            last_full_scan,
             lookback,
         }
     }
@@ -168,13 +157,6 @@ impl BondManager {
     /// Returns `true` if bond claiming is enabled (at least one claim address configured).
     pub fn is_enabled(&self) -> bool {
         !self.claim_addresses.is_empty()
-    }
-
-    /// Overrides the clock function used to obtain the current Unix
-    /// timestamp. Primarily useful for tests that need deterministic
-    /// time control.
-    pub fn set_clock(&mut self, clock: ClockFn) {
-        self.clock = clock;
     }
 
     /// Sets the `DelayedWETH` withdrawal delay.
@@ -242,6 +224,7 @@ impl BondManager {
         factory_client: &dyn DisputeGameFactoryClient,
         verifier_client: &dyn AggregateVerifierClient,
         claim_addresses: &HashSet<Address>,
+        clock: &C,
     ) -> Option<(Address, Address, Option<BondPhase>)> {
         let game_at = match factory_client.game_at_index(index).await {
             Ok(g) => g,
@@ -290,7 +273,7 @@ impl BondManager {
             return None;
         };
 
-        let phase = match Self::determine_phase(verifier_client, game_address).await {
+        let phase = match Self::determine_phase(verifier_client, game_address, clock).await {
             Ok(phase) => phase,
             Err(e) => {
                 warn!(
@@ -336,12 +319,14 @@ impl BondManager {
         factory_client: &Arc<dyn DisputeGameFactoryClient>,
         verifier_client: &dyn AggregateVerifierClient,
         claim_addresses: &HashSet<Address>,
+        clock: &C,
     ) -> Vec<Option<(Address, Address, Option<BondPhase>)>> {
         stream::iter(range)
             .map(|i| {
                 let fc = &**factory_client;
                 async move {
-                    Self::evaluate_game_for_bonds(i, fc, verifier_client, claim_addresses).await
+                    Self::evaluate_game_for_bonds(i, fc, verifier_client, claim_addresses, clock)
+                        .await
                 }
             })
             .buffer_unordered(GameScanner::SCAN_CONCURRENCY)
@@ -387,6 +372,7 @@ impl BondManager {
             &factory_client,
             verifier_client,
             &self.claim_addresses,
+            &self.clock,
         )
         .await;
 
@@ -418,7 +404,7 @@ impl BondManager {
         // Set the discovery watermark so continuous scanning starts from
         // where startup left off.
         self.bond_scan_head = game_count;
-        self.last_full_scan = (self.clock)();
+        self.last_full_scan = self.clock.now();
 
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         info!(count = self.tracked.len(), "bond startup scan complete");
@@ -454,8 +440,8 @@ impl BondManager {
 
         // Periodic full rescan: reset watermark to re-evaluate the
         // lookback window and catch state transitions on older games.
-        let elapsed = (self.clock)().saturating_sub(self.last_full_scan);
-        let is_full_rescan = elapsed >= Self::BOND_DISCOVERY_INTERVAL.as_secs();
+        let elapsed = self.clock.now().saturating_sub(self.last_full_scan);
+        let is_full_rescan = elapsed >= Self::BOND_DISCOVERY_INTERVAL;
         if is_full_rescan {
             let new_head = game_count.saturating_sub(self.lookback);
             debug!(
@@ -490,6 +476,7 @@ impl BondManager {
             &factory_client,
             verifier_client,
             &self.claim_addresses,
+            &self.clock,
         )
         .await;
 
@@ -526,7 +513,7 @@ impl BondManager {
         self.bond_scan_head = game_count;
 
         if is_full_rescan {
-            self.last_full_scan = (self.clock)();
+            self.last_full_scan = self.clock.now();
         }
 
         if discovered > 0 {
@@ -731,12 +718,13 @@ impl BondManager {
             // better than resetting to "now" (which would re-impose the full
             // delay after every restart).
             let resolved_at = verifier_client.resolved_at(game_address).await?;
+            let unlocked_at = Self::unix_to_monotonic(&self.clock, resolved_at);
             info!(
                 game = %game_address,
                 resolved_at,
                 "bond already unlocked, advancing to delay phase"
             );
-            self.set_phase(game_address, BondPhase::AwaitingDelay { unlocked_at: resolved_at });
+            self.set_phase(game_address, BondPhase::AwaitingDelay { unlocked_at });
             return Ok(None);
         }
 
@@ -744,7 +732,7 @@ impl BondManager {
             game_address,
             submitter,
             "unlock",
-            BondPhase::AwaitingDelay { unlocked_at: (self.clock)() },
+            BondPhase::AwaitingDelay { unlocked_at: self.clock.now() },
         )
         .await
     }
@@ -753,7 +741,7 @@ impl BondManager {
     fn check_delay(
         &mut self,
         game_address: Address,
-        unlocked_at: u64,
+        unlocked_at: Duration,
     ) -> eyre::Result<Option<RemovalReason>> {
         // Fall back to 7 days if the onchain delay has not been read yet.
         // If the real delay is shorter, the withdraw attempt will simply
@@ -764,8 +752,7 @@ impl BondManager {
             Self::DEFAULT_WETH_DELAY
         });
 
-        let now = (self.clock)();
-        let elapsed = Duration::from_secs(now.saturating_sub(unlocked_at));
+        let elapsed = self.clock.now().saturating_sub(unlocked_at);
 
         if elapsed >= delay {
             info!(
@@ -844,6 +831,22 @@ impl BondManager {
         }
     }
 
+    /// Converts a Unix timestamp (seconds) to a monotonic [`Duration`]
+    /// relative to the given clock.
+    ///
+    /// Computes how long ago the Unix timestamp occurred and subtracts
+    /// that age from the current monotonic time. Used when recovering
+    /// on-chain timestamps (e.g. `resolved_at`) into the local monotonic
+    /// time domain.
+    fn unix_to_monotonic(clock: &C, unix_secs: u64) -> Duration {
+        let unix_now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock before UNIX epoch")
+            .as_secs();
+        let age = Duration::from_secs(unix_now.saturating_sub(unix_secs));
+        clock.now().saturating_sub(age)
+    }
+
     /// Determines the bond phase from onchain state.
     ///
     /// Returns `None` if the bond has already been fully claimed. Otherwise
@@ -854,6 +857,7 @@ impl BondManager {
     async fn determine_phase(
         verifier_client: &dyn AggregateVerifierClient,
         game_address: Address,
+        clock: &C,
     ) -> eyre::Result<Option<BondPhase>> {
         let bond_claimed = verifier_client.bond_claimed(game_address).await?;
         if bond_claimed {
@@ -869,7 +873,8 @@ impl BondManager {
             // cause one early withdrawal attempt that reverts, but is strictly
             // better than resetting to "now" (which would re-impose the full
             // delay after every restart).
-            return Ok(Some(BondPhase::AwaitingDelay { unlocked_at: resolved_at }));
+            let unlocked_at = Self::unix_to_monotonic(clock, resolved_at);
+            return Ok(Some(BondPhase::AwaitingDelay { unlocked_at }));
         }
 
         if resolved_at > 0 {
@@ -911,15 +916,40 @@ pub trait BondTransactionSubmitter: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use std::{future::Future, pin::Pin};
+
+    use futures::stream::BoxStream;
+
     use super::*;
     use crate::test_utils::{MockDisputeGameFactory, empty_factory};
+
+    /// A deterministic clock that always returns a fixed [`Duration`].
+    ///
+    /// Used in unit tests that need precise control over the monotonic
+    /// time returned by [`Clock::now`].
+    struct FixedClock(Duration);
+
+    impl Clock for FixedClock {
+        fn now(&self) -> Duration {
+            self.0
+        }
+
+        fn sleep(&self, _duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            Box::pin(std::future::pending())
+        }
+
+        fn interval(&self, _period: Duration) -> BoxStream<'static, ()> {
+            Box::pin(futures::stream::pending())
+        }
+    }
 
     fn test_l1_rpc_url() -> url::Url {
         "http://localhost:8545".parse().unwrap()
     }
 
-    fn make_manager(addresses: Vec<Address>) -> BondManager {
-        let mut mgr = BondManager::new(addresses, test_l1_rpc_url(), empty_factory(), 1000);
+    fn make_manager(addresses: Vec<Address>) -> BondManager<FixedClock> {
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(addresses, test_l1_rpc_url(), empty_factory(), 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
         mgr
     }
@@ -947,28 +977,17 @@ mod tests {
         assert!(mgr.is_tracking(&game));
     }
 
-    /// Returns a [`ClockFn`] that always returns the given timestamp.
-    ///
-    /// Only a fixed set of test timestamps is supported; passing an
-    /// unsupported value will panic to prevent silent non-determinism.
-    fn fixed_clock(ts: u64) -> ClockFn {
-        match ts {
-            1000 => || 1000,
-            5000 => || 5000,
-            _ => panic!("unsupported test timestamp {ts} — add a new match arm"),
-        }
-    }
-
     #[test]
     fn check_delay_transitions_when_elapsed() {
         let addr = Address::repeat_byte(0x01);
         let game = Address::repeat_byte(0xAA);
 
-        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000);
+        let clock = FixedClock(Duration::from_secs(1000));
+        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
-        mgr.set_clock(fixed_clock(1000));
 
-        let unlocked_at = 900; // 100 seconds ago > 60 second delay
+        // 100 seconds ago > 60 second delay
+        let unlocked_at = Duration::from_secs(900);
         mgr.tracked.insert(
             game,
             TrackedGame { phase: BondPhase::AwaitingDelay { unlocked_at }, bond_recipient: addr },
@@ -984,11 +1003,12 @@ mod tests {
         let addr = Address::repeat_byte(0x01);
         let game = Address::repeat_byte(0xAA);
 
-        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000);
+        let clock = FixedClock(Duration::from_secs(1000));
+        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(3600));
-        mgr.set_clock(fixed_clock(1000));
 
-        let unlocked_at = 999; // only 1 second ago < 3600 second delay
+        // only 1 second ago < 3600 second delay
+        let unlocked_at = Duration::from_secs(999);
         mgr.tracked.insert(
             game,
             TrackedGame { phase: BondPhase::AwaitingDelay { unlocked_at }, bond_recipient: addr },
@@ -1001,17 +1021,20 @@ mod tests {
 
     #[test]
     fn empty_claim_addresses_means_disabled() {
-        let mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000, clock);
         assert!(!mgr.is_enabled());
     }
 
     #[test]
     fn non_empty_claim_addresses_means_enabled() {
+        let clock = FixedClock(Duration::from_secs(0));
         let mgr = BondManager::new(
             vec![Address::repeat_byte(0x01)],
             test_l1_rpc_url(),
             empty_factory(),
             1000,
+            clock,
         );
         assert!(mgr.is_enabled());
     }
@@ -1045,7 +1068,8 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(3, claim_addr, Address::ZERO);
 
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // bond_scan_head defaults to 0, so the first call should scan all 3.
@@ -1062,7 +1086,8 @@ mod tests {
         // Status 0 = IN_PROGRESS, so the game should match via zkProver.
         let (factory, verifier) = discovery_mocks(2, other_recipient, claim_addr);
 
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
@@ -1074,7 +1099,8 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(2, claim_addr, Address::ZERO);
 
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // Pre-track game 0.
@@ -1101,7 +1127,8 @@ mod tests {
         let factory: Arc<dyn DisputeGameFactoryClient> = Arc::new(MockDisputeGameFactory { games });
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
@@ -1113,7 +1140,8 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(5, claim_addr, Address::ZERO);
 
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // Start from index 3 so only indices 3 and 4 are scanned.
@@ -1128,7 +1156,8 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(5, claim_addr, Address::ZERO);
 
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // Watermark already at game_count — nothing new to scan.
@@ -1143,20 +1172,24 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(10, claim_addr, Address::ZERO);
 
+        // Use a clock at 1000s so we can backdate last_full_scan.
+        let clock = FixedClock(Duration::from_secs(1000));
         let mut mgr = BondManager::new(
             vec![claim_addr],
             test_l1_rpc_url(),
             factory,
             5, // lookback = 5
+            clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // Simulate that the previous scan already covered everything.
         mgr.bond_scan_head = 10;
 
-        // Force the full rescan by backdating `last_full_scan`.
-        mgr.last_full_scan =
-            unix_now().saturating_sub(BondManager::BOND_DISCOVERY_INTERVAL.as_secs());
+        // Force the full rescan by backdating `last_full_scan` past the
+        // discovery interval.
+        mgr.last_full_scan = Duration::from_secs(1000)
+            .saturating_sub(BondManager::<FixedClock>::BOND_DISCOVERY_INTERVAL);
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
         // Full rescan should have reset watermark to 10 - 5 = 5
@@ -1169,7 +1202,8 @@ mod tests {
     async fn discover_disabled_when_no_claim_addresses() {
         let (_, verifier) = discovery_mocks(5, Address::repeat_byte(0xCC), Address::ZERO);
 
-        let mut mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000, clock);
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
         assert_eq!(mgr.tracked_count(), 0);
@@ -1182,7 +1216,8 @@ mod tests {
         // Neither bondRecipient nor zkProver match our claim address.
         let (factory, verifier) = discovery_mocks(3, other, Address::ZERO);
 
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
@@ -1195,7 +1230,9 @@ mod tests {
     async fn discover_handles_empty_factory() {
         let claim_addr = Address::repeat_byte(0xCC);
 
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), empty_factory(), 1000);
+        let clock = FixedClock(Duration::from_secs(0));
+        let mut mgr =
+            BondManager::new(vec![claim_addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
 
         let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
         mgr.discover_claimable_games(&*verifier).await.unwrap();
