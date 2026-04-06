@@ -5,7 +5,7 @@ use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, U256};
 use base_batcher_encoder::FrameEncoder;
 use base_blobs::BlobEncoder;
-use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+use base_consensus_genesis::SystemConfigUpdate;
 use base_protocol::{BlockInfo, Deposits, Frame};
 use tracing::info;
 
@@ -255,7 +255,7 @@ impl L1Miner {
         self.enqueue_log(Log {
             address: l1_sys_cfg_addr,
             data: LogData::new_unchecked(
-                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::ZERO],
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, B256::ZERO],
                 data.into(),
             ),
         });
@@ -281,7 +281,11 @@ impl L1Miner {
         self.enqueue_log(Log {
             address: l1_sys_cfg_addr,
             data: LogData::new_unchecked(
-                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::from(update_type)],
+                vec![
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
+                    B256::from(update_type),
+                ],
                 data.into(),
             ),
         });
@@ -298,7 +302,11 @@ impl L1Miner {
         self.enqueue_log(Log {
             address: l1_sys_cfg_addr,
             data: LogData::new_unchecked(
-                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::from(update_type)],
+                vec![
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
+                    B256::from(update_type),
+                ],
                 data.into(),
             ),
         });
@@ -323,7 +331,11 @@ impl L1Miner {
         self.enqueue_log(Log {
             address: l1_sys_cfg_addr,
             data: LogData::new_unchecked(
-                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::from(update_type)],
+                vec![
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
+                    B256::from(update_type),
+                ],
                 data.into(),
             ),
         });

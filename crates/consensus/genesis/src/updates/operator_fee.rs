@@ -97,7 +97,10 @@ mod tests {
         let log =
             Log { address: Address::ZERO, data: LogData::new_unchecked(vec![], Bytes::default()) };
         let system_log = SystemConfigLog::new(log, false);
-        assert_eq!(OperatorFeeUpdate::try_from(&system_log).unwrap_err(), OperatorFeeUpdateError::InvalidDataLen(0));
+        assert_eq!(
+            OperatorFeeUpdate::try_from(&system_log).unwrap_err(),
+            OperatorFeeUpdateError::InvalidDataLen(0)
+        );
     }
 
     #[rstest]
@@ -105,7 +108,10 @@ mod tests {
     #[case(hex!("000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef"), OperatorFeeUpdateError::InvalidDataPointer(33))]
     #[case(hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef"), OperatorFeeUpdateError::LengthDecodingError)]
     #[case(hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef"), OperatorFeeUpdateError::InvalidDataLength(33))]
-    fn test_operator_fee_update_errors(#[case] data: [u8; 96], #[case] expected: OperatorFeeUpdateError) {
+    fn test_operator_fee_update_errors(
+        #[case] data: [u8; 96],
+        #[case] expected: OperatorFeeUpdateError,
+    ) {
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(

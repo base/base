@@ -206,7 +206,11 @@ mod tests {
     #[rstest]
     #[case(0, Ecotone::NEW_L1_BLOCK, Ecotone::L1_BLOCK_DEPLOYER_CODE_HASH)]
     #[case(1, Ecotone::GAS_PRICE_ORACLE, Ecotone::GAS_PRICE_ORACLE_CODE_HASH)]
-    fn test_ecotone_deployment_code_hashes(#[case] tx_idx: usize, #[case] addr: Address, #[case] code_hash: B256) {
+    fn test_ecotone_deployment_code_hashes(
+        #[case] tx_idx: usize,
+        #[case] addr: Address,
+        #[case] code_hash: B256,
+    ) {
         let txs = Ecotone::deposits().collect::<Vec<_>>();
         check_deployment_code(txs[tx_idx].clone(), addr, code_hash);
     }

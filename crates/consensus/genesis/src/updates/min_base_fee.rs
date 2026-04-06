@@ -79,7 +79,10 @@ mod tests {
         let log =
             Log { address: Address::ZERO, data: LogData::new_unchecked(vec![], Bytes::default()) };
         let system_log = SystemConfigLog::new(log, false);
-        assert_eq!(MinBaseFeeUpdate::try_from(&system_log).unwrap_err(), MinBaseFeeUpdateError::InvalidDataLen(0));
+        assert_eq!(
+            MinBaseFeeUpdate::try_from(&system_log).unwrap_err(),
+            MinBaseFeeUpdateError::InvalidDataLen(0)
+        );
     }
 
     #[rstest]
@@ -88,7 +91,10 @@ mod tests {
     #[case(hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef"), MinBaseFeeUpdateError::LengthDecodingError)]
     #[case(hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef"), MinBaseFeeUpdateError::InvalidDataLength(33))]
     #[case(hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"), MinBaseFeeUpdateError::MinBaseFeeDecodingError)]
-    fn test_min_base_fee_update_errors(#[case] data: [u8; 96], #[case] expected: MinBaseFeeUpdateError) {
+    fn test_min_base_fee_update_errors(
+        #[case] data: [u8; 96],
+        #[case] expected: MinBaseFeeUpdateError,
+    ) {
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(

@@ -269,7 +269,11 @@ mod tests {
     #[case(0, Isthmus::NEW_L1_BLOCK, Isthmus::L1_BLOCK_DEPLOYER_CODE_HASH)]
     #[case(1, Isthmus::GAS_PRICE_ORACLE, Isthmus::GAS_PRICE_ORACLE_CODE_HASH)]
     #[case(2, Isthmus::OPERATOR_FEE_VAULT, Isthmus::OPERATOR_FEE_VAULT_CODE_HASH)]
-    fn test_isthmus_deployment_code_hashes(#[case] tx_idx: usize, #[case] addr: Address, #[case] code_hash: B256) {
+    fn test_isthmus_deployment_code_hashes(
+        #[case] tx_idx: usize,
+        #[case] addr: Address,
+        #[case] code_hash: B256,
+    ) {
         let txs = Isthmus::deposits().collect::<Vec<_>>();
         check_deployment_code(txs[tx_idx].clone(), addr, code_hash);
     }

@@ -83,7 +83,10 @@ mod tests {
             )
         };
         let system_log = SystemConfigLog::new(log, false);
-        assert_eq!(DaFootprintGasScalarUpdate::try_from(&system_log).unwrap().da_footprint_gas_scalar, 0xbeef_u16);
+        assert_eq!(
+            DaFootprintGasScalarUpdate::try_from(&system_log).unwrap().da_footprint_gas_scalar,
+            0xbeef_u16
+        );
     }
 
     #[test]
@@ -91,7 +94,10 @@ mod tests {
         let log =
             Log { address: Address::ZERO, data: LogData::new_unchecked(vec![], Bytes::default()) };
         let system_log = SystemConfigLog::new(log, false);
-        assert_eq!(DaFootprintGasScalarUpdate::try_from(&system_log).unwrap_err(), DaFootprintGasScalarUpdateError::InvalidDataLen(0));
+        assert_eq!(
+            DaFootprintGasScalarUpdate::try_from(&system_log).unwrap_err(),
+            DaFootprintGasScalarUpdateError::InvalidDataLen(0)
+        );
     }
 
     #[rstest]
@@ -100,7 +106,10 @@ mod tests {
     #[case(hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef"), DaFootprintGasScalarUpdateError::LengthDecodingError)]
     #[case(hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef"), DaFootprintGasScalarUpdateError::InvalidDataLength(33))]
     #[case(hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"), DaFootprintGasScalarUpdateError::DaFootprintGasScalarDecodingError)]
-    fn test_da_footprint_update_errors(#[case] data: [u8; 96], #[case] expected: DaFootprintGasScalarUpdateError) {
+    fn test_da_footprint_update_errors(
+        #[case] data: [u8; 96],
+        #[case] expected: DaFootprintGasScalarUpdateError,
+    ) {
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(

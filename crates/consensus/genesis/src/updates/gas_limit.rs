@@ -85,7 +85,10 @@ mod tests {
         let log =
             Log { address: Address::ZERO, data: LogData::new_unchecked(vec![], Bytes::default()) };
         let system_log = SystemConfigLog::new(log, false);
-        assert_eq!(GasLimitUpdate::try_from(&system_log).unwrap_err(), GasLimitUpdateError::InvalidDataLen(0));
+        assert_eq!(
+            GasLimitUpdate::try_from(&system_log).unwrap_err(),
+            GasLimitUpdateError::InvalidDataLen(0)
+        );
     }
 
     #[rstest]

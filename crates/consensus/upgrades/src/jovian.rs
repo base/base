@@ -176,7 +176,11 @@ mod tests {
     #[rstest]
     #[case(0, Jovian::l1_block_address(), hex!("5f885ca815d2cf27a203123e50b8ae204fdca910b6995d90b2d7700cbb9240d1").into())]
     #[case(2, Jovian::gas_price_oracle_address(), hex!("e9fc7c96c4db0d6078e3d359d7e8c982c350a513cb2c31121adf5e1e8a446614").into())]
-    fn test_jovian_deployment_code_hashes(#[case] tx_idx: usize, #[case] addr: Address, #[case] code_hash: B256) {
+    fn test_jovian_deployment_code_hashes(
+        #[case] tx_idx: usize,
+        #[case] addr: Address,
+        #[case] code_hash: B256,
+    ) {
         let txs = Jovian::deposits().collect::<Vec<_>>();
         check_deployment_code(txs[tx_idx].clone(), addr, code_hash);
     }

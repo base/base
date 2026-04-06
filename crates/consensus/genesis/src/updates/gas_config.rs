@@ -101,7 +101,10 @@ mod tests {
         let log =
             Log { address: Address::ZERO, data: LogData::new_unchecked(vec![], Bytes::default()) };
         let system_log = SystemConfigLog::new(log, false);
-        assert_eq!(GasConfigUpdate::try_from(&system_log).unwrap_err(), GasConfigUpdateError::InvalidDataLen(0));
+        assert_eq!(
+            GasConfigUpdate::try_from(&system_log).unwrap_err(),
+            GasConfigUpdateError::InvalidDataLen(0)
+        );
     }
 
     #[rstest]
@@ -109,7 +112,10 @@ mod tests {
     #[case(hex!("00000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef"), GasConfigUpdateError::InvalidDataPointer(33))]
     #[case(hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef"), GasConfigUpdateError::LengthDecodingError)]
     #[case(hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000041000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef"), GasConfigUpdateError::InvalidDataLength(65))]
-    fn test_gas_config_update_errors(#[case] data: [u8; 128], #[case] expected: GasConfigUpdateError) {
+    fn test_gas_config_update_errors(
+        #[case] data: [u8; 128],
+        #[case] expected: GasConfigUpdateError,
+    ) {
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(

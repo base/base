@@ -1,6 +1,7 @@
 //! Contains the [`SystemConfigUpdate`].
 
 use alloy_primitives::{B256, b256};
+
 use crate::{
     BatcherUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate, OperatorFeeUpdate, SystemConfig,
     SystemConfigUpdateKind, UnsafeBlockSignerUpdate,
