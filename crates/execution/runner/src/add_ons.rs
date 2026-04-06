@@ -12,7 +12,6 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::OpPooledTx;
 use base_node_core::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
-use reth_chainspec::{EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
