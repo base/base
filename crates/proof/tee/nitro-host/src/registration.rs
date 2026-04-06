@@ -5,6 +5,17 @@
 //!   ASG replacement on transient L1 failures).
 //! - **Proving guard** — fail-closed with a TTL cache: rejects proof requests
 //!   when the signer is invalid or L1 is unreachable.
+//!
+//! # Trade-off: latching health after deregistration
+//!
+//! After a signer deregistration or image rotation the health latch stays set
+//! while the proving guard rejects every request.  The prover will continue
+//! receiving traffic from the load balancer (because `/healthz` returns 200)
+//! but respond with `-32001` errors.  This is intentional: the ASG must not
+//! terminate the instance on a transient L1 blip, and proof-request callers
+//! already retry on other nodes.  If `/healthz` is ever the **sole** LB
+//! signal with no retry layer, switch to a bounded latch (e.g. stay healthy
+//! for N minutes after the last successful validation).
 
 use std::{
     sync::Arc,
@@ -128,10 +139,9 @@ impl RegistrationChecker {
     }
 
     /// Latching health check: returns `true` once the signer has ever been
-    /// confirmed valid, and stays `true` forever after.
-    ///
-    /// Before the first successful validation, delegates to
-    /// [`fetch_validity`](Self::fetch_validity) and returns its result.
+    /// confirmed valid, and stays `true` forever after — even if the signer
+    /// is later deregistered.  See the [module-level docs](self) for the
+    /// trade-off this implies.
     pub async fn check_health(&self) -> Result<bool, RegistrationError> {
         if self.healthy.get().is_some() {
             return Ok(true);
