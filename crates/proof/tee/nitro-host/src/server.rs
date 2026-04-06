@@ -14,6 +14,7 @@ use tracing::{info, warn};
 use super::{
     NitroBackend,
     health::{RegistrationHealthConfig, RegistrationHealthzRpc},
+    registration::RegistrationChecker,
     transport::NitroTransport,
 };
 
@@ -73,35 +74,41 @@ impl NitroProverServer {
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
-        module.merge(
-            NitroProverRpc {
-                service: self.service,
-                proof_request_timeout: self.proof_request_timeout,
-            }
-            .into_rpc(),
-        )?;
 
-        module.merge(NitroSignerRpc { transport: Arc::clone(&self.transport) }.into_rpc())?;
-
-        match self.registration_health {
+        let checker = match self.registration_health {
             Some(config) => {
                 info!(
                     registry = %config.registry_address,
-                    "registration-gated health check enabled"
+                    "registration-gated health and proving guard enabled"
                 );
                 let l1_url = url::Url::parse(&config.l1_rpc_url)
                     .map_err(|e| eyre::eyre!("invalid L1 RPC URL: {e}"))?;
                 let registry =
                     TEEProverRegistryContractClient::new(config.registry_address, l1_url);
-                let version = env!("CARGO_PKG_VERSION");
-                let transport = Arc::clone(&self.transport);
-                module
-                    .merge(RegistrationHealthzRpc::new(version, transport, registry).into_rpc())?;
+                let checker =
+                    Arc::new(RegistrationChecker::new(Arc::clone(&self.transport), registry));
+                module.merge(
+                    RegistrationHealthzRpc::new(env!("CARGO_PKG_VERSION"), Arc::clone(&checker))
+                        .into_rpc(),
+                )?;
+                Some(checker)
             }
             None => {
                 module.merge(HealthzRpc::new(env!("CARGO_PKG_VERSION")).into_rpc())?;
+                None
             }
-        }
+        };
+
+        module.merge(
+            NitroProverRpc {
+                service: self.service,
+                proof_request_timeout: self.proof_request_timeout,
+                checker,
+            }
+            .into_rpc(),
+        )?;
+
+        module.merge(NitroSignerRpc { transport: Arc::clone(&self.transport) }.into_rpc())?;
 
         Ok(server.start(module))
     }
@@ -111,11 +118,19 @@ impl NitroProverServer {
 struct NitroProverRpc {
     service: ProverService<NitroBackend>,
     proof_request_timeout: Duration,
+    checker: Option<Arc<RegistrationChecker>>,
 }
 
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
+        if let Some(checker) = &self.checker {
+            checker.require_valid_signer().await.map_err(|reason| {
+                warn!(error = %reason, "rejecting proof request: signer validation failed");
+                jsonrpsee::types::ErrorObjectOwned::owned(-32001, reason, None::<()>)
+            })?;
+        }
+
         let l2_block = request.claimed_l2_block_number;
         let timeout = self.proof_request_timeout;
 
