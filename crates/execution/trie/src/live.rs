@@ -12,7 +12,7 @@ use reth_provider::{
 };
 use reth_revm::database::StateProviderDatabase;
 use reth_trie_common::{HashedPostStateSorted, updates::TrieUpdatesSorted};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     BlockStateDiff, OpProofsStorage, OpProofsStorageError, OpProofsStore, api::OperationDurations,
@@ -138,9 +138,26 @@ where
         let start = Instant::now();
         let mut operation_durations = OperationDurations::default();
 
-        let storage_result = self
+        let storage_result = match self
             .storage
-            .store_trie_updates(block, BlockStateDiff { sorted_trie_updates, sorted_post_state })?;
+            .store_trie_updates(block, BlockStateDiff { sorted_trie_updates, sorted_post_state })
+        {
+            Ok(res) => res,
+            Err(OpProofsStorageError::OutOfOrder {
+                block_number,
+                latest_block_hash,
+                parent_block_hash,
+            }) => {
+                warn!(
+                    block_number,
+                    ?latest_block_hash,
+                    ?parent_block_hash,
+                    "Skipping out of order block updates"
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
 
         let write_duration = start.elapsed();
         operation_durations.total_duration_seconds = write_duration;
