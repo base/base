@@ -156,9 +156,11 @@ impl BroadcastLoop {
         }
 
         // Phase 2: drain receiver messages that accumulated during phase 1.
-        // Collect everything synchronously first so the drain is bounded by the
-        // channel's capacity at this instant — no new messages can arrive between
-        // try_recv calls (unlike the previous approach that interleaved sends).
+        // There are no `.await` points in the loop below, so no other tasks
+        // can run and interleave sends. The drain therefore completes promptly
+        // once the current queue is exhausted (a few messages may slip in during
+        // the loop body itself, but try_recv returning Empty is our termination
+        // condition, not a fixed snapshot of the channel's capacity).
         let mut pending = Vec::with_capacity(self.receiver.len());
         loop {
             match self.receiver.try_recv() {
