@@ -359,9 +359,9 @@ mod tests {
     use base_alloy_chains::{BaseChainUpgrades, BaseUpgrade};
     use base_alloy_consensus::OpTxEnvelope;
     use base_revm::{
-        BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
+        BASE_FEE_SCALAR_OFFSET, Builder, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
         ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
-        OPERATOR_FEE_SCALARS_SLOT, OpBuilder, OpSpecId,
+        OPERATOR_FEE_SCALARS_SLOT, OpSpecId,
     };
     use revm::{
         Context,

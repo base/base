@@ -11,9 +11,9 @@ use base_execution_chainspec::OpChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
 use base_execution_evm::{OpEvmConfig, OpRethReceiptBuilder};
 use base_execution_payload_builder::{
-    OpAttributes, OpBuiltPayload, OpPayloadPrimitives,
+    Attributes, OpBuiltPayload, PayloadPrimitives,
     builder::BasePayloadTransactions,
-    config::{BaseBuilderConfig, OpDAConfig, OpGasLimitConfig},
+    config::{BaseBuilderConfig, GasLimitConfig, OpDAConfig},
 };
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
@@ -84,7 +84,7 @@ impl<N> OpNodeTypes for N where
 pub trait BaseFullNodeTypes:
     NodeTypes<
         ChainSpec = OpChainSpec,
-        Primitives: OpPayloadPrimitives,
+        Primitives: PayloadPrimitives,
         Storage = OpStorage,
         Payload: EngineTypes<ExecutionData = OpExecutionData>,
     >
@@ -94,7 +94,7 @@ pub trait BaseFullNodeTypes:
 impl<N> BaseFullNodeTypes for N where
     N: NodeTypes<
             ChainSpec = OpChainSpec,
-            Primitives: OpPayloadPrimitives,
+            Primitives: PayloadPrimitives,
             Storage = OpStorage,
             Payload: EngineTypes<ExecutionData = OpExecutionData>,
         >
@@ -185,7 +185,7 @@ pub struct OpNode {
     /// Gas limit configuration for the OP builder.
     /// Used to control the gas limit of the blocks produced by the OP builder.(configured by the
     /// batcher via the `miner_` api)
-    pub gas_limit_config: OpGasLimitConfig,
+    pub gas_limit_config: GasLimitConfig,
 }
 
 /// A [`ComponentsBuilder`] with its generic arguments set to a stack of Base-specific builders.
@@ -201,11 +201,7 @@ pub type OpNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBu
 impl OpNode {
     /// Creates a new instance of the Base node type.
     pub fn new(args: RollupArgs) -> Self {
-        Self {
-            args,
-            da_config: OpDAConfig::default(),
-            gas_limit_config: OpGasLimitConfig::default(),
-        }
+        Self { args, da_config: OpDAConfig::default(), gas_limit_config: GasLimitConfig::default() }
     }
 
     /// Configure the data availability configuration for the OP builder.
@@ -215,7 +211,7 @@ impl OpNode {
     }
 
     /// Configure the gas limit configuration for the OP builder.
-    pub fn with_gas_limit_config(mut self, gas_limit_config: OpGasLimitConfig) -> Self {
+    pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
         self
     }
@@ -372,7 +368,7 @@ pub struct OpAddOns<
     /// Data availability configuration for the OP builder.
     pub da_config: OpDAConfig,
     /// Gas limit configuration for the OP builder.
-    pub gas_limit_config: OpGasLimitConfig,
+    pub gas_limit_config: GasLimitConfig,
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
     /// network.
     pub sequencer_url: Option<String>,
@@ -391,7 +387,7 @@ where
     pub const fn new(
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
         da_config: OpDAConfig,
-        gas_limit_config: OpGasLimitConfig,
+        gas_limit_config: GasLimitConfig,
         sequencer_url: Option<String>,
         sequencer_headers: Vec<String>,
         min_suggested_priority_fee: u64,
@@ -551,8 +547,8 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: OpAttributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
-    <N::Types as NodeTypes>::Primitives: OpPayloadPrimitives<_Header: HeaderMut>,
+    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
 
@@ -626,8 +622,8 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: OpAttributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
-    <N::Types as NodeTypes>::Primitives: OpPayloadPrimitives<_Header: HeaderMut>,
+    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type EthApi = EthB::EthApi;
 
@@ -665,7 +661,7 @@ pub struct OpAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     /// Data availability configuration for the OP builder.
     da_config: Option<OpDAConfig>,
     /// Gas limit configuration for the OP builder.
-    gas_limit_config: Option<OpGasLimitConfig>,
+    gas_limit_config: Option<GasLimitConfig>,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
     /// Minimum suggested priority fee (tip)
@@ -711,7 +707,7 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
     }
 
     /// Configure the gas limit configuration for the OP payload builder.
-    pub fn with_gas_limit_config(mut self, gas_limit_config: OpGasLimitConfig) -> Self {
+    pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = Some(gas_limit_config);
         self
     }
@@ -943,7 +939,7 @@ pub struct OpPayloadBuilder<Txs = ()> {
     pub da_config: OpDAConfig,
     /// Gas limit configuration for the OP builder.
     /// This is used to configure gas limit related constraints for the payload builder.
-    pub gas_limit_config: OpGasLimitConfig,
+    pub gas_limit_config: GasLimitConfig,
 }
 
 impl OpPayloadBuilder {
@@ -954,7 +950,7 @@ impl OpPayloadBuilder {
             compute_pending_block,
             best_transactions: (),
             da_config: OpDAConfig::default(),
-            gas_limit_config: OpGasLimitConfig::default(),
+            gas_limit_config: GasLimitConfig::default(),
         }
     }
 
@@ -965,7 +961,7 @@ impl OpPayloadBuilder {
     }
 
     /// Configure the gas limit configuration for the OP payload builder.
-    pub fn with_gas_limit_config(mut self, gas_limit_config: OpGasLimitConfig) -> Self {
+    pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
         self
     }
@@ -985,7 +981,7 @@ where
     Node: FullNodeTypes<
             Provider: ChainSpecProvider<ChainSpec: BaseUpgrades>,
             Types: NodeTypes<
-                Primitives: OpPayloadPrimitives,
+                Primitives: PayloadPrimitives,
                 Payload: PayloadTypes<
                     BuiltPayload = OpBuiltPayload<PrimitivesTy<Node::Types>>,
                     PayloadBuilderAttributes = Attrs,
@@ -1002,7 +998,7 @@ where
         > + 'static,
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool::Transaction>,
-    Attrs: OpAttributes<Transaction = TxTy<Node::Types>>,
+    Attrs: Attributes<Transaction = TxTy<Node::Types>>,
 {
     type PayloadBuilder =
         base_execution_payload_builder::OpPayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;

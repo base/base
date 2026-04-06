@@ -4,7 +4,7 @@ use alloy_evm::{Database, EvmEnv, EvmFactory};
 use base_alloy_evm::OpEvm;
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
 use base_revm::{
-    DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
+    Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
 };
 use revm::{
     Context, Inspector,

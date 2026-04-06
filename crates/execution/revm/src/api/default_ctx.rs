@@ -34,7 +34,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::OpBuilder;
+    use crate::Builder;
 
     #[test]
     fn default_run_op() {

@@ -40,7 +40,7 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    OpAttributes, OpPayloadBuilderAttributes, OpPayloadPrimitives, config::BaseBuilderConfig,
+    Attributes, OpPayloadBuilderAttributes, PayloadPrimitives, config::BaseBuilderConfig,
     error::BasePayloadBuilderError, payload::OpBuiltPayload,
 };
 
@@ -157,12 +157,12 @@ impl<Pool, Client, Evm, N, T, Attrs> OpPayloadBuilder<Pool, Client, Evm, T, Attr
 where
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: BaseUpgrades>,
-    N: OpPayloadPrimitives,
+    N: PayloadPrimitives,
     Evm: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
-    Attrs: OpAttributes<Transaction = TxTy<Evm::Primitives>>,
+    Attrs: Attributes<Transaction = TxTy<Evm::Primitives>>,
 {
     /// Constructs a Base payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -192,7 +192,7 @@ where
             best_payload,
         };
 
-        let builder = OpBuilder::new(best);
+        let builder = Builder::new(best);
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(&state_provider);
@@ -230,7 +230,7 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
-        let builder = OpBuilder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
+        let builder = Builder::new(|_| NoopPayloadTransactions::<Pool::Transaction>::default());
         builder.witness(state_provider, &ctx)
     }
 }
@@ -239,7 +239,7 @@ where
 impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
     for OpPayloadBuilder<Pool, Client, Evm, Txs, Attrs>
 where
-    N: OpPayloadPrimitives,
+    N: PayloadPrimitives,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: BaseUpgrades> + Clone,
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
@@ -247,7 +247,7 @@ where
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
     Txs: BasePayloadTransactions<Pool::Transaction>,
-    Attrs: OpAttributes<Transaction = N::SignedTx>,
+    Attrs: Attributes<Transaction = N::SignedTx>,
 {
     type Attributes = Attrs;
     type BuiltPayload = OpBuiltPayload<N>;
@@ -303,20 +303,20 @@ where
 /// And finally
 /// 5. build the block: compute all roots (txs, state)
 #[derive(derive_more::Debug)]
-pub struct OpBuilder<'a, Txs> {
+pub struct Builder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     #[debug(skip)]
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
 }
 
-impl<'a, Txs> OpBuilder<'a, Txs> {
-    /// Creates a new [`OpBuilder`].
+impl<'a, Txs> Builder<'a, Txs> {
+    /// Creates a new [`Builder`].
     pub fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
         Self { best: Box::new(best) }
     }
 }
 
-impl<Txs> OpBuilder<'_, Txs> {
+impl<Txs> Builder<'_, Txs> {
     /// Builds the payload on top of the state.
     pub fn build<Evm, ChainSpec, N, Attrs>(
         self,
@@ -330,10 +330,10 @@ impl<Txs> OpBuilder<'_, Txs> {
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
             >,
         ChainSpec: EthChainSpec + BaseUpgrades,
-        N: OpPayloadPrimitives,
+        N: PayloadPrimitives,
         Txs:
             PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + OpPooledTx>,
-        Attrs: OpAttributes<Transaction = N::SignedTx>,
+        Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let Self { best } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
@@ -415,9 +415,9 @@ impl<Txs> OpBuilder<'_, Txs> {
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
             >,
         ChainSpec: EthChainSpec + BaseUpgrades,
-        N: OpPayloadPrimitives,
+        N: PayloadPrimitives,
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
-        Attrs: OpAttributes<Transaction = N::SignedTx>,
+        Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let mut db = State::builder()
             .with_database(StateProviderDatabase::new(&state_provider))
@@ -560,11 +560,11 @@ pub struct OpPayloadBuilderCtx<
 impl<Evm, ChainSpec, Attrs> OpPayloadBuilderCtx<Evm, ChainSpec, Attrs>
 where
     Evm: ConfigureEvm<
-            Primitives: OpPayloadPrimitives,
+            Primitives: PayloadPrimitives,
             NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<Evm::Primitives>, ChainSpec>,
         >,
     ChainSpec: EthChainSpec + BaseUpgrades,
-    Attrs: OpAttributes<Transaction = TxTy<Evm::Primitives>>,
+    Attrs: Attributes<Transaction = TxTy<Evm::Primitives>>,
 {
     /// Returns the parent block the payload will be build on.
     pub fn parent(&self) -> &SealedHeaderFor<Evm::Primitives> {

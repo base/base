@@ -226,7 +226,7 @@ const SEPOLIA: BaseChainConfig = BaseChainConfig {
     pectra_blob_schedule_timestamp: Some(1_742_486_400),
     isthmus_timestamp: 1_744_905_600,
     jovian_timestamp: 1_763_568_001,
-    base_v1_timestamp: None,
+    base_v1_timestamp: Some(1_776_708_000),
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
     genesis_l1_number: 4_370_868,

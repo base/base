@@ -37,7 +37,7 @@ pub mod validation;
 pub use validation::{canyon, isthmus, validate_block_post_execution};
 
 pub mod error;
-pub use error::OpConsensusError;
+pub use error::BaseConsensusError;
 
 /// Base consensus implementation.
 ///

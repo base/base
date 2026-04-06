@@ -61,15 +61,23 @@ impl<'a> CertChain<'a> {
         Ok(Self { certs: parsed })
     }
 
-    /// Verifies the certificate chain and returns accumulated cert digests.
+    /// Verifies the certificate chain and returns accumulated cert digests
+    /// paired with expiry timestamps.
     ///
     /// Skips verification of the first `trusted_prefix_len` certificates
     /// (they are already trusted on-chain). Verifies from `trusted_prefix_len`
     /// through the leaf certificate.
     ///
-    /// Returns a `Vec<B256>` of accumulated path digests (one per cert),
-    /// matching the on-chain `VerifierJournal.certs` field.
-    pub fn verify_chain(&self, trusted_prefix_len: usize, timestamp: u64) -> Result<Vec<B256>> {
+    /// Returns `(Vec<B256>, Vec<u64>)`:
+    /// - Accumulated path digests (one per cert), matching the on-chain
+    ///   `VerifierJournal.certs` field.
+    /// - Certificate expiry timestamps (`notAfter` as seconds since epoch),
+    ///   matching the on-chain `VerifierJournal.certExpiries` field.
+    pub fn verify_chain(
+        &self,
+        trusted_prefix_len: usize,
+        timestamp: u64,
+    ) -> Result<(Vec<B256>, Vec<u64>)> {
         if trusted_prefix_len > self.certs.len() {
             return Err(VerifierError::CertificateVerification(format!(
                 "trusted prefix length {trusted_prefix_len} exceeds chain length {}",
@@ -78,6 +86,7 @@ impl<'a> CertChain<'a> {
         }
 
         let mut digests = Vec::with_capacity(self.certs.len());
+        let mut expiries = Vec::with_capacity(self.certs.len());
         // Accumulate path digests for all certs (including trusted prefix).
         let mut path_digest = B256::ZERO;
 
@@ -97,6 +106,15 @@ impl<'a> CertChain<'a> {
                 path_digest = B256::from_slice(hasher.finalize().as_slice());
             }
             digests.push(path_digest);
+
+            // Extract notAfter as seconds since epoch for on-chain expiry tracking.
+            let not_after = parsed.cert.validity().not_after.timestamp();
+            let not_after_secs = u64::try_from(not_after).map_err(|_| {
+                VerifierError::CertificateVerification(format!(
+                    "certificate {i}: notAfter timestamp is negative ({not_after})"
+                ))
+            })?;
+            expiries.push(not_after_secs);
 
             // Skip validation for trusted prefix certs.
             if i < trusted_prefix_len {
@@ -144,7 +162,7 @@ impl<'a> CertChain<'a> {
             Self::verify_signature(parent, parsed, i)?;
         }
 
-        Ok(digests)
+        Ok((digests, expiries))
     }
 
     /// Returns the public key bytes from the leaf certificate.
@@ -336,6 +354,17 @@ mod tests {
     /// 0x000001937de1c543 = 1732931765571 ms = 2024-11-30T16:22:45Z.
     const VALID_TIMESTAMP_MS: u64 = 0x000001937de1c543;
 
+    /// Expected notAfter timestamps (seconds since epoch) for each cert in the
+    /// real Nitro chain, extracted from the X.509 validity fields above.
+    /// Order: root, intermediate1, intermediate2, intermediate3, leaf.
+    const EXPECTED_EXPIRIES: [u64; 5] = [
+        2519044085, // Root CA: 2049-10-28T14:28:05Z
+        1734505665, // Intermediate 1: 2024-12-18T07:07:45Z
+        1733447694, // Intermediate 2: 2024-12-06T01:14:54Z
+        1733056891, // Intermediate 3: 2024-12-01T12:41:31Z
+        1732994568, // Leaf: 2024-11-30T19:22:48Z
+    ];
+
     // ── Fixtures ────────────────────────────────────────────────────────
 
     /// Full 5-cert chain (root → 3 intermediates → leaf) from real Nitro attestation.
@@ -360,18 +389,21 @@ mod tests {
         let certs = vec![root_der.as_slice()];
         let chain = CertChain::from_der(&certs).unwrap();
         // Root validity: 2019-10-28 to 2049-10-28.
-        let digests = chain.verify_chain(0, 1_700_000_000_000).unwrap();
+        let (digests, expiries) = chain.verify_chain(0, 1_700_000_000_000).unwrap();
         assert_eq!(digests.len(), 1);
+        assert_eq!(expiries.len(), 1);
         let expected = B256::from_slice(Sha256::digest(&root_der).as_slice());
         assert_eq!(digests[0], expected);
+        assert_eq!(expiries[0], EXPECTED_EXPIRIES[0]);
     }
 
     #[rstest]
     fn full_chain_verifies_all_untrusted(full_chain_der: Vec<Vec<u8>>) {
         let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
         let chain = CertChain::from_der(&refs).unwrap();
-        let digests = chain.verify_chain(0, VALID_TIMESTAMP_MS).unwrap();
+        let (digests, expiries) = chain.verify_chain(0, VALID_TIMESTAMP_MS).unwrap();
         assert_eq!(digests.len(), 5);
+        assert_eq!(expiries.len(), 5);
     }
 
     #[rstest]
@@ -383,15 +415,26 @@ mod tests {
     fn full_chain_with_trusted_prefix(full_chain_der: Vec<Vec<u8>>, #[case] prefix_len: usize) {
         let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
         let chain = CertChain::from_der(&refs).unwrap();
-        let digests = chain.verify_chain(prefix_len, VALID_TIMESTAMP_MS).unwrap();
+        let (digests, expiries) = chain.verify_chain(prefix_len, VALID_TIMESTAMP_MS).unwrap();
         assert_eq!(digests.len(), 5);
+        assert_eq!(expiries.len(), 5);
+        // Structural invariant: each child cert expires at or before its parent
+        // (AWS issues progressively shorter-lived certs down the chain).
+        for i in 1..expiries.len() {
+            assert!(
+                expiries[i] <= expiries[i - 1],
+                "cert {i} expires after its parent: {} > {}",
+                expiries[i],
+                expiries[i - 1]
+            );
+        }
     }
 
     #[rstest]
     fn digests_are_accumulated_path_hashes(full_chain_der: Vec<Vec<u8>>) {
         let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
         let chain = CertChain::from_der(&refs).unwrap();
-        let digests = chain.verify_chain(5, 0).unwrap();
+        let (digests, _expiries) = chain.verify_chain(5, 0).unwrap();
 
         // First digest = sha256(root_der).
         let root_hash = B256::from_slice(Sha256::digest(&full_chain_der[0]).as_slice());
@@ -437,8 +480,9 @@ mod tests {
         let certs = vec![root_der.as_slice()];
         let chain = CertChain::from_der(&certs).unwrap();
         // All trusted → timestamp 0 is fine (validation skipped).
-        let digests = chain.verify_chain(1, 0).unwrap();
+        let (digests, expiries) = chain.verify_chain(1, 0).unwrap();
         assert_eq!(digests.len(), 1);
+        assert_eq!(expiries.len(), 1);
     }
 
     #[rstest]
@@ -508,5 +552,44 @@ mod tests {
         if let Ok(chain) = CertChain::from_der(&refs) {
             assert!(chain.verify_chain(0, VALID_TIMESTAMP_MS).is_err());
         }
+    }
+
+    // ── Certificate expiry extraction ───────────────────────────────────
+
+    #[rstest]
+    fn expiries_match_known_cert_validity(full_chain_der: Vec<Vec<u8>>) {
+        let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
+        let chain = CertChain::from_der(&refs).unwrap();
+        // All trusted — skip validation so we can inspect expiries regardless of timestamp.
+        let (_digests, expiries) = chain.verify_chain(5, 0).unwrap();
+        assert_eq!(expiries.len(), EXPECTED_EXPIRIES.len());
+
+        // Verify each cert's notAfter against the known X.509 validity periods.
+        for (i, (&actual, &expected)) in expiries.iter().zip(EXPECTED_EXPIRIES.iter()).enumerate() {
+            assert_eq!(actual, expected, "expiry mismatch at cert index {i}");
+        }
+    }
+
+    #[rstest]
+    fn expiries_returned_even_for_trusted_prefix(full_chain_der: Vec<Vec<u8>>) {
+        let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
+        let chain = CertChain::from_der(&refs).unwrap();
+
+        // Trusted prefix = 4: root + 3 intermediates cached, only leaf validated.
+        let (_digests, expiries_prefix4) = chain.verify_chain(4, VALID_TIMESTAMP_MS).unwrap();
+        // All trusted: skip all validation.
+        let (_digests, expiries_all) = chain.verify_chain(5, 0).unwrap();
+
+        // Expiries must be identical regardless of trusted prefix length,
+        // since notAfter is extracted unconditionally for all certs.
+        assert_eq!(expiries_prefix4, expiries_all);
+    }
+
+    #[rstest]
+    fn expiries_length_matches_digests_length(full_chain_der: Vec<Vec<u8>>) {
+        let refs: Vec<&[u8]> = full_chain_der.iter().map(|c| c.as_slice()).collect();
+        let chain = CertChain::from_der(&refs).unwrap();
+        let (digests, expiries) = chain.verify_chain(0, VALID_TIMESTAMP_MS).unwrap();
+        assert_eq!(digests.len(), expiries.len());
     }
 }

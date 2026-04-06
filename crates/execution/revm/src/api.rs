@@ -1,7 +1,7 @@
 //! Base API types.
 
 mod builder;
-pub use builder::{DefaultOpEvm, OpBuilder};
+pub use builder::{Builder, DefaultOpEvm};
 
 mod default_ctx;
 pub use default_ctx::{DefaultOp, OpContext};

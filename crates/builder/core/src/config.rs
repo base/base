@@ -6,7 +6,7 @@ use core::{
 };
 use std::sync::Arc;
 
-use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
+use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
 
 use crate::{ExecutionMeteringMode, NoopMeteringProvider, SharedMeteringProvider};
 
@@ -23,7 +23,7 @@ pub struct BuilderConfig {
     pub da_config: OpDAConfig,
 
     /// Gas limit configuration for the payload builder
-    pub gas_limit_config: OpGasLimitConfig,
+    pub gas_limit_config: GasLimitConfig,
 
     /// Extra time allowed for payload building before garbage collection.
     pub block_time_leeway: Duration,
@@ -122,7 +122,7 @@ impl Default for BuilderConfig {
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
             da_config: OpDAConfig::default(),
-            gas_limit_config: OpGasLimitConfig::default(),
+            gas_limit_config: GasLimitConfig::default(),
             flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             flashblocks_interval: Duration::from_millis(250),
             flashblocks_leeway_time: Duration::from_millis(50),
