@@ -20,31 +20,6 @@ pub struct RegistrationHealthConfig {
     pub l1_rpc_url: String,
 }
 
-/// Errors from the registration health check.
-#[derive(Debug, thiserror::Error)]
-pub enum RegistrationHealthError {
-    /// Failed to retrieve the signer public key from the enclave.
-    #[error("failed to get signer public key: {0}")]
-    SignerKey(eyre::Report),
-    /// The public key bytes are not a valid secp256k1 point.
-    #[error("invalid public key: {0}")]
-    InvalidPublicKey(String),
-    /// The L1 RPC call to check registration status failed.
-    #[error("L1 RPC call failed: {0}")]
-    L1Rpc(base_proof_contracts::ContractError),
-    /// The L1 RPC request timed out.
-    #[error("L1 RPC request timed out")]
-    Timeout,
-    /// Registration check failed and stale cache has expired.
-    #[error("registration check failed for {signer}: {reason}")]
-    StaleExpired {
-        /// The signer address that was being checked.
-        signer: Address,
-        /// The underlying reason the registration check failed.
-        reason: String,
-    },
-}
-
 /// JSON-RPC handler for registration-gated health checks.
 ///
 /// Uses the shared [`RegistrationChecker`] with a fail-open stale-cache policy:
@@ -77,11 +52,11 @@ impl HealthzApiServer for RegistrationHealthzRpc {
             Ok(true) => Ok(HealthzResponse { version: self.version.to_string() }),
             Ok(false) => Err(jsonrpsee::types::ErrorObjectOwned::owned(
                 -32000,
-                "signer not registered in TEEProverRegistry",
+                "signer is not a valid signer in TEEProverRegistry",
                 None::<()>,
             )),
             Err(e) => {
-                Err(jsonrpsee::types::ErrorObjectOwned::owned(-32000, e, None::<()>))
+                Err(jsonrpsee::types::ErrorObjectOwned::owned(-32000, e.to_string(), None::<()>))
             }
         }
     }

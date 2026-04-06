@@ -125,9 +125,9 @@ struct NitroProverRpc {
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
         if let Some(checker) = &self.checker {
-            checker.require_valid_signer().await.map_err(|reason| {
-                warn!(error = %reason, "rejecting proof request: signer validation failed");
-                jsonrpsee::types::ErrorObjectOwned::owned(-32001, reason, None::<()>)
+            checker.require_valid_signer().await.map_err(|e| {
+                warn!(error = %e, "rejecting proof request: signer validation failed");
+                jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
             })?;
         }
 
