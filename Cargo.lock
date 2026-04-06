@@ -4684,6 +4684,7 @@ name = "base-proof-tee-nitro-host"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-signer",
  "async-trait",
  "base-health",
  "base-proof-contracts",
@@ -4692,7 +4693,6 @@ dependencies = [
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
  "eyre",
- "hex-literal 1.1.0",
  "jsonrpsee",
  "k256",
  "thiserror 2.0.18",
@@ -4727,6 +4727,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-rpc-types-eth",
+ "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
  "async-trait",

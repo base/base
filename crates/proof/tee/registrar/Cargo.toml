@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 # Alloy
+alloy-signer.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
@@ -21,8 +22,8 @@ aws-sdk-ec2.workspace = true
 aws-sdk-elasticloadbalancingv2.workspace = true
 
 # Crypto
-k256.workspace = true
 rand.workspace = true
+k256 = { workspace = true, features = ["ecdsa"] }
 
 # Contracts
 base-proof-contracts.workspace = true
@@ -61,7 +62,6 @@ rstest.workspace = true
 hex-literal.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
-k256 = { workspace = true, features = ["ecdsa"] }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
 
 [features]
