@@ -97,17 +97,17 @@ impl RegistrationChecker {
             .copied()
     }
 
-    async fn fetch_validity(&self) -> Result<bool, RegistrationError> {
+    async fn fetch_validity(&self) -> Result<(bool, Address), RegistrationError> {
+        let signer = self.signer_address().await?;
+
         {
             let cache = self.cache.read().await;
             if let Some((valid, checked_at)) = *cache
                 && checked_at.elapsed() < CACHE_TTL
             {
-                return Ok(valid);
+                return Ok((valid, signer));
             }
         }
-
-        let signer = self.signer_address().await?;
 
         let result =
             tokio::time::timeout(CHECK_TIMEOUT, self.registry.is_valid_signer(signer)).await;
@@ -120,7 +120,7 @@ impl RegistrationChecker {
                 if !valid && was_valid != Some(false) {
                     warn!(signer = %signer, "signer is not a valid signer in TEEProverRegistry");
                 }
-                Ok(valid)
+                Ok((valid, signer))
             }
             Ok(Err(e)) => Err(RegistrationError::Rpc { signer, reason: e.to_string() }),
             Err(_) => Err(RegistrationError::Rpc { signer, reason: "request timed out".into() }),
@@ -136,7 +136,7 @@ impl RegistrationChecker {
         if self.healthy.get().is_some() {
             return Ok(true);
         }
-        let valid = self.fetch_validity().await?;
+        let (valid, _) = self.fetch_validity().await?;
         if valid {
             let _ = self.healthy.set(());
         }
@@ -149,11 +149,8 @@ impl RegistrationChecker {
     /// proof request is rejected.
     pub async fn require_valid_signer(&self) -> Result<(), RegistrationError> {
         match self.fetch_validity().await {
-            Ok(true) => Ok(()),
-            Ok(false) => {
-                let signer = self.signer_address().await?;
-                Err(RegistrationError::NotValid { signer })
-            }
+            Ok((true, _)) => Ok(()),
+            Ok((false, signer)) => Err(RegistrationError::NotValid { signer }),
             Err(e) => Err(e),
         }
     }
