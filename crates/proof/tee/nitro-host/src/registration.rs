@@ -148,33 +148,45 @@ impl RegistrationChecker {
             Err(e @ (RegistrationError::SignerKey(_) | RegistrationError::InvalidPublicKey(_))) => {
                 Err(e)
             }
-            Err(ref rpc_err) => {
-                let signer = match rpc_err {
-                    RegistrationError::L1Rpc { signer, .. }
-                    | RegistrationError::Timeout { signer } => *signer,
-                    _ => unreachable!(),
-                };
-                let cache = self.cache.read().await;
-                if let Some((valid, checked_at)) = *cache {
-                    let elapsed = checked_at.elapsed();
-                    if elapsed < STALE_LIMIT {
-                        warn!(
-                            error = %rpc_err,
-                            signer = %signer,
-                            stale_secs = elapsed.as_secs(),
-                            "L1 RPC failed, using stale cached registration status"
-                        );
-                        return Ok(valid);
-                    }
-                }
-                Err(RegistrationError::StaleExpired {
-                    signer,
-                    stale_secs: cache
-                        .map(|(_, checked_at)| checked_at.elapsed().as_secs())
-                        .unwrap_or(0),
-                })
+            Err(RegistrationError::L1Rpc { signer, reason }) => {
+                self.use_stale_cache_or_fail(signer, RegistrationError::L1Rpc { signer, reason })
+                    .await
+            }
+            Err(RegistrationError::Timeout { signer }) => {
+                self.use_stale_cache_or_fail(signer, RegistrationError::Timeout { signer }).await
+            }
+            Err(
+                e @ (RegistrationError::NotValid { .. } | RegistrationError::StaleExpired { .. }),
+            ) => Err(e),
+        }
+    }
+
+    async fn use_stale_cache_or_fail(
+        &self,
+        signer: Address,
+        rpc_err: RegistrationError,
+    ) -> Result<bool, RegistrationError> {
+        let cache = self.cache.read().await;
+        if let Some((valid, checked_at)) = *cache {
+            let elapsed = checked_at.elapsed();
+            if elapsed < STALE_LIMIT {
+                warn!(
+                    error = %rpc_err,
+                    signer = %signer,
+                    stale_secs = elapsed.as_secs(),
+                    "L1 RPC failed, using stale cached registration status"
+                );
+                return Ok(valid);
             }
         }
+        let stale_secs = cache.map(|(_, checked_at)| checked_at.elapsed().as_secs()).unwrap_or(0);
+        warn!(
+            error = %rpc_err,
+            signer = %signer,
+            stale_secs,
+            "stale cache expired, cannot verify signer"
+        );
+        Err(RegistrationError::StaleExpired { signer, stale_secs })
     }
 
     /// Fails the request unless the signer is currently valid.
