@@ -176,11 +176,7 @@ impl Confirmer {
     /// Returns `None` if the receipt arrived before the flashblock WS message.
     fn get_flashblocks_latency(&self, tx_hash: &TxHash, pending: &PendingTx) -> Option<Duration> {
         self.flashblock_times.read().get(tx_hash).and_then(|&fb_time| {
-            if fb_time < pending.submit_time {
-                None
-            } else {
-                Some(fb_time.duration_since(pending.submit_time))
-            }
+            fb_time.checked_duration_since(pending.submit_time)
         })
     }
 
@@ -190,15 +186,7 @@ impl Confirmer {
         pending_submit_time: Instant,
     ) -> Option<Duration> {
         self.block_first_seen.read().get(&block_number).and_then(|&block_time| {
-            if block_time < pending_submit_time {
-                debug!(
-                    block = block_number,
-                    "block seen before tx submitted, skipping block latency"
-                );
-                None
-            } else {
-                Some(block_time.duration_since(pending_submit_time))
-            }
+            block_time.checked_duration_since(pending_submit_time)
         })
     }
 
@@ -408,17 +396,9 @@ impl Confirmer {
         {
             let block_times = self.block_first_seen.read();
             for mut deferred in self.deferred_block_latencies.drain(..) {
-                let block_latency = block_times.get(&deferred.block_number).and_then(|&t| {
-                    if t < deferred.submit_time {
-                        debug!(
-                            block = deferred.block_number,
-                            "block seen before tx submitted, skipping block latency"
-                        );
-                        None
-                    } else {
-                        Some(t.duration_since(deferred.submit_time))
-                    }
-                });
+                let block_latency = block_times
+                    .get(&deferred.block_number)
+                    .and_then(|&t| t.checked_duration_since(deferred.submit_time));
 
                 if let Some(latency) = block_latency {
                     deferred.metrics.block_latency = Some(latency);
