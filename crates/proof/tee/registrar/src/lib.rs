@@ -7,8 +7,8 @@ pub use config::{
     RegistrarConfig,
 };
 
-pub mod crl;
-pub use crl::DEFAULT_CRL_FETCH_TIMEOUT_SECS;
+mod crl;
+pub use crl::{CrlError, DEFAULT_CRL_FETCH_TIMEOUT_SECS};
 
 mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;

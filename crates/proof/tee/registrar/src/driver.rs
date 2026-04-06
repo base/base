@@ -11,6 +11,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes, hex};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{INitroEnclaveVerifier, ITEEProverRegistry};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
+use base_proof_tee_nitro_verifier::AttestationReport;
 use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::StreamExt;
 use rand::random;
@@ -121,7 +122,13 @@ where
         config: DriverConfig,
     ) -> Self {
         let crl_http_client = if config.crl.enabled {
-            crl::build_crl_http_client(config.crl.fetch_timeout).ok()
+            match crl::build_crl_http_client(config.crl.fetch_timeout) {
+                Ok(client) => Some(client),
+                Err(e) => {
+                    warn!(error = %e, "failed to build CRL HTTP client, CRL checking will be disabled");
+                    None
+                }
+            }
         } else {
             None
         };
@@ -642,8 +649,6 @@ where
         attestation_bytes: &[u8],
         instance: &ProverInstance,
     ) -> Result<bool> {
-        use base_proof_tee_nitro_verifier::AttestationReport;
-
         let verifier_address = self.config.crl.nitro_verifier_address.ok_or_else(|| {
             RegistrarError::Config("CRL checking enabled but nitro_verifier_address not set".into())
         })?;
