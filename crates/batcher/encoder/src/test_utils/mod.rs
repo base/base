@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use base_alloy_consensus::BaseBlock;
 
+use alloy_primitives::B256;
 use crate::{BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 
 /// A mock implementation of [`BatchPipeline`] for testing downstream consumers
@@ -31,7 +32,7 @@ pub struct MockBatchPipeline {
 }
 
 impl BatchPipeline for MockBatchPipeline {
-    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
+    fn add_block(&mut self, block: BaseBlock, _hash: B256) -> Result<(), (ReorgError, Box<BaseBlock>)> {
         self.blocks_added.push(block);
         Ok(())
     }

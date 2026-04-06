@@ -1,5 +1,6 @@
 //! Block subscription trait for keepalive-aware streaming.
 
+use alloy_primitives::B256;
 use base_alloy_consensus::BaseBlock;
 use futures::stream::BoxStream;
 
@@ -19,5 +20,7 @@ pub trait BlockSubscription: Send {
     /// Extract the block stream from this subscription.
     ///
     /// Must be called at most once; implementors may panic on a second call.
-    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>>;
+    /// The stream yields `(block, hash)` pairs where `hash` is the block hash
+    /// as received from the RPC, avoiding a redundant `hash_slow()` in callers.
+    fn take_stream(&mut self) -> BoxStream<'static, Result<(BaseBlock, B256), SourceError>>;
 }

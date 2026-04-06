@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
+use alloy_primitives::B256;
 use base_alloy_consensus::BaseBlock;
 use base_alloy_network::Base;
 use base_batcher_admin::AdminServer;
@@ -60,7 +61,7 @@ enum Subscription {
 }
 
 impl BlockSubscription for Subscription {
-    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<(BaseBlock, B256), SourceError>> {
         match self {
             Self::Ws(ws) => ws.take_stream(),
             Self::Null(null) => null.take_stream(),
@@ -199,9 +200,10 @@ impl BatcherService {
                         .ok_or_else(|| {
                             SourceError::Provider(format!("block {} not found", header.number))
                         })?;
+                    let hash = rpc_block.header.hash;
                     let block =
                         rpc_block.into_consensus().map_transactions(|t| t.inner.into_inner());
-                    Ok(block)
+                    Ok((block, hash))
                 }
             })
             .boxed();

@@ -25,7 +25,7 @@ pub struct HybridBlockSource<S, P, C> {
     /// Declared before `_subscription` so it is dropped first, ensuring the
     /// stream's underlying transport is released before the provider is torn down.
     #[debug(skip)]
-    sub: BoxStream<'static, Result<BaseBlock, SourceError>>,
+    sub: BoxStream<'static, Result<(BaseBlock, alloy_primitives::B256), SourceError>>,
     /// The original subscription, kept alive so its resources remain open.
     #[debug(skip)]
     _subscription: S,
@@ -65,9 +65,8 @@ where
     /// Process a received block, returning an event if the block is new or a reorg.
     ///
     /// Returns `None` if the block is a duplicate (already seen with the same hash).
-    fn process(&mut self, block: BaseBlock) -> Option<L2BlockEvent> {
+    fn process(&mut self, block: BaseBlock, hash: alloy_primitives::B256) -> Option<L2BlockEvent> {
         let number = block.header.number;
-        let hash = block.header.hash_slow();
 
         // Prune entries older than 256 blocks to bound memory usage.
         let cutoff = number.saturating_sub(256);
@@ -77,7 +76,7 @@ where
             None => {
                 // New block number — insert and emit.
                 self.seen.insert(number, hash);
-                Some(L2BlockEvent::Block(Box::new(block)))
+                Some(L2BlockEvent::Block { block: Box::new(block), hash })
             }
             Some(existing_hash) if *existing_hash == hash => {
                 // Duplicate — already seen this exact block.
@@ -144,8 +143,8 @@ where
             // triggering pipeline resets that discard catchup progress.
             if self.poller.is_catching_up() {
                 match self.poller.unsafe_head().await {
-                    Ok(b) => {
-                        if let Some(event) = self.process(b) {
+                    Ok((b, hash)) => {
+                        if let Some(event) = self.process(b, hash) {
                             return Ok(event);
                         }
                         // Duplicate — continue sequential polling.
@@ -162,8 +161,8 @@ where
             tokio::select! {
                 block = self.sub.next() => {
                     match block {
-                        Some(Ok(b)) => {
-                            if let Some(event) = self.process(b) {
+                        Some(Ok((b, hash))) => {
+                            if let Some(event) = self.process(b, hash) {
                                 return Ok(event);
                             }
                             // Duplicate — loop for next event.
@@ -174,8 +173,8 @@ where
                 }
                 _ = self.interval.next() => {
                     match self.poller.unsafe_head().await {
-                        Ok(b) => {
-                            if let Some(event) = self.process(b) {
+                        Ok((b, hash)) => {
+                            if let Some(event) = self.process(b, hash) {
                                 return Ok(event);
                             }
                             // Duplicate — loop for next event.

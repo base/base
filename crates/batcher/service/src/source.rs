@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use async_trait::async_trait;
+use alloy_primitives::B256;
 use base_alloy_consensus::BaseBlock;
 use base_alloy_network::Base;
 use base_batcher_source::{PollingSource, SourceError};
@@ -43,7 +44,7 @@ impl RpcPollingSource {
 
 #[async_trait]
 impl PollingSource for RpcPollingSource {
-    async fn unsafe_head(&self) -> Result<BaseBlock, SourceError> {
+    async fn unsafe_head(&self) -> Result<(BaseBlock, B256), SourceError> {
         let sequential = *self.next_sequential.lock().unwrap();
 
         if let Some(n) = sequential {
@@ -57,30 +58,30 @@ impl PollingSource for RpcPollingSource {
                 // Block n hasn't been produced yet; switch to normal polling.
                 *self.next_sequential.lock().unwrap() = None;
             } else {
-                let block = self
+                let rpc_block = self
                     .provider
                     .get_block_by_number(n.into())
                     .full()
                     .await
                     .map_err(|e| SourceError::Provider(e.to_string()))?
-                    .ok_or_else(|| SourceError::Provider(format!("block {n} not found")))?
-                    .into_consensus()
-                    .map_transactions(|t| t.inner.into_inner());
+                    .ok_or_else(|| SourceError::Provider(format!("block {n} not found")))?;
+                let hash = rpc_block.header.hash;
+                let block = rpc_block.into_consensus().map_transactions(|t| t.inner.into_inner());
                 *self.next_sequential.lock().unwrap() = Some(n + 1);
-                return Ok(block);
+                return Ok((block, hash));
             }
         }
 
-        let block = self
+        let rpc_block = self
             .provider
             .get_block_by_number(BlockNumberOrTag::Latest)
             .full()
             .await
             .map_err(|e| SourceError::Provider(e.to_string()))?
-            .ok_or_else(|| SourceError::Provider("latest block not found".to_string()))?
-            .into_consensus()
-            .map_transactions(|t| t.inner.into_inner());
-        Ok(block)
+            .ok_or_else(|| SourceError::Provider("latest block not found".to_string()))?;
+        let hash = rpc_block.header.hash;
+        let block = rpc_block.into_consensus().map_transactions(|t| t.inner.into_inner());
+        Ok((block, hash))
     }
 
     fn reset_catchup(&self, start_from: u64) {

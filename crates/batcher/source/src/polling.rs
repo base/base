@@ -1,6 +1,7 @@
 //! Polling source trait for fetching the current unsafe head block.
 
 use async_trait::async_trait;
+use alloy_primitives::B256;
 use base_alloy_consensus::BaseBlock;
 
 use crate::SourceError;
@@ -9,7 +10,10 @@ use crate::SourceError;
 #[async_trait]
 pub trait PollingSource: Send + Sync {
     /// Fetch the current unsafe head block.
-    async fn unsafe_head(&self) -> Result<BaseBlock, SourceError>;
+    ///
+    /// Returns the block together with its hash as it was received from the RPC,
+    /// avoiding a redundant `hash_slow()` recomputation in callers.
+    async fn unsafe_head(&self) -> Result<(BaseBlock, B256), SourceError>;
 
     /// Reset the source to begin sequential catchup from `start_from`.
     ///

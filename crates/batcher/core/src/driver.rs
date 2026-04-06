@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use alloy_primitives::B256;
 use base_alloy_consensus::BaseBlock;
 use base_batcher_encoder::{BatchPipeline, StepResult};
 use base_batcher_source::{
@@ -172,7 +173,7 @@ where
                     self.pipeline.force_close_channel();
                     draining = true;
                 }
-                DriverEvent::Block(b) => self.on_block(b),
+                DriverEvent::Block { block, hash } => self.on_block(block, hash),
                 DriverEvent::Flush => {
                     self.pipeline.force_close_channel();
                     debug!("flush signal received, force-closed channel");
@@ -244,9 +245,9 @@ where
     /// discards in-flight submissions, resets the pipeline, and restarts
     /// sequential catchup from `safe_head + 1`. The triggering block will be
     /// re-delivered by the sequential poller.
-    fn on_block(&mut self, block: Box<BaseBlock>) {
+    fn on_block(&mut self, block: Box<BaseBlock>, hash: alloy_primitives::B256) {
         let number = block.header.number;
-        match self.pipeline.add_block(*block) {
+        match self.pipeline.add_block(*block, hash) {
             Ok(()) => {
                 debug!(block = %number, "added unsafe block to pipeline");
             }
@@ -341,10 +342,10 @@ where
                 }
 
                 event = self.source.next() => match event {
-                    Ok(L2BlockEvent::Block(_) | L2BlockEvent::Flush) if self.stopped => {
+                    Ok(L2BlockEvent::Block { .. } | L2BlockEvent::Flush) if self.stopped => {
                         continue;
                     }
-                    Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
+                    Ok(L2BlockEvent::Block { block, hash }) => DriverEvent::Block { block, hash },
                     Ok(L2BlockEvent::Flush) => DriverEvent::Flush,
                     Ok(L2BlockEvent::Reorg { new_safe_head }) => DriverEvent::Reorg(new_safe_head),
                     Err(SourceError::Exhausted) => DriverEvent::Shutdown,

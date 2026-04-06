@@ -7,7 +7,10 @@ use base_protocol::L2BlockInfo;
 #[derive(Debug, Clone)]
 pub enum L2BlockEvent {
     /// A new unsafe L2 block arrived.
-    Block(Box<BaseBlock>),
+    ///
+    /// `hash` is the block hash pre-computed from the RPC response, avoiding
+    /// a redundant `hash_slow()` (full RLP-encode + keccak256) in downstream consumers.
+    Block { block: Box<BaseBlock>, hash: alloy_primitives::B256 },
     /// An L2 reorg was detected; all state should be rewound to `new_safe_head`.
     Reorg {
         /// The new safe head after the reorg.

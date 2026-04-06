@@ -1,5 +1,6 @@
 //! Internal driver event type produced by the `tokio::select!` I/O phase.
 
+use alloy_primitives::B256;
 use base_alloy_consensus::BaseBlock;
 use base_batcher_encoder::SubmissionId;
 use base_protocol::L2BlockInfo;
@@ -12,7 +13,9 @@ pub enum DriverEvent {
     /// Cancellation token fired, or L2 source signalled exhausted.
     Shutdown,
     /// New L2 unsafe block from the source.
-    Block(Box<BaseBlock>),
+    ///
+    /// `hash` is pre-computed from the RPC response, avoiding redundant `hash_slow()` calls.
+    Block { block: Box<BaseBlock>, hash: B256 },
     /// Source requested a force-flush of the current channel.
     Flush,
     /// L2 reorganisation; new safe head provided.

@@ -337,7 +337,7 @@ impl BatchEncoder {
 }
 
 impl BatchPipeline for BatchEncoder {
-    fn add_block(&mut self, block: BaseBlock) -> Result<(), (ReorgError, Box<BaseBlock>)> {
+    fn add_block(&mut self, block: BaseBlock, hash: B256) -> Result<(), (ReorgError, Box<BaseBlock>)> {
         if !self.blocks.is_empty() && block.header.parent_hash != self.tip {
             return Err((
                 ReorgError::ParentMismatch { expected: self.tip, got: block.header.parent_hash },
@@ -346,7 +346,6 @@ impl BatchPipeline for BatchEncoder {
         }
 
         let number = block.header.number;
-        let hash = block.header.hash_slow();
         self.tip = hash;
         self.blocks.push_back(block);
         BatcherMetrics::pending_blocks().increment(1.0);

@@ -27,7 +27,8 @@ impl InMemoryBlockSource {
 
     /// Push a block event into the queue.
     pub fn push_block(&mut self, block: BaseBlock) {
-        self.queue.push_back(L2BlockEvent::Block(Box::new(block)));
+        let hash = block.header.hash_slow();
+        self.queue.push_back(L2BlockEvent::Block { block: Box::new(block), hash });;
     }
 
     /// Push a reorg event into the queue.

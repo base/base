@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use alloy_primitives::B256;
 use base_alloy_consensus::BaseBlock;
 use base_batcher_source::{BlockSubscription, SourceError};
 use futures::{StreamExt, stream::BoxStream};
@@ -23,7 +24,7 @@ pub struct WsBlockSubscription {
     #[debug(skip)]
     _provider: Arc<dyn std::any::Any + Send + Sync>,
     #[debug("{:?}", stream.as_ref().map(|_| "<stream>"))]
-    stream: Option<BoxStream<'static, Result<BaseBlock, SourceError>>>,
+    stream: Option<BoxStream<'static, Result<(BaseBlock, B256), SourceError>>>,
 }
 
 impl WsBlockSubscription {
@@ -33,14 +34,14 @@ impl WsBlockSubscription {
     /// WS root provider returned by [`ProviderBuilder::connect`].
     pub fn new<P: std::any::Any + Send + Sync + 'static>(
         provider: Arc<P>,
-        stream: BoxStream<'static, Result<BaseBlock, SourceError>>,
+        stream: BoxStream<'static, Result<(BaseBlock, B256), SourceError>>,
     ) -> Self {
         Self { _provider: provider, stream: Some(stream) }
     }
 }
 
 impl BlockSubscription for WsBlockSubscription {
-    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<(BaseBlock, B256), SourceError>> {
         self.stream.take().expect("take_stream called more than once")
     }
 }
@@ -55,7 +56,7 @@ impl BlockSubscription for WsBlockSubscription {
 pub struct NullSubscription;
 
 impl BlockSubscription for NullSubscription {
-    fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
+    fn take_stream(&mut self) -> BoxStream<'static, Result<(BaseBlock, B256), SourceError>> {
         futures::stream::pending().boxed()
     }
 }
