@@ -5,7 +5,7 @@ use alloc::{sync::Arc, vec};
 use alloy_chains::Chain;
 use alloy_primitives::{U256, b256};
 use base_alloy_chains::{BaseChainConfig, BaseUpgrade};
-use base_execution_forks::BASE_SEPOLIA_HARDFORKS;
+use base_execution_upgrades::BASE_SEPOLIA_UPGRADES;
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec, Hardfork};
 use reth_ethereum_forks::EthereumHardfork;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
@@ -16,7 +16,7 @@ use crate::OpChainSpec;
 pub static BASE_SEPOLIA: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
     let genesis = serde_json::from_str(BaseChainConfig::sepolia().genesis_json)
         .expect("Can't deserialize Base Sepolia genesis json");
-    let hardforks = BASE_SEPOLIA_HARDFORKS.clone();
+    let hardforks = BASE_SEPOLIA_UPGRADES.clone();
     OpChainSpec {
         inner: ChainSpec {
             chain: Chain::base_sepolia(),
