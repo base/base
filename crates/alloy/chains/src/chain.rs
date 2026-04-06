@@ -229,7 +229,10 @@ mod tests {
             base_sepolia_forks.upgrade_activation(Jovian),
             ForkCondition::Timestamp(BaseChainConfig::sepolia().jovian_timestamp)
         );
-        assert_eq!(base_sepolia_forks[V1], ForkCondition::Never);
+        assert_eq!(
+            base_sepolia_forks[V1],
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().base_v1_timestamp.unwrap())
+        );
     }
 
     #[test]
