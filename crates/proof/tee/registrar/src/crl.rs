@@ -55,25 +55,25 @@ const ALLOWED_CRL_HOST_KEYWORD: &str = "nitro-enclave";
 
 /// Information extracted from a single certificate needed for CRL checking.
 #[derive(Debug, Clone)]
-pub(crate) struct CertCrlInfo {
+pub struct CertCrlInfo {
     /// Human-readable label for logging (e.g. "intermediate 1").
-    pub(crate) label: String,
+    pub label: String,
     /// Serial number of the certificate (big-endian, unsigned).
-    pub(crate) serial_number: Vec<u8>,
+    pub serial_number: Vec<u8>,
     /// CRL distribution point URL, if present in the certificate.
-    pub(crate) crl_url: Option<String>,
+    pub crl_url: Option<String>,
     /// Accumulated path digest for this certificate position (for on-chain
     /// `revokeCert` calls).
-    pub(crate) path_digest: B256,
+    pub path_digest: B256,
 }
 
 /// Information about a revoked certificate.
 #[derive(Debug, Clone)]
-pub(crate) struct RevokedCertInfo {
+pub struct RevokedCertInfo {
     /// Label of the revoked certificate (e.g. "intermediate 1").
-    pub(crate) label: String,
+    pub label: String,
     /// Path digest for on-chain `revokeCert()`.
-    pub(crate) path_digest: B256,
+    pub path_digest: B256,
 }
 
 /// Extracts CRL-relevant information from each certificate in a DER-encoded
@@ -86,7 +86,7 @@ pub(crate) struct RevokedCertInfo {
 /// # Errors
 ///
 /// Returns an error if any certificate cannot be parsed from DER.
-pub(crate) fn extract_cert_crl_info(certs_der: &[&[u8]]) -> Result<Vec<CertCrlInfo>, CrlError> {
+pub fn extract_cert_crl_info(certs_der: &[&[u8]]) -> Result<Vec<CertCrlInfo>, CrlError> {
     let path_digests = compute_path_digests(certs_der);
     let mut infos = Vec::with_capacity(certs_der.len());
 
@@ -168,7 +168,7 @@ fn is_allowed_crl_host(url: &str) -> bool {
 ///
 /// Returns an error only if the certificate chain itself cannot be parsed.
 /// CRL fetch/parse failures are handled internally (fail-open).
-pub(crate) async fn check_chain_against_crls(
+pub async fn check_chain_against_crls(
     certs_der: &[&[u8]],
     http_client: &reqwest::Client,
 ) -> Result<Vec<RevokedCertInfo>, CrlError> {
@@ -289,7 +289,7 @@ async fn fetch_and_check_crl(
 ///
 /// Uses a timeout to prevent hanging on unresponsive S3 endpoints.
 /// Redirects are disabled to prevent SSRF via open-redirect chains.
-pub(crate) fn build_crl_http_client(timeout: Duration) -> Result<reqwest::Client, CrlError> {
+pub fn build_crl_http_client(timeout: Duration) -> Result<reqwest::Client, CrlError> {
     reqwest::Client::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())

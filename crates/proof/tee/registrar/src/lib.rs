@@ -7,6 +7,7 @@ pub use config::{
     RegistrarConfig,
 };
 
+#[allow(unreachable_pub)]
 mod crl;
 pub use crl::{CrlError, DEFAULT_CRL_FETCH_TIMEOUT_SECS};
 
