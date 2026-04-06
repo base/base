@@ -19,6 +19,37 @@ use x509_parser::{
 
 use crate::{Result, VerifierError};
 
+/// Computes accumulated path digests for a chain of DER-encoded certificates.
+///
+/// Returns one `B256` per certificate, where:
+/// - `digests[0] = sha256(certs_der[0])`
+/// - `digests[i] = sha256(digests[i-1] || sha256(certs_der[i]))` for `i > 0`
+///
+/// This mirrors the on-chain `NitroEnclaveVerifier` path digest accumulation
+/// used for intermediate certificate caching. Both this function and the
+/// Solidity implementation must produce identical digests for the same input.
+///
+/// Returns an empty `Vec` for an empty input.
+pub fn compute_path_digests(certs_der: &[&[u8]]) -> Vec<B256> {
+    let mut digests = Vec::with_capacity(certs_der.len());
+    let mut path_digest = B256::ZERO;
+
+    for (i, der) in certs_der.iter().enumerate() {
+        let cert_digest = B256::from_slice(Sha256::digest(der).as_slice());
+        if i == 0 {
+            path_digest = cert_digest;
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(path_digest.as_slice());
+            hasher.update(cert_digest.as_slice());
+            path_digest = B256::from_slice(hasher.finalize().as_slice());
+        }
+        digests.push(path_digest);
+    }
+
+    digests
+}
+
 /// Parsed DER certificate with its raw bytes.
 #[derive(Debug)]
 struct ParsedCert<'a> {
@@ -77,31 +108,20 @@ impl<'a> CertChain<'a> {
             )));
         }
 
-        let mut digests = Vec::with_capacity(self.certs.len());
-        // Accumulate path digests for all certs (including trusted prefix).
-        let mut path_digest = B256::ZERO;
+        // Compute accumulated path digests for all certs (including trusted
+        // prefix). This is pure hashing and does not depend on validation.
+        let der_refs: Vec<&[u8]> = self.certs.iter().map(|c| c.der).collect();
+        let digests = compute_path_digests(&der_refs);
 
         for (i, parsed) in self.certs.iter().enumerate() {
-            // A cert is a leaf only if it's the last in a multi-cert chain.
-            // A single-cert chain (root only) is treated as CA, not leaf.
-            let is_leaf = i == self.certs.len() - 1 && self.certs.len() > 1;
-            let cert_digest = B256::from_slice(Sha256::digest(parsed.der).as_slice());
-
-            // Accumulate: path_digest = sha256(parent_path_digest || cert_digest)
-            if i == 0 {
-                path_digest = cert_digest;
-            } else {
-                let mut hasher = Sha256::new();
-                hasher.update(path_digest.as_slice());
-                hasher.update(cert_digest.as_slice());
-                path_digest = B256::from_slice(hasher.finalize().as_slice());
-            }
-            digests.push(path_digest);
-
             // Skip validation for trusted prefix certs.
             if i < trusted_prefix_len {
                 continue;
             }
+
+            // A cert is a leaf only if it's the last in a multi-cert chain.
+            // A single-cert chain (root only) is treated as CA, not leaf.
+            let is_leaf = i == self.certs.len() - 1 && self.certs.len() > 1;
 
             // Validate x509 content (M-01 audit fixes).
             Self::validate_cert_content(&parsed.cert, is_leaf)?;

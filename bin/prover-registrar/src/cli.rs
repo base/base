@@ -18,8 +18,9 @@ use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
 use base_proof_tee_registrar::{
-    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, DEFAULT_MAX_CONCURRENCY,
-    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CrlConfig,
+    DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_RECOVERY_ATTEMPTS,
+    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, ProverClient, ProvingConfig,
     RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
@@ -129,6 +130,10 @@ pub(crate) struct Cli {
     #[arg(long, env = cli_env!("UNHEALTHY_REGISTRATION_WINDOW_SECS"), default_value_t = DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS)]
     unhealthy_registration_window_secs: u64,
 
+    // ── CRL Checking ───────────────────────────────────────────────────────────
+    #[command(flatten)]
+    crl: CrlArgs,
+
     // ── Health Server ─────────────────────────────────────────────────────────
     #[command(flatten)]
     health: HealthArgs,
@@ -198,6 +203,30 @@ struct BoundlessArgs {
     /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
     #[arg(long, env = cli_env!("NITRO_VERIFIER_ADDRESS"))]
     nitro_verifier_address: Option<Address>,
+}
+
+/// CRL (Certificate Revocation List) checking CLI arguments.
+#[derive(Args)]
+struct CrlArgs {
+    /// Enable on-demand CRL checking at registration time.
+    /// When enabled, intermediate certificates are checked against CRL
+    /// distribution points before signer registration. Revoked certificates
+    /// trigger a `revokeCert` transaction on-chain.
+    #[arg(long, env = cli_env!("CRL_CHECK_ENABLED"), default_value_t = false)]
+    crl_check_enabled: bool,
+
+    /// `NitroEnclaveVerifier` contract address for `revokeCert` calls.
+    /// Required when `--crl-check-enabled` is set.
+    #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
+    crl_nitro_verifier_address: Option<Address>,
+
+    /// HTTP timeout for CRL fetches from AWS S3 endpoints, in seconds.
+    #[arg(
+        long,
+        env = cli_env!("CRL_FETCH_TIMEOUT_SECS"),
+        default_value_t = DEFAULT_CRL_FETCH_TIMEOUT_SECS
+    )]
+    crl_fetch_timeout_secs: u64,
 }
 
 /// Parse a hex-encoded secp256k1 private key string into a [`PrivateKeySigner`].
@@ -315,6 +344,25 @@ impl Cli {
             return Err(RegistrarError::Config("health server port must be non-zero".into()));
         }
 
+        // Validate CRL config: if enabled, verifier address is required.
+        if self.crl.crl_check_enabled && self.crl.crl_nitro_verifier_address.is_none() {
+            return Err(RegistrarError::Config(
+                "--crl-nitro-verifier-address is required when --crl-check-enabled is set".into(),
+            ));
+        }
+
+        if self.crl.crl_check_enabled && self.crl.crl_fetch_timeout_secs == 0 {
+            return Err(RegistrarError::Config(
+                "--crl-fetch-timeout-secs must be greater than 0".into(),
+            ));
+        }
+
+        let crl = CrlConfig {
+            enabled: self.crl.crl_check_enabled,
+            nitro_verifier_address: self.crl.crl_nitro_verifier_address,
+            fetch_timeout: Duration::from_secs(self.crl.crl_fetch_timeout_secs),
+        };
+
         let health_addr = self.health.socket_addr();
 
         Ok(RegistrarConfig {
@@ -334,6 +382,7 @@ impl Cli {
                 self.unhealthy_registration_window_secs,
             ),
             health_addr,
+            crl,
         })
     }
 
@@ -442,6 +491,7 @@ impl Cli {
             max_tx_retries: config.max_tx_retries,
             tx_retry_delay: config.tx_retry_delay,
             unhealthy_registration_window: config.unhealthy_registration_window,
+            crl: config.crl,
         };
 
         // Mark the service as ready. This signals "initialised and running", not
@@ -764,5 +814,70 @@ mod tests {
     #[case::empty("")]
     fn parse_image_id_invalid(#[case] input: &str) {
         assert!(parse_image_id(input).is_err());
+    }
+
+    // ── CRL config validation tests ─────────────────────────────────────
+
+    /// A test address for `--crl-nitro-verifier-address`.
+    const TEST_CRL_VERIFIER_ADDR: &str = "0x0000000000000000000000000000000000000099";
+
+    #[rstest]
+    fn crl_enabled_without_verifier_address_fails() {
+        let mut args = boundless_args();
+        args.extend(["--crl-check-enabled"]);
+        let result = Cli::parse_from(args).into_config();
+        assert!(
+            result.is_err(),
+            "CRL enabled without --crl-nitro-verifier-address should fail"
+        );
+    }
+
+    #[rstest]
+    fn crl_enabled_with_zero_timeout_fails() {
+        let mut args = boundless_args();
+        args.extend([
+            "--crl-check-enabled",
+            "--crl-nitro-verifier-address",
+            TEST_CRL_VERIFIER_ADDR,
+            "--crl-fetch-timeout-secs",
+            "0",
+        ]);
+        let result = Cli::parse_from(args).into_config();
+        assert!(
+            result.is_err(),
+            "--crl-fetch-timeout-secs 0 with CRL enabled should fail"
+        );
+    }
+
+    #[rstest]
+    fn crl_enabled_with_valid_config_parses() {
+        let mut args = boundless_args();
+        args.extend([
+            "--crl-check-enabled",
+            "--crl-nitro-verifier-address",
+            TEST_CRL_VERIFIER_ADDR,
+        ]);
+        let config = Cli::parse_from(args).into_config().unwrap();
+        assert!(config.crl.enabled);
+        assert!(config.crl.nitro_verifier_address.is_some());
+        assert_eq!(
+            config.crl.fetch_timeout,
+            Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS)
+        );
+    }
+
+    #[rstest]
+    fn crl_disabled_by_default() {
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        assert!(!config.crl.enabled);
+        assert!(config.crl.nitro_verifier_address.is_none());
+    }
+
+    #[rstest]
+    fn crl_disabled_allows_missing_verifier_address() {
+        // When CRL is disabled (default), not providing
+        // --crl-nitro-verifier-address should be fine.
+        let config = Cli::parse_from(boundless_args()).into_config().unwrap();
+        assert!(!config.crl.enabled);
     }
 }

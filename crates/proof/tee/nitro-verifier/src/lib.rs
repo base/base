@@ -17,4 +17,4 @@ mod verify;
 pub use verify::AttestationVerifier;
 
 mod x509;
-pub use x509::CertChain;
+pub use x509::{CertChain, compute_path_digests};

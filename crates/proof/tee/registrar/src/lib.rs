@@ -3,9 +3,12 @@
 
 mod config;
 pub use config::{
-    AwsDiscoveryConfig, BoundlessConfig, DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig,
+    AwsDiscoveryConfig, BoundlessConfig, CrlConfig, DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig,
     RegistrarConfig,
 };
+
+pub mod crl;
+pub use crl::DEFAULT_CRL_FETCH_TIMEOUT_SECS;
 
 mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;

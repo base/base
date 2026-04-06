@@ -24,11 +24,18 @@ aws-sdk-elasticloadbalancingv2.workspace = true
 k256.workspace = true
 rand.workspace = true
 
+# X.509 / CRL
+x509-parser.workspace = true
+
+# HTTP (CRL fetching)
+reqwest.workspace = true
+
 # Contracts
 base-proof-contracts.workspace = true
 
 # Proving
 base-proof-tee-nitro-attestation-prover.workspace = true
+base-proof-tee-nitro-verifier.workspace = true
 
 # Transaction management
 base-tx-manager.workspace = true
@@ -55,8 +62,10 @@ tracing.workspace = true
 
 # Misc
 url.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
+sha2.workspace = true
 rstest.workspace = true
 hex-literal.workspace = true
 alloy-consensus.workspace = true

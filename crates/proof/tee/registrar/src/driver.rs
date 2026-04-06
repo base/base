@@ -7,9 +7,9 @@
 
 use std::{collections::HashSet, error::Error, fmt, time::Duration};
 
-use alloy_primitives::{Address, Bytes, hex};
+use alloy_primitives::{Address, Bytes, FixedBytes, hex};
 use alloy_sol_types::SolCall;
-use base_proof_contracts::ITEEProverRegistry;
+use base_proof_contracts::{INitroEnclaveVerifier, ITEEProverRegistry};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_tx_manager::{TxCandidate, TxManager};
 use futures::stream::StreamExt;
@@ -18,8 +18,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::{
-    InstanceDiscovery, InstanceHealthStatus, ProverClient, ProverInstance, RegistrarError,
-    RegistrarMetrics, RegistryClient, Result, SignerClient,
+    CrlConfig, InstanceDiscovery, InstanceHealthStatus, ProverClient, ProverInstance,
+    RegistrarError, RegistrarMetrics, RegistryClient, Result, SignerClient, crl,
 };
 
 /// Default maximum number of instances processed concurrently.
@@ -71,6 +71,9 @@ pub struct DriverConfig {
     /// while the application is still initializing. Set to zero to disable.
     /// Defaults to [`DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS`] seconds.
     pub unhealthy_registration_window: Duration,
+    /// CRL checking configuration. When enabled, intermediate certificates
+    /// are checked against CRL distribution points before registration.
+    pub crl: CrlConfig,
 }
 
 /// Core registration loop tying together discovery, attestation polling,
@@ -86,6 +89,9 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     tx_manager: T,
     signer_client: S,
     config: DriverConfig,
+    /// Pre-built HTTP client for CRL fetches. Built once at construction
+    /// time when CRL checking is enabled. `None` when CRL is disabled.
+    crl_http_client: Option<reqwest::Client>,
 }
 
 impl<D, P, R, T, S> fmt::Debug for RegistrationDriver<D, P, R, T, S> {
@@ -103,7 +109,10 @@ where
     S: SignerClient,
 {
     /// Creates a new registration driver.
-    pub const fn new(
+    ///
+    /// When CRL checking is enabled, pre-builds the HTTP client used for
+    /// CRL fetches so it can be reused across registration cycles.
+    pub fn new(
         discovery: D,
         proof_provider: P,
         registry: R,
@@ -111,7 +120,20 @@ where
         signer_client: S,
         config: DriverConfig,
     ) -> Self {
-        Self { discovery, proof_provider, registry, tx_manager, signer_client, config }
+        let crl_http_client = if config.crl.enabled {
+            crl::build_crl_http_client(config.crl.fetch_timeout).ok()
+        } else {
+            None
+        };
+        Self {
+            discovery,
+            proof_provider,
+            registry,
+            tx_manager,
+            signer_client,
+            config,
+            crl_http_client,
+        }
     }
 
     /// Runs the registration loop until cancelled.
@@ -309,6 +331,13 @@ where
             addresses.push(ProverClient::derive_address(public_key)?);
         }
 
+        // Early return when no signers are found. This avoids panicking on
+        // `all_attestations[0]` below and is a no-op for both registration
+        // and the active signer set.
+        if addresses.is_empty() {
+            return Ok(addresses);
+        }
+
         // Only attempt registration for instances that pass should_register().
         // Non-registerable instances (Draining, Unhealthy) still contribute
         // their addresses to the active signer set to prevent premature
@@ -360,6 +389,39 @@ where
                 )
                 .into(),
             });
+        }
+
+        // CRL check: parse the first attestation's cabundle, fetch CRLs,
+        // and revoke any intermediate certs found on a CRL. This check
+        // runs once per instance (all enclaves share the same cert chain).
+        //
+        // NOTE: This check runs even when all signers are already registered
+        // on-chain. This is a known inefficiency — the CRL check could be
+        // skipped in that case, but would add complexity for minimal benefit
+        // since CRL fetches are fast relative to proof generation.
+        if self.config.crl.enabled {
+            match self.check_and_revoke_crls(&all_attestations[0], instance).await {
+                Ok(true) => {
+                    // Confirmed revocation — block registration for this instance.
+                    // The revokeCert transaction was already submitted above.
+                    warn!(
+                        instance = %instance.instance_id,
+                        "certificate revoked, skipping registration for this instance"
+                    );
+                    return Ok(addresses);
+                }
+                Ok(false) => {
+                    // All certs clean, proceed with registration.
+                }
+                Err(e) => {
+                    // Fail-open: CRL check errors don't block registration.
+                    warn!(
+                        error = %e,
+                        instance = %instance.instance_id,
+                        "CRL check failed (fail-open, proceeding with registration)"
+                    );
+                }
+            }
         }
 
         for (idx, &signer_address) in addresses.iter().enumerate() {
@@ -558,6 +620,118 @@ where
         RegistrarMetrics::registrations_total().increment(1);
 
         Ok(())
+    }
+
+    /// Checks the attestation's intermediate certificates against CRLs and
+    /// submits `revokeCert` transactions for any revoked certificates.
+    ///
+    /// Parses the attestation document to extract the CA bundle (cert chain),
+    /// then checks each intermediate certificate against its CRL distribution
+    /// point. If a certificate is found on a CRL, a `revokeCert` transaction
+    /// is submitted to the `NitroEnclaveVerifier` contract.
+    ///
+    /// Returns `Ok(true)` if any certificate was found on a CRL (revoked),
+    /// `Ok(false)` if all certificates are clean.
+    ///
+    /// Errors from this function propagate to the caller, which handles
+    /// fail-open semantics: CRL fetch/parse failures are logged as warnings
+    /// and registration proceeds. Confirmed revocations, however, block
+    /// registration for the affected instance.
+    async fn check_and_revoke_crls(
+        &self,
+        attestation_bytes: &[u8],
+        instance: &ProverInstance,
+    ) -> Result<bool> {
+        use base_proof_tee_nitro_verifier::AttestationReport;
+
+        let verifier_address = self.config.crl.nitro_verifier_address.ok_or_else(|| {
+            RegistrarError::Config("CRL checking enabled but nitro_verifier_address not set".into())
+        })?;
+
+        // Parse the attestation document to get the cert chain.
+        let report = AttestationReport::parse(attestation_bytes).map_err(|e| {
+            RegistrarError::ProverClient {
+                instance: instance.endpoint.to_string(),
+                source: format!("failed to parse attestation for CRL check: {e}").into(),
+            }
+        })?;
+
+        let cert_chain_der = report.cert_chain_der();
+
+        let http_client = self
+            .crl_http_client
+            .as_ref()
+            .ok_or_else(|| RegistrarError::Config("CRL HTTP client not available".into()))?;
+
+        RegistrarMetrics::crl_checks_total().increment(1);
+
+        let revoked_certs = crl::check_chain_against_crls(&cert_chain_der, http_client).await?;
+
+        if revoked_certs.is_empty() {
+            debug!(instance = %instance.instance_id, "CRL check passed, all certs clean");
+            return Ok(false);
+        }
+
+        RegistrarMetrics::crl_revocations_detected().increment(revoked_certs.len() as u64);
+
+        for revoked in &revoked_certs {
+            warn!(
+                cert = %revoked.label,
+                path_digest = %revoked.path_digest,
+                instance = %instance.instance_id,
+                "submitting revokeCert transaction"
+            );
+
+            self.submit_revoke_cert(verifier_address, revoked.path_digest).await;
+        }
+
+        Ok(true)
+    }
+
+    /// Submits a `revokeCert` transaction to the `NitroEnclaveVerifier`.
+    ///
+    /// Errors are logged but not propagated — a failed revocation should not
+    /// block the registration cycle.
+    async fn submit_revoke_cert(&self, verifier_address: Address, cert_hash: FixedBytes<32>) {
+        let calldata =
+            Bytes::from(INitroEnclaveVerifier::revokeCertCall { certHash: cert_hash }.abi_encode());
+
+        info!(
+            verifier = %verifier_address,
+            cert_hash = %cert_hash,
+            calldata_len = calldata.len(),
+            "Revoking certificate"
+        );
+
+        let candidate =
+            TxCandidate { tx_data: calldata, to: Some(verifier_address), ..Default::default() };
+
+        match self.tx_manager.send(candidate).await {
+            Ok(receipt) => {
+                if !receipt.inner.status() {
+                    warn!(
+                        cert_hash = %cert_hash,
+                        tx_hash = %receipt.transaction_hash,
+                        "revokeCert transaction reverted (cert may already be revoked)"
+                    );
+                } else {
+                    info!(
+                        cert_hash = %cert_hash,
+                        tx_hash = %receipt.transaction_hash,
+                        "certificate revoked successfully"
+                    );
+                    RegistrarMetrics::revoke_cert_success_total().increment(1);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    cert_hash = %cert_hash,
+                    "failed to submit revokeCert transaction"
+                );
+                RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+            }
+        }
     }
 
     /// Submits a `deregisterSigner` transaction and returns whether it succeeded.
@@ -1055,6 +1229,11 @@ mod tests {
             unhealthy_registration_window: Duration::from_secs(
                 DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS,
             ),
+            crl: CrlConfig {
+                enabled: false,
+                nitro_verifier_address: None,
+                fetch_timeout: Duration::from_secs(crate::DEFAULT_CRL_FETCH_TIMEOUT_SECS),
+            },
         }
     }
 

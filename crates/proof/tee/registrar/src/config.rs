@@ -75,6 +75,19 @@ pub enum ProvingConfig {
     },
 }
 
+/// CRL (Certificate Revocation List) checking configuration.
+#[derive(Clone, Debug)]
+pub struct CrlConfig {
+    /// Whether CRL checking is enabled. When disabled, no CRL fetches or
+    /// `revokeCert` transactions are attempted. Defaults to `false`.
+    pub enabled: bool,
+    /// `NitroEnclaveVerifier` contract address on L1 for `revokeCert` calls.
+    /// Required when `enabled` is `true`.
+    pub nitro_verifier_address: Option<Address>,
+    /// HTTP timeout for CRL fetches from AWS S3 endpoints.
+    pub fetch_timeout: Duration,
+}
+
 /// Runtime configuration for the prover registrar.
 ///
 /// Constructed by the CLI layer (`bin/prover-registrar`), which handles argument
@@ -116,6 +129,9 @@ pub struct RegistrarConfig {
     pub unhealthy_registration_window: Duration,
     /// Health server socket address.
     pub health_addr: SocketAddr,
+    // ── CRL Checking ──────────────────────────────────────────────────────
+    /// CRL (Certificate Revocation List) checking configuration.
+    pub crl: CrlConfig,
 }
 
 impl std::fmt::Debug for RegistrarConfig {
@@ -135,6 +151,7 @@ impl std::fmt::Debug for RegistrarConfig {
             .field("tx_retry_delay", &self.tx_retry_delay)
             .field("unhealthy_registration_window", &self.unhealthy_registration_window)
             .field("health_addr", &self.health_addr)
+            .field("crl", &self.crl)
             .finish()
     }
 }

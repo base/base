@@ -18,6 +18,18 @@ base_metrics::define_metrics! {
 
     #[describe("Total number of processing errors encountered")]
     processing_errors_total: counter,
+
+    #[describe("Total number of CRL checks performed")]
+    crl_checks_total: counter,
+
+    #[describe("Total number of certificate revocations detected via CRL")]
+    crl_revocations_detected: counter,
+
+    #[describe("Total number of revokeCert transaction submission failures")]
+    revoke_cert_tx_failures: counter,
+
+    #[describe("Total number of successful revokeCert transactions")]
+    revoke_cert_success_total: counter,
 }
 
 impl RegistrarMetrics {

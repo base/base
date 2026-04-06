@@ -52,6 +52,10 @@ pub enum RegistrarError {
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),
+
+    /// CRL (Certificate Revocation List) check failed.
+    #[error("CRL error: {0}")]
+    Crl(#[from] crate::crl::CrlError),
 }
 
 impl From<ProverError> for RegistrarError {
