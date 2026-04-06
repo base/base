@@ -911,9 +911,9 @@ fn evaluate_opcode_check(
         (CheckMode::After, Err(e)) => (false, format!("call failed: {e}")),
         (CheckMode::After, Ok(actual)) => {
             if norm(actual) == norm(expected) {
-                (true, format!("→ {}", actual.get(..20).unwrap_or(&actual)))
+                (true, format!("→ {}", actual.get(..20).unwrap_or(actual)))
             } else {
-                (false, format!("got {}", actual.get(..20).unwrap_or(&actual)))
+                (false, format!("got {}", actual.get(..20).unwrap_or(actual)))
             }
         }
     };
