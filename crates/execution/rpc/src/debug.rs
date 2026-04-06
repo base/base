@@ -10,8 +10,8 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_alloy_chains::BaseUpgrades;
 use base_execution_payload_builder::{
-    OpAttributes, OpPayloadPrimitives,
-    builder::{OpBuilder, OpPayloadBuilderCtx},
+    Attributes, PayloadPrimitives,
+    builder::{Builder, OpPayloadBuilderCtx},
 };
 use base_execution_trie::{OpProofsStorage, OpProofsStore};
 use base_txpool::BasePooledTransaction;
@@ -80,7 +80,7 @@ where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     Storage: OpProofsStore + Clone + 'static,
-    Provider: BlockReaderIdExt + NodePrimitivesProvider<Primitives: OpPayloadPrimitives>,
+    Provider: BlockReaderIdExt + NodePrimitivesProvider<Primitives: PayloadPrimitives>,
     EvmConfig: ConfigureEvm<Primitives = Provider::Primitives> + 'static,
 {
     /// Creates a new instance of the `DebugApiExt`.
@@ -121,7 +121,7 @@ where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     P: OpProofsStore + Clone + 'static,
-    Provider: NodePrimitivesProvider<Primitives: OpPayloadPrimitives>,
+    Provider: NodePrimitivesProvider<Primitives: PayloadPrimitives>,
 {
     fn new(
         provider: Provider,
@@ -149,7 +149,7 @@ where
     ErrorObject<'static>: From<Eth::Error>,
     P: OpProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt
-        + NodePrimitivesProvider<Primitives: OpPayloadPrimitives>
+        + NodePrimitivesProvider<Primitives: PayloadPrimitives>
         + HeaderProvider<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>,
 {
     fn parent_header(
@@ -170,8 +170,8 @@ where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
     P: OpProofsStore + Clone + 'static,
-    Attrs: OpAttributes<Transaction = TxTy<EvmConfig::Primitives>>,
-    N: OpPayloadPrimitives,
+    Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
+    N: PayloadPrimitives,
     EvmConfig: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Provider::ChainSpec>,
@@ -184,8 +184,8 @@ where
         + Clone
         + 'static,
     base_alloy_consensus::OpPooledTransaction:
-        TryFrom<<N as OpPayloadPrimitives>::_TX, Error: core::error::Error>,
-    <N as OpPayloadPrimitives>::_TX: From<base_alloy_consensus::OpPooledTransaction>,
+        TryFrom<<N as PayloadPrimitives>::_TX, Error: core::error::Error>,
+    <N as PayloadPrimitives>::_TX: From<base_alloy_consensus::OpPooledTransaction>,
 {
     async fn execute_payload(
         &self,
@@ -222,10 +222,10 @@ where
                         .await
                         .map_err(PayloadBuilderError::other)?;
 
-                    let builder = OpBuilder::new(|_| {
+                    let builder = Builder::new(|_| {
                         NoopPayloadTransactions::<
                             BasePooledTransaction<
-                                <N as OpPayloadPrimitives>::_TX,
+                                <N as PayloadPrimitives>::_TX,
                                 base_alloy_consensus::OpPooledTransaction,
                             >,
                         >::default()

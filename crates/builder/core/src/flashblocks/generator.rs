@@ -527,7 +527,7 @@ mod tests {
     use alloy_primitives::U256;
     use base_alloy_consensus::OpPrimitives;
     use base_execution_payload_builder::{
-        OpPayloadPrimitives, payload::OpPayloadBuilderAttributes,
+        PayloadPrimitives, payload::OpPayloadBuilderAttributes,
     };
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
@@ -670,7 +670,7 @@ mod tests {
     #[async_trait::async_trait]
     impl<N> PayloadBuilder for MockBuilder<N>
     where
-        N: OpPayloadPrimitives,
+        N: PayloadPrimitives,
     {
         type Attributes = OpPayloadBuilderAttributes<N::SignedTx>;
         type BuiltPayload = MockPayload;

@@ -9,14 +9,14 @@ use reth_trie_common::HashedStorage;
 use revm::database::BundleState;
 use tracing::warn;
 
-use crate::OpConsensusError;
+use crate::BaseConsensusError;
 
 /// Verifies that `withdrawals_root` (i.e. `l2tol1-msg-passer` storage root since Isthmus) field is
 /// set in block header.
 pub fn ensure_withdrawals_storage_root_is_some<H: BlockHeader>(
     header: H,
-) -> Result<(), OpConsensusError> {
-    header.withdrawals_root().ok_or(OpConsensusError::L2WithdrawalsRootMissing)?;
+) -> Result<(), BaseConsensusError> {
+    header.withdrawals_root().ok_or(BaseConsensusError::L2WithdrawalsRootMissing)?;
 
     Ok(())
 }
@@ -66,16 +66,16 @@ pub fn verify_withdrawals_root<DB, H>(
     state_updates: &BundleState,
     state: DB,
     header: H,
-) -> Result<(), OpConsensusError>
+) -> Result<(), BaseConsensusError>
 where
     DB: StorageRootProvider,
     H: BlockHeader,
 {
     let header_storage_root =
-        header.withdrawals_root().ok_or(OpConsensusError::L2WithdrawalsRootMissing)?;
+        header.withdrawals_root().ok_or(BaseConsensusError::L2WithdrawalsRootMissing)?;
 
     let storage_root = withdrawals_root(state_updates, state)
-        .map_err(OpConsensusError::L2WithdrawalsRootCalculationFail)?;
+        .map_err(BaseConsensusError::L2WithdrawalsRootCalculationFail)?;
 
     if storage_root == EMPTY_ROOT_HASH {
         // if there was no MessagePasser contract storage, something is wrong
@@ -84,7 +84,7 @@ where
     }
 
     if header_storage_root != storage_root {
-        return Err(OpConsensusError::L2WithdrawalsRootMismatch {
+        return Err(BaseConsensusError::L2WithdrawalsRootMismatch {
             header: header_storage_root,
             exec_res: storage_root,
         });
@@ -104,19 +104,19 @@ pub fn verify_withdrawals_root_prehashed<DB, H>(
     hashed_storage_updates: HashedStorage,
     state: DB,
     header: H,
-) -> Result<(), OpConsensusError>
+) -> Result<(), BaseConsensusError>
 where
     DB: StorageRootProvider,
     H: BlockHeader,
 {
     let header_storage_root =
-        header.withdrawals_root().ok_or(OpConsensusError::L2WithdrawalsRootMissing)?;
+        header.withdrawals_root().ok_or(BaseConsensusError::L2WithdrawalsRootMissing)?;
 
     let storage_root = withdrawals_root_prehashed(hashed_storage_updates, state)
-        .map_err(OpConsensusError::L2WithdrawalsRootCalculationFail)?;
+        .map_err(BaseConsensusError::L2WithdrawalsRootCalculationFail)?;
 
     if header_storage_root != storage_root {
-        return Err(OpConsensusError::L2WithdrawalsRootMismatch {
+        return Err(BaseConsensusError::L2WithdrawalsRootMismatch {
             header: header_storage_root,
             exec_res: storage_root,
         });

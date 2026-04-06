@@ -3,7 +3,7 @@
 use base_alloy_consensus::OpPrimitives;
 use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::OpChainSpec;
-use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
+use base_execution_payload_builder::config::{OpDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::OpEthApiBuilder;
 use base_execution_storage::OpStorage;
 use base_node_core::{
@@ -38,7 +38,7 @@ pub struct BaseNode {
     /// Gas limit configuration for the OP builder.
     /// Used to control the gas limit of the blocks produced by the OP builder. (configured by the
     /// batcher via the `miner_` api)
-    pub gas_limit_config: OpGasLimitConfig,
+    pub gas_limit_config: GasLimitConfig,
 }
 
 impl BaseNode {
@@ -47,7 +47,7 @@ impl BaseNode {
         Self {
             args,
             da_config: OpDAConfig::default(),
-            gas_limit_config: OpGasLimitConfig::default(),
+            gas_limit_config: GasLimitConfig::default(),
         }
     }
 
@@ -58,7 +58,7 @@ impl BaseNode {
     }
 
     /// Configure the gas limit configuration for the OP builder.
-    pub fn with_gas_limit_config(mut self, gas_limit_config: OpGasLimitConfig) -> Self {
+    pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
         self
     }

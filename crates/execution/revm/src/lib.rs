@@ -6,7 +6,7 @@
 extern crate alloc as std;
 
 mod api;
-pub use api::{BaseError, DefaultOp, DefaultOpEvm, OpBuilder, OpContext, OpContextTr};
+pub use api::{BaseError, Builder, DefaultOp, DefaultOpEvm, OpContext, OpContextTr};
 
 mod constants;
 pub use constants::*;

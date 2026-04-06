@@ -5,7 +5,7 @@ use alloy_trie::EMPTY_ROOT_HASH;
 use reth_consensus::ConsensusError;
 use reth_primitives_traits::{BlockBody, GotExpected};
 
-use crate::OpConsensusError;
+use crate::BaseConsensusError;
 
 /// Verifies that withdrawals root in block header (Shanghai) is always [`EMPTY_ROOT_HASH`] in
 /// Canyon.
@@ -28,13 +28,13 @@ pub fn ensure_empty_withdrawals_root<H: BlockHeader>(header: &H) -> Result<(), C
 /// Verifies that withdrawals in block body (Shanghai) is always empty in Canyon.
 /// <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-validation>
 #[inline]
-pub fn ensure_empty_shanghai_withdrawals<T: BlockBody>(body: &T) -> Result<(), OpConsensusError> {
+pub fn ensure_empty_shanghai_withdrawals<T: BlockBody>(body: &T) -> Result<(), BaseConsensusError> {
     // Shanghai rule
     let withdrawals = body.withdrawals().ok_or(ConsensusError::BodyWithdrawalsMissing)?;
 
     //  Canyon rule
     if !withdrawals.as_ref().is_empty() {
-        return Err(OpConsensusError::WithdrawalsNonEmpty);
+        return Err(BaseConsensusError::WithdrawalsNonEmpty);
     }
 
     Ok(())

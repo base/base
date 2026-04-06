@@ -1,6 +1,6 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use base_revm::{
-    BasePrecompiles, DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction,
+    BasePrecompiles, DefaultOp, Builder, OpContext, OpHaltReason, OpSpecId, OpTransaction,
     OpTransactionError,
 };
 use revm::{

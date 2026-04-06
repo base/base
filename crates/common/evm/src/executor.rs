@@ -361,7 +361,7 @@ mod tests {
     use base_revm::{
         BASE_FEE_SCALAR_OFFSET, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
         ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
-        OPERATOR_FEE_SCALARS_SLOT, OpBuilder, OpSpecId,
+        OPERATOR_FEE_SCALARS_SLOT, Builder, OpSpecId,
     };
     use revm::{
         Context,
