@@ -251,7 +251,7 @@ async fn fetch_and_check_crl(
     // Check Content-Length header if present to reject obviously oversized
     // responses before buffering the body.
     if let Some(content_length) = response.content_length()
-        && content_length as usize > MAX_CRL_RESPONSE_BYTES
+        && content_length > MAX_CRL_RESPONSE_BYTES as u64
     {
         return Err(CrlError::Fetch(format!(
             "{crl_url}: response too large ({content_length} bytes, max {MAX_CRL_RESPONSE_BYTES})"
