@@ -48,8 +48,8 @@ base_metrics::define_metrics! {
     )]
     errors_total: counter,
 
-    #[describe("Total reorgs detected at submit time")]
-    reorgs_total: counter,
+    #[describe("Total output root mismatches detected at submit time")]
+    root_mismatch_total: counter,
     #[describe("Time to generate a single proof (seconds)")]
     proof_duration_seconds: histogram,
 

@@ -376,7 +376,7 @@ where
                         target_block = next_to_submit,
                         "Output root mismatch at submit time, resetting pipeline"
                     );
-                    Metrics::reorgs_total().increment(1);
+                    Metrics::root_mismatch_total().increment(1);
                     state.reset();
                     return Ok(());
                 }
@@ -842,13 +842,11 @@ where
         let interval = self.config.driver.intermediate_block_interval;
         for (i, root) in intermediate_roots.iter().enumerate() {
             let block = starting_block_number
-                .checked_add(
-                    (i as u64 + 1).checked_mul(interval).ok_or_else(|| {
-                        SubmitAction::Failed(ProposerError::Internal(
-                            "overflow computing intermediate root block number".into(),
-                        ))
-                    })?,
-                )
+                .checked_add((i as u64 + 1).checked_mul(interval).ok_or_else(|| {
+                    SubmitAction::Failed(ProposerError::Internal(
+                        "overflow computing intermediate root block number".into(),
+                    ))
+                })?)
                 .ok_or_else(|| {
                     SubmitAction::Failed(ProposerError::Internal(
                         "overflow computing intermediate root block number".into(),
