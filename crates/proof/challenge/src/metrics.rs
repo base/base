@@ -82,6 +82,13 @@ base_metrics::define_metrics! {
 
     #[describe("Total number of bonds successfully claimed")]
     bonds_completed_total: counter,
+
+    #[describe("Total bond discovery scans performed")]
+    #[label(scan_type)]
+    bond_discovery_scans_total: counter,
+
+    #[describe("Total claimable games found by bond discovery")]
+    bond_discovery_games_found_total: counter,
 }
 
 impl ChallengerMetrics {
