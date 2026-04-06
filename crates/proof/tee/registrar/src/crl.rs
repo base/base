@@ -30,7 +30,7 @@ use x509_parser::{
 /// Default HTTP timeout for CRL fetches from AWS S3.
 pub const DEFAULT_CRL_FETCH_TIMEOUT_SECS: u64 = 30;
 
-/// Maximum allowed CRL response body size (10 MiB).
+/// Maximum allowed CRL response body size (10 `MiB`).
 ///
 /// Prevents unbounded memory allocation when fetching CRLs. AWS Nitro CRLs
 /// are typically a few KB; this cap is generous to accommodate growth while
@@ -250,12 +250,12 @@ async fn fetch_and_check_crl(
 
     // Check Content-Length header if present to reject obviously oversized
     // responses before buffering the body.
-    if let Some(content_length) = response.content_length() {
-        if content_length as usize > MAX_CRL_RESPONSE_BYTES {
-            return Err(CrlError::Fetch(format!(
-                "{crl_url}: response too large ({content_length} bytes, max {MAX_CRL_RESPONSE_BYTES})"
-            )));
-        }
+    if let Some(content_length) = response.content_length()
+        && content_length as usize > MAX_CRL_RESPONSE_BYTES
+    {
+        return Err(CrlError::Fetch(format!(
+            "{crl_url}: response too large ({content_length} bytes, max {MAX_CRL_RESPONSE_BYTES})"
+        )));
     }
 
     let crl_bytes = response
