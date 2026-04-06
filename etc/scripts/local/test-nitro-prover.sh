@@ -141,7 +141,9 @@ payload=$(cat <<EOF
         "agreed_l2_head_hash": "$AGREED_L2_HEAD_HASH",
         "agreed_l2_output_root": "$AGREED_L2_OUTPUT_ROOT",
         "claimed_l2_output_root": "$CLAIMED_L2_OUTPUT_ROOT",
-        "claimed_l2_block_number": $CLAIMED_L2_BLOCK_NUMBER
+        "claimed_l2_block_number": $CLAIMED_L2_BLOCK_NUMBER,
+        "intermediate_block_interval": $BLOCK_RANGE,
+        "l1_head_number": $L1_HEAD_NUMBER
     }]
 }
 EOF
