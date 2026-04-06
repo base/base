@@ -1,7 +1,10 @@
-//! Shared signer-registration checker backed by the on-chain `TEEProverRegistry`.
+//! Shared signer-validity checker backed by the on-chain `TEEProverRegistry`.
 //!
-//! Used by both the health endpoint (fail-open with stale cache) and the
-//! proving guard (fail-closed) to avoid duplicating L1 contract queries.
+//! Two consumers, two policies:
+//! - **Health endpoint** — latching: once valid, stays healthy forever (avoids
+//!   ASG replacement on transient L1 failures).
+//! - **Proving guard** — fail-closed with a TTL cache: rejects proof requests
+//!   when the signer is invalid or L1 is unreachable.
 
 use std::{
     sync::Arc,
@@ -20,57 +23,41 @@ use super::transport::NitroTransport;
 
 pub(crate) const CACHE_TTL: Duration = Duration::from_secs(30);
 const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
-pub(crate) const STALE_LIMIT: Duration = Duration::from_secs(300);
 
-/// Structured error type for signer-registration checks.
+/// Errors from signer-validity checks.
 #[derive(Debug, Error)]
 pub enum RegistrationError {
-    /// Failed to retrieve the signer public key from the enclave.
-    #[error("failed to get signer public key: {0}")]
-    SignerKey(String),
-    /// The public key bytes are not a valid secp256k1 point.
-    #[error("invalid public key: {0}")]
-    InvalidPublicKey(String),
-    /// The L1 RPC call to check registration status failed.
-    #[error("L1 RPC call failed for signer {signer}: {reason}")]
-    L1Rpc {
+    /// Enclave signer key could not be retrieved or parsed.
+    #[error("signer setup failed: {0}")]
+    Setup(String),
+    /// L1 RPC call failed or timed out.
+    #[error("L1 RPC failed for signer {signer}: {reason}")]
+    Rpc {
         /// The signer address that was being checked.
         signer: Address,
-        /// The underlying RPC error message.
+        /// The underlying error message.
         reason: String,
     },
-    /// The L1 RPC request timed out.
-    #[error("L1 RPC request timed out for signer {signer}")]
-    Timeout {
-        /// The signer address that was being checked.
-        signer: Address,
-    },
-    /// The signer is registered but its image hash does not match, or it is
-    /// not registered at all.
+    /// The signer is not a valid signer in `TEEProverRegistry`.
     #[error("signer {signer} is not a valid signer in TEEProverRegistry")]
     NotValid {
         /// The signer address that failed validation.
         signer: Address,
-    },
-    /// Registration check failed and the stale cache has expired.
-    #[error("registration check failed for {signer}: stale cache expired after {stale_secs}s")]
-    StaleExpired {
-        /// The signer address that was being checked.
-        signer: Address,
-        /// How many seconds the stale cache entry had been held.
-        stale_secs: u64,
     },
 }
 
 /// Checks whether the enclave signer is a **valid** signer in the on-chain
 /// `TEEProverRegistry` (registered AND matching the current image hash).
 ///
-/// Results are cached for [`CACHE_TTL`] to avoid hitting L1 on every request.
+/// Validity results are cached for [`CACHE_TTL`] to avoid hitting L1 on every
+/// request.  A separate latching flag tracks whether the signer has *ever*
+/// been valid — once set, [`check_health`](Self::check_health) always succeeds.
 pub struct RegistrationChecker {
     transport: Arc<NitroTransport>,
     registry: Box<dyn TEEProverRegistryClient>,
     signer: OnceCell<Address>,
     cache: RwLock<Option<(bool, Instant)>>,
+    healthy: OnceCell<()>,
 }
 
 impl std::fmt::Debug for RegistrationChecker {
@@ -90,6 +77,7 @@ impl RegistrationChecker {
             registry: Box::new(registry),
             signer: OnceCell::new(),
             cache: RwLock::new(None),
+            healthy: OnceCell::new(),
         }
     }
 
@@ -100,9 +88,9 @@ impl RegistrationChecker {
                     .transport
                     .signer_public_key()
                     .await
-                    .map_err(|e| RegistrationError::SignerKey(e.to_string()))?;
+                    .map_err(|e| RegistrationError::Setup(format!("signer public key: {e}")))?;
                 let verifying_key = VerifyingKey::from_sec1_bytes(&public_key)
-                    .map_err(|e| RegistrationError::InvalidPublicKey(e.to_string()))?;
+                    .map_err(|e| RegistrationError::Setup(format!("invalid public key: {e}")))?;
                 Ok(public_key_to_address(&verifying_key))
             })
             .await
@@ -134,65 +122,31 @@ impl RegistrationChecker {
                 }
                 Ok(valid)
             }
-            Ok(Err(e)) => Err(RegistrationError::L1Rpc { signer, reason: e.to_string() }),
-            Err(_) => Err(RegistrationError::Timeout { signer }),
+            Ok(Err(e)) => Err(RegistrationError::Rpc { signer, reason: e.to_string() }),
+            Err(_) => Err(RegistrationError::Rpc { signer, reason: "request timed out".into() }),
         }
     }
 
-    /// Returns the cached validity, falling back to stale cache within
-    /// [`STALE_LIMIT`] when L1 is unreachable.  Used by the health endpoint
-    /// (fail-open).
-    pub async fn is_valid_signer_or_stale(&self) -> Result<bool, RegistrationError> {
-        match self.fetch_validity().await {
-            Ok(valid) => Ok(valid),
-            Err(e @ (RegistrationError::SignerKey(_) | RegistrationError::InvalidPublicKey(_))) => {
-                Err(e)
-            }
-            Err(RegistrationError::L1Rpc { signer, reason }) => {
-                self.use_stale_cache_or_fail(signer, RegistrationError::L1Rpc { signer, reason })
-                    .await
-            }
-            Err(RegistrationError::Timeout { signer }) => {
-                self.use_stale_cache_or_fail(signer, RegistrationError::Timeout { signer }).await
-            }
-            Err(
-                e @ (RegistrationError::NotValid { .. } | RegistrationError::StaleExpired { .. }),
-            ) => Err(e),
+    /// Latching health check: returns `true` once the signer has ever been
+    /// confirmed valid, and stays `true` forever after.
+    ///
+    /// Before the first successful validation, delegates to
+    /// [`fetch_validity`](Self::fetch_validity) and returns its result.
+    pub async fn check_health(&self) -> Result<bool, RegistrationError> {
+        if self.healthy.get().is_some() {
+            return Ok(true);
         }
-    }
-
-    async fn use_stale_cache_or_fail(
-        &self,
-        signer: Address,
-        rpc_err: RegistrationError,
-    ) -> Result<bool, RegistrationError> {
-        let cache = self.cache.read().await;
-        if let Some((valid, checked_at)) = *cache {
-            let elapsed = checked_at.elapsed();
-            if elapsed < STALE_LIMIT {
-                warn!(
-                    error = %rpc_err,
-                    signer = %signer,
-                    stale_secs = elapsed.as_secs(),
-                    "L1 RPC failed, using stale cached registration status"
-                );
-                return Ok(valid);
-            }
+        let valid = self.fetch_validity().await?;
+        if valid {
+            let _ = self.healthy.set(());
         }
-        let stale_secs = cache.map(|(_, checked_at)| checked_at.elapsed().as_secs()).unwrap_or(0);
-        warn!(
-            error = %rpc_err,
-            signer = %signer,
-            stale_secs,
-            "stale cache expired, cannot verify signer"
-        );
-        Err(RegistrationError::StaleExpired { signer, stale_secs })
+        Ok(valid)
     }
 
     /// Fails the request unless the signer is currently valid.
     ///
-    /// Fail-closed: does **not** fall back to stale cache.  If L1 is
-    /// unreachable the proof request is rejected.
+    /// Fail-closed: if L1 is unreachable or the signer is not valid, the
+    /// proof request is rejected.
     pub async fn require_valid_signer(&self) -> Result<(), RegistrationError> {
         match self.fetch_validity().await {
             Ok(true) => Ok(()),
@@ -219,11 +173,75 @@ impl RegistrationChecker {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
+        time::Instant,
+    };
 
-    use alloy_primitives::address;
+    use alloy_primitives::{Address, address};
+    use base_proof_contracts::TEEProverRegistryClient;
+    use jsonrpsee::core::async_trait;
 
     use super::*;
+
+    #[derive(Clone)]
+    struct MockRegistry {
+        valid: Arc<AtomicBool>,
+        call_count: Arc<AtomicUsize>,
+        should_fail: Arc<AtomicBool>,
+    }
+
+    impl MockRegistry {
+        fn new(valid: bool) -> Self {
+            Self {
+                valid: Arc::new(AtomicBool::new(valid)),
+                call_count: Arc::new(AtomicUsize::new(0)),
+                should_fail: Arc::new(AtomicBool::new(false)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl TEEProverRegistryClient for MockRegistry {
+        async fn is_valid_signer(
+            &self,
+            _signer: Address,
+        ) -> Result<bool, base_proof_contracts::ContractError> {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            if self.should_fail.load(Ordering::Relaxed) {
+                return Err(base_proof_contracts::ContractError::Validation(
+                    "mock RPC failure".into(),
+                ));
+            }
+            Ok(self.valid.load(Ordering::Relaxed))
+        }
+
+        async fn is_registered_signer(
+            &self,
+            _signer: Address,
+        ) -> Result<bool, base_proof_contracts::ContractError> {
+            unimplemented!()
+        }
+
+        async fn get_registered_signers(
+            &self,
+        ) -> Result<Vec<Address>, base_proof_contracts::ContractError> {
+            unimplemented!()
+        }
+    }
+
+    const TEST_SIGNER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+    fn test_checker_with_mock(
+        registry: impl TEEProverRegistryClient + 'static,
+    ) -> RegistrationChecker {
+        let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        RegistrationChecker::new(transport, registry)
+    }
 
     fn test_checker() -> RegistrationChecker {
         let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
@@ -234,86 +252,108 @@ mod tests {
         RegistrationChecker::new(transport, registry)
     }
 
-    const TEST_SIGNER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-
     #[tokio::test]
-    async fn stale_cache_returns_cached_value_on_rpc_error() {
-        let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
-        let just_expired = Instant::now() - CACHE_TTL - Duration::from_secs(1);
-        *checker.cache.write().await = Some((true, just_expired));
-        let result = checker.is_valid_signer_or_stale().await;
-        assert!(result.unwrap());
+    async fn health_returns_true_when_valid() {
+        let checker = test_checker_with_mock(MockRegistry::new(true));
+        checker.set_signer_for_test(TEST_SIGNER);
+        assert!(checker.check_health().await.unwrap());
     }
 
     #[tokio::test]
-    async fn stale_cache_fails_when_expired() {
-        let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
-        let expired = Instant::now() - STALE_LIMIT - Duration::from_secs(1);
-        *checker.cache.write().await = Some((true, expired));
-        let result = checker.is_valid_signer_or_stale().await;
-        assert!(result.is_err());
+    async fn health_returns_false_when_not_valid() {
+        let checker = test_checker_with_mock(MockRegistry::new(false));
+        checker.set_signer_for_test(TEST_SIGNER);
+        assert!(!checker.check_health().await.unwrap());
     }
 
     #[tokio::test]
-    async fn stale_cache_fails_when_empty() {
-        let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
-        let result = checker.is_valid_signer_or_stale().await;
-        assert!(result.is_err());
+    async fn health_latches_after_first_success() {
+        let registry = MockRegistry::new(true);
+        let checker = test_checker_with_mock(registry.clone());
+        checker.set_signer_for_test(TEST_SIGNER);
+
+        assert!(checker.check_health().await.unwrap());
+
+        registry.valid.store(false, Ordering::Relaxed);
+        registry.should_fail.store(true, Ordering::Relaxed);
+        checker.set_cache_for_test(None).await;
+
+        assert!(checker.check_health().await.unwrap());
     }
 
     #[tokio::test]
-    async fn cache_hit_within_ttl_returns_valid() {
-        let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
-        *checker.cache.write().await = Some((true, Instant::now()));
-        let result = checker.is_valid_signer_or_stale().await;
-        assert!(result.unwrap());
+    async fn health_errors_on_rpc_failure_before_latch() {
+        let registry = MockRegistry::new(false);
+        registry.should_fail.store(true, Ordering::Relaxed);
+        let checker = test_checker_with_mock(registry);
+        checker.set_signer_for_test(TEST_SIGNER);
+        assert!(checker.check_health().await.is_err());
     }
 
     #[tokio::test]
-    async fn cache_hit_returns_false_when_not_valid() {
-        let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
-        *checker.cache.write().await = Some((false, Instant::now()));
-        let result = checker.is_valid_signer_or_stale().await;
-        assert!(!result.unwrap());
+    async fn health_ok_on_rpc_failure_after_latch() {
+        let registry = MockRegistry::new(true);
+        let checker = test_checker_with_mock(registry.clone());
+        checker.set_signer_for_test(TEST_SIGNER);
+        assert!(checker.check_health().await.unwrap());
+
+        registry.should_fail.store(true, Ordering::Relaxed);
+        checker.set_cache_for_test(None).await;
+        assert!(checker.check_health().await.unwrap());
     }
 
     #[tokio::test]
     async fn require_valid_signer_ok_when_cached_valid() {
         let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
-        *checker.cache.write().await = Some((true, Instant::now()));
+        checker.set_signer_for_test(TEST_SIGNER);
+        checker.set_cache_for_test(Some((true, Instant::now()))).await;
         assert!(checker.require_valid_signer().await.is_ok());
     }
 
     #[tokio::test]
     async fn require_valid_signer_rejects_when_cached_invalid() {
         let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
-        *checker.cache.write().await = Some((false, Instant::now()));
-        let err = checker.require_valid_signer().await.unwrap_err();
-        assert!(matches!(err, RegistrationError::NotValid { .. }));
+        checker.set_signer_for_test(TEST_SIGNER);
+        checker.set_cache_for_test(Some((false, Instant::now()))).await;
+        assert!(matches!(
+            checker.require_valid_signer().await.unwrap_err(),
+            RegistrationError::NotValid { .. }
+        ));
     }
 
     #[tokio::test]
     async fn require_valid_signer_rejects_on_rpc_error() {
         let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
-        let err = checker.require_valid_signer().await.unwrap_err();
-        assert!(matches!(err, RegistrationError::L1Rpc { .. } | RegistrationError::Timeout { .. }));
+        checker.set_signer_for_test(TEST_SIGNER);
+        assert!(matches!(
+            checker.require_valid_signer().await.unwrap_err(),
+            RegistrationError::Rpc { .. }
+        ));
     }
 
     #[tokio::test]
-    async fn require_valid_signer_rejects_on_stale_cache() {
+    async fn require_valid_signer_rejects_on_expired_cache() {
         let checker = test_checker();
-        checker.signer.set(TEST_SIGNER).unwrap();
+        checker.set_signer_for_test(TEST_SIGNER);
         let expired = Instant::now() - CACHE_TTL - Duration::from_secs(1);
-        *checker.cache.write().await = Some((true, expired));
-        let err = checker.require_valid_signer().await.unwrap_err();
-        assert!(matches!(err, RegistrationError::L1Rpc { .. } | RegistrationError::Timeout { .. }));
+        checker.set_cache_for_test(Some((true, expired))).await;
+        assert!(matches!(
+            checker.require_valid_signer().await.unwrap_err(),
+            RegistrationError::Rpc { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn cache_hit_within_ttl() {
+        let registry = MockRegistry::new(true);
+        let call_count = Arc::clone(&registry.call_count);
+        let checker = test_checker_with_mock(registry);
+        checker.set_signer_for_test(TEST_SIGNER);
+
+        assert!(checker.require_valid_signer().await.is_ok());
+        assert_eq!(call_count.load(Ordering::Relaxed), 1);
+
+        assert!(checker.require_valid_signer().await.is_ok());
+        assert_eq!(call_count.load(Ordering::Relaxed), 1);
     }
 }

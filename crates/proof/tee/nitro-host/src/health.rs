@@ -22,9 +22,9 @@ pub struct RegistrationHealthConfig {
 
 /// JSON-RPC handler for registration-gated health checks.
 ///
-/// Uses the shared [`RegistrationChecker`] with a fail-open stale-cache policy:
-/// if L1 is temporarily unreachable, the last cached status is returned as long
-/// as it is not older than the stale limit.
+/// Uses the shared [`RegistrationChecker`] with a latching policy: once the
+/// signer has been confirmed valid, health stays healthy forever (avoids ASG
+/// replacement on transient L1 failures).
 pub struct RegistrationHealthzRpc {
     version: &'static str,
     checker: Arc<RegistrationChecker>,
@@ -48,7 +48,7 @@ impl std::fmt::Debug for RegistrationHealthzRpc {
 #[async_trait]
 impl HealthzApiServer for RegistrationHealthzRpc {
     async fn healthz(&self) -> RpcResult<HealthzResponse> {
-        match self.checker.is_valid_signer_or_stale().await {
+        match self.checker.check_health().await {
             Ok(true) => Ok(HealthzResponse { version: self.version.to_string() }),
             Ok(false) => Err(jsonrpsee::types::ErrorObjectOwned::owned(
                 -32000,
@@ -64,12 +64,9 @@ impl HealthzApiServer for RegistrationHealthzRpc {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
-        },
-        time::{Duration, Instant},
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
     use alloy_primitives::{Address, address};
@@ -77,10 +74,7 @@ mod tests {
     use jsonrpsee::core::async_trait;
 
     use super::*;
-    use crate::{
-        registration::{CACHE_TTL, STALE_LIMIT},
-        transport::NitroTransport,
-    };
+    use crate::transport::NitroTransport;
 
     #[derive(Clone)]
     struct MockRegistry {
@@ -118,30 +112,24 @@ mod tests {
             &self,
             _signer: Address,
         ) -> Result<bool, base_proof_contracts::ContractError> {
-            unimplemented!("not used — RegistrationChecker uses is_valid_signer")
+            unimplemented!()
         }
 
         async fn get_registered_signers(
             &self,
         ) -> Result<Vec<Address>, base_proof_contracts::ContractError> {
-            unimplemented!("not used in health checks")
+            unimplemented!()
         }
     }
 
     const TEST_SIGNER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
-    fn test_checker_with_mock(
-        registry: impl TEEProverRegistryClient + 'static,
-    ) -> Arc<RegistrationChecker> {
-        let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
-        let transport = Arc::new(NitroTransport::local(server));
-        Arc::new(RegistrationChecker::new(transport, registry))
-    }
-
     fn test_healthz_with_mock(
         registry: impl TEEProverRegistryClient + 'static,
     ) -> (Arc<RegistrationChecker>, RegistrationHealthzRpc) {
-        let checker = test_checker_with_mock(registry);
+        let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
+        let transport = Arc::new(NitroTransport::local(server));
+        let checker = Arc::new(RegistrationChecker::new(transport, registry));
         let rpc = RegistrationHealthzRpc::new("0.0.0", Arc::clone(&checker));
         (checker, rpc)
     }
@@ -164,34 +152,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn healthz_cache_hit_within_ttl() {
-        let (checker, rpc) = test_healthz_with_mock(MockRegistry::new(true));
+    async fn healthz_latches_after_first_success() {
+        let registry = MockRegistry::new(true);
+        let (checker, rpc) = test_healthz_with_mock(registry.clone());
         checker.set_signer_for_test(TEST_SIGNER);
-        checker.set_cache_for_test(Some((true, Instant::now()))).await;
+
+        let result = HealthzApiServer::healthz(&rpc).await;
+        assert!(result.is_ok());
+
+        registry.valid.store(false, Ordering::Relaxed);
+        registry.should_fail.store(true, Ordering::Relaxed);
+        checker.set_cache_for_test(None).await;
+
         let result = HealthzApiServer::healthz(&rpc).await;
         assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn healthz_uses_stale_cache_on_rpc_failure() {
-        let failing = MockRegistry::new(false);
-        failing.should_fail.store(true, Ordering::Relaxed);
-        let (checker, rpc) = test_healthz_with_mock(failing);
+    async fn healthz_errors_on_rpc_failure_before_latch() {
+        let registry = MockRegistry::new(false);
+        registry.should_fail.store(true, Ordering::Relaxed);
+        let (checker, rpc) = test_healthz_with_mock(registry);
         checker.set_signer_for_test(TEST_SIGNER);
-        let stale_time = Instant::now() - CACHE_TTL - Duration::from_secs(1);
-        checker.set_cache_for_test(Some((true, stale_time))).await;
-        let result = HealthzApiServer::healthz(&rpc).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn healthz_fails_when_stale_cache_expired() {
-        let failing = MockRegistry::new(false);
-        failing.should_fail.store(true, Ordering::Relaxed);
-        let (checker, rpc) = test_healthz_with_mock(failing);
-        checker.set_signer_for_test(TEST_SIGNER);
-        let expired = Instant::now() - STALE_LIMIT - Duration::from_secs(1);
-        checker.set_cache_for_test(Some((true, expired))).await;
         let result = HealthzApiServer::healthz(&rpc).await;
         assert!(result.is_err());
     }
