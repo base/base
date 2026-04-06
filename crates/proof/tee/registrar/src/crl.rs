@@ -118,18 +118,18 @@ pub(crate) fn extract_cert_crl_info(certs_der: &[&[u8]]) -> Result<Vec<CertCrlIn
 /// extension or if none of the distribution points contain a URI.
 fn extract_crl_distribution_point(cert: &X509Certificate<'_>) -> Option<String> {
     for ext in cert.extensions() {
-        if let ParsedExtension::CRLDistributionPoints(cdp) = ext.parsed_extension() {
-            for dp in cdp.iter() {
-                if let Some(name) = &dp.distribution_point {
-                    if let x509_parser::extensions::DistributionPointName::FullName(names) = name {
-                        for gn in names {
-                            if let GeneralName::URI(uri) = gn {
-                                if uri.starts_with("http://") || uri.starts_with("https://") {
-                                    return Some(uri.to_string());
-                                }
-                            }
-                        }
-                    }
+        let ParsedExtension::CRLDistributionPoints(cdp) = ext.parsed_extension() else {
+            continue;
+        };
+        for dp in cdp.iter() {
+            let Some(name) = &dp.distribution_point else { continue };
+            let x509_parser::extensions::DistributionPointName::FullName(names) = name else {
+                continue;
+            };
+            for gn in names {
+                let GeneralName::URI(uri) = gn else { continue };
+                if uri.starts_with("http://") || uri.starts_with("https://") {
+                    return Some(uri.to_string());
                 }
             }
         }
