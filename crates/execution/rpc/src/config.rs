@@ -41,12 +41,10 @@ fn sanitize_system_contracts_for_fork(
         SystemContract::HistoryStorage => {
             chain_spec.is_isthmus_active_at_timestamp(activation_time)
         }
-        // Base does not support L1-style deposit, consolidation, withdrawal request contracts,
-        // or any unknown future system contracts.
+        // Base does not support L1-style deposit, consolidation, or withdrawal request contracts.
         SystemContract::ConsolidationRequestPredeploy
         | SystemContract::DepositContract
-        | SystemContract::WithdrawalRequestPredeploy
-        | SystemContract::Other(_) => false,
+        | SystemContract::WithdrawalRequestPredeploy => false,
     });
 }
 
@@ -161,7 +159,7 @@ mod tests {
         sanitize_system_contracts_for_fork(&chain_spec, &mut fork_config);
 
         assert_eq!(
-            fork_config.system_contracts.keys().cloned().collect::<Vec<_>>(),
+            fork_config.system_contracts.keys().copied().collect::<Vec<_>>(),
             vec![SystemContract::BeaconRoots]
         );
     }
@@ -174,7 +172,7 @@ mod tests {
         sanitize_system_contracts_for_fork(&chain_spec, &mut fork_config);
 
         assert_eq!(
-            fork_config.system_contracts.keys().cloned().collect::<Vec<_>>(),
+            fork_config.system_contracts.keys().copied().collect::<Vec<_>>(),
             vec![SystemContract::BeaconRoots, SystemContract::HistoryStorage]
         );
     }
