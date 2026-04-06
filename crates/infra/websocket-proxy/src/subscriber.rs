@@ -334,18 +334,18 @@ where
 /// a valid flashblock payload or either field is missing.
 ///
 /// Uses a minimal typed struct to avoid materializing the entire JSON tree.
+#[derive(serde::Deserialize)]
+struct PositionExtract {
+    index: u64,
+    metadata: MetadataExtract,
+}
+
+#[derive(serde::Deserialize)]
+struct MetadataExtract {
+    block_number: u64,
+}
+
 fn parse_flashblock_position(data: &str) -> Option<(u64, u64)> {
-    #[derive(serde::Deserialize)]
-    struct PositionExtract {
-        index: u64,
-        metadata: MetadataExtract,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct MetadataExtract {
-        block_number: u64,
-    }
-
     let extract: PositionExtract = serde_json::from_str(data).ok()?;
     Some((extract.metadata.block_number, extract.index))
 }

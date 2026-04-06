@@ -4,6 +4,13 @@ use std::{collections::VecDeque, num::NonZeroUsize};
 ///
 /// Each entry is stored as `(I, V)`. When the buffer reaches
 /// capacity, the oldest entry is evicted on [`push`](Self::push).
+///
+/// # Ordering invariant
+///
+/// Callers must push entries in non-decreasing position order.
+/// The lookup methods ([`entries_after`](Self::entries_after),
+/// [`positioned_entries_after`](Self::positioned_entries_after)) use binary
+/// search and will return incorrect results if this invariant is violated.
 #[derive(Debug, Clone)]
 pub struct RingBuffer<I, V> {
     entries: VecDeque<(I, V)>,
@@ -49,21 +56,23 @@ where
 {
     /// Returns an iterator over values for entries whose position is
     /// strictly greater than `cutoff`.
+    ///
+    /// Uses binary search — O(log n) — relying on the ordering invariant.
     pub fn entries_after<'a>(&'a self, cutoff: &'a I) -> impl Iterator<Item = &'a V> {
-        self.entries
-            .iter()
-            .filter_map(move |(pos, val)| if pos > cutoff { Some(val) } else { None })
+        let start = self.entries.partition_point(|(pos, _)| pos <= cutoff);
+        self.entries.range(start..).map(|(_, val)| val)
     }
 
     /// Returns an iterator over `(&I, &V)` tuples for entries whose
     /// position is strictly greater than `cutoff`.
+    ///
+    /// Uses binary search — O(log n) — relying on the ordering invariant.
     pub fn positioned_entries_after<'a>(
         &'a self,
         cutoff: &'a I,
     ) -> impl Iterator<Item = (&'a I, &'a V)> {
-        self.entries
-            .iter()
-            .filter_map(move |(pos, val)| if pos > cutoff { Some((pos, val)) } else { None })
+        let start = self.entries.partition_point(|(pos, _)| pos <= cutoff);
+        self.entries.range(start..).map(|(pos, val)| (pos, val))
     }
 }
 

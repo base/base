@@ -159,7 +159,7 @@ impl BroadcastLoop {
         // Collect everything synchronously first so the drain is bounded by the
         // channel's capacity at this instant — no new messages can arrive between
         // try_recv calls (unlike the previous approach that interleaved sends).
-        let mut pending = Vec::new();
+        let mut pending = Vec::with_capacity(self.receiver.len());
         loop {
             match self.receiver.try_recv() {
                 Ok((pos, data)) => {
