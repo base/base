@@ -15,7 +15,7 @@ use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTransactionSigned, OpT
 use base_alloy_evm::OpReceiptBuilder;
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::OpPayloadBuilderError};
+use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::BasePayloadBuilderError};
 use base_revm::{L1BlockInfo, OpSpecId};
 use base_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
@@ -493,7 +493,7 @@ impl OpPayloadBuilderCtx {
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(
-                    OpPayloadBuilderError::BlobTransactionRejected,
+                    BasePayloadBuilderError::BlobTransactionRejected,
                 ));
             }
 
@@ -502,7 +502,7 @@ impl OpPayloadBuilderCtx {
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.
             let sequencer_tx = sequencer_tx.value().try_clone_into_recovered().map_err(|_| {
-                PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
+                PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
             // Cache the depositor account prior to the state transition for the deposit nonce.
@@ -519,7 +519,7 @@ impl OpPayloadBuilderCtx {
                 })
                 .transpose()
                 .map_err(|_| {
-                    PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
+                    PayloadBuilderError::other(BasePayloadBuilderError::AccountLoadFailed(
                         sequencer_tx.signer(),
                     ))
                 })?;

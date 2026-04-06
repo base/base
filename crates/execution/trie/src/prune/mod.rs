@@ -9,4 +9,4 @@ pub use pruner::OpProofStoragePruner;
 mod metrics;
 
 mod task;
-pub use task::OpProofStoragePrunerTask;
+pub use task::BaseProofStoragePrunerTask;

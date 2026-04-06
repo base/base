@@ -66,8 +66,8 @@ impl<T: Transaction> OpTransaction<T> {
 
 impl OpTransaction<TxEnv> {
     /// Create a new Base transaction.
-    pub fn builder() -> OpTransactionBuilder {
-        OpTransactionBuilder::new()
+    pub fn builder() -> BaseTransactionBuilder {
+        BaseTransactionBuilder::new()
     }
 }
 
@@ -207,13 +207,13 @@ impl<T: Transaction> OpTxTr for OpTransaction<T> {
 
 /// Builder for constructing [`OpTransaction`] instances
 #[derive(Default, Debug)]
-pub struct OpTransactionBuilder {
+pub struct BaseTransactionBuilder {
     base: TxEnvBuilder,
     enveloped_tx: Option<Bytes>,
     deposit: DepositTransactionParts,
 }
 
-impl OpTransactionBuilder {
+impl BaseTransactionBuilder {
     /// Create a new builder with default values
     pub fn new() -> Self {
         Self {
@@ -305,24 +305,24 @@ impl OpTransactionBuilder {
 
     /// Build the [`OpTransaction`] instance, return error if the transaction is not valid.
     ///
-    pub fn build(mut self) -> Result<OpTransaction<TxEnv>, OpBuildError> {
+    pub fn build(mut self) -> Result<OpTransaction<TxEnv>, BuildError> {
         let tx_type = self.base.get_tx_type();
         if tx_type.is_some() {
             if Some(DEPOSIT_TRANSACTION_TYPE) == tx_type {
                 // if tx type is deposit, check if source hash is set
                 if self.deposit.source_hash == B256::ZERO {
-                    return Err(OpBuildError::MissingSourceHashForDeposit);
+                    return Err(BuildError::MissingSourceHashForDeposit);
                 }
             } else if self.enveloped_tx.is_none() {
                 // enveloped is required for non-deposit transactions
-                return Err(OpBuildError::MissingEnvelopedTxBytes);
+                return Err(BuildError::MissingEnvelopedTxBytes);
             }
         } else if self.deposit.source_hash != B256::ZERO {
             // if type is not set and source hash is set, set the transaction type to deposit
             self.base = self.base.tx_type(Some(DEPOSIT_TRANSACTION_TYPE));
         } else if self.enveloped_tx.is_none() {
             // tx is not deposit and enveloped is required
-            return Err(OpBuildError::MissingEnvelopedTxBytes);
+            return Err(BuildError::MissingEnvelopedTxBytes);
         }
 
         let base = self.base.build()?;
@@ -334,7 +334,7 @@ impl OpTransactionBuilder {
 /// Error type for building [`TxEnv`]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum OpBuildError {
+pub enum BuildError {
     /// Base transaction build error
     Base(TxEnvBuildError),
     /// Missing enveloped transaction bytes
@@ -343,7 +343,7 @@ pub enum OpBuildError {
     MissingSourceHashForDeposit,
 }
 
-impl From<TxEnvBuildError> for OpBuildError {
+impl From<TxEnvBuildError> for BuildError {
     fn from(error: TxEnvBuildError) -> Self {
         Self::Base(error)
     }

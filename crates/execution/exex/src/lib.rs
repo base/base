@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
 use base_execution_trie::{
-    OpProofStoragePrunerTask, OpProofsStorage, OpProofsStore, live::LiveTrieCollector,
+    BaseProofStoragePrunerTask, OpProofsStorage, OpProofsStore, live::LiveTrieCollector,
     metrics::BlockMetrics,
 };
 use futures::TryStreamExt;
@@ -235,7 +235,7 @@ where
             sync_target_tx.send(best_block)?;
         }
 
-        let prune_task = OpProofStoragePrunerTask::new(
+        let prune_task = BaseProofStoragePrunerTask::new(
             self.storage.clone(),
             self.ctx.provider().clone(),
             self.proofs_history_window,

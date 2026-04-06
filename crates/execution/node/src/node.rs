@@ -12,8 +12,8 @@ use base_execution_consensus::OpBeaconConsensus;
 use base_execution_evm::{OpEvmConfig, OpRethReceiptBuilder};
 use base_execution_payload_builder::{
     OpAttributes, OpBuiltPayload, OpPayloadPrimitives,
-    builder::OpPayloadTransactions,
-    config::{OpBuilderConfig, OpDAConfig, OpGasLimitConfig},
+    builder::BasePayloadTransactions,
+    config::{BaseBuilderConfig, OpDAConfig, OpGasLimitConfig},
 };
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
@@ -1001,7 +1001,7 @@ where
             >,
         > + 'static,
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
+    Txs: BasePayloadTransactions<Pool::Transaction>,
     Attrs: OpAttributes<Transaction = TxTy<Node::Types>>,
 {
     type PayloadBuilder =
@@ -1018,7 +1018,7 @@ where
                 pool,
                 ctx.provider().clone(),
                 evm_config,
-                OpBuilderConfig {
+                BaseBuilderConfig {
                     da_config: self.da_config.clone(),
                     gas_limit_config: self.gas_limit_config.clone(),
                 },

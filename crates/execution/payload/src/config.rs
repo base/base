@@ -4,14 +4,14 @@ use std::sync::{Arc, atomic::AtomicU64};
 
 /// Settings for the OP builder.
 #[derive(Debug, Clone, Default)]
-pub struct OpBuilderConfig {
+pub struct BaseBuilderConfig {
     /// Data availability configuration for the OP builder.
     pub da_config: OpDAConfig,
     /// Gas limit configuration for the OP builder.
     pub gas_limit_config: OpGasLimitConfig,
 }
 
-impl OpBuilderConfig {
+impl BaseBuilderConfig {
     /// Creates a new OP builder configuration with the given data availability configuration.
     pub const fn new(da_config: OpDAConfig, gas_limit_config: OpGasLimitConfig) -> Self {
         Self { da_config, gas_limit_config }
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn test_da_constrained() {
-        let config = OpBuilderConfig::default();
+        let config = BaseBuilderConfig::default();
         assert!(config.constrained_da_config().is_none());
     }
 
