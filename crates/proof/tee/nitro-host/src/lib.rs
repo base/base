@@ -10,7 +10,7 @@ mod convert;
 pub use convert::Convert;
 
 mod health;
-pub use health::RegistrationHealthConfig;
+pub use health::{RegistrationHealthConfig, RegistrationHealthError, RegistrationHealthzRpc};
 
 mod server;
 pub use server::NitroProverServer;
