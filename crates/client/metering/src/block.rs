@@ -12,6 +12,7 @@ use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
+use revm_database::states::bundle_state::BundleRetention;
 
 use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 
@@ -111,6 +112,10 @@ where
         }
     }
     let execution_time = evm_start.elapsed().as_micros();
+
+    // Merge transitions to ensure proper state root calculation
+    // This consolidates all state transitions from transaction execution
+    db.merge_transitions(BundleRetention::Reverts);
 
     // Calculate state root and measure time
     let state_root_start = Instant::now();
