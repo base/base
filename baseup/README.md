@@ -54,6 +54,22 @@ or
 ```bash
 BASE_BIN_DIR=/custom/path/bin baseup
 ```
+## Shell Configuration
+
+The installer automatically configures your shell by:
+- Creating `~/.base/env` with `export PATH="$HOME/.base/bin:$PATH"`
+- Adding `. ~/.base/env` to your shell config (`.bashrc`, `.zshrc`, `.bash_profile`, `.profile`)
+- Creating `~/.base/env.fish` for Fish shell users
+
+To apply immediately without restarting your shell, run:
+```bash
+source ~/.base/env
+```
+
+For Fish shell:
+```fish
+source ~/.base/env.fish
+```
 
 ## Hosting
 
