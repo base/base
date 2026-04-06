@@ -370,11 +370,11 @@ where
                         }
                     };
                 }
-                Err(SubmitAction::Reorg) => {
+                Err(SubmitAction::RootMismatch) => {
                     submit_timer.disarm();
                     warn!(
                         target_block = next_to_submit,
-                        "Reorg detected at submit time, resetting pipeline"
+                        "Output root mismatch at submit time, resetting pipeline"
                     );
                     Metrics::reorgs_total().increment(1);
                     state.reset();
@@ -821,7 +821,7 @@ where
                 target_block,
                 "Proposal output root does not match canonical chain at submit time"
             );
-            return Err(SubmitAction::Reorg);
+            return Err(SubmitAction::RootMismatch);
         }
 
         // Extract intermediate roots.
@@ -835,6 +835,43 @@ where
         let intermediate_roots = self
             .extract_intermediate_roots(starting_block_number, proposals)
             .map_err(SubmitAction::Failed)?;
+
+        // JIT validation: check that each intermediate output root matches
+        // the canonical chain.  This catches TEE prover bugs or reorgs that
+        // occurred between proving and submission.
+        let interval = self.config.driver.intermediate_block_interval;
+        for (i, root) in intermediate_roots.iter().enumerate() {
+            let block = starting_block_number
+                .checked_add(
+                    (i as u64 + 1).checked_mul(interval).ok_or_else(|| {
+                        SubmitAction::Failed(ProposerError::Internal(
+                            "overflow computing intermediate root block number".into(),
+                        ))
+                    })?,
+                )
+                .ok_or_else(|| {
+                    SubmitAction::Failed(ProposerError::Internal(
+                        "overflow computing intermediate root block number".into(),
+                    ))
+                })?;
+
+            let canonical = self
+                .rollup_client
+                .output_at_block(block)
+                .await
+                .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))?;
+
+            if *root != canonical.output_root {
+                warn!(
+                    intermediate_block = block,
+                    proposal_root = ?root,
+                    canonical_root = ?canonical.output_root,
+                    target_block,
+                    "Intermediate output root does not match canonical chain at submit time"
+                );
+                return Err(SubmitAction::RootMismatch);
+            }
+        }
 
         // Pre-submission signer validation: if a TEE prover registry is
         // configured, recover the signer from the aggregate proposal signature
@@ -964,8 +1001,8 @@ where
 /// Internal action after a submission attempt.
 #[derive(Debug)]
 enum SubmitAction {
-    /// Chain reorg detected — output root no longer matches canonical.
-    Reorg,
+    /// Output root mismatch — proved root no longer matches canonical chain.
+    RootMismatch,
     /// Transient failure — retry later with the same proof.
     Failed(ProposerError),
     /// Proof is permanently invalid (e.g. signer not registered) — discard
@@ -976,7 +1013,7 @@ enum SubmitAction {
 impl std::fmt::Display for SubmitAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Reorg => write!(f, "reorg detected"),
+            Self::RootMismatch => write!(f, "output root mismatch"),
             Self::Failed(e) | Self::Discard(e) => write!(f, "{e}"),
         }
     }
@@ -1817,6 +1854,113 @@ mod tests {
             cache.as_ref().unwrap().game_count,
             1,
             "cache watermark must not advance past the failed scan"
+        );
+    }
+
+    // ---- Intermediate output root validation tests ----
+
+    fn submit_pipeline(
+        block_interval: u64,
+        intermediate_block_interval: u64,
+        output_roots: HashMap<u64, B256>,
+    ) -> ProvingPipeline<
+        MockL1,
+        MockL2,
+        MockRollupClient,
+        MockAnchorStateRegistry,
+        MockDisputeGameFactory,
+    > {
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: Duration::from_millis(1) });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(0, B256::ZERO),
+            output_roots,
+        });
+        let anchor_registry =
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
+
+        ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 1,
+                max_game_recovery_lookback: 5000,
+                max_retries: 1,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    block_interval,
+                    intermediate_block_interval,
+                    ..Default::default()
+                },
+            },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            Arc::new(MockDisputeGameFactory::with_count(0)),
+            Arc::new(MockAggregateVerifier::empty()),
+            Arc::new(MockOutputProposer),
+            cancel,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_validate_and_submit_intermediate_roots_match() {
+        // block_interval=4, intermediate_block_interval=2 → intermediates at
+        // blocks 2 and 4.  MockRollupClient returns B256::repeat_byte(n) for
+        // blocks without explicit entries, which matches test_proposal(n).
+        let pipeline = submit_pipeline(4, 2, HashMap::new());
+
+        let target_block = 4u64;
+        let proposals: Vec<Proposal> = (1..=4).map(test_proposal).collect();
+        let aggregate = test_proposal(target_block);
+        let proof_result = ProofResult::Tee { aggregate_proposal: aggregate, proposals };
+
+        let result = pipeline.validate_and_submit(&proof_result, target_block, 0).await;
+        assert!(result.is_ok(), "all roots match, submission should succeed");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_validate_and_submit_intermediate_root_mismatch() {
+        // Intermediate root at block 2: proposal says repeat_byte(2),
+        // canonical says repeat_byte(0xFF) → mismatch.
+        let mut output_roots = HashMap::new();
+        output_roots.insert(2, B256::repeat_byte(0xFF));
+
+        let pipeline = submit_pipeline(4, 2, output_roots);
+
+        let target_block = 4u64;
+        let proposals: Vec<Proposal> = (1..=4).map(test_proposal).collect();
+        let aggregate = test_proposal(target_block);
+        let proof_result = ProofResult::Tee { aggregate_proposal: aggregate, proposals };
+
+        let result = pipeline.validate_and_submit(&proof_result, target_block, 0).await;
+        assert!(
+            matches!(result, Err(SubmitAction::RootMismatch)),
+            "intermediate mismatch should return RootMismatch, got {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_validate_and_submit_final_root_mismatch() {
+        // Final output root at target_block=4: proposal says repeat_byte(4),
+        // canonical says repeat_byte(0xAA) → mismatch on the final root.
+        let mut output_roots = HashMap::new();
+        output_roots.insert(4, B256::repeat_byte(0xAA));
+
+        let pipeline = submit_pipeline(4, 2, output_roots);
+
+        let target_block = 4u64;
+        let proposals: Vec<Proposal> = (1..=4).map(test_proposal).collect();
+        let aggregate = test_proposal(target_block);
+        let proof_result = ProofResult::Tee { aggregate_proposal: aggregate, proposals };
+
+        let result = pipeline.validate_and_submit(&proof_result, target_block, 0).await;
+        assert!(
+            matches!(result, Err(SubmitAction::RootMismatch)),
+            "final root mismatch should return RootMismatch, got {result:?}"
         );
     }
 }
