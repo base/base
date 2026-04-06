@@ -36,10 +36,12 @@ pub enum RegistrationHealthError {
     #[error("L1 RPC request timed out")]
     Timeout,
     /// Registration check failed and stale cache has expired.
-    #[error("registration check failed for {signer}, stale cache expired")]
+    #[error("registration check failed for {signer}: {reason}")]
     StaleExpired {
         /// The signer address that was being checked.
         signer: Address,
+        /// The underlying reason the registration check failed.
+        reason: String,
     },
 }
 
@@ -111,7 +113,7 @@ impl RegistrationHealthzRpc {
                 return Ok(registered);
             }
         }
-        Err(RegistrationHealthError::StaleExpired { signer })
+        Err(RegistrationHealthError::StaleExpired { signer, reason: error.to_string() })
     }
 
     async fn check_registration(&self) -> Result<bool, RegistrationHealthError> {
@@ -146,9 +148,7 @@ impl RegistrationHealthzRpc {
                 let error = RegistrationHealthError::L1Rpc(e);
                 self.use_stale_cache_or_fail(signer, &error).await
             }
-            Err(_) => self
-                .use_stale_cache_or_fail(signer, &RegistrationHealthError::Timeout)
-                .await,
+            Err(_) => self.use_stale_cache_or_fail(signer, &RegistrationHealthError::Timeout).await,
         }
     }
 }
@@ -173,11 +173,9 @@ impl HealthzApiServer for RegistrationHealthzRpc {
                 "signer not registered in TEEProverRegistry",
                 None::<()>,
             )),
-            Err(e) => Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                -32000,
-                e.to_string(),
-                None::<()>,
-            )),
+            Err(e) => {
+                Err(jsonrpsee::types::ErrorObjectOwned::owned(-32000, e.to_string(), None::<()>))
+            }
         }
     }
 }
@@ -240,7 +238,9 @@ mod tests {
         }
     }
 
-    fn test_rpc_with_mock(registry: impl TEEProverRegistryClient + 'static) -> RegistrationHealthzRpc {
+    fn test_rpc_with_mock(
+        registry: impl TEEProverRegistryClient + 'static,
+    ) -> RegistrationHealthzRpc {
         let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
         RegistrationHealthzRpc::new("0.0.0", transport, registry)
