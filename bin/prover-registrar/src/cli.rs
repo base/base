@@ -224,7 +224,8 @@ struct CrlArgs {
     #[arg(
         long,
         env = cli_env!("CRL_FETCH_TIMEOUT_SECS"),
-        default_value_t = DEFAULT_CRL_FETCH_TIMEOUT_SECS
+        default_value_t = DEFAULT_CRL_FETCH_TIMEOUT_SECS,
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     crl_fetch_timeout_secs: u64,
 }
@@ -348,12 +349,6 @@ impl Cli {
         if self.crl.crl_check_enabled && self.crl.crl_nitro_verifier_address.is_none() {
             return Err(RegistrarError::Config(
                 "--crl-nitro-verifier-address is required when --crl-check-enabled is set".into(),
-            ));
-        }
-
-        if self.crl.crl_check_enabled && self.crl.crl_fetch_timeout_secs == 0 {
-            return Err(RegistrarError::Config(
-                "--crl-fetch-timeout-secs must be greater than 0".into(),
             ));
         }
 
@@ -839,8 +834,8 @@ mod tests {
             "--crl-fetch-timeout-secs",
             "0",
         ]);
-        let result = Cli::parse_from(args).into_config();
-        assert!(result.is_err(), "--crl-fetch-timeout-secs 0 with CRL enabled should fail");
+        let result = Cli::try_parse_from(args);
+        assert!(result.is_err(), "--crl-fetch-timeout-secs 0 should be rejected by clap");
     }
 
     #[rstest]

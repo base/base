@@ -67,6 +67,43 @@ pub struct CertCrlInfo {
     pub path_digest: B256,
 }
 
+impl CertCrlInfo {
+    /// Extracts CRL-relevant information from each certificate in a
+    /// DER-encoded chain.
+    ///
+    /// The certificates must be in chain order: root → intermediates → leaf.
+    /// Path digests are computed identically to the on-chain
+    /// `NitroEnclaveVerifier` accumulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any certificate cannot be parsed from DER.
+    pub fn from_chain(certs_der: &[&[u8]]) -> Result<Vec<Self>, CrlError> {
+        let path_digests = compute_path_digests(certs_der);
+        let mut infos = Vec::with_capacity(certs_der.len());
+
+        for (i, der) in certs_der.iter().enumerate() {
+            let (_, cert) = X509Certificate::from_der(der)
+                .map_err(|e| CrlError::CertParse(format!("certificate {i}: {e}")))?;
+
+            let serial_number = cert.tbs_certificate.serial.to_bytes_be();
+            let crl_url = extract_crl_distribution_point(&cert);
+
+            let label = if i == 0 {
+                "root".to_string()
+            } else if i == certs_der.len() - 1 {
+                "leaf".to_string()
+            } else {
+                format!("intermediate {i}")
+            };
+
+            infos.push(Self { label, serial_number, crl_url, path_digest: path_digests[i] });
+        }
+
+        Ok(infos)
+    }
+}
+
 /// Information about a revoked certificate.
 #[derive(Debug, Clone)]
 pub struct RevokedCertInfo {
@@ -74,41 +111,6 @@ pub struct RevokedCertInfo {
     pub label: String,
     /// Path digest for on-chain `revokeCert()`.
     pub path_digest: B256,
-}
-
-/// Extracts CRL-relevant information from each certificate in a DER-encoded
-/// chain.
-///
-/// The certificates must be in chain order: root → intermediates → leaf.
-/// Path digests are computed identically to the on-chain
-/// `NitroEnclaveVerifier` accumulation.
-///
-/// # Errors
-///
-/// Returns an error if any certificate cannot be parsed from DER.
-pub fn extract_cert_crl_info(certs_der: &[&[u8]]) -> Result<Vec<CertCrlInfo>, CrlError> {
-    let path_digests = compute_path_digests(certs_der);
-    let mut infos = Vec::with_capacity(certs_der.len());
-
-    for (i, der) in certs_der.iter().enumerate() {
-        let (_, cert) = X509Certificate::from_der(der)
-            .map_err(|e| CrlError::CertParse(format!("certificate {i}: {e}")))?;
-
-        let serial_number = cert.tbs_certificate.serial.to_bytes_be();
-        let crl_url = extract_crl_distribution_point(&cert);
-
-        let label = if i == 0 {
-            "root".to_string()
-        } else if i == certs_der.len() - 1 {
-            "leaf".to_string()
-        } else {
-            format!("intermediate {i}")
-        };
-
-        infos.push(CertCrlInfo { label, serial_number, crl_url, path_digest: path_digests[i] });
-    }
-
-    Ok(infos)
 }
 
 /// Extracts the first HTTP/HTTPS CRL distribution point URL from a
@@ -172,7 +174,7 @@ pub async fn check_chain_against_crls(
     certs_der: &[&[u8]],
     http_client: &reqwest::Client,
 ) -> Result<Vec<RevokedCertInfo>, CrlError> {
-    let cert_infos = extract_cert_crl_info(certs_der)?;
+    let cert_infos = CertCrlInfo::from_chain(certs_der)?;
     let mut revoked = Vec::new();
 
     // Skip root (index 0) and leaf (last) — CRL checks are for intermediates.
@@ -374,7 +376,7 @@ mod tests {
     // ── Fixtures ────────────────────────────────────────────────────────
 
     /// Decoded DER bytes and their slice references for the full 5-cert
-    /// chain, ready for use in `extract_cert_crl_info`.
+    /// chain, ready for use in `CertCrlInfo::from_chain`.
     struct ChainFixture {
         owned: Vec<Vec<u8>>,
     }
@@ -445,7 +447,7 @@ mod tests {
         #[case] expected_hex: &str,
     ) {
         let refs = full_chain.refs();
-        let infos = extract_cert_crl_info(&refs).unwrap();
+        let infos = CertCrlInfo::from_chain(&refs).unwrap();
         assert_eq!(hex::encode(&infos[index].serial_number), expected_hex);
     }
 
@@ -454,7 +456,7 @@ mod tests {
     #[rstest]
     fn path_digests_match_onchain_computation(full_chain: ChainFixture) {
         let refs = full_chain.refs();
-        let infos = extract_cert_crl_info(&refs).unwrap();
+        let infos = CertCrlInfo::from_chain(&refs).unwrap();
 
         // First digest = sha256(root_der).
         let root_hash = B256::from_slice(Sha256::digest(&full_chain.owned[0]).as_slice());
@@ -469,19 +471,19 @@ mod tests {
         assert_eq!(infos[1].path_digest, expected);
     }
 
-    // ── extract_cert_crl_info: full chain properties ────────────────────
+    // ── CertCrlInfo::from_chain: full chain properties ────────────────────
 
     #[rstest]
     fn full_chain_has_correct_count(full_chain: ChainFixture) {
         let refs = full_chain.refs();
-        let infos = extract_cert_crl_info(&refs).unwrap();
+        let infos = CertCrlInfo::from_chain(&refs).unwrap();
         assert_eq!(infos.len(), FULL_CHAIN_LEN);
     }
 
     #[rstest]
     fn labels_are_correct(full_chain: ChainFixture) {
         let refs = full_chain.refs();
-        let infos = extract_cert_crl_info(&refs).unwrap();
+        let infos = CertCrlInfo::from_chain(&refs).unwrap();
         assert_eq!(infos[0].label, "root");
         assert_eq!(infos[1].label, "intermediate 1");
         assert_eq!(infos[2].label, "intermediate 2");
@@ -492,7 +494,7 @@ mod tests {
     #[rstest]
     fn intermediates_1_and_2_have_crl_urls(full_chain: ChainFixture) {
         let refs = full_chain.refs();
-        let infos = extract_cert_crl_info(&refs).unwrap();
+        let infos = CertCrlInfo::from_chain(&refs).unwrap();
 
         assert!(infos[0].crl_url.is_none(), "root should not have a CRL URL");
         assert_eq!(
@@ -516,13 +518,13 @@ mod tests {
 
     #[rstest]
     fn empty_chain_returns_empty_vec() {
-        let result = extract_cert_crl_info(&[]);
+        let result = CertCrlInfo::from_chain(&[]);
         assert!(result.unwrap().is_empty());
     }
 
     #[rstest]
     fn invalid_der_returns_cert_parse_error() {
-        let result = extract_cert_crl_info(&[&INVALID_DER_BYTES[..]]);
+        let result = CertCrlInfo::from_chain(&[&INVALID_DER_BYTES[..]]);
         let err = result.unwrap_err();
         assert!(matches!(err, CrlError::CertParse(_)), "expected CertParse, got: {err}");
     }
@@ -532,7 +534,7 @@ mod tests {
     #[rstest]
     fn single_cert_chain_labels_as_root_and_leaf(root_only_chain: ChainFixture) {
         let refs = root_only_chain.refs();
-        let infos = extract_cert_crl_info(&refs).unwrap();
+        let infos = CertCrlInfo::from_chain(&refs).unwrap();
         // A single cert is both first (root) and last (leaf). The labelling
         // logic checks `i == 0` first, so it should be labelled "root".
         assert_eq!(infos.len(), 1);
@@ -542,7 +544,7 @@ mod tests {
     #[rstest]
     fn two_cert_chain_labels_root_and_leaf(root_and_leaf_chain: ChainFixture) {
         let refs = root_and_leaf_chain.refs();
-        let infos = extract_cert_crl_info(&refs).unwrap();
+        let infos = CertCrlInfo::from_chain(&refs).unwrap();
         assert_eq!(infos.len(), 2);
         assert_eq!(infos[0].label, "root");
         assert_eq!(infos[1].label, "leaf");

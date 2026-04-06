@@ -10,7 +10,7 @@ pub use config::{
 mod crl;
 pub use crl::{
     CertCrlInfo, CrlError, DEFAULT_CRL_FETCH_TIMEOUT_SECS, RevokedCertInfo, build_crl_http_client,
-    check_chain_against_crls, extract_cert_crl_info,
+    check_chain_against_crls,
 };
 
 mod discovery;
