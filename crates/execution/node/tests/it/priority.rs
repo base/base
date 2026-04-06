@@ -7,7 +7,7 @@ use alloy_genesis::Genesis;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, ChainId, TxKind};
 use base_execution_chainspec::OpChainSpecBuilder;
-use base_execution_payload_builder::builder::OpPayloadTransactions;
+use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_node_core::{
     OpNode,
     args::RollupArgs,
@@ -43,7 +43,7 @@ struct CustomTxPriority {
     chain_id: ChainId,
 }
 
-impl OpPayloadTransactions<BasePooledTransaction> for CustomTxPriority {
+impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
     fn best_transactions<Pool>(
         &self,
         pool: Pool,

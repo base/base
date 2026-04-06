@@ -229,7 +229,10 @@ mod tests {
             base_sepolia_forks.upgrade_activation(Jovian),
             ForkCondition::Timestamp(BaseChainConfig::sepolia().jovian_timestamp)
         );
-        assert_eq!(base_sepolia_forks[V1], ForkCondition::Never);
+        assert_eq!(
+            base_sepolia_forks[V1],
+            ForkCondition::Timestamp(BaseChainConfig::sepolia().base_v1_timestamp.unwrap())
+        );
     }
 
     #[test]
@@ -265,14 +268,17 @@ mod tests {
 
     #[test]
     fn is_base_v1_active_at_timestamp() {
-        // V1 is not scheduled on mainnet or sepolia yet (ForkCondition::Never)
+        // V1 is not scheduled on mainnet yet (ForkCondition::Never)
         let base_mainnet_forks = BaseChainUpgrades::mainnet();
         assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(0));
         assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(u64::MAX));
 
+        // V1 is scheduled on sepolia at 1776708000
         let base_sepolia_forks = BaseChainUpgrades::sepolia();
         assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(0));
-        assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(u64::MAX));
+        assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(1_776_707_999));
+        assert!(base_sepolia_forks.is_base_v1_active_at_timestamp(1_776_708_000));
+        assert!(base_sepolia_forks.is_base_v1_active_at_timestamp(u64::MAX));
 
         // V1 is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
         let devnet_forks = BaseChainUpgrades::devnet();
@@ -299,6 +305,12 @@ mod tests {
         assert_eq!(
             base_mainnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Never
+        );
+
+        let base_sepolia_forks = BaseChainUpgrades::sepolia();
+        assert_eq!(
+            base_sepolia_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
+            ForkCondition::Timestamp(1_776_708_000)
         );
 
         let devnet_forks = BaseChainUpgrades::devnet();

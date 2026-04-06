@@ -9,7 +9,8 @@ use alloy_provider::{Provider, RootProvider};
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryContractClient,
+    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
+    DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{L2Client, L2ClientConfig};
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
@@ -143,11 +144,19 @@ impl ChallengerService {
         // ── 7b. Bond manager (optional) ─────────────────────────────────────
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
             let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
-            let mut bm = BondManager::new(config.bond_claim_addresses, l1_rpc_url);
+            let mut bm = BondManager::new(
+                config.bond_claim_addresses,
+                l1_rpc_url,
+                Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
+                config.lookback_games,
+            );
             info!("starting bond recovery scan");
-            if let Err(e) =
-                bm.startup_scan(&*factory_client, &*verifier_client, config.lookback_games).await
-            {
+            if let Err(e) = bm.startup_scan(&*verifier_client).await {
+                // On failure `bond_scan_head` stays at 0, so the first
+                // `discover_claimable_games` tick will scan the entire
+                // factory as an implicit recovery. This is intentional:
+                // it is preferable to a large one-time scan over
+                // disabling bond claiming entirely.
                 warn!(error = %e, "bond startup scan failed, continuing without recovery");
             }
             info!(tracked = bm.tracked_count(), "bond manager ready");

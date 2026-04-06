@@ -1,8 +1,8 @@
 use std::marker::PhantomData;
 
 use base_execution_payload_builder::{
-    OpAttributes, OpPayloadPrimitives,
-    config::{OpDAConfig, OpGasLimitConfig},
+    Attributes, PayloadPrimitives,
+    config::{GasLimitConfig, OpDAConfig},
 };
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
@@ -48,7 +48,7 @@ pub struct BaseAddOns<
     /// Data availability configuration for the OP builder.
     pub da_config: OpDAConfig,
     /// Gas limit configuration for the OP builder.
-    pub gas_limit_config: OpGasLimitConfig,
+    pub gas_limit_config: GasLimitConfig,
 }
 
 impl<N, EthB, PVB, EB, EVB, RpcMiddleware> BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
@@ -61,7 +61,7 @@ where
     pub const fn new(
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
         da_config: OpDAConfig,
-        gas_limit_config: OpGasLimitConfig,
+        gas_limit_config: GasLimitConfig,
     ) -> Self {
         Self { rpc_add_ons, da_config, gas_limit_config }
     }
@@ -195,8 +195,8 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: OpAttributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
-    <N::Types as NodeTypes>::Primitives: OpPayloadPrimitives<_Header: HeaderMut>,
+    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
 
@@ -274,8 +274,8 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: OpAttributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
-    <N::Types as NodeTypes>::Primitives: OpPayloadPrimitives<_Header: HeaderMut>,
+    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type EthApi = EthB::EthApi;
 
@@ -313,7 +313,7 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     /// Data availability configuration for the OP builder.
     da_config: Option<OpDAConfig>,
     /// Gas limit configuration for the OP builder.
-    gas_limit_config: Option<OpGasLimitConfig>,
+    gas_limit_config: Option<GasLimitConfig>,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
     /// Minimum suggested priority fee (tip)
@@ -359,7 +359,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     }
 
     /// Configure the gas limit configuration for the OP payload builder.
-    pub fn with_gas_limit_config(mut self, gas_limit_config: OpGasLimitConfig) -> Self {
+    pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = Some(gas_limit_config);
         self
     }

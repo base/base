@@ -5,7 +5,7 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_alloy_chains::BaseUpgrades;
-use base_execution_payload_builder::{OpAttributes, OpPayloadBuilder, OpPayloadPrimitives};
+use base_execution_payload_builder::{Attributes, OpPayloadBuilder, PayloadPrimitives};
 use base_txpool::OpPooledTx;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_chainspec::ChainSpecProvider;
@@ -66,7 +66,7 @@ where
             Transaction: OpPooledTx<Consensus = <Provider::Primitives as NodePrimitives>::SignedTx>,
         > + 'static,
     Provider: BlockReaderIdExt<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>
-        + NodePrimitivesProvider<Primitives: OpPayloadPrimitives>
+        + NodePrimitivesProvider<Primitives: PayloadPrimitives>
         + StateProviderFactory
         + ChainSpecProvider<ChainSpec: BaseUpgrades>
         + Clone
@@ -75,7 +75,7 @@ where
             Primitives = Provider::Primitives,
             NextBlockEnvCtx: BuildNextEnv<Attrs, Provider::Header, Provider::ChainSpec>,
         > + 'static,
-    Attrs: OpAttributes<Transaction = TxTy<EvmConfig::Primitives>>,
+    Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
 {
     async fn execute_payload(
         &self,

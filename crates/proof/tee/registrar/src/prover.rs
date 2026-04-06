@@ -2,11 +2,12 @@
 
 use std::{collections::HashMap, sync::Mutex, time::Duration};
 
-use alloy_primitives::{Address, keccak256};
+use alloy_primitives::Address;
+use alloy_signer::utils::public_key_to_address;
 use async_trait::async_trait;
 use base_proof_primitives::EnclaveApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use k256::elliptic_curve::sec1::ToEncodedPoint;
+use k256::ecdsa::VerifyingKey;
 use tracing::debug;
 use url::Url;
 
@@ -21,8 +22,6 @@ use crate::{RegistrarError, Result, SignerClient};
 /// across poll cycles. The `timeout` is configured once at construction and
 /// applied to all requests.
 ///
-/// Also provides [`derive_address`](Self::derive_address), a pure-crypto helper
-/// that derives an Ethereum address from a SEC1-encoded public key.
 pub struct ProverClient {
     /// Timeout applied to all JSON-RPC requests.
     timeout: Duration,
@@ -74,17 +73,11 @@ impl ProverClient {
 
     /// Derives an Ethereum [`Address`] from a SEC1-encoded public key.
     ///
-    /// Validates that the bytes represent a valid point on the secp256k1 curve
-    /// (via [`k256::PublicKey::from_sec1_bytes`]), then computes the address as
-    /// `keccak256(uncompressed_point[1..])[12..]`.
-    ///
     /// Accepts both compressed (33-byte) and uncompressed (65-byte) SEC1 formats.
     pub fn derive_address(public_key: &[u8]) -> Result<Address> {
-        let key = k256::PublicKey::from_sec1_bytes(public_key)
+        let verifying_key = VerifyingKey::from_sec1_bytes(public_key)
             .map_err(|e| RegistrarError::InvalidPublicKey(e.to_string()))?;
-        let uncompressed = key.to_encoded_point(false);
-        let hash = keccak256(&uncompressed.as_bytes()[1..]);
-        Ok(Address::from_slice(&hash[12..]))
+        Ok(public_key_to_address(&verifying_key))
     }
 }
 

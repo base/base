@@ -34,7 +34,7 @@ impl ProofsHistoryExtension {
 impl BaseNodeExtension for ProofsHistoryExtension {
     /// Applies the extension to the supplied hooks.
     fn apply(self: Box<Self>, mut hooks: NodeHooks) -> NodeHooks {
-        // TODO: if NodeHooks exposes the underlying OpBuilder, we can call launch_node_with_proof_history
+        // TODO: if NodeHooks exposes the underlying Builder, we can call launch_node_with_proof_history
         let args = self.config;
         let proofs_history_enabled = args.proofs_history;
         let proofs_history_window = args.proofs_history_window;

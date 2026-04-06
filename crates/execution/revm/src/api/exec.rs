@@ -187,7 +187,7 @@ mod tests {
         database::{InMemoryDB, State},
     };
 
-    use crate::{DefaultOp, OpBuilder, OpContext};
+    use crate::{Builder, DefaultOp, OpContext};
 
     /// Verifies that the system call caller is loaded into the EVM state cache so it appears in the
     /// execution witness.
@@ -205,7 +205,7 @@ mod tests {
         let contract = Address::repeat_byte(0xAB);
 
         // Use State with bundle tracking, mirroring the witness generation path in
-        // OpBuilder::witness and debug_executionWitness.
+        // Builder::witness and debug_executionWitness.
         let state =
             State::builder().with_database(InMemoryDB::default()).with_bundle_update().build();
 

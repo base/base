@@ -1,4 +1,4 @@
-//! Base builder trait [`OpBuilder`] used to build [`OpEvm`].
+//! Base builder trait [`Builder`] used to build [`OpEvm`].
 use revm::{
     Context, Database,
     context::Cfg,
@@ -15,7 +15,7 @@ pub type DefaultOpEvm<CTX, INSP = ()> =
     OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, BasePrecompiles>;
 
 /// Trait that allows for Base `OpEvm` to be built.
-pub trait OpBuilder: Sized {
+pub trait Builder: Sized {
     /// Type of the context.
     type Context;
 
@@ -26,7 +26,7 @@ pub trait OpBuilder: Sized {
     fn build_op_with_inspector<INSP>(self, inspector: INSP) -> DefaultOpEvm<Self::Context, INSP>;
 }
 
-impl<BLOCK, TX, CFG, DB, JOURNAL> OpBuilder for Context<BLOCK, TX, CFG, DB, JOURNAL, L1BlockInfo>
+impl<BLOCK, TX, CFG, DB, JOURNAL> Builder for Context<BLOCK, TX, CFG, DB, JOURNAL, L1BlockInfo>
 where
     BLOCK: Block,
     TX: OpTxTr,

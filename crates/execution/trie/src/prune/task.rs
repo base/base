@@ -12,18 +12,18 @@ const PRUNE_BATCH_SIZE: u64 = 200;
 
 /// Periodic pruner task: constructs the pruner and runs it every interval.
 #[derive(Debug)]
-pub struct OpProofStoragePrunerTask<P, H> {
+pub struct BaseProofStoragePrunerTask<P, H> {
     pruner: OpProofStoragePruner<P, H>,
     min_block_interval: u64,
     task_run_interval: Duration,
 }
 
-impl<P, H> OpProofStoragePrunerTask<P, H>
+impl<P, H> BaseProofStoragePrunerTask<P, H>
 where
     P: OpProofsStore,
     H: BlockHashReader,
 {
-    /// Initialize a new [`OpProofStoragePrunerTask`]
+    /// Initialize a new [`BaseProofStoragePrunerTask`]
     pub const fn new(
         provider: OpProofsStorage<P>,
         hash_reader: H,

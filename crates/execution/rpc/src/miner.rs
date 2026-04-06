@@ -2,7 +2,7 @@
 
 use alloy_primitives::U64;
 pub use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
-use base_execution_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
+use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
 use jsonrpsee_core::{RpcResult, async_trait};
 use tracing::debug;
 
@@ -22,13 +22,13 @@ base_metrics::define_metrics! {
 #[derive(Debug, Clone)]
 pub struct OpMinerExtApi {
     da_config: OpDAConfig,
-    gas_limit_config: OpGasLimitConfig,
+    gas_limit_config: GasLimitConfig,
 }
 
 impl OpMinerExtApi {
     /// Instantiate the miner API extension with the given, sharable data availability
     /// configuration.
-    pub const fn new(da_config: OpDAConfig, gas_limit_config: OpGasLimitConfig) -> Self {
+    pub const fn new(da_config: OpDAConfig, gas_limit_config: GasLimitConfig) -> Self {
         Self { da_config, gas_limit_config }
     }
 }

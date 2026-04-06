@@ -29,14 +29,14 @@ pub const SUPPORTED_CHAINS: &[&str] =
 
 /// Genesis info extracted from a Base genesis config.
 #[derive(Default, Debug)]
-pub struct OpGenesisInfo {
+pub struct GenesisInfo {
     /// Base chain info extracted from genesis extra fields.
     pub optimism_chain_info: base_common_rpc_types::BaseChainInfo,
     /// Base fee params derived from the genesis config.
     pub base_fee_params: BaseFeeParamsKind,
 }
 
-impl OpGenesisInfo {
+impl GenesisInfo {
     /// Extracts Base genesis info from an [`alloy_genesis::Genesis`].
     pub fn extract_from(genesis: &Genesis) -> Self {
         let mut info = Self {
@@ -232,7 +232,7 @@ impl BaseUpgrades for OpChainSpec {
 
 impl From<Genesis> for OpChainSpec {
     fn from(genesis: Genesis) -> Self {
-        let optimism_genesis_info = OpGenesisInfo::extract_from(&genesis);
+        let optimism_genesis_info = GenesisInfo::extract_from(&genesis);
         let genesis_info =
             optimism_genesis_info.optimism_chain_info.genesis_info.unwrap_or_default();
 

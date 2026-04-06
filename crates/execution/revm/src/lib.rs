@@ -6,7 +6,7 @@
 extern crate alloc as std;
 
 mod api;
-pub use api::{BaseError, DefaultOp, DefaultOpEvm, OpBuilder, OpContext, OpContextTr};
+pub use api::{BaseError, Builder, DefaultOp, DefaultOpEvm, OpContext, OpContextTr};
 
 mod constants;
 pub use constants::*;
@@ -34,8 +34,8 @@ pub use spec::*;
 
 mod transaction;
 pub use transaction::{
-    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, OpBuildError, OpTransaction,
-    OpTransactionBuilder, OpTransactionError, OpTxTr,
+    BaseTransactionBuilder, BuildError, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    OpTransaction, OpTransactionError, OpTxTr,
 };
 
 mod compat;

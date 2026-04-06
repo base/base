@@ -9,19 +9,19 @@ use reth_rpc_eth_types::EthApiError;
 
 /// Creates a factory for state providers using OP Proofs external proofs storage.
 #[derive(Debug)]
-pub struct OpStateProviderFactory<Eth, P> {
+pub struct BaseStateProviderFactory<Eth, P> {
     eth_api: Eth,
     preimage_store: OpProofsStorage<P>,
 }
 
-impl<Eth, P> OpStateProviderFactory<Eth, P> {
+impl<Eth, P> BaseStateProviderFactory<Eth, P> {
     /// Creates a new state provider factory.
     pub const fn new(eth_api: Eth, preimage_store: OpProofsStorage<P>) -> Self {
         Self { eth_api, preimage_store }
     }
 }
 
-impl<'a, Eth, P> OpStateProviderFactory<Eth, P>
+impl<'a, Eth, P> BaseStateProviderFactory<Eth, P>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,

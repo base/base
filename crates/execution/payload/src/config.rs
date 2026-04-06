@@ -4,16 +4,16 @@ use std::sync::{Arc, atomic::AtomicU64};
 
 /// Settings for the OP builder.
 #[derive(Debug, Clone, Default)]
-pub struct OpBuilderConfig {
+pub struct BaseBuilderConfig {
     /// Data availability configuration for the OP builder.
     pub da_config: OpDAConfig,
     /// Gas limit configuration for the OP builder.
-    pub gas_limit_config: OpGasLimitConfig,
+    pub gas_limit_config: GasLimitConfig,
 }
 
-impl OpBuilderConfig {
+impl BaseBuilderConfig {
     /// Creates a new OP builder configuration with the given data availability configuration.
-    pub const fn new(da_config: OpDAConfig, gas_limit_config: OpGasLimitConfig) -> Self {
+    pub const fn new(da_config: OpDAConfig, gas_limit_config: GasLimitConfig) -> Self {
         Self { da_config, gas_limit_config }
     }
 
@@ -95,14 +95,14 @@ struct OpDAConfigInner {
 /// This type is shareable and can be used to update the Gas Limit configuration for the OP payload
 /// builder.
 #[derive(Debug, Clone, Default)]
-pub struct OpGasLimitConfig {
+pub struct GasLimitConfig {
     /// Gas limit for a transaction
     ///
     /// 0 means use the default gas limit.
     gas_limit: Arc<AtomicU64>,
 }
 
-impl OpGasLimitConfig {
+impl GasLimitConfig {
     /// Creates a new Gas Limit configuration with the given maximum gas limit.
     pub fn new(max_gas_limit: u64) -> Self {
         let this = Self::default();
@@ -139,13 +139,13 @@ mod tests {
 
     #[test]
     fn test_da_constrained() {
-        let config = OpBuilderConfig::default();
+        let config = BaseBuilderConfig::default();
         assert!(config.constrained_da_config().is_none());
     }
 
     #[test]
     fn test_gas_limit() {
-        let gas_limit = OpGasLimitConfig::default();
+        let gas_limit = GasLimitConfig::default();
         assert_eq!(gas_limit.gas_limit(), None);
         gas_limit.set_gas_limit(50000);
         assert_eq!(gas_limit.gas_limit(), Some(50000));

@@ -32,18 +32,18 @@ where
 
 /// Converter for OP receipts.
 #[derive(Debug, Clone)]
-pub struct OpReceiptConverter<Provider> {
+pub struct BaseReceiptConverter<Provider> {
     provider: Provider,
 }
 
-impl<Provider> OpReceiptConverter<Provider> {
-    /// Creates a new [`OpReceiptConverter`].
+impl<Provider> BaseReceiptConverter<Provider> {
+    /// Creates a new [`BaseReceiptConverter`].
     pub const fn new(provider: Provider) -> Self {
         Self { provider }
     }
 }
 
-impl<Provider, N> ReceiptConverter<N> for OpReceiptConverter<Provider>
+impl<Provider, N> ReceiptConverter<N> for BaseReceiptConverter<Provider>
 where
     N: NodePrimitives<SignedTx: OpTransaction, Receipt = OpReceipt>,
     Provider: BlockReader<Block = N::Block>
@@ -110,7 +110,7 @@ where
 /// L1 fee and data gas for a non-deposit transaction, or deposit nonce and receipt version for a
 /// deposit transaction.
 #[derive(Debug, Clone)]
-pub struct OpReceiptFieldsBuilder {
+pub struct ReceiptFieldsBuilder {
     /// Block number.
     pub block_number: u64,
     /// Block timestamp.
@@ -147,7 +147,7 @@ pub struct OpReceiptFieldsBuilder {
     pub da_footprint_gas_scalar: Option<u16>,
 }
 
-impl OpReceiptFieldsBuilder {
+impl ReceiptFieldsBuilder {
     /// Returns a new builder.
     pub const fn new(block_timestamp: u64, block_number: u64) -> Self {
         Self {
@@ -324,7 +324,7 @@ impl OpReceiptBuilder {
             core_receipt.blob_gas_used = Some(da_size);
         });
 
-        let op_receipt_fields = OpReceiptFieldsBuilder::new(timestamp, block_number)
+        let op_receipt_fields = ReceiptFieldsBuilder::new(timestamp, block_number)
             .l1_block_info(chain_spec, tx_signed, l1_block_info)?
             .build();
 
@@ -420,7 +420,7 @@ mod tests {
             BLOCK_124665056_TIMESTAMP
         ));
 
-        let receipt_meta = OpReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
             .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -498,7 +498,7 @@ mod tests {
             ..Default::default()
         };
 
-        let receipt_meta = OpReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
             .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -522,7 +522,7 @@ mod tests {
             ..Default::default()
         };
 
-        let receipt_meta = OpReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+        let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
             .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -556,7 +556,7 @@ mod tests {
         );
         let tx_1 = OpTransactionSigned::decode_2718(&mut &tx[..]).unwrap();
 
-        let receipt_meta = OpReceiptFieldsBuilder::new(1730216981, 21713817)
+        let receipt_meta = ReceiptFieldsBuilder::new(1730216981, 21713817)
             .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
@@ -615,7 +615,7 @@ mod tests {
         let op_hardforks = &*BASE_MAINNET;
 
         let receipt =
-            OpReceiptFieldsBuilder::new(BaseChainConfig::mainnet().jovian_timestamp, u64::MAX)
+            ReceiptFieldsBuilder::new(BaseChainConfig::mainnet().jovian_timestamp, u64::MAX)
                 .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
                 .expect("should parse revm l1 info")
                 .build();

@@ -32,4 +32,4 @@ mod dev;
 pub use dev::BASE_DEV;
 
 mod spec;
-pub use spec::{OpChainSpec, OpGenesisInfo, SUPPORTED_CHAINS};
+pub use spec::{GenesisInfo, OpChainSpec, SUPPORTED_CHAINS};

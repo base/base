@@ -9,3 +9,4 @@ docs/specs/dist/
 docs/specs/.vocs/
 *.log
 .vscode/
+*.env
