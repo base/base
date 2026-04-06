@@ -35,7 +35,8 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-serde_json.workspace = true
+rstest.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 rand = { workspace = true, features = ["thread_rng"] }
 arbitrary = { workspace = true, features = ["derive"] }
 toml = { workspace = true, features = ["parse", "serde"] }

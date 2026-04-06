@@ -3,9 +3,9 @@
 use alloy_primitives::Log;
 
 use crate::{
-    BatcherUpdate, CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, Eip1559Update,
-    GasConfigUpdate, GasLimitUpdate, LogProcessingError, OperatorFeeUpdate, SystemConfigUpdate,
-    SystemConfigUpdateError, SystemConfigUpdateKind, UnsafeBlockSignerUpdate,
+    BatcherUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate, LogProcessingError,
+    OperatorFeeUpdate, SystemConfigUpdate, SystemConfigUpdateError, SystemConfigUpdateKind,
+    UnsafeBlockSignerUpdate,
     updates::{DaFootprintGasScalarUpdate, MinBaseFeeUpdate},
 };
 
@@ -40,7 +40,7 @@ impl SystemConfigLog {
         if self.log.topics().len() < 3 {
             return Err(LogProcessingError::InvalidTopicLen(self.log.topics().len()));
         }
-        if self.log.topics()[0] != CONFIG_UPDATE_TOPIC {
+        if self.log.topics()[0] != SystemConfigUpdate::TOPIC {
             return Err(LogProcessingError::InvalidTopic);
         }
         Ok(())
@@ -49,7 +49,7 @@ impl SystemConfigLog {
     /// Validate the config update version.
     pub fn validate_version(&self) -> Result<(), LogProcessingError> {
         let version = self.log.topics()[1];
-        if version != CONFIG_UPDATE_EVENT_VERSION_0 {
+        if version != SystemConfigUpdate::EVENT_VERSION_0 {
             return Err(LogProcessingError::UnsupportedVersion(version));
         }
         Ok(())

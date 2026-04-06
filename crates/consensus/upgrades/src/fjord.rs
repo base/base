@@ -114,31 +114,17 @@ impl Hardfork for Fjord {
 mod tests {
     use alloc::vec;
 
+    use rstest::rstest;
+
     use super::*;
     use crate::test_utils::check_deployment_code;
 
-    #[test]
-    fn test_deploy_fjord_gas_price_oracle_source() {
-        assert_eq!(
-            Fjord::deploy_fjord_gas_price_oracle_source(),
-            hex!("86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3")
-        );
-    }
-
-    #[test]
-    fn test_update_fjord_gas_price_oracle_source() {
-        assert_eq!(
-            Fjord::update_fjord_gas_price_oracle_source(),
-            hex!("1e6bb0c28bfab3dc9b36ffb0f721f00d6937f33577606325692db0965a7d58c6")
-        );
-    }
-
-    #[test]
-    fn test_enable_fjord_source() {
-        assert_eq!(
-            Fjord::enable_fjord_source(),
-            hex!("bac7bb0d5961cad209a345408b0280a0d4686b1b20665e1b0f9cdafd73b19b6b")
-        );
+    #[rstest]
+    #[case(Fjord::deploy_fjord_gas_price_oracle_source(), hex!("86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3"))]
+    #[case(Fjord::update_fjord_gas_price_oracle_source(), hex!("1e6bb0c28bfab3dc9b36ffb0f721f00d6937f33577606325692db0965a7d58c6"))]
+    #[case(Fjord::enable_fjord_source(), hex!("bac7bb0d5961cad209a345408b0280a0d4686b1b20665e1b0f9cdafd73b19b6b"))]
+    fn test_fjord_source_hashes(#[case] actual: B256, #[case] expected: [u8; 32]) {
+        assert_eq!(actual, expected);
     }
 
     #[test]

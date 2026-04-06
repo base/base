@@ -161,7 +161,7 @@ mod tests {
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, Log, LogData, U256, address, b256};
-    use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+    use base_consensus_genesis::SystemConfigUpdate;
 
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChainProvider};
@@ -178,7 +178,7 @@ mod tests {
         Log {
             address: L1_SYS_CONFIG_ADDR,
             data: LogData::new_unchecked(
-                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, B256::ZERO],
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, B256::ZERO],
                 data.into(),
             ),
         }
@@ -193,7 +193,7 @@ mod tests {
             Receipt { status: alloy_consensus::Eip658Value::Eip658(true), ..Receipt::default() };
         let bad = Log::new(
             Address::from([2; 20]),
-            vec![CONFIG_UPDATE_TOPIC, B256::default()],
+            vec![SystemConfigUpdate::TOPIC, B256::default()],
             Bytes::default(),
         )
         .unwrap();
@@ -354,7 +354,7 @@ mod tests {
         Log {
             address: L1_SYS_CONFIG_ADDR,
             data: LogData::new_unchecked(
-                vec![CONFIG_UPDATE_TOPIC, CONFIG_UPDATE_EVENT_VERSION_0, update_type],
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, update_type],
                 data.into(),
             ),
         }

@@ -20,11 +20,10 @@ pub use updates::{
 
 mod system;
 pub use system::{
-    BatcherUpdateError, CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC,
-    DaFootprintGasScalarUpdateError, EIP1559UpdateError, GasConfigUpdateError, GasLimitUpdateError,
-    LogProcessingError, MinBaseFeeUpdateError, OperatorFeeUpdateError, SystemConfig,
-    SystemConfigLog, SystemConfigUpdate, SystemConfigUpdateError, SystemConfigUpdateKind,
-    UnsafeBlockSignerUpdateError,
+    BatcherUpdateError, DaFootprintGasScalarUpdateError, EIP1559UpdateError, GasConfigUpdateError,
+    GasLimitUpdateError, LogProcessingError, MinBaseFeeUpdateError, OperatorFeeUpdateError,
+    SystemConfig, SystemConfigLog, SystemConfigUpdate, SystemConfigUpdateError,
+    SystemConfigUpdateKind, UnsafeBlockSignerUpdateError,
 };
 
 mod chain;

@@ -260,7 +260,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
-    use base_consensus_genesis::{CONFIG_UPDATE_TOPIC, HardForkConfig, SystemConfig};
+    use base_consensus_genesis::{HardForkConfig, SystemConfig, SystemConfigUpdate};
     use base_consensus_registry::Sepolia;
     use base_protocol::{BlockInfo, DepositDecodeError};
 
@@ -680,7 +680,7 @@ mod tests {
         // causing update_with_receipts to return an error.
         let bad_log = Log {
             address: sys_config_addr,
-            data: LogData::new_unchecked(vec![CONFIG_UPDATE_TOPIC], Bytes::default()),
+            data: LogData::new_unchecked(vec![SystemConfigUpdate::TOPIC], Bytes::default()),
         };
         let bad_receipt = Receipt {
             status: Eip658Value::Eip658(true),
