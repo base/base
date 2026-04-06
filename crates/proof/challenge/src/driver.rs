@@ -194,10 +194,11 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
     /// Executes a single scan-validate-prove-submit cycle.
     ///
     /// First polls any in-flight proof sessions that are not in the current
-    /// scan batch, then advances bond lifecycle claims, then scans for new
-    /// candidates and processes them.
+    /// scan batch, then discovers claimable bonds, advances bond lifecycle
+    /// claims, and finally scans for new candidates and processes them.
     pub async fn step(&mut self) -> eyre::Result<()> {
         self.poll_pending_proofs().await;
+        self.discover_claimable_bonds().await;
         self.poll_bond_claims().await;
 
         let (candidates, new_last_scanned) = self.scanner.scan(self.last_scanned).await?;
@@ -211,6 +212,18 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager> Driver<L2, P, T> {
         }
 
         Ok(())
+    }
+
+    /// Discovers new claimable games via incremental and periodic full
+    /// rescanning. Runs before [`poll_bond_claims`](Self::poll_bond_claims)
+    /// so that newly discovered games are immediately eligible for
+    /// advancement in the same tick.
+    async fn discover_claimable_bonds(&mut self) {
+        if let Some(ref mut bond_manager) = self.bond_manager
+            && let Err(e) = bond_manager.discover_claimable_games(&*self.verifier_client).await
+        {
+            warn!(error = %e, "bond discovery scan failed");
+        }
     }
 
     /// Polls the bond manager to advance tracked games through the bond

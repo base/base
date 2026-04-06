@@ -40,8 +40,8 @@ use revm::context::{Block, BlockEnv};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    OpAttributes, OpPayloadBuilderAttributes, OpPayloadPrimitives, config::OpBuilderConfig,
-    error::OpPayloadBuilderError, payload::OpBuiltPayload,
+    OpAttributes, OpPayloadBuilderAttributes, OpPayloadPrimitives, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::OpBuiltPayload,
 };
 
 /// Base payload builder
@@ -62,7 +62,7 @@ pub struct OpPayloadBuilder<
     /// Node client.
     pub client: Client,
     /// Settings for the builder, e.g. DA settings.
-    pub config: OpBuilderConfig,
+    pub config: BaseBuilderConfig,
     /// The type responsible for yielding the best transactions for the payload if mempool
     /// transactions are allowed.
     pub best_transactions: Txs,
@@ -98,12 +98,12 @@ impl<Pool, Client, Evm, Attrs> OpPayloadBuilder<Pool, Client, Evm, (), Attrs> {
         Self::with_builder_config(pool, client, evm_config, Default::default())
     }
 
-    /// Configures the builder with the given [`OpBuilderConfig`].
+    /// Configures the builder with the given [`BaseBuilderConfig`].
     pub const fn with_builder_config(
         pool: Pool,
         client: Client,
         evm_config: Evm,
-        config: OpBuilderConfig,
+        config: BaseBuilderConfig,
     ) -> Self {
         Self {
             pool,
@@ -246,7 +246,7 @@ where
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
         >,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
+    Txs: BasePayloadTransactions<Pool::Transaction>,
     Attrs: OpAttributes<Transaction = N::SignedTx>,
 {
     type Attributes = Attrs;
@@ -448,7 +448,7 @@ impl<Txs> OpBuilder<'_, Txs> {
 }
 
 /// A type that returns the [`PayloadTransactions`] that should be included in the pool.
-pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
+pub trait BasePayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
     fn best_transactions<Pool: TransactionPool<Transaction = Transaction>>(
@@ -458,7 +458,7 @@ pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'sta
     ) -> impl PayloadTransactions<Transaction = Transaction>;
 }
 
-impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
+impl<T: PoolTransaction> BasePayloadTransactions<T> for () {
     fn best_transactions<Pool: TransactionPool<Transaction = T>>(
         &self,
         pool: Pool,
@@ -546,7 +546,7 @@ pub struct OpPayloadBuilderCtx<
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: Evm,
     /// Additional config for the builder/sequencer, e.g. DA and gas limit
-    pub builder_config: OpBuilderConfig,
+    pub builder_config: BaseBuilderConfig,
     /// The chainspec
     pub chain_spec: Arc<ChainSpec>,
     /// How to build the payload.
@@ -630,7 +630,7 @@ where
             // A sequencer's block should never contain blob transactions.
             if sequencer_tx.value().is_eip4844() {
                 return Err(PayloadBuilderError::other(
-                    OpPayloadBuilderError::BlobTransactionRejected,
+                    BasePayloadBuilderError::BlobTransactionRejected,
                 ));
             }
 
@@ -639,7 +639,7 @@ where
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.
             let sequencer_tx = sequencer_tx.value().try_clone_into_recovered().map_err(|_| {
-                PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
+                PayloadBuilderError::other(BasePayloadBuilderError::TransactionEcRecoverFailed)
             })?;
 
             let gas_used = match builder.execute_transaction(sequencer_tx.clone()) {

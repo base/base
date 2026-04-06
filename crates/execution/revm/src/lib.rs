@@ -34,8 +34,8 @@ pub use spec::*;
 
 mod transaction;
 pub use transaction::{
-    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, OpBuildError, OpTransaction,
-    OpTransactionBuilder, OpTransactionError, OpTxTr,
+    BaseTransactionBuilder, BuildError, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    OpTransaction, OpTransactionError, OpTxTr,
 };
 
 mod compat;
