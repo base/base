@@ -12,5 +12,7 @@ pub use base::Base;
 
 mod builder;
 
+mod wallet;
+
 #[cfg(feature = "reth")]
 mod reth;
