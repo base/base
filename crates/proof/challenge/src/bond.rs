@@ -247,6 +247,10 @@ impl BondManager {
             Ok(g) => g,
             Err(e) => {
                 warn!(index, error = %e, "failed to fetch game at index");
+                ChallengerMetrics::bond_evaluation_errors_total(
+                    ChallengerMetrics::EVAL_ERROR_GAME_FETCH,
+                )
+                .increment(1);
                 return None;
             }
         };
@@ -264,6 +268,10 @@ impl BondManager {
                     error = %e,
                     "failed to read bondRecipient/zkProver"
                 );
+                ChallengerMetrics::bond_evaluation_errors_total(
+                    ChallengerMetrics::EVAL_ERROR_BOND_READ,
+                )
+                .increment(1);
                 return None;
             }
         };
@@ -290,6 +298,10 @@ impl BondManager {
                     error = %e,
                     "failed to determine bond phase"
                 );
+                ChallengerMetrics::bond_evaluation_errors_total(
+                    ChallengerMetrics::EVAL_ERROR_PHASE_READ,
+                )
+                .increment(1);
                 return None;
             }
         };

@@ -89,6 +89,10 @@ base_metrics::define_metrics! {
 
     #[describe("Total claimable games found by bond discovery")]
     bond_discovery_games_found_total: counter,
+
+    #[describe("Total bond evaluation failures by error type")]
+    #[label(error_type)]
+    bond_evaluation_errors_total: counter,
 }
 
 impl ChallengerMetrics {
@@ -104,4 +108,13 @@ impl ChallengerMetrics {
     /// Label value when a resolve was skipped because the game was already
     /// resolved on-chain (e.g. by another actor).
     pub const STATUS_ALREADY_RESOLVED: &str = "already_resolved";
+
+    /// Label value for a game fetch failure during bond evaluation.
+    pub const EVAL_ERROR_GAME_FETCH: &str = "game_fetch";
+
+    /// Label value for a bond recipient/zk prover read failure.
+    pub const EVAL_ERROR_BOND_READ: &str = "bond_read";
+
+    /// Label value for a bond phase determination failure.
+    pub const EVAL_ERROR_PHASE_READ: &str = "phase_read";
 }
