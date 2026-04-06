@@ -7,6 +7,8 @@ use moka::sync::Cache;
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 
+use crate::BuilderMetrics;
+
 /// Shared, cross-block cache of permanently rejected transaction hashes.
 ///
 /// Backed by [`moka::sync::Cache`] with a TTL so entries expire if metering
@@ -33,6 +35,12 @@ impl RejectionCache {
     /// Returns the number of cached entries.
     pub fn entry_count(&self) -> u64 {
         self.0.entry_count()
+    }
+
+    /// Flushes pending cache maintenance tasks (evictions, TTL expiry).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn run_pending_tasks(&self) {
+        self.0.run_pending_tasks();
     }
 }
 
@@ -96,6 +104,7 @@ where
         for hash in tx_hashes {
             self.rejection_cache.insert(*hash);
         }
+        BuilderMetrics::rejection_cache_size().set(self.rejection_cache.entry_count() as f64);
     }
 }
 
@@ -116,6 +125,7 @@ where
             }
 
             if self.rejection_cache.contains_key(&hash) {
+                BuilderMetrics::rejection_cache_hits().increment(1);
                 continue;
             }
 
@@ -434,5 +444,41 @@ mod tests {
             "tx rejected in block 1 should be skipped in block 2"
         );
         assert_eq!(seen_hashes.len(), 1, "only non-rejected tx should appear");
+    }
+
+    /// A rejected transaction becomes eligible again after the cache TTL expires.
+    #[test]
+    fn test_rejected_tx_eligible_after_ttl_expiry() {
+        let mut pool = PendingPool::new(CoinbaseTipOrdering::<MockTransaction>::default());
+        let mut f = MockTransactionFactory::default();
+
+        let tx_1 = f.create_eip1559();
+        let tx_2 = f.create_eip1559();
+        let tx_2_hash = *tx_2.hash();
+        pool.add_transaction(Arc::new(tx_1), 0);
+        pool.add_transaction(Arc::new(tx_2), 0);
+
+        // TTL is short, 1ms
+        let cache = RejectionCache::new(1000, Duration::from_millis(1));
+
+        // Reject tx_2
+        let mut iter1 =
+            BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache.clone());
+        let _tx1 = iter1.next(()).unwrap();
+        let _tx2 = iter1.next(()).unwrap();
+        iter1.mark_rejected(&[tx_2_hash]);
+
+        // Wait for TTL to expire and flush pending evictions
+        std::thread::sleep(Duration::from_millis(50));
+        cache.run_pending_tasks();
+
+        // New iterator — tx_2 should be back
+        let mut iter2 = BestFlashblocksTxs::new(BestPayloadTransactions::new(pool.best()), cache);
+        let mut seen_hashes = Vec::new();
+        while let Some(tx) = iter2.next(()) {
+            seen_hashes.push(*tx.hash());
+        }
+        assert!(seen_hashes.contains(&tx_2_hash), "tx should be eligible again after TTL expiry");
+        assert_eq!(seen_hashes.len(), 2, "both txs should appear");
     }
 }
