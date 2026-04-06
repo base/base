@@ -718,7 +718,8 @@ impl<C: Clock> BondManager<C> {
             // better than resetting to "now" (which would re-impose the full
             // delay after every restart).
             let resolved_at = verifier_client.resolved_at(game_address).await?;
-            let unlocked_at = Self::unix_to_monotonic(&self.clock, resolved_at);
+            let unlocked_at =
+                Self::unix_to_monotonic(&self.clock, resolved_at, Self::wall_clock_unix_secs());
             info!(
                 game = %game_address,
                 resolved_at,
@@ -834,17 +835,30 @@ impl<C: Clock> BondManager<C> {
     /// Converts a Unix timestamp (seconds) to a monotonic [`Duration`]
     /// relative to the given clock.
     ///
-    /// Computes how long ago the Unix timestamp occurred and subtracts
-    /// that age from the current monotonic time. Used when recovering
-    /// on-chain timestamps (e.g. `resolved_at`) into the local monotonic
-    /// time domain.
-    fn unix_to_monotonic(clock: &C, unix_secs: u64) -> Duration {
-        let unix_now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
-            .as_secs();
+    /// Computes how long ago `unix_secs` occurred relative to `unix_now`
+    /// and subtracts that age from the current monotonic time. Used when
+    /// recovering on-chain timestamps (e.g. `resolved_at`) into the
+    /// local monotonic time domain.
+    ///
+    /// `unix_now` is accepted as a parameter (rather than calling
+    /// `SystemTime::now()` internally) so that the function is fully
+    /// deterministic and testable.
+    ///
+    /// If `unix_secs` is ahead of `unix_now` (e.g. L1 clock skew),
+    /// the age is treated as zero and `unlocked_at` equals the current
+    /// monotonic time — re-imposing the full delay. This is the safe
+    /// conservative fallback.
+    fn unix_to_monotonic(clock: &C, unix_secs: u64, unix_now: u64) -> Duration {
         let age = Duration::from_secs(unix_now.saturating_sub(unix_secs));
         clock.now().saturating_sub(age)
+    }
+
+    /// Returns the current Unix timestamp in seconds.
+    fn wall_clock_unix_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock before UNIX epoch")
+            .as_secs()
     }
 
     /// Determines the bond phase from onchain state.
@@ -873,7 +887,8 @@ impl<C: Clock> BondManager<C> {
             // cause one early withdrawal attempt that reverts, but is strictly
             // better than resetting to "now" (which would re-impose the full
             // delay after every restart).
-            let unlocked_at = Self::unix_to_monotonic(clock, resolved_at);
+            let unlocked_at =
+                Self::unix_to_monotonic(clock, resolved_at, Self::wall_clock_unix_secs());
             return Ok(Some(BondPhase::AwaitingDelay { unlocked_at }));
         }
 
@@ -1017,6 +1032,41 @@ mod tests {
         let result = mgr.check_delay(game, unlocked_at);
         assert!(result.is_ok());
         assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::AwaitingDelay { .. }));
+    }
+
+    #[test]
+    fn unix_to_monotonic_past_timestamp() {
+        // Clock at 500s monotonic, unix_now=2000, event at unix 1900
+        // → age = 100s → monotonic = 500 - 100 = 400s.
+        let clock = FixedClock(Duration::from_secs(500));
+        let result = BondManager::unix_to_monotonic(&clock, 1900, 2000);
+        assert_eq!(result, Duration::from_secs(400));
+    }
+
+    #[test]
+    fn unix_to_monotonic_future_timestamp_clamps() {
+        // If the on-chain timestamp is ahead of local wall clock
+        // (clock skew), age saturates to 0 → monotonic = clock.now().
+        let clock = FixedClock(Duration::from_secs(500));
+        let result = BondManager::unix_to_monotonic(&clock, 2100, 2000);
+        assert_eq!(result, Duration::from_secs(500));
+    }
+
+    #[test]
+    fn unix_to_monotonic_same_timestamp() {
+        // Event happened "right now" → age = 0 → monotonic = clock.now().
+        let clock = FixedClock(Duration::from_secs(500));
+        let result = BondManager::unix_to_monotonic(&clock, 2000, 2000);
+        assert_eq!(result, Duration::from_secs(500));
+    }
+
+    #[test]
+    fn unix_to_monotonic_age_exceeds_monotonic() {
+        // If the event is older than the monotonic uptime, saturate to zero
+        // rather than underflowing.
+        let clock = FixedClock(Duration::from_secs(50));
+        let result = BondManager::unix_to_monotonic(&clock, 1000, 2000);
+        assert_eq!(result, Duration::ZERO);
     }
 
     #[test]
