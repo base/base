@@ -28,7 +28,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 use alloy_primitives::Address;
@@ -104,6 +104,7 @@ pub struct TrackedGame {
 /// discovers claimable games via [`discover_claimable_games`](Self::discover_claimable_games),
 /// scanning both newly created games and periodically rescanning the
 /// lookback window to catch games challenged or resolved by other actors.
+#[derive(derive_more::Debug)]
 pub struct BondManager {
     /// Games being tracked, keyed by proxy address.
     tracked: HashMap<Address, TrackedGame>,
@@ -118,29 +119,18 @@ pub struct BondManager {
     /// Injectable clock for obtaining the current Unix timestamp. Defaults
     /// to [`unix_now`] in production; tests can substitute a controlled
     /// clock.
+    #[debug(skip)]
     clock: ClockFn,
     /// Factory client for querying game indices during bond discovery.
+    #[debug(skip)]
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     /// Highest game index scanned for bond discovery. Incremental scans
     /// start from this index; periodic full rescans reset it backward.
     bond_scan_head: u64,
-    /// When the last full rescan of the lookback window completed.
-    last_full_scan: Instant,
+    /// Unix timestamp (seconds) of the last full rescan completion.
+    last_full_scan: u64,
     /// Number of games to look back during periodic full rescans.
     lookback: u64,
-}
-
-impl std::fmt::Debug for BondManager {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BondManager")
-            .field("tracked", &self.tracked)
-            .field("claim_addresses", &self.claim_addresses)
-            .field("weth_delay", &self.weth_delay)
-            .field("l1_rpc_url", &self.l1_rpc_url)
-            .field("bond_scan_head", &self.bond_scan_head)
-            .field("lookback", &self.lookback)
-            .finish_non_exhaustive()
-    }
 }
 
 impl BondManager {
@@ -170,7 +160,7 @@ impl BondManager {
             clock: unix_now,
             factory_client,
             bond_scan_head: 0,
-            last_full_scan: Instant::now(),
+            last_full_scan: unix_now(),
             lookback,
         }
     }
@@ -391,15 +381,18 @@ impl BondManager {
         // Process results sequentially: insert tracked games and resolve the
         // WETH delay from the first relevant game.
         for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
-            let Some(phase) = phase else {
-                continue;
-            };
-
+            // Resolve the WETH delay from the first available game,
+            // including already-claimed ones, so that the delay is
+            // bootstrapped as early as possible.
             if self.weth_delay.is_none()
                 && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
             {
                 warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
             }
+
+            let Some(phase) = phase else {
+                continue; // already claimed, skip
+            };
 
             info!(
                 game = %game_address,
@@ -413,7 +406,7 @@ impl BondManager {
         // Set the discovery watermark so continuous scanning starts from
         // where startup left off.
         self.bond_scan_head = game_count;
-        self.last_full_scan = Instant::now();
+        self.last_full_scan = (self.clock)();
 
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         info!(count = self.tracked.len(), "bond startup scan complete");
@@ -447,7 +440,8 @@ impl BondManager {
 
         // Periodic full rescan: reset watermark to re-evaluate the
         // lookback window and catch state transitions on older games.
-        let is_full_rescan = self.last_full_scan.elapsed() >= Self::BOND_DISCOVERY_INTERVAL;
+        let elapsed = (self.clock)().saturating_sub(self.last_full_scan);
+        let is_full_rescan = elapsed >= Self::BOND_DISCOVERY_INTERVAL.as_secs();
         if is_full_rescan {
             let new_head = game_count.saturating_sub(self.lookback);
             debug!(
@@ -518,7 +512,7 @@ impl BondManager {
         self.bond_scan_head = game_count;
 
         if is_full_rescan {
-            self.last_full_scan = Instant::now();
+            self.last_full_scan = (self.clock)();
         }
 
         if discovered > 0 {
@@ -1147,7 +1141,8 @@ mod tests {
         mgr.bond_scan_head = 10;
 
         // Force the full rescan by backdating `last_full_scan`.
-        mgr.last_full_scan = Instant::now() - BondManager::BOND_DISCOVERY_INTERVAL;
+        mgr.last_full_scan =
+            unix_now().saturating_sub(BondManager::BOND_DISCOVERY_INTERVAL.as_secs());
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
         // Full rescan should have reset watermark to 10 - 5 = 5

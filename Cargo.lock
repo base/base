@@ -3083,6 +3083,7 @@ dependencies = [
  "base-tx-manager",
  "base-zk-client",
  "clap",
+ "derive_more",
  "eyre",
  "futures",
  "humantime",

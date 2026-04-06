@@ -74,6 +74,9 @@ tokio-util.workspace = true
 # Health
 base-health = { workspace = true, features = ["axum-server"] }
 
+# Derive
+derive_more = { workspace = true, features = ["debug"] }
+
 # Misc
 url.workspace = true
 humantime.workspace = true
