@@ -826,10 +826,7 @@ mod tests {
         let mut args = boundless_args();
         args.extend(["--crl-check-enabled"]);
         let result = Cli::parse_from(args).into_config();
-        assert!(
-            result.is_err(),
-            "CRL enabled without --crl-nitro-verifier-address should fail"
-        );
+        assert!(result.is_err(), "CRL enabled without --crl-nitro-verifier-address should fail");
     }
 
     #[rstest]
@@ -843,10 +840,7 @@ mod tests {
             "0",
         ]);
         let result = Cli::parse_from(args).into_config();
-        assert!(
-            result.is_err(),
-            "--crl-fetch-timeout-secs 0 with CRL enabled should fail"
-        );
+        assert!(result.is_err(), "--crl-fetch-timeout-secs 0 with CRL enabled should fail");
     }
 
     #[rstest]
@@ -860,10 +854,7 @@ mod tests {
         let config = Cli::parse_from(args).into_config().unwrap();
         assert!(config.crl.enabled);
         assert!(config.crl.nitro_verifier_address.is_some());
-        assert_eq!(
-            config.crl.fetch_timeout,
-            Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS)
-        );
+        assert_eq!(config.crl.fetch_timeout, Duration::from_secs(DEFAULT_CRL_FETCH_TIMEOUT_SECS));
     }
 
     #[rstest]
