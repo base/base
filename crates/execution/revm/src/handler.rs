@@ -116,7 +116,7 @@ where
 
             let effective_balance_spending = tx
                 .effective_balance_spending(basefee, blob_price)
-                .expect("Deposit transaction effective balance spending overflow")
+                .map_err(|e| ERROR::from(OpTransactionError::from(e)))?
                 - tx.value();
 
             // Mind value should be added first before subtracting the effective balance spending.
