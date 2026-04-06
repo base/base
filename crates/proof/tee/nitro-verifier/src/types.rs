@@ -51,6 +51,9 @@ sol! {
         uint64 timestamp;
         /// Array of certificate hashes in the chain (root to leaf).
         bytes32[] certs;
+        /// Array of certificate expiry timestamps (notAfter, seconds since epoch).
+        /// One entry per cert, matching the `certs` array ordering.
+        uint64[] certExpiries;
         /// User-defined data embedded in the attestation.
         bytes userData;
         /// Cryptographic nonce used for replay protection.
