@@ -328,7 +328,7 @@ impl BondManager {
     }
 
     /// Evaluates all games in `range` concurrently for bond tracking
-    /// eligibility, returning one entry per index.
+    /// eligibility, returning one entry per evaluated game.
     async fn evaluate_bond_range(
         range: std::ops::Range<u64>,
         factory_client: &Arc<dyn DisputeGameFactoryClient>,
