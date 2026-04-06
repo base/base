@@ -7,9 +7,11 @@ pub use config::{
     RegistrarConfig,
 };
 
-#[allow(unreachable_pub)]
 mod crl;
-pub use crl::{CrlError, DEFAULT_CRL_FETCH_TIMEOUT_SECS};
+pub use crl::{
+    CertCrlInfo, CrlError, RevokedCertInfo, build_crl_http_client, check_chain_against_crls,
+    extract_cert_crl_info, DEFAULT_CRL_FETCH_TIMEOUT_SECS,
+};
 
 mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;
