@@ -429,12 +429,14 @@ impl BondManager {
         verifier_client: &dyn AggregateVerifierClient,
     ) -> eyre::Result<()> {
         if !self.is_enabled() {
+            warn!("bond manager is disabled, skipping discovery scan");
             return Ok(());
         }
 
         let factory_client = Arc::clone(&self.factory_client);
         let game_count = factory_client.game_count().await?;
         if game_count == 0 {
+            debug!("no games found, skipping bond discovery scan");
             return Ok(());
         }
 
