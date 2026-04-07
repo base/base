@@ -259,6 +259,7 @@ where
                     if !state.submit_tasks.is_empty() =>
                 {
                     self.handle_submit_result(result, &mut state).await;
+                    self.try_start_submit(&mut state);
                 }
 
                 Some(result) = state.prove_tasks.join_next(),
