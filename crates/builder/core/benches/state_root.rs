@@ -13,7 +13,14 @@
 //! The benchmarks use an MDBX-backed [`MdbxProofsStorage`] pre-populated with
 //! 50k base-state accounts so that state root computation exercises real disk
 //! I/O through the production trie overlay path.
-use std::sync::Arc;
+//!
+//! [`StateRootProvider::state_root_with_updates`] takes [`HashedPostState`] by
+//! value, so each iteration clones the post state. `finalize_only` clones the
+//! full accumulated state once; `per_flashblock` clones one snapshot per
+//! flashblock (sizes 1×…10× a single delta), so copy work in the per-flashblock
+//! loop is higher than in `finalize_only` and contributes to the reported gap
+//! alongside repeated trie work.
+use std::{hint::black_box, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256, keccak256};
@@ -180,9 +187,11 @@ fn per_flashblock_benches(c: &mut Criterion) {
         g.bench_function(BenchmarkId::new("accounts_per_fb", accounts_per_fb), |b| {
             b.iter(|| {
                 for snapshot in &snapshots {
-                    provider
-                        .state_root_with_updates(snapshot.clone())
-                        .expect("state root should succeed");
+                    black_box(
+                        provider
+                            .state_root_with_updates(snapshot.clone())
+                            .expect("state root should succeed"),
+                    );
                 }
             });
         });
