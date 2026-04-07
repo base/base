@@ -260,20 +260,25 @@ where
                 }
 
                 Some(result) = state.submit_tasks.join_next() => {
-                    self.handle_submit_result(result, &mut state).await;
-                    self.try_start_submit(&mut state);
+                    let chain_next = self.handle_submit_result(result, &mut state).await;
+                    if chain_next {
+                        self.try_submit(&mut state);
+                    }
+                    // On failure / discard the proof stays in `proved` and the
+                    // next `poll_interval` tick will pick it up, avoiding a
+                    // tight retry loop when L1 is persistently failing.
                 }
 
                 Some(result) = state.prove_tasks.join_next() => {
                     self.handle_proof_result(result, &mut state);
-                    self.try_start_submit(&mut state);
+                    self.try_submit(&mut state);
                 }
 
                 _ = poll_interval.tick() => {
                     if let Err(e) = self.tick(&mut state).await {
                         error!(error = ?e, "Pipeline tick failed, retrying next interval");
                     }
-                    self.try_start_submit(&mut state);
+                    self.try_submit(&mut state);
                 }
             }
         }
@@ -372,7 +377,7 @@ where
         Ok(())
     }
 
-    fn try_start_submit(&self, state: &mut PipelineState) {
+    fn try_submit(&self, state: &mut PipelineState) {
         if state.submitting.is_some() || !state.submit_tasks.is_empty() {
             return;
         }
@@ -429,17 +434,20 @@ where
         });
     }
 
+    /// Returns `true` when the caller should immediately attempt the next
+    /// submission (i.e. on success). Returns `false` on failure/discard so
+    /// that retry is deferred to the next poll-interval tick.
     async fn handle_submit_result(
         &self,
         join_result: Result<SubmitOutcome, tokio::task::JoinError>,
         state: &mut PipelineState,
-    ) {
+    ) -> bool {
         let outcome = match join_result {
             Ok(outcome) => outcome,
             Err(join_err) => {
                 warn!(error = %join_err, "Submit task panicked or was cancelled");
                 state.reset();
-                return;
+                return false;
             }
         };
 
@@ -450,7 +458,6 @@ where
                 state.retry_counts.remove(&target_block);
                 state.submitting = None;
                 state.cached_recovery = None;
-                // Re-recover eagerly so try_start_submit can chain the next block.
                 match self.recover_latest_state(&mut state.cached_recovery).await {
                     Ok(recovered) => {
                         state.prune_stale(recovered.l2_block_number);
@@ -460,11 +467,13 @@ where
                     }
                 }
                 state.record_gauges();
+                true
             }
             SubmitOutcome::RootMismatch { target_block } => {
                 warn!(target_block, "Output root mismatch at submit time, resetting pipeline");
                 Metrics::root_mismatch_total().increment(1);
                 state.reset();
+                false
             }
             SubmitOutcome::Failed { target_block, proof, error } => {
                 Metrics::errors_total(error.metric_label()).increment(1);
@@ -476,6 +485,7 @@ where
                 state.proved.insert(target_block, proof);
                 state.submitting = None;
                 state.record_gauges();
+                false
             }
             SubmitOutcome::Discard { target_block, error } => {
                 Metrics::errors_total(error.metric_label()).increment(1);
@@ -486,6 +496,7 @@ where
                 );
                 state.submitting = None;
                 state.record_gauges();
+                false
             }
         }
     }

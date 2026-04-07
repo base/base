@@ -115,10 +115,6 @@ pub struct ProposerArgs {
     )]
     pub skip_tls_verify: bool,
 
-    /// Wait for node sync before starting.
-    #[arg(long = "wait-node-sync", env = cli_env!("WAIT_NODE_SYNC"), default_value = "false")]
-    pub wait_node_sync: bool,
-
     /// Maximum number of retry attempts for RPC operations.
     #[arg(long = "rpc-max-retries", env = cli_env!("RPC_MAX_RETRIES"), default_value = "5")]
     pub rpc_max_retries: u32,
@@ -267,7 +263,6 @@ mod tests {
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
         assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");
         assert!(!cli.proposer.skip_tls_verify);
-        assert!(!cli.proposer.wait_node_sync);
         assert_eq!(cli.proposer.game_type, 1);
         assert_eq!(cli.proposer.max_parallel_proofs, 1);
         assert_eq!(cli.proposer.max_game_recovery_lookback, 5000);
