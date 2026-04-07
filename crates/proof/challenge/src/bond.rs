@@ -28,7 +28,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
 use alloy_primitives::Address;
@@ -723,8 +723,11 @@ impl<C: Clock> BondManager<C> {
             // better than resetting to "now" (which would re-impose the full
             // delay after every restart).
             let resolved_at = verifier_client.resolved_at(game_address).await?;
-            let unlocked_at =
-                Self::unix_to_monotonic(&self.clock, resolved_at, Self::wall_clock_unix_secs());
+            let unlocked_at = Self::unix_to_monotonic(
+                &self.clock,
+                resolved_at,
+                self.clock.wall_clock_unix_secs(),
+            );
             info!(
                 game = %game_address,
                 resolved_at,
@@ -845,8 +848,8 @@ impl<C: Clock> BondManager<C> {
     /// recovering on-chain timestamps (e.g. `resolved_at`) into the
     /// local monotonic time domain.
     ///
-    /// `unix_now` is accepted as a parameter (rather than calling
-    /// `SystemTime::now()` internally) so that the function is fully
+    /// `unix_now` is accepted as a parameter (callers obtain it via
+    /// [`Clock::wall_clock_unix_secs`]) so that the function is fully
     /// deterministic and testable.
     ///
     /// If `unix_secs` is ahead of `unix_now` (e.g. L1 clock skew),
@@ -856,14 +859,6 @@ impl<C: Clock> BondManager<C> {
     fn unix_to_monotonic(clock: &C, unix_secs: u64, unix_now: u64) -> Duration {
         let age = Duration::from_secs(unix_now.saturating_sub(unix_secs));
         clock.now().saturating_sub(age)
-    }
-
-    /// Returns the current Unix timestamp in seconds.
-    fn wall_clock_unix_secs() -> u64 {
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("system clock before UNIX epoch")
-            .as_secs()
     }
 
     /// Determines the bond phase from onchain state.
@@ -893,7 +888,7 @@ impl<C: Clock> BondManager<C> {
             // better than resetting to "now" (which would re-impose the full
             // delay after every restart).
             let unlocked_at =
-                Self::unix_to_monotonic(clock, resolved_at, Self::wall_clock_unix_secs());
+                Self::unix_to_monotonic(clock, resolved_at, clock.wall_clock_unix_secs());
             return Ok(Some(BondPhase::AwaitingDelay { unlocked_at }));
         }
 
@@ -943,15 +938,19 @@ mod tests {
     use super::*;
     use crate::test_utils::{MockDisputeGameFactory, empty_factory};
 
-    /// A deterministic clock that always returns a fixed [`Duration`].
+    /// A deterministic clock that always returns fixed values.
     ///
     /// Used in unit tests that need precise control over the monotonic
-    /// time returned by [`Clock::now`].
-    struct FixedClock(Duration);
+    /// time returned by [`Clock::now`] and the wall-clock Unix seconds
+    /// returned by [`Clock::wall_clock_unix_secs`].
+    struct FixedClock {
+        monotonic: Duration,
+        wall_unix: u64,
+    }
 
     impl Clock for FixedClock {
         fn now(&self) -> Duration {
-            self.0
+            self.monotonic
         }
 
         fn sleep(&self, _duration: Duration) -> Pin<Box<dyn Future<Output = ()> + Send>> {
@@ -961,6 +960,16 @@ mod tests {
         fn interval(&self, _period: Duration) -> BoxStream<'static, ()> {
             Box::pin(futures::stream::pending())
         }
+
+        fn wall_clock_unix_secs(&self) -> u64 {
+            self.wall_unix
+        }
+    }
+
+    /// Creates a [`FixedClock`] with the given monotonic seconds and a
+    /// default wall-clock value of `2_000_000_000`.
+    fn fixed_clock(secs: u64) -> FixedClock {
+        FixedClock { monotonic: Duration::from_secs(secs), wall_unix: 2_000_000_000 }
     }
 
     fn test_l1_rpc_url() -> url::Url {
@@ -968,7 +977,7 @@ mod tests {
     }
 
     fn make_manager(addresses: Vec<Address>) -> BondManager<FixedClock> {
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(addresses, test_l1_rpc_url(), empty_factory(), 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
         mgr
@@ -1002,7 +1011,7 @@ mod tests {
         let addr = Address::repeat_byte(0x01);
         let game = Address::repeat_byte(0xAA);
 
-        let clock = FixedClock(Duration::from_secs(1000));
+        let clock = fixed_clock(1000);
         let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
@@ -1023,7 +1032,7 @@ mod tests {
         let addr = Address::repeat_byte(0x01);
         let game = Address::repeat_byte(0xAA);
 
-        let clock = FixedClock(Duration::from_secs(1000));
+        let clock = fixed_clock(1000);
         let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(3600));
 
@@ -1043,7 +1052,7 @@ mod tests {
     fn unix_to_monotonic_past_timestamp() {
         // Clock at 500s monotonic, unix_now=2000, event at unix 1900
         // → age = 100s → monotonic = 500 - 100 = 400s.
-        let clock = FixedClock(Duration::from_secs(500));
+        let clock = fixed_clock(500);
         let result = BondManager::unix_to_monotonic(&clock, 1900, 2000);
         assert_eq!(result, Duration::from_secs(400));
     }
@@ -1052,7 +1061,7 @@ mod tests {
     fn unix_to_monotonic_future_timestamp_clamps() {
         // If the on-chain timestamp is ahead of local wall clock
         // (clock skew), age saturates to 0 → monotonic = clock.now().
-        let clock = FixedClock(Duration::from_secs(500));
+        let clock = fixed_clock(500);
         let result = BondManager::unix_to_monotonic(&clock, 2100, 2000);
         assert_eq!(result, Duration::from_secs(500));
     }
@@ -1060,7 +1069,7 @@ mod tests {
     #[test]
     fn unix_to_monotonic_same_timestamp() {
         // Event happened "right now" → age = 0 → monotonic = clock.now().
-        let clock = FixedClock(Duration::from_secs(500));
+        let clock = fixed_clock(500);
         let result = BondManager::unix_to_monotonic(&clock, 2000, 2000);
         assert_eq!(result, Duration::from_secs(500));
     }
@@ -1069,21 +1078,21 @@ mod tests {
     fn unix_to_monotonic_age_exceeds_monotonic() {
         // If the event is older than the monotonic uptime, saturate to zero
         // rather than underflowing.
-        let clock = FixedClock(Duration::from_secs(50));
+        let clock = fixed_clock(50);
         let result = BondManager::unix_to_monotonic(&clock, 1000, 2000);
         assert_eq!(result, Duration::ZERO);
     }
 
     #[test]
     fn empty_claim_addresses_means_disabled() {
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000, clock);
         assert!(!mgr.is_enabled());
     }
 
     #[test]
     fn non_empty_claim_addresses_means_enabled() {
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mgr = BondManager::new(
             vec![Address::repeat_byte(0x01)],
             test_l1_rpc_url(),
@@ -1123,7 +1132,7 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(3, claim_addr, Address::ZERO);
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
@@ -1141,7 +1150,7 @@ mod tests {
         // Status 0 = IN_PROGRESS, so the game should match via zkProver.
         let (factory, verifier) = discovery_mocks(2, other_recipient, claim_addr);
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
@@ -1154,7 +1163,7 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(2, claim_addr, Address::ZERO);
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
@@ -1182,7 +1191,7 @@ mod tests {
         let factory: Arc<dyn DisputeGameFactoryClient> = Arc::new(MockDisputeGameFactory { games });
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
@@ -1195,7 +1204,7 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(5, claim_addr, Address::ZERO);
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
@@ -1211,7 +1220,7 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let (factory, verifier) = discovery_mocks(5, claim_addr, Address::ZERO);
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
@@ -1228,7 +1237,7 @@ mod tests {
         let (factory, verifier) = discovery_mocks(10, claim_addr, Address::ZERO);
 
         // Use a clock at 1000s so we can backdate last_full_scan.
-        let clock = FixedClock(Duration::from_secs(1000));
+        let clock = fixed_clock(1000);
         let mut mgr = BondManager::new(
             vec![claim_addr],
             test_l1_rpc_url(),
@@ -1257,7 +1266,7 @@ mod tests {
     async fn discover_disabled_when_no_claim_addresses() {
         let (_, verifier) = discovery_mocks(5, Address::repeat_byte(0xCC), Address::ZERO);
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000, clock);
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
@@ -1271,7 +1280,7 @@ mod tests {
         // Neither bondRecipient nor zkProver match our claim address.
         let (factory, verifier) = discovery_mocks(3, other, Address::ZERO);
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
         mgr.set_weth_delay(Duration::from_secs(60));
 
@@ -1285,7 +1294,7 @@ mod tests {
     async fn discover_handles_empty_factory() {
         let claim_addr = Address::repeat_byte(0xCC);
 
-        let clock = FixedClock(Duration::from_secs(0));
+        let clock = fixed_clock(0);
         let mut mgr =
             BondManager::new(vec![claim_addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
 
