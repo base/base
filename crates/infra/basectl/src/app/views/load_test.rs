@@ -1199,15 +1199,15 @@ fn render_complete_status(
 
     lines.push(Line::from(vec![
         Span::styled("    Latency p50  ", label),
-        Span::styled(fmt_dur(summary.latency.p50), value),
+        Span::styled(fmt_dur(summary.block_latency.p50), value),
         Span::styled("  p95  ", label),
-        Span::styled(fmt_dur(summary.latency.p95), value),
+        Span::styled(fmt_dur(summary.block_latency.p95), value),
     ]));
     lines.push(Line::from(vec![
         Span::styled("    Latency p99  ", label),
-        Span::styled(fmt_dur(summary.latency.p99), value),
+        Span::styled(fmt_dur(summary.block_latency.p99), value),
         Span::styled("  max  ", label),
-        Span::styled(fmt_dur(summary.latency.max), value),
+        Span::styled(fmt_dur(summary.block_latency.max), value),
     ]));
     lines.push(Line::from(""));
 

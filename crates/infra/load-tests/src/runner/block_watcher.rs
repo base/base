@@ -29,7 +29,7 @@ pub struct BlockWatcher {
 
 impl BlockWatcher {
     /// Creates a new [`BlockWatcher`].
-    pub fn new(
+    pub const fn new(
         ws_url: Url,
         block_first_seen: BlockFirstSeen,
         cancel_token: CancellationToken,
