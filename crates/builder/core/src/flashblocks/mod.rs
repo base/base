@@ -21,7 +21,7 @@ pub use context::{
 };
 
 mod payload;
-pub use payload::FlashblocksExecutionInfo;
+pub use payload::{FlashblocksExecutionInfo, compute_state_root};
 
 mod service;
 pub use service::FlashblocksServiceBuilder;

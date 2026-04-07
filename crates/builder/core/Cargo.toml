@@ -166,11 +166,18 @@ reth-ipc.workspace = true
 reth-testing-utils.workspace = true
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 
+# trie
+base-execution-trie.workspace = true
+reth-trie-common.workspace = true
+
 # metrics
 metrics-exporter-prometheus.workspace = true
 
 # alloy
 alloy-provider = { workspace = true, default-features = true, features = ["txpool-api"] }
+
+# bench
+criterion = { workspace = true, features = ["html_reports"] }
 
 # misc
 ctor.workspace = true
