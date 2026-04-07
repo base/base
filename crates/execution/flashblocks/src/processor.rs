@@ -481,9 +481,7 @@ where
 
         // Extract the accumulated bundle state for pending block serving.
         db.merge_transitions(BundleRetention::Reverts);
-        let bundle_state = db.take_bundle();
-
-        pending_blocks_builder.with_bundle_state(bundle_state);
+        pending_blocks_builder.with_bundle_state(db.take_bundle());
         pending_blocks_builder.with_state_overrides(state_overrides);
 
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
