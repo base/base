@@ -83,6 +83,9 @@ base_metrics::define_metrics! {
     #[describe("Total number of bonds successfully claimed")]
     bonds_completed_total: counter,
 
+    #[describe("Total number of bonds dropped because recipient changed after resolve")]
+    bonds_not_claimable_total: counter,
+
     #[describe("Total bond discovery scans performed")]
     #[label(scan_type)]
     bond_discovery_scans_total: counter,

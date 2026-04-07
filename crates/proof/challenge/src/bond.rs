@@ -567,6 +567,8 @@ impl<C: Clock> BondManager<C> {
             self.tracked.remove(addr);
             if *reason == RemovalReason::Completed {
                 ChallengerMetrics::bonds_completed_total().increment(1);
+            } else if *reason == RemovalReason::NotClaimable {
+                ChallengerMetrics::bonds_not_claimable_total().increment(1);
             }
         }
 
