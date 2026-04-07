@@ -686,21 +686,18 @@ impl LoadRunner {
             }
         }
 
-        // Cancel WebSocket watchers after drain so block timestamps remain
-        // available for deferred latency resolution during the drain phase.
-        self.cancel_token.cancel();
-
-        // Let the confirmer finish gracefully (stop_flag is already set);
-        // abort only if it hangs beyond a short grace period.
+        // Let the confirmer finish gracefully (stop_flag is already set).
+        // Block watcher stays alive so deferred block latencies can still resolve.
         if tokio::time::timeout(Duration::from_secs(2), confirmer_task).await.is_err() {
             warn!("confirmer did not shut down in time");
         }
 
-        // Collect any metrics the confirmer sent during its graceful shutdown
-        // (e.g. deferred block latencies resolved after the main drain loop).
         while let Ok(metrics) = metrics_rx.try_recv() {
             self.collector.record_confirmed(metrics);
         }
+
+        // Now safe to stop WebSocket tasks — confirmer is done.
+        self.cancel_token.cancel();
 
         match tokio::time::timeout(Duration::from_secs(2), flashblock_tracker_task).await {
             Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock tracker panicked"),

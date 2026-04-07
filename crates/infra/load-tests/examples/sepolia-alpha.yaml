@@ -2,10 +2,10 @@
 #
 # Requires FUNDER_KEY environment variable with a funded private key
 
-rpc: <Address of the Sepolia Alpha RPC>
+rpc: https://REPLACE-ME.example.com
 
 # WebSocket endpoints for latency tracking
-rpc_ws_url: <Address of the Sepolia Alpha RPC WebSocket>
+rpc_ws_url: wss://REPLACE-ME.example.com
 flashblocks_ws_url: "wss://sepolia-alpha.flashblocks.base.org/ws"
 
 sender_count: 10
