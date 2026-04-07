@@ -176,7 +176,7 @@ impl StrategyOption {
         }
     }
 
-    fn to_tx_type(self) -> TxTypeConfig {
+    const fn to_tx_type(self) -> TxTypeConfig {
         match self {
             Self::Transfer => TxTypeConfig::Transfer,
             Self::Calldata => TxTypeConfig::Calldata { max_size: 128, repeat_count: 1 },
@@ -218,25 +218,25 @@ impl StrategyOption {
         }
     }
 
-    fn matches_tx_type(self, tx: &TxTypeConfig) -> bool {
-        match (self, tx) {
-            (Self::Transfer, TxTypeConfig::Transfer) => true,
-            (Self::Calldata, TxTypeConfig::Calldata { .. }) => true,
-            (Self::Ecrecover, TxTypeConfig::Precompile { target: PrecompileTarget::Ecrecover, .. }) => true,
-            (Self::Sha256, TxTypeConfig::Precompile { target: PrecompileTarget::Sha256, .. }) => true,
-            (Self::Ripemd160, TxTypeConfig::Precompile { target: PrecompileTarget::Ripemd160, .. }) => true,
-            (Self::Identity, TxTypeConfig::Precompile { target: PrecompileTarget::Identity, .. }) => true,
-            (Self::Modexp, TxTypeConfig::Precompile { target: PrecompileTarget::Modexp, .. }) => true,
-            (Self::Bn254Add, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Add, .. }) => true,
-            (Self::Bn254Mul, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Mul, .. }) => true,
-            (Self::Bn254Pairing, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Pairing, .. }) => true,
-            (Self::Blake2f, TxTypeConfig::Precompile { target: PrecompileTarget::Blake2f { .. }, .. }) => true,
-            (Self::Kzg, TxTypeConfig::Precompile { target: PrecompileTarget::KzgPointEvaluation, .. }) => true,
-            (Self::OsakaClz, TxTypeConfig::Osaka { target: OsakaTarget::Clz }) => true,
-            (Self::OsakaP256verify, TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka }) => true,
-            (Self::OsakaModexp, TxTypeConfig::Osaka { target: OsakaTarget::ModexpOsaka }) => true,
-            _ => false,
-        }
+    const fn matches_tx_type(self, tx: &TxTypeConfig) -> bool {
+        matches!(
+            (self, tx),
+            (Self::Transfer, TxTypeConfig::Transfer)
+                | (Self::Calldata, TxTypeConfig::Calldata { .. })
+                | (Self::Ecrecover, TxTypeConfig::Precompile { target: PrecompileTarget::Ecrecover, .. })
+                | (Self::Sha256, TxTypeConfig::Precompile { target: PrecompileTarget::Sha256, .. })
+                | (Self::Ripemd160, TxTypeConfig::Precompile { target: PrecompileTarget::Ripemd160, .. })
+                | (Self::Identity, TxTypeConfig::Precompile { target: PrecompileTarget::Identity, .. })
+                | (Self::Modexp, TxTypeConfig::Precompile { target: PrecompileTarget::Modexp, .. })
+                | (Self::Bn254Add, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Add, .. })
+                | (Self::Bn254Mul, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Mul, .. })
+                | (Self::Bn254Pairing, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Pairing, .. })
+                | (Self::Blake2f, TxTypeConfig::Precompile { target: PrecompileTarget::Blake2f { .. }, .. })
+                | (Self::Kzg, TxTypeConfig::Precompile { target: PrecompileTarget::KzgPointEvaluation, .. })
+                | (Self::OsakaClz, TxTypeConfig::Osaka { target: OsakaTarget::Clz })
+                | (Self::OsakaP256verify, TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka })
+                | (Self::OsakaModexp, TxTypeConfig::Osaka { target: OsakaTarget::ModexpOsaka })
+        )
     }
 }
 
@@ -681,10 +681,10 @@ impl LoadTestView {
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(ref mut modal) = self.strategy_modal {
-                    if modal.cursor + 1 < n {
-                        modal.cursor += 1;
-                    }
+                if let Some(ref mut modal) = self.strategy_modal
+                    && modal.cursor + 1 < n
+                {
+                    modal.cursor += 1;
                 }
             }
             KeyCode::Char(' ') => {
@@ -694,14 +694,12 @@ impl LoadTestView {
                 }
             }
             KeyCode::Enter => {
-                let transactions =
-                    self.strategy_modal.as_ref().map(|m| m.to_transactions());
-                if let Some(txs) = transactions {
-                    if !txs.is_empty() {
-                        if let Some(cfg) = self.effective_config_mut() {
-                            cfg.transactions = txs;
-                        }
-                    }
+                let transactions = self.strategy_modal.as_ref().map(|m| m.to_transactions());
+                if let Some(txs) = transactions
+                    && !txs.is_empty()
+                    && let Some(cfg) = self.effective_config_mut()
+                {
+                    cfg.transactions = txs;
                 }
                 self.strategy_modal = None;
             }
@@ -1088,10 +1086,8 @@ impl LoadTestView {
 
         if matches!(self.state, RunState::Idle | RunState::Complete { .. }) {
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![Span::styled(
-                "  [t] strategy  [e] edit config",
-                dim_style,
-            )]));
+            lines
+                .push(Line::from(vec![Span::styled("  [t] strategy  [e] edit config", dim_style)]));
         }
 
         let p = Paragraph::new(lines);
@@ -1687,8 +1683,7 @@ fn render_strategy_modal(frame: &mut Frame<'_>, parent: Rect, modal: &StrategyMo
     let mut lines: Vec<Line<'_>> = vec![Line::from("")];
 
     let end = (scroll + visible_rows).min(n);
-    for i in scroll..end {
-        let strategy = ALL_STRATEGIES[i];
+    for (i, &strategy) in ALL_STRATEGIES.iter().enumerate().take(end).skip(scroll) {
         let is_selected = i == modal.cursor;
         let is_enabled = modal.enabled[i];
 
