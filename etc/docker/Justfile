@@ -76,7 +76,7 @@ transfer-leader to='':
 
 # TUI dashboard: HA conductor cluster monitor (requires devnet running)
 conductor:
-    cargo run --quiet -p basectl -- --config devnet conductor
+    cargo run --quiet -p basectl -- conductor
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")

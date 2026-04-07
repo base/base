@@ -5,6 +5,7 @@ use ratatui::{
 };
 
 use super::Keybinding;
+use crate::commands::common::COLOR_BASE_BLUE;
 
 const HELP_SIDEBAR_WIDTH: u16 = 30;
 
@@ -36,17 +37,35 @@ impl AppFrame {
         }
     }
 
-    /// Renders the help sidebar if it is visible in the layout.
+    /// Renders the network badge (always) and the help sidebar (when visible).
     pub(crate) fn render(
         f: &mut Frame<'_>,
         layout: &AppLayout,
         config_name: &str,
         keybindings: &[Keybinding],
     ) {
+        render_network_badge(f, config_name);
         if let Some(sidebar) = layout.sidebar {
             render_help_sidebar(f, sidebar, config_name, keybindings);
         }
     }
+}
+
+/// Renders a `[network]` badge pinned to the top-right corner of the full frame.
+fn render_network_badge(f: &mut Frame<'_>, config_name: &str) {
+    let badge = format!(" [{config_name}] ");
+    let badge_width = badge.len() as u16;
+    let area = f.area();
+    if area.width < badge_width || area.height == 0 {
+        return;
+    }
+    let badge_area =
+        Rect { x: area.x + area.width - badge_width, y: area.y, width: badge_width, height: 1 };
+    f.render_widget(
+        Paragraph::new(badge)
+            .style(Style::default().fg(COLOR_BASE_BLUE).add_modifier(Modifier::BOLD)),
+        badge_area,
+    );
 }
 
 fn render_help_sidebar(
@@ -75,6 +94,11 @@ fn render_help_sidebar(
         .collect();
 
     lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("           n", Style::default().fg(Color::Yellow)),
+        Span::raw("  "),
+        Span::styled("Switch network", Style::default().fg(Color::White)),
+    ]));
     lines.push(Line::from(vec![
         Span::styled("           ?", Style::default().fg(Color::Yellow)),
         Span::raw("  "),

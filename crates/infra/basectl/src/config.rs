@@ -157,8 +157,32 @@ struct ChainConfigOverride {
 }
 
 impl ChainConfig {
+    /// Returns a sorted list of all available network names: the three built-ins
+    /// followed by any `*.yaml`/`*.yml` files found in `~/.config/base/networks/`
+    /// that are not already covered by the built-ins.
+    pub fn available_names() -> Vec<String> {
+        let mut names = vec!["mainnet".to_string(), "sepolia".to_string(), "devnet".to_string()];
+        if let Some(dir) = Self::config_dir()
+            && let Ok(entries) = std::fs::read_dir(&dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let ext = path.extension().and_then(|e| e.to_str()).map(str::to_owned);
+                if matches!(ext.as_deref(), Some("yaml") | Some("yml"))
+                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                {
+                    let s = stem.to_string();
+                    if !names.contains(&s) {
+                        names.push(s);
+                    }
+                }
+            }
+        }
+        names
+    }
+
     /// Returns the default Base mainnet configuration.
-    pub(crate) fn mainnet() -> Self {
+    pub fn mainnet() -> Self {
         let rollup =
             Registry::rollup_config(8453).expect("Base mainnet config missing from registry");
         Self {
@@ -177,7 +201,7 @@ impl ChainConfig {
     }
 
     /// Returns the default Base Sepolia configuration.
-    pub(crate) fn sepolia() -> Self {
+    pub fn sepolia() -> Self {
         let rollup =
             Registry::rollup_config(84532).expect("Base Sepolia config missing from registry");
         Self {
