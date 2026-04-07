@@ -110,8 +110,10 @@ impl App {
             }
 
             // Show `[…]` in the badge while a network switch is in progress.
+            // Use ASCII "..." so badge.len() == display width (avoids multi-byte
+            // width miscalculation from the 3-byte U+2026 HORIZONTAL ELLIPSIS).
             let badge_name = if self.pending_network.is_some() {
-                "…".to_string()
+                "...".to_string()
             } else {
                 self.resources.chain_name().to_string()
             };
@@ -144,8 +146,12 @@ impl App {
                             self.show_help = !self.show_help;
                             Action::None
                         }
-                        // `n` opens the network picker from anywhere.
-                        KeyCode::Char('n') if self.pending_network.is_none() => {
+                        // `n` opens the network picker from anywhere, unless the
+                        // active view is in a text-input mode that needs all chars.
+                        KeyCode::Char('n')
+                            if self.pending_network.is_none()
+                                && !current_view.captures_char_input() =>
+                        {
                             self.show_help = false;
                             self.network_picker = Some(NetworkPicker::new());
                             Action::None
@@ -242,6 +248,9 @@ impl App {
                 Err(oneshot::error::TryRecvError::Empty) => None,
                 Err(oneshot::error::TryRecvError::Closed) => {
                     self.pending_network = None;
+                    self.resources
+                        .toasts
+                        .push(Toast::warning("Network switch failed: task dropped".to_string()));
                     None
                 }
             },

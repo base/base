@@ -320,8 +320,16 @@ impl ChainConfig {
         };
 
         if let Some(config_dir) = Self::config_dir() {
-            let user_config_path = config_dir.join(format!("{name_or_path}.yaml"));
-            if user_config_path.exists() {
+            let yaml_path = config_dir.join(format!("{name_or_path}.yaml"));
+            let yml_path = config_dir.join(format!("{name_or_path}.yml"));
+            let user_config_path = if yaml_path.exists() {
+                Some(yaml_path)
+            } else if yml_path.exists() {
+                Some(yml_path)
+            } else {
+                None
+            };
+            if let Some(user_config_path) = user_config_path {
                 return base_config.map_or_else(
                     || Self::load_from_file(&user_config_path),
                     |base| Self::load_and_merge(&user_config_path, base),
