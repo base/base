@@ -21,11 +21,6 @@ impl FlashblocksConfig {
     /// Create a new Flashblocks configuration.
     pub fn new(websocket_url: Url, max_pending_blocks_depth: u64) -> Self {
         let state = Arc::new(FlashblocksState::new(max_pending_blocks_depth));
-        Self {
-            websocket_url,
-            max_pending_blocks_depth,
-            cached_execution: false,
-            state,
-        }
+        Self { websocket_url, max_pending_blocks_depth, cached_execution: false, state }
     }
 }

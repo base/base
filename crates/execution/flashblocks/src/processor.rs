@@ -74,14 +74,7 @@ where
             .best_block_number()
             .map_or_else(|_| FlashblockCache::new(0), FlashblockCache::new);
 
-        Self {
-            pending_blocks,
-            client,
-            max_depth,
-            rx,
-            sender,
-            cache: Arc::new(Mutex::new(cache)),
-        }
+        Self { pending_blocks, client, max_depth, rx, sender, cache: Arc::new(Mutex::new(cache)) }
     }
 
     /// Processes updates from the queue until the channel closes.
