@@ -72,9 +72,10 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{Address, B256, Bytes, Log, LogData, hex};
+    use rstest::rstest;
 
     use super::*;
-    use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+    use crate::SystemConfigUpdate;
 
     #[test]
     fn test_operator_fee_update_try_from() {
@@ -85,10 +86,8 @@ mod tests {
                 hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000babe000000000000beef").into()
             )
         };
-
         let system_log = SystemConfigLog::new(log, false);
         let update = OperatorFeeUpdate::try_from(&system_log).unwrap();
-
         assert_eq!(update.operator_fee_scalar, 0xbabe_u32);
         assert_eq!(update.operator_fee_constant, 0xbeef_u64);
     }
@@ -98,83 +97,29 @@ mod tests {
         let log =
             Log { address: Address::ZERO, data: LogData::new_unchecked(vec![], Bytes::default()) };
         let system_log = SystemConfigLog::new(log, false);
-        let err = OperatorFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, OperatorFeeUpdateError::InvalidDataLen(0));
+        assert_eq!(
+            OperatorFeeUpdate::try_from(&system_log).unwrap_err(),
+            OperatorFeeUpdateError::InvalidDataLen(0)
+        );
     }
 
-    #[test]
-    fn test_operator_fee_update_pointer_decoding_error() {
+    #[rstest]
+    #[case(hex!("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef"), OperatorFeeUpdateError::PointerDecodingError)]
+    #[case(hex!("000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef"), OperatorFeeUpdateError::InvalidDataPointer(33))]
+    #[case(hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef"), OperatorFeeUpdateError::LengthDecodingError)]
+    #[case(hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef"), OperatorFeeUpdateError::InvalidDataLength(33))]
+    fn test_operator_fee_update_errors(
+        #[case] data: [u8; 96],
+        #[case] expected: OperatorFeeUpdateError,
+    ) {
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, B256::ZERO],
+                data.into(),
+            ),
         };
-
         let system_log = SystemConfigLog::new(log, false);
-        let err = OperatorFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, OperatorFeeUpdateError::PointerDecodingError);
-    }
-
-    #[test]
-    fn test_operator_fee_update_invalid_pointer_length() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = OperatorFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, OperatorFeeUpdateError::InvalidDataPointer(33));
-    }
-
-    #[test]
-    fn test_operator_fee_update_length_decoding_error() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = OperatorFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, OperatorFeeUpdateError::LengthDecodingError);
-    }
-
-    #[test]
-    fn test_operator_fee_update_invalid_data_length() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = OperatorFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, OperatorFeeUpdateError::InvalidDataLength(33));
+        assert_eq!(OperatorFeeUpdate::try_from(&system_log).unwrap_err(), expected);
     }
 }

@@ -56,30 +56,22 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{Address, B256, Bytes, Log, LogData, hex};
+    use rstest::rstest;
 
     use super::*;
-    use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+    use crate::SystemConfigUpdate;
 
     #[test]
     fn test_min_base_fee_update_try_from() {
-        let update_type = B256::ZERO;
-
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    update_type,
-                ],
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, B256::ZERO],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
             )
         };
-
         let system_log = SystemConfigLog::new(log, false);
-        let update = MinBaseFeeUpdate::try_from(&system_log).unwrap();
-
-        assert_eq!(update.min_base_fee, 0xbeef_u64);
+        assert_eq!(MinBaseFeeUpdate::try_from(&system_log).unwrap().min_base_fee, 0xbeef_u64);
     }
 
     #[test]
@@ -87,102 +79,30 @@ mod tests {
         let log =
             Log { address: Address::ZERO, data: LogData::new_unchecked(vec![], Bytes::default()) };
         let system_log = SystemConfigLog::new(log, false);
-        let err = MinBaseFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, MinBaseFeeUpdateError::InvalidDataLen(0));
+        assert_eq!(
+            MinBaseFeeUpdate::try_from(&system_log).unwrap_err(),
+            MinBaseFeeUpdateError::InvalidDataLen(0)
+        );
     }
 
-    #[test]
-    fn test_min_base_fee_update_pointer_decoding_error() {
+    #[rstest]
+    #[case(hex!("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef"), MinBaseFeeUpdateError::PointerDecodingError)]
+    #[case(hex!("000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef"), MinBaseFeeUpdateError::InvalidDataPointer(33))]
+    #[case(hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef"), MinBaseFeeUpdateError::LengthDecodingError)]
+    #[case(hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef"), MinBaseFeeUpdateError::InvalidDataLength(33))]
+    #[case(hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"), MinBaseFeeUpdateError::MinBaseFeeDecodingError)]
+    fn test_min_base_fee_update_errors(
+        #[case] data: [u8; 96],
+        #[case] expected: MinBaseFeeUpdateError,
+    ) {
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, B256::ZERO],
+                data.into(),
+            ),
         };
-
         let system_log = SystemConfigLog::new(log, false);
-        let err = MinBaseFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, MinBaseFeeUpdateError::PointerDecodingError);
-    }
-
-    #[test]
-    fn test_min_base_fee_update_invalid_pointer_length() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = MinBaseFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, MinBaseFeeUpdateError::InvalidDataPointer(33));
-    }
-
-    #[test]
-    fn test_min_base_fee_update_length_decoding_error() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = MinBaseFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, MinBaseFeeUpdateError::LengthDecodingError);
-    }
-
-    #[test]
-    fn test_min_base_fee_update_invalid_data_length() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = MinBaseFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, MinBaseFeeUpdateError::InvalidDataLength(33));
-    }
-
-    #[test]
-    fn test_min_base_fee_update_min_base_fee_decoding_error() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = MinBaseFeeUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, MinBaseFeeUpdateError::MinBaseFeeDecodingError);
+        assert_eq!(MinBaseFeeUpdate::try_from(&system_log).unwrap_err(), expected);
     }
 }

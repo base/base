@@ -228,7 +228,7 @@ base-execution-trie = { path = "crates/execution/trie" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
 base-engine-tree = { path = "crates/execution/engine-tree" }
 base-flashblocks = { path = "crates/execution/flashblocks" }
-base-execution-forks = { path = "crates/execution/hardforks" }
+base-execution-upgrades = { path = "crates/execution/upgrades" }
 base-execution-storage = { path = "crates/execution/storage" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }

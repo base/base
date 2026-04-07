@@ -56,29 +56,23 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{B256, Bytes, Log, LogData, address, hex};
+    use rstest::rstest;
 
     use super::*;
-    use crate::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC};
+    use crate::SystemConfigUpdate;
 
     #[test]
     fn test_batcher_update_try_from() {
-        let update_type = B256::ZERO;
-
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    update_type,
-                ],
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, B256::ZERO],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
             )
         };
-
         let system_log = SystemConfigLog::new(log, false);
         let update = BatcherUpdate::try_from(&system_log).unwrap();
-        assert_eq!(update.batcher_address, address!("000000000000000000000000000000000000bEEF"),);
+        assert_eq!(update.batcher_address, address!("000000000000000000000000000000000000bEEF"));
     }
 
     #[test]
@@ -86,102 +80,27 @@ mod tests {
         let log =
             Log { address: Address::ZERO, data: LogData::new_unchecked(vec![], Bytes::default()) };
         let system_log = SystemConfigLog::new(log, false);
-        let err = BatcherUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, BatcherUpdateError::InvalidDataLen(0));
+        assert_eq!(
+            BatcherUpdate::try_from(&system_log).unwrap_err(),
+            BatcherUpdateError::InvalidDataLen(0)
+        );
     }
 
-    #[test]
-    fn test_batcher_update_pointer_decoding_error() {
+    #[rstest]
+    #[case(hex!("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef"), BatcherUpdateError::PointerDecodingError)]
+    #[case(hex!("000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef"), BatcherUpdateError::InvalidDataPointer(33))]
+    #[case(hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef"), BatcherUpdateError::LengthDecodingError)]
+    #[case(hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef"), BatcherUpdateError::InvalidDataLength(33))]
+    #[case(hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"), BatcherUpdateError::BatcherAddressDecodingError)]
+    fn test_batcher_update_errors(#[case] data: [u8; 96], #[case] expected: BatcherUpdateError) {
         let log = Log {
             address: Address::ZERO,
             data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
+                vec![SystemConfigUpdate::TOPIC, SystemConfigUpdate::EVENT_VERSION_0, B256::ZERO],
+                data.into(),
+            ),
         };
-
         let system_log = SystemConfigLog::new(log, false);
-        let err = BatcherUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, BatcherUpdateError::PointerDecodingError);
-    }
-
-    #[test]
-    fn test_batcher_update_invalid_pointer_length() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("000000000000000000000000000000000000000000000000000000000000002100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = BatcherUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, BatcherUpdateError::InvalidDataPointer(33));
-    }
-
-    #[test]
-    fn test_batcher_update_length_decoding_error() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("0000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = BatcherUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, BatcherUpdateError::LengthDecodingError);
-    }
-
-    #[test]
-    fn test_batcher_update_invalid_data_length() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000210000000000000000000000000000000000000000000000000000babe0000beef").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = BatcherUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, BatcherUpdateError::InvalidDataLength(33));
-    }
-
-    #[test]
-    fn test_batcher_update_batcher_decoding_error() {
-        let log = Log {
-            address: Address::ZERO,
-            data: LogData::new_unchecked(
-                vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
-                    B256::ZERO,
-                ],
-                hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").into()
-            )
-        };
-
-        let system_log = SystemConfigLog::new(log, false);
-        let err = BatcherUpdate::try_from(&system_log).unwrap_err();
-        assert_eq!(err, BatcherUpdateError::BatcherAddressDecodingError);
+        assert_eq!(BatcherUpdate::try_from(&system_log).unwrap_err(), expected);
     }
 }

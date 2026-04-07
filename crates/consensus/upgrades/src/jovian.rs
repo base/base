@@ -150,81 +150,44 @@ impl Hardfork for Jovian {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
+    use alloy_primitives::{B256, b256};
+    use rstest::rstest;
 
     use super::*;
     use crate::test_utils::check_deployment_code;
 
-    #[test]
-    fn test_l1_block_source_hash() {
-        let expected = b256!("bb1a656f65401240fac3db12e7a79ebb954b11e62f7626eb11691539b798d3bf");
-        assert_eq!(Jovian::deploy_l1_block_source(), expected);
+    #[rstest]
+    #[case(Jovian::deploy_l1_block_source(), b256!("bb1a656f65401240fac3db12e7a79ebb954b11e62f7626eb11691539b798d3bf"))]
+    #[case(Jovian::l1_block_proxy_update(), b256!("f3275f829340521028f9ad5bce4ecb1c64a45d448794effa2a77674627338e76"))]
+    #[case(Jovian::gas_price_oracle(), b256!("239b7021a6c2cf3a918481242bbb5a9499057f24501539467536c691bb133962"))]
+    #[case(Jovian::gas_price_oracle_proxy_update(), b256!("a70c60aa53b8c1c0d52b39b1e901e7d7c09f7819595cb24048a6bb1983b401ff"))]
+    #[case(Jovian::gas_price_oracle_enable_jovian(), b256!("e836db6a959371756f8941be3e962d000f7e12a32e49e2c9ca42ba177a92716c"))]
+    fn test_jovian_source_hashes(#[case] actual: B256, #[case] expected: B256) {
+        assert_eq!(actual, expected);
     }
 
-    #[test]
-    fn test_l1_block_proxy_update_source_hash() {
-        let expected = b256!("f3275f829340521028f9ad5bce4ecb1c64a45d448794effa2a77674627338e76");
-        assert_eq!(Jovian::l1_block_proxy_update(), expected);
+    #[rstest]
+    #[case(Jovian::gas_price_oracle_address(), hex!("0x3659cfe60000000000000000000000004f1db3c6abd250ba86e0928471a8f7db3afd88f1"))]
+    #[case(Jovian::l1_block_address(), hex!("0x3659cfe60000000000000000000000003ba4007f5c922fbb33c454b41ea7a1f11e83df2c"))]
+    fn test_upgrade_calldata(#[case] addr: Address, #[case] expected: [u8; 36]) {
+        assert_eq!(**UpgradeCalldata::build(addr), expected);
     }
 
-    #[test]
-    fn test_gas_price_oracle_source_hash() {
-        let expected = b256!("239b7021a6c2cf3a918481242bbb5a9499057f24501539467536c691bb133962");
-        assert_eq!(Jovian::gas_price_oracle(), expected);
-    }
-
-    #[test]
-    fn test_upgrade_to_calldata_for_gas_price_oracle() {
-        assert_eq!(
-            **UpgradeCalldata::build(Jovian::gas_price_oracle_address()),
-            hex!("0x3659cfe60000000000000000000000004f1db3c6abd250ba86e0928471a8f7db3afd88f1")
-        );
-    }
-
-    #[test]
-    fn test_upgrade_to_calldata_for_l1_block_proxy_update() {
-        assert_eq!(
-            **UpgradeCalldata::build(Jovian::l1_block_address()),
-            hex!("0x3659cfe60000000000000000000000003ba4007f5c922fbb33c454b41ea7a1f11e83df2c")
-        );
-    }
-
-    #[test]
-    fn test_gas_price_oracle_proxy_update_source_hash() {
-        let expected = b256!("a70c60aa53b8c1c0d52b39b1e901e7d7c09f7819595cb24048a6bb1983b401ff");
-        assert_eq!(Jovian::gas_price_oracle_proxy_update(), expected);
-    }
-
-    #[test]
-    fn test_gas_price_oracle_enable_jovian_source_hash() {
-        let expected = b256!("e836db6a959371756f8941be3e962d000f7e12a32e49e2c9ca42ba177a92716c");
-        assert_eq!(Jovian::gas_price_oracle_enable_jovian(), expected);
-    }
-
-    #[test]
-    fn test_verify_jovian_l1_block_deployment_code_hash() {
+    #[rstest]
+    #[case(0, Jovian::l1_block_address(), hex!("5f885ca815d2cf27a203123e50b8ae204fdca910b6995d90b2d7700cbb9240d1").into())]
+    #[case(2, Jovian::gas_price_oracle_address(), hex!("e9fc7c96c4db0d6078e3d359d7e8c982c350a513cb2c31121adf5e1e8a446614").into())]
+    fn test_jovian_deployment_code_hashes(
+        #[case] tx_idx: usize,
+        #[case] addr: Address,
+        #[case] code_hash: B256,
+    ) {
         let txs = Jovian::deposits().collect::<Vec<_>>();
-        check_deployment_code(
-            txs[0].clone(),
-            Jovian::l1_block_address(),
-            hex!("5f885ca815d2cf27a203123e50b8ae204fdca910b6995d90b2d7700cbb9240d1").into(),
-        );
+        check_deployment_code(txs[tx_idx].clone(), addr, code_hash);
     }
 
     #[test]
     fn test_verify_set_jovian() {
         let hash = &keccak256("setJovian()")[..4];
         assert_eq!(hash, hex!("0xb3d72079"))
-    }
-
-    #[test]
-    fn test_verify_jovian_gas_price_oracle_deployment_code_hash() {
-        let txs = Jovian::deposits().collect::<Vec<_>>();
-
-        check_deployment_code(
-            txs[2].clone(),
-            Jovian::gas_price_oracle_address(),
-            hex!("e9fc7c96c4db0d6078e3d359d7e8c982c350a513cb2c31121adf5e1e8a446614").into(),
-        );
     }
 }

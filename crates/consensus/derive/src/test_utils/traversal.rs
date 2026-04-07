@@ -4,7 +4,7 @@ use alloc::{sync::Arc, vec};
 
 use alloy_consensus::Receipt;
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, address, hex};
-use base_consensus_genesis::{CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC, RollupConfig};
+use base_consensus_genesis::{RollupConfig, SystemConfigUpdate};
 use base_protocol::BlockInfo;
 
 use crate::{PollingTraversal, test_utils::TestChainProvider};
@@ -23,8 +23,8 @@ impl TraversalTestHelper {
             address: Self::L1_SYS_CONFIG_ADDR,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     B256::ZERO, // Update type
                 ],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
@@ -38,7 +38,7 @@ impl TraversalTestHelper {
             Receipt { status: alloy_consensus::Eip658Value::Eip658(true), ..Receipt::default() };
         let bad = Log::new(
             Address::from([2; 20]),
-            vec![CONFIG_UPDATE_TOPIC, B256::default()],
+            vec![SystemConfigUpdate::TOPIC, B256::default()],
             Bytes::default(),
         )
         .unwrap();

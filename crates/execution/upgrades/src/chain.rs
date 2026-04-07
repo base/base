@@ -7,7 +7,7 @@ use spin::Lazy;
 
 /// Extension trait to convert alloy's [`BaseChainUpgrades`] into reth's [`ChainHardforks`].
 pub trait BaseChainUpgradesExt {
-    /// Expands Base hardforks into a full [`ChainHardforks`] including implied Ethereum entries.
+    /// Expands Base upgrades into a full [`ChainHardforks`] including implied Ethereum entries.
     ///
     /// Pre-Bedrock Ethereum hardforks are set to block 0. Paired Ethereum hardforks
     /// use their Base counterpart's timestamp:
@@ -77,24 +77,24 @@ impl BaseChainUpgradesExt for BaseChainUpgrades {
     }
 }
 
-/// Dev hardforks.
-pub static DEV_HARDFORKS: Lazy<ChainHardforks> =
+/// Dev chain upgrades.
+pub static DEV_UPGRADES: Lazy<ChainHardforks> =
     Lazy::new(|| BaseChainUpgrades::devnet().to_chain_hardforks());
 
-/// Base Sepolia list of hardforks.
-pub static BASE_SEPOLIA_HARDFORKS: Lazy<ChainHardforks> =
+/// Base Sepolia chain upgrades.
+pub static BASE_SEPOLIA_UPGRADES: Lazy<ChainHardforks> =
     Lazy::new(|| BaseChainUpgrades::sepolia().to_chain_hardforks());
 
-/// Base mainnet list of hardforks.
-pub static BASE_MAINNET_HARDFORKS: Lazy<ChainHardforks> =
+/// Base mainnet chain upgrades.
+pub static BASE_MAINNET_UPGRADES: Lazy<ChainHardforks> =
     Lazy::new(|| BaseChainUpgrades::mainnet().to_chain_hardforks());
 
-/// Base devnet-0-sepolia-dev-0 list of hardforks.
-pub static BASE_DEVNET_0_SEPOLIA_DEV_0_HARDFORKS: Lazy<ChainHardforks> =
+/// Base devnet-0-sepolia-dev-0 chain upgrades.
+pub static BASE_DEVNET_0_SEPOLIA_DEV_0_UPGRADES: Lazy<ChainHardforks> =
     Lazy::new(|| BaseChainUpgrades::base_devnet_0_sepolia_dev_0().to_chain_hardforks());
 
-/// Base Zeronet list of hardforks.
-pub static BASE_ZERONET_HARDFORKS: Lazy<ChainHardforks> =
+/// Base Zeronet chain upgrades.
+pub static BASE_ZERONET_UPGRADES: Lazy<ChainHardforks> =
     Lazy::new(|| BaseChainUpgrades::zeronet().to_chain_hardforks());
 
 #[cfg(test)]

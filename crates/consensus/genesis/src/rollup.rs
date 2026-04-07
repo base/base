@@ -825,6 +825,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "serde")]
     fn test_rollup_config_unknown_field() {
         let raw: &str = r#"
         {

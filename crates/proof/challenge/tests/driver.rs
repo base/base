@@ -14,8 +14,8 @@ use base_challenger::{
     test_utils::{
         MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState,
         MockL1HeadProvider, MockL2Provider, MockTeeProofProvider, MockTxManager,
-        MockZkProofProvider, addr, build_test_header_and_account, empty_factory, factory_game,
-        mock_state, mock_state_with_tee, receipt_with_status,
+        MockZkProofProvider, TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account,
+        empty_factory, factory_game, mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
@@ -1231,6 +1231,7 @@ async fn test_bond_manager_full_lifecycle() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     mgr.set_weth_delay(Duration::from_secs(0)); // instant delay for testing
@@ -1290,6 +1291,7 @@ async fn test_bond_manager_skips_already_resolved_game() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     mgr.set_weth_delay(Duration::from_secs(0));
@@ -1341,6 +1343,7 @@ async fn test_bond_manager_skips_already_unlocked_game() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     mgr.set_weth_delay(Duration::from_secs(0));
@@ -1389,6 +1392,7 @@ async fn test_bond_manager_skips_already_claimed_game() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     mgr.set_weth_delay(Duration::from_secs(0));
@@ -1439,6 +1443,7 @@ async fn test_bond_manager_tx_failure_retries() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     mgr.set_weth_delay(Duration::from_secs(0));
@@ -1472,6 +1477,7 @@ async fn test_bond_manager_ignores_non_claim_addresses() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     assert!(!mgr.track_game(game_addr, other_addr));
@@ -1499,6 +1505,7 @@ async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     mgr.set_weth_delay(Duration::from_secs(0));
@@ -1539,6 +1546,7 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     mgr.set_weth_delay(Duration::from_secs(0));
@@ -1597,6 +1605,7 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
         "http://localhost:8545".parse().unwrap(),
         empty_factory(),
         1000,
+        TEST_DISCOVERY_INTERVAL,
         TokioRuntime::new(),
     );
     bond_manager.set_weth_delay(Duration::from_secs(3600));

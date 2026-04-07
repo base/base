@@ -107,6 +107,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "serde")]
     fn test_addresses_deserialize() {
         let raw: &str = r#"
         {
@@ -157,6 +158,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "serde")]
     fn test_addresses_unknown_field_json() {
         let raw: &str = r#"
         {

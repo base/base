@@ -7,7 +7,7 @@ use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
 use base_alloy_chains::{BaseUpgrade, BaseUpgrades};
-use base_execution_forks::BASE_MAINNET_HARDFORKS;
+use base_execution_upgrades::BASE_MAINNET_UPGRADES;
 use base_protocol::Predeploys;
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
@@ -297,7 +297,7 @@ impl From<Genesis> for OpChainSpec {
         block_hardforks.append(&mut time_hardforks);
 
         // Order hardforks to match mainnet ordering
-        let mainnet_hardforks = BASE_MAINNET_HARDFORKS.clone();
+        let mainnet_hardforks = BASE_MAINNET_UPGRADES.clone();
         let mainnet_order = mainnet_hardforks.forks_iter();
 
         let mut ordered_hardforks = Vec::with_capacity(block_hardforks.len());

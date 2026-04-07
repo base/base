@@ -8,7 +8,7 @@ use alloy_primitives::B256;
 use alloy_primitives::{Address, B64, Log, U256};
 
 use crate::{
-    CONFIG_UPDATE_TOPIC, RollupConfig, SystemConfigLog, SystemConfigUpdateError,
+    RollupConfig, SystemConfigLog, SystemConfigUpdate, SystemConfigUpdateError,
     SystemConfigUpdateKind,
 };
 
@@ -141,7 +141,7 @@ impl SystemConfig {
                 let topics = log.topics();
                 log.address == l1_system_config_address
                     && !topics.is_empty()
-                    && topics[0] == CONFIG_UPDATE_TOPIC
+                    && topics[0] == SystemConfigUpdate::TOPIC
             })
             .map(|log| self.process_config_update_log(log, ecotone_active))
             .fold((Vec::new(), Vec::new()), |(mut updates, mut errors), result| {
@@ -229,7 +229,7 @@ mod tests {
     use alloy_primitives::{B256, LogData, address, b256, hex};
 
     use super::*;
-    use crate::{CONFIG_UPDATE_EVENT_VERSION_0, HardForkConfig};
+    use crate::{HardForkConfig, SystemConfigUpdate};
 
     const BATCHER_UPDATE_TYPE: B256 =
         b256!("0000000000000000000000000000000000000000000000000000000000000000");
@@ -419,8 +419,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     BATCHER_UPDATE_TYPE,
                 ],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
@@ -455,8 +455,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     BATCHER_UPDATE_TYPE,
                 ],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
@@ -480,8 +480,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     GAS_CONFIG_UPDATE_TYPE,
                 ],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef").into()
@@ -503,8 +503,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     GAS_CONFIG_UPDATE_TYPE,
                 ],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000babe000000000000000000000000000000000000000000000000000000000000beef").into()
@@ -526,8 +526,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     GAS_LIMIT_UPDATE_TYPE,
                 ],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()
@@ -547,8 +547,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     EIP1559_UPDATE_TYPE,
                 ],
                 hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
@@ -569,8 +569,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     OPERATOR_FEE_UPDATE_TYPE,
                 ],
                 hex!("0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000babe000000000000beef").into()
@@ -594,8 +594,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     BATCHER_UPDATE_TYPE,
                 ],
                 // ABI-encoded address with dirty upper bytes — will fail address decoding
@@ -608,8 +608,8 @@ mod tests {
             address: Address::ZERO,
             data: LogData::new_unchecked(
                 vec![
-                    CONFIG_UPDATE_TOPIC,
-                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    SystemConfigUpdate::TOPIC,
+                    SystemConfigUpdate::EVENT_VERSION_0,
                     GAS_LIMIT_UPDATE_TYPE,
                 ],
                 hex!("00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000beef").into()

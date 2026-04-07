@@ -85,6 +85,10 @@ enum RunState {
     Idle,
     Running {
         start: Instant,
+        /// When the actual test run began (after bootstrap/funding). Used for the
+        /// progress bar so that bootstrap/funding time does not count against the
+        /// configured duration.
+        run_start: Option<Instant>,
         run_count: u32,
         stop_flag: Arc<AtomicBool>,
         phase_rx: watch::Receiver<RunPhase>,
@@ -105,7 +109,9 @@ impl std::fmt::Debug for RunState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Idle => write!(f, "Idle"),
-            Self::Running { run_count, .. } => write!(f, "Running(run={run_count})"),
+            Self::Running { run_count, run_start, .. } => {
+                write!(f, "Running(run={run_count}, started={})", run_start.is_some())
+            }
             Self::Complete { run_count, .. } => write!(f, "Complete(run={run_count})"),
             Self::Error(e) => write!(f, "Error({e})"),
         }
@@ -366,6 +372,7 @@ impl LoadTestView {
 
         self.state = RunState::Running {
             start: Instant::now(),
+            run_start: None,
             run_count,
             stop_flag,
             phase_rx,
@@ -577,13 +584,18 @@ impl View for LoadTestView {
             ref mut done_rx,
             ref mut current_snap,
             ref mut current_phase,
+            ref mut run_start,
             run_count,
             start,
             ..
         } = self.state
         {
             if phase_rx.has_changed().unwrap_or(false) {
-                *current_phase = phase_rx.borrow_and_update().clone();
+                let new_phase = phase_rx.borrow_and_update().clone();
+                if matches!(new_phase, RunPhase::Running) && run_start.is_none() {
+                    *run_start = Some(Instant::now());
+                }
+                *current_phase = new_phase;
             }
             // Update snapshot (non-blocking — take latest value).
             if snap_rx.has_changed().unwrap_or(false) {
@@ -883,11 +895,17 @@ impl LoadTestView {
 
         match &self.state {
             RunState::Idle => render_idle_status(frame, inner, self.continuous),
-            RunState::Running { start, run_count, current_snap, current_phase, .. } => {
+            RunState::Running {
+                start, run_start, run_count, current_snap, current_phase, ..
+            } => {
                 let run_duration = self
                     .effective_config()
                     .and_then(|c: &TestConfig| c.parse_duration().ok())
                     .flatten();
+                // Use the actual test start time (after bootstrap/funding) for the
+                // progress bar so that funding time doesn't count against the duration.
+                // Fall back to task spawn time while still in bootstrap/funding phases.
+                let elapsed = run_start.map_or_else(|| start.elapsed(), |t| t.elapsed());
                 render_running_status(
                     frame,
                     inner,
@@ -896,7 +914,7 @@ impl LoadTestView {
                     RunProgress {
                         run_count: *run_count,
                         continuous: self.continuous,
-                        elapsed: start.elapsed(),
+                        elapsed,
                         duration: run_duration,
                     },
                 );

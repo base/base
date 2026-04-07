@@ -150,6 +150,7 @@ impl ChallengerService {
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
                 config.lookback_games,
+                config.bond_discovery_interval,
                 TokioRuntime::new(),
             );
             info!("starting bond recovery scan");

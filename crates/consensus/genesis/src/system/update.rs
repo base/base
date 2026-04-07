@@ -1,5 +1,7 @@
 //! Contains the [`SystemConfigUpdate`].
 
+use alloy_primitives::{B256, b256};
+
 use crate::{
     BatcherUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate, OperatorFeeUpdate, SystemConfig,
     SystemConfigUpdateKind, UnsafeBlockSignerUpdate,
@@ -30,6 +32,13 @@ pub enum SystemConfigUpdate {
 }
 
 impl SystemConfigUpdate {
+    /// `keccak256("ConfigUpdate(uint256,uint8,bytes)")`
+    pub const TOPIC: B256 =
+        b256!("1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be");
+
+    /// The initial version of the system config event log.
+    pub const EVENT_VERSION_0: B256 = B256::ZERO;
+
     /// Applies the update to the [`SystemConfig`].
     pub const fn apply(&self, config: &mut SystemConfig) {
         match self {

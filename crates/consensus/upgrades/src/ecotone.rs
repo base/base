@@ -187,76 +187,32 @@ impl Hardfork for Ecotone {
 mod tests {
     use alloc::vec;
 
+    use rstest::rstest;
+
     use super::*;
     use crate::test_utils::check_deployment_code;
 
-    #[test]
-    fn test_deploy_l1_block_source() {
-        assert_eq!(
-            Ecotone::deploy_l1_block_source(),
-            hex!("877a6077205782ea15a6dc8699fa5ebcec5e0f4389f09cb8eda09488231346f8")
-        );
+    #[rstest]
+    #[case(Ecotone::deploy_l1_block_source(), hex!("877a6077205782ea15a6dc8699fa5ebcec5e0f4389f09cb8eda09488231346f8"))]
+    #[case(Ecotone::deploy_gas_price_oracle_source(), hex!("a312b4510adf943510f05fcc8f15f86995a5066bd83ce11384688ae20e6ecf42"))]
+    #[case(Ecotone::update_l1_block_source(), hex!("18acb38c5ff1c238a7460ebc1b421fa49ec4874bdf1e0a530d234104e5e67dbc"))]
+    #[case(Ecotone::update_gas_price_oracle_source(), hex!("ee4f9385eceef498af0be7ec5862229f426dec41c8d42397c7257a5117d9230a"))]
+    #[case(Ecotone::enable_ecotone_source(), hex!("0c1cb38e99dbc9cbfab3bb80863380b0905290b37eb3d6ab18dc01c1f3e75f93"))]
+    #[case(Ecotone::beacon_roots_source(), hex!("69b763c48478b9dc2f65ada09b3d92133ec592ea715ec65ad6e7f3dc519dc00c"))]
+    fn test_ecotone_source_hashes(#[case] actual: B256, #[case] expected: [u8; 32]) {
+        assert_eq!(actual, expected);
     }
-    #[test]
-    fn test_verify_ecotone_l1_deployment_code_hash() {
+
+    #[rstest]
+    #[case(0, Ecotone::NEW_L1_BLOCK, Ecotone::L1_BLOCK_DEPLOYER_CODE_HASH)]
+    #[case(1, Ecotone::GAS_PRICE_ORACLE, Ecotone::GAS_PRICE_ORACLE_CODE_HASH)]
+    fn test_ecotone_deployment_code_hashes(
+        #[case] tx_idx: usize,
+        #[case] addr: Address,
+        #[case] code_hash: B256,
+    ) {
         let txs = Ecotone::deposits().collect::<Vec<_>>();
-
-        check_deployment_code(
-            txs[0].clone(),
-            Ecotone::NEW_L1_BLOCK,
-            Ecotone::L1_BLOCK_DEPLOYER_CODE_HASH,
-        );
-    }
-
-    #[test]
-    fn test_verify_ecotone_gas_price_oracle_deployment_code_hash() {
-        let txs = Ecotone::deposits().collect::<Vec<_>>();
-
-        check_deployment_code(
-            txs[1].clone(),
-            Ecotone::GAS_PRICE_ORACLE,
-            Ecotone::GAS_PRICE_ORACLE_CODE_HASH,
-        );
-    }
-
-    #[test]
-    fn test_deploy_gas_price_oracle_source() {
-        assert_eq!(
-            Ecotone::deploy_gas_price_oracle_source(),
-            hex!("a312b4510adf943510f05fcc8f15f86995a5066bd83ce11384688ae20e6ecf42")
-        );
-    }
-
-    #[test]
-    fn test_update_l1_block_source() {
-        assert_eq!(
-            Ecotone::update_l1_block_source(),
-            hex!("18acb38c5ff1c238a7460ebc1b421fa49ec4874bdf1e0a530d234104e5e67dbc")
-        );
-    }
-
-    #[test]
-    fn test_update_gas_price_oracle_source() {
-        assert_eq!(
-            Ecotone::update_gas_price_oracle_source(),
-            hex!("ee4f9385eceef498af0be7ec5862229f426dec41c8d42397c7257a5117d9230a")
-        );
-    }
-
-    #[test]
-    fn test_enable_ecotone_source() {
-        assert_eq!(
-            Ecotone::enable_ecotone_source(),
-            hex!("0c1cb38e99dbc9cbfab3bb80863380b0905290b37eb3d6ab18dc01c1f3e75f93")
-        );
-    }
-
-    #[test]
-    fn test_beacon_block_roots_source() {
-        assert_eq!(
-            Ecotone::beacon_roots_source(),
-            hex!("69b763c48478b9dc2f65ada09b3d92133ec592ea715ec65ad6e7f3dc519dc00c")
-        );
+        check_deployment_code(txs[tx_idx].clone(), addr, code_hash);
     }
 
     #[test]

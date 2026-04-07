@@ -229,50 +229,21 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::b256;
+    use rstest::rstest;
 
     use super::*;
     use crate::test_utils::check_deployment_code;
 
-    #[test]
-    fn test_l1_block_source_hash() {
-        let expected = b256!("3b2d0821ca2411ad5cd3595804d1213d15737188ae4cbd58aa19c821a6c211bf");
-        assert_eq!(Isthmus::deploy_l1_block_source(), expected);
-    }
-
-    #[test]
-    fn test_gas_price_oracle_source_hash() {
-        let expected = b256!("fc70b48424763fa3fab9844253b4f8d508f91eb1f7cb11a247c9baec0afb8035");
-        assert_eq!(Isthmus::deploy_gas_price_oracle_source(), expected);
-    }
-
-    #[test]
-    fn test_operator_fee_vault_source_hash() {
-        let expected = b256!("107a570d3db75e6110817eb024f09f3172657e920634111ce9875d08a16daa96");
-        assert_eq!(Isthmus::deploy_operator_fee_vault_source(), expected);
-    }
-
-    #[test]
-    fn test_l1_block_update_source_hash() {
-        let expected = b256!("ebe8b5cb10ca47e0d8bda8f5355f2d66711a54ddeb0ef1d30e29418c9bf17a0e");
-        assert_eq!(Isthmus::update_l1_block_source(), expected);
-    }
-
-    #[test]
-    fn test_gas_price_oracle_update_source_hash() {
-        let expected = b256!("ecf2d9161d26c54eda6b7bfdd9142719b1e1199a6e5641468d1bf705bc531ab0");
-        assert_eq!(Isthmus::update_gas_price_oracle_source(), expected);
-    }
-
-    #[test]
-    fn test_operator_fee_vault_update_source_hash() {
-        let expected = b256!("ad74e1adb877ccbe176b8fa1cc559388a16e090ddbe8b512f5b37d07d887a927");
-        assert_eq!(Isthmus::update_operator_fee_vault_source(), expected);
-    }
-
-    #[test]
-    fn test_enable_isthmus_source() {
-        let expected = b256!("3ddf4b1302548dd92939826e970f260ba36167f4c25f18390a5e8b194b295319");
-        assert_eq!(Isthmus::enable_isthmus_source(), expected);
+    #[rstest]
+    #[case(Isthmus::deploy_l1_block_source(), b256!("3b2d0821ca2411ad5cd3595804d1213d15737188ae4cbd58aa19c821a6c211bf"))]
+    #[case(Isthmus::deploy_gas_price_oracle_source(), b256!("fc70b48424763fa3fab9844253b4f8d508f91eb1f7cb11a247c9baec0afb8035"))]
+    #[case(Isthmus::deploy_operator_fee_vault_source(), b256!("107a570d3db75e6110817eb024f09f3172657e920634111ce9875d08a16daa96"))]
+    #[case(Isthmus::update_l1_block_source(), b256!("ebe8b5cb10ca47e0d8bda8f5355f2d66711a54ddeb0ef1d30e29418c9bf17a0e"))]
+    #[case(Isthmus::update_gas_price_oracle_source(), b256!("ecf2d9161d26c54eda6b7bfdd9142719b1e1199a6e5641468d1bf705bc531ab0"))]
+    #[case(Isthmus::update_operator_fee_vault_source(), b256!("ad74e1adb877ccbe176b8fa1cc559388a16e090ddbe8b512f5b37d07d887a927"))]
+    #[case(Isthmus::enable_isthmus_source(), b256!("3ddf4b1302548dd92939826e970f260ba36167f4c25f18390a5e8b194b295319"))]
+    fn test_isthmus_source_hashes(#[case] actual: B256, #[case] expected: B256) {
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -294,33 +265,16 @@ mod tests {
             assert_eq!(isthmus_upgrade_tx[i], *expected);
         }
     }
-    #[test]
-    fn test_verify_isthmus_l1_block_deployment_code_hash() {
+    #[rstest]
+    #[case(0, Isthmus::NEW_L1_BLOCK, Isthmus::L1_BLOCK_DEPLOYER_CODE_HASH)]
+    #[case(1, Isthmus::GAS_PRICE_ORACLE, Isthmus::GAS_PRICE_ORACLE_CODE_HASH)]
+    #[case(2, Isthmus::OPERATOR_FEE_VAULT, Isthmus::OPERATOR_FEE_VAULT_CODE_HASH)]
+    fn test_isthmus_deployment_code_hashes(
+        #[case] tx_idx: usize,
+        #[case] addr: Address,
+        #[case] code_hash: B256,
+    ) {
         let txs = Isthmus::deposits().collect::<Vec<_>>();
-        check_deployment_code(
-            txs[0].clone(),
-            Isthmus::NEW_L1_BLOCK,
-            Isthmus::L1_BLOCK_DEPLOYER_CODE_HASH,
-        );
-    }
-    #[test]
-    fn test_verify_isthmus_gas_price_oracle_deployment_code_hash() {
-        let txs = Isthmus::deposits().collect::<Vec<_>>();
-
-        check_deployment_code(
-            txs[1].clone(),
-            Isthmus::GAS_PRICE_ORACLE,
-            Isthmus::GAS_PRICE_ORACLE_CODE_HASH,
-        );
-    }
-    #[test]
-    fn test_verify_isthmus_operator_fee_vault_deployment_code_hash() {
-        let txs = Isthmus::deposits().collect::<Vec<_>>();
-
-        check_deployment_code(
-            txs[2].clone(),
-            Isthmus::OPERATOR_FEE_VAULT,
-            Isthmus::OPERATOR_FEE_VAULT_CODE_HASH,
-        );
+        check_deployment_code(txs[tx_idx].clone(), addr, code_hash);
     }
 }
