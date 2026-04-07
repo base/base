@@ -223,18 +223,45 @@ impl StrategyOption {
             (self, tx),
             (Self::Transfer, TxTypeConfig::Transfer)
                 | (Self::Calldata, TxTypeConfig::Calldata { .. })
-                | (Self::Ecrecover, TxTypeConfig::Precompile { target: PrecompileTarget::Ecrecover, .. })
+                | (
+                    Self::Ecrecover,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Ecrecover, .. }
+                )
                 | (Self::Sha256, TxTypeConfig::Precompile { target: PrecompileTarget::Sha256, .. })
-                | (Self::Ripemd160, TxTypeConfig::Precompile { target: PrecompileTarget::Ripemd160, .. })
-                | (Self::Identity, TxTypeConfig::Precompile { target: PrecompileTarget::Identity, .. })
+                | (
+                    Self::Ripemd160,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Ripemd160, .. }
+                )
+                | (
+                    Self::Identity,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Identity, .. }
+                )
                 | (Self::Modexp, TxTypeConfig::Precompile { target: PrecompileTarget::Modexp, .. })
-                | (Self::Bn254Add, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Add, .. })
-                | (Self::Bn254Mul, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Mul, .. })
-                | (Self::Bn254Pairing, TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Pairing, .. })
-                | (Self::Blake2f, TxTypeConfig::Precompile { target: PrecompileTarget::Blake2f { .. }, .. })
-                | (Self::Kzg, TxTypeConfig::Precompile { target: PrecompileTarget::KzgPointEvaluation, .. })
+                | (
+                    Self::Bn254Add,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Add, .. }
+                )
+                | (
+                    Self::Bn254Mul,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Mul, .. }
+                )
+                | (
+                    Self::Bn254Pairing,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Pairing, .. }
+                )
+                | (
+                    Self::Blake2f,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Blake2f { .. }, .. }
+                )
+                | (
+                    Self::Kzg,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::KzgPointEvaluation, .. }
+                )
                 | (Self::OsakaClz, TxTypeConfig::Osaka { target: OsakaTarget::Clz })
-                | (Self::OsakaP256verify, TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka })
+                | (
+                    Self::OsakaP256verify,
+                    TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka }
+                )
                 | (Self::OsakaModexp, TxTypeConfig::Osaka { target: OsakaTarget::ModexpOsaka })
         )
     }
