@@ -208,28 +208,32 @@ impl ChecksPanel {
 
 // ── Color zones ───────────────────────────────────────────────────────────────
 
+const SECS_PER_MINUTE: u64 = 60;
+const SECS_PER_HOUR: u64 = 60 * SECS_PER_MINUTE;
+const SECS_PER_DAY: u64 = 24 * SECS_PER_HOUR;
+
 const fn zone_color(remaining_secs: i64) -> Color {
     match remaining_secs {
-        s if s > 30 * 86400 => Color::DarkGray,
-        s if s > 14 * 86400 => COLOR_BASE_BLUE,
-        s if s > 7 * 86400 => Color::Cyan,
-        s if s > 3 * 86400 => Color::Green,
-        s if s > 86400 => Color::Yellow,
-        s if s > 3600 => Color::Rgb(255, 140, 0),
-        s if s > 600 => Color::Red,
+        s if s > (30 * SECS_PER_DAY) as i64 => Color::DarkGray,
+        s if s > (14 * SECS_PER_DAY) as i64 => COLOR_BASE_BLUE,
+        s if s > (7 * SECS_PER_DAY) as i64 => Color::Cyan,
+        s if s > (3 * SECS_PER_DAY) as i64 => Color::Green,
+        s if s > SECS_PER_DAY as i64 => Color::Yellow,
+        s if s > SECS_PER_HOUR as i64 => Color::Rgb(255, 140, 0),
+        s if s > (10 * SECS_PER_MINUTE) as i64 => Color::Red,
         _ => Color::Magenta,
     }
 }
 
 const fn zone_message(remaining_secs: i64) -> &'static str {
     match remaining_secs {
-        s if s > 30 * 86400 => "standing by...",
-        s if s > 14 * 86400 => "less than 30 days to go",
-        s if s > 7 * 86400 => "under two weeks",
-        s if s > 3 * 86400 => "less than a week",
-        s if s > 86400 => "under 3 days",
-        s if s > 3600 => "final 24 hours — all hands on deck",
-        s if s > 600 => "under an hour — stand by your terminals",
+        s if s > (30 * SECS_PER_DAY) as i64 => "standing by...",
+        s if s > (14 * SECS_PER_DAY) as i64 => "less than 30 days to go",
+        s if s > (7 * SECS_PER_DAY) as i64 => "under two weeks",
+        s if s > (3 * SECS_PER_DAY) as i64 => "less than a week",
+        s if s > SECS_PER_DAY as i64 => "under 3 days",
+        s if s > SECS_PER_HOUR as i64 => "final 24 hours — all hands on deck",
+        s if s > (10 * SECS_PER_MINUTE) as i64 => "under an hour — stand by your terminals",
         _ => "under 10 minutes — THIS IS IT",
     }
 }
@@ -256,9 +260,9 @@ fn fmt_timestamp(ts: u64) -> String {
 }
 
 fn fmt_elapsed(elapsed_secs: u64) -> String {
-    let days = elapsed_secs / 86400;
-    let hours = (elapsed_secs % 86400) / 3600;
-    let minutes = (elapsed_secs % 3600) / 60;
+    let days = elapsed_secs / SECS_PER_DAY;
+    let hours = (elapsed_secs % SECS_PER_DAY) / SECS_PER_HOUR;
+    let minutes = (elapsed_secs % SECS_PER_HOUR) / SECS_PER_MINUTE;
     if days > 0 {
         format!("{days}d {hours}h {minutes}m ago")
     } else if hours > 0 {
@@ -476,10 +480,14 @@ fn render_countdown(
     let msg = zone_message(remaining);
 
     let secs = remaining.max(0) as u64;
-    let (days, hours, minutes, seconds) =
-        (secs / 86400, (secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
+    let (days, hours, minutes, seconds) = (
+        secs / SECS_PER_DAY,
+        (secs % SECS_PER_DAY) / SECS_PER_HOUR,
+        (secs % SECS_PER_HOUR) / SECS_PER_MINUTE,
+        secs % SECS_PER_MINUTE,
+    );
 
-    let start_ts = ts.saturating_sub(90 * 86400);
+    let start_ts = ts.saturating_sub(90 * SECS_PER_DAY);
     let total = ts.saturating_sub(start_ts) as f64;
     let elapsed = now.saturating_sub(start_ts) as f64;
     let pct = if total > 0.0 { (elapsed / total).clamp(0.0, 1.0) } else { 1.0 };
