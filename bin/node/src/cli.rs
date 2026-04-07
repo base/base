@@ -93,6 +93,7 @@ pub struct Args {
     #[arg(
         long = "builder-rpc-urls",
         value_name = "BUILDER_RPC_URLS",
+        value_delimiter = ',',
         requires = "enable_tx_forwarding"
     )]
     pub builder_rpc_urls: Vec<Url>,
