@@ -21,6 +21,7 @@ Load testing and benchmarking framework for Base infrastructure.
 just load-test devnet
 
 # Run load test against sepolia-alpha (requires funded key)
+# NOTE: Sepolia-alpha RPC and Flashblocks websocket need to be specified in examples/sepolia-alpha.yaml
 FUNDER_KEY=0x... just load-test sepolia-alpha
 
 # Run load test against sepolia (requires funded key)

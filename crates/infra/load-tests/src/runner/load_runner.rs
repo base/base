@@ -77,11 +77,11 @@ pub struct LoadRunner {
 
 impl LoadRunner {
     /// Creates a new load runner with the given configuration.
-    #[instrument(skip_all, fields(rpc_url = %config.rpc_url, chain_id = config.chain_id))]
+    #[instrument(skip_all, fields(rpc_url = %config.rpc_http_url, chain_id = config.chain_id))]
     pub fn new(config: LoadConfig) -> Result<Self> {
         config.validate()?;
 
-        let client = RpcClient::new(config.rpc_url.clone());
+        let client = RpcClient::new(config.rpc_http_url.clone());
 
         let accounts = if let Some(mnemonic) = &config.mnemonic {
             info!(
@@ -100,7 +100,7 @@ impl LoadRunner {
             AccountPool::with_offset(config.seed, config.account_count, config.sender_offset)?
         };
 
-        let providers = Self::build_providers(&config.rpc_url, &accounts);
+        let providers = Self::build_providers(&config.rpc_http_url, &accounts);
         let sender_addresses = accounts.accounts().iter().map(|a| a.address.to_string()).collect();
 
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
@@ -253,7 +253,7 @@ impl LoadRunner {
 
         let funder_address = funding_key.address();
         let wallet = EthereumWallet::from(funding_key);
-        let funder_provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
+        let funder_provider = create_wallet_provider(self.config.rpc_http_url.clone(), wallet);
         let mut nonce = funder_provider
             .get_transaction_count(funder_address)
             .pending()
@@ -369,7 +369,7 @@ impl LoadRunner {
             let account_nonce = self.client.get_nonce(account.address).await?;
             account.nonce = account_nonce;
 
-            let provider = NonceProvider::new_http(self.config.rpc_url.clone());
+            let provider = NonceProvider::new_http(self.config.rpc_http_url.clone());
             let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
             self.nonce_managers.insert(account.address, nonce_manager);
 
@@ -393,7 +393,7 @@ impl LoadRunner {
 
         for account in self.accounts.accounts() {
             if !self.nonce_managers.contains_key(&account.address) {
-                let provider = NonceProvider::new_http(self.config.rpc_url.clone());
+                let provider = NonceProvider::new_http(self.config.rpc_http_url.clone());
                 let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
                 self.nonce_managers.insert(account.address, nonce_manager);
             }
@@ -418,17 +418,17 @@ impl LoadRunner {
         let flashblock_times: FlashblockTimes = Arc::new(RwLock::new(HashMap::new()));
         let block_first_seen: BlockFirstSeen = Arc::new(RwLock::new(BTreeMap::new()));
 
-        info!(url = %self.config.flashblocks_url, "starting flashblock tracker");
+        info!(url = %self.config.flashblocks_ws_url, "starting flashblock tracker");
         let flashblock_tracker_task = FlashblockTracker::new(
-            self.config.flashblocks_url.clone(),
+            self.config.flashblocks_ws_url.clone(),
             Arc::clone(&flashblock_times),
             self.cancel_token.clone(),
         )
         .start();
 
-        info!(url = %self.config.ws_url, "starting block watcher");
+        info!(url = %self.config.rpc_ws_url, "starting block watcher");
         let block_watcher_task = BlockWatcher::new(
-            self.config.ws_url.clone(),
+            self.config.rpc_ws_url.clone(),
             Arc::clone(&block_first_seen),
             self.cancel_token.clone(),
         )
@@ -445,7 +445,7 @@ impl LoadRunner {
         let confirmer_handle = confirmer.handle();
         let confirmer_handle_for_run = confirmer_handle.clone();
 
-        let confirmer_client = RpcClient::new(self.config.rpc_url.clone());
+        let confirmer_client = RpcClient::new(self.config.rpc_http_url.clone());
         let confirmer_task = tokio::spawn(async move {
             confirmer.run(confirmer_client, &confirmer_handle_for_run).await
         });
@@ -868,7 +868,7 @@ impl LoadRunner {
 
             let send_amount = balance.saturating_sub(drain_gas_cost);
             let wallet = EthereumWallet::from(account.signer.clone());
-            let provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
+            let provider = create_wallet_provider(self.config.rpc_http_url.clone(), wallet);
             let nonce = provider
                 .get_transaction_count(account.address)
                 .pending()

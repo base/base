@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 # alloy
 alloy-network.workspace = true
-alloy-provider.workspace = true
+alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true

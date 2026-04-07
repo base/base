@@ -7,11 +7,11 @@
 # RPC endpoint for local devnet
 rpc: http://localhost:8545
 
-# WebSocket endpoint for block latency tracking
-ws_url: "ws://localhost:8546"
+# WebSocket RPC endpoint for block latency tracking
+rpc_ws_url: "ws://localhost:8546"
 
 # Flashblocks websocket url (flashblock latency tracking)
-flashblocks_url: "ws://localhost:7111"
+flashblocks_ws_url: "ws://localhost:7111"
 
 # Number of sender accounts
 sender_count: 10

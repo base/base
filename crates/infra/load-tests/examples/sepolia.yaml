@@ -5,8 +5,8 @@
 rpc: https://sepolia.base.org
 
 # WebSocket endpoints for latency tracking
-ws_url: "wss://sepolia.base.org"
-flashblocks_url: "wss://sepolia.flashblocks.base.org/ws"
+rpc_ws_url: "wss://sepolia.base.org"
+flashblocks_ws_url: "wss://sepolia.flashblocks.base.org/ws"
 
 sender_count: 10
 target_gps: 2100000
