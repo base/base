@@ -7,9 +7,10 @@ Only `base-consensus` and `base-reth-node` will  support the Base V1 hardfork. I
 `op-node`, `op-geth` or any other clients you will need to update prior to the activation date.
 :::
 
-- Add Fusaka Support
+- Add Osaka Support
 - Simplify Flashblocks Websocket Format
 - Enable TEE & ZK Proofs
+- Only Base Node Reth / Base Consensus will be supported
 
 ## Activation Timestamps
 
