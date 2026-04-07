@@ -52,8 +52,11 @@ base_metrics::define_metrics! {
     #[describe("Time for one pipeline tick (seconds)")]
     tick_duration_seconds: histogram,
 
-    #[describe("Time to validate and submit a proposal (seconds)")]
-    submission_duration_seconds: histogram,
+    #[describe("Total time to validate and submit a proposal (seconds)")]
+    proposal_total_duration_seconds: histogram,
+
+    #[describe("Time for propose_output L1 transaction (seconds)")]
+    proposal_l1_tx_duration_seconds: histogram,
 }
 
 impl Metrics {

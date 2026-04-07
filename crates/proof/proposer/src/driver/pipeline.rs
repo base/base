@@ -1,6 +1,6 @@
 //! Parallel proving pipeline for the proposer.
 //!
-//! The [`ProvingPipeline`] is a three-phase coordinator that runs multiple
+//! The [`ProvingPipeline`] is an event-driven coordinator that runs multiple
 //! proofs concurrently while maintaining strictly sequential on-chain submission.
 //!
 //! # Architecture
@@ -8,14 +8,25 @@
 //! ```text
 //! ┌──────────┐     ┌──────────────┐     ┌──────────────┐
 //! │  PLAN    │ ──▶ │  PROVE       │ ──▶ │  SUBMIT      │
-//! │ (scan)   │     │ (parallel)   │     │ (sequential) │
+//! │ (scan)   │     │ (parallel)   │     │ (at most 1)  │
 //! └──────────┘     └──────────────┘     └──────────────┘
 //! ```
 //!
-//! - **Plan**: Builds `ProofRequest`s for block ranges up to the current safe head.
-//! - **Prove**: Dispatches proof tasks into a `JoinSet` with window-based concurrency.
-//! - **Submit**: Drains proved results in order, validates against canonical chain (JIT),
-//!   and submits on-chain.
+//! The coordinator loop uses `tokio::select!` over three event sources:
+//!
+//! - **Submit completion** — when the spawned L1 transaction resolves, the
+//!   coordinator processes the outcome and (on success only) chains the next
+//!   submission immediately.
+//! - **Proof completion** — when any proof task finishes, its result is stored
+//!   in `proved` and the coordinator attempts to start a submission if one is
+//!   ready and no submission is in flight.
+//! - **Poll-interval tick** — periodic recovery scan that discovers new safe
+//!   head advances, refills proof slots, and retries failed submissions.
+//!
+//! Submission runs as a separate spawned task so the coordinator never blocks
+//! on L1 transaction confirmation. Failed submissions defer retry to the next
+//! tick rather than retrying immediately, preventing tight loops when L1 is
+//! persistently failing.
 
 use std::{
     cmp::Ordering,
@@ -264,9 +275,10 @@ where
                     if chain_next {
                         self.try_submit(&mut state);
                     }
-                    // On failure / discard the proof stays in `proved` and the
-                    // next `poll_interval` tick will pick it up, avoiding a
-                    // tight retry loop when L1 is persistently failing.
+                    // On failure / discard the proof stays in `proved`. Retry
+                    // can happen from the tick or prove_tasks arms, but those
+                    // fire at poll_interval (12s) or proof-completion cadence
+                    // (minutes), so the retry rate is naturally bounded.
                 }
 
                 Some(result) = state.prove_tasks.join_next() => {
@@ -406,7 +418,7 @@ where
 
         let pipeline = self.clone();
         state.submit_tasks.spawn(async move {
-            let mut submit_timer = base_metrics::timed!(Metrics::submission_duration_seconds());
+            let mut submit_timer = base_metrics::timed!(Metrics::proposal_total_duration_seconds());
             let result =
                 pipeline.validate_and_submit(&proof_result, next_to_submit, parent_index).await;
             match result {
@@ -444,8 +456,13 @@ where
     ) -> bool {
         let outcome = match join_result {
             Ok(outcome) => outcome,
+            Err(join_err) if join_err.is_cancelled() => {
+                debug!(error = %join_err, "Submit task cancelled");
+                state.submitting = None;
+                return false;
+            }
             Err(join_err) => {
-                warn!(error = %join_err, "Submit task panicked or was cancelled");
+                warn!(error = %join_err, "Submit task panicked");
                 state.reset();
                 return false;
             }
@@ -537,8 +554,11 @@ where
                     state.record_gauges();
                 }
             }
+            Err(join_err) if join_err.is_cancelled() => {
+                debug!(error = %join_err, "Proof task cancelled");
+            }
             Err(join_err) => {
-                warn!(error = %join_err, "Proof task panicked or was cancelled");
+                warn!(error = %join_err, "Proof task panicked");
                 state.reset();
             }
         }
@@ -1014,7 +1034,8 @@ where
         );
 
         // Submit with timeout.
-        match tokio::time::timeout(
+        let mut propose_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
+        let propose_result = tokio::time::timeout(
             PROPOSAL_TIMEOUT,
             self.output_proposer.propose_output(
                 aggregate_proposal,
@@ -1023,29 +1044,35 @@ where
                 &intermediate_roots,
             ),
         )
-        .await
-        {
+        .await;
+
+        match propose_result {
             Ok(Ok(())) => {
+                drop(propose_timer);
                 info!(target_block, "Dispute game created successfully");
                 Metrics::l2_output_proposals_total().increment(1);
                 Ok(())
             }
             Ok(Err(e)) => {
                 if is_game_already_exists(&e) {
+                    drop(propose_timer);
                     info!(
                         target_block,
                         "Game already exists, next tick will load fresh state from chain"
                     );
-                    // Treat as success — game already submitted (possibly by another proposer).
                     Ok(())
                 } else {
+                    propose_timer.disarm();
                     Err(SubmitAction::Failed(e))
                 }
             }
-            Err(_) => Err(SubmitAction::Failed(ProposerError::Internal(format!(
-                "dispute game creation timed out after {}s",
-                PROPOSAL_TIMEOUT.as_secs()
-            )))),
+            Err(_) => {
+                propose_timer.disarm();
+                Err(SubmitAction::Failed(ProposerError::Internal(format!(
+                    "dispute game creation timed out after {}s",
+                    PROPOSAL_TIMEOUT.as_secs()
+                ))))
+            }
         }
     }
 
