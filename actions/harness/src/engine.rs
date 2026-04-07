@@ -300,6 +300,11 @@ impl ActionEngineClient {
             .unwrap_or_else(|| {
                 // Genesis case: derive the real hash from the chain spec genesis header so the
                 // builder can locate the committed state in the DB.
+                debug_assert_eq!(
+                    parent_hash,
+                    B256::ZERO,
+                    "unknown parent hash {parent_hash} — missed block or caller bug"
+                );
                 let genesis_header = inner.chain_spec.genesis_header().clone();
                 let genesis_hash = genesis_header.hash_slow();
                 (genesis_hash, genesis_header)
