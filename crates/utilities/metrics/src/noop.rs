@@ -38,3 +38,8 @@ impl NoopDropTimer {
     #[inline(always)]
     pub const fn disarm(&mut self) {}
 }
+
+impl Drop for NoopDropTimer {
+    #[inline(always)]
+    fn drop(&mut self) {}
+}
