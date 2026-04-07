@@ -104,6 +104,7 @@ where
         for hash in tx_hashes {
             self.rejection_cache.insert(*hash);
         }
+        BuilderMetrics::rejection_cache_insertions().increment(tx_hashes.len() as u64);
         BuilderMetrics::rejection_cache_size().set(self.rejection_cache.entry_count() as f64);
     }
 }
