@@ -1,7 +1,7 @@
 name: Benchmark
 
 on:
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -10,7 +10,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   BENCHMARK_REPO: "base/benchmark"
-  BENCHMARK_REF: "39fbbe58e0cd57795e88e8b6f1d9f51f856abc0a"
+  BENCHMARK_REF: "48f0e0405fc9df31bd8b3e59d686374695e06d64"
 
 permissions:
   contents: read
