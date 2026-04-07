@@ -122,6 +122,10 @@ impl PipelineState {
         self.proved.retain(|&target, _| target > recovered_block);
         self.inflight.retain(|&target| target > recovered_block);
         self.retry_counts.retain(|&target, _| target > recovered_block);
+        if self.submitting.is_some_and(|b| b <= recovered_block) {
+            self.submitting = None;
+            self.submit_tasks.abort_all();
+        }
     }
 }
 
@@ -255,16 +259,12 @@ where
                     break;
                 }
 
-                Some(result) = state.submit_tasks.join_next(),
-                    if !state.submit_tasks.is_empty() =>
-                {
+                Some(result) = state.submit_tasks.join_next() => {
                     self.handle_submit_result(result, &mut state).await;
                     self.try_start_submit(&mut state);
                 }
 
-                Some(result) = state.prove_tasks.join_next(),
-                    if !state.prove_tasks.is_empty() =>
-                {
+                Some(result) = state.prove_tasks.join_next() => {
                     self.handle_proof_result(result, &mut state);
                     self.try_start_submit(&mut state);
                 }
@@ -450,6 +450,15 @@ where
                 state.retry_counts.remove(&target_block);
                 state.submitting = None;
                 state.cached_recovery = None;
+                // Re-recover eagerly so try_start_submit can chain the next block.
+                match self.recover_latest_state(&mut state.cached_recovery).await {
+                    Ok(recovered) => {
+                        state.prune_stale(recovered.l2_block_number);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to recover state after submission");
+                    }
+                }
                 state.record_gauges();
             }
             SubmitOutcome::RootMismatch { target_block } => {
