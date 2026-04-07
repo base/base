@@ -1105,7 +1105,9 @@ mod tests {
 
     // ---- discover_claimable_games tests ----
 
-    use crate::test_utils::{MockAggregateVerifier, addr, factory_game, mock_state};
+    use crate::test_utils::{
+        MockAggregateVerifier, MockBondTransactionSubmitter, addr, factory_game, mock_state,
+    };
 
     /// Builds a factory and verifier pair where each game has the given
     /// `bond_recipient` and `zk_prover`. All games are `IN_PROGRESS` (status 0)
@@ -1288,6 +1290,64 @@ mod tests {
         assert_eq!(mgr.tracked_count(), 0);
         // Watermark should still advance past the scanned range.
         assert_eq!(mgr.bond_scan_head, 3);
+    }
+
+    #[tokio::test]
+    async fn determine_phase_returns_awaiting_delay_when_bond_unlocked() {
+        // resolved_at = 1_999_999_900 → age = 2_000_000_000 - 1_999_999_900 = 100s
+        // monotonic 500 - 100 = 400 → unlocked_at should be 400s.
+        let game = addr(0);
+        let mut state = mock_state(1, Address::ZERO, 100);
+        state.resolved_at = 1_999_999_900;
+        state.bond_unlocked = true;
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(game, state);
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        let clock = fixed_clock(500);
+        let phase = BondManager::determine_phase(&*verifier, game, &clock).await.unwrap().unwrap();
+        assert!(
+            matches!(phase, BondPhase::AwaitingDelay { unlocked_at } if unlocked_at == Duration::from_secs(400)),
+            "expected AwaitingDelay {{ unlocked_at: 400s }}, got {phase:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn try_unlock_advances_when_already_unlocked() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let game = addr(0);
+
+        // resolved_at = 1_999_999_800 → age = 2_000_000_000 - 1_999_999_800 = 200s
+        // monotonic 500 - 200 = 300 → unlocked_at should be 300s.
+        let mut state = mock_state(1, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.resolved_at = 1_999_999_800;
+        state.bond_unlocked = true;
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(game, state);
+        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+
+        let clock = fixed_clock(500);
+        let mut mgr =
+            BondManager::new(vec![claim_addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
+        mgr.set_weth_delay(Duration::from_secs(60));
+        mgr.track_game(game, claim_addr);
+
+        // MockBondTransactionSubmitter should NOT be called — the bond is
+        // already unlocked, so try_unlock must skip the transaction.
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none(), "try_unlock should not remove the game");
+
+        let tracked = mgr.tracked.get(&game).expect("game should still be tracked");
+        assert!(
+            matches!(tracked.phase, BondPhase::AwaitingDelay { unlocked_at } if unlocked_at == Duration::from_secs(300)),
+            "expected AwaitingDelay {{ unlocked_at: 300s }}, got {:?}",
+            tracked.phase,
+        );
+        assert!(submitter.recorded_calls().is_empty(), "no transaction should have been submitted");
     }
 
     #[tokio::test]
