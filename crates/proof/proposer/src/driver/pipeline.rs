@@ -350,7 +350,8 @@ where
                                 (target, Err(ProposerError::Internal("cancelled".into())))
                             }
                             result = prover.prove(request) => {
-                                let _ = proof_timer;
+                                #[allow(dropping_copy_types)]
+                                drop(proof_timer);
                                 (target, result.map_err(|e| ProposerError::Prover(e.to_string())))
                             }
                         }
@@ -406,7 +407,8 @@ where
                 pipeline.validate_and_submit(&proof_result, next_to_submit, parent_index).await;
             match result {
                 Ok(()) => {
-                    let _ = submit_timer;
+                    #[allow(dropping_copy_types)]
+                    drop(submit_timer);
                     SubmitOutcome::Success { target_block: next_to_submit }
                 }
                 Err(SubmitAction::RootMismatch) => {
