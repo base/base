@@ -895,7 +895,9 @@ impl LoadTestView {
 
         match &self.state {
             RunState::Idle => render_idle_status(frame, inner, self.continuous),
-            RunState::Running { start, run_start, run_count, current_snap, current_phase, .. } => {
+            RunState::Running {
+                start, run_start, run_count, current_snap, current_phase, ..
+            } => {
                 let run_duration = self
                     .effective_config()
                     .and_then(|c: &TestConfig| c.parse_duration().ok())
