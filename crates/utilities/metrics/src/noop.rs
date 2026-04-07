@@ -27,7 +27,7 @@ impl NoopMetric {
 }
 
 /// No-op drop timer used when the `metrics` feature is disabled.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct NoopDropTimer;
 
 impl NoopDropTimer {
