@@ -458,7 +458,7 @@ impl<C: Clock> BondManager<C> {
             return Ok(());
         }
 
-        let scan_end = game_count.min(scan_start + self.lookback);
+        let scan_end = game_count.min(scan_start.saturating_add(self.lookback));
         if scan_end < game_count {
             let behind = game_count - scan_end;
             warn!(
