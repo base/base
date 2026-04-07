@@ -4,6 +4,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use alloy_consensus::{
@@ -27,6 +28,9 @@ use base_zk_client::{
 };
 
 use crate::L1HeadProvider;
+
+/// Discovery interval used in tests (5 minutes).
+pub const TEST_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]

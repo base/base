@@ -114,6 +114,16 @@ pub struct ChallengerArgs {
     #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
     pub lookback_games: u64,
 
+    /// How often a full rescan of the bond lookback window is performed to
+    /// catch state transitions (games challenged or resolved by other actors).
+    #[arg(
+        long = "bond-discovery-interval",
+        env = cli_env!("BOND_DISCOVERY_INTERVAL"),
+        default_value = "300s",
+        value_parser = humantime::parse_duration
+    )]
+    pub bond_discovery_interval: Duration,
+
     /// Comma-separated list of addresses to claim bonds on behalf of.
     ///
     /// When set, the challenger will automatically resolve games and claim

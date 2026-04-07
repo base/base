@@ -107,6 +107,8 @@ pub struct ChallengerConfig {
     pub tx_manager: TxManagerConfig,
     /// Number of past games to scan on startup.
     pub lookback_games: u64,
+    /// How often a full rescan of the bond lookback window is performed.
+    pub bond_discovery_interval: Duration,
     /// Addresses to claim bonds on behalf of.
     pub bond_claim_addresses: Vec<Address>,
     /// Health server socket address.
@@ -178,6 +180,10 @@ impl ChallengerConfig {
         };
 
         require_nonzero(cli.challenger.lookback_games, "lookback-games")?;
+        require_nonzero_duration(
+            cli.challenger.bond_discovery_interval,
+            "bond-discovery-interval",
+        )?;
 
         // Health server is always started, so the port must be valid.
         require_nonzero(cli.health.port.into(), "health.port")?;
@@ -208,6 +214,7 @@ impl ChallengerConfig {
             signing,
             tx_manager,
             lookback_games: cli.challenger.lookback_games,
+            bond_discovery_interval: cli.challenger.bond_discovery_interval,
             bond_claim_addresses: cli.challenger.bond_claim_addresses,
             health_addr,
             log: LogConfig::from(cli.logging),
@@ -272,6 +279,7 @@ mod tests {
         assert_eq!(config.zk_connect_timeout, Duration::from_secs(10));
         assert_eq!(config.zk_request_timeout, Duration::from_secs(30));
         assert_eq!(config.lookback_games, 1000);
+        assert_eq!(config.bond_discovery_interval, Duration::from_secs(300));
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
         assert!(matches!(config.signing, SignerConfig::Remote { .. }));
         assert_eq!(config.tx_manager.num_confirmations, 10);
@@ -284,6 +292,7 @@ mod tests {
     #[case::zk_connect_timeout("--zk-connect-timeout", "0s", "zk-connect-timeout")]
     #[case::zk_request_timeout("--zk-request-timeout", "0s", "zk-request-timeout")]
     #[case::lookback_games("--lookback-games", "0", "lookback-games")]
+    #[case::bond_discovery_interval("--bond-discovery-interval", "0s", "bond-discovery-interval")]
     fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] field: &str) {
         let all_args = [&LOCAL_SIGNER_ARGS[..], &[flag, value]].concat();
         let cli = cli_from_args(&all_args);

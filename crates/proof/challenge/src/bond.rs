@@ -118,6 +118,9 @@ pub struct BondManager<C: Clock> {
     last_full_scan: Duration,
     /// Number of games to look back during periodic full rescans.
     lookback: u64,
+    /// How often a full rescan of the lookback window is performed to catch
+    /// state transitions (games challenged or resolved by other actors).
+    discovery_interval: Duration,
 }
 
 impl<C: Clock> BondManager<C> {
@@ -126,16 +129,13 @@ impl<C: Clock> BondManager<C> {
     /// succeed earlier; if longer, the attempt reverts and is retried.
     const DEFAULT_WETH_DELAY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-    /// How often a full rescan of the lookback window is performed to catch
-    /// state transitions (games challenged or resolved by other actors).
-    const BOND_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
-
     /// Creates a new bond manager for the given set of claim addresses.
     pub fn new(
         claim_addresses: Vec<Address>,
         l1_rpc_url: url::Url,
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         lookback: u64,
+        discovery_interval: Duration,
         clock: C,
     ) -> Self {
         let last_full_scan = clock.now();
@@ -151,6 +151,7 @@ impl<C: Clock> BondManager<C> {
             bond_scan_head: 0,
             last_full_scan,
             lookback,
+            discovery_interval,
         }
     }
 
@@ -418,7 +419,7 @@ impl<C: Clock> BondManager<C> {
     /// handful of games per tick, costing a single `game_count()` RPC
     /// when idle.
     ///
-    /// **Periodic full rescan** (every [`BOND_DISCOVERY_INTERVAL`](Self::BOND_DISCOVERY_INTERVAL)):
+    /// **Periodic full rescan** (every `discovery_interval`):
     /// resets the watermark backward by `lookback` to re-evaluate games
     /// whose state may have changed (e.g. challenged or resolved by
     /// another actor since the last scan).
@@ -441,7 +442,7 @@ impl<C: Clock> BondManager<C> {
         // Periodic full rescan: reset watermark to re-evaluate the
         // lookback window and catch state transitions on older games.
         let elapsed = self.clock.now().saturating_sub(self.last_full_scan);
-        let is_full_rescan = elapsed >= Self::BOND_DISCOVERY_INTERVAL;
+        let is_full_rescan = elapsed >= self.discovery_interval;
         if is_full_rescan {
             let new_head = game_count.saturating_sub(self.lookback);
             debug!(
@@ -950,7 +951,7 @@ mod tests {
     use futures::stream::BoxStream;
 
     use super::*;
-    use crate::test_utils::{MockDisputeGameFactory, empty_factory};
+    use crate::test_utils::{MockDisputeGameFactory, TEST_DISCOVERY_INTERVAL, empty_factory};
 
     /// A deterministic clock that always returns fixed values.
     ///
@@ -992,7 +993,14 @@ mod tests {
 
     fn make_manager(addresses: Vec<Address>) -> BondManager<FixedClock> {
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(addresses, test_l1_rpc_url(), empty_factory(), 1000, clock);
+        let mut mgr = BondManager::new(
+            addresses,
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
         mgr
     }
@@ -1026,7 +1034,14 @@ mod tests {
         let game = Address::repeat_byte(0xAA);
 
         let clock = fixed_clock(1000);
-        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![addr],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // 100 seconds ago > 60 second delay
@@ -1047,7 +1062,14 @@ mod tests {
         let game = Address::repeat_byte(0xAA);
 
         let clock = fixed_clock(1000);
-        let mut mgr = BondManager::new(vec![addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![addr],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(3600));
 
         // only 1 second ago < 3600 second delay
@@ -1100,7 +1122,14 @@ mod tests {
     #[test]
     fn empty_claim_addresses_means_disabled() {
         let clock = fixed_clock(0);
-        let mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000, clock);
+        let mgr = BondManager::new(
+            vec![],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         assert!(!mgr.is_enabled());
     }
 
@@ -1112,6 +1141,7 @@ mod tests {
             test_l1_rpc_url(),
             empty_factory(),
             1000,
+            TEST_DISCOVERY_INTERVAL,
             clock,
         );
         assert!(mgr.is_enabled());
@@ -1149,7 +1179,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(3, claim_addr, Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // bond_scan_head defaults to 0, so the first call should scan all 3.
@@ -1167,7 +1204,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(2, other_recipient, claim_addr);
 
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
@@ -1180,7 +1224,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(2, claim_addr, Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // Pre-track game 0.
@@ -1208,7 +1259,14 @@ mod tests {
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
@@ -1221,7 +1279,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(5, claim_addr, Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // Start from index 3 so only indices 3 and 4 are scanned.
@@ -1237,7 +1302,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(5, claim_addr, Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // Watermark already at game_count — nothing new to scan.
@@ -1259,6 +1331,7 @@ mod tests {
             test_l1_rpc_url(),
             factory,
             5, // lookback = 5
+            TEST_DISCOVERY_INTERVAL,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1268,8 +1341,7 @@ mod tests {
 
         // Force the full rescan by backdating `last_full_scan` past the
         // discovery interval.
-        mgr.last_full_scan = Duration::from_secs(1000)
-            .saturating_sub(BondManager::<FixedClock>::BOND_DISCOVERY_INTERVAL);
+        mgr.last_full_scan = Duration::from_secs(1000).saturating_sub(TEST_DISCOVERY_INTERVAL);
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
         // Full rescan should have reset watermark to 10 - 5 = 5
@@ -1283,7 +1355,14 @@ mod tests {
         let (_, verifier) = discovery_mocks(5, Address::repeat_byte(0xCC), Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(vec![], test_l1_rpc_url(), empty_factory(), 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
         assert_eq!(mgr.tracked_count(), 0);
@@ -1297,7 +1376,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(3, other, Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
@@ -1344,8 +1430,14 @@ mod tests {
         let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
         let clock = fixed_clock(500);
-        let mut mgr =
-            BondManager::new(vec![claim_addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
         mgr.track_game(game, claim_addr);
 
@@ -1369,8 +1461,14 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
 
         let clock = fixed_clock(0);
-        let mut mgr =
-            BondManager::new(vec![claim_addr], test_l1_rpc_url(), empty_factory(), 1000, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
 
         let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
         mgr.discover_claimable_games(&*verifier).await.unwrap();
@@ -1388,8 +1486,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(game_count, claim_addr, Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr =
-            BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, lookback, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            lookback,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // bond_scan_head starts at 0, game_count = 1200, span = 1200 > lookback.
@@ -1411,8 +1515,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(game_count, claim_addr, Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr =
-            BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, lookback, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            lookback,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         // First tick: scans 0..500, watermark = 500.
@@ -1434,8 +1544,14 @@ mod tests {
         let (factory, verifier) = discovery_mocks(game_count, claim_addr, Address::ZERO);
 
         let clock = fixed_clock(0);
-        let mut mgr =
-            BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, lookback, clock);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            factory,
+            lookback,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
         mgr.set_weth_delay(Duration::from_secs(60));
 
         mgr.discover_claimable_games(&*verifier).await.unwrap();
