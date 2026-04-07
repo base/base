@@ -458,13 +458,26 @@ impl<C: Clock> BondManager<C> {
             return Ok(());
         }
 
-        let span = game_count - scan_start;
+        let scan_end = game_count.min(scan_start + self.lookback);
+        if scan_end < game_count {
+            let behind = game_count - scan_end;
+            warn!(
+                scan_start,
+                scan_end,
+                game_count,
+                max = self.lookback,
+                behind,
+                "bond scan span exceeds lookback cap, scanning partial range"
+            );
+        }
+
         let scan_type = if is_full_rescan { "full" } else { "incremental" };
         debug!(
             scan_type,
             scan_start,
+            scan_end,
+            effective_span = scan_end - scan_start,
             game_count,
-            span,
             tracked = self.tracked.len(),
             "bond discovery scan"
         );
@@ -472,7 +485,7 @@ impl<C: Clock> BondManager<C> {
         ChallengerMetrics::bond_discovery_scans_total(scan_type).increment(1);
 
         let results = Self::evaluate_bond_range(
-            scan_start..game_count,
+            scan_start..scan_end,
             &factory_client,
             verifier_client,
             &self.claim_addresses,
@@ -509,8 +522,9 @@ impl<C: Clock> BondManager<C> {
             discovered += 1;
         }
 
-        // Advance watermark past the scanned range.
-        self.bond_scan_head = game_count;
+        // Advance watermark to the end of the scanned range (which may
+        // be less than `game_count` when the span was capped).
+        self.bond_scan_head = scan_end;
 
         if is_full_rescan {
             self.last_full_scan = self.clock.now();
@@ -1362,5 +1376,71 @@ mod tests {
         mgr.discover_claimable_games(&*verifier).await.unwrap();
         assert_eq!(mgr.tracked_count(), 0);
         assert_eq!(mgr.bond_scan_head, 0);
+    }
+
+    // ---- lookback capping tests ----
+
+    #[tokio::test]
+    async fn discover_caps_span_to_lookback() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let lookback = 500u64;
+        let game_count = 1200u64;
+        let (factory, verifier) = discovery_mocks(game_count, claim_addr, Address::ZERO);
+
+        let clock = fixed_clock(0);
+        let mut mgr =
+            BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, lookback, clock);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        // bond_scan_head starts at 0, game_count = 1200, span = 1200 > lookback.
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+
+        assert_eq!(
+            mgr.bond_scan_head, lookback,
+            "watermark should advance by lookback, not to game_count"
+        );
+        // Only games 0..500 should be discovered.
+        assert_eq!(mgr.tracked_count(), lookback as usize);
+    }
+
+    #[tokio::test]
+    async fn discover_catches_up_over_multiple_ticks() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let lookback = 500u64;
+        let game_count = 800u64;
+        let (factory, verifier) = discovery_mocks(game_count, claim_addr, Address::ZERO);
+
+        let clock = fixed_clock(0);
+        let mut mgr =
+            BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, lookback, clock);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        // First tick: scans 0..500, watermark = 500.
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.bond_scan_head, lookback);
+        assert_eq!(mgr.tracked_count(), lookback as usize);
+
+        // Second tick: scans 500..800 (span = 300 < lookback), watermark = 800.
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+        assert_eq!(mgr.bond_scan_head, game_count);
+        assert_eq!(mgr.tracked_count(), game_count as usize);
+    }
+
+    #[tokio::test]
+    async fn discover_no_cap_when_span_within_lookback() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let lookback = 1000u64;
+        let game_count = 500u64;
+        let (factory, verifier) = discovery_mocks(game_count, claim_addr, Address::ZERO);
+
+        let clock = fixed_clock(0);
+        let mut mgr =
+            BondManager::new(vec![claim_addr], test_l1_rpc_url(), factory, lookback, clock);
+        mgr.set_weth_delay(Duration::from_secs(60));
+
+        mgr.discover_claimable_games(&*verifier).await.unwrap();
+
+        assert_eq!(mgr.bond_scan_head, game_count);
+        assert_eq!(mgr.tracked_count(), game_count as usize);
     }
 }

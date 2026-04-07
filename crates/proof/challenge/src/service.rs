@@ -154,11 +154,11 @@ impl ChallengerService {
             );
             info!("starting bond recovery scan");
             if let Err(e) = bm.startup_scan(&*verifier_client).await {
-                // On failure `bond_scan_head` stays at 0, so the first
-                // `discover_claimable_games` tick will scan the entire
-                // factory as an implicit recovery. This is intentional:
-                // it is preferable to a large one-time scan over
-                // disabling bond claiming entirely.
+                // On failure `bond_scan_head` stays at 0, so
+                // `discover_claimable_games` will progressively scan the
+                // factory over multiple ticks (capped at `lookback` games
+                // per tick). This is intentional: progressive catch-up
+                // is preferable to disabling bond claiming entirely.
                 warn!(error = %e, "bond startup scan failed, continuing without recovery");
             }
             info!(tracked = bm.tracked_count(), "bond manager ready");
