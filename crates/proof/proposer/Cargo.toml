@@ -63,7 +63,7 @@ eyre.workspace = true
 thiserror.workspace = true
 
 # CLI
-clap.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
 base-cli-utils.workspace = true
 
 # Metrics

@@ -33,7 +33,7 @@ use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClien
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use eyre::Result;
 use futures::{StreamExt, stream};
-use tokio::{task::JoinSet, time::sleep};
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -74,10 +74,14 @@ struct CachedRecovery {
 struct PipelineState {
     /// Running proof tasks, each yielding `(target_block, result)`.
     prove_tasks: JoinSet<(u64, Result<ProofResult, ProposerError>)>,
+    /// At most one concurrent submission task.
+    submit_tasks: JoinSet<SubmitOutcome>,
     /// Completed proofs waiting for sequential submission, keyed by target block.
     proved: BTreeMap<u64, ProofResult>,
     /// Target blocks currently being proved.
     inflight: BTreeSet<u64>,
+    /// Target block currently being submitted (at most one).
+    submitting: Option<u64>,
     /// Per-target-block retry counts; exceeding `max_retries` triggers a full reset.
     retry_counts: BTreeMap<u64, u32>,
     /// Cached result from the last successful recovery scan.
@@ -88,8 +92,10 @@ impl PipelineState {
     fn new() -> Self {
         Self {
             prove_tasks: JoinSet::new(),
+            submit_tasks: JoinSet::new(),
             proved: BTreeMap::new(),
             inflight: BTreeSet::new(),
+            submitting: None,
             retry_counts: BTreeMap::new(),
             cached_recovery: None,
         }
@@ -97,8 +103,10 @@ impl PipelineState {
 
     fn reset(&mut self) {
         self.prove_tasks.abort_all();
+        self.submit_tasks.abort_all();
         self.inflight.clear();
         self.proved.clear();
+        self.submitting = None;
         self.retry_counts.clear();
         self.cached_recovery = None;
         self.record_gauges();
@@ -139,6 +147,30 @@ where
     verifier_client: Arc<dyn AggregateVerifierClient>,
     output_proposer: Arc<dyn OutputProposer>,
     cancel: CancellationToken,
+}
+
+impl<L1, L2, R, ASR, F> Clone for ProvingPipeline<L1, L2, R, ASR, F>
+where
+    L1: L1Provider,
+    L2: L2Provider,
+    R: RollupProvider,
+    ASR: AnchorStateRegistryClient,
+    F: DisputeGameFactoryClient,
+{
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            prover: Arc::clone(&self.prover),
+            l1_client: Arc::clone(&self.l1_client),
+            l2_client: Arc::clone(&self.l2_client),
+            rollup_client: Arc::clone(&self.rollup_client),
+            anchor_registry: Arc::clone(&self.anchor_registry),
+            factory_client: Arc::clone(&self.factory_client),
+            verifier_client: Arc::clone(&self.verifier_client),
+            output_proposer: Arc::clone(&self.output_proposer),
+            cancel: self.cancel.clone(),
+        }
+    }
 }
 
 impl<L1, L2, R, ASR, F> std::fmt::Debug for ProvingPipeline<L1, L2, R, ASR, F>
@@ -199,6 +231,10 @@ where
     }
 
     /// Runs the parallel proving pipeline until cancelled.
+    ///
+    /// The coordinator never blocks on L1 transaction confirmation. Submission
+    /// runs as a separate spawned task while the coordinator continues to
+    /// collect proof completions and refill proof slots immediately.
     pub async fn run(&self) -> Result<()> {
         info!(
             max_parallel_proofs = self.config.max_parallel_proofs,
@@ -207,6 +243,7 @@ where
         );
 
         let mut state = PipelineState::new();
+        let mut poll_interval = tokio::time::interval(self.config.driver.poll_interval);
 
         loop {
             tokio::select! {
@@ -214,25 +251,29 @@ where
 
                 () = self.cancel.cancelled() => {
                     state.prove_tasks.abort_all();
+                    state.submit_tasks.abort_all();
                     break;
                 }
-                result = self.tick(&mut state) => {
-                    if let Err(e) = result {
-                        error!(error = ?e, "Pipeline failed, retrying next interval");
+
+                Some(result) = state.submit_tasks.join_next(),
+                    if !state.submit_tasks.is_empty() =>
+                {
+                    self.handle_submit_result(result, &mut state).await;
+                }
+
+                Some(result) = state.prove_tasks.join_next(),
+                    if !state.prove_tasks.is_empty() =>
+                {
+                    self.handle_proof_result(result, &mut state);
+                    self.try_start_submit(&mut state);
+                }
+
+                _ = poll_interval.tick() => {
+                    if let Err(e) = self.tick(&mut state).await {
+                        error!(error = ?e, "Pipeline tick failed, retrying next interval");
                     }
+                    self.try_start_submit(&mut state);
                 }
-            }
-
-            while let Some(result) = state.prove_tasks.try_join_next() {
-                self.handle_proof_result(result, &mut state);
-            }
-
-            tokio::select! {
-                () = self.cancel.cancelled() => {
-                    state.prove_tasks.abort_all();
-                    break;
-                }
-                () = sleep(self.config.driver.poll_interval) => {}
             }
         }
 
@@ -250,7 +291,6 @@ where
             Metrics::safe_head().set(safe_head as f64);
             state.prune_stale(recovered.l2_block_number);
             self.dispatch_proofs(&recovered, safe_head, state).await?;
-            self.try_submit(recovered, state).await?;
         }
         Ok(())
     }
@@ -282,6 +322,7 @@ where
         while cursor <= safe_head
             && !state.inflight.contains(&cursor)
             && !state.proved.contains_key(&cursor)
+            && state.submitting != Some(cursor)
             && state.inflight.len() < self.config.max_parallel_proofs
         {
             match self.build_proof_request_for(start_block, start_output, cursor).await {
@@ -308,7 +349,7 @@ where
                                 (target, Err(ProposerError::Internal("cancelled".into())))
                             }
                             result = prover.prove(request) => {
-                                drop(proof_timer);
+                                let _ = proof_timer;
                                 (target, result.map_err(|e| ProposerError::Prover(e.to_string())))
                             }
                         }
@@ -330,77 +371,111 @@ where
         Ok(())
     }
 
-    #[instrument(skip_all, fields(next_block))]
-    async fn try_submit(&self, initial: RecoveredState, state: &mut PipelineState) -> Result<()> {
-        let mut recovered = initial;
-        loop {
-            let next_to_submit = recovered
-                .l2_block_number
-                .checked_add(self.config.driver.block_interval)
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "overflow: l2_block_number {} + block_interval {}",
-                        recovered.l2_block_number,
-                        self.config.driver.block_interval
-                    )
-                })?;
+    fn try_start_submit(&self, state: &mut PipelineState) {
+        if state.submitting.is_some() || !state.submit_tasks.is_empty() {
+            return;
+        }
 
-            let proof_result = match state.proved.remove(&next_to_submit) {
-                Some(r) => r,
-                None => return Ok(()),
+        let recovered = match &state.cached_recovery {
+            Some(c) => c.state,
+            None => return,
+        };
+
+        let next_to_submit =
+            match recovered.l2_block_number.checked_add(self.config.driver.block_interval) {
+                Some(n) => n,
+                None => return,
             };
 
-            tracing::Span::current().record("next_block", next_to_submit);
+        let proof_result = match state.proved.remove(&next_to_submit) {
+            Some(r) => r,
+            None => return,
+        };
 
+        let parent_index = recovered.game_index;
+        state.submitting = Some(next_to_submit);
+        state.record_gauges();
+
+        info!(target_block = next_to_submit, parent_index, "Spawning submission task");
+
+        let pipeline = self.clone();
+        state.submit_tasks.spawn(async move {
             let mut submit_timer = base_metrics::timed!(Metrics::submission_duration_seconds());
-            let submit_result =
-                self.validate_and_submit(&proof_result, next_to_submit, recovered.game_index).await;
-            match submit_result {
+            let result =
+                pipeline.validate_and_submit(&proof_result, next_to_submit, parent_index).await;
+            match result {
                 Ok(()) => {
-                    drop(submit_timer);
-                    info!(target_block = next_to_submit, "Submission successful");
-                    Metrics::last_proposed_block().set(next_to_submit as f64);
-                    state.retry_counts.remove(&next_to_submit);
-                    state.record_gauges();
-                    recovered = match self.recover_latest_state(&mut state.cached_recovery).await {
-                        Ok(r) => r,
-                        Err(e) => {
-                            warn!(error = %e, "Failed to recover state after submission");
-                            return Ok(());
-                        }
-                    };
+                    let _ = submit_timer;
+                    SubmitOutcome::Success { target_block: next_to_submit }
                 }
                 Err(SubmitAction::RootMismatch) => {
                     submit_timer.disarm();
-                    warn!(
-                        target_block = next_to_submit,
-                        "Output root mismatch at submit time, resetting pipeline"
-                    );
-                    Metrics::root_mismatch_total().increment(1);
-                    state.reset();
-                    return Ok(());
+                    SubmitOutcome::RootMismatch { target_block: next_to_submit }
                 }
                 Err(SubmitAction::Failed(e)) => {
                     submit_timer.disarm();
-                    Metrics::errors_total(e.metric_label()).increment(1);
-                    warn!(
-                        error = %e,
-                        target_block = next_to_submit,
-                        "Submission failed, will retry next tick"
-                    );
-                    state.proved.insert(next_to_submit, proof_result);
-                    return Ok(());
+                    SubmitOutcome::Failed {
+                        target_block: next_to_submit,
+                        proof: proof_result,
+                        error: e,
+                    }
                 }
                 Err(SubmitAction::Discard(e)) => {
                     submit_timer.disarm();
-                    Metrics::errors_total(e.metric_label()).increment(1);
-                    warn!(
-                        error = %e,
-                        target_block = next_to_submit,
-                        "Proof discarded, will re-prove next tick"
-                    );
-                    return Ok(());
+                    SubmitOutcome::Discard { target_block: next_to_submit, error: e }
                 }
+            }
+        });
+    }
+
+    async fn handle_submit_result(
+        &self,
+        join_result: Result<SubmitOutcome, tokio::task::JoinError>,
+        state: &mut PipelineState,
+    ) {
+        let outcome = match join_result {
+            Ok(outcome) => outcome,
+            Err(join_err) => {
+                warn!(error = %join_err, "Submit task panicked or was cancelled");
+                state.reset();
+                return;
+            }
+        };
+
+        match outcome {
+            SubmitOutcome::Success { target_block } => {
+                info!(target_block, "Submission successful");
+                Metrics::last_proposed_block().set(target_block as f64);
+                state.retry_counts.remove(&target_block);
+                state.submitting = None;
+                state.cached_recovery = None;
+                state.record_gauges();
+            }
+            SubmitOutcome::RootMismatch { target_block } => {
+                warn!(target_block, "Output root mismatch at submit time, resetting pipeline");
+                Metrics::root_mismatch_total().increment(1);
+                state.reset();
+            }
+            SubmitOutcome::Failed { target_block, proof, error } => {
+                Metrics::errors_total(error.metric_label()).increment(1);
+                warn!(
+                    error = %error,
+                    target_block,
+                    "Submission failed, will retry"
+                );
+                state.proved.insert(target_block, proof);
+                state.submitting = None;
+                state.record_gauges();
+            }
+            SubmitOutcome::Discard { target_block, error } => {
+                Metrics::errors_total(error.metric_label()).increment(1);
+                warn!(
+                    error = %error,
+                    target_block,
+                    "Proof discarded, will re-prove"
+                );
+                state.submitting = None;
+                state.record_gauges();
             }
         }
     }
@@ -1015,6 +1090,14 @@ impl std::fmt::Display for SubmitAction {
             Self::Failed(e) | Self::Discard(e) => write!(f, "{e}"),
         }
     }
+}
+
+/// Result of a concurrent submission task, returned to the coordinator.
+enum SubmitOutcome {
+    Success { target_block: u64 },
+    RootMismatch { target_block: u64 },
+    Failed { target_block: u64, proof: ProofResult, error: ProposerError },
+    Discard { target_block: u64, error: ProposerError },
 }
 
 #[cfg(test)]
