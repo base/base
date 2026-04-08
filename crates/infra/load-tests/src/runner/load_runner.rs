@@ -301,8 +301,7 @@ impl LoadRunner {
         // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
         // When gas_price is 0 (e.g. a fresh devnet), `gas_price * 2` would be 0
         // while max_priority_fee=1, causing the transaction to be rejected.
-        let max_fee =
-            gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
 
         // Phase 2: Early balance validation — abort before sending any TXs if
         // the funder cannot cover the total cost.
@@ -919,12 +918,8 @@ impl LoadRunner {
         let pb_drain = Self::progress_bar(total_accounts as u64, "Draining accounts");
 
         // Each account has its own signer, so drains are fully independent.
-        let account_data: Vec<_> = self
-            .accounts
-            .accounts()
-            .iter()
-            .map(|a| (a.address, a.signer.clone()))
-            .collect();
+        let account_data: Vec<_> =
+            self.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
 
         let drain_futs: Vec<_> = account_data
             .into_iter()
@@ -1004,8 +999,7 @@ impl LoadRunner {
         let pb_confirm = Self::progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
-        if let Err(e) = Self::await_confirmations(&client, &mut pending_txs, &pb_confirm).await
-        {
+        if let Err(e) = Self::await_confirmations(&client, &mut pending_txs, &pb_confirm).await {
             warn!(error = %e, "some drain txs did not confirm within timeout");
         }
         pb_confirm.finish_and_clear();
