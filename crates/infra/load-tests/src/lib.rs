@@ -11,7 +11,7 @@ mod devnet;
 pub use devnet::{HARDHAT_TEST_KEYS, devnet_funder, ensure_funder_balance, is_local_rpc};
 
 mod utils;
-pub use utils::{BaselineError, Result, init_tracing};
+pub use utils::{BaselineError, Result};
 
 mod rpc;
 pub use rpc::{ReceiptProvider, RpcClient, WalletProvider, create_wallet_provider};

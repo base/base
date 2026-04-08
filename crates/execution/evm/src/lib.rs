@@ -19,6 +19,7 @@ use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{DepositReceipt, EIP1559ParamError, OpPrimitives};
 use base_alloy_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
+    spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
 };
 use base_execution_chainspec::OpChainSpec;
 use base_revm::{OpSpecId, OpTransaction};
@@ -43,7 +44,7 @@ use {
 };
 
 mod config;
-pub use config::{OpNextBlockEnvAttributes, revm_spec, revm_spec_by_timestamp_after_bedrock};
+pub use config::OpNextBlockEnvAttributes;
 mod execute;
 pub use execute::*;
 pub mod l1;

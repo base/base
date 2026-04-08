@@ -90,8 +90,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
 use base_alloy_rpc_types_engine::OpExecutionData;
-use base_execution_rpc::engine::OP_ENGINE_CAPABILITIES;
-pub use base_execution_rpc::{OpEngineApi, OpEthApi, OpEthApiBuilder};
+use base_execution_rpc::{OpEngineApi, engine::OP_ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{
     AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, NodeTypes,

@@ -6,6 +6,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpPooledTransaction, OpPrimitives};
+use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
 use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadAttributes};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
@@ -18,8 +19,8 @@ use base_execution_payload_builder::{
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::OpEthApiBuilder,
-    miner::{MinerApiExtServer, OpMinerExtApi},
-    witness::{DebugExecutionWitnessApiServer, OpDebugWitnessApi},
+    miner::OpMinerExtApi,
+    witness::OpDebugWitnessApi,
 };
 use base_execution_storage::OpStorage;
 use base_execution_txpool::{
@@ -52,7 +53,7 @@ use reth_node_builder::{
 };
 use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::providers::ProviderFactoryBuilder;
-use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
+use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{

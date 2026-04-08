@@ -9,16 +9,14 @@ use alloy_eips::{
 use alloy_primitives::{Address, B64, B256, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{
-    BlobsBundleV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1,
-    ExecutionPayloadV3, PayloadId,
+    BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
+    ExecutionPayloadV1, ExecutionPayloadV3, PayloadId,
 };
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData, OpPrimitives};
-/// Re-export for use in downstream arguments.
-pub use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_alloy_rpc_types_engine::{
-    BlobsBundleV2, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
-    OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4,
+    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadEnvelopeV5,
+    OpExecutionPayloadV4, OpPayloadAttributes,
 };
 use base_execution_evm::OpNextBlockEnvAttributes;
 use reth_chainspec::EthChainSpec;
@@ -483,10 +481,10 @@ mod tests {
     use alloy_primitives::{FixedBytes, address, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_alloy_consensus::OpTransactionSigned;
+    use base_alloy_rpc_types_engine::OpPayloadAttributes;
     use reth_payload_primitives::EngineApiMessageVersion;
 
     use super::*;
-    use crate::OpPayloadAttributes;
 
     #[test]
     fn test_payload_id_parity_op_geth() {

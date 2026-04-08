@@ -453,7 +453,8 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_alloy_consensus::OpTransactionSigned;
     use base_bundles::{Bundle, ParsedBundle};
-    use base_node_runner::test_utils::{Account, SimpleStorage, TestHarness};
+    use base_node_runner::test_utils::TestHarness;
+    use base_test_utils::{Account, SimpleStorage};
     use eyre::Context;
     use reth_provider::StateProviderFactory;
     use reth_revm::{bytecode::Bytecode, state::AccountInfo};

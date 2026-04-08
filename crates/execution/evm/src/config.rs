@@ -1,6 +1,3 @@
-pub use base_alloy_evm::{
-    spec as revm_spec, spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
-};
 use revm::primitives::{Address, B256, Bytes};
 
 /// Context relevant for execution of a next block w.r.t OP.

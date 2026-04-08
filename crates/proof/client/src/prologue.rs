@@ -6,10 +6,9 @@ use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::B
 use alloy_primitives::B256;
 use base_alloy_evm::OpTxEnv;
 use base_consensus_derive::EthereumDataSource;
-pub use base_proof::{BootInfo, HintType, OracleProviderError};
 use base_proof::{
-    CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
-    OraclePipeline, new_oracle_pipeline_cursor,
+    BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
+    OracleL2ChainProvider, OraclePipeline, new_oracle_pipeline_cursor,
 };
 use base_proof_executor::TrieDBProvider;
 use base_proof_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};

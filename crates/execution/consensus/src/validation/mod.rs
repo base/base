@@ -3,7 +3,6 @@
 pub mod canyon;
 pub mod isthmus;
 
-// Re-export the decode_holocene_base_fee function for compatibility
 use alloc::vec::Vec;
 
 use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
@@ -12,7 +11,6 @@ use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::DepositReceipt;
-pub use base_execution_chainspec::decode_holocene_base_fee;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};

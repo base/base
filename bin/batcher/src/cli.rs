@@ -286,7 +286,7 @@ enum BatchTypeArg {
     Span,
 }
 
-impl From<BatchTypeArg> for base_batcher_encoder::BatchType {
+impl From<BatchTypeArg> for base_protocol::BatchType {
     fn from(value: BatchTypeArg) -> Self {
         match value {
             BatchTypeArg::Single => Self::Single,
@@ -325,7 +325,7 @@ mod tests {
         let cli = parse_cli(&[]);
         let config = cli.args.into_config().expect("config should build");
 
-        assert_eq!(config.encoder_config.batch_type, base_batcher_encoder::BatchType::Single);
+        assert_eq!(config.encoder_config.batch_type, base_protocol::BatchType::Single);
     }
 
     #[test]
@@ -333,7 +333,7 @@ mod tests {
         let cli = parse_cli(&["--batch-type", "1"]);
         let config = cli.args.into_config().expect("config should build");
 
-        assert_eq!(config.encoder_config.batch_type, base_batcher_encoder::BatchType::Span);
+        assert_eq!(config.encoder_config.batch_type, base_protocol::BatchType::Span);
     }
 
     #[test]

@@ -1,8 +1,9 @@
 //! Encoder configuration and its validation error type.
 
 use base_consensus_genesis::RollupConfig;
+use base_protocol::BatchType;
 
-use crate::{BatchType, DaType};
+use crate::DaType;
 
 /// Configuration for the [`BatchEncoder`](crate::BatchEncoder).
 #[derive(Debug, Clone)]

@@ -5,7 +5,8 @@ use std::sync::Arc;
 use alloy_eips::eip7910::{EthConfig, EthForkConfig, SystemContract};
 use alloy_provider::Provider;
 use base_execution_chainspec::OpChainSpec;
-use base_node_runner::test_utils::{TestHarnessBuilder, build_test_genesis_v1};
+use base_node_runner::test_utils::TestHarnessBuilder;
+use base_test_utils::build_test_genesis_v1;
 use eyre::Result;
 
 fn assert_zero_blob_schedule(config: &EthConfig) {

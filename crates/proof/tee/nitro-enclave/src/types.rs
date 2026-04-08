@@ -10,7 +10,6 @@
 //! shared with zkVM programs without pulling in enclave-specific dependencies.
 
 use alloy_primitives::{Address, B256, Bytes};
-pub use base_proof_primitives::{BlockId, Genesis, GenesisSystemConfig, PerChainConfig};
 
 // ---------------------------------------------------------------------------
 // Proof types
@@ -113,6 +112,7 @@ mod tests {
     use alloy_primitives::{address, b256};
     use base_alloy_chains::BaseChainConfig;
     use base_consensus_registry::Registry;
+    use base_proof_primitives::PerChainConfig;
 
     use super::*;
 

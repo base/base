@@ -58,6 +58,7 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = [
 # base-alloy
 base-alloy-network = { workspace = true, optional = true }
 base-alloy-consensus = { workspace = true, features = ["reth"] }
+base-alloy-rpc-jsonrpsee.workspace = true
 base-alloy-rpc-types-engine = { workspace = true, optional = true }
 
 # tokio
@@ -79,7 +80,6 @@ tracing-subscriber = { workspace = true, optional = true }
 [features]
 test-utils = [
 	"base-node-core/test-utils",
-	"dep:alloy-chains",
 	"dep:alloy-eips",
 	"dep:alloy-genesis",
 	"dep:alloy-primitives",
@@ -87,7 +87,6 @@ test-utils = [
 	"dep:alloy-rpc-client",
 	"dep:alloy-rpc-types",
 	"dep:alloy-rpc-types-engine",
-	"dep:alloy-signer",
 	"dep:base-alloy-network",
 	"dep:base-alloy-rpc-types-engine",
 	"dep:base-test-utils",

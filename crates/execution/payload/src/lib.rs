@@ -14,9 +14,7 @@ pub use builder::OpPayloadBuilder;
 pub mod config;
 pub mod error;
 pub mod payload;
-pub use payload::{
-    OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilderAttributes, payload_id_optimism,
-};
+pub use payload::{OpBuiltPayload, OpPayloadBuilderAttributes, payload_id_optimism};
 mod traits;
 pub use traits::*;
 mod types;

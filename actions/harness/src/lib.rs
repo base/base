@@ -44,8 +44,6 @@ mod engine;
 pub use engine::{ActionEngineClient, ActionEngineClientInner, PendingPayload};
 
 mod node;
-pub use base_consensus_derive::StepResult;
-pub use base_consensus_safedb::{SafeDBError, SafeHeadResponse};
 pub use node::{
     ActionPipeline, BlobVerifierPipeline, DerivedBlock, NodeStepResult, TestRollupNode,
     VerifierError, VerifierPipeline,

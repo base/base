@@ -13,13 +13,13 @@ use base_comp::{
     BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
 };
 use base_consensus_genesis::RollupConfig;
-use base_protocol::{Batch, ChannelId, Frame, SingleBatch, SpanBatch};
+use base_protocol::{Batch, BatchType, ChannelId, Frame, SingleBatch, SpanBatch};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};
 
 use crate::{
-    BatchPipeline, BatchSubmission, BatchType, BatcherMetrics, DaType, EncoderConfig, ReorgError,
-    StepError, StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, BatcherMetrics, DaType, EncoderConfig, ReorgError, StepError,
+    StepResult, SubmissionId,
     channel::{OpenChannel, PendingRef, ReadyChannel},
 };
 

@@ -13,7 +13,8 @@ use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_flashblocks::{FlashblocksAPI, FlashblocksReceiver, FlashblocksState};
-use base_node_runner::test_utils::{Account, LocalNodeProvider, TestHarness};
+use base_node_runner::test_utils::{LocalNodeProvider, TestHarness};
+use base_test_utils::Account;
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};

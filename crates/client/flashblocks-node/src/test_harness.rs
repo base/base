@@ -30,11 +30,11 @@ use base_flashblocks::{
 use base_node_runner::{
     BaseNodeExtension, NodeHooks,
     test_utils::{
-        Account, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNode,
-        LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
-        init_silenced_tracing,
+        L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNode, LocalNodeProvider,
+        NODE_STARTUP_DELAY_MS, TestHarness, init_silenced_tracing,
     },
 };
+use base_test_utils::{Account, build_test_genesis};
 use derive_more::Deref;
 use eyre::Result;
 use reth_chain_state::CanonStateSubscriptions;

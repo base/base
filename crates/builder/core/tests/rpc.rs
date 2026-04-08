@@ -7,7 +7,8 @@ use alloy_rpc_client::RpcClient;
 use base_alloy_consensus::{OpTransactionSigned, OpTypedTransaction, TxDeposit};
 use base_builder_core::BuilderApiExtension;
 use base_execution_txpool::ValidatedTransaction;
-use base_node_runner::test_utils::{Account, TestHarness};
+use base_node_runner::test_utils::TestHarness;
+use base_test_utils::Account;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {

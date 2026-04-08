@@ -5,9 +5,10 @@ use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
-use base_batcher_encoder::{BatchEncoder, BatchType, EncoderConfig};
+use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_consensus_genesis::RollupConfig;
+use base_protocol::BatchType;
 use base_runtime::TokioRuntime;
 use tokio_util::sync::CancellationToken;
 

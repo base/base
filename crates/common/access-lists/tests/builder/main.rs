@@ -3,22 +3,22 @@
 use std::{collections::HashMap, sync::Arc};
 
 use alloy_consensus::Header;
-pub use alloy_primitives::{Address, B256, TxKind, U256};
-pub use alloy_sol_types::SolCall;
-use base_access_lists::FBALBuilderDb;
-pub use base_access_lists::FlashblockAccessList;
+use alloy_primitives::{Address, B256, TxKind, U256};
+use alloy_sol_types::SolCall;
+use base_access_lists::{FBALBuilderDb, FlashblockAccessList};
 use base_execution_chainspec::OpChainSpec;
 use base_execution_evm::OpEvmConfig;
-pub use base_revm::OpTransaction;
-pub use base_test_utils::{
+use base_revm::OpTransaction;
+use base_test_utils::{
     AccessListContract, ContractFactory, DEVNET_CHAIN_ID, Logic, Logic2, Proxy, SimpleStorage,
     build_test_genesis,
 };
-pub use eyre::Result;
+use eyre::Result;
 use reth_evm::{ConfigureEvm, Evm};
-use revm::{DatabaseCommit, context::result::ResultAndState, database::InMemoryDB};
-pub use revm::{
-    context::TxEnv,
+use revm::{
+    DatabaseCommit,
+    context::{TxEnv, result::ResultAndState},
+    database::InMemoryDB,
     interpreter::instructions::utility::IntoAddress,
     primitives::ONE_ETHER,
     state::{AccountInfo, Bytecode},

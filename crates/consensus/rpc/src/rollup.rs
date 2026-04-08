@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use base_consensus_engine::EngineState;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_gossip::Metrics;
-use base_consensus_safedb::{SafeDBError, SafeDBReader};
+use base_consensus_safedb::{SafeDBError, SafeDBReader, SafeHeadResponse};
 use base_protocol::SyncStatus;
 use jsonrpsee::{
     core::RpcResult,
@@ -18,7 +18,7 @@ use jsonrpsee::{
 
 use crate::{
     EngineRpcClient, L1State, L1WatcherQueries, OutputResponse, RollupNodeApiServer,
-    SafeHeadResponse, l1_watcher::L1WatcherQuerySender,
+    l1_watcher::L1WatcherQuerySender,
 };
 
 /// `RollupRpc`

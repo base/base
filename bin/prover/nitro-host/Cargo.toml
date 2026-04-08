@@ -22,10 +22,14 @@ base-cli-utils.workspace = true
 alloy-primitives.workspace = true
 base-consensus-registry.workspace = true
 base-proof-tee-nitro-host.workspace = true
+base-proof-tee-nitro-enclave = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
 base-proof-host = { workspace = true, features = ["metrics"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+base-proof-tee-nitro-enclave.workspace = true
+
 [features]
-local = []
+local = [ "dep:base-proof-tee-nitro-enclave" ]

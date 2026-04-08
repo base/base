@@ -18,7 +18,8 @@ use base_alloy_flashblocks::{
 use base_alloy_network::Base;
 use base_common_rpc_types::OpTransactionRequest;
 use base_flashblocks_node::test_harness::FlashblocksHarness;
-use base_node_runner::test_utils::{Account, DoubleCounter, L1_BLOCK_INFO_DEPOSIT_TX};
+use base_node_runner::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
+use base_test_utils::{Account, DoubleCounter};
 use eyre::Result;
 use futures::{SinkExt, StreamExt};
 use reth_revm::context::TransactionType;

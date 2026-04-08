@@ -29,8 +29,8 @@ mod jsonrpsee;
 #[cfg(feature = "client")]
 pub use jsonrpsee::{AdminApiClient, BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient};
 pub use jsonrpsee::{
-    AdminApiServer, BaseAdminApiServer, BaseP2PApiServer, ConductorApiServer, DevEngineApiServer,
-    HealthzApiServer, MinerApiExtServer, RollupNodeApiServer, WsServer,
+    AdminApiServer, BaseP2PApiServer, ConductorApiServer, DevEngineApiServer, HealthzApiServer,
+    RollupNodeApiServer, WsServer,
 };
 
 mod l1_watcher;
@@ -45,7 +45,6 @@ pub use output::OutputResponse;
 mod p2p;
 
 mod response;
-pub use response::SafeHeadResponse;
 
 mod rollup;
 pub use rollup::RollupRpc;

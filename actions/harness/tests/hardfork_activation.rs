@@ -4,8 +4,9 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
+use base_batcher_encoder::{DaType, EncoderConfig};
 use base_consensus_genesis::HardForkConfig;
+use base_protocol::BatchType;
 
 // ---------------------------------------------------------------------------
 // Section 1: Base mainnet config — hardfork boundary tests

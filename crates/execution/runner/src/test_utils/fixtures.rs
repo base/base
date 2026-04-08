@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
 use base_execution_chainspec::OpChainSpec;
-use base_test_utils::{Account, build_test_genesis};
+use base_test_utils::{Account, GENESIS_GAS_LIMIT, build_test_genesis};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
@@ -20,7 +20,7 @@ use reth_provider::{
     providers::{NodeTypesForProvider, RocksDBBuilder, StaticFileProvider},
 };
 
-use crate::test_utils::{GENESIS_GAS_LIMIT, TEST_ACCOUNT_BALANCE_ETH};
+use crate::test_utils::TEST_ACCOUNT_BALANCE_ETH;
 
 /// Creates a test chain spec with pre-funded test accounts.
 pub fn load_chain_spec() -> Arc<OpChainSpec> {

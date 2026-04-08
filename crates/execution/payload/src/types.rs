@@ -1,9 +1,9 @@
 use base_alloy_consensus::OpPrimitives;
-use base_alloy_rpc_types_engine::OpExecutionData;
+use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadAttributes};
 use reth_payload_primitives::{BuiltPayload, PayloadTypes};
 use reth_primitives_traits::{Block, NodePrimitives, SealedBlock};
 
-use crate::{OpBuiltPayload, OpPayloadAttributes, OpPayloadBuilderAttributes};
+use crate::{OpBuiltPayload, OpPayloadBuilderAttributes};
 
 /// ZST that aggregates Base [`PayloadTypes`].
 #[derive(Debug, Default, Clone, serde::Deserialize, serde::Serialize)]

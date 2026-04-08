@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
 use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
     config::{GasLimitConfig, OpDAConfig},
@@ -7,7 +8,7 @@ use base_execution_payload_builder::{
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::OpEthApiBuilder,
-    miner::{MinerApiExtServer, OpMinerExtApi},
+    miner::OpMinerExtApi,
     witness::OpDebugWitnessApi,
 };
 use base_execution_txpool::OpPooledTx;

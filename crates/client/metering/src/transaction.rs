@@ -57,7 +57,7 @@ mod tests {
     use alloy_network::TxSignerSync;
     use alloy_primitives::{Address, U256, bytes};
     use base_alloy_consensus::OpTxEnvelope;
-    use base_node_runner::test_utils::Account as BaseAccount;
+    use base_test_utils::Account as BaseAccount;
 
     use super::*;
 

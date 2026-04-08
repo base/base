@@ -62,6 +62,7 @@ alloy-rpc-types-eth.workspace = true
 base-alloy-chains.workspace = true
 base-alloy-consensus = { workspace = true, features = ["reth"] }
 alloy-rpc-types-engine.workspace = true
+base-alloy-rpc-jsonrpsee.workspace = true
 base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
 
 # async

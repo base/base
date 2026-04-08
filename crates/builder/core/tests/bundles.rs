@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::TxHash;
+use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::{
-    ChainDriver, ChainDriverExt, ExternalTransactionPool, ONE_ETH, PrivateKeySigner, Protocol,
-    TransactionBuilderExt, setup_test_instance,
+    ChainDriver, ChainDriverExt, ExternalTransactionPool, ONE_ETH, Protocol, TransactionBuilderExt,
+    setup_test_instance,
 };
 use base_execution_txpool::{BasePooledTransaction, unix_time_millis};
 

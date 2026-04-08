@@ -11,12 +11,11 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::Bytes;
 use alloy_provider::Provider;
+use alloy_signer::SignerSync;
 use base_common_rpc_types::OpTransactionRequest;
 use base_execution_chainspec::OpChainSpec;
-use base_node_runner::test_utils::{
-    Account, DEVNET_CHAIN_ID, SignerSync, TestHarnessBuilder, build_test_genesis,
-    build_test_genesis_v1,
-};
+use base_node_runner::test_utils::TestHarnessBuilder;
+use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis, build_test_genesis_v1};
 use eyre::Result;
 
 const GAS_LIMIT_CAP: u64 = 1 << 24; // 16,777,216

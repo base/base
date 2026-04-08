@@ -160,6 +160,7 @@ tikv-jemallocator = { workspace = true, optional = true }
 [dev-dependencies]
 # workspace
 base-builder-core = { path = ".", features = ["test-utils"] }
+base-test-utils.workspace = true
 
 # reth
 reth-ipc.workspace = true

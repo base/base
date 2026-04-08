@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod submission;
-pub use submission::{BatchSubmission, BatchType, DaType, FrameEncoder, SubmissionId};
+pub use submission::{BatchSubmission, DaType, FrameEncoder, SubmissionId};
 
 mod step;
 pub use step::{StepError, StepResult};

@@ -6,13 +6,14 @@ use alloy_signer_local::PrivateKeySigner;
 use base_alloy_chains::BaseChainConfig;
 use base_alloy_evm::OpEvmFactory;
 use base_consensus_genesis::RollupConfig;
-use base_proof_client::{BootInfo, Prologue};
+use base_proof::BootInfo;
+use base_proof_client::Prologue;
 use base_proof_preimage::PreimageKey;
+use base_proof_primitives::PerChainConfig;
 use tracing::info;
 
 use crate::{
-    Ecdsa, NsmRng, NsmSession, Oracle, PerChainConfig, ProofJournal, Proposal, Signing,
-    TeeProofResult,
+    Ecdsa, NsmRng, NsmSession, Oracle, ProofJournal, Proposal, Signing, TeeProofResult,
     error::{NitroError, NsmError, ProposalError, Result},
 };
 

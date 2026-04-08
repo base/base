@@ -20,9 +20,8 @@ use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_flashblocks_node::test_harness::FlashblocksHarness;
-use base_node_runner::test_utils::{
-    Account, L1_BLOCK_INFO_DEPOSIT_TX, MockERC20, TransparentUpgradeableProxy,
-};
+use base_node_runner::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
+use base_test_utils::{Account, MockERC20, TransparentUpgradeableProxy};
 use eyre::Result;
 struct Erc20TestSetup {
     harness: FlashblocksHarness,

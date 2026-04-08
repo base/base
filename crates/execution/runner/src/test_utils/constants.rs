@@ -1,6 +1,5 @@
 //! Shared constants used across integration tests.
 
-pub use alloy_chains::NamedChain;
 use alloy_primitives::{B256, Bytes, b256, bytes};
 
 // Block Building

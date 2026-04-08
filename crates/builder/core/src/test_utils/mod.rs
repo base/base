@@ -10,7 +10,7 @@ mod utils;
 
 use alloy_network::TxSignerSync;
 use alloy_primitives::B256;
-pub use alloy_signer_local::PrivateKeySigner;
+use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
 use base_alloy_consensus::{OpTransactionSigned, OpTypedTransaction};
 use base_execution_chainspec::OpChainSpec;

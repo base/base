@@ -13,11 +13,11 @@ use base_consensus_registry::Registry;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
-use base_proof_tee_nitro_host::EnclaveServer;
+use base_proof_tee_nitro_enclave::Server as EnclaveServer;
+#[cfg(target_os = "linux")]
+use base_proof_tee_nitro_enclave::VSOCK_PORT;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::RegistrationHealthConfig;
-#[cfg(target_os = "linux")]
-use base_proof_tee_nitro_host::VSOCK_PORT;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_tee_nitro_host::{NitroProverServer, NitroTransport};
 use clap::{Parser, Subcommand};

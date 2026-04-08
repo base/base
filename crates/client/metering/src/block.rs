@@ -138,7 +138,8 @@ mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_primitives::{Address, Signature};
     use base_alloy_consensus::{BaseBlockBody, OpTransactionSigned};
-    use base_node_runner::test_utils::{Account, TestHarness};
+    use base_node_runner::test_utils::TestHarness;
+    use base_test_utils::Account;
     use reth_primitives_traits::Block as _;
     use reth_transaction_pool::test_utils::TransactionBuilder;
 
