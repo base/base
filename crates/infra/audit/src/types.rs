@@ -1,6 +1,6 @@
 use alloy_consensus::transaction::{SignerRecoverable, Transaction as ConsensusTransaction};
 use alloy_primitives::{Address, TxHash, U256};
-use base_bundles::{AcceptedBundle, BundleExtensions};
+use base_bundles::{AcceptedBundle, BundleExtensions, MeterBundleResponse};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -44,12 +44,12 @@ pub struct RejectedTransaction {
     pub block_number: u64,
     /// The transaction hash.
     pub tx_hash: TxHash,
-    /// The raw EIP-2718 encoded transaction bytes.
-    pub raw_tx: Bytes,
     /// The reason the transaction was rejected.
     pub reason: String,
     /// Unix timestamp when the rejection occurred.
     pub timestamp: u64,
+    /// The metering simulation response that informed the rejection decision.
+    pub metering: MeterBundleResponse,
 }
 
 /// Bundle lifecycle event.

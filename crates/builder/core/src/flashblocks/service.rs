@@ -48,8 +48,7 @@ impl FlashblocksServiceBuilder {
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
             let forwarder = RejectedTxForwarder::new(url, rx)
                 .map_err(|e| eyre::eyre!("Failed to create rejected tx forwarder: {e}"))?;
-            ctx.task_executor()
-                .spawn_critical_task("rejected-tx-forwarder", Box::pin(forwarder.run()));
+            ctx.task_executor().spawn_task(Box::pin(forwarder.run()));
             info!(audit_archiver_url = %url, "Rejected transaction forwarder started");
             Some(tx)
         } else {

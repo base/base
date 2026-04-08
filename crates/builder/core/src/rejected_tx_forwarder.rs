@@ -3,7 +3,10 @@
 //! Forwards rejected transactions from the builder to the audit-archiver
 //! service via the `base_persistTransaction` RPC method.
 
-use alloy_primitives::{Bytes, TxHash};
+use core::time::Duration;
+
+use alloy_primitives::TxHash;
+use base_bundles::MeterBundleResponse;
 use jsonrpsee::{
     core::client::ClientT,
     http_client::{HttpClient, HttpClientBuilder},
@@ -17,14 +20,14 @@ use tracing::{info, warn};
 pub struct RejectedTxInfo {
     /// The transaction hash.
     pub tx_hash: TxHash,
-    /// The raw EIP-2718 encoded transaction bytes.
-    pub raw_tx: Bytes,
     /// The block number the transaction was intended for.
     pub block_number: u64,
     /// The reason the transaction was rejected.
     pub reason: String,
     /// Unix timestamp when the rejection occurred.
     pub timestamp: u64,
+    /// The metering simulation response that informed the rejection decision.
+    pub metering: MeterBundleResponse,
 }
 
 /// Forwards rejected transactions to the audit-archiver via RPC.
@@ -33,9 +36,7 @@ pub struct RejectedTxInfo {
 /// fire-and-forget RPC calls to the audit-archiver service.
 #[derive(Debug)]
 pub struct RejectedTxForwarder {
-    /// The jsonrpsee HTTP client for calling the audit-archiver.
     client: HttpClient,
-    /// Receiver for rejected transaction info.
     rx: mpsc::UnboundedReceiver<RejectedTxInfo>,
 }
 
@@ -46,6 +47,7 @@ impl RejectedTxForwarder {
         rx: mpsc::UnboundedReceiver<RejectedTxInfo>,
     ) -> eyre::Result<Self> {
         let client = HttpClientBuilder::default()
+            .request_timeout(Duration::from_secs(1))
             .build(audit_archiver_url)
             .map_err(|e| eyre::eyre!("Failed to build audit archiver HTTP client: {e}"))?;
         Ok(Self { client, rx })
@@ -59,9 +61,9 @@ impl RejectedTxForwarder {
             let params = vec![json!({
                 "block_number": info.block_number,
                 "tx_hash": info.tx_hash,
-                "raw_tx": info.raw_tx,
                 "reason": info.reason,
                 "timestamp": info.timestamp,
+                "metering": info.metering,
             })];
 
             match self.client.request::<bool, _>("base_persistTransaction", params).await {

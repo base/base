@@ -14,6 +14,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, L1BlockInfo, OpSpecId};
 use base_execution_chainspec::BaseChainSpec;
+use base_bundles::MeterBundleResponse;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
@@ -455,17 +456,29 @@ impl BasePayloadBuilderCtx {
     ///
     /// This is a fire-and-forget operation — errors are silently ignored to avoid
     /// impacting block building performance.
-    fn send_rejected_tx(&self, tx_hash: TxHash, raw_tx: &[u8], reason: &str) {
+    fn send_rejected_tx(
+        &self,
+        tx_hash: TxHash,
+        reason: &str,
+        metering: MeterBundleResponse,
+    ) {
         if let Some(sender) = &self.rejected_tx_sender {
             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
             let info = RejectedTxInfo {
                 tx_hash,
-                raw_tx: Bytes::copy_from_slice(raw_tx),
                 block_number: self.block_number(),
                 reason: reason.to_string(),
                 timestamp: now,
+                metering,
             };
-            let _ = sender.send(info);
+            if let Err(e) = sender.try_send(info) {
+                warn!(
+                    target: "payload_builder",
+                    error = %e,
+                    tx_hash = %tx_hash,
+                    "Rejected tx channel full, dropping entry"
+                );
+            }
         }
     }
 }
@@ -1118,6 +1131,7 @@ impl BasePayloadBuilderCtx {
             cancel: CancellationToken::new(),
             extra: FlashblocksExtraCtx::default(),
             builder_config: crate::BuilderConfig::default(),
+            rejected_tx_sender: None,
         }
     }
 }
