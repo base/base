@@ -415,7 +415,11 @@ impl Cli {
         // ── 3. Build L1 provider and tx manager ──────────────────────────────
         let l1_addr = config.signing.address();
         let provider = if metrics_enabled {
-            let (layer, balance_rx) = BalanceMonitorLayer::new(l1_addr, cancel.clone());
+            let (layer, balance_rx) = BalanceMonitorLayer::new(
+                l1_addr,
+                cancel.clone(),
+                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+            );
             let provider =
                 ProviderBuilder::new().layer(layer).connect_http(config.l1_rpc_url.clone());
             tokio::spawn(async move {

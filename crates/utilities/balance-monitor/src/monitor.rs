@@ -2,9 +2,8 @@
 //!
 //! Provides a [`BalanceMonitorLayer`] that plugs into any alloy provider stack
 //! via [`ProviderBuilder::layer`]. When the layer is applied it spawns a
-//! background task that polls the monitored address's balance on every new
-//! block (via [`Provider::watch_blocks`]) and publishes the latest value
-//! through a [`tokio::sync::watch`] channel.
+//! background task that periodically polls the monitored address's balance
+//! and publishes the latest value through a [`tokio::sync::watch`] channel.
 //!
 //! The layer is an identity layer — it returns the inner provider unchanged,
 //! so the resulting provider type is the same as if the layer were never
@@ -13,13 +12,14 @@
 //!
 //! [`ProviderBuilder::layer`]: alloy_provider::ProviderBuilder::layer
 
+use std::time::Duration;
+
 use alloy_network::Network;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderLayer};
-use futures::StreamExt;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 /// An identity [`ProviderLayer`] that spawns a background balance-monitoring
 /// task.
@@ -35,7 +35,11 @@ use tracing::{debug, error, warn};
 /// # Example
 ///
 /// ```rust,ignore
-/// let (layer, balance_rx) = BalanceMonitorLayer::new(address, cancel.clone());
+/// let (layer, balance_rx) = BalanceMonitorLayer::new(
+///     address,
+///     cancel.clone(),
+///     BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+/// );
 ///
 /// let provider = ProviderBuilder::new()
 ///     .layer(layer)
@@ -52,18 +56,25 @@ use tracing::{debug, error, warn};
 pub struct BalanceMonitorLayer {
     address: Address,
     cancel: CancellationToken,
+    poll_interval: Duration,
     tx: watch::Sender<U256>,
 }
 
 impl BalanceMonitorLayer {
-    /// Creates a new layer together with the receiving end of the balance
-    /// channel.
+    /// Default polling interval (12 seconds, matching L1 block time).
+    pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(12);
+
+    /// Creates a new layer that polls `address` every `poll_interval`.
     ///
     /// The returned [`watch::Receiver`] yields the latest observed balance
     /// (as [`U256`] in wei). The initial value is [`U256::ZERO`].
-    pub fn new(address: Address, cancel: CancellationToken) -> (Self, watch::Receiver<U256>) {
+    pub fn new(
+        address: Address,
+        cancel: CancellationToken,
+        poll_interval: Duration,
+    ) -> (Self, watch::Receiver<U256>) {
         let (tx, rx) = watch::channel(U256::ZERO);
-        (Self { address, cancel, tx }, rx)
+        (Self { address, cancel, poll_interval, tx }, rx)
     }
 }
 
@@ -78,24 +89,15 @@ where
         let provider = inner.clone();
         let address = self.address;
         let cancel = self.cancel.clone();
+        let poll_interval = self.poll_interval;
         let tx = self.tx.clone();
 
         tokio::spawn(async move {
-            let poller = match provider.watch_blocks().await {
-                Ok(poller) => poller,
-                Err(e) => {
-                    error!(error = %e, address = %address, "failed to install block filter, balance monitor disabled");
-                    return;
-                }
-            };
-            let mut stream = poller.into_stream().flat_map(futures::stream::iter);
+            let mut interval = tokio::time::interval(poll_interval);
             loop {
                 tokio::select! {
                     () = cancel.cancelled() => break,
-                    block = stream.next() => {
-                        if block.is_none() {
-                            break;
-                        }
+                    _ = interval.tick() => {
                         match provider.get_balance(address).await {
                             Ok(bal) => {
                                 let _ = tx.send(bal);

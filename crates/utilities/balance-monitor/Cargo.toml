@@ -12,12 +12,11 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-futures.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 tokio-util.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]

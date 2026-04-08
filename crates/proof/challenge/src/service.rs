@@ -75,7 +75,11 @@ impl ChallengerService {
         let signer_config = config.signing;
         let sender_addr = signer_config.address();
         let l1_provider = if config.metrics.enabled {
-            let (layer, balance_rx) = BalanceMonitorLayer::new(sender_addr, cancel.clone());
+            let (layer, balance_rx) = BalanceMonitorLayer::new(
+                sender_addr,
+                cancel.clone(),
+                BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
+            );
             let provider = ProviderBuilder::new()
                 .layer(layer)
                 .connect_http(config.l1_eth_rpc.as_ref().clone());
