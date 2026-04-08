@@ -48,6 +48,14 @@ impl SignerConfig {
         Self::Local(signer)
     }
 
+    /// Returns the sender address for this signer configuration.
+    pub const fn address(&self) -> Address {
+        match self {
+            Self::Local(signer) => signer.address(),
+            Self::Remote { address, .. } => *address,
+        }
+    }
+
     /// Builds an [`EthereumWallet`] from this configuration.
     ///
     /// # Errors

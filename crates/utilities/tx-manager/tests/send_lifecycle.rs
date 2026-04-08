@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 ///
 /// Under CI load Anvil's auto-mine may not have flushed yet, causing
 /// `query_receipt` to see stale tip heights or missing receipts.
-async fn mine_block(manager: &SimpleTxManager) {
+async fn mine_block(manager: &SimpleTxManager<RootProvider>) {
     manager
         .provider()
         .raw_request::<(), String>("evm_mine".into(), ())
@@ -48,7 +48,7 @@ fn fast_polling_config() -> TxManagerConfig {
 /// configured with the given [`TxManagerConfig`].
 async fn setup_with_config(
     config: TxManagerConfig,
-) -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);
@@ -95,7 +95,7 @@ impl TxSigner<Signature> for FailingSigner {
 
 async fn setup_with_failing_signer_config(
     config: TxManagerConfig,
-) -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);
@@ -323,7 +323,7 @@ async fn query_receipt_returns_none_when_not_enough_confirmations() {
 // ── wait_mined() ──────────────────────────────────────────────────────
 
 /// Helper: publishes a simple value-transfer tx and returns the hash.
-async fn publish_simple_tx(manager: &SimpleTxManager) -> (B256, SendState) {
+async fn publish_simple_tx(manager: &SimpleTxManager<RootProvider>) -> (B256, SendState) {
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
         value: U256::from(1_000u64),

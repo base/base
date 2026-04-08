@@ -20,7 +20,7 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 async fn manager_from_anvil(
     anvil: &alloy_node_bindings::AnvilInstance,
     config: TxManagerConfig,
-) -> SimpleTxManager {
+) -> SimpleTxManager<RootProvider> {
     let provider = RootProvider::new_http(anvil.endpoint_url());
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
     let wallet = EthereumWallet::from(signer);
@@ -37,7 +37,7 @@ async fn manager_from_anvil(
 
 async fn setup_with_config(
     config: TxManagerConfig,
-) -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     let anvil = alloy_node_bindings::Anvil::new().spawn();
     let manager = manager_from_anvil(&anvil, config).await;
     (manager, anvil)
@@ -71,7 +71,7 @@ async fn revert(provider: &RootProvider, id: U256) {
     assert!(success, "evm_revert should return true");
 }
 
-async fn publish_simple_tx(manager: &SimpleTxManager) -> (B256, SendState) {
+async fn publish_simple_tx(manager: &SimpleTxManager<RootProvider>) -> (B256, SendState) {
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
         value: U256::from(1_000u64),
@@ -87,7 +87,7 @@ async fn publish_simple_tx(manager: &SimpleTxManager) -> (B256, SendState) {
 
 async fn query(
     send_state: &SendState,
-    manager: &SimpleTxManager,
+    manager: &SimpleTxManager<RootProvider>,
     tx_hash: B256,
     confirmations: u64,
 ) -> Option<alloy_rpc_types_eth::TransactionReceipt> {

@@ -34,6 +34,7 @@
 //! [`TransactionRequest`]: alloy_rpc_types_eth::TransactionRequest
 
 use std::{
+    fmt::Debug,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -47,7 +48,7 @@ use alloy_eips::{
 };
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes};
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
@@ -151,15 +152,15 @@ impl BumpState {
 /// (nonce, gas, fees) are set manually on [`TransactionRequest`] without
 /// alloy fillers or `PendingTransactionBuilder`.
 #[derive(Debug, Clone)]
-pub struct SimpleTxManager {
+pub struct SimpleTxManager<P> {
     /// RPC provider for chain queries and transaction submission.
-    provider: RootProvider,
+    provider: P,
     /// Wallet used for signing transactions.
     wallet: EthereumWallet,
     /// Validated runtime configuration.
     config: TxManagerConfig,
     /// Nonce manager for sequential nonce allocation.
-    nonce_manager: NonceManager<RootProvider>,
+    nonce_manager: NonceManager<P>,
     /// Chain ID for transaction construction.
     chain_id: u64,
     /// Shutdown flag shared across the manager and any spawned background
@@ -173,7 +174,10 @@ pub struct SimpleTxManager {
     blob_builder: BlobTxBuilder,
 }
 
-impl SimpleTxManager {
+impl<P> SimpleTxManager<P>
+where
+    P: Provider + Clone + Debug + Send + Sync + 'static,
+{
     /// Maximum number of retry attempts for [`Self::prepare`].
     pub const PREPARE_MAX_RETRIES: usize = 30;
 
@@ -191,7 +195,7 @@ impl SimpleTxManager {
     /// be built. See [`from_wallet`](Self::from_wallet) for other error
     /// conditions.
     pub async fn new(
-        provider: RootProvider,
+        provider: P,
         signer_config: SignerConfig,
         config: TxManagerConfig,
         chain_id: u64,
@@ -216,7 +220,7 @@ impl SimpleTxManager {
     /// fails or the chain ID does not match the provider. Returns
     /// [`TxManagerError::Rpc`] if the provider is unreachable.
     pub async fn from_wallet(
-        provider: RootProvider,
+        provider: P,
         wallet: EthereumWallet,
         config: TxManagerConfig,
         chain_id: u64,
@@ -254,7 +258,7 @@ impl SimpleTxManager {
     }
 
     /// Returns a reference to the RPC provider.
-    pub const fn provider(&self) -> &RootProvider {
+    pub const fn provider(&self) -> &P {
         &self.provider
     }
 
@@ -269,7 +273,7 @@ impl SimpleTxManager {
     }
 
     /// Returns a reference to the nonce manager.
-    pub const fn nonce_manager(&self) -> &NonceManager<RootProvider> {
+    pub const fn nonce_manager(&self) -> &NonceManager<P> {
         &self.nonce_manager
     }
 
@@ -1418,7 +1422,7 @@ impl SimpleTxManager {
     ///   RPC load is proportional to `bump_count × 1/interval`.
     pub fn wait_for_tx(
         send_state: Arc<SendState>,
-        provider: RootProvider,
+        provider: P,
         tx_hash: B256,
         config: TxManagerConfig,
         receipt_tx: mpsc::Sender<TransactionReceipt>,
@@ -1446,7 +1450,7 @@ impl SimpleTxManager {
     /// the `confirmation_timeout` deadline is exceeded.
     pub async fn wait_mined(
         send_state: &SendState,
-        provider: &RootProvider,
+        provider: &P,
         tx_hash: B256,
         config: &TxManagerConfig,
         closed: &AtomicBool,
@@ -1508,7 +1512,7 @@ impl SimpleTxManager {
     /// Returns [`TxManagerError::Rpc`] if provider calls fail.
     pub async fn query_receipt(
         send_state: &SendState,
-        provider: &RootProvider,
+        provider: &P,
         tx_hash: B256,
         num_confirmations: u64,
         network_timeout: Duration,
@@ -1606,7 +1610,10 @@ impl SimpleTxManager {
     }
 }
 
-impl TxManager for SimpleTxManager {
+impl<P> TxManager for SimpleTxManager<P>
+where
+    P: Provider + Clone + Debug + Send + Sync + 'static,
+{
     async fn send(&self, candidate: TxCandidate) -> SendResponse {
         self.send_tx(candidate, None).await
     }
@@ -1661,7 +1668,7 @@ mod tests {
         GasPriceCaps, NoopTxMetrics, SendState, TxCandidate, TxManagerConfig, TxManagerError,
     };
 
-    async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+    async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
         let anvil = Anvil::new().spawn();
         let url = anvil.endpoint_url();
         let provider = RootProvider::new_http(url);
@@ -1725,7 +1732,7 @@ mod tests {
             sidecar: None,
         };
 
-        let abort = SimpleTxManager::apply_bump_result(input, &mut state);
+        let abort = SimpleTxManager::<RootProvider>::apply_bump_result(input, &mut state);
 
         assert_eq!(abort.is_some(), abort_expected);
         assert_eq!(state.tip, expected_tip);
@@ -1818,7 +1825,7 @@ mod tests {
 
         let mut state = default_bump_state();
 
-        let abort = SimpleTxManager::apply_bump_result_with_suppression(
+        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
             Err(error),
             &mut state,
             &send_state,
@@ -1847,7 +1854,7 @@ mod tests {
         let send_state = suppression_send_state(tx_mined);
         let mut state = default_bump_state();
 
-        let abort = SimpleTxManager::apply_bump_result_with_suppression(
+        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
             Err(error),
             &mut state,
             &send_state,
@@ -1876,7 +1883,7 @@ mod tests {
 
         let mut state = default_bump_state();
 
-        let abort = SimpleTxManager::apply_bump_result_with_suppression(
+        let abort = SimpleTxManager::<RootProvider>::apply_bump_result_with_suppression(
             Ok(new_state),
             &mut state,
             &send_state,
@@ -1916,7 +1923,11 @@ mod tests {
             send_state.record_successful_publish();
         }
         assert_eq!(
-            SimpleTxManager::should_reset_nonce_on_send_error(&result, &send_state, nonce_override,),
+            SimpleTxManager::<RootProvider>::should_reset_nonce_on_send_error(
+                &result,
+                &send_state,
+                nonce_override,
+            ),
             expected,
         );
     }
@@ -1938,7 +1949,10 @@ mod tests {
         if has_publish {
             send_state.record_successful_publish();
         }
-        assert_eq!(SimpleTxManager::should_return_reserved_nonce(&result, &send_state,), expected,);
+        assert_eq!(
+            SimpleTxManager::<RootProvider>::should_return_reserved_nonce(&result, &send_state,),
+            expected,
+        );
     }
 
     #[tokio::test]

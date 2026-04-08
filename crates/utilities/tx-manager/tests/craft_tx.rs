@@ -19,7 +19,7 @@ use base_tx_manager::{
 /// configured with the given [`TxManagerConfig`].
 async fn setup_with_config(
     config: TxManagerConfig,
-) -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);
@@ -35,7 +35,7 @@ async fn setup_with_config(
 
 /// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
 /// with the default [`TxManagerConfig`].
-async fn setup() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     setup_with_config(TxManagerConfig::default()).await
 }
 
@@ -585,7 +585,7 @@ impl TxSigner<Signature> for FailingSigner {
 /// whose wallet uses a [`FailingSigner`], causing all signing attempts
 /// to fail. The `FailingSigner` claims the same address as Anvil's first
 /// account so the rest of the pipeline (gas estimation, nonce) works.
-async fn setup_with_failing_signer() -> (SimpleTxManager, alloy_node_bindings::AnvilInstance) {
+async fn setup_with_failing_signer() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);
@@ -765,7 +765,7 @@ async fn prepared_tx_fees_match_decoded_transaction_with_overrides() {
 #[test]
 fn simple_tx_manager_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<SimpleTxManager>();
+    assert_send_sync::<SimpleTxManager<RootProvider>>();
 }
 
 // ── increase_gas_price ──────────────────────────────────────────────
