@@ -6,9 +6,6 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-mod balance;
-pub use balance::{BALANCE_POLL_INTERVAL, balance_monitor};
-
 mod cli;
 pub use cli::{
     AdminArgs, Cli, HealthArgs, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli,

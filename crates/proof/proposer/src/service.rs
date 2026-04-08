@@ -6,7 +6,8 @@ use std::sync::{
 };
 
 use alloy_primitives::Address;
-use alloy_provider::Provider;
+use alloy_provider::{Provider, ProviderBuilder};
+use base_balance_monitor::{BalanceMonitorLayer, wei_to_f64};
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
@@ -18,7 +19,7 @@ use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
     RollupProvider,
 };
-use base_tx_manager::{BaseTxMetrics, SimpleTxManager, TxManager};
+use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
@@ -27,7 +28,6 @@ use tracing::{info, warn};
 
 use crate::{
     Metrics,
-    balance::balance_monitor,
     config::ProposerConfig,
     driver::{
         DriverConfig, PipelineConfig, PipelineHandle, ProposerDriverControl, ProvingPipeline,
@@ -182,7 +182,13 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
                 eyre::eyre!("tx manager config required when not in dry-run mode")
             })?;
 
-            let l1_tx_provider = alloy_provider::RootProvider::new_http(config.l1_eth_rpc.clone());
+            let sender_addr = signing.address();
+
+            let (monitor_layer, balance_rx) =
+                BalanceMonitorLayer::new(sender_addr, cancel.clone());
+            let l1_tx_provider = ProviderBuilder::new()
+                .layer(monitor_layer)
+                .connect_http(config.l1_eth_rpc.clone());
             let l1_chain_id = l1_tx_provider
                 .get_chain_id()
                 .await
@@ -196,8 +202,17 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
             )
             .await
             .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
-            let addr = tx_manager.sender_address();
-            info!(%addr, "Transaction manager initialized");
+            info!(addr = %sender_addr, "Transaction manager initialized");
+
+            if config.metrics.enabled {
+                tokio::spawn(async move {
+                    let mut rx = balance_rx;
+                    while rx.changed().await.is_ok() {
+                        Metrics::account_balance_wei().set(wei_to_f64(*rx.borrow_and_update()));
+                    }
+                });
+                info!(addr = %sender_addr, "Balance monitor started");
+            }
 
             let submitter = ProposalSubmitter::new(
                 tx_manager,
@@ -205,7 +220,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
                 config.game_type,
                 init_bond,
             );
-            (Arc::new(submitter), Some(addr))
+            (Arc::new(submitter), Some(sender_addr))
         };
     info!("Output proposer initialized");
 
@@ -268,17 +283,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         })
     });
 
-    // ── 9. Start balance monitor (if metrics enabled and not dry-run) ───
-    let balance_handle: Option<JoinHandle<()>> = if config.metrics.enabled
-        && let Some(addr) = proposer_address
-    {
-        let handle = tokio::spawn(balance_monitor(Arc::clone(&l1_client), addr, cancel.clone()));
-        info!(%addr, "Balance monitor started");
-        Some(handle)
-    } else {
-        None
-    };
-
     // ── 10. Start the driver loop ────────────────────────────────────────
     driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
@@ -302,10 +306,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         && let Err(e) = driver_handle.stop_proposer().await
     {
         warn!(error = e, "Error stopping proposer driver");
-    }
-
-    if let Some(handle) = balance_handle {
-        let _ = handle.await;
     }
 
     if let Some(handle) = admin_handle {

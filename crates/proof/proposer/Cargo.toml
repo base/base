@@ -33,6 +33,9 @@ base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
 # Tx Manager
 base-tx-manager.workspace = true
 
+# Balance Monitor
+base-balance-monitor.workspace = true
+
 # Proof
 base-proof-rpc.workspace = true
 base-proof-contracts.workspace = true
