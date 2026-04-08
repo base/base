@@ -58,7 +58,6 @@ duration: "30s"
 | Config | Target | Notes |
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
-| `sepolia-alpha.yaml` | Sepolia Alpha | Requires `FUNDER_KEY` |
 | `sepolia.yaml` | Sepolia | Requires `FUNDER_KEY` |
 
 ### Environment Variables
