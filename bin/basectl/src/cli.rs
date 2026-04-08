@@ -26,10 +26,6 @@ pub(crate) enum Commands {
         /// Output flashblocks as JSON lines instead of the TUI
         #[arg(long)]
         json: bool,
-        /// Network to connect to (mainnet, sepolia, devnet, or a config file path).
-        /// Only used with --json; the TUI uses the in-app network picker.
-        #[arg(long, default_value = "mainnet")]
-        network: String,
     },
     /// DA (Data Availability) backlog monitor
     #[command(visible_alias = "d")]
