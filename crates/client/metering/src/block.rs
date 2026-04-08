@@ -12,6 +12,7 @@ use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::Block as BlockT;
 use reth_provider::{HeaderProvider, StateProviderFactory};
 use reth_revm::{database::StateProviderDatabase, db::State};
+use revm_database::states::bundle_state::BundleRetention;
 
 use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 
@@ -114,6 +115,9 @@ where
 
     // Calculate state root and measure time
     let state_root_start = Instant::now();
+    // Merge all state transitions so that `bundle_state` reflects the complete
+    // post-execution state before we compute the hashed post-state and trie root.
+    db.merge_transitions(BundleRetention::Reverts);
     let hashed_state = state_provider.hashed_post_state(&db.bundle_state);
     let _state_root = state_provider
         .state_root(hashed_state)
