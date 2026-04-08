@@ -437,9 +437,8 @@ impl Cli {
                     cancel.clone(),
                     BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
                 );
-                let _bl_provider = ProviderBuilder::new()
-                    .layer(bl_layer)
-                    .connect_http(boundless.rpc_url.clone());
+                let _bl_provider =
+                    ProviderBuilder::new().layer(bl_layer).connect_http(boundless.rpc_url.clone());
                 tokio::spawn(async move {
                     let mut rx = bl_balance_rx;
                     while rx.changed().await.is_ok() {
