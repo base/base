@@ -7,6 +7,9 @@ use clap::{Parser, Subcommand};
 #[command(name = "basectl")]
 #[command(about = "Base infrastructure control CLI")]
 pub(crate) struct Cli {
+    /// Chain configuration (mainnet, sepolia, devnet, or path to config file)
+    #[arg(short = 'c', long = "config", default_value = "mainnet", global = true)]
+    pub(crate) config: String,
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
 }

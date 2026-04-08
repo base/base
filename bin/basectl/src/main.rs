@@ -13,15 +13,18 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = cli::Cli::parse();
 
+    let config = &cli.config;
     match cli.command {
-        Some(cli::Commands::Config) => run_app(ViewId::Config).await,
+        Some(cli::Commands::Config) => run_app(ViewId::Config, config).await,
         Some(cli::Commands::Flashblocks { json: true, network }) => {
             run_flashblocks_json(ChainConfig::load(&network).await?).await
         }
-        Some(cli::Commands::Flashblocks { json: false, .. }) => run_app(ViewId::Flashblocks).await,
-        Some(cli::Commands::Da) => run_app(ViewId::DaMonitor).await,
-        Some(cli::Commands::CommandCenter) => run_app(ViewId::CommandCenter).await,
-        Some(cli::Commands::Conductor) => run_app(ViewId::Conductor).await,
-        None => run_app(ViewId::Home).await,
+        Some(cli::Commands::Flashblocks { json: false, .. }) => {
+            run_app(ViewId::Flashblocks, config).await
+        }
+        Some(cli::Commands::Da) => run_app(ViewId::DaMonitor, config).await,
+        Some(cli::Commands::CommandCenter) => run_app(ViewId::CommandCenter, config).await,
+        Some(cli::Commands::Conductor) => run_app(ViewId::Conductor, config).await,
+        None => run_app(ViewId::Home, config).await,
     }
 }

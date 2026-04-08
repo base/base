@@ -19,9 +19,9 @@ use crate::{
     tui::Toast,
 };
 
-/// Launches the TUI application starting from the specified view, defaulting to mainnet.
-pub async fn run_app(initial_view: ViewId) -> Result<()> {
-    let config = ChainConfig::mainnet();
+/// Launches the TUI application starting from the specified view and network.
+pub async fn run_app(initial_view: ViewId, network: &str) -> Result<()> {
+    let config = ChainConfig::load(network).await?;
     let mut resources = Resources::new(config.clone());
     start_background_services(&config, &mut resources);
     let app = App::new(resources, initial_view);
