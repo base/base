@@ -402,8 +402,6 @@ impl<C: Clock> BondManager<C> {
             self.tracked.insert(game_address, TrackedGame { phase, bond_recipient });
         }
 
-        // Set the discovery watermark so continuous scanning starts from
-        // where startup left off.
         self.bond_scan_head = game_count;
         self.last_full_scan = self.clock.now();
 
@@ -497,7 +495,6 @@ impl<C: Clock> BondManager<C> {
         let mut discovered = 0u64;
 
         for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
-            // Skip games already being tracked.
             if self.tracked.contains_key(&game_address) {
                 continue;
             }
@@ -523,8 +520,6 @@ impl<C: Clock> BondManager<C> {
             discovered += 1;
         }
 
-        // Advance watermark to the end of the scanned range (which may
-        // be less than `game_count` when the span was capped).
         self.bond_scan_head = scan_end;
 
         if is_full_rescan {
@@ -618,10 +613,7 @@ impl<C: Clock> BondManager<C> {
             BondPhase::NeedsUnlock => {
                 self.try_unlock(game_address, verifier_client, submitter).await
             }
-            BondPhase::AwaitingDelay { unlocked_at } => {
-                let unlocked_at = *unlocked_at;
-                self.check_delay(game_address, unlocked_at)
-            }
+            BondPhase::AwaitingDelay { unlocked_at } => self.check_delay(game_address, *unlocked_at),
             BondPhase::NeedsWithdraw => {
                 self.try_withdraw(game_address, verifier_client, submitter).await
             }
@@ -642,7 +634,6 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<Option<RemovalReason>> {
-        // Check if already resolved onchain (e.g., someone else called it).
         let status = verifier_client.status(game_address).await?;
         if status != GameScanner::STATUS_IN_PROGRESS {
             ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
@@ -667,7 +658,6 @@ impl<C: Clock> BondManager<C> {
             return Ok(None);
         }
 
-        // Submit resolve transaction.
         let calldata = encode_resolve_calldata();
         info!(game = %game_address, "submitting resolve transaction");
         match submitter.send_bond_tx(game_address, calldata).await {
@@ -893,9 +883,10 @@ impl<C: Clock> BondManager<C> {
             return Ok(None);
         }
 
-        let resolved_at = verifier_client.resolved_at(game_address).await?;
-
-        let bond_unlocked = verifier_client.bond_unlocked(game_address).await?;
+        let (resolved_at, bond_unlocked) = futures::try_join!(
+            verifier_client.resolved_at(game_address),
+            verifier_client.bond_unlocked(game_address),
+        )?;
         if bond_unlocked {
             // Use `resolved_at` as a conservative lower bound for the unlock
             // time. The unlock must have occurred after resolve, so this may
