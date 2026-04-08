@@ -415,9 +415,8 @@ impl Cli {
         // ── 3. Build L1 provider and tx manager ──────────────────────────────
         let l1_addr = config.signing.address();
         let (monitor_layer, balance_rx) = BalanceMonitorLayer::new(l1_addr, cancel.clone());
-        let provider = ProviderBuilder::new()
-            .layer(monitor_layer)
-            .connect_http(config.l1_rpc_url.clone());
+        let provider =
+            ProviderBuilder::new().layer(monitor_layer).connect_http(config.l1_rpc_url.clone());
 
         let tx_manager = SimpleTxManager::new(
             provider,

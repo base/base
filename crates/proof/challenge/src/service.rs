@@ -193,7 +193,8 @@ impl ChallengerService {
             tokio::spawn(async move {
                 let mut rx = balance_rx;
                 while rx.changed().await.is_ok() {
-                    ChallengerMetrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
+                    ChallengerMetrics::account_balance_wei()
+                        .set(f64::from(*rx.borrow_and_update()));
                 }
             });
             info!(%sender_addr, "Balance monitor started");

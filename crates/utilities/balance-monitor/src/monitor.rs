@@ -123,5 +123,3 @@ impl<P: Provider<N>, N: Network> Provider<N> for BalanceMonitorProvider<P, N> {
         self.inner.root()
     }
 }
-
-

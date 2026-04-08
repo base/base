@@ -184,11 +184,9 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
             let sender_addr = signing.address();
 
-            let (monitor_layer, balance_rx) =
-                BalanceMonitorLayer::new(sender_addr, cancel.clone());
-            let l1_tx_provider = ProviderBuilder::new()
-                .layer(monitor_layer)
-                .connect_http(config.l1_eth_rpc.clone());
+            let (monitor_layer, balance_rx) = BalanceMonitorLayer::new(sender_addr, cancel.clone());
+            let l1_tx_provider =
+                ProviderBuilder::new().layer(monitor_layer).connect_http(config.l1_eth_rpc.clone());
             let l1_chain_id = l1_tx_provider
                 .get_chain_id()
                 .await
