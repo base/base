@@ -5,7 +5,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use base_balance_monitor::{BalanceMonitorLayer, wei_to_f64};
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
@@ -71,8 +72,12 @@ impl ChallengerService {
             .map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;
 
         // ── 3. Construct tx-manager and challenge submitter ──────────────────
-        let l1_provider = RootProvider::new_http(config.l1_eth_rpc.as_ref().clone());
         let signer_config = config.signing;
+        let sender_addr = signer_config.address();
+        let (monitor_layer, balance_rx) = BalanceMonitorLayer::new(sender_addr, cancel.clone());
+        let l1_provider = ProviderBuilder::new()
+            .layer(monitor_layer)
+            .connect_http(config.l1_eth_rpc.as_ref().clone());
         let chain_id = l1_provider
             .get_chain_id()
             .await
@@ -182,6 +187,17 @@ impl ChallengerService {
             let health_cancel = cancel.clone();
             tokio::spawn(async move { HealthServer::serve(addr, ready_flag, health_cancel).await })
         };
+
+        // ── 8b. Start balance monitor (if metrics enabled) ─────────────────
+        if config.metrics.enabled {
+            tokio::spawn(async move {
+                let mut rx = balance_rx;
+                while rx.changed().await.is_ok() {
+                    ChallengerMetrics::account_balance_wei().set(wei_to_f64(*rx.borrow_and_update()));
+                }
+            });
+            info!(%sender_addr, "Balance monitor started");
+        }
 
         // ── 9. Run driver ────────────────────────────────────────────────────
         let driver_config = DriverConfig {

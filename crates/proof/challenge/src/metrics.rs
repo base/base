@@ -96,6 +96,9 @@ base_metrics::define_metrics! {
     #[describe("Total bond evaluation failures by error type")]
     #[label(error_type)]
     bond_evaluation_errors_total: counter,
+
+    #[describe("Challenger account balance in wei")]
+    account_balance_wei: gauge,
 }
 
 impl ChallengerMetrics {

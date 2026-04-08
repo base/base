@@ -46,6 +46,9 @@ base-proof-contracts.workspace = true
 # Transaction management
 base-tx-manager.workspace = true
 
+# Balance Monitor
+base-balance-monitor.workspace = true
+
 # RPC
 base-proof-rpc.workspace = true
 
