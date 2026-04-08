@@ -10,7 +10,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use alloy_provider::ProviderBuilder;
+use alloy_provider::{Provider, ProviderBuilder};
 use alloy_signer_local::PrivateKeySigner;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
@@ -440,14 +440,24 @@ impl Cli {
 
             if let ProvingConfig::Boundless(ref boundless) = config.proving {
                 let bl_addr = boundless.signer.address();
-                let (bl_layer, bl_balance_rx) = BalanceMonitorLayer::new(bl_addr, cancel.clone());
-                let _bl_provider = ProviderBuilder::new()
-                    .layer(bl_layer)
-                    .connect_http(boundless.rpc_url.clone());
+                let bl_rpc = boundless.rpc_url.clone();
+                let bl_cancel = cancel.clone();
                 tokio::spawn(async move {
-                    let mut rx = bl_balance_rx;
-                    while rx.changed().await.is_ok() {
-                        RegistrarMetrics::boundless_balance_wei().set(f64::from(*rx.borrow_and_update()));
+                    let provider = ProviderBuilder::new().connect_http(bl_rpc);
+                    loop {
+                        tokio::select! {
+                            () = bl_cancel.cancelled() => break,
+                            () = tokio::time::sleep(Duration::from_secs(30)) => {
+                                match provider.get_balance(bl_addr).await {
+                                    Ok(bal) => {
+                                        RegistrarMetrics::boundless_balance_wei().set(f64::from(bal));
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, address = %bl_addr, "failed to fetch Boundless balance");
+                                    }
+                                }
+                            }
+                        }
                     }
                 });
                 info!(%bl_addr, "Boundless balance monitor started");
