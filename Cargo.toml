@@ -291,6 +291,7 @@ base-reth-cli = { path = "crates/utilities/reth-cli" }
 base-test-utils = { path = "crates/utilities/test-utils" }
 base-tx-manager = { path = "crates/utilities/tx-manager" }
 base-ring-buffer = { path = "crates/shared/ring-buffer" }
+base-balance-monitor = { path = "crates/utilities/balance-monitor" }
 base-macros = { path = "crates/utilities/macros", default-features = false }
 base-metrics = { path = "crates/utilities/metrics", default-features = false }
 base-runtime = { path = "crates/utilities/runtime", default-features = false }
