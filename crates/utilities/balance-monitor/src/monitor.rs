@@ -12,7 +12,10 @@
 //!
 //! [`ProviderBuilder::layer`]: alloy_provider::ProviderBuilder::layer
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 use alloy_network::Network;
 use alloy_primitives::{Address, U256};
@@ -31,6 +34,10 @@ use tracing::{debug, warn};
 /// Because this is an identity layer (`type Provider = P`), the resulting
 /// provider type is unchanged. Callers that do not need balance monitoring
 /// should simply not apply this layer to the provider stack.
+///
+/// Each instance must only be layered once. A second call to
+/// [`ProviderLayer::layer`] will log a warning and skip spawning a
+/// duplicate task.
 ///
 /// # Example
 ///
@@ -58,6 +65,7 @@ pub struct BalanceMonitorLayer {
     cancel: CancellationToken,
     poll_interval: Duration,
     tx: watch::Sender<U256>,
+    spawned: AtomicBool,
 }
 
 impl BalanceMonitorLayer {
@@ -74,7 +82,7 @@ impl BalanceMonitorLayer {
         poll_interval: Duration,
     ) -> (Self, watch::Receiver<U256>) {
         let (tx, rx) = watch::channel(U256::ZERO);
-        (Self { address, cancel, poll_interval, tx }, rx)
+        (Self { address, cancel, poll_interval, tx, spawned: AtomicBool::new(false) }, rx)
     }
 }
 
@@ -86,6 +94,11 @@ where
     type Provider = P;
 
     fn layer(&self, inner: P) -> P {
+        if self.spawned.swap(true, Ordering::Relaxed) {
+            warn!(address = %self.address, "balance monitor already spawned, skipping duplicate");
+            return inner;
+        }
+
         let provider = inner.clone();
         let address = self.address;
         let cancel = self.cancel.clone();
@@ -94,6 +107,7 @@ where
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(poll_interval);
+            interval.tick().await;
             loop {
                 tokio::select! {
                     () = cancel.cancelled() => break,
