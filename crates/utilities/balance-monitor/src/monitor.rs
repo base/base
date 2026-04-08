@@ -16,7 +16,7 @@ use alloy_provider::{Provider, ProviderLayer, RootProvider};
 use futures::StreamExt;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// A [`ProviderLayer`] that spawns a background balance-monitoring task.
 ///
@@ -62,7 +62,7 @@ impl BalanceMonitorLayer {
 
 impl<P, N> ProviderLayer<P, N> for BalanceMonitorLayer
 where
-    P: Provider<N> + Clone + 'static,
+    P: Provider<N> + Clone + Send + 'static,
     N: Network,
 {
     type Provider = BalanceMonitorProvider<P, N>;
@@ -77,7 +77,7 @@ where
             let poller = match provider.watch_blocks().await {
                 Ok(poller) => poller,
                 Err(e) => {
-                    warn!(error = %e, address = %address, "failed to install block filter, balance monitor disabled");
+                    error!(error = %e, address = %address, "failed to install block filter, balance monitor disabled");
                     return;
                 }
             };
