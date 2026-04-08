@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
-use base_balance_monitor::{BalanceMonitorLayer, wei_to_f64};
+use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
@@ -193,7 +193,7 @@ impl ChallengerService {
             tokio::spawn(async move {
                 let mut rx = balance_rx;
                 while rx.changed().await.is_ok() {
-                    ChallengerMetrics::account_balance_wei().set(wei_to_f64(*rx.borrow_and_update()));
+                    ChallengerMetrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
                 }
             });
             info!(%sender_addr, "Balance monitor started");

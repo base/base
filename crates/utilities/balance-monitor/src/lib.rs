@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod monitor;
-pub use monitor::{BalanceMonitorLayer, BalanceMonitorProvider, wei_to_f64};
+pub use monitor::{BalanceMonitorLayer, BalanceMonitorProvider};
 
 #[cfg(test)]
 mod tests;

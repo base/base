@@ -7,7 +7,7 @@ use std::sync::{
 
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
-use base_balance_monitor::{BalanceMonitorLayer, wei_to_f64};
+use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
@@ -208,7 +208,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
                 tokio::spawn(async move {
                     let mut rx = balance_rx;
                     while rx.changed().await.is_ok() {
-                        Metrics::account_balance_wei().set(wei_to_f64(*rx.borrow_and_update()));
+                        Metrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
                     }
                 });
                 info!(addr = %sender_addr, "Balance monitor started");

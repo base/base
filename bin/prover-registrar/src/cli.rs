@@ -12,7 +12,7 @@ use std::{
 use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
 use alloy_signer_local::PrivateKeySigner;
-use base_balance_monitor::{BalanceMonitorLayer, wei_to_f64};
+use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_tee_nitro_attestation_prover::{
@@ -433,7 +433,7 @@ impl Cli {
             tokio::spawn(async move {
                 let mut rx = balance_rx;
                 while rx.changed().await.is_ok() {
-                    RegistrarMetrics::account_balance_wei().set(wei_to_f64(*rx.borrow_and_update()));
+                    RegistrarMetrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
                 }
             });
             info!(%l1_addr, "L1 balance monitor started");
@@ -447,7 +447,7 @@ impl Cli {
                 tokio::spawn(async move {
                     let mut rx = bl_balance_rx;
                     while rx.changed().await.is_ok() {
-                        RegistrarMetrics::boundless_balance_wei().set(wei_to_f64(*rx.borrow_and_update()));
+                        RegistrarMetrics::boundless_balance_wei().set(f64::from(*rx.borrow_and_update()));
                     }
                 });
                 info!(%bl_addr, "Boundless balance monitor started");

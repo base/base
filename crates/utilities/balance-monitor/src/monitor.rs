@@ -37,11 +37,11 @@ use tracing::{debug, warn};
 /// tokio::spawn(async move {
 ///     while balance_rx.changed().await.is_ok() {
 ///         let bal = *balance_rx.borrow_and_update();
-///         metrics.set(wei_to_f64(bal));
+///         metrics.set(f64::from(bal));
 ///     }
 /// });
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BalanceMonitorLayer {
     address: Address,
     cancel: CancellationToken,
@@ -124,9 +124,4 @@ impl<P: Provider<N>, N: Network> Provider<N> for BalanceMonitorProvider<P, N> {
     }
 }
 
-/// Convert a [`U256`] wei value to [`f64`] for use in Prometheus gauges.
-///
-/// Returns [`f64::MAX`] if the value cannot be parsed.
-pub fn wei_to_f64(wei: U256) -> f64 {
-    wei.to_string().parse().unwrap_or(f64::MAX)
-}
+
