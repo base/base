@@ -301,8 +301,7 @@ impl LoadRunner {
             .map(|(_, deficit)| *deficit)
             .fold(U256::ZERO, |a, b| a.saturating_add(b));
         let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_fee));
-        let total_gas_cost =
-            gas_cost_per_tx.saturating_mul(U256::from(accounts_to_fund.len()));
+        let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(accounts_to_fund.len()));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
         let funder_balance = self.client.get_balance(funder_address).await?;
@@ -343,8 +342,9 @@ impl LoadRunner {
             .iter()
             .enumerate()
             .map(|(i, &(address, deficit))| {
-                let nonce =
-                    start_nonce + u64::try_from(i).expect("account index exceeds u64");
+                let nonce = start_nonce
+                    .checked_add(u64::try_from(i).expect("account index exceeds u64"))
+                    .expect("nonce overflow");
                 let tx = TransactionRequest::default()
                     .with_to(address)
                     .with_value(deficit)
@@ -360,6 +360,7 @@ impl LoadRunner {
         let pb_send = Self::progress_bar(txs.len() as u64, "Sending funding txs");
         let mut pending_txs: Vec<(TxHash, Address)> = Vec::with_capacity(txs.len());
         let mut send_failures: Vec<(Address, U256, u64, String)> = Vec::new();
+        let mut fatal_errors: Vec<String> = Vec::new();
 
         let send_futs = txs.into_iter().map(|(tx, address, deficit, nonce)| {
             let provider = &funder_provider;
@@ -384,16 +385,21 @@ impl LoadRunner {
                     if error_str.contains("already known") {
                         send_failures.push((address, deficit, nonce, error_str));
                     } else {
-                        pb_send.finish_and_clear();
                         error!(to = %address, error = %e, "failed to fund account");
-                        return Err(BaselineError::Transaction(format!(
-                            "failed to fund {address}: {e}",
-                        )));
+                        fatal_errors.push(format!("failed to fund {address}: {e}"));
                     }
                 }
             }
         }
         pb_send.finish_and_clear();
+
+        if !fatal_errors.is_empty() {
+            return Err(BaselineError::Transaction(format!(
+                "{} funding tx(s) failed: {}",
+                fatal_errors.len(),
+                fatal_errors.join("; "),
+            )));
+        }
 
         // Retry "already known" failures with higher gas price.
         if !send_failures.is_empty() {
@@ -504,20 +510,21 @@ impl LoadRunner {
             .await;
         pb_refresh.finish_and_clear();
 
+        let addr_to_idx: HashMap<Address, usize> =
+            self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
+
         for result in refresh_results {
             let (addr, balance, account_nonce) = result?;
-            if let Some(account) =
-                self.accounts.accounts_mut().iter_mut().find(|a| a.address == addr)
-            {
-                account.balance = balance;
-                account.nonce = account_nonce;
+            let idx = addr_to_idx[&addr];
+            let account = &mut self.accounts.accounts_mut()[idx];
+            account.balance = balance;
+            account.nonce = account_nonce;
 
-                let provider = NonceProvider::new_http(self.config.rpc_url.clone());
-                let nonce_manager = NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT);
-                self.nonce_managers.insert(addr, nonce_manager);
+            let provider = NonceProvider::new_http(self.config.rpc_url.clone());
+            let nonce_manager = NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT);
+            self.nonce_managers.insert(addr, nonce_manager);
 
-                debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
-            }
+            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
         }
 
         info!(funded = accounts_to_fund.len(), "funding complete");
