@@ -245,12 +245,12 @@ impl LoadRunner {
 
         let balance_futs: Vec<_> = addresses
             .iter()
-            .map(|&(addr, _)| {
+            .map(|&(addr, idx)| {
                 let client = &self.client;
                 async move {
                     let balance = client.get_balance(addr).await?;
                     let nonce = client.get_nonce(addr).await?;
-                    Ok::<_, BaselineError>((balance, nonce))
+                    Ok::<_, BaselineError>((addr, idx, balance, nonce))
                 }
             })
             .collect();
@@ -263,8 +263,8 @@ impl LoadRunner {
         pb_check.finish_and_clear();
 
         let mut accounts_to_fund = Vec::new();
-        for (result, &(addr, idx)) in results.into_iter().zip(addresses.iter()) {
-            let (balance, nonce) = result?;
+        for result in results {
+            let (addr, idx, balance, nonce) = result?;
             let account = &mut self.accounts.accounts_mut()[idx];
             account.balance = balance;
             account.nonce = nonce;
@@ -296,10 +296,13 @@ impl LoadRunner {
 
         // Phase 2: Early balance validation — abort before sending any TXs if
         // the funder cannot cover the total cost.
-        let total_deficit: U256 =
-            accounts_to_fund.iter().map(|(_, deficit)| *deficit).fold(U256::ZERO, |a, b| a + b);
-        let gas_cost_per_tx = U256::from(21_000u64) * U256::from(max_fee);
-        let total_gas_cost = gas_cost_per_tx * U256::from(accounts_to_fund.len());
+        let total_deficit: U256 = accounts_to_fund
+            .iter()
+            .map(|(_, deficit)| *deficit)
+            .fold(U256::ZERO, |a, b| a.saturating_add(b));
+        let gas_cost_per_tx = U256::from(21_000u64).saturating_mul(U256::from(max_fee));
+        let total_gas_cost =
+            gas_cost_per_tx.saturating_mul(U256::from(accounts_to_fund.len()));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
         let funder_balance = self.client.get_balance(funder_address).await?;
@@ -340,7 +343,8 @@ impl LoadRunner {
             .iter()
             .enumerate()
             .map(|(i, &(address, deficit))| {
-                let nonce = start_nonce + i as u64;
+                let nonce =
+                    start_nonce + u64::try_from(i).expect("account index exceeds u64");
                 let tx = TransactionRequest::default()
                     .with_to(address)
                     .with_value(deficit)
@@ -507,13 +511,13 @@ impl LoadRunner {
             {
                 account.balance = balance;
                 account.nonce = account_nonce;
+
+                let provider = NonceProvider::new_http(self.config.rpc_url.clone());
+                let nonce_manager = NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT);
+                self.nonce_managers.insert(addr, nonce_manager);
+
+                debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
             }
-
-            let provider = NonceProvider::new_http(self.config.rpc_url.clone());
-            let nonce_manager = NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT);
-            self.nonce_managers.insert(addr, nonce_manager);
-
-            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
         }
 
         info!(funded = accounts_to_fund.len(), "funding complete");
