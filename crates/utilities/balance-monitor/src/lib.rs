@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod monitor;
-pub use monitor::{BalanceMonitorLayer, BalanceMonitorProvider};
+pub use monitor::BalanceMonitorLayer;
 
 #[cfg(test)]
 mod tests;

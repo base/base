@@ -6,23 +6,31 @@
 //! block (via [`Provider::watch_blocks`]) and publishes the latest value
 //! through a [`tokio::sync::watch`] channel.
 //!
+//! The layer is an identity layer — it returns the inner provider unchanged,
+//! so the resulting provider type is the same as if the layer were never
+//! applied. This allows callers to conditionally apply the layer without
+//! introducing type divergence.
+//!
 //! [`ProviderBuilder::layer`]: alloy_provider::ProviderBuilder::layer
-
-use std::marker::PhantomData;
 
 use alloy_network::Network;
 use alloy_primitives::{Address, U256};
-use alloy_provider::{Provider, ProviderLayer, RootProvider};
+use alloy_provider::{Provider, ProviderLayer};
 use futures::StreamExt;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-/// A [`ProviderLayer`] that spawns a background balance-monitoring task.
+/// An identity [`ProviderLayer`] that spawns a background balance-monitoring
+/// task.
 ///
 /// The layer reuses the wrapped provider's existing transport — no extra HTTP
 /// connection is needed. Balance updates are emitted on a
 /// [`watch::Receiver<U256>`] obtained at construction time.
+///
+/// Because this is an identity layer (`type Provider = P`), the resulting
+/// provider type is unchanged. Callers that do not need balance monitoring
+/// should simply not apply this layer to the provider stack.
 ///
 /// # Example
 ///
@@ -33,11 +41,10 @@ use tracing::{debug, error, warn};
 ///     .layer(layer)
 ///     .connect_http(rpc_url);
 ///
-/// // Consume balance updates (e.g. for Prometheus metrics).
 /// tokio::spawn(async move {
-///     while balance_rx.changed().await.is_ok() {
-///         let bal = *balance_rx.borrow_and_update();
-///         metrics.set(f64::from(bal));
+///     let mut rx = balance_rx;
+///     while rx.changed().await.is_ok() {
+///         metrics.set(f64::from(*rx.borrow_and_update()));
 ///     }
 /// });
 /// ```
@@ -65,9 +72,9 @@ where
     P: Provider<N> + Clone + Send + 'static,
     N: Network,
 {
-    type Provider = BalanceMonitorProvider<P, N>;
+    type Provider = P;
 
-    fn layer(&self, inner: P) -> Self::Provider {
+    fn layer(&self, inner: P) -> P {
         let provider = inner.clone();
         let address = self.address;
         let cancel = self.cancel.clone();
@@ -103,23 +110,6 @@ where
             }
         });
 
-        BalanceMonitorProvider { inner, _network: PhantomData }
-    }
-}
-
-/// Transparent pass-through provider created by [`BalanceMonitorLayer`].
-///
-/// This provider delegates every call to the inner provider unchanged.
-/// The balance monitoring happens entirely in a background task spawned by
-/// the layer.
-#[derive(Clone, Debug)]
-pub struct BalanceMonitorProvider<P, N = alloy_network::Ethereum> {
-    inner: P,
-    _network: PhantomData<N>,
-}
-
-impl<P: Provider<N>, N: Network> Provider<N> for BalanceMonitorProvider<P, N> {
-    fn root(&self) -> &RootProvider<N> {
-        self.inner.root()
+        inner
     }
 }

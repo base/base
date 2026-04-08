@@ -414,42 +414,37 @@ impl Cli {
 
         // ── 3. Build L1 provider and tx manager ──────────────────────────────
         let l1_addr = config.signing.address();
-        let (monitor_layer, balance_rx) = BalanceMonitorLayer::new(l1_addr, cancel.clone());
-        let provider =
-            ProviderBuilder::new().layer(monitor_layer).connect_http(config.l1_rpc_url.clone());
-
-        let tx_manager = SimpleTxManager::new(
-            provider,
-            config.signing,
-            config.tx_manager,
-            config.l1_chain_id,
-            Arc::new(BaseTxMetrics::new("registrar")),
-        )
-        .await?;
-
-        // ── 3b. Start balance monitor metrics (if enabled) ─────────────────────
-        if metrics_enabled {
+        let provider = if metrics_enabled {
+            let (layer, balance_rx) =
+                BalanceMonitorLayer::new(l1_addr, cancel.clone());
+            let provider = ProviderBuilder::new()
+                .layer(layer)
+                .connect_http(config.l1_rpc_url.clone());
             tokio::spawn(async move {
                 let mut rx = balance_rx;
                 while rx.changed().await.is_ok() {
-                    RegistrarMetrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
+                    RegistrarMetrics::account_balance_wei()
+                        .set(f64::from(*rx.borrow_and_update()));
                 }
             });
             info!(%l1_addr, "L1 balance monitor started");
 
+            // Boundless balance uses a simple poll loop since the Boundless
+            // SDK manages its own provider internally.
             if let ProvingConfig::Boundless(ref boundless) = config.proving {
                 let bl_addr = boundless.signer.address();
                 let bl_rpc = boundless.rpc_url.clone();
                 let bl_cancel = cancel.clone();
                 tokio::spawn(async move {
-                    let provider = ProviderBuilder::new().connect_http(bl_rpc);
+                    let bl_provider = ProviderBuilder::new().connect_http(bl_rpc);
                     loop {
                         tokio::select! {
                             () = bl_cancel.cancelled() => break,
                             () = tokio::time::sleep(Duration::from_secs(30)) => {
-                                match provider.get_balance(bl_addr).await {
+                                match bl_provider.get_balance(bl_addr).await {
                                     Ok(bal) => {
-                                        RegistrarMetrics::boundless_balance_wei().set(f64::from(bal));
+                                        RegistrarMetrics::boundless_balance_wei()
+                                            .set(f64::from(bal));
                                     }
                                     Err(e) => {
                                         warn!(error = %e, address = %bl_addr, "failed to fetch Boundless balance");
@@ -461,7 +456,20 @@ impl Cli {
                 });
                 info!(%bl_addr, "Boundless balance monitor started");
             }
-        }
+
+            provider
+        } else {
+            ProviderBuilder::new().connect_http(config.l1_rpc_url.clone())
+        };
+
+        let tx_manager = SimpleTxManager::new(
+            provider,
+            config.signing,
+            config.tx_manager,
+            config.l1_chain_id,
+            Arc::new(BaseTxMetrics::new("registrar")),
+        )
+        .await?;
 
         // ── 4. Build AWS SDK clients for discovery ───────────────────────────
         let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())

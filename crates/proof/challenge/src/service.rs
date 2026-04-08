@@ -74,10 +74,24 @@ impl ChallengerService {
         // ── 3. Construct tx-manager and challenge submitter ──────────────────
         let signer_config = config.signing;
         let sender_addr = signer_config.address();
-        let (monitor_layer, balance_rx) = BalanceMonitorLayer::new(sender_addr, cancel.clone());
-        let l1_provider = ProviderBuilder::new()
-            .layer(monitor_layer)
-            .connect_http(config.l1_eth_rpc.as_ref().clone());
+        let l1_provider = if config.metrics.enabled {
+            let (layer, balance_rx) =
+                BalanceMonitorLayer::new(sender_addr, cancel.clone());
+            let provider = ProviderBuilder::new()
+                .layer(layer)
+                .connect_http(config.l1_eth_rpc.as_ref().clone());
+            tokio::spawn(async move {
+                let mut rx = balance_rx;
+                while rx.changed().await.is_ok() {
+                    ChallengerMetrics::account_balance_wei()
+                        .set(f64::from(*rx.borrow_and_update()));
+                }
+            });
+            info!(%sender_addr, "Balance monitor started");
+            provider
+        } else {
+            ProviderBuilder::new().connect_http(config.l1_eth_rpc.as_ref().clone())
+        };
         let chain_id = l1_provider
             .get_chain_id()
             .await
@@ -187,18 +201,6 @@ impl ChallengerService {
             let health_cancel = cancel.clone();
             tokio::spawn(async move { HealthServer::serve(addr, ready_flag, health_cancel).await })
         };
-
-        // ── 8b. Start balance monitor (if metrics enabled) ─────────────────
-        if config.metrics.enabled {
-            tokio::spawn(async move {
-                let mut rx = balance_rx;
-                while rx.changed().await.is_ok() {
-                    ChallengerMetrics::account_balance_wei()
-                        .set(f64::from(*rx.borrow_and_update()));
-                }
-            });
-            info!(%sender_addr, "Balance monitor started");
-        }
 
         // ── 9. Run driver ────────────────────────────────────────────────────
         let driver_config = DriverConfig {

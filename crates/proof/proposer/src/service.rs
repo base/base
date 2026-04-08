@@ -184,9 +184,24 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
 
             let sender_addr = signing.address();
 
-            let (monitor_layer, balance_rx) = BalanceMonitorLayer::new(sender_addr, cancel.clone());
-            let l1_tx_provider =
-                ProviderBuilder::new().layer(monitor_layer).connect_http(config.l1_eth_rpc.clone());
+            let l1_tx_provider = if config.metrics.enabled {
+                let (layer, balance_rx) =
+                    BalanceMonitorLayer::new(sender_addr, cancel.clone());
+                let provider = ProviderBuilder::new()
+                    .layer(layer)
+                    .connect_http(config.l1_eth_rpc.clone());
+                tokio::spawn(async move {
+                    let mut rx = balance_rx;
+                    while rx.changed().await.is_ok() {
+                        Metrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
+                    }
+                });
+                info!(addr = %sender_addr, "Balance monitor started");
+                provider
+            } else {
+                ProviderBuilder::new().connect_http(config.l1_eth_rpc.clone())
+            };
+
             let l1_chain_id = l1_tx_provider
                 .get_chain_id()
                 .await
@@ -201,16 +216,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
             .await
             .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
             info!(addr = %sender_addr, "Transaction manager initialized");
-
-            if config.metrics.enabled {
-                tokio::spawn(async move {
-                    let mut rx = balance_rx;
-                    while rx.changed().await.is_ok() {
-                        Metrics::account_balance_wei().set(f64::from(*rx.borrow_and_update()));
-                    }
-                });
-                info!(addr = %sender_addr, "Balance monitor started");
-            }
 
             let submitter = ProposalSubmitter::new(
                 tx_manager,
