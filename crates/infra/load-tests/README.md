@@ -20,9 +20,6 @@ Load testing and benchmarking framework for Base infrastructure.
 # Run load test against local devnet (uses Anvil Account #1)
 just load-test devnet
 
-# Run load test against sepolia-alpha (requires funded key)
-FUNDER_KEY=0x... just load-test sepolia-alpha
-
 # Run load test against sepolia (requires funded key)
 FUNDER_KEY=0x... just load-test sepolia
 ```
@@ -58,7 +55,6 @@ duration: "30s"
 | Config | Target | Notes |
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
-| `sepolia-alpha.yaml` | Sepolia Alpha | Requires `FUNDER_KEY` |
 | `sepolia.yaml` | Sepolia | Requires `FUNDER_KEY` |
 
 ### Environment Variables

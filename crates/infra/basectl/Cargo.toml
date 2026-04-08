@@ -18,6 +18,7 @@ crossterm = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-contract = { workspace = true }
 base-load-tests = { workspace = true }
+base-alloy-chains = { workspace = true }
 base-alloy-network = { workspace = true }
 base-consensus-gossip = { workspace = true }
 base-alloy-flashblocks = { workspace = true }

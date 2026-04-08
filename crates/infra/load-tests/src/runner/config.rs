@@ -109,25 +109,6 @@ impl LoadConfig {
         }
     }
 
-    /// Creates a new load config for Sepolia Alpha.
-    pub fn sepolia_alpha() -> Self {
-        Self {
-            rpc_url: "https://base-sepolia-alpha.cbhq.net".parse().unwrap(),
-            chain_id: 11763072,
-            account_count: 10,
-            seed: 42,
-            mnemonic: None,
-            sender_offset: 0,
-            transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
-            target_gps: 2_100_000,
-            duration: Some(Duration::from_secs(30)),
-            max_in_flight_per_sender: 50,
-            batch_size: 5,
-            batch_timeout: Duration::from_millis(50),
-            max_gas_price: DEFAULT_MAX_GAS_PRICE,
-        }
-    }
-
     /// Validates the configuration, returning an error if invalid.
     pub fn validate(&self) -> Result<()> {
         if self.account_count == 0 {

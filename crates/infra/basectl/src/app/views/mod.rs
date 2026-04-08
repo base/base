@@ -29,3 +29,6 @@ pub(crate) use proofs::ProofsView;
 
 mod transaction_pane;
 pub(crate) use transaction_pane::TransactionPane;
+
+mod upgrades;
+pub(crate) use upgrades::UpgradesView;

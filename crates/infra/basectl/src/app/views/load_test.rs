@@ -9,7 +9,7 @@ use std::{
 
 use base_load_tests::{
     DisplaySnapshot, LoadRunner, MetricsSummary, OsakaTarget, PrecompileTarget, RpcClient,
-    TestConfig, TxTypeConfig, devnet_funder, ensure_funder_balance, is_local_rpc,
+    TestConfig, TxTypeConfig, WeightedTxType, devnet_funder, ensure_funder_balance, is_local_rpc,
 };
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -34,6 +34,7 @@ const KEYBINDINGS_IDLE: &[Keybinding] = &[
     Keybinding { key: "←/→", description: "Select network" },
     Keybinding { key: "b", description: "Begin test" },
     Keybinding { key: "c", description: "Continuous mode" },
+    Keybinding { key: "t", description: "Strategy" },
     Keybinding { key: "e", description: "Edit config" },
     Keybinding { key: "Esc", description: "Back" },
     Keybinding { key: "?", description: "Toggle help" },
@@ -119,6 +120,191 @@ impl std::fmt::Debug for RunState {
 }
 
 // ---------------------------------------------------------------------------
+// Strategy multiselect
+// ---------------------------------------------------------------------------
+
+/// Flat enumeration of all individually-selectable load strategies shown in the TUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StrategyOption {
+    Transfer,
+    Calldata,
+    Ecrecover,
+    Sha256,
+    Ripemd160,
+    Identity,
+    Modexp,
+    Bn254Add,
+    Bn254Mul,
+    Bn254Pairing,
+    Blake2f,
+    Kzg,
+    OsakaClz,
+    OsakaP256verify,
+    OsakaModexp,
+}
+
+const ALL_STRATEGIES: &[StrategyOption] = &[
+    StrategyOption::Transfer,
+    StrategyOption::Calldata,
+    StrategyOption::Ecrecover,
+    StrategyOption::Sha256,
+    StrategyOption::Ripemd160,
+    StrategyOption::Identity,
+    StrategyOption::Modexp,
+    StrategyOption::Bn254Add,
+    StrategyOption::Bn254Mul,
+    StrategyOption::Bn254Pairing,
+    StrategyOption::Blake2f,
+    StrategyOption::Kzg,
+    StrategyOption::OsakaClz,
+    StrategyOption::OsakaP256verify,
+    StrategyOption::OsakaModexp,
+];
+
+impl StrategyOption {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Transfer => "transfer",
+            Self::Calldata => "calldata",
+            Self::Ecrecover => "precompile  ecrecover",
+            Self::Sha256 => "precompile  sha256",
+            Self::Ripemd160 => "precompile  ripemd160",
+            Self::Identity => "precompile  identity",
+            Self::Modexp => "precompile  modexp",
+            Self::Bn254Add => "precompile  bn254_add",
+            Self::Bn254Mul => "precompile  bn254_mul",
+            Self::Bn254Pairing => "precompile  bn254_pairing",
+            Self::Blake2f => "precompile  blake2f",
+            Self::Kzg => "precompile  kzg",
+            Self::OsakaClz => "osaka  clz",
+            Self::OsakaP256verify => "osaka  p256verify",
+            Self::OsakaModexp => "osaka  modexp",
+        }
+    }
+
+    const fn to_tx_type(self) -> TxTypeConfig {
+        match self {
+            Self::Transfer => TxTypeConfig::Transfer,
+            Self::Calldata => TxTypeConfig::Calldata { max_size: 128, repeat_count: 1 },
+            Self::Ecrecover => {
+                TxTypeConfig::Precompile { target: PrecompileTarget::Ecrecover, iterations: 1 }
+            }
+            Self::Sha256 => {
+                TxTypeConfig::Precompile { target: PrecompileTarget::Sha256, iterations: 1 }
+            }
+            Self::Ripemd160 => {
+                TxTypeConfig::Precompile { target: PrecompileTarget::Ripemd160, iterations: 1 }
+            }
+            Self::Identity => {
+                TxTypeConfig::Precompile { target: PrecompileTarget::Identity, iterations: 1 }
+            }
+            Self::Modexp => {
+                TxTypeConfig::Precompile { target: PrecompileTarget::Modexp, iterations: 1 }
+            }
+            Self::Bn254Add => {
+                TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Add, iterations: 1 }
+            }
+            Self::Bn254Mul => {
+                TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Mul, iterations: 1 }
+            }
+            Self::Bn254Pairing => {
+                TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Pairing, iterations: 1 }
+            }
+            Self::Blake2f => TxTypeConfig::Precompile {
+                target: PrecompileTarget::Blake2f { rounds: None },
+                iterations: 1,
+            },
+            Self::Kzg => TxTypeConfig::Precompile {
+                target: PrecompileTarget::KzgPointEvaluation,
+                iterations: 1,
+            },
+            Self::OsakaClz => TxTypeConfig::Osaka { target: OsakaTarget::Clz },
+            Self::OsakaP256verify => TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka },
+            Self::OsakaModexp => TxTypeConfig::Osaka { target: OsakaTarget::ModexpOsaka },
+        }
+    }
+
+    const fn matches_tx_type(self, tx: &TxTypeConfig) -> bool {
+        matches!(
+            (self, tx),
+            (Self::Transfer, TxTypeConfig::Transfer)
+                | (Self::Calldata, TxTypeConfig::Calldata { .. })
+                | (
+                    Self::Ecrecover,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Ecrecover, .. }
+                )
+                | (Self::Sha256, TxTypeConfig::Precompile { target: PrecompileTarget::Sha256, .. })
+                | (
+                    Self::Ripemd160,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Ripemd160, .. }
+                )
+                | (
+                    Self::Identity,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Identity, .. }
+                )
+                | (Self::Modexp, TxTypeConfig::Precompile { target: PrecompileTarget::Modexp, .. })
+                | (
+                    Self::Bn254Add,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Add, .. }
+                )
+                | (
+                    Self::Bn254Mul,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Mul, .. }
+                )
+                | (
+                    Self::Bn254Pairing,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Bn254Pairing, .. }
+                )
+                | (
+                    Self::Blake2f,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::Blake2f { .. }, .. }
+                )
+                | (
+                    Self::Kzg,
+                    TxTypeConfig::Precompile { target: PrecompileTarget::KzgPointEvaluation, .. }
+                )
+                | (Self::OsakaClz, TxTypeConfig::Osaka { target: OsakaTarget::Clz })
+                | (
+                    Self::OsakaP256verify,
+                    TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka }
+                )
+                | (Self::OsakaModexp, TxTypeConfig::Osaka { target: OsakaTarget::ModexpOsaka })
+        )
+    }
+}
+
+#[derive(Debug)]
+struct StrategyModal {
+    /// Index of the currently highlighted strategy.
+    cursor: usize,
+    /// Which strategies are currently enabled.
+    enabled: Vec<bool>,
+}
+
+impl StrategyModal {
+    fn from_config(transactions: &[WeightedTxType]) -> Self {
+        let mut enabled = vec![false; ALL_STRATEGIES.len()];
+        for (i, &strategy) in ALL_STRATEGIES.iter().enumerate() {
+            enabled[i] = transactions.iter().any(|t| strategy.matches_tx_type(&t.tx_type));
+        }
+        // Default to transfer if nothing matched.
+        if !enabled.iter().any(|&e| e) {
+            enabled[0] = true;
+        }
+        Self { cursor: 0, enabled }
+    }
+
+    fn to_transactions(&self) -> Vec<WeightedTxType> {
+        ALL_STRATEGIES
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.enabled[*i])
+            .map(|(_, &strategy)| WeightedTxType { weight: 1, tx_type: strategy.to_tx_type() })
+            .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Edit modal state
 // ---------------------------------------------------------------------------
 
@@ -162,6 +348,8 @@ pub(crate) struct LoadTestView {
     state: RunState,
     /// Edit modal; `None` when the modal is closed.
     edit: Option<EditModal>,
+    /// Strategy multiselect modal; `None` when the modal is closed.
+    strategy_modal: Option<StrategyModal>,
     /// In-memory funder private key override (raw 0x-prefixed hex).
     /// When set, takes precedence over the `FUNDER_KEY` env var.
     funder_key_override: Option<String>,
@@ -178,6 +366,7 @@ impl LoadTestView {
             continuous: false,
             state: RunState::Idle,
             edit: None,
+            strategy_modal: None,
             funder_key_override: None,
         }
     }
@@ -516,6 +705,44 @@ impl LoadTestView {
             }
         }
     }
+
+    fn handle_strategy_key(&mut self, key: KeyEvent) {
+        let n = ALL_STRATEGIES.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(ref mut modal) = self.strategy_modal {
+                    modal.cursor = modal.cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(ref mut modal) = self.strategy_modal
+                    && modal.cursor + 1 < n
+                {
+                    modal.cursor += 1;
+                }
+            }
+            KeyCode::Char(' ') => {
+                if let Some(ref mut modal) = self.strategy_modal {
+                    let i = modal.cursor;
+                    modal.enabled[i] = !modal.enabled[i];
+                }
+            }
+            KeyCode::Enter => {
+                let transactions = self.strategy_modal.as_ref().map(|m| m.to_transactions());
+                if let Some(txs) = transactions
+                    && !txs.is_empty()
+                    && let Some(cfg) = self.effective_config_mut()
+                {
+                    cfg.transactions = txs;
+                }
+                self.strategy_modal = None;
+            }
+            KeyCode::Esc => {
+                self.strategy_modal = None;
+            }
+            _ => {}
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -566,12 +793,12 @@ impl View for LoadTestView {
     }
 
     fn consumes_esc(&self) -> bool {
-        // Consume Esc ourselves when the edit modal is open.
-        self.edit.is_some()
+        // Consume Esc ourselves when a modal is open.
+        self.edit.is_some() || self.strategy_modal.is_some()
     }
 
     fn consumes_quit(&self) -> bool {
-        self.edit.is_some()
+        self.edit.is_some() || self.strategy_modal.is_some()
     }
 
     fn captures_char_input(&self) -> bool {
@@ -653,6 +880,12 @@ impl View for LoadTestView {
             return Action::None;
         }
 
+        // Route keys into the strategy modal when it is open.
+        if self.strategy_modal.is_some() {
+            self.handle_strategy_key(key);
+            return Action::None;
+        }
+
         match key.code {
             // Network selection — only while idle.
             KeyCode::Left | KeyCode::Char('h')
@@ -694,6 +927,16 @@ impl View for LoadTestView {
                 if matches!(self.state, RunState::Running { .. }) =>
             {
                 self.stop_run();
+            }
+
+            // Open strategy multiselect modal.
+            KeyCode::Char('t')
+                if matches!(self.state, RunState::Idle | RunState::Complete { .. })
+                    && !self.configs.is_empty() =>
+            {
+                let txs =
+                    self.effective_config().map(|c| c.transactions.clone()).unwrap_or_default();
+                self.strategy_modal = Some(StrategyModal::from_config(&txs));
             }
 
             // Open edit modal.
@@ -741,6 +984,11 @@ impl View for LoadTestView {
         // Overlay the edit modal on top of everything.
         if self.edit.is_some() {
             render_edit_modal(frame, area, &self.edit, self);
+        }
+
+        // Overlay the strategy modal on top of everything.
+        if let Some(ref modal) = self.strategy_modal {
+            render_strategy_modal(frame, area, modal);
         }
     }
 }
@@ -832,7 +1080,7 @@ impl LoadTestView {
         ]));
 
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled("  Tx mix", label_style)]));
+        lines.push(Line::from(vec![Span::styled("  Strategy", label_style)]));
 
         let total_weight: u32 = cfg.transactions.iter().map(|t| t.weight).sum();
         for wtx in &cfg.transactions {
@@ -881,7 +1129,8 @@ impl LoadTestView {
 
         if matches!(self.state, RunState::Idle | RunState::Complete { .. }) {
             lines.push(Line::from(""));
-            lines.push(Line::from(vec![Span::styled("  [e] edit config in memory", dim_style)]));
+            lines
+                .push(Line::from(vec![Span::styled("  [t] strategy  [e] edit config", dim_style)]));
         }
 
         let p = Paragraph::new(lines);
@@ -1346,6 +1595,11 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &RunState, continuous
             spans.push(Span::styled("stop", dim));
 
             spans.push(sep.clone());
+            spans.push(Span::styled("[t]", key));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("strategy", desc));
+
+            spans.push(sep.clone());
             spans.push(Span::styled("[e]", key));
             spans.push(Span::raw(" "));
             spans.push(Span::styled("edit config", desc));
@@ -1439,6 +1693,67 @@ fn render_edit_modal(
             hint_style,
         )]));
     }
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+// ---------------------------------------------------------------------------
+// Strategy modal renderer
+// ---------------------------------------------------------------------------
+
+fn render_strategy_modal(frame: &mut Frame<'_>, parent: Rect, modal: &StrategyModal) {
+    let n = ALL_STRATEGIES.len();
+    let popup_w = 46u16.min(parent.width.saturating_sub(4));
+    let popup_h = (n as u16 + 5).min(parent.height.saturating_sub(4));
+    let x = parent.x + parent.width.saturating_sub(popup_w) / 2;
+    let y = parent.y + parent.height.saturating_sub(popup_h) / 2;
+    let popup = Rect { x, y, width: popup_w, height: popup_h };
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(" Strategy ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(COLOR_BASE_BLUE));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let label_style = Style::default().fg(Color::White);
+    let dim_style = Style::default().fg(Color::DarkGray);
+    let selected_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let check_on_style = Style::default().fg(COLOR_BASE_BLUE);
+    let hint_style = Style::default().fg(Color::DarkGray);
+
+    // Compute scroll offset so the cursor is always visible.
+    let content_overhead: usize = 3; // blank top + blank before hint + hint line
+    let visible_rows = (inner.height as usize).saturating_sub(content_overhead);
+    let scroll = if modal.cursor >= visible_rows { modal.cursor - visible_rows + 1 } else { 0 };
+
+    let mut lines: Vec<Line<'_>> = vec![Line::from("")];
+
+    let end = (scroll + visible_rows).min(n);
+    for (i, &strategy) in ALL_STRATEGIES.iter().enumerate().take(end).skip(scroll) {
+        let is_selected = i == modal.cursor;
+        let is_enabled = modal.enabled[i];
+
+        let selector = if is_selected { "▸ " } else { "  " };
+        let selector_style = if is_selected { selected_style } else { dim_style };
+        let checkbox = if is_enabled { "[x] " } else { "[ ] " };
+        let check_style = if is_enabled { check_on_style } else { dim_style };
+        let label_sty = if is_selected { selected_style } else { label_style };
+
+        lines.push(Line::from(vec![
+            Span::styled(selector, selector_style),
+            Span::styled(checkbox, check_style),
+            Span::styled(strategy.label(), label_sty),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        "  ↑/↓ move  Space toggle  Enter confirm  Esc cancel",
+        hint_style,
+    )]));
 
     frame.render_widget(Paragraph::new(lines), inner);
 }

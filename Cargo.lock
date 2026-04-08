@@ -5321,6 +5321,7 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "arboard",
+ "base-alloy-chains",
  "base-alloy-consensus",
  "base-alloy-flashblocks",
  "base-alloy-network",

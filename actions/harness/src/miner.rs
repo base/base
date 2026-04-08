@@ -575,9 +575,9 @@ impl L1Miner {
     ///
     /// [`mine_block`]: L1Miner::mine_block
     pub fn submit_blob_frames(&mut self, frames: &[Arc<Frame>]) {
-        let blobs =
-            BlobEncoder::encode_frames(frames).expect("frame data fits within blob capacity");
-        for blob in blobs {
+        for frame in frames {
+            let blob = BlobEncoder::encode_packed(core::slice::from_ref(frame))
+                .expect("frame data fits within blob capacity");
             self.enqueue_blob(B256::ZERO, blob);
         }
     }

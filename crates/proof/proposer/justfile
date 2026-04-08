@@ -49,10 +49,10 @@ run *ARGS:
 # Override ENCLAVE_RPC for local testing: just run-dev --enclave-rpc http://localhost:1234
 run-dev *ARGS:
     cargo run --bin base-proposer -- \
-        --l1-eth-rpc https://c3-chainproxy-eth-sepolia-full-dev.cbhq.net \
-        --l2-eth-rpc https://base-sepolia-dev.cbhq.net:8545 \
-        --rollup-rpc https://base-sepolia-archive-k8s-dev.cbhq.net:7545 \
-        --enclave-rpc https://base-proofs-nitro-prover-dev.cbhq.net \
+        --l1-eth-rpc https://ethereum-sepolia-rpc.publicnode.com \
+        --l2-eth-rpc https://sepolia.base.org \
+        --rollup-rpc https://sepolia.base.org \
+        --enclave-rpc http://localhost:1234 \
         --onchain-verifier-addr 0xaddD538424b2549a13deE55dE55174516Ed037BC \
         --poll-interval 6s \
         --min-proposal-interval 1 \
@@ -68,9 +68,9 @@ run-dev *ARGS:
 # Start the enclave server first: cd op-enclave/rust && make run-server
 run-local *ARGS:
     cargo run --bin base-proposer -- \
-        --l1-eth-rpc https://c3-chainproxy-eth-sepolia-full-dev.cbhq.net \
-        --l2-eth-rpc https://base-sepolia.cbhq.net \
-        --rollup-rpc https://base-sepolia-archive-k8s-dev.cbhq.net:7545 \
+        --l1-eth-rpc https://ethereum-sepolia-rpc.publicnode.com \
+        --l2-eth-rpc https://sepolia.base.org \
+        --rollup-rpc https://sepolia.base.org \
         --enclave-rpc http://localhost:1234 \
         --onchain-verifier-addr 0x0000000000000000000000000000000000000000 \
         --poll-interval 5s \
