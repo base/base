@@ -344,7 +344,15 @@ async fn rescue_batch(
         return Ok((U256::ZERO, 0));
     }
 
-    info!(accounts = to_drain.len(), "found accounts with recoverable balance");
+    let recoverable: U256 = to_drain
+        .iter()
+        .map(|(_, balance)| balance.saturating_sub(params.drain_gas_cost))
+        .fold(U256::ZERO, |a, b| a.saturating_add(b));
+    info!(
+        accounts = to_drain.len(),
+        recoverable_eth = %format_ether(recoverable),
+        "found accounts with recoverable balance"
+    );
 
     let drain_futs: Vec<_> = to_drain
         .iter()
