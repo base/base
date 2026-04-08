@@ -242,7 +242,7 @@ mod tests {
         let latency: f64 =
             latency_line.split_whitespace().last().unwrap_or("0").parse().unwrap_or(0.0);
         assert!(
-            latency >= 9.0 && latency < 30.0,
+            (9.0..30.0).contains(&latency),
             "latency {latency} not in expected range [9, 30)"
         );
     }
