@@ -90,7 +90,7 @@ fn all_chains() -> [ChainUpgrades; 4] {
         },
         ChainUpgrades {
             display_name: "Zeronet",
-            default_rpc: "https://base-zeronet.cbhq.net",
+            default_rpc: "http://localhost:8545",
             specs: specs_from_config(BaseChainConfig::zeronet()),
         },
         ChainUpgrades {

@@ -112,7 +112,7 @@ impl LoadConfig {
     /// Creates a new load config for Sepolia Alpha.
     pub fn sepolia_alpha() -> Self {
         Self {
-            rpc_url: "https://base-sepolia-alpha.cbhq.net".parse().unwrap(),
+            rpc_url: "http://localhost:8545".parse().unwrap(),
             chain_id: 11763072,
             account_count: 10,
             seed: 42,
