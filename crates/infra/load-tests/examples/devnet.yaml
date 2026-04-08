@@ -8,7 +8,7 @@
 rpc: http://localhost:8545
 
 # Number of sender accounts
-sender_count: 10
+sender_count: 100
 
 # Target gas per second (~100 simple transfers)
 target_gps: 2100000

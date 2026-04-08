@@ -26,6 +26,11 @@ use tracing::{debug, error, info, instrument, warn};
 /// Maximum number of concurrent RPC requests during funding/draining operations.
 const FUNDING_CONCURRENCY: usize = 32;
 
+/// Maximum number of funding TXs to send before waiting for confirmation.
+/// Kept below typical per-sender txpool limits (e.g. reth default is 16) to
+/// avoid "txpool is full" rejections when all TXs originate from one funder.
+const FUNDING_BATCH_SIZE: usize = 16;
+
 use super::{
     AdaptiveBackoff, Confirmer, ConfirmerHandle, DisplaySnapshot, LoadConfig, LoadTestDisplay,
     RateLimiter, TxType,
@@ -337,7 +342,8 @@ impl LoadRunner {
         let replacement_max_fee = max_fee.saturating_mul(3);
         let replacement_priority_fee = max_priority_fee.saturating_mul(3);
 
-        // Phase 3: Build all TXs upfront with pre-assigned nonces, send concurrently.
+        // Phase 3+4: Send funding TXs in batches and confirm each batch before
+        // sending the next. This avoids overwhelming the txpool's per-sender limit.
         let txs: Vec<(TransactionRequest, Address, U256, u64)> = accounts_to_fund
             .iter()
             .enumerate()
@@ -357,134 +363,94 @@ impl LoadRunner {
             })
             .collect();
 
-        let pb_send = Self::progress_bar(txs.len() as u64, "Sending funding txs");
-        let mut pending_txs: Vec<(TxHash, Address)> = Vec::with_capacity(txs.len());
-        let mut send_failures: Vec<(Address, U256, u64, String)> = Vec::new();
-        let mut fatal_errors: Vec<String> = Vec::new();
+        let total_txs = txs.len() as u64;
+        let pb_fund = Self::progress_bar(total_txs, "Funding accounts");
+        let chain_id = self.config.chain_id;
 
-        let send_futs = txs.into_iter().map(|(tx, address, deficit, nonce)| {
-            let provider = &funder_provider;
-            async move {
-                let result = provider.send_transaction(tx).await;
-                (result, address, deficit, nonce)
-            }
-        });
+        for batch in txs.chunks(FUNDING_BATCH_SIZE) {
+            let mut batch_pending: Vec<(TxHash, Address)> = Vec::with_capacity(batch.len());
+            let mut retries: Vec<(Address, U256, u64)> = Vec::new();
+            let mut fatal_errors: Vec<String> = Vec::new();
 
-        let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_CONCURRENCY);
-
-        while let Some((result, address, deficit, nonce)) = send_stream.next().await {
-            pb_send.inc(1);
-            match result {
-                Ok(pending) => {
-                    let tx_hash = *pending.tx_hash();
-                    debug!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, "funding tx sent");
-                    pending_txs.push((tx_hash, address));
-                }
-                Err(e) => {
-                    let error_str = e.to_string();
-                    if error_str.contains("already known") {
-                        send_failures.push((address, deficit, nonce, error_str));
-                    } else {
-                        error!(to = %address, error = %e, "failed to fund account");
-                        fatal_errors.push(format!("failed to fund {address}: {e}"));
-                    }
-                }
-            }
-        }
-        pb_send.finish_and_clear();
-
-        if !fatal_errors.is_empty() {
-            return Err(BaselineError::Transaction(format!(
-                "{} funding tx(s) failed: {}",
-                fatal_errors.len(),
-                fatal_errors.join("; "),
-            )));
-        }
-
-        // Retry "already known" failures with higher gas price.
-        if !send_failures.is_empty() {
-            info!(count = send_failures.len(), "retrying already-known txs with higher gas");
-            let chain_id = self.config.chain_id;
-            let retry_futs = send_failures.into_iter().map(|(address, deficit, nonce, _)| {
+            let send_futs = batch.iter().map(|(tx, address, deficit, nonce)| {
                 let provider = &funder_provider;
+                let tx = tx.clone();
+                let address = *address;
+                let deficit = *deficit;
+                let nonce = *nonce;
                 async move {
-                    let replacement = TransactionRequest::default()
-                        .with_to(address)
-                        .with_value(deficit)
-                        .with_nonce(nonce)
-                        .with_chain_id(chain_id)
-                        .with_gas_limit(21_000)
-                        .with_max_fee_per_gas(replacement_max_fee)
-                        .with_max_priority_fee_per_gas(replacement_priority_fee);
-                    let result = provider.send_transaction(replacement).await;
-                    (result, address, nonce)
+                    let result = provider.send_transaction(tx).await;
+                    (result, address, deficit, nonce)
                 }
             });
 
-            let mut retry_stream = stream::iter(retry_futs).buffer_unordered(FUNDING_CONCURRENCY);
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
 
-            while let Some((result, address, nonce)) = retry_stream.next().await {
+            while let Some((result, address, deficit, nonce)) = send_stream.next().await {
                 match result {
                     Ok(pending) => {
                         let tx_hash = *pending.tx_hash();
-                        info!(to = %address, nonce, tx_hash = %tx_hash, "replacement funding tx sent");
-                        pending_txs.push((tx_hash, address));
-                    }
-                    Err(replace_err) => {
-                        warn!(to = %address, nonce, error = %replace_err, "replacement tx also failed, proceeding");
-                    }
-                }
-            }
-        }
-
-        // Phase 4: Parallel confirmation polling.
-        let pb_confirm = Self::progress_bar(pending_txs.len() as u64, "Confirming funding txs");
-        let timeout = Duration::from_secs(60);
-        let poll_interval = Duration::from_millis(500);
-        let start = Instant::now();
-
-        while !pending_txs.is_empty() && start.elapsed() < timeout {
-            tokio::time::sleep(poll_interval).await;
-
-            let receipt_futs: Vec<_> = pending_txs
-                .iter()
-                .map(|&(tx_hash, address)| {
-                    let client = &self.client;
-                    async move {
-                        let receipt = client.get_transaction_receipt(tx_hash).await;
-                        (tx_hash, address, receipt)
-                    }
-                })
-                .collect();
-
-            let receipts: Vec<_> = futures::future::join_all(receipt_futs).await;
-
-            let mut still_pending = Vec::new();
-            for (tx_hash, address, receipt) in receipts {
-                match receipt {
-                    Ok(Some(_)) => {
-                        debug!(tx_hash = %tx_hash, address = %address, "funding tx confirmed");
-                        pb_confirm.inc(1);
-                    }
-                    Ok(None) => {
-                        still_pending.push((tx_hash, address));
+                        debug!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, "funding tx sent");
+                        batch_pending.push((tx_hash, address));
                     }
                     Err(e) => {
-                        warn!(tx_hash = %tx_hash, error = %e, "failed to get receipt");
-                        still_pending.push((tx_hash, address));
+                        let error_str = e.to_string();
+                        if error_str.contains("already known") {
+                            retries.push((address, deficit, nonce));
+                        } else {
+                            error!(to = %address, error = %e, "failed to fund account");
+                            fatal_errors.push(format!("failed to fund {address}: {e}"));
+                        }
                     }
                 }
             }
-            pending_txs = still_pending;
-        }
-        pb_confirm.finish_and_clear();
 
-        if !pending_txs.is_empty() {
-            let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
-            return Err(BaselineError::Transaction(format!(
-                "funding txs did not confirm within timeout: {unconfirmed:?}"
-            )));
+            if !fatal_errors.is_empty() {
+                pb_fund.finish_and_clear();
+                return Err(BaselineError::Transaction(format!(
+                    "{} funding tx(s) failed: {}",
+                    fatal_errors.len(),
+                    fatal_errors.join("; "),
+                )));
+            }
+
+            if !retries.is_empty() {
+                let retry_futs = retries.into_iter().map(|(address, deficit, nonce)| {
+                    let provider = &funder_provider;
+                    async move {
+                        let replacement = TransactionRequest::default()
+                            .with_to(address)
+                            .with_value(deficit)
+                            .with_nonce(nonce)
+                            .with_chain_id(chain_id)
+                            .with_gas_limit(21_000)
+                            .with_max_fee_per_gas(replacement_max_fee)
+                            .with_max_priority_fee_per_gas(replacement_priority_fee);
+                        let result = provider.send_transaction(replacement).await;
+                        (result, address, nonce)
+                    }
+                });
+
+                let mut retry_stream =
+                    stream::iter(retry_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+
+                while let Some((result, address, nonce)) = retry_stream.next().await {
+                    match result {
+                        Ok(pending) => {
+                            let tx_hash = *pending.tx_hash();
+                            info!(to = %address, nonce, tx_hash = %tx_hash, "replacement funding tx sent");
+                            batch_pending.push((tx_hash, address));
+                        }
+                        Err(replace_err) => {
+                            warn!(to = %address, nonce, error = %replace_err, "replacement tx also failed, proceeding");
+                        }
+                    }
+                }
+            }
+
+            Self::await_confirmations(&self.client, &mut batch_pending, &pb_fund).await?;
         }
+        pb_fund.finish_and_clear();
 
         // Phase 5: Parallel post-funding state refresh.
         let pb_refresh = Self::progress_bar(total_accounts as u64, "Refreshing account state");
@@ -1030,50 +996,12 @@ impl LoadRunner {
 
         let pb_confirm = Self::progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
-        let timeout = Duration::from_secs(60);
-        let poll_interval = Duration::from_millis(500);
-        let start = Instant::now();
 
-        while !pending_txs.is_empty() && start.elapsed() < timeout {
-            tokio::time::sleep(poll_interval).await;
-
-            let receipt_futs: Vec<_> = pending_txs
-                .iter()
-                .map(|&(tx_hash, address)| {
-                    let client = &self.client;
-                    async move {
-                        let receipt = client.get_transaction_receipt(tx_hash).await;
-                        (tx_hash, address, receipt)
-                    }
-                })
-                .collect();
-
-            let receipts: Vec<_> = futures::future::join_all(receipt_futs).await;
-
-            let mut still_pending = Vec::new();
-            for (tx_hash, address, receipt) in receipts {
-                match receipt {
-                    Ok(Some(_)) => {
-                        debug!(tx_hash = %tx_hash, from = %address, "drain tx confirmed");
-                        pb_confirm.inc(1);
-                    }
-                    Ok(None) => {
-                        still_pending.push((tx_hash, address));
-                    }
-                    Err(e) => {
-                        warn!(tx_hash = %tx_hash, error = %e, "failed to get drain receipt");
-                        still_pending.push((tx_hash, address));
-                    }
-                }
-            }
-            pending_txs = still_pending;
+        if let Err(e) = Self::await_confirmations(&self.client, &mut pending_txs, &pb_confirm).await
+        {
+            warn!(error = %e, "some drain txs did not confirm within timeout");
         }
         pb_confirm.finish_and_clear();
-
-        if !pending_txs.is_empty() {
-            let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
-            warn!(accounts = ?unconfirmed, "some drain txs did not confirm within timeout");
-        }
 
         info!(total = %total_drained, "drain complete");
         Ok(total_drained)
@@ -1088,6 +1016,57 @@ impl LoadRunner {
         );
         pb.set_prefix(prefix.to_string());
         pb
+    }
+
+    async fn await_confirmations(
+        client: &RpcClient,
+        pending_txs: &mut Vec<(TxHash, Address)>,
+        pb: &ProgressBar,
+    ) -> Result<()> {
+        let timeout = Duration::from_secs(60);
+        let poll_interval = Duration::from_millis(500);
+        let start = Instant::now();
+
+        while !pending_txs.is_empty() && start.elapsed() < timeout {
+            tokio::time::sleep(poll_interval).await;
+
+            let receipt_futs: Vec<_> = pending_txs
+                .iter()
+                .map(|&(tx_hash, address)| async move {
+                    let receipt = client.get_transaction_receipt(tx_hash).await;
+                    (tx_hash, address, receipt)
+                })
+                .collect();
+
+            let receipts: Vec<_> = futures::future::join_all(receipt_futs).await;
+
+            let mut still_pending = Vec::new();
+            for (tx_hash, address, receipt) in receipts {
+                match receipt {
+                    Ok(Some(_)) => {
+                        debug!(tx_hash = %tx_hash, address = %address, "tx confirmed");
+                        pb.inc(1);
+                    }
+                    Ok(None) => {
+                        still_pending.push((tx_hash, address));
+                    }
+                    Err(e) => {
+                        warn!(tx_hash = %tx_hash, error = %e, "failed to get receipt");
+                        still_pending.push((tx_hash, address));
+                    }
+                }
+            }
+            *pending_txs = still_pending;
+        }
+
+        if !pending_txs.is_empty() {
+            let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
+            return Err(BaselineError::Transaction(format!(
+                "txs did not confirm within timeout: {unconfirmed:?}"
+            )));
+        }
+
+        Ok(())
     }
 
     /// Checks account balances, stores the results for the live display, and
