@@ -5,7 +5,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, TxHash, U256, utils::format_ether};
 use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
@@ -182,23 +182,41 @@ impl RescueArgs {
             match args[i].as_str() {
                 "--rpc-url" | "--rpc" => {
                     i += 1;
-                    rpc_url = Some(args[i].parse()?);
+                    rpc_url = Some(
+                        args.get(i)
+                            .ok_or_else(|| eyre::eyre!("--rpc-url requires a value"))?
+                            .parse()?,
+                    );
                 }
                 "--seed" => {
                     i += 1;
-                    seed = Some(args[i].parse()?);
+                    seed = Some(
+                        args.get(i)
+                            .ok_or_else(|| eyre::eyre!("--seed requires a value"))?
+                            .parse()?,
+                    );
                 }
                 "--count" => {
                     i += 1;
-                    scan_count = args[i].parse()?;
+                    scan_count = args
+                        .get(i)
+                        .ok_or_else(|| eyre::eyre!("--count requires a value"))?
+                        .parse()?;
                 }
                 "--offset" => {
                     i += 1;
-                    offset = args[i].parse()?;
+                    offset = args
+                        .get(i)
+                        .ok_or_else(|| eyre::eyre!("--offset requires a value"))?
+                        .parse()?;
                 }
                 "--mnemonic" => {
                     i += 1;
-                    mnemonic = Some(args[i].clone());
+                    mnemonic = Some(
+                        args.get(i)
+                            .ok_or_else(|| eyre::eyre!("--mnemonic requires a value"))?
+                            .clone(),
+                    );
                 }
                 "--help" | "-h" => {
                     print_rescue_usage();
@@ -260,7 +278,8 @@ async fn run_rescue(raw_args: Vec<String>) -> Result<()> {
     let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(DEFAULT_MAX_GAS_PRICE);
     let drain_gas_limit = 21_000u128;
     let l1_fee_buffer = 1_000_000_000_000_000u128;
-    let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);
+    let drain_gas_cost =
+        U256::from(drain_gas_limit.saturating_mul(max_fee).saturating_add(l1_fee_buffer));
 
     let params = DrainParams {
         funder_address,
@@ -329,7 +348,7 @@ async fn rescue_batch(
         .collect();
 
     let balance_results: Vec<_> =
-        stream::iter(balance_futs).buffer_unordered(RESCUE_CONCURRENCY).collect().await;
+        stream::iter(balance_futs).buffered(RESCUE_CONCURRENCY).collect().await;
 
     let mut to_drain: Vec<(&FundedAccount, U256)> = Vec::new();
     for (result, account) in balance_results.into_iter().zip(accounts.accounts().iter()) {
@@ -454,8 +473,12 @@ async fn rescue_await_confirmations(
         let mut still_pending = Vec::new();
         for (tx_hash, address, receipt) in receipts {
             match receipt {
-                Ok(Some(_)) => {
-                    debug!(tx_hash = %tx_hash, address = %address, "rescue tx confirmed");
+                Ok(Some(receipt)) => {
+                    if receipt.status() {
+                        debug!(tx_hash = %tx_hash, address = %address, "rescue tx confirmed");
+                    } else {
+                        warn!(tx_hash = %tx_hash, address = %address, "rescue tx reverted");
+                    }
                 }
                 Ok(None) => {
                     still_pending.push((tx_hash, address));
