@@ -8,11 +8,13 @@ use std::{
 };
 
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, U256, utils::format_ether};
+use alloy_primitives::{Address, Bytes, TxHash, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
+use futures::stream::{self, StreamExt};
+use indicatif::{ProgressBar, ProgressStyle};
 
 /// Provider type for nonce management. Uses Ethereum network type because
 /// `NonceManager` only calls `get_transaction_count`, which returns the same
@@ -20,6 +22,9 @@ use base_tx_manager::NonceManager;
 type NonceProvider = RootProvider<Ethereum>;
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, instrument, warn};
+
+/// Maximum number of concurrent RPC requests during funding/draining operations.
+const FUNDING_CONCURRENCY: usize = 32;
 
 use super::{
     AdaptiveBackoff, Confirmer, ConfirmerHandle, DisplaySnapshot, LoadConfig, LoadTestDisplay,
@@ -231,18 +236,44 @@ impl LoadRunner {
         funding_key: PrivateKeySigner,
         amount_per_account: U256,
     ) -> Result<()> {
+        let total_accounts = self.accounts.len();
+        let pb_check = Self::progress_bar(total_accounts as u64, "Checking balances");
+
+        // Phase 1: Parallel balance + nonce queries.
+        let addresses: Vec<(Address, usize)> =
+            self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
+
+        let balance_futs: Vec<_> = addresses
+            .iter()
+            .map(|&(addr, _)| {
+                let client = &self.client;
+                async move {
+                    let balance = client.get_balance(addr).await?;
+                    let nonce = client.get_nonce(addr).await?;
+                    Ok::<_, BaselineError>((balance, nonce))
+                }
+            })
+            .collect();
+
+        let results: Vec<_> = stream::iter(balance_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_check.inc(1))
+            .collect()
+            .await;
+        pb_check.finish_and_clear();
+
         let mut accounts_to_fund = Vec::new();
-        for account in self.accounts.accounts_mut() {
-            let balance = self.client.get_balance(account.address).await?;
+        for (result, &(addr, idx)) in results.into_iter().zip(addresses.iter()) {
+            let (balance, nonce) = result?;
+            let account = &mut self.accounts.accounts_mut()[idx];
             account.balance = balance;
-            let account_nonce = self.client.get_nonce(account.address).await?;
-            account.nonce = account_nonce;
+            account.nonce = nonce;
 
             if balance < amount_per_account {
                 let deficit = amount_per_account.saturating_sub(balance);
-                accounts_to_fund.push((account.address, deficit));
+                accounts_to_fund.push((addr, deficit));
             } else {
-                debug!(address = %account.address, balance = %balance, "account already funded");
+                debug!(address = %addr, balance = %balance, "account already funded");
             }
         }
 
@@ -254,18 +285,6 @@ impl LoadRunner {
         let funder_address = funding_key.address();
         let wallet = EthereumWallet::from(funding_key);
         let funder_provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
-        let mut nonce = funder_provider
-            .get_transaction_count(funder_address)
-            .pending()
-            .await
-            .map_err(|e| BaselineError::Rpc(e.to_string()))?;
-
-        info!(
-            from = %funder_address,
-            amount = %amount_per_account,
-            accounts_needing_funds = accounts_to_fund.len(),
-            "funding accounts"
-        );
 
         let gas_price = self.client.get_gas_price().await?;
         let max_priority_fee = (gas_price / 10).max(1);
@@ -275,62 +294,141 @@ impl LoadRunner {
         let max_fee =
             gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
 
+        // Phase 2: Early balance validation — abort before sending any TXs if
+        // the funder cannot cover the total cost.
+        let total_deficit: U256 =
+            accounts_to_fund.iter().map(|(_, deficit)| *deficit).fold(U256::ZERO, |a, b| a + b);
+        let gas_cost_per_tx = U256::from(21_000u64) * U256::from(max_fee);
+        let total_gas_cost = gas_cost_per_tx * U256::from(accounts_to_fund.len());
+        let total_needed = total_deficit.saturating_add(total_gas_cost);
+
+        let funder_balance = self.client.get_balance(funder_address).await?;
+
+        if funder_balance < total_needed {
+            let shortfall = total_needed.saturating_sub(funder_balance);
+            return Err(BaselineError::Transaction(format!(
+                "funder {} has insufficient balance: has {} ETH, needs {} ETH (deficit {} ETH + gas {} ETH), shortfall {} ETH",
+                funder_address,
+                format_ether(funder_balance),
+                format_ether(total_needed),
+                format_ether(total_deficit),
+                format_ether(total_gas_cost),
+                format_ether(shortfall),
+            )));
+        }
+
+        let start_nonce = funder_provider
+            .get_transaction_count(funder_address)
+            .pending()
+            .await
+            .map_err(|e| BaselineError::Rpc(e.to_string()))?;
+
+        info!(
+            from = %funder_address,
+            amount = %amount_per_account,
+            accounts_needing_funds = accounts_to_fund.len(),
+            funder_balance = %format_ether(funder_balance),
+            total_needed = %format_ether(total_needed),
+            "funding accounts"
+        );
+
         let replacement_max_fee = max_fee.saturating_mul(3);
         let replacement_priority_fee = max_priority_fee.saturating_mul(3);
 
-        let mut pending_txs = Vec::new();
-        for (address, deficit) in &accounts_to_fund {
-            let tx = TransactionRequest::default()
-                .with_to(*address)
-                .with_value(*deficit)
-                .with_nonce(nonce)
-                .with_chain_id(self.config.chain_id)
-                .with_gas_limit(21_000)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(max_priority_fee);
+        // Phase 3: Build all TXs upfront with pre-assigned nonces, send concurrently.
+        let txs: Vec<(TransactionRequest, Address, U256, u64)> = accounts_to_fund
+            .iter()
+            .enumerate()
+            .map(|(i, &(address, deficit))| {
+                let nonce = start_nonce + i as u64;
+                let tx = TransactionRequest::default()
+                    .with_to(address)
+                    .with_value(deficit)
+                    .with_nonce(nonce)
+                    .with_chain_id(self.config.chain_id)
+                    .with_gas_limit(21_000)
+                    .with_max_fee_per_gas(max_fee)
+                    .with_max_priority_fee_per_gas(max_priority_fee);
+                (tx, address, deficit, nonce)
+            })
+            .collect();
 
-            match funder_provider.send_transaction(tx).await {
+        let pb_send = Self::progress_bar(txs.len() as u64, "Sending funding txs");
+        let mut pending_txs: Vec<(TxHash, Address)> = Vec::with_capacity(txs.len());
+        let mut send_failures: Vec<(Address, U256, u64, String)> = Vec::new();
+
+        let send_futs = txs.into_iter().map(|(tx, address, deficit, nonce)| {
+            let provider = &funder_provider;
+            async move {
+                let result = provider.send_transaction(tx).await;
+                (result, address, deficit, nonce)
+            }
+        });
+
+        let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_CONCURRENCY);
+
+        while let Some((result, address, deficit, nonce)) = send_stream.next().await {
+            pb_send.inc(1);
+            match result {
                 Ok(pending) => {
                     let tx_hash = *pending.tx_hash();
                     debug!(to = %address, deficit = %deficit, nonce, tx_hash = %tx_hash, "funding tx sent");
-                    pending_txs.push((tx_hash, *address));
-                    nonce += 1;
+                    pending_txs.push((tx_hash, address));
                 }
                 Err(e) => {
                     let error_str = e.to_string();
                     if error_str.contains("already known") {
-                        warn!(to = %address, nonce, "funding tx already in mempool, replacing with higher gas price");
-                        let replacement = TransactionRequest::default()
-                            .with_to(*address)
-                            .with_value(*deficit)
-                            .with_nonce(nonce)
-                            .with_chain_id(self.config.chain_id)
-                            .with_gas_limit(21_000)
-                            .with_max_fee_per_gas(replacement_max_fee)
-                            .with_max_priority_fee_per_gas(replacement_priority_fee);
-
-                        match funder_provider.send_transaction(replacement).await {
-                            Ok(pending) => {
-                                let tx_hash = *pending.tx_hash();
-                                info!(to = %address, nonce, tx_hash = %tx_hash, "replacement funding tx sent");
-                                pending_txs.push((tx_hash, *address));
-                            }
-                            Err(replace_err) => {
-                                warn!(to = %address, nonce, error = %replace_err, "replacement tx also failed, proceeding");
-                            }
-                        }
-                        nonce += 1;
-                        continue;
+                        send_failures.push((address, deficit, nonce, error_str));
+                    } else {
+                        pb_send.finish_and_clear();
+                        error!(to = %address, error = %e, "failed to fund account");
+                        return Err(BaselineError::Transaction(format!(
+                            "failed to fund {address}: {e}",
+                        )));
                     }
-                    error!(to = %address, error = %e, "failed to fund account");
-                    return Err(BaselineError::Transaction(format!(
-                        "failed to fund {address}: {e}",
-                    )));
+                }
+            }
+        }
+        pb_send.finish_and_clear();
+
+        // Retry "already known" failures with higher gas price.
+        if !send_failures.is_empty() {
+            info!(count = send_failures.len(), "retrying already-known txs with higher gas");
+            let chain_id = self.config.chain_id;
+            let retry_futs = send_failures.into_iter().map(|(address, deficit, nonce, _)| {
+                let provider = &funder_provider;
+                async move {
+                    let replacement = TransactionRequest::default()
+                        .with_to(address)
+                        .with_value(deficit)
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(21_000)
+                        .with_max_fee_per_gas(replacement_max_fee)
+                        .with_max_priority_fee_per_gas(replacement_priority_fee);
+                    let result = provider.send_transaction(replacement).await;
+                    (result, address, nonce)
+                }
+            });
+
+            let mut retry_stream = stream::iter(retry_futs).buffer_unordered(FUNDING_CONCURRENCY);
+
+            while let Some((result, address, nonce)) = retry_stream.next().await {
+                match result {
+                    Ok(pending) => {
+                        let tx_hash = *pending.tx_hash();
+                        info!(to = %address, nonce, tx_hash = %tx_hash, "replacement funding tx sent");
+                        pending_txs.push((tx_hash, address));
+                    }
+                    Err(replace_err) => {
+                        warn!(to = %address, nonce, error = %replace_err, "replacement tx also failed, proceeding");
+                    }
                 }
             }
         }
 
-        info!(count = pending_txs.len(), "waiting for funding txs to confirm");
+        // Phase 4: Parallel confirmation polling.
+        let pb_confirm = Self::progress_bar(pending_txs.len() as u64, "Confirming funding txs");
         let timeout = Duration::from_secs(60);
         let poll_interval = Duration::from_millis(500);
         let start = Instant::now();
@@ -338,11 +436,25 @@ impl LoadRunner {
         while !pending_txs.is_empty() && start.elapsed() < timeout {
             tokio::time::sleep(poll_interval).await;
 
+            let receipt_futs: Vec<_> = pending_txs
+                .iter()
+                .map(|&(tx_hash, address)| {
+                    let client = &self.client;
+                    async move {
+                        let receipt = client.get_transaction_receipt(tx_hash).await;
+                        (tx_hash, address, receipt)
+                    }
+                })
+                .collect();
+
+            let receipts: Vec<_> = futures::future::join_all(receipt_futs).await;
+
             let mut still_pending = Vec::new();
-            for (tx_hash, address) in pending_txs {
-                match self.client.get_transaction_receipt(tx_hash).await {
+            for (tx_hash, address, receipt) in receipts {
+                match receipt {
                     Ok(Some(_)) => {
                         debug!(tx_hash = %tx_hash, address = %address, "funding tx confirmed");
+                        pb_confirm.inc(1);
                     }
                     Ok(None) => {
                         still_pending.push((tx_hash, address));
@@ -355,6 +467,7 @@ impl LoadRunner {
             }
             pending_txs = still_pending;
         }
+        pb_confirm.finish_and_clear();
 
         if !pending_txs.is_empty() {
             let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
@@ -363,17 +476,44 @@ impl LoadRunner {
             )));
         }
 
-        for account in self.accounts.accounts_mut() {
-            let balance = self.client.get_balance(account.address).await?;
-            account.balance = balance;
-            let account_nonce = self.client.get_nonce(account.address).await?;
-            account.nonce = account_nonce;
+        // Phase 5: Parallel post-funding state refresh.
+        let pb_refresh = Self::progress_bar(total_accounts as u64, "Refreshing account state");
+        let refresh_futs: Vec<_> = self
+            .accounts
+            .accounts()
+            .iter()
+            .map(|a| {
+                let client = &self.client;
+                let addr = a.address;
+                async move {
+                    let balance = client.get_balance(addr).await?;
+                    let nonce = client.get_nonce(addr).await?;
+                    Ok::<_, BaselineError>((addr, balance, nonce))
+                }
+            })
+            .collect();
+
+        let refresh_results: Vec<_> = stream::iter(refresh_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_refresh.inc(1))
+            .collect()
+            .await;
+        pb_refresh.finish_and_clear();
+
+        for result in refresh_results {
+            let (addr, balance, account_nonce) = result?;
+            if let Some(account) =
+                self.accounts.accounts_mut().iter_mut().find(|a| a.address == addr)
+            {
+                account.balance = balance;
+                account.nonce = account_nonce;
+            }
 
             let provider = NonceProvider::new_http(self.config.rpc_url.clone());
-            let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
-            self.nonce_managers.insert(account.address, nonce_manager);
+            let nonce_manager = NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT);
+            self.nonce_managers.insert(addr, nonce_manager);
 
-            debug!(address = %account.address, balance = %balance, nonce = account_nonce, "account state refreshed");
+            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
         }
 
         info!(funded = accounts_to_fund.len(), "funding complete");
@@ -793,53 +933,82 @@ impl LoadRunner {
         let l1_fee_buffer = 1_000_000_000_000_000u128;
         let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);
 
+        let total_accounts = self.accounts.len();
+        let pb_drain = Self::progress_bar(total_accounts as u64, "Draining accounts");
+
+        // Each account has its own signer, so drains are fully independent.
+        let drain_futs: Vec<_> = self
+            .accounts
+            .accounts()
+            .iter()
+            .map(|account| {
+                let client = &self.client;
+                let rpc_url = self.config.rpc_url.clone();
+                let chain_id = self.config.chain_id;
+                let signer = account.signer.clone();
+                let address = account.address;
+                async move {
+                    let balance = client.get_pending_balance(address).await?;
+                    if balance <= drain_gas_cost {
+                        debug!(
+                            address = %address,
+                            balance = %balance,
+                            "skipping drain, balance too low to cover gas"
+                        );
+                        return Ok::<_, BaselineError>(None);
+                    }
+
+                    let send_amount = balance.saturating_sub(drain_gas_cost);
+                    let wallet = EthereumWallet::from(signer);
+                    let provider = create_wallet_provider(rpc_url, wallet);
+                    let nonce = provider
+                        .get_transaction_count(address)
+                        .pending()
+                        .await
+                        .map_err(|e| BaselineError::Rpc(e.to_string()))?;
+
+                    let tx = TransactionRequest::default()
+                        .with_to(funder_address)
+                        .with_value(send_amount)
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(drain_gas_limit as u64)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+
+                    match provider.send_transaction(tx).await {
+                        Ok(pending) => {
+                            let tx_hash = *pending.tx_hash();
+                            debug!(
+                                from = %address,
+                                amount = %send_amount,
+                                tx_hash = %tx_hash,
+                                "drain tx sent"
+                            );
+                            Ok(Some((tx_hash, address, send_amount)))
+                        }
+                        Err(e) => {
+                            warn!(from = %address, error = %e, "drain tx failed, skipping");
+                            Ok(None)
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        let drain_results: Vec<_> = stream::iter(drain_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_drain.inc(1))
+            .collect()
+            .await;
+        pb_drain.finish_and_clear();
+
         let mut pending_txs = Vec::new();
         let mut total_drained = U256::ZERO;
-
-        for account in self.accounts.accounts() {
-            let balance = self.client.get_pending_balance(account.address).await?;
-            if balance <= drain_gas_cost {
-                debug!(
-                    address = %account.address,
-                    balance = %balance,
-                    "skipping drain, balance too low to cover gas"
-                );
-                continue;
-            }
-
-            let send_amount = balance.saturating_sub(drain_gas_cost);
-            let wallet = EthereumWallet::from(account.signer.clone());
-            let provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
-            let nonce = provider
-                .get_transaction_count(account.address)
-                .pending()
-                .await
-                .map_err(|e| BaselineError::Rpc(e.to_string()))?;
-
-            let tx = TransactionRequest::default()
-                .with_to(funder_address)
-                .with_value(send_amount)
-                .with_nonce(nonce)
-                .with_chain_id(self.config.chain_id)
-                .with_gas_limit(drain_gas_limit as u64)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas(max_priority_fee);
-
-            match provider.send_transaction(tx).await {
-                Ok(pending) => {
-                    let tx_hash = *pending.tx_hash();
-                    debug!(
-                        from = %account.address,
-                        amount = %send_amount,
-                        tx_hash = %tx_hash,
-                        "drain tx sent"
-                    );
-                    pending_txs.push((tx_hash, account.address));
-                    total_drained = total_drained.saturating_add(send_amount);
-                }
-                Err(e) => {
-                    warn!(from = %account.address, error = %e, "drain tx failed, skipping");
-                }
+        for result in drain_results {
+            if let Some((tx_hash, address, amount)) = result? {
+                pending_txs.push((tx_hash, address));
+                total_drained = total_drained.saturating_add(amount);
             }
         }
 
@@ -848,6 +1017,7 @@ impl LoadRunner {
             return Ok(U256::ZERO);
         }
 
+        let pb_confirm = Self::progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
         let timeout = Duration::from_secs(60);
         let poll_interval = Duration::from_millis(500);
@@ -856,11 +1026,25 @@ impl LoadRunner {
         while !pending_txs.is_empty() && start.elapsed() < timeout {
             tokio::time::sleep(poll_interval).await;
 
+            let receipt_futs: Vec<_> = pending_txs
+                .iter()
+                .map(|&(tx_hash, address)| {
+                    let client = &self.client;
+                    async move {
+                        let receipt = client.get_transaction_receipt(tx_hash).await;
+                        (tx_hash, address, receipt)
+                    }
+                })
+                .collect();
+
+            let receipts: Vec<_> = futures::future::join_all(receipt_futs).await;
+
             let mut still_pending = Vec::new();
-            for (tx_hash, address) in pending_txs {
-                match self.client.get_transaction_receipt(tx_hash).await {
+            for (tx_hash, address, receipt) in receipts {
+                match receipt {
                     Ok(Some(_)) => {
                         debug!(tx_hash = %tx_hash, from = %address, "drain tx confirmed");
+                        pb_confirm.inc(1);
                     }
                     Ok(None) => {
                         still_pending.push((tx_hash, address));
@@ -873,6 +1057,7 @@ impl LoadRunner {
             }
             pending_txs = still_pending;
         }
+        pb_confirm.finish_and_clear();
 
         if !pending_txs.is_empty() {
             let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
@@ -881,6 +1066,17 @@ impl LoadRunner {
 
         info!(total = %total_drained, "drain complete");
         Ok(total_drained)
+    }
+
+    fn progress_bar(total: u64, prefix: &str) -> ProgressBar {
+        let pb = ProgressBar::new(total);
+        pb.set_style(
+            ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .expect("valid template")
+                .progress_chars("█▓░"),
+        );
+        pb.set_prefix(prefix.to_string());
+        pb
     }
 
     /// Checks account balances, stores the results for the live display, and
