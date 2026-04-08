@@ -723,17 +723,8 @@ impl<C: Clock> BondManager<C> {
         // Check if already unlocked onchain.
         let unlocked = verifier_client.bond_unlocked(game_address).await?;
         if unlocked {
-            // Use `resolved_at` as a conservative lower bound for the unlock
-            // time. The unlock must have occurred after resolve, so this may
-            // cause one early withdrawal attempt that reverts, but is strictly
-            // better than resetting to "now" (which would re-impose the full
-            // delay after every restart).
             let resolved_at = verifier_client.resolved_at(game_address).await?;
-            let unlocked_at = Self::unix_to_monotonic(
-                &self.clock,
-                resolved_at,
-                self.clock.wall_clock_unix_secs(),
-            );
+            let unlocked_at = Self::estimate_unlock_time(&self.clock, resolved_at);
             info!(
                 game = %game_address,
                 resolved_at,
@@ -763,7 +754,7 @@ impl<C: Clock> BondManager<C> {
         // succeed earlier than expected. If longer, the attempt will revert
         // and be retried on the next poll tick.
         let delay = self.weth_delay.unwrap_or_else(|| {
-            warn!(game = %game_address, "WETH delay not yet known, using default 7 days");
+            debug!(game = %game_address, "WETH delay not yet known, using default 7 days");
             Self::DEFAULT_WETH_DELAY
         });
 
@@ -867,6 +858,15 @@ impl<C: Clock> BondManager<C> {
         clock.now().saturating_sub(age)
     }
 
+    /// Estimates when the bond was unlocked using `resolved_at` as a
+    /// conservative lower bound. The unlock must have occurred after
+    /// resolve, so this may cause one early withdrawal attempt that
+    /// reverts, but is strictly better than resetting to "now" (which
+    /// would re-impose the full delay after every restart).
+    fn estimate_unlock_time(clock: &C, resolved_at: u64) -> Duration {
+        Self::unix_to_monotonic(clock, resolved_at, clock.wall_clock_unix_secs())
+    }
+
     /// Determines the bond phase from onchain state.
     ///
     /// Returns `None` if the bond has already been fully claimed. Otherwise
@@ -889,13 +889,7 @@ impl<C: Clock> BondManager<C> {
             verifier_client.bond_unlocked(game_address),
         )?;
         if bond_unlocked {
-            // Use `resolved_at` as a conservative lower bound for the unlock
-            // time. The unlock must have occurred after resolve, so this may
-            // cause one early withdrawal attempt that reverts, but is strictly
-            // better than resetting to "now" (which would re-impose the full
-            // delay after every restart).
-            let unlocked_at =
-                Self::unix_to_monotonic(clock, resolved_at, clock.wall_clock_unix_secs());
+            let unlocked_at = Self::estimate_unlock_time(clock, resolved_at);
             return Ok(Some(BondPhase::AwaitingDelay { unlocked_at }));
         }
 
