@@ -14,7 +14,7 @@ rpc_ws_url: "ws://localhost:8546"
 flashblocks_ws_url: "ws://localhost:7111"
 
 # Number of sender accounts
-sender_count: 10
+sender_count: 100
 
 # Target gas per second (~100 simple transfers)
 target_gps: 2100000
