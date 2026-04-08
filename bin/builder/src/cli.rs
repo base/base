@@ -2,7 +2,9 @@
 
 use core::{net::SocketAddr, time::Duration};
 
-use base_builder_core::{BuilderConfig, ExecutionMeteringMode, SharedMeteringProvider};
+use base_builder_core::{
+    BuilderConfig, ExecutionMeteringMode, RejectionCache, SharedMeteringProvider,
+};
 use base_builder_metering::MeteringStore;
 use base_node_core::args::RollupArgs;
 
@@ -106,6 +108,14 @@ pub struct Args {
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
     pub tx_data_store_buffer_size: usize,
 
+    /// Maximum number of entries in the rejection cache for permanently rejected transactions
+    #[arg(long = "builder.rejection-cache-max-capacity", default_value = "100000")]
+    pub rejection_cache_max_capacity: u64,
+
+    /// TTL in seconds for entries in the rejection cache
+    #[arg(long = "builder.rejection-cache-ttl-secs", default_value = "1800")]
+    pub rejection_cache_ttl_secs: u64,
+
     /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
     #[arg(long = "telemetry.sampling-ratio", env = "SAMPLING_RATIO", default_value = "100")]
     pub sampling_ratio: u64,
@@ -142,6 +152,8 @@ impl Default for Args {
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
             tx_data_store_buffer_size: 10000,
+            rejection_cache_max_capacity: 100_000,
+            rejection_cache_ttl_secs: 1800,
             sampling_ratio: 100,
             flashblocks: FlashblocksArgs::default(),
         }
@@ -182,6 +194,10 @@ impl Args {
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             metering_provider,
+            rejection_cache: RejectionCache::new(
+                self.rejection_cache_max_capacity,
+                Duration::from_secs(self.rejection_cache_ttl_secs),
+            ),
         })
     }
 }

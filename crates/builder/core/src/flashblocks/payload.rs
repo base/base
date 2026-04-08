@@ -376,9 +376,12 @@ where
         ctx = ctx.with_cancel(fb_cancel.clone()).with_extra_ctx(extra);
 
         // Create best_transaction iterator
-        let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
-            self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
-        ));
+        let mut best_txs = BestFlashblocksTxs::new(
+            BestPayloadTransactions::new(
+                self.pool.best_transactions_with_attributes(ctx.best_transaction_attributes()),
+            ),
+            self.config.rejection_cache.clone(),
+        );
         let interval = self.config.flashblocks_interval;
         let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
 
@@ -589,6 +592,21 @@ where
         let diag = ctx
             .execute_best_transactions(info, state, best_txs, &limits)
             .wrap_err("failed to execute best transactions")?;
+
+        // Evict permanently rejected transactions from the iterator and pool.
+        // The rejection cache (inside best_txs) prevents re-entry on P2P re-gossip.
+        if !diag.permanently_rejected_txs.is_empty() {
+            let rejected_count = diag.permanently_rejected_txs.len();
+            best_txs.mark_rejected(&diag.permanently_rejected_txs);
+            self.config.metering_provider.remove(&diag.permanently_rejected_txs);
+            self.pool.remove_transactions(diag.permanently_rejected_txs.clone());
+            info!(
+                target: "payload_builder",
+                count = rejected_count,
+                "evicted permanently rejected transactions from pool",
+            );
+        }
+
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
             .iter()
