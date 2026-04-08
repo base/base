@@ -65,7 +65,7 @@ impl AlloyChainProvider {
     pub async fn latest_block_number(&mut self) -> Result<u64, RpcError<TransportErrorKind>> {
         Metrics::chain_rpc_calls("block_number").increment(1);
 
-        let result = base_metrics::time!(Metrics::request_duration(), {
+        let result = base_metrics::time!(Metrics::request_duration("block_number"), {
             self.inner.get_block_number().await
         });
 
@@ -162,7 +162,7 @@ impl ChainProvider for AlloyChainProvider {
 
         Metrics::chain_rpc_calls("header_by_hash").increment(1);
 
-        let block = base_metrics::time!(Metrics::request_duration(), {
+        let block = base_metrics::time!(Metrics::request_duration("header_by_hash"), {
             self.inner.get_block_by_hash(hash).await
         })
         .inspect_err(|_e| {
@@ -184,7 +184,7 @@ impl ChainProvider for AlloyChainProvider {
     async fn block_info_by_number(&mut self, number: u64) -> Result<BlockInfo, Self::Error> {
         Metrics::chain_rpc_calls("block_by_number").increment(1);
 
-        let block = base_metrics::time!(Metrics::request_duration(), {
+        let block = base_metrics::time!(Metrics::request_duration("block_by_number"), {
             self.inner.get_block_by_number(number.into()).await
         })
         .inspect_err(|_e| {
@@ -212,7 +212,7 @@ impl ChainProvider for AlloyChainProvider {
 
         Metrics::chain_rpc_calls("receipts_by_hash").increment(1);
 
-        let receipts = base_metrics::time!(Metrics::request_duration(), {
+        let receipts = base_metrics::time!(Metrics::request_duration("receipts_by_hash"), {
             self.inner.get_block_receipts(hash.into()).await
         })
         .inspect_err(|_e| {
@@ -246,7 +246,7 @@ impl ChainProvider for AlloyChainProvider {
 
         Metrics::chain_rpc_calls("block_by_hash").increment(1);
 
-        let block = base_metrics::time!(Metrics::request_duration(), {
+        let block = base_metrics::time!(Metrics::request_duration("block_by_hash"), {
             self.inner.get_block_by_hash(hash).full().await
         })
         .inspect_err(|_e| {

@@ -228,10 +228,9 @@ impl BeaconClient for OnlineBeaconClient {
             return Ok(APIConfigResponse::new(l1_slot_duration));
         }
 
-        let result = base_metrics::time!(Metrics::request_duration(), {
+        let result = base_metrics::time!(Metrics::request_duration("spec"), {
             async {
-                let first =
-                    self.inner.get(format!("{}/{}", self.base, SPEC_METHOD)).send().await?;
+                let first = self.inner.get(format!("{}/{}", self.base, SPEC_METHOD)).send().await?;
                 first.json::<APIConfigResponse>().await
             }
             .await
@@ -247,7 +246,7 @@ impl BeaconClient for OnlineBeaconClient {
     async fn genesis_time(&self) -> Result<APIGenesisResponse, Self::Error> {
         Metrics::beacon_requests("genesis").increment(1);
 
-        let result = base_metrics::time!(Metrics::request_duration(), {
+        let result = base_metrics::time!(Metrics::request_duration("genesis"), {
             async {
                 let first =
                     self.inner.get(format!("{}/{}", self.base, GENESIS_METHOD)).send().await?;
@@ -271,7 +270,7 @@ impl BeaconClient for OnlineBeaconClient {
         Metrics::beacon_requests("blobs").increment(1);
 
         // Try to get the blobs from the blobs endpoint.
-        let result = base_metrics::time!(Metrics::request_duration(), {
+        let result = base_metrics::time!(Metrics::request_duration("blobs"), {
             self.filtered_beacon_blobs(slot, blob_hashes).await
         });
 

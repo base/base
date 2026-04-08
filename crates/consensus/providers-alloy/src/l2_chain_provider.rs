@@ -112,44 +112,48 @@ impl AlloyL2ChainProvider {
 
         Metrics::l2_chain_requests(method_name).increment(1);
 
-        let result = base_metrics::time!(Metrics::request_duration(), {
-            async {
-                let block = match id {
-                    BlockId::Number(num) => self.inner.get_block_by_number(num).full().await?,
-                    BlockId::Hash(hash) => {
-                        let block =
-                            self.inner.get_block_by_hash(hash.block_hash).full().await?;
-
-                        // Verify block hash matches if we fetched by hash
-                        if let Some(ref b) = block {
-                            self.verify_block_hash(b.header.hash, hash.block_hash)?;
-                        }
-
-                        block
-                    }
-                };
-
-                match block {
-                    Some(block) => {
-                        let consensus_block =
-                            block.into_consensus().map_transactions(|t| t.inner.inner);
-
-                        let l2_block = L2BlockInfo::from_block_and_genesis(
-                            &consensus_block,
-                            &self.rollup_config.genesis,
-                        )
-                        .map_err(|_| {
-                            RpcError::local_usage_str(
-                                "failed to construct L2BlockInfo from block and genesis",
-                            )
-                        })?;
-                        Ok(Some(l2_block))
-                    }
-                    None => Ok(None),
-                }
+        let raw_block = base_metrics::time!(Metrics::request_duration(method_name), {
+            match &id {
+                BlockId::Number(num) => self.inner.get_block_by_number(*num).full().await,
+                BlockId::Hash(hash) => self.inner.get_block_by_hash(hash.block_hash).full().await,
             }
-            .await
         });
+
+        let result = async {
+            let block = match id {
+                BlockId::Number(_) => raw_block?,
+                BlockId::Hash(hash) => {
+                    let block = raw_block?;
+
+                    // Verify block hash matches if we fetched by hash
+                    if let Some(ref b) = block {
+                        self.verify_block_hash(b.header.hash, hash.block_hash)?;
+                    }
+
+                    block
+                }
+            };
+
+            match block {
+                Some(block) => {
+                    let consensus_block =
+                        block.into_consensus().map_transactions(|t| t.inner.inner);
+
+                    let l2_block = L2BlockInfo::from_block_and_genesis(
+                        &consensus_block,
+                        &self.rollup_config.genesis,
+                    )
+                    .map_err(|_| {
+                        RpcError::local_usage_str(
+                            "failed to construct L2BlockInfo from block and genesis",
+                        )
+                    })?;
+                    Ok(Some(l2_block))
+                }
+                None => Ok(None),
+            }
+        }
+        .await;
 
         if result.is_err() {
             Metrics::l2_chain_errors(method_name).increment(1);
@@ -235,16 +239,16 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
 
         Metrics::l2_chain_requests("l2_block_ref_by_number").increment(1);
 
-        let block = base_metrics::time!(Metrics::request_duration(), {
+        let block = base_metrics::time!(Metrics::request_duration("l2_block_ref_by_number"), {
             self.inner.get_block_by_number(number.into()).full().await
         })
         .map_err(|e| {
             Metrics::l2_chain_errors("l2_block_ref_by_number").increment(1);
             AlloyL2ChainProviderError::Transport(e)
         })?
-            .ok_or(AlloyL2ChainProviderError::BlockNotFound(number))?
-            .into_consensus()
-            .map_transactions(|t| t.inner.inner.into_inner());
+        .ok_or(AlloyL2ChainProviderError::BlockNotFound(number))?
+        .into_consensus()
+        .map_transactions(|t| t.inner.inner.into_inner());
 
         self.block_by_number_cache.put(number, block.clone());
         Ok(block)

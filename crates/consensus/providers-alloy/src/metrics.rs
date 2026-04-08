@@ -31,6 +31,7 @@ base_metrics::define_metrics! {
     #[describe("Number of blob sidecar fetch errors")]
     blob_fetch_errors: counter,
     #[describe("Duration of provider requests in seconds")]
+    #[label(name = "method", default = ["block_number", "header_by_hash", "block_by_number", "block_by_hash", "receipts_by_hash", "l2_block_ref_by_number", "l2_block_ref_by_hash", "spec", "genesis", "blobs"])]
     request_duration: histogram,
     #[describe("Number of active entries in provider caches")]
     #[label(name = "cache", default = ["header_by_hash", "receipts_by_hash", "block_info_and_tx"])]
