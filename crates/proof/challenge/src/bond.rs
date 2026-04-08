@@ -635,50 +635,51 @@ impl<C: Clock> BondManager<C> {
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<Option<RemovalReason>> {
         let status = verifier_client.status(game_address).await?;
-        if status != GameScanner::STATUS_IN_PROGRESS {
+
+        if status == GameScanner::STATUS_IN_PROGRESS {
+            let game_over = verifier_client.game_over(game_address).await?;
+            if !game_over {
+                debug!(game = %game_address, "game dispute period not yet elapsed");
+                return Ok(None);
+            }
+
+            let calldata = encode_resolve_calldata();
+            info!(game = %game_address, "submitting resolve transaction");
+            match submitter.send_bond_tx(game_address, calldata).await {
+                Ok(tx_hash) => {
+                    info!(
+                        game = %game_address,
+                        tx_hash = %tx_hash,
+                        "resolve transaction confirmed"
+                    );
+                    ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
+                        .increment(1);
+                }
+                Err(e) => {
+                    warn!(
+                        game = %game_address,
+                        error = %e,
+                        "resolve transaction failed, will retry"
+                    );
+                    ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                        .increment(1);
+                    return Ok(None);
+                }
+            }
+        } else {
             ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
                 .increment(1);
-
-            // Re-read the onchain bondRecipient — resolve may have changed
-            // it (e.g. to the challenger on CHALLENGER_WINS). If it is no
-            // longer in our claim set, stop tracking this game.
-            if !self.is_bond_claimable(verifier_client, game_address).await? {
-                return Ok(Some(RemovalReason::NotClaimable));
-            }
-
             info!(game = %game_address, status, "game already resolved, advancing to unlock phase");
-            self.set_phase(game_address, BondPhase::NeedsUnlock);
-            return Ok(None);
         }
 
-        // Check if the game is ready to resolve.
-        let game_over = verifier_client.game_over(game_address).await?;
-        if !game_over {
-            debug!(game = %game_address, "game dispute period not yet elapsed");
-            return Ok(None);
+        // Re-read the onchain bondRecipient — resolve may have changed it
+        // (e.g. to the challenger on CHALLENGER_WINS). If it is no longer
+        // in our claim set, stop tracking this game.
+        if !self.is_bond_claimable(verifier_client, game_address).await? {
+            return Ok(Some(RemovalReason::NotClaimable));
         }
 
-        let calldata = encode_resolve_calldata();
-        info!(game = %game_address, "submitting resolve transaction");
-        match submitter.send_bond_tx(game_address, calldata).await {
-            Ok(tx_hash) => {
-                info!(game = %game_address, tx_hash = %tx_hash, "resolve transaction confirmed");
-                ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
-                    .increment(1);
-
-                // Re-read bondRecipient to verify it's in our claim set.
-                if !self.is_bond_claimable(verifier_client, game_address).await? {
-                    return Ok(Some(RemovalReason::NotClaimable));
-                }
-
-                self.set_phase(game_address, BondPhase::NeedsUnlock);
-            }
-            Err(e) => {
-                warn!(game = %game_address, error = %e, "resolve transaction failed, will retry");
-                ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
-                    .increment(1);
-            }
-        }
+        self.set_phase(game_address, BondPhase::NeedsUnlock);
         Ok(None)
     }
 
