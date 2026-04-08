@@ -30,6 +30,12 @@ base_metrics::define_metrics! {
 
     #[describe("Total number of successful revokeCert transactions")]
     revoke_cert_success_total: counter,
+
+    #[describe("Registrar L1 account balance in wei")]
+    account_balance_wei: gauge,
+
+    #[describe("Registrar Boundless account balance in wei")]
+    boundless_balance_wei: gauge,
 }
 
 impl RegistrarMetrics {

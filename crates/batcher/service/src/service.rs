@@ -90,7 +90,7 @@ type ServiceDriver = BatchDriver<
     TokioRuntime,
     BatchEncoder,
     HybridBlockSource<Subscription, RpcPollingSource, TokioRuntime>,
-    SimpleTxManager,
+    SimpleTxManager<RootProvider>,
     ServiceThrottle,
     HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource>,
 >;
