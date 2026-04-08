@@ -185,11 +185,9 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
             let sender_addr = signing.address();
 
             let l1_tx_provider = if config.metrics.enabled {
-                let (layer, balance_rx) =
-                    BalanceMonitorLayer::new(sender_addr, cancel.clone());
-                let provider = ProviderBuilder::new()
-                    .layer(layer)
-                    .connect_http(config.l1_eth_rpc.clone());
+                let (layer, balance_rx) = BalanceMonitorLayer::new(sender_addr, cancel.clone());
+                let provider =
+                    ProviderBuilder::new().layer(layer).connect_http(config.l1_eth_rpc.clone());
                 tokio::spawn(async move {
                     let mut rx = balance_rx;
                     while rx.changed().await.is_ok() {
