@@ -1089,9 +1089,12 @@ impl LoadRunner {
 
             let receipt_futs: Vec<_> = pending_txs
                 .iter()
-                .map(|&(tx_hash, address)| async move {
-                    let receipt = client.get_transaction_receipt(tx_hash).await;
-                    (tx_hash, address, receipt)
+                .map(|&(tx_hash, address)| {
+                    let client = client.clone();
+                    async move {
+                        let receipt = client.get_transaction_receipt(tx_hash).await;
+                        (tx_hash, address, receipt)
+                    }
                 })
                 .collect();
 
