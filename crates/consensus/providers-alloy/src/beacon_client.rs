@@ -228,11 +228,14 @@ impl BeaconClient for OnlineBeaconClient {
             return Ok(APIConfigResponse::new(l1_slot_duration));
         }
 
-        let result = async {
-            let first = self.inner.get(format!("{}/{}", self.base, SPEC_METHOD)).send().await?;
-            first.json::<APIConfigResponse>().await
-        }
-        .await;
+        let result = base_metrics::time!(Metrics::request_duration(), {
+            async {
+                let first =
+                    self.inner.get(format!("{}/{}", self.base, SPEC_METHOD)).send().await?;
+                first.json::<APIConfigResponse>().await
+            }
+            .await
+        });
 
         if result.is_err() {
             Metrics::beacon_errors("spec").increment(1);
@@ -244,11 +247,14 @@ impl BeaconClient for OnlineBeaconClient {
     async fn genesis_time(&self) -> Result<APIGenesisResponse, Self::Error> {
         Metrics::beacon_requests("genesis").increment(1);
 
-        let result = async {
-            let first = self.inner.get(format!("{}/{}", self.base, GENESIS_METHOD)).send().await?;
-            first.json::<APIGenesisResponse>().await
-        }
-        .await;
+        let result = base_metrics::time!(Metrics::request_duration(), {
+            async {
+                let first =
+                    self.inner.get(format!("{}/{}", self.base, GENESIS_METHOD)).send().await?;
+                first.json::<APIGenesisResponse>().await
+            }
+            .await
+        });
 
         if result.is_err() {
             Metrics::beacon_errors("genesis").increment(1);
@@ -265,7 +271,9 @@ impl BeaconClient for OnlineBeaconClient {
         Metrics::beacon_requests("blobs").increment(1);
 
         // Try to get the blobs from the blobs endpoint.
-        let result = self.filtered_beacon_blobs(slot, blob_hashes).await;
+        let result = base_metrics::time!(Metrics::request_duration(), {
+            self.filtered_beacon_blobs(slot, blob_hashes).await
+        });
 
         if result.is_err() {
             Metrics::beacon_errors("blobs").increment(1);

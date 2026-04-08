@@ -65,7 +65,9 @@ impl AlloyChainProvider {
     pub async fn latest_block_number(&mut self) -> Result<u64, RpcError<TransportErrorKind>> {
         Metrics::chain_rpc_calls("block_number").increment(1);
 
-        let result = self.inner.get_block_number().await;
+        let result = base_metrics::time!(Metrics::request_duration(), {
+            self.inner.get_block_number().await
+        });
 
         if result.is_err() {
             Metrics::chain_rpc_errors("block_number").increment(1);
@@ -160,14 +162,13 @@ impl ChainProvider for AlloyChainProvider {
 
         Metrics::chain_rpc_calls("header_by_hash").increment(1);
 
-        let block = self
-            .inner
-            .get_block_by_hash(hash)
-            .await
-            .inspect_err(|_e| {
-                Metrics::chain_rpc_errors("header_by_hash").increment(1);
-            })?
-            .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?;
+        let block = base_metrics::time!(Metrics::request_duration(), {
+            self.inner.get_block_by_hash(hash).await
+        })
+        .inspect_err(|_e| {
+            Metrics::chain_rpc_errors("header_by_hash").increment(1);
+        })?
+        .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?;
         let header = block.header.into_consensus();
 
         // Verify the header hash matches what we requested
@@ -183,14 +184,13 @@ impl ChainProvider for AlloyChainProvider {
     async fn block_info_by_number(&mut self, number: u64) -> Result<BlockInfo, Self::Error> {
         Metrics::chain_rpc_calls("block_by_number").increment(1);
 
-        let block = self
-            .inner
-            .get_block_by_number(number.into())
-            .await
-            .inspect_err(|_e| {
-                Metrics::chain_rpc_errors("block_by_number").increment(1);
-            })?
-            .ok_or(AlloyChainProviderError::BlockNotFound(number.into()))?;
+        let block = base_metrics::time!(Metrics::request_duration(), {
+            self.inner.get_block_by_number(number.into()).await
+        })
+        .inspect_err(|_e| {
+            Metrics::chain_rpc_errors("block_by_number").increment(1);
+        })?
+        .ok_or(AlloyChainProviderError::BlockNotFound(number.into()))?;
         let header = block.header.into_consensus();
 
         let block_info = BlockInfo {
@@ -212,14 +212,13 @@ impl ChainProvider for AlloyChainProvider {
 
         Metrics::chain_rpc_calls("receipts_by_hash").increment(1);
 
-        let receipts = self
-            .inner
-            .get_block_receipts(hash.into())
-            .await
-            .inspect_err(|_e| {
-                Metrics::chain_rpc_errors("receipts_by_hash").increment(1);
-            })?
-            .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?;
+        let receipts = base_metrics::time!(Metrics::request_duration(), {
+            self.inner.get_block_receipts(hash.into()).await
+        })
+        .inspect_err(|_e| {
+            Metrics::chain_rpc_errors("receipts_by_hash").increment(1);
+        })?
+        .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?;
         let consensus_receipts = receipts
             .into_iter()
             .map(|r| r.inner.into_primitives_receipt().as_receipt().cloned())
@@ -247,17 +246,15 @@ impl ChainProvider for AlloyChainProvider {
 
         Metrics::chain_rpc_calls("block_by_hash").increment(1);
 
-        let block = self
-            .inner
-            .get_block_by_hash(hash)
-            .full()
-            .await
-            .inspect_err(|_e| {
-                Metrics::chain_rpc_errors("block_by_hash").increment(1);
-            })?
-            .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?
-            .into_consensus()
-            .map_transactions(|t| t.inner.into_inner());
+        let block = base_metrics::time!(Metrics::request_duration(), {
+            self.inner.get_block_by_hash(hash).full().await
+        })
+        .inspect_err(|_e| {
+            Metrics::chain_rpc_errors("block_by_hash").increment(1);
+        })?
+        .ok_or(AlloyChainProviderError::BlockNotFound(hash.into()))?
+        .into_consensus()
+        .map_transactions(|t| t.inner.into_inner());
 
         // Verify the block hash matches what we requested
         self.verify_header_hash(&block.header, hash)?;
