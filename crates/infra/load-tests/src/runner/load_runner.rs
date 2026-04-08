@@ -242,6 +242,11 @@ impl LoadRunner {
         amount_per_account: U256,
     ) -> Result<()> {
         let total_accounts = self.accounts.len();
+        let client = self.client.clone();
+        let rpc_url = self.config.rpc_url.clone();
+        let chain_id = self.config.chain_id;
+        let max_gas_price = self.config.max_gas_price;
+
         let pb_check = Self::progress_bar(total_accounts as u64, "Checking balances");
 
         // Phase 1: Parallel balance + nonce queries.
@@ -251,7 +256,7 @@ impl LoadRunner {
         let balance_futs: Vec<_> = addresses
             .iter()
             .map(|&(addr, idx)| {
-                let client = &self.client;
+                let client = client.clone();
                 async move {
                     let balance = client.get_balance(addr).await?;
                     let nonce = client.get_nonce(addr).await?;
@@ -289,15 +294,15 @@ impl LoadRunner {
 
         let funder_address = funding_key.address();
         let wallet = EthereumWallet::from(funding_key);
-        let funder_provider = create_wallet_provider(self.config.rpc_url.clone(), wallet);
+        let funder_provider = Arc::new(create_wallet_provider(rpc_url.clone(), wallet));
 
-        let gas_price = self.client.get_gas_price().await?;
+        let gas_price = client.get_gas_price().await?;
         let max_priority_fee = (gas_price / 10).max(1);
         // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
         // When gas_price is 0 (e.g. a fresh devnet), `gas_price * 2` would be 0
         // while max_priority_fee=1, causing the transaction to be rejected.
         let max_fee =
-            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
+            gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
 
         // Phase 2: Early balance validation — abort before sending any TXs if
         // the funder cannot cover the total cost.
@@ -309,7 +314,7 @@ impl LoadRunner {
         let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(accounts_to_fund.len()));
         let total_needed = total_deficit.saturating_add(total_gas_cost);
 
-        let funder_balance = self.client.get_balance(funder_address).await?;
+        let funder_balance = client.get_balance(funder_address).await?;
 
         if funder_balance < total_needed {
             let shortfall = total_needed.saturating_sub(funder_balance);
@@ -355,7 +360,7 @@ impl LoadRunner {
                     .with_to(address)
                     .with_value(deficit)
                     .with_nonce(nonce)
-                    .with_chain_id(self.config.chain_id)
+                    .with_chain_id(chain_id)
                     .with_gas_limit(21_000)
                     .with_max_fee_per_gas(max_fee)
                     .with_max_priority_fee_per_gas(max_priority_fee);
@@ -365,19 +370,15 @@ impl LoadRunner {
 
         let total_txs = txs.len() as u64;
         let pb_fund = Self::progress_bar(total_txs, "Funding accounts");
-        let chain_id = self.config.chain_id;
-
-        for batch in txs.chunks(FUNDING_BATCH_SIZE) {
+        let mut txs_remaining = txs.into_iter().peekable();
+        while txs_remaining.peek().is_some() {
+            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
             let mut batch_pending: Vec<(TxHash, Address)> = Vec::with_capacity(batch.len());
             let mut retries: Vec<(Address, U256, u64)> = Vec::new();
             let mut fatal_errors: Vec<String> = Vec::new();
 
-            let send_futs = batch.iter().map(|(tx, address, deficit, nonce)| {
-                let provider = &funder_provider;
-                let tx = tx.clone();
-                let address = *address;
-                let deficit = *deficit;
-                let nonce = *nonce;
+            let send_futs = batch.into_iter().map(|(tx, address, deficit, nonce)| {
+                let provider = Arc::clone(&funder_provider);
                 async move {
                     let result = provider.send_transaction(tx).await;
                     (result, address, deficit, nonce)
@@ -416,7 +417,7 @@ impl LoadRunner {
 
             if !retries.is_empty() {
                 let retry_futs = retries.into_iter().map(|(address, deficit, nonce)| {
-                    let provider = &funder_provider;
+                    let provider = Arc::clone(&funder_provider);
                     async move {
                         let replacement = TransactionRequest::default()
                             .with_to(address)
@@ -448,7 +449,7 @@ impl LoadRunner {
                 }
             }
 
-            Self::await_confirmations(&self.client, &mut batch_pending, &pb_fund).await?;
+            Self::await_confirmations(&client, &mut batch_pending, &pb_fund).await?;
         }
         pb_fund.finish_and_clear();
 
@@ -459,7 +460,7 @@ impl LoadRunner {
             .accounts()
             .iter()
             .map(|a| {
-                let client = &self.client;
+                let client = client.clone();
                 let addr = a.address;
                 async move {
                     let balance = client.get_balance(addr).await?;
@@ -486,7 +487,7 @@ impl LoadRunner {
             account.balance = balance;
             account.nonce = account_nonce;
 
-            let provider = NonceProvider::new_http(self.config.rpc_url.clone());
+            let provider = NonceProvider::new_http(rpc_url.clone());
             let nonce_manager = NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT);
             self.nonce_managers.insert(addr, nonce_manager);
 
@@ -899,7 +900,11 @@ impl LoadRunner {
     #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
     pub async fn drain_accounts(&self, funding_key: PrivateKeySigner) -> Result<U256> {
         let funder_address = funding_key.address();
-        let gas_price = self.client.get_gas_price().await?;
+        let client = self.client.clone();
+        let rpc_url = self.config.rpc_url.clone();
+        let chain_id = self.config.chain_id;
+
+        let gas_price = client.get_gas_price().await?;
         let max_priority_fee = (gas_price / 10).max(1);
         // Ensure max_fee >= max_priority_fee (EIP-1559 requirement).
         let max_fee =
@@ -914,16 +919,18 @@ impl LoadRunner {
         let pb_drain = Self::progress_bar(total_accounts as u64, "Draining accounts");
 
         // Each account has its own signer, so drains are fully independent.
-        let drain_futs: Vec<_> = self
+        let account_data: Vec<_> = self
             .accounts
             .accounts()
             .iter()
-            .map(|account| {
-                let client = &self.client;
-                let rpc_url = self.config.rpc_url.clone();
-                let chain_id = self.config.chain_id;
-                let signer = account.signer.clone();
-                let address = account.address;
+            .map(|a| (a.address, a.signer.clone()))
+            .collect();
+
+        let drain_futs: Vec<_> = account_data
+            .into_iter()
+            .map(|(address, signer)| {
+                let client = client.clone();
+                let rpc_url = rpc_url.clone();
                 async move {
                     let balance = client.get_pending_balance(address).await?;
                     if balance <= drain_gas_cost {
@@ -997,7 +1004,7 @@ impl LoadRunner {
         let pb_confirm = Self::progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
-        if let Err(e) = Self::await_confirmations(&self.client, &mut pending_txs, &pb_confirm).await
+        if let Err(e) = Self::await_confirmations(&client, &mut pending_txs, &pb_confirm).await
         {
             warn!(error = %e, "some drain txs did not confirm within timeout");
         }
@@ -1032,9 +1039,12 @@ impl LoadRunner {
 
             let receipt_futs: Vec<_> = pending_txs
                 .iter()
-                .map(|&(tx_hash, address)| async move {
-                    let receipt = client.get_transaction_receipt(tx_hash).await;
-                    (tx_hash, address, receipt)
+                .map(|&(tx_hash, address)| {
+                    let client = client.clone();
+                    async move {
+                        let receipt = client.get_transaction_receipt(tx_hash).await;
+                        (tx_hash, address, receipt)
+                    }
                 })
                 .collect();
 

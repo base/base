@@ -53,6 +53,7 @@ pub fn create_wallet_provider(rpc_url: Url, wallet: EthereumWallet) -> WalletPro
 }
 
 /// RPC client for read-only interactions with Base nodes.
+#[derive(Clone)]
 pub struct RpcClient {
     provider: RootProvider<Base>,
     url: Url,
