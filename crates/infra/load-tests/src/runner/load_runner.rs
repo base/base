@@ -1089,12 +1089,9 @@ impl LoadRunner {
 
             let receipt_futs: Vec<_> = pending_txs
                 .iter()
-                .map(|&(tx_hash, address)| {
-                    let client = client.clone();
-                    async move {
-                        let receipt = client.get_transaction_receipt(tx_hash).await;
-                        (tx_hash, address, receipt)
-                    }
+                .map(|&(tx_hash, address)| async move {
+                    let receipt = client.get_transaction_receipt(tx_hash).await;
+                    (tx_hash, address, receipt)
                 })
                 .collect();
 
@@ -1118,7 +1115,6 @@ impl LoadRunner {
             }
             *pending_txs = still_pending;
         }
-        pb_confirm.finish_and_clear();
 
         if !pending_txs.is_empty() {
             let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
@@ -1128,17 +1124,6 @@ impl LoadRunner {
         }
 
         Ok(())
-    }
-
-    fn progress_bar(total: u64, prefix: &str) -> ProgressBar {
-        let pb = ProgressBar::new(total);
-        pb.set_style(
-            ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
-                .expect("valid template")
-                .progress_chars("█▓░"),
-        );
-        pb.set_prefix(prefix.to_string());
-        pb
     }
 
     /// Checks account balances, stores the results for the live display, and
