@@ -1,5 +1,7 @@
 //! The internal state of the engine controller.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use alloy_rpc_types_engine::ForkchoiceState;
 use base_protocol::L2BlockInfo;
 use serde::{Deserialize, Serialize};
@@ -65,17 +67,25 @@ impl EngineSyncState {
     /// Applies the update to the provided sync state, using the current state values if the update
     /// is not specified. Returns the new sync state.
     pub fn apply_update(self, sync_state_update: EngineSyncStateUpdate) -> Self {
+        let now_secs =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64();
         if let Some(unsafe_head) = sync_state_update.unsafe_head {
             Metrics::block_labels(Metrics::UNSAFE_BLOCK_LABEL)
                 .set(unsafe_head.block_info.number as f64);
+            Metrics::block_refs_latency(Metrics::UNSAFE_BLOCK_LABEL)
+                .set(now_secs - unsafe_head.block_info.timestamp as f64);
         }
         if let Some(safe_head) = sync_state_update.safe_head {
             Metrics::block_labels(Metrics::SAFE_BLOCK_LABEL)
                 .set(safe_head.block_info.number as f64);
+            Metrics::block_refs_latency(Metrics::SAFE_BLOCK_LABEL)
+                .set(now_secs - safe_head.block_info.timestamp as f64);
         }
         if let Some(finalized_head) = sync_state_update.finalized_head {
             Metrics::block_labels(Metrics::FINALIZED_BLOCK_LABEL)
                 .set(finalized_head.block_info.number as f64);
+            Metrics::block_refs_latency(Metrics::FINALIZED_BLOCK_LABEL)
+                .set(now_secs - finalized_head.block_info.timestamp as f64);
         }
 
         Self {
@@ -129,6 +139,9 @@ impl EngineState {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "metrics")]
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     #[cfg(feature = "metrics")]
     use base_protocol::BlockInfo;
     #[cfg(feature = "metrics")]
@@ -191,5 +204,46 @@ mod tests {
         assert!(handle.render().contains(
             format!("base_node_block_labels{{label=\"{label_name}\"}} {number}").as_str()
         ));
+    }
+
+    #[rstest]
+    #[case::set_unsafe(EngineState::set_unsafe_head, Metrics::UNSAFE_BLOCK_LABEL)]
+    #[case::set_safe_head(EngineState::set_safe_head, Metrics::SAFE_BLOCK_LABEL)]
+    #[case::set_finalized_head(EngineState::set_finalized_head, Metrics::FINALIZED_BLOCK_LABEL)]
+    #[cfg(feature = "metrics")]
+    fn test_chain_refs_latency_metrics(
+        #[case] set_fn: impl Fn(&mut EngineState, L2BlockInfo),
+        #[case] label_name: &str,
+    ) {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() - 10;
+
+        metrics::with_local_recorder(&recorder, || {
+            let mut state = EngineState::default();
+            set_fn(
+                &mut state,
+                L2BlockInfo {
+                    block_info: BlockInfo { timestamp, ..Default::default() },
+                    ..Default::default()
+                },
+            );
+        });
+
+        let rendered = handle.render();
+        let latency_line = rendered
+            .lines()
+            .find(|l| {
+                l.starts_with(&format!("base_node_block_refs_latency{{label=\"{label_name}\"}}"))
+            })
+            .expect("latency metric not found");
+        let latency: f64 =
+            latency_line.split_whitespace().last().unwrap_or("0").parse().unwrap_or(0.0);
+        assert!(
+            latency >= 9.0 && latency < 30.0,
+            "latency {latency} not in expected range [9, 30)"
+        );
     }
 }

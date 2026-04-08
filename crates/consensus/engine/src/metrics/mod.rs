@@ -8,6 +8,9 @@ base_metrics::define_metrics! {
     #[describe("Blockchain head labels")]
     #[label(label)]
     block_labels: gauge,
+    #[describe("Seconds behind wall clock for each blockchain head ref")]
+    #[label(label)]
+    block_refs_latency: gauge,
     #[describe("Engine tasks successfully executed")]
     #[label(
         name = "task",
