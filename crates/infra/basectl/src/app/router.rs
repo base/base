@@ -17,6 +17,8 @@ pub enum ViewId {
     Proofs,
     /// Load test runner and metrics viewer.
     LoadTest,
+    /// Network upgrade activation countdown and history.
+    Upgrades,
 }
 
 /// Manages view navigation history and the current active view.

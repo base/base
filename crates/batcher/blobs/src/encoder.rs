@@ -59,25 +59,6 @@ impl BlobEncoder {
         Self::encode(&data)
     }
 
-    /// Encode each [`Frame`] into its own EIP-4844 [`Blob`].
-    ///
-    /// Each frame is prefixed with [`DERIVATION_VERSION_0`] before encoding.
-    /// Returns a blob per frame in the same order.
-    ///
-    /// Kept for compatibility with the action-test harness
-    /// (`actions/harness/src/miner.rs`). New code should use [`encode_packed`](Self::encode_packed).
-    pub fn encode_frames(frames: &[Arc<Frame>]) -> Result<Vec<Box<Blob>>, BlobEncodeError> {
-        let mut blobs = Vec::with_capacity(frames.len());
-        for frame in frames {
-            let encoded = frame.encode();
-            let mut data = Vec::with_capacity(1 + encoded.len());
-            data.push(DERIVATION_VERSION_0);
-            data.extend_from_slice(&encoded);
-            blobs.push(Self::encode(&data)?);
-        }
-        Ok(blobs)
-    }
-
     /// Encode `data` into a single EIP-4844 [`Blob`].
     ///
     /// Returns a [`BlobEncodeError::DataTooLarge`] if the input exceeds

@@ -74,8 +74,6 @@ pub struct ProposerConfig {
     pub rollup_rpc: Url,
     /// Skip TLS certificate verification.
     pub skip_tls_verify: bool,
-    /// Wait for node sync before starting.
-    pub wait_node_sync: bool,
     /// Logging configuration (from base-cli-utils).
     pub log: LogConfig,
     /// Metrics server configuration.
@@ -186,7 +184,6 @@ impl ProposerConfig {
             tx_manager,
             rollup_rpc: cli.proposer.rollup_rpc,
             skip_tls_verify: cli.proposer.skip_tls_verify,
-            wait_node_sync: cli.proposer.wait_node_sync,
             max_parallel_proofs: cli.proposer.max_parallel_proofs,
             max_game_recovery_lookback: cli.proposer.max_game_recovery_lookback,
             tee_prover_registry_address: cli.proposer.tee_prover_registry_address,
@@ -250,7 +247,6 @@ mod tests {
                 rpc_timeout: Duration::from_secs(30),
                 rollup_rpc: Url::parse("http://localhost:7545").unwrap(),
                 skip_tls_verify: false,
-                wait_node_sync: false,
                 rpc_max_retries: 5,
                 rpc_retry_initial_delay: Duration::from_millis(100),
                 rpc_retry_max_delay: Duration::from_secs(10),

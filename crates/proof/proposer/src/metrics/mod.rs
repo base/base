@@ -38,10 +38,6 @@ base_metrics::define_metrics! {
             "tx_reverted",
             "config",
             "internal",
-            "output_root_mismatch",
-            "l1_origin_mismatch",
-            "block_number_mismatch",
-            "block_info_derivation",
             "tx_manager",
             "game_already_exists"
         ]
@@ -56,8 +52,11 @@ base_metrics::define_metrics! {
     #[describe("Time for one pipeline tick (seconds)")]
     tick_duration_seconds: histogram,
 
-    #[describe("Time to validate and submit a proposal (seconds)")]
-    submission_duration_seconds: histogram,
+    #[describe("Total time to validate and submit a proposal (seconds)")]
+    proposal_total_duration_seconds: histogram,
+
+    #[describe("Time for propose_output L1 transaction (seconds)")]
+    proposal_l1_tx_duration_seconds: histogram,
 }
 
 impl Metrics {
@@ -73,14 +72,6 @@ impl Metrics {
     pub const ERROR_TYPE_CONFIG: &str = "config";
     /// Internal error.
     pub const ERROR_TYPE_INTERNAL: &str = "internal";
-    /// Output root mismatch.
-    pub const ERROR_TYPE_OUTPUT_ROOT_MISMATCH: &str = "output_root_mismatch";
-    /// L1 origin hash mismatch.
-    pub const ERROR_TYPE_L1_ORIGIN_MISMATCH: &str = "l1_origin_mismatch";
-    /// Block number mismatch.
-    pub const ERROR_TYPE_BLOCK_NUMBER_MISMATCH: &str = "block_number_mismatch";
-    /// Block info derivation failure.
-    pub const ERROR_TYPE_BLOCK_INFO_DERIVATION: &str = "block_info_derivation";
     /// Transaction manager error.
     pub const ERROR_TYPE_TX_MANAGER: &str = "tx_manager";
     /// Game already exists.

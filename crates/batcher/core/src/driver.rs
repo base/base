@@ -504,7 +504,7 @@ mod tests {
     /// never pruned. The driver must call requeue so the encoder can unwind that state.
     #[test]
     fn test_blob_encoding_failure_requeues_submission() {
-        // encode_frames feeds: DERIVATION_VERSION_0 (1) + frame.encode() (23 + data.len())
+        // encode_packed feeds: DERIVATION_VERSION_0 (1) + frame.encode() (23 + data.len())
         // = 24 + data.len() bytes into BlobEncoder::encode. It fails when > BLOB_MAX_DATA_SIZE
         // (130_044), so data.len() >= 130_021 guarantees DataTooLarge.
         const OVERSIZED: usize = 130_021;
