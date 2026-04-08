@@ -50,6 +50,12 @@ pub struct SafeDB {
 impl SafeDB {
     /// Opens (or creates) the safe head database at the given path.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, SafeDBError> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                SafeDBError::Database(format!("failed to create database directory: {e}"))
+            })?;
+        }
         let db = Database::create(path).map_err(|e| SafeDBError::Database(e.to_string()))?;
 
         // Ensure the table exists.
