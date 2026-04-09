@@ -12,11 +12,11 @@ use base_challenger::{
     GameScanner, L1HeadProvider, OutputValidator, PendingProof, ProofPhase, ScannerConfig,
     TeeConfig,
     test_utils::{
-        DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier,
-        MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState, MockL1HeadProvider,
-        MockL2Provider, MockTeeProofProvider, MockTxManager, MockZkProofProvider,
-        MockZkProofState, TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account,
-        empty_factory, factory_game, mock_state, mock_state_with_tee, receipt_with_status,
+        DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
+        MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider,
+        MockTeeProofProvider, MockTxManager, MockZkProofProvider, MockZkProofState,
+        TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account, empty_factory, factory_game,
+        mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
@@ -110,7 +110,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
         proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
         session_id: Some(session_id),
         prover_address: Some(format!("{:#x}", addr(0))),
-        l1_head: Some(format!("{:#x}", DEFAULT_L1_HEAD)),
+        l1_head: Some(format!("{DEFAULT_L1_HEAD:#x}")),
     };
 
     PendingProof::ready(
@@ -885,10 +885,8 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.step().await.unwrap();
 
-    let entry = driver
-        .pending_proofs
-        .get(&addr(0))
-        .expect("ZK nullification proof should be pending");
+    let entry =
+        driver.pending_proofs.get(&addr(0)).expect("ZK nullification proof should be pending");
     assert_eq!(entry.intent, DisputeIntent::Nullify, "intent should be Nullify for ZK proposals");
 }
 
