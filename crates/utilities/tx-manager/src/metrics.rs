@@ -128,6 +128,22 @@ impl BaseTxMetrics {
     pub const fn new(name: &'static str) -> Self {
         Self { name }
     }
+
+    /// Zero-initializes all counters and gauges for this instance's `name`
+    /// label so they appear immediately in the metrics endpoint.
+    ///
+    /// Call this once at startup after the metrics recorder is installed.
+    pub fn zero(&self) {
+        TxManagerMetrics::tx_gas_bump_count(self.name).absolute(0);
+        TxManagerMetrics::current_nonce(self.name).set(0.0);
+        TxManagerMetrics::tx_publish_error_count(self.name).absolute(0);
+        TxManagerMetrics::basefee_gwei(self.name).set(0.0);
+        TxManagerMetrics::tipcap_gwei(self.name).set(0.0);
+        TxManagerMetrics::blob_fee_gwei(self.name).set(0.0);
+        TxManagerMetrics::rpc_error_count(self.name).absolute(0);
+        TxManagerMetrics::tx_confirmed_count(self.name).absolute(0);
+        TxManagerMetrics::tx_failed_count(self.name).absolute(0);
+    }
 }
 
 impl TxMetrics for BaseTxMetrics {
