@@ -3,18 +3,19 @@
 //! Provides [`AccountProofVerifier`] for verifying `eth_getProof` responses
 //! against a state root using Merkle Patricia Trie proofs.
 
-use alloy_rlp::Encodable;
-use thiserror::Error;
 use alloy_primitives::{B256, keccak256};
+use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
-use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
+use alloy_trie::proof::{ProofVerificationError, verify_proof};
+use alloy_trie::{Nibbles, TrieAccount};
+use thiserror::Error;
 
 /// Errors from account proof verification.
-#[derive(Debug, Clone, Eq, PartialEq, Error)]
+#[derive(Debug, Eq, PartialEq, Error)]
 pub enum AccountProofError {
     /// The Merkle proof does not match the expected account state.
     #[error("account proof verification failed: {0}")]
-    VerificationFailed(String),
+    VerificationFailed(#[from] ProofVerificationError),
 }
 
 /// Verifies `eth_getProof` responses against state roots.
@@ -24,15 +25,10 @@ pub struct AccountProofVerifier;
 impl AccountProofVerifier {
     /// Verifies an `eth_getProof` response against a state root.
     ///
-    /// Checks that the account proof is valid against the given `state_root`
-    /// by RLP-encoding the account fields (nonce, balance, storage root, code
-    /// hash) and verifying the Merkle Patricia Trie proof.
-    ///
     /// # Errors
     ///
-    /// Returns [`AccountProofError::VerificationFailed`] if:
-    /// - The proof is invalid against the state root
-    /// - The account data doesn't match the proof
+    /// Returns [`AccountProofError::VerificationFailed`] if the proof is
+    /// invalid or the account data doesn't match.
     pub fn verify(
         response: &EIP1186AccountProofResponse,
         state_root: B256,
@@ -49,7 +45,7 @@ impl AccountProofVerifier {
         let mut encoded = Vec::with_capacity(account.length());
         account.encode(&mut encoded);
 
-        verify_proof(state_root, key, Some(encoded), &response.account_proof)
-            .map_err(|e| AccountProofError::VerificationFailed(e.to_string()))
+        verify_proof(state_root, key, Some(encoded), &response.account_proof)?;
+        Ok(())
     }
 }
