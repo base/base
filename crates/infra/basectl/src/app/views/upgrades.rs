@@ -70,18 +70,6 @@ struct ChainUpgrades {
     specs: Vec<UpgradeSpec>,
 }
 
-impl ChainUpgrades {
-    /// Returns `true` if the V1 upgrade has activated at or before `now`.
-    fn v1_active(&self, now: u64) -> bool {
-        self.specs
-            .iter()
-            .find(|s| s.name == "V1")
-            .and_then(|s| s.timestamp)
-            .map(|ts| ts <= now)
-            .unwrap_or(false)
-    }
-}
-
 fn specs_from_config(cfg: &BaseChainConfig) -> Vec<UpgradeSpec> {
     vec![
         UpgradeSpec { name: "Delta", timestamp: Some(cfg.delta_timestamp) },
