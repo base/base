@@ -7,12 +7,13 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, Bytes, U256};
 use base_action_harness::{
     ActionDataSource, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L2Sequencer,
-    PendingTx, SharedL1Chain, StepResult, TestGossipTransport, TestRollupConfigBuilder,
-    TestRollupNode, UserDeposit, block_info_from,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, PendingTx,
+    SharedL1Chain, TestGossipTransport, TestRollupConfigBuilder, TestRollupNode, UserDeposit,
+    block_info_from,
 };
-use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
-use base_consensus_derive::{PipelineBuilder, StatefulAttributesBuilder};
+use base_batcher_encoder::{DaType, EncoderConfig};
+use base_consensus_derive::{PipelineBuilder, StatefulAttributesBuilder, StepResult};
+use base_protocol::BatchType;
 use base_protocol::{BlockInfo, DERIVATION_VERSION_0, L2BlockInfo};
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives

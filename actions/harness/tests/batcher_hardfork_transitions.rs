@@ -5,7 +5,8 @@ use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, DerivedBlock, L1MinerConfig,
     SharedL1Chain, TestRollupConfigBuilder,
 };
-use base_batcher_encoder::{BatchType, DaType, EncoderConfig};
+use base_batcher_encoder::{DaType, EncoderConfig};
+use base_protocol::BatchType;
 use base_consensus_genesis::{HardForkConfig, RollupConfig};
 use tracing_subscriber::EnvFilter;
 
