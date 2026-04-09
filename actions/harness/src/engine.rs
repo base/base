@@ -42,7 +42,7 @@ use base_execution_payload_builder::{
 use base_node_core::OpNode;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use base_test_utils::build_test_genesis;
-use base_txpool::BasePooledTransaction;
+use base_execution_txpool::BasePooledTransaction;
 use reth_basic_payload_builder::{
     BuildArguments, PayloadBuilder as RethPayloadBuilder, PayloadConfig,
 };
