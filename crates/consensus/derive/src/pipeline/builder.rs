@@ -136,4 +136,3 @@ where
         Self::new(attributes, rollup_config, l2_chain_provider)
     }
 }
-

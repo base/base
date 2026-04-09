@@ -165,7 +165,6 @@ where
             Err(PipelineError::NotEnoughData.temp())
         }
     }
-
 }
 
 #[async_trait]
