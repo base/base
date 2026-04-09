@@ -13,6 +13,9 @@ const ECDSA_V_OFFSET: u8 = 27;
 /// Proof type byte for TEE proofs (matches `AggregateVerifier.ProofType.TEE`).
 pub const PROOF_TYPE_TEE: u8 = 0;
 
+/// Proof type byte for ZK proofs (matches `AggregateVerifier.ProofType.ZK`).
+pub const PROOF_TYPE_ZK: u8 = 1;
+
 /// Errors that can occur during cryptographic operations.
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum CryptoError {
