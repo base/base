@@ -76,7 +76,7 @@ impl ChallengerService {
         let sender_addr = signer_config.address();
         let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
         let l1_provider = if config.metrics.enabled {
-            let (layer, balance_rx) = BalanceMonitorLayer::new(
+            let (layer, mut balance_rx) = BalanceMonitorLayer::new(
                 sender_addr,
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
@@ -85,10 +85,9 @@ impl ChallengerService {
                 .layer(layer)
                 .connect_http(l1_rpc_url.clone());
             tokio::spawn(async move {
-                let mut rx = balance_rx;
-                while rx.changed().await.is_ok() {
+                while balance_rx.changed().await.is_ok() {
                     ChallengerMetrics::account_balance_wei()
-                        .set(f64::from(*rx.borrow_and_update()));
+                        .set(f64::from(*balance_rx.borrow_and_update()));
                 }
             });
             info!(%sender_addr, "Balance monitor started");
@@ -142,7 +141,7 @@ impl ChallengerService {
         info!(endpoint = %config.zk_rpc_url, "ZK proof client initialized");
 
         // ── 6b. TEE proof client (optional) ─────────────────────────────────
-        let tee: Option<crate::TeeConfig> = if let Some(ref tee_url) = config.tee_rpc_url {
+        let tee = if let Some(ref tee_url) = config.tee_rpc_url {
             let request_timeout = config.tee_request_timeout.ok_or_else(|| {
                 eyre::eyre!("tee_request_timeout must be set when tee_rpc_url is configured")
             })?;
