@@ -144,11 +144,7 @@ impl BlobData {
     /// Fills in the pointers to the fetched blob bodies.
     /// There should be exactly one placeholder blobOrCalldata
     /// element for each blob, otherwise an error is returned.
-    pub fn fill(
-        &mut self,
-        blobs: &[Box<Blob>],
-        index: usize,
-    ) -> Result<bool, BlobProviderError> {
+    pub fn fill(&mut self, blobs: &[Box<Blob>], index: usize) -> Result<bool, BlobProviderError> {
         // Do not fill if there is calldata here
         if self.calldata.is_some() {
             return Ok(false);

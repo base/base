@@ -132,10 +132,7 @@ where
     /// ## Returns
     /// - `Ok(SingleBatch)` if an empty batch was derived.
     /// - `Err(PipelineError)` if an empty batch could not be derived.
-    pub fn try_derive_empty_batch(
-        &mut self,
-        parent: &L2BlockInfo,
-    ) -> PipelineResult<SingleBatch> {
+    pub fn try_derive_empty_batch(&mut self, parent: &L2BlockInfo) -> PipelineResult<SingleBatch> {
         let epoch = self.l1_blocks[0];
 
         // If the current epoch is too old compared to the L1 block we are at,
