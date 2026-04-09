@@ -206,10 +206,8 @@ impl GameScanner {
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
 
-        let new_last_scanned = match lowest_error {
-            Some(e) => e.checked_sub(1).or(last_scanned),
-            None => Some(end),
-        };
+        let new_last_scanned =
+            lowest_error.map_or(Some(end), |e| e.checked_sub(1).or(last_scanned));
 
         if let Some(head) = new_last_scanned {
             ChallengerMetrics::scan_head().set(head as f64);

@@ -81,9 +81,7 @@ impl ChallengerService {
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
-            let provider = ProviderBuilder::new()
-                .layer(layer)
-                .connect_http(l1_rpc_url.clone());
+            let provider = ProviderBuilder::new().layer(layer).connect_http(l1_rpc_url.clone());
             tokio::spawn(async move {
                 while balance_rx.changed().await.is_ok() {
                     ChallengerMetrics::account_balance_wei()
@@ -120,8 +118,7 @@ impl ChallengerService {
             "DisputeGameFactory client initialized"
         );
 
-        let verifier_client =
-            AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
+        let verifier_client = AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
