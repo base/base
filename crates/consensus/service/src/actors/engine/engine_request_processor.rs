@@ -641,7 +641,7 @@ mod tests {
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use alloy_rpc_types_eth::Block as RpcBlock;
-    use base_alloy_rpc_types::Transaction as OpTransaction;
+    use base_common_rpc_types::Transaction as OpTransaction;
     use base_consensus_engine::{
         Engine, EngineState,
         test_utils::{test_block_info, test_engine_client_builder},
@@ -921,11 +921,9 @@ mod tests {
                 .build(),
         );
 
-        let mut mock_derivation = MockEngineDerivationClient::new();
-        // On the unfixed path these fire once el_sync_finished is set; allow them so the
-        // test reaches the state assertion rather than panicking on unexpected mock calls.
-        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
-        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        // No derivation calls: el_sync_finished stays false on the fixed validator path so
+        // mark_el_sync_complete_and_notify_derivation_actor never fires.
+        let mock_derivation = MockEngineDerivationClient::new();
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
@@ -945,16 +943,17 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = processor.start(req_rx);
 
-        state_rx
-            .clone()
-            .wait_for(|s| s.el_sync_finished)
-            .await
-            .expect("state channel closed before el_sync_finished was set");
+        // Close the channel so the task exits after bootstrap + one drain.
+        drop(req_tx);
+        let _ = handle.await;
 
-        // A validator must NOT impose reth's safe/finalized state on the EL during bootstrap.
-        // After the fix safe_head and finalized_head stay zeroed because only the unsafe head
-        // is carried in the FCU. Before the fix both become reth's reported values (50 / 40).
+        // After the fix: validators take the seed-only path; el_sync_finished stays false
+        // and safe/finalized heads are never populated from reth's reported values.
         let state = state_rx.borrow();
+        assert!(
+            !state.el_sync_finished,
+            "validator must not set el_sync_finished during bootstrap"
+        );
         assert_eq!(
             state.sync_state.safe_head(),
             L2BlockInfo::default(),
@@ -967,9 +966,6 @@ mod tests {
             "validator must not set finalized head to reth's reported finalized head (expected zeroed, got block {})",
             state.sync_state.finalized_head().block_info.number,
         );
-
-        drop(req_tx);
-        let _ = handle.await;
     }
 
     /// Verifies that a validator node (`unsafe_head_tx` = None, no conductor) seeds engine
