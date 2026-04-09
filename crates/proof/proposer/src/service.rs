@@ -54,7 +54,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         poll_interval = ?config.poll_interval,
         rpc_timeout = ?config.rpc_timeout,
         max_parallel_proofs = config.max_parallel_proofs,
-        max_game_recovery_lookback = config.max_game_recovery_lookback,
         health_addr = %config.health_addr,
         admin_addr = ?config.admin_addr,
         tee_prover_registry = ?config.tee_prover_registry_address,
@@ -113,14 +112,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         .build(config.prover_rpc.as_str())
         .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?;
     info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
-
-    // Validate that anchor_state_registry_addr is not the zero address.
-    // It is used as the "no parent" sentinel for the first game from anchor
-    // state, so a zero address would be indistinguishable from an unconfigured
-    // value.
-    if config.anchor_state_registry_addr == Address::ZERO {
-        return Err(eyre::eyre!("anchor-state-registry-addr must not be the zero address"));
-    }
 
     // ── 4. Create contract clients and read onchain config ──────────────
     let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
@@ -240,7 +231,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     // ── 6. Create proving pipeline ─────────────────────────────────────────
     let pipeline_config = PipelineConfig {
         max_parallel_proofs: config.max_parallel_proofs,
-        max_game_recovery_lookback: config.max_game_recovery_lookback,
         max_retries: 3,
         tee_prover_registry_address: config.tee_prover_registry_address,
         driver: DriverConfig {

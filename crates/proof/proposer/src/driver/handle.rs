@@ -211,7 +211,6 @@ mod tests {
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
                 max_parallel_proofs: 2,
-                max_game_recovery_lookback: 5000,
                 max_retries: 3,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {

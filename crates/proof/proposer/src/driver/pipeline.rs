@@ -50,7 +50,7 @@ use tracing::{debug, error, info, instrument, warn};
 use super::core::{DriverConfig, RecoveredState};
 use crate::{
     Metrics,
-    constants::{PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
+    constants::{MAX_FACTORY_SCAN_LOOKBACK, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
     error::ProposerError,
     output_proposer::{OutputProposer, is_game_already_exists},
 };
@@ -62,20 +62,6 @@ pub struct PipelineConfig {
     pub max_parallel_proofs: usize,
     /// Maximum retries for a single proof range before full pipeline reset.
     pub max_retries: u32,
-    /// Controls two aspects of recovery:
-    ///
-    /// 1. **Initial scan window** — on cold start (or L1 reorg), how many
-    ///    factory entries (from the most recent) are fetched. After the
-    ///    initial scan, subsequent ticks only fetch *new* entries
-    ///    incrementally (typically 0–2 RPC calls).
-    /// 2. **Walk step limit** — maximum number of forward-walk steps from
-    ///    the anchor root. Canonical output roots for all reachable blocks
-    ///    are pre-fetched concurrently before the walk begins, so the walk
-    ///    itself is purely in-memory.
-    ///
-    /// When the walk is truncated by this limit, the walk result is NOT
-    /// cached so the next tick will re-walk from the anchor.
-    pub max_game_recovery_lookback: u64,
     /// Base driver configuration.
     pub driver: DriverConfig,
     /// Optional address of the `TEEProverRegistry` contract on L1.
@@ -654,7 +640,7 @@ where
     ///    - If `game_count` *increased*, scan only the new entries
     ///      (`cached.scanned_up_to..count`) and merge into the existing map.
     ///    - If `game_count` *decreased* (L1 reorg) or no cache exists, do a
-    ///      full scan of the most recent `max_game_recovery_lookback` entries.
+    ///      full scan of the most recent `MAX_FACTORY_SCAN_LOOKBACK` entries.
     /// 4. **Forward walk.** Walk from the anchor block, stepping by
     ///    `block_interval`. For each step, find a game whose
     ///    `parent_address` matches the expected parent AND whose
@@ -708,18 +694,14 @@ where
         // itself becomes purely in-memory lookups against this pre-fetched
         // map, eliminating O(N) sequential RPCs.
         let block_interval = self.config.driver.block_interval;
-        let max_steps = self.config.max_game_recovery_lookback;
 
         let prefetch_blocks: Vec<u64> = {
             let mut blocks = Vec::new();
             let mut block = anchor.l2_block_number;
-            for _ in 0..max_steps {
-                block = match block.checked_add(block_interval) {
-                    Some(b) => b,
-                    None => break,
-                };
-                if game_map.map.contains_key(&block) {
-                    blocks.push(block);
+            while let Some(next) = block.checked_add(block_interval) {
+                if game_map.map.contains_key(&next) {
+                    blocks.push(next);
+                    block = next;
                 } else {
                     // The walk cannot continue past a missing block.
                     break;
@@ -760,26 +742,8 @@ where
         let mut parent_output_root = anchor.root;
         let mut parent_block = anchor.l2_block_number;
         let mut steps: u64 = 0;
-        let mut truncated = false;
 
-        loop {
-            if steps >= max_steps {
-                warn!(
-                    steps,
-                    max = max_steps,
-                    latest_block = parent_block,
-                    "Recovery forward walk truncated at max steps limit; \
-                     state is valid but may not be fully caught up"
-                );
-                truncated = true;
-                break;
-            }
-
-            let expected_block = match parent_block.checked_add(block_interval) {
-                Some(b) => b,
-                None => break,
-            };
-
+        while let Some(expected_block) = parent_block.checked_add(block_interval) {
             // Look up the pre-fetched canonical root. A missing entry means
             // the block had no game in the map (the pre-fetch stopped there).
             let canonical_root = match canonical_roots.get(&expected_block) {
@@ -880,18 +844,7 @@ where
             l2_block_number: parent_block,
         };
 
-        // Only cache if the walk completed naturally (found a gap or
-        // exhausted all games). When truncated by max_steps the entire
-        // cache (including the game map) is discarded so the next tick
-        // performs a full rescan and re-walk. This is intentional:
-        // truncation is rare (hitting max_steps means thousands of
-        // unverified games) and preserving a partial map adds complexity
-        // for little benefit.
-        if truncated {
-            *cache = None;
-        } else {
-            *cache = Some(CachedRecovery { game_map, anchor_root: anchor.root, state });
-        }
+        *cache = Some(CachedRecovery { game_map, anchor_root: anchor.root, state });
 
         Ok(state)
     }
@@ -899,7 +852,7 @@ where
     /// Returns an up-to-date game map, reusing the cached map when possible.
     ///
     /// - **Cold start / reorg (count decreased):** Full scan of the most
-    ///   recent `max_game_recovery_lookback` entries.
+    ///   recent `MAX_FACTORY_SCAN_LOOKBACK` entries.
     /// - **Incremental (count increased):** Scan only the new entries
     ///   (`cached.scanned_up_to..count`) and merge into the existing map.
     /// - **Anchor root changed (count unchanged):** Reuse the existing map
@@ -922,10 +875,10 @@ where
                 // If the delta exceeds the lookback window (e.g. proposer
                 // was offline for an extended period), fall back to a full
                 // scan rather than issuing an unbounded number of RPCs.
-                if new_entries > self.config.max_game_recovery_lookback {
+                if new_entries > MAX_FACTORY_SCAN_LOOKBACK {
                     warn!(
                         new_entries,
-                        max = self.config.max_game_recovery_lookback,
+                        max = MAX_FACTORY_SCAN_LOOKBACK,
                         "Incremental delta exceeds lookback, falling back to full scan"
                     );
                     return self.full_scan(count).await;
@@ -961,10 +914,10 @@ where
     }
 
     /// Performs a full factory scan of the most recent
-    /// `max_game_recovery_lookback` entries and returns a fresh
+    /// [`MAX_FACTORY_SCAN_LOOKBACK`] entries and returns a fresh
     /// [`CachedGameMap`].
     async fn full_scan(&self, count: u64) -> Result<CachedGameMap, ProposerError> {
-        let search_count = count.min(self.config.max_game_recovery_lookback);
+        let search_count = count.min(MAX_FACTORY_SCAN_LOOKBACK);
         let start_index = count.saturating_sub(search_count);
         let mut map = HashMap::new();
         self.scan_factory_range(start_index, count, &mut map).await?;
@@ -1431,9 +1384,6 @@ mod tests {
     /// Default L1 block number returned by `MockL1`.
     const TEST_L1_BLOCK_NUMBER: u64 = 1000;
 
-    /// Default max game recovery lookback for pipeline tests.
-    const TEST_MAX_LOOKBACK: u64 = 5000;
-
     /// Default mock prover delay for recovery tests (minimal).
     const MOCK_PROVER_DELAY: Duration = Duration::from_millis(1);
 
@@ -1572,7 +1522,6 @@ mod tests {
             output_roots,
             TEST_ANCHOR_BLOCK,
             TEST_BLOCK_INTERVAL,
-            TEST_MAX_LOOKBACK,
         )
     }
 
@@ -1582,7 +1531,6 @@ mod tests {
         output_roots: HashMap<u64, B256>,
         anchor_block: u64,
         block_interval: u64,
-        max_lookback: u64,
     ) -> TestPipeline {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
@@ -1598,7 +1546,6 @@ mod tests {
         ProvingPipeline::new(
             PipelineConfig {
                 max_parallel_proofs: 1,
-                max_game_recovery_lookback: max_lookback,
                 max_retries: 1,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
@@ -1627,7 +1574,6 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
-                max_game_recovery_lookback: TEST_MAX_LOOKBACK,
                 max_retries: 3,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
@@ -1654,7 +1600,6 @@ mod tests {
         let pipeline = test_pipeline(
             PipelineConfig {
                 max_parallel_proofs: 2,
-                max_game_recovery_lookback: TEST_MAX_LOOKBACK,
                 max_retries: 3,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
@@ -1835,31 +1780,6 @@ mod tests {
         assert_eq!(state.output_root, valid_root);
     }
 
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_scan_window_caps_at_max_lookback() {
-        // 5 games exist, but max_lookback=3 means only the last 3 factory
-        // entries are scanned (indices 2-4, blocks 1536-2560). The forward
-        // walk from anchor (block 0) can't find block 512 → gap → anchor.
-        let max_lookback = 3;
-        let (games, info_map, output_roots) = game_chain(5);
-
-        let pipeline = recovery_pipeline_full(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-            TEST_ANCHOR_BLOCK,
-            TEST_BLOCK_INTERVAL,
-            max_lookback,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Scan window misses early games, so walk finds a gap immediately.
-        assert_eq!(state.l2_block_number, TEST_ANCHOR_BLOCK);
-        assert_eq!(state.parent_address, Address::ZERO);
-    }
-
     // ---- Recovery: scan resilience (game_info failure propagation) ----
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -2035,51 +1955,6 @@ mod tests {
             cache.as_ref().unwrap().game_map.scanned_up_to,
             1,
             "reorg: cache should reflect new count"
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_full_rescan_on_delta_exceeds_lookback() {
-        // Cache has scanned_up_to=1 but factory now has 3 games (delta=2).
-        // Set max_game_recovery_lookback=1 so the delta exceeds the
-        // lookback window, triggering a full rescan instead of an
-        // unbounded incremental scan.
-        let (games, info_map, output_roots) = game_chain(3);
-        let first_info = info_map[&proxy_addr(0)];
-
-        let cached_map = HashMap::from([(
-            TEST_BLOCK_INTERVAL,
-            vec![ScannedGame { proxy: proxy_addr(0), info: first_info }],
-        )]);
-
-        let mut cache = Some(CachedRecovery {
-            game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(0),
-                output_root: first_info.root_claim,
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
-        });
-
-        let mut pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
-        pipeline.config.max_game_recovery_lookback = 1; // delta of 2 exceeds this
-
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Full rescan with lookback=1 only sees the last factory entry
-        // (game at index 2, block 1536). That game's parent_address is
-        // proxy_addr(1) which doesn't match the anchor sentinel, so the
-        // walk finds no chain from anchor and falls back to anchor state.
-        assert_eq!(state.l2_block_number, 0, "should fall back to anchor state");
-        assert_eq!(
-            cache.as_ref().unwrap().game_map.scanned_up_to,
-            3,
-            "full rescan should set scanned_up_to to current count"
         );
     }
 
@@ -2338,36 +2213,6 @@ mod tests {
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
     }
 
-    // ---- Recovery: truncation does not cache (C3) ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_truncation_does_not_cache() {
-        // With max_lookback=2 and exactly 2 games: the scan covers both
-        // (indices 0-1), and the walk verifies both (2 steps). At that
-        // point steps == max_steps triggers truncation BEFORE the next
-        // iteration's gap check.
-        let (games, info_map, output_roots) = game_chain(2);
-
-        let pipeline = recovery_pipeline_full(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-            TEST_ANCHOR_BLOCK,
-            TEST_BLOCK_INTERVAL,
-            2, // max_lookback = 2: scan covers both, walk limited to 2 steps
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Walk verifies 2 games, then hits max_steps → truncated.
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 2);
-        assert_eq!(state.parent_address, proxy_addr(1));
-
-        // Cache should NOT be populated because the walk was truncated.
-        assert!(cache.is_none(), "truncated walk should not populate cache");
-    }
-
     // ---- Recovery: anchor root cache invalidation (H3) ----
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
@@ -2431,7 +2276,6 @@ mod tests {
         ProvingPipeline::new(
             PipelineConfig {
                 max_parallel_proofs: 1,
-                max_game_recovery_lookback: TEST_MAX_LOOKBACK,
                 max_retries: 1,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
