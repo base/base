@@ -6,7 +6,7 @@
 //! [`OutputRoot`](base_protocol::OutputRoot), and compares them against the
 //! onchain claims.
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
 use base_proof_rpc::{L2Provider, RpcError};
@@ -132,14 +132,6 @@ struct Checkpoint {
     claimed_root: B256,
 }
 
-/// RAII guard that records the validation latency histogram on drop.
-struct RecordOnDrop(Instant);
-
-impl Drop for RecordOnDrop {
-    fn drop(&mut self) {
-        ChallengerMetrics::validation_latency_seconds().record(self.0.elapsed().as_secs_f64());
-    }
-}
 
 /// Validates output roots for candidate dispute games.
 ///
@@ -231,7 +223,7 @@ impl<L2: L2Provider> OutputValidator<L2> {
         game_address: Address,
         checkpoints: &[Checkpoint],
     ) -> Result<Option<(usize, B256)>, ValidatorError> {
-        let _latency = RecordOnDrop(Instant::now());
+        let _latency = base_metrics::timed!(ChallengerMetrics::validation_latency_seconds());
 
         let mut stream = stream::iter(checkpoints.iter().enumerate())
             .map(|(idx, cp)| async move { (idx, cp, self.compute_output_root(cp.block).await) })
