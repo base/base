@@ -81,6 +81,7 @@ rstest.workspace = true
 anyhow.workspace = true
 mockall.workspace = true
 arbitrary.workspace = true
+base-common-rpc-types.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 base-consensus-derive = {workspace = true, features = ["test-utils"]}
 base-consensus-engine = { workspace = true, features = ["test-utils"] }

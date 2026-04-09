@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Stdout};
+use std::{collections::HashMap, io::Stdout, sync::atomic::Ordering, time::Duration};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -70,6 +70,19 @@ impl App {
         let mut terminal = setup_terminal()?;
         let result = self.run_loop(&mut terminal, &mut view_factory).await;
         restore_terminal(&mut terminal)?;
+
+        if let Some(task) = self.resources.load_test_task.take() {
+            task.stop_flag.store(true, Ordering::SeqCst);
+            eprintln!("Waiting for load test to drain accounts...");
+            match tokio::time::timeout(Duration::from_secs(120), task.handle).await {
+                Ok(Ok(())) => eprintln!("Load test shutdown complete."),
+                Ok(Err(e)) => eprintln!("Load test task panicked: {e}"),
+                Err(_) => {
+                    eprintln!("Load test drain timed out. Funds may remain in test accounts.")
+                }
+            }
+        }
+
         result
     }
 

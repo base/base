@@ -4,7 +4,6 @@ use base_proof_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
 use base_proof_tee_nitro_enclave::Server;
 
-use super::convert::Convert;
 #[cfg(target_os = "linux")]
 use super::vsock::VsockTransport;
 use crate::NitroHostError;
@@ -38,12 +37,11 @@ impl NitroTransport {
         &self,
         preimages: Vec<(PreimageKey, Vec<u8>)>,
     ) -> Result<ProofResult, NitroHostError> {
-        let tee_result = match self {
+        Ok(match self {
             #[cfg(target_os = "linux")]
             Self::Vsock(t) => t.prove(preimages).await?,
             Self::Local(s) => Box::pin(s.prove(preimages)).await?,
-        };
-        Ok(Convert::proof_result(tee_result))
+        })
     }
 
     /// Return the 65-byte uncompressed ECDSA public key of the enclave signer.

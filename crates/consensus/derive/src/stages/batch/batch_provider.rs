@@ -175,18 +175,6 @@ where
             Err(PipelineError::NotEnoughData.temp())
         }
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.attempt_update()?;
-
-        if let Some(batch_validator) = self.batch_validator.as_mut() {
-            batch_validator.provide_block(block).await
-        } else if let Some(batch_queue) = self.batch_queue.as_mut() {
-            batch_queue.provide_block(block).await
-        } else {
-            Err(PipelineError::NotEnoughData.temp())
-        }
-    }
 }
 
 #[async_trait]

@@ -92,7 +92,6 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     node.register_block_hash(4, B256::ZERO);
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     // Under Holocene, when the pipeline reaches block 3 in the span batch and
@@ -132,7 +131,6 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
 
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 4, "after recovery submission, safe head must reach block 4");
@@ -193,14 +191,11 @@ async fn mixed_singular_and_span_batches_after_delta() {
 
     node.initialize().await;
 
-    // Drive derivation L1 block by block. The first batch (singular) derives
-    // L2 block 1; the second (span) derives L2 block 2.
-    for i in 1..=2u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(
+        total_derived, 2,
+        "mixed singular + span batches must both derive; safe head should reach 2"
+    );
     assert_eq!(
         node.l2_safe_number(),
         2,
@@ -298,7 +293,6 @@ async fn granite_channel_timeout_enforced() {
     batcher.confirm_staged(block_1_num).await;
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 0, "incomplete channel should not advance safe head");
@@ -311,8 +305,7 @@ async fn granite_channel_timeout_enforced() {
     }
 
     // Signal all empty blocks to the verifier.
-    for i in 2..=52u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 2..=52u64 {
         node.run_until_idle().await;
     }
 
@@ -333,7 +326,6 @@ async fn granite_channel_timeout_enforced() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(late_block_num).await;
 
-    node.act_l1_head_signal(h.l1.block_info_at(late_block_num)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(
         derived, 0,
@@ -351,8 +343,6 @@ async fn granite_channel_timeout_enforced() {
     Batcher::new(source2, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
-    let recovery_num = h.l1.latest_number();
-    node.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
     let recovered = node.run_until_idle().await;
 
     assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
@@ -472,8 +462,7 @@ async fn jovian_single_batch_transition_block_deposit_only() {
 
     // Signal all L1 blocks to the node and drive derivation.
     let tip = h.l1.latest_number();
-    for i in 1..=tip {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=tip {
         node.run_until_idle().await;
     }
 

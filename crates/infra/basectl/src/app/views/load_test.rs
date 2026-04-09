@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, mpsc::error::TryRecvError, watch};
 use url::Url;
 
 use crate::{
-    app::{Action, Resources, View},
+    app::{Action, LoadTestTask, Resources, View},
     commands::common::COLOR_BASE_BLUE,
     tui::{Keybinding, Toast},
 };
@@ -467,7 +467,7 @@ impl LoadTestView {
         let (snap_tx, snap_rx) = watch::channel(DisplaySnapshot::default());
         let (done_tx, done_rx) = mpsc::channel(1);
 
-        tokio::spawn(async move {
+        let task_handle = tokio::spawn(async move {
             // Fetch chain_id from the network's RPC — required for transaction signing.
             let client = RpcClient::new(cfg.rpc.clone());
             let chain_id = client.chain_id().await.ok();
@@ -558,6 +558,9 @@ impl LoadTestView {
 
             let _ = done_tx.send(result.map_err(|e| e.to_string())).await;
         });
+
+        resources.load_test_task =
+            Some(LoadTestTask { stop_flag: Arc::clone(&stop_flag), handle: task_handle });
 
         self.state = RunState::Running {
             start: Instant::now(),
@@ -854,6 +857,7 @@ impl View for LoadTestView {
                         self.state = RunState::Idle;
                         self.start_run(run_count + 1, resources);
                     } else {
+                        resources.load_test_task = None;
                         resources.toasts.push(Toast::info(format!(
                             "Load test complete in {:.1}s — {:.1} TPS / {:.0} GPS",
                             elapsed.as_secs_f64(),
@@ -864,6 +868,7 @@ impl View for LoadTestView {
                     }
                 }
                 Err(e) => {
+                    resources.load_test_task = None;
                     resources.toasts.push(Toast::warning(format!("Load test error: {e}")));
                     self.state = RunState::Error(e);
                 }
@@ -1340,13 +1345,25 @@ fn render_live_metrics(frame: &mut Frame<'_>, area: Rect, snap: &DisplaySnapshot
     lines.push(Line::from(""));
 
     // Latency.
-    lines.push(Line::from(Span::styled("  LATENCY (rolling 30s)", label)));
+    lines.push(Line::from(Span::styled("  BLOCK LATENCY (rolling 30s)", label)));
     lines.push(Line::from(vec![
         Span::styled("    p50  ", label),
         Span::styled(fmt_dur(snap.p50_latency), value),
         Span::styled("    p99  ", label),
         Span::styled(fmt_dur(snap.p99_latency), value),
     ]));
+    if snap.flashblocks_p50_latency > Duration::ZERO
+        || snap.flashblocks_p99_latency > Duration::ZERO
+    {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("  FLASHBLOCKS LATENCY (rolling 30s)", label)));
+        lines.push(Line::from(vec![
+            Span::styled("    p50  ", label),
+            Span::styled(fmt_dur(snap.flashblocks_p50_latency), value),
+            Span::styled("    p99  ", label),
+            Span::styled(fmt_dur(snap.flashblocks_p99_latency), value),
+        ]));
+    }
 
     lines.push(Line::from(""));
 

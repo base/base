@@ -6,9 +6,6 @@ pub use error::NitroHostError;
 mod backend;
 pub use backend::NitroBackend;
 
-mod convert;
-pub use convert::Convert;
-
 mod registration;
 pub use registration::{RegistrationChecker, RegistrationError};
 

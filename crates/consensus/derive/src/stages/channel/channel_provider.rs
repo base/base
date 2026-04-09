@@ -165,18 +165,6 @@ where
             Err(PipelineError::NotEnoughData.temp())
         }
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.attempt_update()?;
-
-        if let Some(channel_assembler) = self.channel_assembler.as_mut() {
-            channel_assembler.provide_block(block).await
-        } else if let Some(channel_bank) = self.channel_bank.as_mut() {
-            channel_bank.provide_block(block).await
-        } else {
-            Err(PipelineError::NotEnoughData.temp())
-        }
-    }
 }
 
 #[async_trait]

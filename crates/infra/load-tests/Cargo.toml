@@ -12,6 +12,7 @@ description = "Core library for Base network load testing and benchmarking"
 name = "base-load-test"
 path = "src/bin/load_test.rs"
 
+
 [lints]
 workspace = true
 
@@ -41,7 +42,7 @@ eyre.workspace = true
 rand.workspace = true
 revm.workspace = true
 serde.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 futures.workspace = true
 tracing.workspace = true
 humantime.workspace = true

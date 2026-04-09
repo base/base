@@ -71,7 +71,7 @@ impl<P: L1OriginSelectorProvider + Send + Sync> OriginSelector for L1OriginSelec
         }
 
         let Some(current) = self.current else {
-            unreachable!("Current L1 origin should always be set by `select_origins`");
+            return Err(L1OriginSelectorError::OriginNotFound(unsafe_head.l1_origin.hash));
         };
 
         let max_seq_drift = self.cfg.max_sequencer_drift(current.timestamp);
@@ -186,6 +186,9 @@ pub enum L1OriginSelectorError {
         "Waiting for more L1 data to be available to select the next L1 origin block. Current L1 origin: {0:?}"
     )]
     NotEnoughData(BlockInfo),
+    /// The L1 origin block was not found by its hash, e.g. during an L1 reorg or sync lag.
+    #[error("L1 origin block not found by hash: {0}")]
+    OriginNotFound(B256),
 }
 
 /// L1 [`BlockInfo`] provider interface for the [`L1OriginSelector`].
@@ -355,6 +358,37 @@ mod tests {
             assert_eq!(next.hash, B256::with_last_byte(expected_epoch as u8));
             assert_eq!(next.number, expected_epoch);
         }
+    }
+
+    /// Tests that [`L1OriginSelectorError::OriginNotFound`] is returned (rather than a panic)
+    /// when the L1 provider cannot find the current origin block by hash, e.g. after a reorg.
+    #[tokio::test]
+    async fn test_next_l1_origin_not_found() {
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            max_sequencer_drift: 600,
+            ..Default::default()
+        });
+
+        // Provider has no blocks, simulating a block disappearing due to an L1 reorg.
+        let provider = MockOriginSelectorProvider::default();
+        let mut selector = L1OriginSelector::new(Arc::clone(&cfg), provider);
+
+        let unsafe_head = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::with_last_byte(1),
+                number: 1,
+                timestamp: 2,
+                ..Default::default()
+            },
+            l1_origin: NumHash { number: 0, hash: B256::with_last_byte(42) },
+            seq_num: 0,
+        };
+
+        let err = selector.next_l1_origin(unsafe_head, false).await.unwrap_err();
+        assert!(
+            matches!(err, L1OriginSelectorError::OriginNotFound(h) if h == B256::with_last_byte(42))
+        );
     }
 
     #[tokio::test]

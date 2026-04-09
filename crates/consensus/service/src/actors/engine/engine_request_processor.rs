@@ -637,20 +637,33 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_eips::BlockNumberOrTag;
+    use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash};
+    use alloy_primitives::B256;
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+    use alloy_rpc_types_eth::Block as RpcBlock;
+    use base_common_rpc_types::Transaction as OpTransaction;
     use base_consensus_engine::{
         Engine, EngineState,
         test_utils::{test_block_info, test_engine_client_builder},
     };
-    use base_consensus_genesis::RollupConfig;
-    use base_protocol::L2BlockInfo;
+    use base_consensus_genesis::{ChainGenesis, RollupConfig, SystemConfig};
+    use base_protocol::{BlockInfo, L2BlockInfo};
     use tokio::sync::{mpsc, watch};
 
     use crate::{
         EngineClientError, EngineProcessingRequest, EngineProcessor, EngineRequestReceiver,
         MockConductor, ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
+
+    /// Returns a default all-zero L2 block and its canonical hash.
+    ///
+    /// Use the returned hash as `genesis.l2.hash` in the test rollup config so that
+    /// [`L2BlockInfo::from_block_and_genesis`] accepts the block via the genesis path.
+    fn make_genesis_block() -> (RpcBlock<OpTransaction>, B256) {
+        let block = RpcBlock::<OpTransaction>::default();
+        let hash = block.clone().into_consensus().hash_slow();
+        (block, hash)
+    }
 
     fn valid_fcu() -> ForkchoiceUpdated {
         ForkchoiceUpdated {
@@ -879,6 +892,82 @@ mod tests {
         let _ = handle.await;
     }
 
+    /// Regression test: demonstrates that a validator node (`unsafe_head_tx` = None) was
+    /// incorrectly using reth's reported safe/finalized heads in the bootstrap FCU instead
+    /// of sending zeroed values.
+    ///
+    /// On unfixed main the beyond-genesis path queries reth's Safe/Finalized tags
+    /// unconditionally and builds a `probe_update` with those non-zero values.  After a Valid
+    /// FCU response the engine sync state is seeded with those values, so `safe_head` becomes
+    /// block 50 rather than staying zeroed.
+    ///
+    /// After the fix, validators take the follower path and send a FCU with only the unsafe
+    /// head, leaving safe/finalized zeroed and not disrupting EL snap-sync.
+    ///
+    /// This test FAILS on unfixed main and PASSES after the fix lands.
+    #[tokio::test]
+    async fn bootstrap_beyond_genesis_validator_sends_zeroed_safe_finalized() {
+        let head = test_block_info(100);
+        // Non-zero safe/finalized — this is what reth reports and what the unfixed path uses.
+        let reth_safe = test_block_info(50);
+        let reth_finalized = test_block_info(40);
+
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, head)
+                .with_block_info_by_tag(BlockNumberOrTag::Safe, reth_safe)
+                .with_block_info_by_tag(BlockNumberOrTag::Finalized, reth_finalized)
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        );
+
+        // No derivation calls: el_sync_finished stays false on the fixed validator path so
+        // mark_el_sync_complete_and_notify_derivation_actor never fires.
+        let mock_derivation = MockEngineDerivationClient::new();
+
+        let (state_tx, state_rx) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+
+        // Validator mode: unsafe_head_tx = None.
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            mock_derivation,
+            engine,
+            None,
+            None,
+            false,
+        );
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = processor.start(req_rx);
+
+        // Close the channel so the task exits after bootstrap + one drain.
+        drop(req_tx);
+        let _ = handle.await;
+
+        // After the fix: validators take the seed-only path; el_sync_finished stays false
+        // and safe/finalized heads are never populated from reth's reported values.
+        let state = state_rx.borrow();
+        assert!(
+            !state.el_sync_finished,
+            "validator must not set el_sync_finished during bootstrap"
+        );
+        assert_eq!(
+            state.sync_state.safe_head(),
+            L2BlockInfo::default(),
+            "validator must not set safe head to reth's reported safe head (expected zeroed, got block {})",
+            state.sync_state.safe_head().block_info.number,
+        );
+        assert_eq!(
+            state.sync_state.finalized_head(),
+            L2BlockInfo::default(),
+            "validator must not set finalized head to reth's reported finalized head (expected zeroed, got block {})",
+            state.sync_state.finalized_head().block_info.number,
+        );
+    }
+
     /// Verifies that a validator node (`unsafe_head_tx` = None, no conductor) seeds engine
     /// state without sending a bootstrap FCU or setting `el_sync_finished`.
     ///
@@ -1053,39 +1142,79 @@ mod tests {
 
     // ── existing bootstrap integration tests ────────────────────────────────────────────
 
-    /// Verifies that a validator node at genesis seeds the engine state without sending
-    /// a FCU or setting `el_sync_finished`.
+    /// Regression test: demonstrates that a validator node at genesis was incorrectly calling
+    /// `engine.reset()`, which sends a FCU to the EL and — when reth responds Valid — sets
+    /// `el_sync_finished = true`.  Reth always responds Valid to a genesis FCU because it always
+    /// holds the genesis block, so this prematurely signalled EL sync completion for validators
+    /// joining an established network that still need to snap-sync.
     ///
-    /// Previously, this path called `probe_el_sync`, which sent a genesis FCU and set
-    /// `el_sync_finished=true` when reth responded `Valid`. Reth always responds `Valid`
-    /// to a genesis FCU (it always holds the genesis block), so this incorrectly signalled
-    /// EL sync completion for validators joining an established network that still need to
-    /// snap-sync. The fix seeds internal state only; `el_sync_finished` is left `false`
-    /// and will be set by the first gossip `InsertTask` FCU instead.
+    /// After the fix, validators at genesis call `seed_state()` only; no FCU is sent and
+    /// `el_sync_finished` stays false.
+    ///
+    /// This test FAILS on unfixed main (`el_sync_finished` = true) and PASSES after the fix.
     #[tokio::test]
     async fn bootstrap_at_genesis_validator_seeds_without_probing_el_sync() {
-        // genesis_head hash = B256::ZERO = RollupConfig::default().genesis.l2.hash,
-        // so at_genesis = true and the at-genesis validator branch executes.
-        let genesis_head = L2BlockInfo::default();
+        let (genesis_block, genesis_hash) = make_genesis_block();
 
-        // No FCU response is configured — none should be sent.
+        // Build a RollupConfig whose genesis.l2.hash matches the computed hash so that
+        // L2BlockInfo::from_block_and_genesis accepts the block via the genesis fast path.
+        let cfg = Arc::new(RollupConfig {
+            genesis: ChainGenesis {
+                l2: BlockNumHash { number: 0, hash: genesis_hash },
+                l1: BlockNumHash { number: 0, hash: B256::ZERO },
+                system_config: Some(SystemConfig::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let genesis_l2_info = L2BlockInfo {
+            block_info: BlockInfo {
+                hash: genesis_hash,
+                number: 0,
+                parent_hash: B256::ZERO,
+                timestamp: 0,
+            },
+            l1_origin: NumHash { number: 0, hash: B256::ZERO },
+            seq_num: 0,
+        };
+
+        // On unfixed main, engine.reset() queries: Finalized L2 block, Latest L2 block,
+        // the L1 origin of the unsafe head (hash B256::ZERO), FCU v3, then L1 block 0
+        // and the L2 safe block by hash for system-config extraction.
         let client = Arc::new(
             test_engine_client_builder()
-                .with_block_info_by_tag(BlockNumberOrTag::Latest, genesis_head)
+                .with_config(Arc::clone(&cfg))
+                // Bootstrap at_genesis check (l2_block_info_by_label path).
+                .with_block_info_by_tag(BlockNumberOrTag::Latest, genesis_l2_info)
+                // L2ForkchoiceState::current: Finalized and Latest L2 blocks (get_l2_block path).
+                .with_l2_block(BlockId::Number(BlockNumberOrTag::Finalized), genesis_block.clone())
+                .with_l2_block(BlockId::Number(BlockNumberOrTag::Latest), genesis_block.clone())
+                // find_starting_forkchoice unsafe-head loop: L1 origin of genesis is B256::ZERO.
+                .with_l1_block(BlockId::from(B256::ZERO), RpcBlock::default())
+                // SynchronizeTask inside engine.reset() sends FCU v3.
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                // Post-FCU: L1 origin block at number 0 and L2 safe block by genesis hash.
+                .with_l1_block(BlockId::from(0u64), RpcBlock::default())
+                .with_l2_block(BlockId::from(genesis_hash), genesis_block.clone())
                 .build(),
         );
 
-        // No derivation calls should be made during at-genesis validator bootstrap:
-        // el_sync_finished stays false so mark_el_sync_complete_... never fires.
-        let mock_derivation = MockEngineDerivationClient::new();
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        // On unfixed main: engine.reset() succeeds and el_sync_finished is set to true.
+        // Then mark_el_sync_complete fires: finalized = genesis (not default) → skip
+        // inner reset, call notify_sync_completed. safe_head changes → send_new_engine_safe_head.
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
 
+        // Validator mode: unsafe_head_tx = None.
         let processor = EngineProcessor::new(
             Arc::clone(&client),
-            Arc::new(RollupConfig::default()),
+            Arc::clone(&cfg),
             mock_derivation,
             engine,
             None, // validator mode
@@ -1096,11 +1225,15 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = processor.start(req_rx);
 
-        // Close the channel so the task exits after completing bootstrap + one drain.
         drop(req_tx);
         let _ = handle.await;
 
-        // el_sync_finished must remain false — only a gossip InsertTask FCU may set it.
+        // After the fix: validators at genesis only seed internal state without sending a FCU,
+        // so el_sync_finished stays false and safe/finalized heads stay zeroed.
+        //
+        // Before the fix: engine.reset() succeeds, sends a genesis FCU, reth responds Valid
+        // (it always holds genesis), setting el_sync_finished = true and stamping safe_head /
+        // finalized_head with the genesis L2BlockInfo (hash = genesis_hash, not B256::ZERO).
         let state = state_rx.borrow();
         assert!(
             !state.el_sync_finished,
@@ -1109,12 +1242,14 @@ mod tests {
         assert_eq!(
             state.sync_state.safe_head(),
             L2BlockInfo::default(),
-            "safe head must remain zeroed"
+            "validator at genesis must not set safe_head via engine.reset() (expected zeroed, got hash {})",
+            state.sync_state.safe_head().block_info.hash,
         );
         assert_eq!(
             state.sync_state.finalized_head(),
             L2BlockInfo::default(),
-            "finalized head must remain zeroed"
+            "validator at genesis must not set finalized_head via engine.reset() (expected zeroed, got hash {})",
+            state.sync_state.finalized_head().block_info.hash,
         );
     }
 }
