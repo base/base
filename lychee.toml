@@ -34,6 +34,7 @@ exclude = [
 
     # Moved on main; backport branch retains the old path
     'https://github\.com/base/base/blob/main/crates/alloy/evm/src/spec_id\.rs',
+    'https://github\.com/base/base/blob/main/crates/execution/hardforks/src/chain\.rs',
 
     # Internal / staging sites not meant for link checking
     'https://rustup\.rs/',
