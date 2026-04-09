@@ -45,7 +45,7 @@ async fn base_v1_derivation_crosses_activation_boundary() {
     node.initialize().await;
 
     for i in 1..=4u64 {
-        batcher.push_block(builder.build_next_block_with_single_transaction());
+        batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
         let derived = node.run_until_idle().await;
