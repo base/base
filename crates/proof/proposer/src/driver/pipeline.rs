@@ -133,10 +133,13 @@ impl PipelineState {
         self.proved.retain(|&target, _| target > recovered_block);
         self.inflight.retain(|&target| target > recovered_block);
         self.retry_counts.retain(|&target, _| target > recovered_block);
-        if self.submitting.is_some_and(|b| b <= recovered_block) {
-            self.submitting = None;
-            self.submit_tasks.abort_all();
-        }
+        // NOTE: we intentionally do NOT abort in-flight submit tasks here.
+        // When the recovered block advances past the submitting block, it
+        // means the transaction already landed on L1.  Aborting the task
+        // would prevent `handle_submit_result` from recording the
+        // `last_proposed_block` metric and performing proper state cleanup.
+        // The task will finish with `Success` or `GameAlreadyExists`, and
+        // `handle_submit_result` will clear `submitting` and update metrics.
     }
 }
 
@@ -1878,6 +1881,34 @@ mod tests {
         assert_eq!(state.game_index, last_idx as u32);
         assert_eq!(state.l2_block_number, 9999);
         assert_eq!(cache.as_ref().unwrap().game_count, new_count);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_prune_stale_does_not_abort_inflight_submit() {
+        let mut state = PipelineState::new();
+        state.submitting = Some(512);
+        state.proved.insert(512, {
+            let p = test_proposal(512);
+            ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] }
+        });
+        state.inflight.insert(512);
+        state.retry_counts.insert(512, 1);
+
+        state.submit_tasks.spawn(async { SubmitOutcome::Success { target_block: 512 } });
+
+        state.prune_stale(512);
+
+        assert!(state.proved.is_empty());
+        assert!(state.inflight.is_empty());
+        assert!(state.retry_counts.is_empty());
+        assert!(!state.submit_tasks.is_empty(), "submit task must not be aborted by prune_stale");
+
+        let result = state.submit_tasks.join_next().await.expect("task should exist");
+        let outcome = result.expect("task should complete without cancellation");
+        assert!(
+            matches!(outcome, SubmitOutcome::Success { target_block: 512 }),
+            "submit task should produce Success, not be cancelled"
+        );
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
