@@ -232,7 +232,7 @@ where
 }
 
 #[cfg(test)]
-pub mod tests {
+pub(super) mod tests {
     use alloc::vec;
 
     use alloy_consensus::{Blob, Signed, TxEip4844, TxEip4844Variant};
@@ -245,7 +245,7 @@ pub mod tests {
         test_utils::{TestBlobProvider, TestChainProvider},
     };
 
-    pub fn default_test_blob_source() -> BlobSource<TestChainProvider, TestBlobProvider> {
+    pub(crate) fn default_test_blob_source() -> BlobSource<TestChainProvider, TestBlobProvider> {
         let chain_provider = TestChainProvider::default();
         let blob_fetcher = TestBlobProvider::default();
         let batch_inbox_address = Address::default();
@@ -256,7 +256,7 @@ pub mod tests {
         valid_blob_txs().into_iter().next().unwrap().recover_signer().unwrap()
     }
 
-    pub fn valid_blob_txs() -> Vec<TxEnvelope> {
+    pub(crate) fn valid_blob_txs() -> Vec<TxEnvelope> {
         let batch_inbox_address = Registry::rollup_config(8453).unwrap().batch_inbox_address;
         let sig = Signature::test_signature();
         vec![TxEnvelope::Eip4844(Signed::new_unchecked(

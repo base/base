@@ -309,7 +309,7 @@ impl BlockHandler {
 }
 
 #[cfg(test)]
-pub mod tests {
+pub(crate) mod tests {
 
     use alloy_chains::Chain;
     use alloy_consensus::{Block, EMPTY_OMMER_ROOT_HASH};
