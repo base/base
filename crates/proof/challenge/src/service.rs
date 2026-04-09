@@ -77,14 +77,12 @@ impl ChallengerService {
             .get_chain_id()
             .await
             .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
-        let tx_metrics = Arc::new(BaseTxMetrics::new("challenger"));
-        tx_metrics.zero();
         let tx_manager = SimpleTxManager::new(
             l1_provider,
             signer_config,
             config.tx_manager,
             chain_id,
-            tx_metrics,
+            Arc::new(BaseTxMetrics::new("challenger")),
         )
         .await
         .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
