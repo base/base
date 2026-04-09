@@ -42,7 +42,7 @@ pub use validator::{
 };
 
 mod verify;
-pub use verify::{AccountProofError, verify_account_proof};
+pub use verify::{AccountProofError, AccountProofVerifier};
 
 mod bond;
 pub use bond::{BondManager, BondPhase, BondTransactionSubmitter, RemovalReason, TrackedGame};
