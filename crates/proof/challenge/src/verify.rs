@@ -6,8 +6,10 @@
 use alloy_primitives::{B256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
-use alloy_trie::proof::{ProofVerificationError, verify_proof};
-use alloy_trie::{Nibbles, TrieAccount};
+use alloy_trie::{
+    Nibbles, TrieAccount,
+    proof::{ProofVerificationError, verify_proof},
+};
 use thiserror::Error;
 
 /// Errors from account proof verification.
