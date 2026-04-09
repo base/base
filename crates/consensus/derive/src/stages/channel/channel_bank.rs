@@ -14,10 +14,10 @@ use crate::{
 };
 
 /// The maximum size of a channel bank.
-pub(crate) const MAX_CHANNEL_BANK_SIZE: usize = 100_000_000;
+pub const MAX_CHANNEL_BANK_SIZE: usize = 100_000_000;
 
 /// The maximum size of a channel bank after the Fjord Hardfork.
-pub(crate) const FJORD_MAX_CHANNEL_BANK_SIZE: usize = 1_000_000_000;
+pub const FJORD_MAX_CHANNEL_BANK_SIZE: usize = 1_000_000_000;
 
 /// [`ChannelBank`] is a stateful stage that does the following:
 /// 1. Unmarshalls frames from L1 transaction data

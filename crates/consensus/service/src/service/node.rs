@@ -32,7 +32,8 @@ use crate::{
 };
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
-pub(crate) const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
+/// Poll interval in seconds for the head block stream.
+pub const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
 
 /// The configuration for the L1 chain.
 #[derive(Debug, Clone)]
@@ -76,23 +77,23 @@ impl L1Config {
 #[derive(Debug)]
 pub struct RollupNode {
     /// The rollup configuration.
-    pub(crate) config: Arc<RollupConfig>,
+    pub config: Arc<RollupConfig>,
     /// The L1 configuration.
-    pub(crate) l1_config: L1Config,
+    pub l1_config: L1Config,
     /// The L2 EL provider.
-    pub(crate) l2_provider: RootProvider<Base>,
+    pub l2_provider: RootProvider<Base>,
     /// Whether to trust the L2 RPC.
-    pub(crate) l2_trust_rpc: bool,
+    pub l2_trust_rpc: bool,
     /// The [`EngineConfig`] for the node.
-    pub(crate) engine_config: EngineConfig,
+    pub engine_config: EngineConfig,
     /// The [`RpcBuilder`] for the node.
-    pub(crate) rpc_builder: Option<RpcBuilder>,
+    pub rpc_builder: Option<RpcBuilder>,
     /// The P2P [`NetworkConfig`] for the node.
-    pub(crate) p2p_config: NetworkConfig,
+    pub p2p_config: NetworkConfig,
     /// The [`SequencerConfig`] for the node.
-    pub(crate) sequencer_config: SequencerConfig,
+    pub sequencer_config: SequencerConfig,
     /// Optional derivation delegate provider.
-    pub(crate) derivation_delegate_provider: Option<DerivationDelegateClient>,
+    pub derivation_delegate_provider: Option<DerivationDelegateClient>,
     /// Optional path to the safe head database.
     ///
     /// When set, the node records L1→L2 safe head mappings to a persistent redb database and
@@ -101,7 +102,7 @@ pub struct RollupNode {
     ///
     /// If the path is set but the database cannot be opened (e.g., bad permissions, disk
     /// error, or corrupted file), the node **fails to start** with an error.
-    pub(crate) safedb_path: Option<PathBuf>,
+    pub safedb_path: Option<PathBuf>,
 }
 
 /// A RollupNode-level derivation actor wrapper.

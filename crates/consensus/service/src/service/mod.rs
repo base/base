@@ -13,7 +13,8 @@ mod mode;
 pub use mode::NodeMode;
 
 mod node;
-pub use node::{L1Config, RollupNode};
+pub use node::{HEAD_STREAM_POLL_INTERVAL, L1Config, RollupNode};
 
-pub(crate) mod util;
+mod util;
+pub use util::ShutdownSignal;
 pub(crate) use util::spawn_and_wait;

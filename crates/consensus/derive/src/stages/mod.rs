@@ -27,7 +27,7 @@ pub use frame_queue::{FrameQueue, FrameQueueProvider};
 mod channel;
 pub use channel::{
     ChannelAssembler, ChannelBank, ChannelProvider, ChannelReader, ChannelReaderProvider,
-    NextFrameProvider,
+    FJORD_MAX_CHANNEL_BANK_SIZE, MAX_CHANNEL_BANK_SIZE, NextFrameProvider,
 };
 
 mod batch;

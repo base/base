@@ -218,7 +218,7 @@ where
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;

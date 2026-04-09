@@ -21,7 +21,7 @@ use tracing::error;
 
 use crate::actors::network::TestNetwork;
 
-pub(crate) struct TestNetworkBuilder {
+pub struct TestNetworkBuilder {
     chain_id: u64,
     unsafe_block_signer: Address,
     custom_keypair: Option<Keypair>,
@@ -32,7 +32,7 @@ impl TestNetworkBuilder {
         RollupConfig { l2_chain_id: Chain::from_id(self.chain_id), ..Default::default() }
     }
 
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let chain_id = rand::rng().next_u64();
 
         Self { chain_id, unsafe_block_signer: Address::ZERO, custom_keypair: None }
@@ -43,7 +43,7 @@ impl TestNetworkBuilder {
     /// signer to the sequencer's address and the custom keypair to the sequencer's keypair.
     /// This amounts to calling [`Self::with_unsafe_block_signer`] and [`Self::with_custom_keypair`]
     /// sequentially.
-    pub(crate) fn set_sequencer(mut self) -> Self {
+    pub fn set_sequencer(mut self) -> Self {
         let sequencer_keypair = Keypair::generate_secp256k1();
         let secp256k1_key = sequencer_keypair.clone().try_into_secp256k1()
         .map_err(|e| anyhow::anyhow!("Impossible to convert keypair to secp256k1. This is a bug since we only support secp256k1 keys: {e}")).unwrap()
@@ -59,7 +59,7 @@ impl TestNetworkBuilder {
 
     /// Minimal network configuration.
     /// Only allows loopback addresses in the discovery table.
-    pub(crate) async fn build(&mut self, bootnodes: Vec<Enr>) -> TestNetwork {
+    pub async fn build(&mut self, bootnodes: Vec<Enr>) -> TestNetwork {
         let keypair = self.custom_keypair.take().unwrap_or_else(Keypair::generate_secp256k1);
 
         let secp256k1_key = keypair.clone().try_into_secp256k1()

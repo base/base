@@ -8,7 +8,7 @@
 //! [BlockInfo]: base_protocol::BlockInfo
 
 mod blob_data;
-pub use blob_data::BlobData;
+pub use blob_data::{BLOB_ENCODING_ROUNDS, BLOB_ENCODING_VERSION, BLOB_MAX_DATA_SIZE, BlobData};
 
 mod ethereum;
 pub use ethereum::EthereumDataSource;
