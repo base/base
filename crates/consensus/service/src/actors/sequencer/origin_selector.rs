@@ -276,7 +276,7 @@ mod tests {
 
     impl MockOriginSelectorProvider {
         /// Creates a new [`MockOriginSelectorProvider`].
-        pub fn with_block(&mut self, block: BlockInfo) {
+        fn with_block(&mut self, block: BlockInfo) {
             self.blocks.insert(block);
         }
     }

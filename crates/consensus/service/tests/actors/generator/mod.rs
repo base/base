@@ -1,4 +1,4 @@
 //! Test block generator utilities including block builder and seed helpers.
 
-pub mod block_builder;
-pub mod seed;
+pub(crate) mod block_builder;
+pub(crate) mod seed;

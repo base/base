@@ -13,9 +13,9 @@ use tokio::{
 };
 use tracing::info;
 
-pub mod builder;
+pub(crate) mod builder;
 
-pub struct TestNetwork {
+pub(crate) struct TestNetwork {
     pub(super) inbound_data: NetworkInboundData,
     pub(super) blocks_rx: mpsc::Receiver<OpExecutionPayloadEnvelope>,
     #[allow(dead_code)]
@@ -23,7 +23,7 @@ pub struct TestNetwork {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum TestNetworkError {
+pub(crate) enum TestNetworkError {
     #[error("P2p receiver closed")]
     P2pReceiverClosed,
     #[error("P2p receiver closed before sending response: {0}")]

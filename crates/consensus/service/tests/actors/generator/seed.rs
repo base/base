@@ -2,12 +2,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rand::SeedableRng;
 
-pub static SEED_GENERATOR_BUILDER: SeedGeneratorBuilder = SeedGeneratorBuilder::new();
+pub(crate) static SEED_GENERATOR_BUILDER: SeedGeneratorBuilder = SeedGeneratorBuilder::new();
 
-pub struct SeedGeneratorBuilder(AtomicU64);
+pub(crate) struct SeedGeneratorBuilder(AtomicU64);
 
 impl SeedGeneratorBuilder {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self(AtomicU64::new(0))
     }
 
@@ -15,19 +15,19 @@ impl SeedGeneratorBuilder {
         self.0.fetch_add(1, Ordering::SeqCst)
     }
 
-    pub fn next_generator(&self) -> SeedGenerator {
+    pub(crate) fn next_generator(&self) -> SeedGenerator {
         SeedGenerator(rand::rngs::StdRng::seed_from_u64(self.next()))
     }
 }
 
-pub struct SeedGenerator(pub(super) rand::rngs::StdRng);
+pub(crate) struct SeedGenerator(pub(super) rand::rngs::StdRng);
 
 impl SeedGenerator {
-    pub const fn as_rng(&mut self) -> &mut rand::rngs::StdRng {
+    pub(crate) const fn as_rng(&mut self) -> &mut rand::rngs::StdRng {
         &mut self.0
     }
 
-    pub fn random_bytes(&mut self, len: usize) -> Vec<u8> {
+    pub(crate) fn random_bytes(&mut self, len: usize) -> Vec<u8> {
         let mut data = vec![0; len];
         rand::Rng::fill(self.as_rng(), &mut data[..]);
         data

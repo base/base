@@ -11,7 +11,7 @@ use libp2p::bytes::BufMut;
 use crate::actors::generator::seed::SeedGenerator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PayloadVersion {
+pub(crate) enum PayloadVersion {
     V1,
     #[allow(dead_code)]
     V2,
@@ -23,7 +23,7 @@ pub enum PayloadVersion {
 
 impl SeedGenerator {
     /// Generate a random op execution payload.
-    pub fn random_valid_payload(
+    pub(crate) fn random_valid_payload(
         &mut self,
         version: PayloadVersion,
     ) -> anyhow::Result<OpExecutionPayloadEnvelope> {
@@ -92,7 +92,7 @@ impl SeedGenerator {
     }
 
     /// Make the block v2 compatible
-    pub fn v2_valid_block(&mut self) -> Block<OpTxEnvelope> {
+    pub(crate) fn v2_valid_block(&mut self) -> Block<OpTxEnvelope> {
         let mut block = self.v1_valid_block();
 
         block.body.withdrawals = Some(vec![].into());
@@ -106,7 +106,7 @@ impl SeedGenerator {
     }
 
     /// Make the block v3 compatible
-    pub fn v3_valid_block(&mut self) -> Block<OpTxEnvelope> {
+    pub(crate) fn v3_valid_block(&mut self) -> Block<OpTxEnvelope> {
         let mut block = self.valid_block();
 
         block.body.withdrawals = Some(vec![].into());
@@ -129,7 +129,7 @@ impl SeedGenerator {
     }
 
     /// Make the block v4 compatible
-    pub fn v4_valid_block(&mut self) -> Block<OpTxEnvelope> {
+    pub(crate) fn v4_valid_block(&mut self) -> Block<OpTxEnvelope> {
         self.v3_valid_block()
     }
 }

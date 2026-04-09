@@ -1,4 +1,4 @@
 //! Integration tests for the node actors.
 
-pub mod generator;
+pub(crate) mod generator;
 mod network;
