@@ -179,7 +179,6 @@ enum CheckMode {
     After,
 }
 
-
 #[derive(Debug, Clone)]
 struct CheckResult {
     passed: Option<bool>,
