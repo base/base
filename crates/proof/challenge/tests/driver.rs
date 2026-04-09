@@ -109,6 +109,14 @@ fn default_tx_manager() -> MockTxManager {
     MockTxManager::new(Ok(receipt_with_status(true, B256::repeat_byte(0xAA))))
 }
 
+fn default_l2() -> Arc<MockL2Provider> {
+    Arc::new(MockL2Provider::new())
+}
+
+fn single_game_factory() -> Arc<MockDisputeGameFactory> {
+    Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] })
+}
+
 fn single_game_verifier(state: MockGameState) -> Arc<MockAggregateVerifier> {
     Arc::new(MockAggregateVerifier { games: HashMap::from([(addr(0), state)]) })
 }
@@ -179,7 +187,7 @@ fn base_game_mocks() -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, B256,
     l2.insert_block(20, header_20, account_20);
     let l2 = Arc::new(l2);
 
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let factory = single_game_factory();
 
     (l2, factory, root_15, root_20)
 }
@@ -205,9 +213,9 @@ fn invalid_game_mocks()
 fn driver_with_ready_proof(
     game_state: MockGameState,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let factory = single_game_factory();
     let verifier = single_game_verifier(game_state);
-    let l2 = Arc::new(MockL2Provider::new());
+    let l2 = default_l2();
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.pending_proofs.insert(addr(0), default_ready_proof(DisputeIntent::Challenge));
     driver
@@ -217,7 +225,7 @@ fn driver_with_ready_proof(
 async fn test_step_no_candidates() {
     let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
     let verifier = empty_verifier();
-    let l2 = Arc::new(MockL2Provider::new());
+    let l2 = default_l2();
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
@@ -228,12 +236,12 @@ async fn test_step_no_candidates() {
 async fn test_step_valid_game_skipped() {
     // l2_block_number - starting_block_number < intermediate_block_interval
     // → expected_count = 0 → trivially valid, no proof requested.
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let factory = single_game_factory();
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
         ..game_state(14)
     });
-    let l2 = Arc::new(MockL2Provider::new());
+    let l2 = default_l2();
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
@@ -244,7 +252,7 @@ async fn test_step_valid_game_skipped() {
 async fn test_step_validation_error_blocks_not_available() {
     // Game with intermediate roots, but checkpoint blocks are unavailable.
     // Validator returns BlockNotAvailable → process_candidate skips gracefully.
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let factory = single_game_factory();
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
         intermediate_output_roots: vec![BOGUS_ROOT, B256::repeat_byte(0xEE)],
@@ -267,8 +275,7 @@ async fn test_step_invalid_game_proof_succeeded() {
 
     let zk = succeeded_zk_prover("proof-123", vec![0xDE, 0xAD]);
 
-    let tx_hash = B256::repeat_byte(0xCC);
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+    let tx_manager = default_tx_manager();
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
@@ -354,7 +361,7 @@ async fn test_step_scan_error_propagated() {
         ScannerConfig { lookback_games: 1000 },
     );
 
-    let l2 = Arc::new(MockL2Provider::new());
+    let l2 = default_l2();
     let validator = OutputValidator::new(l2);
     let submitter = ChallengeSubmitter::new(default_tx_manager());
 
@@ -390,7 +397,7 @@ async fn test_step_pending_proof_skips_prove_block() {
         state: Mutex::new(MockZkProofState { receipt: vec![0xBE, 0xEF], ..Default::default() }),
     });
 
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, DEFAULT_TX_HASH)));
+    let tx_manager = default_tx_manager();
 
     let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), tx_manager);
 
@@ -422,7 +429,7 @@ async fn test_step_nullification_failure_preserves_proof() {
     // First tx call fails (NonceTooLow), second succeeds.
     let tx_manager = MockTxManager::with_responses(vec![
         Err(TxManagerError::NonceTooLow),
-        Ok(receipt_with_status(true, B256::repeat_byte(0xCC))),
+        Ok(receipt_with_status(true, DEFAULT_TX_HASH)),
     ]);
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
@@ -490,7 +497,7 @@ async fn test_poll_or_submit_drops_nullified_game() {
 async fn test_run_cancellation() {
     let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
     let verifier = empty_verifier();
-    let l2 = Arc::new(MockL2Provider::new());
+    let l2 = default_l2();
 
     let driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.cancel.cancel();
@@ -513,7 +520,7 @@ async fn test_step_proof_retry_succeeds() {
         }),
     });
 
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, DEFAULT_TX_HASH)));
+    let tx_manager = default_tx_manager();
 
     let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), tx_manager);
 
@@ -631,8 +638,7 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     let tee = Arc::new(MockTeeProofProvider::failure("L1 unreachable"));
     let zk = succeeded_zk_prover("zk-after-tee-fail", vec![0xDE, 0xAD]);
 
-    let tx_hash = B256::repeat_byte(0xCC);
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+    let tx_manager = default_tx_manager();
 
     let mut driver = test_driver_with_tee(
         factory,
@@ -687,7 +693,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         proposals: vec![],
     }));
 
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, DEFAULT_TX_HASH)));
+    let tx_manager = default_tx_manager();
 
     let mut driver = test_driver_with_tee(
         factory,
@@ -733,8 +739,8 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
     // A pending proof with DisputeIntent::Nullify should NOT be dropped
     // when zkProver is non-zero (unlike DisputeIntent::Challenge, which
     // requires zkProver == ZERO).
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let l2 = Arc::new(MockL2Provider::new());
+    let factory = single_game_factory();
+    let l2 = default_l2();
     let mut game_state = mock_state_with_tee(0, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20);
     game_state.countered_index = 2; // challenged at 0-based index 1
     let verifier = single_game_verifier(game_state);
@@ -754,8 +760,8 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
 async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
     // A pending proof with DisputeIntent::Challenge should be dropped
     // when zkProver is non-zero (game already challenged).
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let l2 = Arc::new(MockL2Provider::new());
+    let factory = single_game_factory();
+    let l2 = default_l2();
     let verifier =
         single_game_verifier(mock_state_with_tee(0, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20));
 
@@ -865,12 +871,12 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
 async fn test_step_valid_zk_proposal_skipped() {
     // A ZK-proposed game with valid intermediate roots should not trigger
     // any action.
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+    let factory = single_game_factory();
     let verifier = single_game_verifier(MockGameState {
         zk_prover: ZK_PROVER_ADDR,
         ..game_state(14)
     });
-    let l2 = Arc::new(MockL2Provider::new());
+    let l2 = default_l2();
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.step().await.unwrap();
@@ -1128,8 +1134,7 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
 
     let zk = succeeded_zk_prover("bond-track", vec![0xDE, 0xAD]);
 
-    let tx_hash = B256::repeat_byte(0xCC);
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+    let tx_manager = default_tx_manager();
 
     let mut bond_manager = default_bond_manager(sender_addr);
     bond_manager.set_weth_delay(Duration::from_secs(3600));
