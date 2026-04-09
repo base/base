@@ -3,10 +3,11 @@
 //! Provides [`AccountProofVerifier`] for verifying `eth_getProof` responses
 //! against a state root using Merkle Patricia Trie proofs.
 
+use alloy_rlp::Encodable;
+use thiserror::Error;
 use alloy_primitives::{B256, keccak256};
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
-use thiserror::Error;
 
 /// Errors from account proof verification.
 #[derive(Debug, Clone, Eq, PartialEq, Error)]
@@ -45,7 +46,10 @@ impl AccountProofVerifier {
             code_hash: response.code_hash,
         };
 
-        verify_proof(state_root, key, Some(alloy_rlp::encode(&account)), &response.account_proof)
+        let mut encoded = Vec::with_capacity(account.length());
+        account.encode(&mut encoded);
+
+        verify_proof(state_root, key, Some(encoded), &response.account_proof)
             .map_err(|e| AccountProofError::VerificationFailed(e.to_string()))
     }
 }
