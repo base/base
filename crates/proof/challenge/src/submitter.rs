@@ -13,7 +13,7 @@ use std::time::Instant;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 use base_tx_manager::{TxCandidate, TxManager};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{BondTransactionSubmitter, ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
 
@@ -84,7 +84,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             ..Default::default()
         };
 
-        info!(
+        debug!(
             tx = ?candidate,
             "sending tx candidate",
         );
