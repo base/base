@@ -43,7 +43,7 @@ sol! {
 }
 
 /// Information about a game at a factory index.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct GameAtIndex {
     /// The game type ID.
     pub game_type: u32,

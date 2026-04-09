@@ -155,7 +155,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         }
         self.games
             .get(index as usize)
-            .cloned()
+            .copied()
             .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
     }
     async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {

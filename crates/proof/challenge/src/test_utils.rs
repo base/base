@@ -115,7 +115,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
         self.games
             .get(index as usize)
-            .cloned()
+            .copied()
             .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
     }
 
