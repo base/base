@@ -90,7 +90,10 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     node.initialize().await;
 
     let total_derived = node.run_until_idle().await;
-    assert_eq!(total_derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
+    assert_eq!(
+        total_derived, L2_BLOCK_COUNT as usize,
+        "expected {L2_BLOCK_COUNT} L2 blocks derived"
+    );
 
     assert_eq!(node.l2_safe_number(), L2_BLOCK_COUNT);
 
@@ -1273,7 +1276,10 @@ async fn garbage_payload_silently_ignored_then_valid_batch_derived(
     // Both blocks processed: garbage in block 1 is silently ignored,
     // valid batch in block 2 is derived.
     let total_derived = node.run_until_idle().await;
-    assert_eq!(total_derived, 1, "valid batch after garbage must be derived; garbage silently ignored");
+    assert_eq!(
+        total_derived, 1,
+        "valid batch after garbage must be derived; garbage silently ignored"
+    );
     assert_eq!(node.l2_safe_number(), 1);
 }
 

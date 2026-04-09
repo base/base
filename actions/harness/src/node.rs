@@ -12,8 +12,8 @@ use base_alloy_provider::OpEngineApi;
 use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use base_consensus_derive::{
     ActivationSignal, DerivationPipeline, Pipeline, PipelineError, PipelineErrorKind,
-    PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver,
-    StatefulAttributesBuilder, StepResult,
+    PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver, StatefulAttributesBuilder,
+    StepResult,
 };
 use base_consensus_engine::{EngineForkchoiceVersion, EngineNewPayloadVersion};
 use base_consensus_genesis::RollupConfig;
@@ -579,9 +579,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                     }
                     PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
                         self.pipeline
-                            .signal(
-                                ActivationSignal { l2_safe_head: self.safe_head }.signal(),
-                            )
+                            .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
                             .await
                             .expect("TestRollupNode: Holocene activation signal failed");
                         no_progress = 0;
