@@ -69,7 +69,9 @@ pub struct PipelineConfig {
     ///    initial scan, subsequent ticks only fetch *new* entries
     ///    incrementally (typically 0–2 RPC calls).
     /// 2. **Walk step limit** — maximum number of forward-walk steps from
-    ///    the anchor root, each requiring an `output_at_block` RPC call.
+    ///    the anchor root. Canonical output roots for all reachable blocks
+    ///    are pre-fetched concurrently before the walk begins, so the walk
+    ///    itself is purely in-memory.
     ///
     /// When the walk is truncated by this limit, the walk result is NOT
     /// cached so the next tick will re-walk from the anchor.
@@ -698,14 +700,62 @@ where
         // A full rescan is needed only on cold start or L1 reorg.
         let game_map = self.updated_game_map(cache.as_ref(), count).await?;
 
-        // ── Forward walk ────────────────────────────────────────────────
+        // ── Pre-fetch canonical output roots ───────────────────────────
         //
-        // NOTE: Each step calls `output_at_block` sequentially. This is
-        // O(N) sequential RPCs where N = number of verified games. A future
-        // optimization could batch these calls, but the walk is bounded by
-        // `max_steps` and typically completes quickly.
+        // Compute the set of block numbers the forward walk *could* visit
+        // (consecutive strides from the anchor that have games in the map),
+        // then fetch all their canonical output roots concurrently. The walk
+        // itself becomes purely in-memory lookups against this pre-fetched
+        // map, eliminating O(N) sequential RPCs.
         let block_interval = self.config.driver.block_interval;
         let max_steps = self.config.max_game_recovery_lookback;
+
+        let prefetch_blocks: Vec<u64> = {
+            let mut blocks = Vec::new();
+            let mut block = anchor.l2_block_number;
+            for _ in 0..max_steps {
+                block = match block.checked_add(block_interval) {
+                    Some(b) => b,
+                    None => break,
+                };
+                if game_map.map.contains_key(&block) {
+                    blocks.push(block);
+                } else {
+                    // The walk cannot continue past a missing block.
+                    break;
+                }
+            }
+            blocks
+        };
+
+        let canonical_roots: HashMap<u64, B256> = if prefetch_blocks.is_empty() {
+            HashMap::new()
+        } else {
+            debug!(
+                blocks = prefetch_blocks.len(),
+                "Pre-fetching canonical output roots concurrently"
+            );
+            stream::iter(prefetch_blocks)
+                .map(|block_number| {
+                    let rollup = &self.rollup_client;
+                    async move {
+                        rollup
+                            .output_at_block(block_number)
+                            .await
+                            .map(|out| (block_number, out.output_root))
+                            .map_err(ProposerError::Rpc)
+                    }
+                })
+                .buffered(RECOVERY_SCAN_CONCURRENCY)
+                .try_collect()
+                .await?
+        };
+
+        // ── Forward walk ────────────────────────────────────────────────
+        //
+        // Walk from the anchor root, verifying parent-chain linkage and
+        // output root correctness at each step. All output root lookups
+        // are served from the pre-fetched `canonical_roots` map above.
         let mut parent_address = anchor_state_registry_address;
         let mut parent_output_root = anchor.root;
         let mut parent_block = anchor.l2_block_number;
@@ -728,6 +778,22 @@ where
             let expected_block = match parent_block.checked_add(block_interval) {
                 Some(b) => b,
                 None => break,
+            };
+
+            // Look up the pre-fetched canonical root. A missing entry means
+            // the block had no game in the map (the pre-fetch stopped there).
+            let canonical_root = match canonical_roots.get(&expected_block) {
+                Some(root) => *root,
+                None => {
+                    info!(
+                        gap_block = expected_block,
+                        parent_block,
+                        parent_address = %parent_address,
+                        games_verified = steps,
+                        "Found first missing game, will propose from here"
+                    );
+                    break;
+                }
             };
 
             // Look up all games at this block number, then find one whose
@@ -775,21 +841,15 @@ where
             let ScannedGame { proxy, info } = *first;
 
             // Verify the root claim matches the canonical output root.
-            match self.rollup_client.output_at_block(expected_block).await {
-                Ok(canonical) if canonical.output_root == info.root_claim => {}
-                Ok(canonical) => {
-                    warn!(
-                        l2_block_number = expected_block,
-                        game_proxy = %proxy,
-                        onchain_root = ?info.root_claim,
-                        canonical_root = ?canonical.output_root,
-                        "Output root mismatch during forward walk, treating as gap"
-                    );
-                    break;
-                }
-                Err(e) => {
-                    return Err(ProposerError::Rpc(e));
-                }
+            if canonical_root != info.root_claim {
+                warn!(
+                    l2_block_number = expected_block,
+                    game_proxy = %proxy,
+                    onchain_root = ?info.root_claim,
+                    canonical_root = ?canonical_root,
+                    "Output root mismatch during forward walk, treating as gap"
+                );
+                break;
             }
 
             debug!(
