@@ -67,6 +67,18 @@ struct ChainUpgrades {
     specs: Vec<UpgradeSpec>,
 }
 
+impl ChainUpgrades {
+    /// Returns `true` if the V1 upgrade has activated at or before `now`.
+    fn v1_active(&self, now: u64) -> bool {
+        self.specs
+            .iter()
+            .find(|s| s.name == "V1")
+            .and_then(|s| s.timestamp)
+            .map(|ts| ts <= now)
+            .unwrap_or(false)
+    }
+}
+
 fn specs_from_config(cfg: &BaseChainConfig) -> Vec<UpgradeSpec> {
     vec![
         UpgradeSpec { name: "Delta", timestamp: Some(cfg.delta_timestamp) },
@@ -120,12 +132,6 @@ const V1_CHECK_NAMES: &[&str] = &[
     "eth_config",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CheckMode {
-    Before,
-    After,
-}
-
 #[derive(Debug, Clone)]
 struct CheckResult {
     passed: Option<bool>,
@@ -146,7 +152,6 @@ enum CheckUpdate {
 struct ChecksPanel {
     /// Chain index these checks were (or are being) run for.
     chain_idx: Option<usize>,
-    mode: Option<CheckMode>,
     rpc_url: String,
     /// Name of the check currently executing.
     current: Option<String>,
@@ -158,16 +163,15 @@ struct ChecksPanel {
 }
 
 impl ChecksPanel {
-    fn start(&mut self, chain_idx: usize, rpc_url: String, mode: CheckMode) {
+    fn start(&mut self, chain_idx: usize, rpc_url: String) {
         let (tx, rx) = mpsc::channel(64);
         self.chain_idx = Some(chain_idx);
-        self.mode = Some(mode);
         self.rpc_url = rpc_url.clone();
         self.current = None;
         self.results.clear();
         self.running = true;
         self.rx = Some(rx);
-        self.handle = Some(tokio::spawn(run_v1_checks_streaming(rpc_url, mode, tx)));
+        self.handle = Some(tokio::spawn(run_v1_checks_streaming(rpc_url, tx)));
     }
 
     fn reset(&mut self) {
@@ -175,7 +179,6 @@ impl ChecksPanel {
             h.abort();
         }
         self.chain_idx = None;
-        self.mode = None;
         self.rpc_url.clear();
         self.current = None;
         self.results.clear();
@@ -306,7 +309,6 @@ impl UpgradesView {
             tick_count: 0,
             checks: ChecksPanel {
                 chain_idx: None,
-                mode: None,
                 rpc_url: String::new(),
                 current: None,
                 results: HashMap::new(),
@@ -357,18 +359,10 @@ impl View for UpgradesView {
                 }
             }
             KeyCode::Char('r') if !self.checks.running => {
-                let now = now_unix();
                 let chain = &self.chains[self.selected_chain];
-                let v1_activated = chain
-                    .specs
-                    .iter()
-                    .find(|s| s.name == "V1")
-                    .and_then(|s| s.timestamp)
-                    .map(|ts| ts <= now)
-                    .unwrap_or(false);
-                if v1_activated {
+                if chain.v1_active(now_unix()) {
                     let rpc = self.rpc_for_selected(resources);
-                    self.checks.start(self.selected_chain, rpc, CheckMode::After);
+                    self.checks.start(self.selected_chain, rpc);
                 }
             }
             _ => {}
@@ -438,15 +432,8 @@ impl View for UpgradesView {
             .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
             .split(outer[2]);
 
-        let v1_active = chain
-            .specs
-            .iter()
-            .find(|s| s.name == "V1")
-            .and_then(|s| s.timestamp)
-            .map(|ts| ts <= now)
-            .unwrap_or(false);
         render_history(frame, bottom[0], chain, now);
-        render_checks_panel(frame, bottom[1], &self.checks, self.tick_count, v1_active);
+        render_checks_panel(frame, bottom[1], &self.checks, self.tick_count, chain.v1_active(now));
         render_footer(frame, outer[3], self.checks.running);
     }
 }
@@ -672,22 +659,16 @@ fn render_checks_panel(
         return;
     }
 
-    let mode_str = match panel.mode {
-        Some(CheckMode::Before) => "before",
-        Some(CheckMode::After) => "after",
-        None => "?",
-    };
-
     let passed = panel.results.values().filter(|r| r.passed == Some(true)).count();
     let failed = panel.results.values().filter(|r| r.passed == Some(false)).count();
 
     let (title, border_color) = if panel.running {
         let spin = spinner[(tick / 2) as usize % spinner.len()];
-        (format!(" V1 Checks ({mode_str})  {spin} running… "), Color::Yellow)
+        (format!(" V1 Checks  {spin} running… "), Color::Yellow)
     } else if failed > 0 {
-        (format!(" V1 Checks ({mode_str})  ✓ {passed}  ✗ {failed} "), Color::Red)
+        (format!(" V1 Checks  ✓ {passed}  ✗ {failed} "), Color::Red)
     } else {
-        (format!(" V1 Checks ({mode_str})  ✓ {passed} passed "), Color::LightGreen)
+        (format!(" V1 Checks  ✓ {passed} passed "), Color::LightGreen)
     };
 
     let rows: Vec<Row<'static>> = V1_CHECK_NAMES
@@ -882,15 +863,6 @@ const MODEXP_OVERSIZED: &str = concat!(
     "0000000000000000000000000000000000000000000000000000000000000001",
 );
 
-fn not_activated(msg: &str) -> bool {
-    let m = msg.to_lowercase();
-    m.contains("notactivated")
-        || m.contains("invalid opcode")
-        || m.contains("undefined opcode")
-        || m.contains("opcode 0x1e")
-        || m.contains("unsupported opcode")
-}
-
 fn norm(h: &str) -> String {
     h.trim().trim_matches('"').to_lowercase()
 }
@@ -936,18 +908,10 @@ fn evaluate_opcode_check(
     _name: &str,
     result: &Result<String, String>,
     expected: &str,
-    mode: CheckMode,
 ) -> CheckResult {
-    let (passed, detail) = match (mode, result) {
-        (CheckMode::Before, Err(e)) if not_activated(e) => {
-            (true, "opcode unavailable (expected before V1)".to_string())
-        }
-        (CheckMode::Before, Err(e)) => (false, format!("unexpected error: {e}")),
-        (CheckMode::Before, Ok(actual)) => {
-            (false, format!("unexpectedly succeeded before V1: {actual}"))
-        }
-        (CheckMode::After, Err(e)) => (false, format!("call failed: {e}")),
-        (CheckMode::After, Ok(actual)) => {
+    let (passed, detail) = match result {
+        Err(e) => (false, format!("call failed: {e}")),
+        Ok(actual) => {
             if norm(actual) == norm(expected) {
                 (true, format!("→ {}", actual.get(..20).unwrap_or(actual)))
             } else {
@@ -960,9 +924,7 @@ fn evaluate_opcode_check(
 
 fn evaluate_gas_probe(
     result: &Result<String, String>,
-    mode: CheckMode,
     gas_label: &str,
-    before_desc: &str,
     after_desc: &str,
 ) -> CheckResult {
     let actual = match result {
@@ -972,27 +934,14 @@ fn evaluate_gas_probe(
     let success_val = norm(PROBE_SUCCESS);
 
     let (passed, detail) = if actual == success_val {
-        match mode {
-            CheckMode::Before => {
-                (true, format!("{gas_label} CALL succeeded ({before_desc} before V1)"))
-            }
-            CheckMode::After => (
-                false,
-                format!("{gas_label} CALL succeeded — expected OOG ({after_desc} after V1)"),
-            ),
-        }
+        (false, format!("{gas_label} CALL succeeded — expected OOG ({after_desc} after V1)"))
     } else {
-        match mode {
-            CheckMode::After => (true, format!("{gas_label} CALL OOG ({after_desc} after V1)")),
-            CheckMode::Before => {
-                (false, format!("{gas_label} CALL OOG — expected success ({before_desc})"))
-            }
-        }
+        (true, format!("{gas_label} CALL OOG ({after_desc} after V1)"))
     };
     CheckResult { passed: Some(passed), detail }
 }
 
-async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sender<CheckUpdate>) {
+async fn run_v1_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>) {
     macro_rules! send_start {
         ($name:expr) => {
             if tx.send(CheckUpdate::Starting($name.to_string())).await.is_err() {
@@ -1059,27 +1008,18 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
         send_start!(name);
         let r =
             eth_call_override(&client, CLZ_PROBE_ADDR, calldata, CLZ_PROBE_ADDR, CLZ_RUNTIME).await;
-        send_result!(name, evaluate_opcode_check(name, &r, expected, mode));
+        send_result!(name, evaluate_opcode_check(name, &r, expected));
     }
 
     // ── MODEXP size limit ──────────────────────────────────────────────────────
     send_start!("MODEXP size limit");
     let r = eth_call(&client, MODEXP_ADDR, MODEXP_OVERSIZED).await;
-    let modexp_size = match (mode, r) {
-        (CheckMode::Before, Ok(_)) => CheckResult {
-            passed: Some(true),
-            detail: "oversized input accepted (expected before V1)".to_string(),
-        },
-        (CheckMode::Before, Err(e)) => {
-            CheckResult { passed: Some(false), detail: format!("unexpectedly rejected: {e}") }
-        }
-        (CheckMode::After, Err(_)) => CheckResult {
+    let modexp_size = match r {
+        Err(_) => CheckResult {
             passed: Some(true),
             detail: "oversized input rejected (correct)".to_string(),
         },
-        (CheckMode::After, Ok(v)) => {
-            CheckResult { passed: Some(false), detail: format!("unexpectedly accepted: {v}") }
-        }
+        Ok(v) => CheckResult { passed: Some(false), detail: format!("unexpectedly accepted: {v}") },
     };
     send_result!("MODEXP size limit", modexp_size);
 
@@ -1093,7 +1033,7 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
         MODEXP_GAS_PROBE_RUNTIME,
     )
     .await;
-    send_result!("MODEXP min gas", evaluate_gas_probe(&r, mode, "400-gas", "min=200", "min=500"));
+    send_result!("MODEXP min gas", evaluate_gas_probe(&r, "400-gas", "min=500"));
 
     // ── P256VERIFY gas (3450 → 6900) ───────────────────────────────────────────
     send_start!("P256VERIFY gas");
@@ -1105,10 +1045,7 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
         P256_GAS_PROBE_RUNTIME,
     )
     .await;
-    send_result!(
-        "P256VERIFY gas",
-        evaluate_gas_probe(&r, mode, "5000-gas", "cost=3450", "cost=6900")
-    );
+    send_result!("P256VERIFY gas", evaluate_gas_probe(&r, "5000-gas", "cost=6900"));
 
     // ── eth_config RPC method ──────────────────────────────────────────────────
     send_start!("eth_config");
@@ -1116,21 +1053,9 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
         ClientT::request::<serde_json::Value, _>(&client, "eth_config", rpc_params![])
             .await
             .map_err(|e| e.to_string());
-    let eth_config_check = match (mode, cfg_result) {
-        (CheckMode::Before, Ok(_)) => CheckResult {
-            passed: Some(false),
-            detail: "unexpectedly available before V1".to_string(),
-        },
-        (CheckMode::Before, Err(_)) => CheckResult {
-            passed: Some(true),
-            detail: "unavailable before V1 (expected)".to_string(),
-        },
-        (CheckMode::After, Ok(_)) => {
-            CheckResult { passed: Some(true), detail: "available after V1".to_string() }
-        }
-        (CheckMode::After, Err(e)) => {
-            CheckResult { passed: Some(false), detail: format!("unavailable after V1: {e}") }
-        }
+    let eth_config_check = match cfg_result {
+        Ok(_) => CheckResult { passed: Some(true), detail: "available after V1".to_string() },
+        Err(e) => CheckResult { passed: Some(false), detail: format!("unavailable after V1: {e}") },
     };
     send_result!("eth_config", eth_config_check);
 }
