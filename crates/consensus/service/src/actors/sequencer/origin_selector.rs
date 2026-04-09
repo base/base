@@ -381,10 +381,7 @@ mod tests {
                 timestamp: 2,
                 ..Default::default()
             },
-            l1_origin: NumHash {
-                number: 0,
-                hash: B256::with_last_byte(42),
-            },
+            l1_origin: NumHash { number: 0, hash: B256::with_last_byte(42) },
             seq_num: 0,
         };
 
