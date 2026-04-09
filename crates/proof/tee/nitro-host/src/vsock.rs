@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use base_proof_preimage::PreimageKey;
-use base_proof_tee_nitro_enclave::{EnclaveRequest, EnclaveResponse, Frame, TeeProofResult};
+use base_proof_primitives::ProofResult;
+use base_proof_tee_nitro_enclave::{EnclaveRequest, EnclaveResponse, Frame};
 use tokio_vsock::{VsockAddr, VsockStream};
 use tracing::info;
 
@@ -40,7 +41,7 @@ impl VsockTransport {
     pub async fn prove(
         &self,
         preimages: Vec<(PreimageKey, Vec<u8>)>,
-    ) -> Result<TeeProofResult, NitroHostError> {
+    ) -> Result<ProofResult, NitroHostError> {
         let preimage_count = preimages.len();
         let total_value_bytes: usize = preimages.iter().map(|(_, v)| v.len()).sum();
         info!(

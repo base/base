@@ -18,7 +18,6 @@ development mode the enclave server runs in-process without vsock or NSM hardwar
 | `backend` | `NitroBackend` — `ProverBackend` impl dispatching to enclave via transport |
 | `transport` | `NitroTransport` — vsock (production) or in-process (local dev) |
 | `vsock` | *(Linux-only)* `VsockTransport` — frame-based vsock communication with timeouts |
-| `convert` | Type conversions between enclave-native and host-side proof types |
 
 ## Usage
 
