@@ -296,14 +296,14 @@ impl ActionEngineClient {
             .map(|h| (parent_hash, h.clone()))
             .unwrap_or_else(|| {
                 // Genesis case: derive the real hash from the chain spec genesis header so the
-                // builder can locate the committed state in the DB.
-                debug_assert_eq!(
-                    parent_hash,
-                    B256::ZERO,
-                    "unknown parent hash {parent_hash} — missed block or caller bug"
-                );
+                // builder can locate the committed state in the DB. Callers may pass either
+                // B256::ZERO (rollup-config convention) or the actual computed genesis hash.
                 let genesis_header = inner.chain_spec.genesis_header().clone();
                 let genesis_hash = genesis_header.hash_slow();
+                debug_assert!(
+                    parent_hash == B256::ZERO || parent_hash == genesis_hash,
+                    "unknown parent hash {parent_hash} — missed block or caller bug"
+                );
                 (genesis_hash, genesis_header)
             });
 
