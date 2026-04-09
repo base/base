@@ -383,11 +383,7 @@ impl<C: Clock> BondManager<C> {
             // Resolve the WETH delay from the first available game,
             // including already-claimed ones, so that the delay is
             // bootstrapped as early as possible.
-            if self.weth_delay.is_none()
-                && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
-            {
-                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
-            }
+            self.ensure_weth_delay(verifier_client, game_address).await;
 
             let Some(phase) = phase else {
                 continue; // already claimed, skip
@@ -503,11 +499,7 @@ impl<C: Clock> BondManager<C> {
                 continue;
             };
 
-            if self.weth_delay.is_none()
-                && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
-            {
-                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
-            }
+            self.ensure_weth_delay(verifier_client, game_address).await;
 
             info!(
                 game = %game_address,
@@ -549,11 +541,8 @@ impl<C: Clock> BondManager<C> {
         }
 
         // Lazily resolve the DelayedWETH delay if not yet known.
-        if self.weth_delay.is_none()
-            && let Some(&game_address) = self.tracked.keys().next()
-            && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
-        {
-            warn!(error = %e, "failed to resolve DelayedWETH delay, will retry next poll");
+        if let Some(&game_address) = self.tracked.keys().next() {
+            self.ensure_weth_delay(verifier_client, game_address).await;
         }
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
@@ -898,6 +887,19 @@ impl<C: Clock> BondManager<C> {
         }
 
         Ok(Some(BondPhase::NeedsResolve))
+    }
+
+    /// Resolves the `DelayedWETH` delay if not yet known, logging on failure.
+    async fn ensure_weth_delay(
+        &mut self,
+        verifier_client: &dyn AggregateVerifierClient,
+        game_address: Address,
+    ) {
+        if self.weth_delay.is_none() {
+            if let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await {
+                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
+            }
+        }
     }
 
     /// Reads the `DelayedWETH` address from a game proxy and fetches the delay.
