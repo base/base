@@ -366,7 +366,6 @@ impl MockL2Provider {
     }
 }
 
-
 #[async_trait]
 impl L2Provider for MockL2Provider {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
@@ -405,16 +404,29 @@ impl L2Provider for MockL2Provider {
 }
 
 /// Mock ZK proof provider for testing the driver.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MockZkProofProvider {
     /// Session ID returned by [`prove_block`](ZkProofProvider::prove_block).
     pub session_id: String,
+    /// Mutable proof state returned by [`get_proof`](ZkProofProvider::get_proof).
+    pub state: Mutex<MockZkProofState>,
+}
+
+/// Mutable state for [`MockZkProofProvider`].
+#[derive(Debug, Default, Clone)]
+pub struct MockZkProofState {
     /// Proof job status returned by [`get_proof`](ZkProofProvider::get_proof).
-    pub proof_status: Mutex<i32>,
+    pub proof_status: i32,
     /// Proof receipt bytes returned when status is `Succeeded`.
-    pub receipt: Mutex<Vec<u8>>,
+    pub receipt: Vec<u8>,
     /// Error message returned when status is `Failed`.
-    pub error_message: Mutex<Option<String>>,
+    pub error_message: Option<String>,
+}
+
+impl Default for MockZkProofProvider {
+    fn default() -> Self {
+        Self { session_id: String::new(), state: Mutex::new(MockZkProofState::default()) }
+    }
 }
 
 #[async_trait]
@@ -427,10 +439,12 @@ impl ZkProofProvider for MockZkProofProvider {
     }
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
-        let status = *self.proof_status.lock().unwrap();
-        let receipt = self.receipt.lock().unwrap().clone();
-        let error_message = self.error_message.lock().unwrap().clone();
-        Ok(GetProofResponse { status, receipt, error_message })
+        let state = self.state.lock().unwrap().clone();
+        Ok(GetProofResponse {
+            status: state.proof_status,
+            receipt: state.receipt,
+            error_message: state.error_message,
+        })
     }
 }
 
@@ -444,16 +458,12 @@ pub struct MockTeeProofProvider {
 impl MockTeeProofProvider {
     /// Creates a mock that returns a single successful result.
     pub fn success(result: ProofResult) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Ok(result));
-        Self { results: Mutex::new(q) }
+        Self { results: Mutex::new(VecDeque::from([Ok(result)])) }
     }
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Err(msg.into()));
-        Self { results: Mutex::new(q) }
+        Self { results: Mutex::new(VecDeque::from([Err(msg.into())])) }
     }
 }
 
@@ -481,16 +491,12 @@ impl MockL1HeadProvider {
     /// Creates a mock whose [`block_number_by_hash`](L1HeadProvider::block_number_by_hash)
     /// returns `number` and asserts it is called with `hash`.
     pub fn success(hash: B256, number: u64) -> Self {
-        let mut bq = VecDeque::new();
-        bq.push_back((Some(hash), Ok(number)));
-        Self { block_number_results: Mutex::new(bq) }
+        Self { block_number_results: Mutex::new(VecDeque::from([(Some(hash), Ok(number))])) }
     }
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
-        let mut bq = VecDeque::new();
-        bq.push_back((None, Err(eyre::eyre!("{msg}"))));
-        Self { block_number_results: Mutex::new(bq) }
+        Self { block_number_results: Mutex::new(VecDeque::from([(None, Err(eyre::eyre!("{msg}")))])) }
     }
 }
 
@@ -523,9 +529,7 @@ pub struct MockTxManager {
 impl MockTxManager {
     /// Creates a new mock with a single pre-configured response.
     pub fn new(response: SendResponse) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(response);
-        Self { responses: Mutex::new(q) }
+        Self { responses: Mutex::new(VecDeque::from([response])) }
     }
 
     /// Creates a new mock with multiple responses returned in order.
@@ -625,9 +629,7 @@ pub struct MockBondTransactionSubmitter {
 impl MockBondTransactionSubmitter {
     /// Creates a mock that returns a single successful transaction hash.
     pub fn success(tx_hash: B256) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Ok(tx_hash));
-        Self { responses: Mutex::new(q), calls: Mutex::new(Vec::new()) }
+        Self { responses: Mutex::new(VecDeque::from([Ok(tx_hash)])), calls: Mutex::new(Vec::new()) }
     }
 
     /// Creates a mock with multiple responses returned in order.

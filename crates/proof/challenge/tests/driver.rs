@@ -14,7 +14,8 @@ use base_challenger::{
     test_utils::{
         MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState,
         MockL1HeadProvider, MockL2Provider, MockTeeProofProvider, MockTxManager,
-        MockZkProofProvider, TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account,
+        MockZkProofProvider, MockZkProofState, TEST_DISCOVERY_INTERVAL, addr,
+        build_test_header_and_account,
         empty_factory, factory_game, mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
@@ -258,9 +259,11 @@ async fn test_step_invalid_game_proof_succeeded() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "proof-123".to_string(),
-        proof_status: Mutex::new(ProofJobStatus::Succeeded as i32),
-        receipt: Mutex::new(vec![0xDE, 0xAD]),
-        ..Default::default()
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Succeeded as i32,
+            receipt: vec![0xDE, 0xAD],
+            ..Default::default()
+        }),
     });
 
     let tx_hash = B256::repeat_byte(0xCC);
@@ -290,8 +293,10 @@ async fn test_step_invalid_game_proof_failed() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "proof-fail".to_string(),
-        proof_status: Mutex::new(ProofJobStatus::Failed as i32),
-        ..Default::default()
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Failed as i32,
+            ..Default::default()
+        }),
     });
 
     // tx_manager should NOT be called (proof failed → no submission)
@@ -432,8 +437,10 @@ async fn test_step_pending_proof_skips_prove_block() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "pending-session".to_string(),
-        receipt: Mutex::new(vec![0xBE, 0xEF]),
-        ..Default::default()
+        state: Mutex::new(MockZkProofState {
+            receipt: vec![0xBE, 0xEF],
+            ..Default::default()
+        }),
     });
 
     let tx_hash = B256::repeat_byte(0xDD);
@@ -449,7 +456,7 @@ async fn test_step_pending_proof_skips_prove_block() {
     );
 
     // Simulate the proof completing before the next poll.
-    *zk.proof_status.lock().unwrap() = ProofJobStatus::Succeeded as i32;
+    zk.state.lock().unwrap().proof_status = ProofJobStatus::Succeeded as i32;
 
     // Step 2: same game re-discovered → polls existing session, proof succeeds,
     // challenge tx submitted, session removed from pending_proofs.
@@ -469,9 +476,11 @@ async fn test_step_nullification_failure_preserves_proof() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "proof-ok".to_string(),
-        proof_status: Mutex::new(ProofJobStatus::Succeeded as i32),
-        receipt: Mutex::new(vec![0xDE, 0xAD]),
-        ..Default::default()
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Succeeded as i32,
+            receipt: vec![0xDE, 0xAD],
+            ..Default::default()
+        }),
     });
 
     // First tx call fails (NonceTooLow), second succeeds.
@@ -593,9 +602,11 @@ async fn test_step_proof_retry_succeeds() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "retry-session".to_string(),
-        proof_status: Mutex::new(ProofJobStatus::Failed as i32),
-        receipt: Mutex::new(vec![0xBE, 0xEF]),
-        ..Default::default()
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Failed as i32,
+            receipt: vec![0xBE, 0xEF],
+            ..Default::default()
+        }),
     });
 
     let tx_hash = B256::repeat_byte(0xDD);
@@ -621,7 +632,7 @@ async fn test_step_proof_retry_succeeds() {
     assert_eq!(entry.retry_count, 1);
 
     // Simulate proof succeeding on the retry session.
-    *zk.proof_status.lock().unwrap() = ProofJobStatus::Succeeded as i32;
+    zk.state.lock().unwrap().proof_status = ProofJobStatus::Succeeded as i32;
 
     // Step 3: proof succeeds, challenge tx submitted, entry removed.
     driver.step().await.unwrap();
@@ -638,8 +649,10 @@ async fn test_step_proof_exceeds_max_retries() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "fail-forever".to_string(),
-        proof_status: Mutex::new(ProofJobStatus::Failed as i32),
-        ..Default::default()
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Failed as i32,
+            ..Default::default()
+        }),
     });
 
     let tx_manager = default_tx_manager();
@@ -746,9 +759,11 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     let tee = Arc::new(MockTeeProofProvider::failure("L1 unreachable"));
     let zk = Arc::new(MockZkProofProvider {
         session_id: "zk-after-tee-fail".to_string(),
-        proof_status: Mutex::new(ProofJobStatus::Succeeded as i32),
-        receipt: Mutex::new(vec![0xDE, 0xAD]),
-        ..Default::default()
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Succeeded as i32,
+            receipt: vec![0xDE, 0xAD],
+            ..Default::default()
+        }),
     });
 
     let tx_hash = B256::repeat_byte(0xCC);
@@ -1577,9 +1592,11 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "bond-track".to_string(),
-        proof_status: Mutex::new(base_zk_client::ProofJobStatus::Succeeded as i32),
-        receipt: Mutex::new(vec![0xDE, 0xAD]),
-        ..Default::default()
+        state: Mutex::new(MockZkProofState {
+            proof_status: base_zk_client::ProofJobStatus::Succeeded as i32,
+            receipt: vec![0xDE, 0xAD],
+            ..Default::default()
+        }),
     });
 
     let tx_hash = B256::repeat_byte(0xCC);
