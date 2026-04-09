@@ -660,7 +660,7 @@ impl<C: Clock> BondManager<C> {
         } else {
             ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
                 .increment(1);
-            info!(game = %game_address, status, "game already resolved, advancing to unlock phase");
+            info!(game = %game_address, status, "game already resolved");
         }
 
         // Re-read the onchain bondRecipient — resolve may have changed it

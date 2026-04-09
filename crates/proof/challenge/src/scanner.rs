@@ -232,18 +232,18 @@ impl GameScanner {
     pub async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
         let factory = self.factory_client.game_at_index(index).await?;
 
-        // Fetch status and classification fields in a single concurrent batch.
-        let (status, zk_prover, tee_prover, countered_index) = tokio::try_join!(
-            self.verifier_client.status(factory.proxy),
-            self.verifier_client.zk_prover(factory.proxy),
-            self.verifier_client.tee_prover(factory.proxy),
-            self.verifier_client.countered_index(factory.proxy),
-        )?;
-
+        let status = self.verifier_client.status(factory.proxy).await?;
         if status != Self::STATUS_IN_PROGRESS {
             debug!(index = index, status = status, "skipping game not in progress");
             return Ok(None);
         }
+
+        // Fetch classification fields only for in-progress games.
+        let (zk_prover, tee_prover, countered_index) = tokio::try_join!(
+            self.verifier_client.zk_prover(factory.proxy),
+            self.verifier_client.tee_prover(factory.proxy),
+            self.verifier_client.countered_index(factory.proxy),
+        )?;
 
         let category = match Self::classify(index, tee_prover, zk_prover, countered_index) {
             Some(c) => c,
@@ -309,6 +309,7 @@ impl GameScanner {
 
             // Path 2: TEE-proposed and challenged by ZK.
             (true, true, ci) => {
+                debug_assert!(ci > 0, "ci == 0 should be handled by (true, true, 0) arm");
                 Some(GameCategory::FraudulentZkChallenge { challenged_index: ci - 1 })
             }
 
