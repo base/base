@@ -456,12 +456,7 @@ impl BasePayloadBuilderCtx {
     ///
     /// This is a fire-and-forget operation — errors are silently ignored to avoid
     /// impacting block building performance.
-    fn send_rejected_tx(
-        &self,
-        tx_hash: TxHash,
-        reason: &str,
-        metering: MeterBundleResponse,
-    ) {
+    fn send_rejected_tx(&self, tx_hash: TxHash, reason: &str, metering: MeterBundleResponse) {
         if let Some(sender) = &self.rejected_tx_sender {
             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
             let info = RejectedTxInfo {
@@ -812,7 +807,9 @@ impl BasePayloadBuilderCtx {
                         self.send_rejected_tx(
                             tx_hash,
                             &err_message,
-                            resource_usage.clone().expect("metering data must exist for metering-based rejection"),
+                            resource_usage
+                                .clone()
+                                .expect("metering data must exist for metering-based rejection"),
                         );
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;

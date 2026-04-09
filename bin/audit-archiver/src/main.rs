@@ -105,7 +105,10 @@ async fn main() -> Result<()> {
 
     let rpc_addr = SocketAddr::from(([0, 0, 0, 0], args.rpc_port));
     let rpc_module = AuditArchiverRpc::new(writer.clone());
-    let rpc_server = ServerBuilder::default().build(rpc_addr).await.map_err(|e| anyhow::anyhow!("Failed to build RPC server: {e}"))?;
+    let rpc_server = ServerBuilder::default()
+        .build(rpc_addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to build RPC server: {e}"))?;
     let rpc_handle = rpc_server.start(rpc_module.into_rpc());
     info!(rpc_addr = %rpc_addr, "Audit archiver RPC server started");
 
