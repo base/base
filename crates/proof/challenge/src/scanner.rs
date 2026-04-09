@@ -207,8 +207,7 @@ impl GameScanner {
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
 
         let new_last_scanned = match lowest_error {
-            Some(0) => last_scanned,
-            Some(e) => Some(e - 1),
+            Some(e) => e.checked_sub(1).or(last_scanned),
             None => Some(end),
         };
 
@@ -256,12 +255,12 @@ impl GameScanner {
         // Fetch remaining fields only for actionable games.
         let ((info, starting_block_number, l1_head), intermediate_block_interval) = tokio::try_join!(
             async {
-                let r = tokio::try_join!(
+                tokio::try_join!(
                     self.verifier_client.game_info(factory.proxy),
                     self.verifier_client.starting_block_number(factory.proxy),
                     self.verifier_client.l1_head(factory.proxy),
-                );
-                Result::<_, eyre::Report>::Ok(r?)
+                )
+                .map_err(Into::into)
             },
             self.resolve_intermediate_block_interval(factory.game_type),
         )?;
