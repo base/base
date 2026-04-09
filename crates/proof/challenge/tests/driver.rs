@@ -83,6 +83,10 @@ fn default_tx_manager() -> MockTxManager {
     MockTxManager::new(Ok(receipt_with_status(true, B256::repeat_byte(0xAA))))
 }
 
+fn single_game_verifier(state: MockGameState) -> Arc<MockAggregateVerifier> {
+    Arc::new(MockAggregateVerifier { games: HashMap::from([(addr(0), state)]) })
+}
+
 fn default_prove_request() -> ProveBlockRequest {
     let session_id = PendingProof::derive_session_id(addr(0), 1);
 
@@ -126,22 +130,17 @@ fn invalid_game_mocks()
 -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
     let (l2, factory, root_15, _root_20) = base_game_mocks();
 
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(
-            addr(0),
-            MockGameState {
-                tee_prover: Address::repeat_byte(0xEE),
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                l1_head: B256::repeat_byte(0xAA),
-                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-                ..Default::default()
-            },
-        )]),
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: Address::repeat_byte(0xEE),
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: B256::repeat_byte(0x01),
+            l2_block_number: 20,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: B256::repeat_byte(0xAA),
+        intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+        ..Default::default()
     });
 
     (l2, factory, verifier)
@@ -153,7 +152,7 @@ fn driver_with_ready_proof(
     game_state: MockGameState,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let verifier = Arc::new(MockAggregateVerifier { games: HashMap::from([(addr(0), game_state)]) });
+    let verifier = single_game_verifier(game_state);
     let l2 = Arc::new(MockL2Provider::new());
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.pending_proofs.insert(
@@ -185,29 +184,20 @@ async fn test_step_valid_game_skipped() {
     // l2_block_number - starting_block_number < intermediate_block_interval
     // → expected_count = 0 → trivially valid, no proof requested.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(
-            addr(0),
-            MockGameState {
-                tee_prover: Address::repeat_byte(0xEE),
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 14,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                l1_head: B256::repeat_byte(0xAA),
-                ..Default::default()
-            },
-        )]),
-    });
-    let l2 = Arc::new(MockL2Provider::new());
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "should-not-be-called".to_string(),
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: Address::repeat_byte(0xEE),
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: B256::repeat_byte(0x01),
+            l2_block_number: 14,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: B256::repeat_byte(0xAA),
         ..Default::default()
     });
+    let l2 = Arc::new(MockL2Provider::new());
 
-    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
     driver.step().await.unwrap();
 }
@@ -217,24 +207,17 @@ async fn test_step_validation_error_blocks_not_available() {
     // Game with intermediate roots, but checkpoint blocks are unavailable.
     // Validator returns BlockNotAvailable → process_candidate skips gracefully.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(
-            addr(0),
-            MockGameState {
-                status: 0,
-                zk_prover: Address::ZERO,
-                tee_prover: Address::repeat_byte(0xEE),
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                l1_head: B256::repeat_byte(0xAA),
-                intermediate_output_roots: vec![B256::repeat_byte(0xFF), B256::repeat_byte(0xEE)],
-                ..Default::default()
-            },
-        )]),
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: Address::repeat_byte(0xEE),
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: B256::repeat_byte(0x01),
+            l2_block_number: 20,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: B256::repeat_byte(0xAA),
+        intermediate_output_roots: vec![B256::repeat_byte(0xFF), B256::repeat_byte(0xEE)],
+        ..Default::default()
     });
 
     let mut l2 = MockL2Provider::new();
@@ -242,12 +225,7 @@ async fn test_step_validation_error_blocks_not_available() {
     l2.error_blocks.push(20);
     let l2 = Arc::new(l2);
 
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "test-session".to_string(),
-        ..Default::default()
-    });
-
-    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
     driver.step().await.unwrap();
 }
@@ -709,23 +687,18 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     let l1_hash = B256::repeat_byte(0xAA);
     let tee_addr = Address::repeat_byte(0xEE);
 
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(
-            addr(0),
-            MockGameState {
-                tee_prover: tee_addr,
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                l1_head: l1_hash,
-                // root_15 is correct, index 1 is bogus — invalid_index == 1
-                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-                ..Default::default()
-            },
-        )]),
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: tee_addr,
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: B256::repeat_byte(0x01),
+            l2_block_number: 20,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: l1_hash,
+        // root_15 is correct, index 1 is bogus — invalid_index == 1
+        intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+        ..Default::default()
     });
 
     let l1_head = Arc::new(MockL1HeadProvider::success(l1_hash, 100));
@@ -778,30 +751,18 @@ async fn test_step_nullified_game_not_reprocessed() {
     // Both provers zeroed (post-nullification) → scanner filters it out.
     let (l2, factory, root_15, _root_20) = base_game_mocks();
 
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(
-            addr(0),
-            MockGameState {
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                l1_head: B256::repeat_byte(0xAA),
-                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-                ..Default::default()
-            },
-        )]),
-    });
-
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "should-not-be-called".to_string(),
+    let verifier = single_game_verifier(MockGameState {
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: B256::repeat_byte(0x01),
+            l2_block_number: 20,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: B256::repeat_byte(0xAA),
+        intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
         ..Default::default()
     });
-    let tx_manager = default_tx_manager();
-
-    let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
     // Run two steps — the game should be filtered by the scanner on both.
     driver.step().await.unwrap();
@@ -826,7 +787,7 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
     let l2 = Arc::new(MockL2Provider::new());
     let mut game_state = mock_state_with_tee(0, zk_addr, tee_addr, 20);
     game_state.countered_index = 2; // challenged at 0-based index 1
-    let verifier = Arc::new(MockAggregateVerifier { games: HashMap::from([(addr(0), game_state)]) });
+    let verifier = single_game_verifier(game_state);
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.pending_proofs.insert(
@@ -857,9 +818,7 @@ async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
 
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let l2 = Arc::new(MockL2Provider::new());
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(addr(0), mock_state_with_tee(0, zk_addr, tee_addr, 20))]),
-    });
+    let verifier = single_game_verifier(mock_state_with_tee(0, zk_addr, tee_addr, 20));
 
     let tx = MockTxManager::new(Err(TxManagerError::NonceTooLow)); // Should never be called
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx);
@@ -899,24 +858,19 @@ fn fraudulent_zk_challenge_mocks(
     let (l2, factory, root_15, root_20) = base_game_mocks();
     let onchain_root_at_20 = if correct_root_at_20 { root_20 } else { B256::repeat_byte(0xFF) };
 
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(
-            addr(0),
-            MockGameState {
-                zk_prover: Address::repeat_byte(0xCC),
-                tee_prover: Address::repeat_byte(0xEE),
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                l1_head: B256::repeat_byte(0xAA),
-                intermediate_output_roots: vec![root_15, onchain_root_at_20],
-                countered_index: 2, // 1-based → challenged_index = 1
-                ..Default::default()
-            },
-        )]),
+    let verifier = single_game_verifier(MockGameState {
+        zk_prover: Address::repeat_byte(0xCC),
+        tee_prover: Address::repeat_byte(0xEE),
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: B256::repeat_byte(0x01),
+            l2_block_number: 20,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: B256::repeat_byte(0xAA),
+        intermediate_output_roots: vec![root_15, onchain_root_at_20],
+        countered_index: 2, // 1-based → challenged_index = 1
+        ..Default::default()
     });
 
     (l2, factory, verifier)
@@ -929,12 +883,7 @@ async fn test_step_fraudulent_zk_challenge_legitimate_skips() {
     // a proof.
     let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(false);
 
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "should-not-be-called".to_string(),
-        ..Default::default()
-    });
-
-    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.step().await.unwrap();
 
     assert!(
@@ -991,23 +940,17 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
 
     let zk_addr = Address::repeat_byte(0xCC);
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(
-            addr(0),
-            MockGameState {
-                status: 0,
-                zk_prover: zk_addr,
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 20,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                l1_head: B256::repeat_byte(0xAA),
-                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-                ..Default::default()
-            },
-        )]),
+    let verifier = single_game_verifier(MockGameState {
+        zk_prover: zk_addr,
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: B256::repeat_byte(0x01),
+            l2_block_number: 20,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: B256::repeat_byte(0xAA),
+        intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+        ..Default::default()
     });
 
     let zk = Arc::new(MockZkProofProvider {
@@ -1030,31 +973,20 @@ async fn test_step_valid_zk_proposal_skipped() {
     // A ZK-proposed game with valid intermediate roots should not trigger
     // any action.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let verifier = Arc::new(MockAggregateVerifier {
-        games: HashMap::from([(
-            addr(0),
-            MockGameState {
-                status: 0,
-                zk_prover: Address::repeat_byte(0xCC),
-                game_info: base_proof_contracts::GameInfo {
-                    root_claim: B256::repeat_byte(0x01),
-                    l2_block_number: 14,
-                    parent_index: 0,
-                },
-                starting_block_number: 10,
-                l1_head: B256::repeat_byte(0xAA),
-                ..Default::default()
-            },
-        )]),
+    let verifier = single_game_verifier(MockGameState {
+        zk_prover: Address::repeat_byte(0xCC),
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: B256::repeat_byte(0x01),
+            l2_block_number: 14,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: B256::repeat_byte(0xAA),
+        ..Default::default()
     });
     let l2 = Arc::new(MockL2Provider::new());
 
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "should-not-be-called".to_string(),
-        ..Default::default()
-    });
-
-    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.step().await.unwrap();
 
     assert!(driver.pending_proofs.is_empty(), "valid ZK proposal should not trigger any proof");
@@ -1063,6 +995,16 @@ async fn test_step_valid_zk_proposal_skipped() {
 // ──────────────────────────────────────────────────────────────────────────
 // Bond lifecycle integration tests
 // ──────────────────────────────────────────────────────────────────────────
+
+const fn bond_test_state(claim_addr: Address) -> MockGameState {
+    let mut state = mock_state(1, Address::ZERO, 100);
+    state.bond_recipient = claim_addr;
+    state
+}
+
+fn bond_test_verifier(claim_addr: Address) -> Arc<MockAggregateVerifier> {
+    single_game_verifier(bond_test_state(claim_addr))
+}
 
 fn default_bond_manager(claim_addr: Address) -> BondManager<TokioRuntime> {
     let mut mgr = BondManager::new(
@@ -1089,12 +1031,7 @@ async fn test_bond_manager_full_lifecycle() {
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
     let tx_hash = B256::repeat_byte(0xDD);
-
-    let mut verifier_games = HashMap::new();
-    let mut state = mock_state(1, Address::ZERO, 100);
-    state.bond_recipient = claim_addr;
-    verifier_games.insert(game_addr, state);
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+    let verifier = bond_test_verifier(claim_addr);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
         Ok(tx_hash), // claimCredit (unlock) tx
@@ -1137,12 +1074,7 @@ async fn test_bond_manager_skips_already_resolved_game() {
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
     let tx_hash = B256::repeat_byte(0xDD);
-
-    let mut verifier_games = HashMap::new();
-    let mut state = mock_state(1, Address::ZERO, 100); // status=1 (CHALLENGER_WINS)
-    state.bond_recipient = claim_addr;
-    verifier_games.insert(game_addr, state);
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+    let verifier = bond_test_verifier(claim_addr);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
         Ok(tx_hash), // unlock
@@ -1177,13 +1109,10 @@ async fn test_bond_manager_skips_already_unlocked_game() {
     let game_addr = addr(0);
     let tx_hash = B256::repeat_byte(0xDD);
 
-    let mut verifier_games = HashMap::new();
-    let mut state = mock_state(1, Address::ZERO, 100);
-    state.bond_recipient = claim_addr;
+    let mut state = bond_test_state(claim_addr);
     state.bond_unlocked = true;
     state.resolved_at = 1_000_000;
-    verifier_games.insert(game_addr, state);
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+    let verifier = single_game_verifier(state);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
         Ok(tx_hash), // withdraw
@@ -1216,14 +1145,11 @@ async fn test_bond_manager_skips_already_claimed_game() {
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
 
-    let mut verifier_games = HashMap::new();
-    let mut state = mock_state(1, Address::ZERO, 100);
-    state.bond_recipient = claim_addr;
+    let mut state = bond_test_state(claim_addr);
     state.bond_unlocked = true;
     state.bond_claimed = true;
     state.resolved_at = 1_000_000;
-    verifier_games.insert(game_addr, state);
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+    let verifier = single_game_verifier(state);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
 
@@ -1250,12 +1176,7 @@ async fn test_bond_manager_tx_failure_retries() {
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
     let tx_hash = B256::repeat_byte(0xDD);
-
-    let mut verifier_games = HashMap::new();
-    let mut state = mock_state(1, Address::ZERO, 100); // status=1 (CHALLENGER_WINS)
-    state.bond_recipient = claim_addr;
-    verifier_games.insert(game_addr, state);
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+    let verifier = bond_test_verifier(claim_addr);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
         Err(base_tx_manager::TxManagerError::NonceTooLow.into()),
@@ -1297,11 +1218,9 @@ async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
 
-    let mut verifier_games = HashMap::new();
-    let mut state = mock_state(2, Address::ZERO, 100); // status=2 (DEFENDER_WINS)
-    state.bond_recipient = claim_addr;
-    verifier_games.insert(game_addr, state);
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+    let mut state = bond_test_state(claim_addr);
+    state.status = 2; // DEFENDER_WINS
+    let verifier = single_game_verifier(state);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
 
@@ -1325,11 +1244,10 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
     let other_addr = Address::repeat_byte(0xDD);
     let game_addr = addr(0);
 
-    let mut verifier_games = HashMap::new();
-    let mut state = mock_state(2, Address::ZERO, 100); // status=2 (DEFENDER_WINS)
+    let mut state = bond_test_state(claim_addr);
+    state.status = 2; // DEFENDER_WINS
     state.bond_recipient = other_addr; // bond goes to someone else
-    verifier_games.insert(game_addr, state);
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+    let verifier = single_game_verifier(state);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
 
