@@ -42,7 +42,7 @@ eyre.workspace = true
 rand.workspace = true
 revm.workspace = true
 serde.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 futures.workspace = true
 tracing.workspace = true
 humantime.workspace = true

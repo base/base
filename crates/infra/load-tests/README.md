@@ -45,6 +45,8 @@ Example minimal config:
 
 ```yaml
 rpc: http://localhost:8545
+rpc_ws_url: "ws://localhost:8546"
+flashblocks_ws_url: "ws://localhost:7111"
 sender_count: 10
 target_gps: 2100000
 duration: "30s"

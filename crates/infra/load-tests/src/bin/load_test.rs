@@ -3,7 +3,10 @@
 //! Also provides a `rescue` subcommand for recovering stranded funds from
 //! test accounts after failed or interrupted load test runs.
 
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration, sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+},};
 
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, TxHash, U256, utils::format_ether};
@@ -53,10 +56,12 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
 
     let mut config_path: Option<PathBuf> = None;
     let mut continuous = false;
+    let mut drain_only = false;
 
     for arg in &args {
         match arg.as_str() {
             "--continuous" => continuous = true,
+            "--drain-only" => drain_only = true,
             other => {
                 if config_path.is_none() {
                     config_path = Some(PathBuf::from(other));
@@ -70,13 +75,13 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
             option_env!("CARGO_MANIFEST_DIR")
                 .map(|dir| PathBuf::from(dir).join("examples/devnet.yaml"))
         })
-        .ok_or_else(|| eyre::eyre!("usage: base-load-test [--continuous] <config.yaml>"))?;
+        .ok_or_else(|| {
+            eyre::eyre!("usage: base-load-test [--continuous] [--drain-only] <config.yaml>")
+        })?;
 
     if !config_path.exists() {
         bail!("config file not found: {}", config_path.display());
     }
-
-    println!("=== Base Load Test Runner ===");
 
     let test_config = TestConfig::load(&config_path)?;
 
@@ -88,6 +93,25 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
         let cfg = test_config.to_load_config(rpc_chain_id)?;
         if continuous { cfg.with_continuous() } else { cfg }
     };
+
+    let funding_key = TestConfig::funder_key()?;
+
+    // Drain-only mode: recover funds from a previous interrupted run.
+    if drain_only {
+        println!("=== Drain-Only Mode ===");
+        println!(
+            "Re-deriving {} accounts from config and draining to funder...",
+            load_config.account_count
+        );
+        let runner = LoadRunner::new(load_config)?;
+        match runner.drain_accounts(funding_key).await {
+            Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+            Err(e) => bail!("drain failed: {e}"),
+        }
+        return Ok(());
+    }
+
+    println!("=== Base Load Test Runner ===");
 
     println!(
         "Config: {} | RPC: {} | Chain: {}",
@@ -103,10 +127,15 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
     );
     println!();
 
-    let funding_key = TestConfig::funder_key()?;
     let funding_amount = test_config.parse_funding_amount()?;
 
     let mut runner = LoadRunner::new(load_config.clone())?;
+
+    // Install signal handler before any long-running work. First signal sets
+    // the stop flag so `run()` exits its loop gracefully and the drain sequence
+    // runs. A second signal force-exits.
+    let stop_flag = runner.stop_flag();
+    install_signal_handler(stop_flag);
 
     println!("Funding test accounts...");
     runner.fund_accounts(funding_key.clone(), funding_amount).await?;
@@ -120,40 +149,79 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
     let display = LoadTestDisplay::new(&mp, load_config.duration);
     runner.set_display(display);
 
-    let summary = runner.run().await?;
+    let run_result = runner.run().await;
+
+    if let Ok(ref summary) = run_result {
+        println!();
+        println!("=== Results ===");
+        println!(
+            "Submitted: {} | Confirmed: {} | Failed: {}",
+            summary.throughput.total_submitted,
+            summary.throughput.total_confirmed,
+            summary.throughput.total_failed
+        );
+        println!(
+            "TPS: {:.2} | GPS: {:.0} | Success: {:.1}%",
+            summary.throughput.tps,
+            summary.throughput.gps,
+            summary.throughput.success_rate()
+        );
+        let fb = &summary.flashblocks_latency;
+        println!(
+            "Flashblocks Latency: p50={:.1?}  p90={:.1?}  p99={:.1?}  (n={})",
+            fb.p50, fb.p90, fb.p99, fb.count
+        );
+        let bl = &summary.block_latency;
+        println!(
+            "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+            bl.min, bl.p50, bl.mean, bl.p99, bl.max
+        );
+        println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
+    }
 
     println!();
-    println!("=== Results ===");
-    println!(
-        "Submitted: {} | Confirmed: {} | Failed: {}",
-        summary.throughput.total_submitted,
-        summary.throughput.total_confirmed,
-        summary.throughput.total_failed
-    );
-    println!(
-        "TPS: {:.2} | GPS: {:.0} | Success: {:.1}%",
-        summary.throughput.tps,
-        summary.throughput.gps,
-        summary.throughput.success_rate()
-    );
-    let fb = &summary.flashblocks_latency;
-    println!(
-        "Flashblocks Latency: p50={:.1?}  p90={:.1?}  p99={:.1?}  (n={})",
-        fb.p50, fb.p90, fb.p99, fb.count
-    );
-    let bl = &summary.block_latency;
-    println!(
-        "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
-        bl.min, bl.p50, bl.mean, bl.p99, bl.max
-    );
-    println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
-    println!();
-
     println!("Draining accounts back to funder...");
-    let drained = runner.drain_accounts(funding_key).await?;
-    println!("Drained {} ETH back to funder.", format_ether(drained));
+    match runner.drain_accounts(funding_key).await {
+        Ok(drained) => println!("Drained {} ETH back to funder.", format_ether(drained)),
+        Err(e) => eprintln!("Warning: drain failed: {e}"),
+    }
+
+    run_result?;
 
     Ok(())
+}
+
+/// Spawns a background task that converts OS signals into a cooperative stop
+/// via the shared [`AtomicBool`]. A second signal force-exits the process.
+fn install_signal_handler(stop_flag: Arc<AtomicBool>) {
+    tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        eprintln!("\nReceived signal, stopping gracefully. Send again to force exit.");
+        stop_flag.store(true, Ordering::SeqCst);
+
+        wait_for_shutdown_signal().await;
+        eprintln!("\nForcing exit. Funds may remain in test accounts.");
+        std::process::exit(1);
+    });
+}
+
+/// Waits for either SIGINT (Ctrl-C) or SIGTERM (Unix only).
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 // ---------------------------------------------------------------------------
