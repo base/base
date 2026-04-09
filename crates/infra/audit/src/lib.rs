@@ -34,7 +34,6 @@ pub use storage::{
 };
 
 mod types;
-pub use base_bundles::RejectedTransaction;
 use tokio::sync::mpsc;
 use tracing::error;
 pub use types::{BundleEvent, BundleId, DropReason, Transaction, TransactionId};

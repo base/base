@@ -467,6 +467,7 @@ impl BasePayloadBuilderCtx {
                 metering,
             };
             if let Err(e) = sender.try_send(rejected_tx) {
+                BuilderMetrics::rejected_tx_channel_drops().increment(1);
                 warn!(
                     target: "payload_builder",
                     error = %e,
@@ -804,6 +805,8 @@ impl BasePayloadBuilderCtx {
                         // `ExecutionMeteringLimitExceeded` can only fire when
                         // `tx.execution_time_us` or `tx.state_root_gas` is Some, which
                         // requires `resource_usage` to be Some.
+                        //
+                        // We are only doing metering rejections for the audit trail for now
                         self.send_rejected_tx(
                             tx_hash,
                             &err_message,

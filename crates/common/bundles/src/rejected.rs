@@ -7,6 +7,7 @@ use crate::MeterBundleResponse;
 
 /// A transaction that was rejected during block building.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RejectedTransaction {
     /// The block number the transaction was intended for.
     pub block_number: u64,

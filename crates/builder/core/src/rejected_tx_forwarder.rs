@@ -29,6 +29,7 @@ impl RejectedTxForwarder {
         audit_archiver_url: &str,
         rx: mpsc::UnboundedReceiver<RejectedTxInfo>,
     ) -> eyre::Result<Self> {
+        // TODO: consider doing batched RPC calls if we are dropping too many rejected transactions
         let client = HttpClientBuilder::default()
             .request_timeout(Duration::from_secs(1))
             .build(audit_archiver_url)
