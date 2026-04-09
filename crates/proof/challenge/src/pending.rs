@@ -152,22 +152,6 @@ impl PendingProof {
         }
     }
 
-    /// Returns the session ID if the proof is in the `AwaitingProof` phase.
-    pub fn session_id(&self) -> Option<&str> {
-        match &self.phase {
-            ProofPhase::AwaitingProof { session_id } => Some(session_id),
-            _ => None,
-        }
-    }
-
-    /// Returns the proof bytes if the proof is in the `ReadyToSubmit` phase.
-    pub const fn proof_bytes(&self) -> Option<&Bytes> {
-        match &self.phase {
-            ProofPhase::ReadyToSubmit { proof_bytes } => Some(proof_bytes),
-            _ => None,
-        }
-    }
-
     /// Returns `true` if the proof is in the `ReadyToSubmit` phase.
     pub const fn is_ready(&self) -> bool {
         matches!(self.phase, ProofPhase::ReadyToSubmit { .. })
@@ -175,7 +159,7 @@ impl PendingProof {
 }
 
 /// Collection of in-flight proof sessions keyed by dispute-game address.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct PendingProofs(HashMap<Address, PendingProof>);
 
 impl PendingProofs {
@@ -274,10 +258,11 @@ impl PendingProofs {
                 raw.push(PROOF_TYPE_ZK);
                 raw.extend_from_slice(&response.receipt);
                 let proof_bytes = Bytes::from(raw);
+                let update = ProofUpdate::Ready(proof_bytes.clone());
 
-                pending.phase = ProofPhase::ReadyToSubmit { proof_bytes: proof_bytes.clone() };
+                pending.phase = ProofPhase::ReadyToSubmit { proof_bytes };
 
-                ProofUpdate::Ready(proof_bytes)
+                update
             }
             ProofJobStatus::Failed => {
                 warn!(game = %game, error_message = ?response.error_message, "proof job failed");
