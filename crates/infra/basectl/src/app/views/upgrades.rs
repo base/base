@@ -5,8 +5,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use url::Url;
-
 use base_alloy_chains::BaseChainConfig;
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -22,6 +20,7 @@ use ratatui::{
 };
 use serde_json::json;
 use tokio::{sync::mpsc, task::JoinHandle};
+use url::Url;
 
 use crate::{
     app::{Action, Resources, View},
