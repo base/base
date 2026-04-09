@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
@@ -13,7 +13,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
     DisputeGameFactoryContractClient,
 };
-use base_proof_rpc::{L2Client, L2ClientConfig};
+use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use base_zk_client::{ZkProofClient, ZkProofClientConfig};
@@ -147,10 +147,12 @@ impl ChallengerService {
                 .build(tee_url.as_str())
                 .map_err(|e| eyre::eyre!("failed to create TEE RPC client: {e}"))?;
             info!(endpoint = %tee_url, "TEE proof client initialized");
-            let tee_l1_provider = RootProvider::new_http(l1_rpc_url.clone());
+            let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
+            let l1_client = L1Client::new(l1_config)
+                .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
             Some(crate::TeeConfig {
                 provider: Arc::new(client),
-                l1_head_provider: Arc::new(crate::RpcL1HeadProvider::new(tee_l1_provider)),
+                l1_head_provider: Arc::new(l1_client),
                 request_timeout,
             })
         } else {
