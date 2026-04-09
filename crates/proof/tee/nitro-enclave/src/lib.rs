@@ -9,11 +9,6 @@ pub use oracle::Oracle;
 mod transport;
 pub use transport::{Frame, TransportError, TransportResult};
 
-mod types;
-pub use types::{
-    ECDSA_SIGNATURE_LENGTH, PROOF_JOURNAL_BASE_LENGTH, ProofJournal, Proposal, TeeProofResult,
-};
-
 mod attestation;
 pub use attestation::{
     AttestationDocument, AwsCaRoot, DEFAULT_CA_ROOTS, DEFAULT_CA_ROOTS_SHA256, VerificationResult,
