@@ -202,7 +202,7 @@ impl GameScanner {
             }
         }
 
-        candidates.sort_by_key(|c| c.index);
+        candidates.sort_unstable_by_key(|c| c.index);
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
 
@@ -235,36 +235,36 @@ impl GameScanner {
     pub async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
         let factory = self.factory_client.game_at_index(index).await?;
 
-        let status = self.verifier_client.status(factory.proxy).await?;
-        if status != Self::STATUS_IN_PROGRESS {
-            debug!(index = index, status = status, "skipping game not in progress");
-            return Ok(None);
-        }
-
-        // Phase 1: fetch only the fields needed for classification.
-        let (zk_prover, tee_prover, countered_index) = tokio::try_join!(
+        // Fetch status and classification fields in a single concurrent batch.
+        let (status, zk_prover, tee_prover, countered_index) = tokio::try_join!(
+            self.verifier_client.status(factory.proxy),
             self.verifier_client.zk_prover(factory.proxy),
             self.verifier_client.tee_prover(factory.proxy),
             self.verifier_client.countered_index(factory.proxy),
         )?;
 
-        // Classify the game based on its prover state. Return early for
-        // non-actionable games to avoid the remaining RPC calls.
-        let category = Self::classify(index, tee_prover, zk_prover, countered_index);
-        let category = match category {
+        if status != Self::STATUS_IN_PROGRESS {
+            debug!(index = index, status = status, "skipping game not in progress");
+            return Ok(None);
+        }
+
+        let category = match Self::classify(index, tee_prover, zk_prover, countered_index) {
             Some(c) => c,
             None => return Ok(None),
         };
 
-        // Phase 2: fetch the remaining fields only for actionable games.
-        let (info, starting_block_number, l1_head) = tokio::try_join!(
-            self.verifier_client.game_info(factory.proxy),
-            self.verifier_client.starting_block_number(factory.proxy),
-            self.verifier_client.l1_head(factory.proxy),
+        // Fetch remaining fields only for actionable games.
+        let ((info, starting_block_number, l1_head), intermediate_block_interval) = tokio::try_join!(
+            async {
+                let r = tokio::try_join!(
+                    self.verifier_client.game_info(factory.proxy),
+                    self.verifier_client.starting_block_number(factory.proxy),
+                    self.verifier_client.l1_head(factory.proxy),
+                );
+                Result::<_, eyre::Report>::Ok(r?)
+            },
+            self.resolve_intermediate_block_interval(factory.game_type),
         )?;
-
-        let intermediate_block_interval =
-            self.resolve_intermediate_block_interval(factory.game_type).await?;
 
         Ok(Some(CandidateGame {
             index,
@@ -293,9 +293,14 @@ impl GameScanner {
             // Path 1: TEE-proposed, unchallenged.
             (true, false, 0) => Some(GameCategory::InvalidTeeProposal),
 
-            // Path 2: TEE-proposed and challenged by ZK.
-            (true, true, ci) if ci > 0 => {
-                Some(GameCategory::FraudulentZkChallenge { challenged_index: ci - 1 })
+            // TEE-only game with a non-zero countered_index — unexpected state.
+            (true, false, ci) => {
+                debug!(
+                    index = index,
+                    countered_index = ci,
+                    "skipping TEE-only game with unexpected non-zero countered_index"
+                );
+                None
             }
 
             // TEE + ZK present but no countered index — second proof was added
@@ -305,12 +310,16 @@ impl GameScanner {
                 None
             }
 
+            // Path 2: TEE-proposed and challenged by ZK.
+            (true, true, ci) => {
+                Some(GameCategory::FraudulentZkChallenge { challenged_index: ci - 1 })
+            }
+
             // Path 3: ZK-proposed, unchallenged.
             (false, true, 0) => Some(GameCategory::InvalidZkProposal),
 
             // ZK-only game with a non-zero countered_index — unexpected state.
-            // A ZK-proposed game should not have a challenge counter set.
-            (false, true, ci) if ci > 0 => {
+            (false, true, ci) => {
                 debug!(
                     index = index,
                     countered_index = ci,
@@ -322,18 +331,6 @@ impl GameScanner {
             // Both provers zeroed — already nullified.
             (false, false, _) => {
                 debug!(index = index, "skipping nullified game (both provers zeroed)");
-                None
-            }
-
-            // Defensive catch-all for any state not covered above.
-            _ => {
-                debug!(
-                    index = index,
-                    has_tee = has_tee,
-                    has_zk = has_zk,
-                    countered_index = countered_index,
-                    "skipping game in unexpected state"
-                );
                 None
             }
         }
