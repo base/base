@@ -132,7 +132,6 @@ struct Checkpoint {
     claimed_root: B256,
 }
 
-
 /// Validates output roots for candidate dispute games.
 ///
 /// Fetches L2 block headers and `L2ToL1MessagePasser` storage proofs to
