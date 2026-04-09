@@ -703,7 +703,6 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<Option<RemovalReason>> {
-        // Check if already unlocked onchain.
         let (unlocked, resolved_at) = futures::try_join!(
             verifier_client.bond_unlocked(game_address),
             verifier_client.resolved_at(game_address),
@@ -770,7 +769,6 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<Option<RemovalReason>> {
-        // Check if already claimed onchain.
         let claimed = verifier_client.bond_claimed(game_address).await?;
         if claimed {
             info!(game = %game_address, "bond already claimed");
@@ -933,7 +931,10 @@ mod tests {
     use futures::stream::BoxStream;
 
     use super::*;
-    use crate::test_utils::{MockDisputeGameFactory, TEST_DISCOVERY_INTERVAL, empty_factory};
+    use crate::test_utils::{
+        MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory,
+        TEST_DISCOVERY_INTERVAL, addr, empty_factory, factory_game, mock_state,
+    };
 
     /// A deterministic clock that always returns fixed values.
     ///
@@ -1130,10 +1131,6 @@ mod tests {
     }
 
     // ---- discover_claimable_games tests ----
-
-    use crate::test_utils::{
-        MockAggregateVerifier, MockBondTransactionSubmitter, addr, factory_game, mock_state,
-    };
 
     /// Builds a factory and verifier pair where each game has the given
     /// `bond_recipient` and `zk_prover`. All games are `IN_PROGRESS` (status 0)
