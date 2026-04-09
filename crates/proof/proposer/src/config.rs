@@ -93,7 +93,8 @@ pub struct ProposerConfig {
     /// Maximum number of concurrent proof tasks.
     /// When > 1, uses the parallel proving pipeline instead of the sequential driver.
     pub max_parallel_proofs: usize,
-    /// Maximum number of games to scan backwards when recovering state on startup.
+    /// Maximum number of factory entries to scan and forward-walk steps when
+    /// recovering state on startup.
     pub max_game_recovery_lookback: u64,
     /// Optional address of the `TEEProverRegistry` contract on L1.
     /// When set, the proposer validates signers before on-chain submission.

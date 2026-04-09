@@ -150,11 +150,13 @@ pub struct ProposerArgs {
     )]
     pub max_parallel_proofs: usize,
 
-    /// Maximum number of games to scan backwards when recovering state on startup.
-    /// Must be greater than the maximum number of pending (unresolved) dispute games
-    /// that could exist at any given time. For production deployments with high game
-    /// volume, increase this beyond the default to ensure the proposer can always
-    /// find and resume from its most recent game after a restart.
+    /// Maximum number of factory entries to scan (from the most recent) and
+    /// forward-walk steps from the anchor root when recovering on-chain state.
+    /// Must be greater than the maximum number of pending (unresolved) dispute
+    /// games that could exist at any given time. For production deployments
+    /// with high game volume, increase this beyond the default to ensure the
+    /// proposer can always find and resume from its most recent game after a
+    /// restart.
     #[arg(
         long = "max-game-recovery-lookback",
         env = cli_env!("MAX_GAME_RECOVERY_LOOKBACK"),

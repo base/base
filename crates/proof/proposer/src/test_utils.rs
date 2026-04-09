@@ -201,10 +201,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
                 "mock: simulated game_info failure for {addr}"
             )));
         }
-        Ok(self.game_info_map.get(&addr).cloned().unwrap_or(GameInfo {
+        Ok(self.game_info_map.get(&addr).copied().unwrap_or(GameInfo {
             root_claim: B256::ZERO,
             l2_block_number: 0,
-            parent_index: 0,
+            parent_address: Address::ZERO,
         }))
     }
     async fn status(&self, _: Address) -> Result<u8, ContractError> {
@@ -307,7 +307,7 @@ impl OutputProposer for MockOutputProposer {
         &self,
         _proposal: &Proposal,
         _l2_block_number: u64,
-        _parent_index: u32,
+        _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         Ok(())

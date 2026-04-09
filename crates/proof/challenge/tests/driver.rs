@@ -122,7 +122,7 @@ fn invalid_game_mocks()
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: B256::repeat_byte(0xAA),
@@ -185,7 +185,7 @@ async fn test_step_valid_game_skipped() {
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 14,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: B256::repeat_byte(0xAA),
@@ -224,7 +224,7 @@ async fn test_step_validation_error_blocks_not_available() {
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: B256::repeat_byte(0xAA),
@@ -336,7 +336,7 @@ async fn test_step_validation_error_skipped() {
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: B256::repeat_byte(0xAA),
@@ -815,7 +815,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: l1_hash,
@@ -900,7 +900,7 @@ async fn test_step_nullified_game_not_reprocessed() {
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: B256::repeat_byte(0xAA),
@@ -1041,7 +1041,7 @@ fn fraudulent_zk_challenge_mocks(
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: B256::repeat_byte(0xAA),
@@ -1133,7 +1133,7 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 20,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: B256::repeat_byte(0xAA),
@@ -1173,7 +1173,7 @@ async fn test_step_valid_zk_proposal_skipped() {
             game_info: base_proof_contracts::GameInfo {
                 root_claim: B256::repeat_byte(0x01),
                 l2_block_number: 14,
-                parent_index: 0,
+                parent_address: Address::ZERO,
             },
             starting_block_number: 10,
             l1_head: B256::repeat_byte(0xAA),

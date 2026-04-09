@@ -35,8 +35,8 @@ sol! {
         /// Returns the address that provided a ZK proof.
         function zkProver() external view returns (address);
 
-        /// Returns the parent game's factory index.
-        function parentIndex() external pure returns (uint32);
+        /// Returns the parent game's address.
+        function parentAddress() external pure returns (address);
 
         /// Returns the block interval between proposals (immutable on the implementation).
         function BLOCK_INTERVAL() external view returns (uint256);
@@ -136,14 +136,14 @@ sol! {
 }
 
 /// Information about a dispute game instance.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct GameInfo {
     /// The output root claimed by this game.
     pub root_claim: B256,
     /// The L2 block number of this game.
     pub l2_block_number: u64,
-    /// The parent game's factory index.
-    pub parent_index: u32,
+    /// The parent game's proxy address.
+    pub parent_address: Address,
 }
 
 /// Async trait for querying `AggregateVerifier` game instances.
@@ -238,7 +238,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
-        let (root_claim, l2_seq, parent_index) = futures::try_join!(
+        let (root_claim, l2_seq, parent_address) = futures::try_join!(
             async {
                 contract.rootClaim().call().await.map_err(|e| ContractError::Call {
                     context: "rootClaim failed".into(),
@@ -252,8 +252,8 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                 })
             },
             async {
-                contract.parentIndex().call().await.map_err(|e| ContractError::Call {
-                    context: "parentIndex failed".into(),
+                contract.parentAddress().call().await.map_err(|e| ContractError::Call {
+                    context: "parentAddress failed".into(),
                     source: e,
                 })
             },
@@ -263,7 +263,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .try_into()
             .map_err(|_| ContractError::Validation("l2SequenceNumber overflows u64".into()))?;
 
-        Ok(GameInfo { root_claim, l2_block_number, parent_index })
+        Ok(GameInfo { root_claim, l2_block_number, parent_address })
     }
 
     async fn status(&self, game_address: Address) -> Result<u8, ContractError> {

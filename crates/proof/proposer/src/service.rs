@@ -114,6 +114,14 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?;
     info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
 
+    // Validate that anchor_state_registry_addr is not the zero address.
+    // It is used as the "no parent" sentinel for the first game from anchor
+    // state, so a zero address would be indistinguishable from an unconfigured
+    // value.
+    if config.anchor_state_registry_addr == Address::ZERO {
+        return Err(eyre::eyre!("anchor-state-registry-addr must not be the zero address"));
+    }
+
     // ── 4. Create contract clients and read onchain config ──────────────
     let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
         config.anchor_state_registry_addr,
@@ -244,6 +252,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
             allow_non_finalized: config.allow_non_finalized,
             proposer_address: proposer_address.unwrap_or_default(),
             tee_image_hash: config.tee_image_hash,
+            anchor_state_registry_address: config.anchor_state_registry_addr,
         },
     };
     let pipeline = ProvingPipeline::new(
@@ -310,7 +319,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     if driver_handle.is_running()
         && let Err(e) = driver_handle.stop_proposer().await
     {
-        warn!(error = e, "Error stopping proposer driver");
+        warn!(error = %e, "Error stopping proposer driver");
     }
 
     if let Some(handle) = admin_handle {
