@@ -12,11 +12,11 @@ use base_challenger::{
     GameScanner, L1HeadProvider, OutputValidator, PendingProof, ProofPhase, ScannerConfig,
     TeeConfig,
     test_utils::{
-        MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState,
-        MockL1HeadProvider, MockL2Provider, MockTeeProofProvider, MockTxManager,
-        MockZkProofProvider, MockZkProofState, TEST_DISCOVERY_INTERVAL, addr,
-        build_test_header_and_account, empty_factory, factory_game, mock_state,
-        mock_state_with_tee, receipt_with_status,
+        DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier,
+        MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState, MockL1HeadProvider,
+        MockL2Provider, MockTeeProofProvider, MockTxManager, MockZkProofProvider,
+        MockZkProofState, TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account,
+        empty_factory, factory_game, mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
@@ -26,6 +26,12 @@ use base_runtime::TokioRuntime;
 use base_tx_manager::TxManagerError;
 use base_zk_client::{ProofJobStatus, ProofType, ProveBlockRequest};
 use tokio_util::sync::CancellationToken;
+
+const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
+const ZK_PROVER_ADDR: Address = Address::new([0xCC; 20]);
+const DEFAULT_TX_HASH: B256 = B256::repeat_byte(0xDD);
+const BOGUS_ROOT: B256 = B256::repeat_byte(0xFF);
+const BOGUS_CLAIM: B256 = B256::repeat_byte(0x01);
 
 /// Builds a test driver with the given mocks.
 fn test_driver(
@@ -97,7 +103,7 @@ fn default_prove_request() -> ProveBlockRequest {
         proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
         session_id: Some(session_id),
         prover_address: Some(format!("{:#x}", addr(0))),
-        l1_head: Some(format!("{:#x}", B256::repeat_byte(0xAA))),
+        l1_head: Some(format!("{:#x}", DEFAULT_L1_HEAD)),
     }
 }
 
@@ -105,13 +111,12 @@ fn default_prove_request() -> ProveBlockRequest {
 /// invalid-game test scenarios. Layout: starting=10, `l2_block=20`,
 /// interval=5, checkpoints at blocks 15 and 20.
 fn base_game_mocks() -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, B256, B256) {
-    let storage_hash = B256::repeat_byte(0xBB);
-    let (header_15, account_15) = build_test_header_and_account(15, storage_hash);
+    let (header_15, account_15) = build_test_header_and_account(15, STORAGE_HASH);
     let root_15 =
-        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
-    let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
+        OutputRoot::from_parts(header_15.state_root, STORAGE_HASH, header_15.hash_slow()).hash();
+    let (header_20, account_20) = build_test_header_and_account(20, STORAGE_HASH);
     let root_20 =
-        OutputRoot::from_parts(header_20.state_root, storage_hash, header_20.hash_slow()).hash();
+        OutputRoot::from_parts(header_20.state_root, STORAGE_HASH, header_20.hash_slow()).hash();
 
     let mut l2 = MockL2Provider::new();
     l2.insert_block(15, header_15, account_15);
@@ -131,15 +136,15 @@ fn invalid_game_mocks()
     let (l2, factory, root_15, _root_20) = base_game_mocks();
 
     let verifier = single_game_verifier(MockGameState {
-        tee_prover: Address::repeat_byte(0xEE),
+        tee_prover: DEFAULT_TEE_PROVER,
         game_info: base_proof_contracts::GameInfo {
-            root_claim: B256::repeat_byte(0x01),
+            root_claim: BOGUS_CLAIM,
             l2_block_number: 20,
             parent_index: 0,
         },
         starting_block_number: 10,
-        l1_head: B256::repeat_byte(0xAA),
-        intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+        l1_head: DEFAULT_L1_HEAD,
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
         ..Default::default()
     });
 
@@ -185,14 +190,14 @@ async fn test_step_valid_game_skipped() {
     // → expected_count = 0 → trivially valid, no proof requested.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let verifier = single_game_verifier(MockGameState {
-        tee_prover: Address::repeat_byte(0xEE),
+        tee_prover: DEFAULT_TEE_PROVER,
         game_info: base_proof_contracts::GameInfo {
-            root_claim: B256::repeat_byte(0x01),
+            root_claim: BOGUS_CLAIM,
             l2_block_number: 14,
             parent_index: 0,
         },
         starting_block_number: 10,
-        l1_head: B256::repeat_byte(0xAA),
+        l1_head: DEFAULT_L1_HEAD,
         ..Default::default()
     });
     let l2 = Arc::new(MockL2Provider::new());
@@ -208,15 +213,15 @@ async fn test_step_validation_error_blocks_not_available() {
     // Validator returns BlockNotAvailable → process_candidate skips gracefully.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let verifier = single_game_verifier(MockGameState {
-        tee_prover: Address::repeat_byte(0xEE),
+        tee_prover: DEFAULT_TEE_PROVER,
         game_info: base_proof_contracts::GameInfo {
-            root_claim: B256::repeat_byte(0x01),
+            root_claim: BOGUS_CLAIM,
             l2_block_number: 20,
             parent_index: 0,
         },
         starting_block_number: 10,
-        l1_head: B256::repeat_byte(0xAA),
-        intermediate_output_roots: vec![B256::repeat_byte(0xFF), B256::repeat_byte(0xEE)],
+        l1_head: DEFAULT_L1_HEAD,
+        intermediate_output_roots: vec![BOGUS_ROOT, B256::repeat_byte(0xEE)],
         ..Default::default()
     });
 
@@ -372,8 +377,7 @@ async fn test_step_pending_proof_skips_prove_block() {
         state: Mutex::new(MockZkProofState { receipt: vec![0xBE, 0xEF], ..Default::default() }),
     });
 
-    let tx_hash = B256::repeat_byte(0xDD);
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, DEFAULT_TX_HASH)));
 
     let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), tx_manager);
 
@@ -455,7 +459,7 @@ async fn test_poll_or_submit_drops_resolved_game() {
 async fn test_poll_or_submit_drops_already_challenged_game() {
     // Game is still IN_PROGRESS but already challenged (zk_prover != ZERO)
     // — driver should drop the pending proof.
-    let mut driver = driver_with_ready_proof(mock_state(0, Address::repeat_byte(0xCC), 20));
+    let mut driver = driver_with_ready_proof(mock_state(0, ZK_PROVER_ADDR, 20));
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -503,8 +507,7 @@ async fn test_step_proof_retry_succeeds() {
         }),
     });
 
-    let tx_hash = B256::repeat_byte(0xDD);
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, DEFAULT_TX_HASH)));
 
     let mut driver = test_driver(factory, verifier, l2, Arc::clone(&zk), tx_manager);
 
@@ -684,20 +687,19 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
 async fn test_step_invalid_game_tee_proof_succeeds() {
     // TEE proof succeeds → submitted directly without ZK.
     let (l2, factory, root_15, root_20) = base_game_mocks();
-    let l1_hash = B256::repeat_byte(0xAA);
-    let tee_addr = Address::repeat_byte(0xEE);
+    let l1_hash = DEFAULT_L1_HEAD;
 
     let verifier = single_game_verifier(MockGameState {
-        tee_prover: tee_addr,
+        tee_prover: DEFAULT_TEE_PROVER,
         game_info: base_proof_contracts::GameInfo {
-            root_claim: B256::repeat_byte(0x01),
+            root_claim: BOGUS_CLAIM,
             l2_block_number: 20,
             parent_index: 0,
         },
         starting_block_number: 10,
         l1_head: l1_hash,
         // root_15 is correct, index 1 is bogus — invalid_index == 1
-        intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
         ..Default::default()
     });
 
@@ -717,8 +719,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         proposals: vec![],
     }));
 
-    let tx_hash = B256::repeat_byte(0xDD);
-    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
+    let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, DEFAULT_TX_HASH)));
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "should-not-be-called".to_string(),
@@ -753,13 +754,13 @@ async fn test_step_nullified_game_not_reprocessed() {
 
     let verifier = single_game_verifier(MockGameState {
         game_info: base_proof_contracts::GameInfo {
-            root_claim: B256::repeat_byte(0x01),
+            root_claim: BOGUS_CLAIM,
             l2_block_number: 20,
             parent_index: 0,
         },
         starting_block_number: 10,
-        l1_head: B256::repeat_byte(0xAA),
-        intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+        l1_head: DEFAULT_L1_HEAD,
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
         ..Default::default()
     });
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
@@ -780,12 +781,9 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
     // A pending proof with DisputeIntent::Nullify should NOT be dropped
     // when zkProver is non-zero (unlike DisputeIntent::Challenge, which
     // requires zkProver == ZERO).
-    let tee_addr = Address::repeat_byte(0xEE);
-    let zk_addr = Address::repeat_byte(0xCC);
-
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let l2 = Arc::new(MockL2Provider::new());
-    let mut game_state = mock_state_with_tee(0, zk_addr, tee_addr, 20);
+    let mut game_state = mock_state_with_tee(0, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20);
     game_state.countered_index = 2; // challenged at 0-based index 1
     let verifier = single_game_verifier(game_state);
 
@@ -813,12 +811,10 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
 async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
     // A pending proof with DisputeIntent::Challenge should be dropped
     // when zkProver is non-zero (game already challenged).
-    let tee_addr = Address::repeat_byte(0xEE);
-    let zk_addr = Address::repeat_byte(0xCC);
-
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let l2 = Arc::new(MockL2Provider::new());
-    let verifier = single_game_verifier(mock_state_with_tee(0, zk_addr, tee_addr, 20));
+    let verifier =
+        single_game_verifier(mock_state_with_tee(0, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20));
 
     let tx = MockTxManager::new(Err(TxManagerError::NonceTooLow)); // Should never be called
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx);
@@ -856,18 +852,18 @@ fn fraudulent_zk_challenge_mocks(
     correct_root_at_20: bool,
 ) -> (Arc<MockL2Provider>, Arc<MockDisputeGameFactory>, Arc<MockAggregateVerifier>) {
     let (l2, factory, root_15, root_20) = base_game_mocks();
-    let onchain_root_at_20 = if correct_root_at_20 { root_20 } else { B256::repeat_byte(0xFF) };
+    let onchain_root_at_20 = if correct_root_at_20 { root_20 } else { BOGUS_ROOT };
 
     let verifier = single_game_verifier(MockGameState {
-        zk_prover: Address::repeat_byte(0xCC),
-        tee_prover: Address::repeat_byte(0xEE),
+        zk_prover: ZK_PROVER_ADDR,
+        tee_prover: DEFAULT_TEE_PROVER,
         game_info: base_proof_contracts::GameInfo {
-            root_claim: B256::repeat_byte(0x01),
+            root_claim: BOGUS_CLAIM,
             l2_block_number: 20,
             parent_index: 0,
         },
         starting_block_number: 10,
-        l1_head: B256::repeat_byte(0xAA),
+        l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![root_15, onchain_root_at_20],
         countered_index: 2, // 1-based → challenged_index = 1
         ..Default::default()
@@ -927,29 +923,27 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
     // A game proposed with a ZK proof (tee_prover == ZERO, zk_prover != ZERO)
     // with invalid intermediate roots should trigger a ZK proof with
     // DisputeIntent::Nullify.
-    let storage_hash = B256::repeat_byte(0xBB);
-    let (header_15, _account_15) = build_test_header_and_account(15, storage_hash);
+    let (header_15, _account_15) = build_test_header_and_account(15, STORAGE_HASH);
     let root_15 =
-        OutputRoot::from_parts(header_15.state_root, storage_hash, header_15.hash_slow()).hash();
-    let (header_20, account_20) = build_test_header_and_account(20, storage_hash);
+        OutputRoot::from_parts(header_15.state_root, STORAGE_HASH, header_15.hash_slow()).hash();
+    let (header_20, account_20) = build_test_header_and_account(20, STORAGE_HASH);
 
     let mut l2 = MockL2Provider::new();
     l2.insert_block(15, header_15, account_20.clone());
     l2.insert_block(20, header_20, account_20);
     let l2 = Arc::new(l2);
 
-    let zk_addr = Address::repeat_byte(0xCC);
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let verifier = single_game_verifier(MockGameState {
-        zk_prover: zk_addr,
+        zk_prover: ZK_PROVER_ADDR,
         game_info: base_proof_contracts::GameInfo {
-            root_claim: B256::repeat_byte(0x01),
+            root_claim: BOGUS_CLAIM,
             l2_block_number: 20,
             parent_index: 0,
         },
         starting_block_number: 10,
-        l1_head: B256::repeat_byte(0xAA),
-        intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+        l1_head: DEFAULT_L1_HEAD,
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
         ..Default::default()
     });
 
@@ -974,14 +968,14 @@ async fn test_step_valid_zk_proposal_skipped() {
     // any action.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let verifier = single_game_verifier(MockGameState {
-        zk_prover: Address::repeat_byte(0xCC),
+        zk_prover: ZK_PROVER_ADDR,
         game_info: base_proof_contracts::GameInfo {
-            root_claim: B256::repeat_byte(0x01),
+            root_claim: BOGUS_CLAIM,
             l2_block_number: 14,
             parent_index: 0,
         },
         starting_block_number: 10,
-        l1_head: B256::repeat_byte(0xAA),
+        l1_head: DEFAULT_L1_HEAD,
         ..Default::default()
     });
     let l2 = Arc::new(MockL2Provider::new());
@@ -1028,9 +1022,9 @@ async fn test_bond_manager_full_lifecycle() {
     // status=1 (CHALLENGER_WINS) to represent a game that has already been
     // resolved on-chain. The manager detects this and advances directly
     // to NeedsUnlock without submitting a resolve transaction.
-    let claim_addr = Address::repeat_byte(0xCC);
+    let claim_addr = ZK_PROVER_ADDR;
     let game_addr = addr(0);
-    let tx_hash = B256::repeat_byte(0xDD);
+    let tx_hash = DEFAULT_TX_HASH;
     let verifier = bond_test_verifier(claim_addr);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
@@ -1071,9 +1065,9 @@ async fn test_bond_manager_full_lifecycle() {
 
 #[tokio::test]
 async fn test_bond_manager_skips_already_resolved_game() {
-    let claim_addr = Address::repeat_byte(0xCC);
+    let claim_addr = ZK_PROVER_ADDR;
     let game_addr = addr(0);
-    let tx_hash = B256::repeat_byte(0xDD);
+    let tx_hash = DEFAULT_TX_HASH;
     let verifier = bond_test_verifier(claim_addr);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
@@ -1105,9 +1099,9 @@ async fn test_bond_manager_skips_already_resolved_game() {
 
 #[tokio::test]
 async fn test_bond_manager_skips_already_unlocked_game() {
-    let claim_addr = Address::repeat_byte(0xCC);
+    let claim_addr = ZK_PROVER_ADDR;
     let game_addr = addr(0);
-    let tx_hash = B256::repeat_byte(0xDD);
+    let tx_hash = DEFAULT_TX_HASH;
 
     let mut state = bond_test_state(claim_addr);
     state.bond_unlocked = true;
@@ -1142,7 +1136,7 @@ async fn test_bond_manager_skips_already_unlocked_game() {
 
 #[tokio::test]
 async fn test_bond_manager_skips_already_claimed_game() {
-    let claim_addr = Address::repeat_byte(0xCC);
+    let claim_addr = ZK_PROVER_ADDR;
     let game_addr = addr(0);
 
     let mut state = bond_test_state(claim_addr);
@@ -1173,9 +1167,9 @@ async fn test_bond_manager_skips_already_claimed_game() {
 
 #[tokio::test]
 async fn test_bond_manager_tx_failure_retries() {
-    let claim_addr = Address::repeat_byte(0xCC);
+    let claim_addr = ZK_PROVER_ADDR;
     let game_addr = addr(0);
-    let tx_hash = B256::repeat_byte(0xDD);
+    let tx_hash = DEFAULT_TX_HASH;
     let verifier = bond_test_verifier(claim_addr);
 
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
@@ -1203,7 +1197,7 @@ async fn test_bond_manager_tx_failure_retries() {
 
 #[tokio::test]
 async fn test_bond_manager_ignores_non_claim_addresses() {
-    let claim_addr = Address::repeat_byte(0xCC);
+    let claim_addr = ZK_PROVER_ADDR;
     let other_addr = Address::repeat_byte(0xDD);
     let game_addr = addr(0);
 
@@ -1215,7 +1209,7 @@ async fn test_bond_manager_ignores_non_claim_addresses() {
 #[tokio::test]
 async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
     // DEFENDER_WINS but bondRecipient is ours → keep and advance to NeedsUnlock.
-    let claim_addr = Address::repeat_byte(0xCC);
+    let claim_addr = ZK_PROVER_ADDR;
     let game_addr = addr(0);
 
     let mut state = bond_test_state(claim_addr);
@@ -1240,7 +1234,7 @@ async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
 #[tokio::test]
 async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
     // bondRecipient not in claim set → removed from tracking.
-    let claim_addr = Address::repeat_byte(0xCC);
+    let claim_addr = ZK_PROVER_ADDR;
     let other_addr = Address::repeat_byte(0xDD);
     let game_addr = addr(0);
 
