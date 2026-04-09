@@ -801,15 +801,13 @@ impl BasePayloadBuilderCtx {
                         }
                         let err_message = err.to_string();
                         log_txn(Err(err));
-                        // SAFETY: `ExecutionMeteringLimitExceeded` can only fire when
+                        // `ExecutionMeteringLimitExceeded` can only fire when
                         // `tx.execution_time_us` or `tx.state_root_gas` is Some, which
                         // requires `resource_usage` to be Some.
                         self.send_rejected_tx(
                             tx_hash,
                             &err_message,
-                            resource_usage
-                                .clone()
-                                .unwrap_or_default(),
+                            resource_usage.clone().unwrap_or_default(),
                         );
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;

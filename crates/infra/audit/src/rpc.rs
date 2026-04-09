@@ -3,10 +3,9 @@
 //! Exposes the `base_persistTransaction` method for receiving rejected
 //! transactions from the builder and persisting them to S3.
 
+use base_bundles::RejectedTransaction;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use tracing::{error, info};
-
-use base_bundles::RejectedTransaction;
 
 use crate::storage::S3EventReaderWriter;
 

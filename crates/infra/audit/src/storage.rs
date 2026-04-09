@@ -12,12 +12,10 @@ use aws_sdk_s3::{
     },
     primitives::ByteStream,
 };
-use base_bundles::{AcceptedBundle, BundleExtensions};
+use base_bundles::{AcceptedBundle, BundleExtensions, RejectedTransaction};
 use futures::future;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
-
-use base_bundles::RejectedTransaction;
 
 use crate::{
     metrics::Metrics,
