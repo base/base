@@ -178,36 +178,30 @@ async fn test_step_no_candidates() {
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
     driver.step().await.unwrap();
-    // No error, no panic — empty scan is fine.
 }
 
 #[tokio::test]
 async fn test_step_valid_game_skipped() {
-    // Game with valid intermediate roots → no proof requested.
-    // We set up a game that will pass validation because intermediate_roots is empty
-    // and l2_block_number - starting_block_number < intermediate_block_interval
-    // so expected_count = 0 → trivially valid.
+    // l2_block_number - starting_block_number < intermediate_block_interval
+    // → expected_count = 0 → trivially valid, no proof requested.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let mut verifier_games = HashMap::new();
-    let tee_addr = Address::repeat_byte(0xEE);
-    verifier_games.insert(
-        addr(0),
-        MockGameState {
-            tee_prover: tee_addr,
-            game_info: base_proof_contracts::GameInfo {
-                root_claim: B256::repeat_byte(0x01),
-                l2_block_number: 14,
-                parent_index: 0,
+    let verifier = Arc::new(MockAggregateVerifier {
+        games: HashMap::from([(
+            addr(0),
+            MockGameState {
+                tee_prover: Address::repeat_byte(0xEE),
+                game_info: base_proof_contracts::GameInfo {
+                    root_claim: B256::repeat_byte(0x01),
+                    l2_block_number: 14,
+                    parent_index: 0,
+                },
+                starting_block_number: 10,
+                l1_head: B256::repeat_byte(0xAA),
+                ..Default::default()
             },
-            starting_block_number: 10,
-            l1_head: B256::repeat_byte(0xAA),
-            ..Default::default()
-        },
-    );
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        )]),
+    });
     let l2 = Arc::new(MockL2Provider::new());
-
-    // The ZK prover should NOT be called since the game is valid.
     let zk = Arc::new(MockZkProofProvider {
         session_id: "should-not-be-called".to_string(),
         ..Default::default()
@@ -216,8 +210,6 @@ async fn test_step_valid_game_skipped() {
     let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
 
     driver.step().await.unwrap();
-    // If the ZK prover were called, the test would still pass, but the game
-    // being valid means process_candidate returns early.
 }
 
 #[tokio::test]
@@ -225,28 +217,26 @@ async fn test_step_validation_error_blocks_not_available() {
     // Game with intermediate roots, but checkpoint blocks are unavailable.
     // Validator returns BlockNotAvailable → process_candidate skips gracefully.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let mut verifier_games = HashMap::new();
-    let tee_addr = Address::repeat_byte(0xEE);
-    verifier_games.insert(
-        addr(0),
-        MockGameState {
-            status: 0,
-            zk_prover: Address::ZERO,
-            tee_prover: tee_addr,
-            game_info: base_proof_contracts::GameInfo {
-                root_claim: B256::repeat_byte(0x01),
-                l2_block_number: 20,
-                parent_index: 0,
+    let verifier = Arc::new(MockAggregateVerifier {
+        games: HashMap::from([(
+            addr(0),
+            MockGameState {
+                status: 0,
+                zk_prover: Address::ZERO,
+                tee_prover: Address::repeat_byte(0xEE),
+                game_info: base_proof_contracts::GameInfo {
+                    root_claim: B256::repeat_byte(0x01),
+                    l2_block_number: 20,
+                    parent_index: 0,
+                },
+                starting_block_number: 10,
+                l1_head: B256::repeat_byte(0xAA),
+                intermediate_output_roots: vec![B256::repeat_byte(0xFF), B256::repeat_byte(0xEE)],
+                ..Default::default()
             },
-            starting_block_number: 10,
-            l1_head: B256::repeat_byte(0xAA),
-            intermediate_output_roots: vec![B256::repeat_byte(0xFF), B256::repeat_byte(0xEE)],
-            ..Default::default()
-        },
-    );
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        )]),
+    });
 
-    // Checkpoint blocks are not available → validator returns BlockNotAvailable.
     let mut l2 = MockL2Provider::new();
     l2.error_blocks.push(15);
     l2.error_blocks.push(20);
@@ -259,13 +249,11 @@ async fn test_step_validation_error_blocks_not_available() {
 
     let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
 
-    // step succeeds — BlockNotAvailable causes process_candidate to skip
     driver.step().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_step_invalid_game_proof_succeeded() {
-    // Proof succeeds → nullification submitted.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -299,7 +287,6 @@ async fn test_step_invalid_game_proof_succeeded() {
 
 #[tokio::test]
 async fn test_step_invalid_game_proof_failed() {
-    // ZK prover returns Failed → entry retained and re-initiated with retry_count == 1.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -310,7 +297,6 @@ async fn test_step_invalid_game_proof_failed() {
         }),
     });
 
-    // tx_manager should NOT be called (proof failed → no submission)
     let tx_manager = default_tx_manager();
 
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
@@ -338,10 +324,6 @@ async fn test_step_invalid_game_proof_failed() {
 
 #[tokio::test]
 async fn test_step_scan_error_propagated() {
-    // Use ErrorOnIndexFactory where game_count succeeds but game_at_index
-    // errors. But scan itself catches per-game errors. To get scan to fail,
-    // we need game_count to fail, which requires a custom factory.
-
     /// Factory that always fails on `game_count`.
     #[derive(Debug)]
     struct FailingFactory;
@@ -405,9 +387,6 @@ async fn test_step_scan_error_propagated() {
 
 #[tokio::test]
 async fn test_step_pending_proof_skips_prove_block() {
-    // First step: proof initiated (status=Unspecified via Default, not ready).
-    // Second step: same game re-discovered → polls existing session,
-    // proof succeeds, nullification submitted.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -441,9 +420,6 @@ async fn test_step_pending_proof_skips_prove_block() {
 
 #[tokio::test]
 async fn test_step_nullification_failure_preserves_proof() {
-    // Proof succeeds on the second step but nullification tx fails.
-    // The entry should stay in pending_proofs as ReadyToSubmit.
-    // On the next step the tx succeeds without re-proving.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -528,38 +504,9 @@ async fn test_run_cancellation() {
     let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
     let l2 = Arc::new(MockL2Provider::new());
 
-    let scanner = GameScanner::new(
-        Arc::clone(&factory) as Arc<dyn base_proof_contracts::DisputeGameFactoryClient>,
-        Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        ScannerConfig { lookback_games: 1000 },
-    );
-    let validator = OutputValidator::new(l2);
-    let submitter = ChallengeSubmitter::new(default_tx_manager());
-    let cancel = CancellationToken::new();
+    let driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
+    driver.cancel.cancel();
 
-    let config = DriverConfig {
-        poll_interval: Duration::from_secs(60), // long poll so it blocks
-        cancel: cancel.clone(),
-        ready: Arc::new(AtomicBool::new(false)),
-    };
-
-    let driver = Driver::new(
-        config,
-        DriverComponents {
-            scanner,
-            validator,
-            zk_prover: default_zk_prover(),
-            submitter,
-            tee: None,
-            verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
-            bond_manager: None::<BondManager<TokioRuntime>>,
-        },
-    );
-
-    // Cancel immediately
-    cancel.cancel();
-
-    // run() should return promptly
     tokio::time::timeout(Duration::from_secs(2), driver.run())
         .await
         .expect("driver.run() should exit promptly after cancellation");
@@ -567,9 +514,6 @@ async fn test_run_cancellation() {
 
 #[tokio::test]
 async fn test_step_proof_retry_succeeds() {
-    // Proof is initiated on the first tick, fails on the second tick
-    // (NeedsRetry), then re-initiated prove_block returns a new session.
-    // On the third tick the proof succeeds and challenge tx is submitted.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -616,7 +560,6 @@ async fn test_step_proof_retry_succeeds() {
 
 #[tokio::test]
 async fn test_step_proof_exceeds_max_retries() {
-    // Proof keeps failing → entry dropped after MAX_PROOF_RETRIES + 1 failures.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -656,15 +599,9 @@ async fn test_step_proof_exceeds_max_retries() {
 
 // ── TEE-first proof sourcing tests ─────────────────────────────────────────
 
-/// Builds the common mocks for a TEE-eligible invalid-game scenario.
-///
-/// The game at `addr(0)` has `tee_prover = 0xEE..EE` and the same block
-/// layout as `invalid_game_mocks()`.
 #[tokio::test]
 async fn test_step_invalid_game_tee_fails_zk_fallback() {
-    // Game has a TEE prover, TEE provider is configured, but the TEE proof
-    // attempt fails (L1 provider is unreachable with dummy). The driver
-    // should fall back to ZK and initiate a ZK proof session.
+    // TEE proof attempt fails → driver falls back to ZK.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let tee = Arc::new(MockTeeProofProvider::failure("enclave unreachable"));
@@ -689,7 +626,6 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
 
     driver.step().await.unwrap();
 
-    // The TEE attempt fails, so a ZK proof session should be initiated.
     let entry =
         driver.pending_proofs.get(&addr(0)).expect("ZK proof should be pending after TEE fallback");
     assert!(
@@ -700,8 +636,7 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
 
 #[tokio::test]
 async fn test_step_invalid_game_no_tee_provider_zk_only() {
-    // Game has a TEE prover, but the driver has no TEE provider configured
-    // (tee-rpc-url was not set). Should go straight to ZK.
+    // No TEE provider configured → go straight to ZK.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let zk = Arc::new(MockZkProofProvider {
@@ -710,7 +645,6 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
     });
 
     let tx_manager = default_tx_manager();
-    // No TEE provider (None).
     let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
 
     driver.step().await.unwrap();
@@ -724,8 +658,6 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
 
 #[tokio::test]
 async fn test_step_invalid_game_tee_fails_zk_succeeds() {
-    // Game has a TEE prover, TEE proof attempt fails, driver falls back to
-    // ZK, ZK proof succeeds on the next poll, challenge tx submitted.
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let tee = Arc::new(MockTeeProofProvider::failure("L1 unreachable"));
@@ -772,9 +704,7 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
 
 #[tokio::test]
 async fn test_step_invalid_game_tee_proof_succeeds() {
-    // Game has a TEE prover, L1 head provider returns a valid hash, TEE proof
-    // provider returns a valid proof with the correct output root. The driver
-    // should submit the TEE proof directly without initiating a ZK session.
+    // TEE proof succeeds → submitted directly without ZK.
     let (l2, factory, root_15, root_20) = base_game_mocks();
     let l1_hash = B256::repeat_byte(0xAA);
     let tee_addr = Address::repeat_byte(0xEE);
@@ -817,7 +747,6 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
     let tx_hash = B256::repeat_byte(0xDD);
     let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
 
-    // ZK prover should NOT be called since TEE proof succeeds.
     let zk = Arc::new(MockZkProofProvider {
         session_id: "should-not-be-called".to_string(),
         ..Default::default()
@@ -838,7 +767,6 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 
     driver.step().await.unwrap();
 
-    // TEE proof was submitted directly — no pending ZK proof.
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
         "no pending ZK proof should exist after successful TEE submission"
@@ -847,16 +775,13 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 
 #[tokio::test]
 async fn test_step_nullified_game_not_reprocessed() {
-    // Simulate the post-nullification on-chain state: game is still
-    // IN_PROGRESS but both teeProver and zkProver are address(0).
-    // The scanner should filter it out and no proof should be initiated.
+    // Both provers zeroed (post-nullification) → scanner filters it out.
     let (l2, factory, root_15, _root_20) = base_game_mocks();
 
     let verifier = Arc::new(MockAggregateVerifier {
         games: HashMap::from([(
             addr(0),
             MockGameState {
-                // Both provers zeroed — this is the state after TEE nullification.
                 game_info: base_proof_contracts::GameInfo {
                     root_claim: B256::repeat_byte(0x01),
                     l2_block_number: 20,
@@ -870,7 +795,6 @@ async fn test_step_nullified_game_not_reprocessed() {
         )]),
     });
 
-    // Neither the ZK prover nor the tx manager should be called.
     let zk = Arc::new(MockZkProofProvider {
         session_id: "should-not-be-called".to_string(),
         ..Default::default()
@@ -918,7 +842,6 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
 
     driver.step().await.unwrap();
 
-    // The pending proof should have been submitted (and removed), not dropped.
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
         "nullify intent should be submitted, not dropped due to zk_prover"
@@ -1068,24 +991,24 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
 
     let zk_addr = Address::repeat_byte(0xCC);
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let mut verifier_games = HashMap::new();
-    verifier_games.insert(
-        addr(0),
-        MockGameState {
-            status: 0,
-            zk_prover: zk_addr,
-            game_info: base_proof_contracts::GameInfo {
-                root_claim: B256::repeat_byte(0x01),
-                l2_block_number: 20,
-                parent_index: 0,
+    let verifier = Arc::new(MockAggregateVerifier {
+        games: HashMap::from([(
+            addr(0),
+            MockGameState {
+                status: 0,
+                zk_prover: zk_addr,
+                game_info: base_proof_contracts::GameInfo {
+                    root_claim: B256::repeat_byte(0x01),
+                    l2_block_number: 20,
+                    parent_index: 0,
+                },
+                starting_block_number: 10,
+                l1_head: B256::repeat_byte(0xAA),
+                intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
+                ..Default::default()
             },
-            starting_block_number: 10,
-            l1_head: B256::repeat_byte(0xAA),
-            intermediate_output_roots: vec![root_15, B256::repeat_byte(0xFF)],
-            ..Default::default()
-        },
-    );
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        )]),
+    });
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "zk-nullify-session".to_string(),
@@ -1107,24 +1030,23 @@ async fn test_step_valid_zk_proposal_skipped() {
     // A ZK-proposed game with valid intermediate roots should not trigger
     // any action.
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
-    let zk_addr = Address::repeat_byte(0xCC);
-    let mut verifier_games = HashMap::new();
-    verifier_games.insert(
-        addr(0),
-        MockGameState {
-            status: 0,
-            zk_prover: zk_addr,
-            game_info: base_proof_contracts::GameInfo {
-                root_claim: B256::repeat_byte(0x01),
-                l2_block_number: 14,
-                parent_index: 0,
+    let verifier = Arc::new(MockAggregateVerifier {
+        games: HashMap::from([(
+            addr(0),
+            MockGameState {
+                status: 0,
+                zk_prover: Address::repeat_byte(0xCC),
+                game_info: base_proof_contracts::GameInfo {
+                    root_claim: B256::repeat_byte(0x01),
+                    l2_block_number: 14,
+                    parent_index: 0,
+                },
+                starting_block_number: 10,
+                l1_head: B256::repeat_byte(0xAA),
+                ..Default::default()
             },
-            starting_block_number: 10,
-            l1_head: B256::repeat_byte(0xAA),
-            ..Default::default()
-        },
-    );
-    let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        )]),
+    });
     let l2 = Arc::new(MockL2Provider::new());
 
     let zk = Arc::new(MockZkProofProvider {
@@ -1168,16 +1090,12 @@ async fn test_bond_manager_full_lifecycle() {
     let game_addr = addr(0);
     let tx_hash = B256::repeat_byte(0xDD);
 
-    // Set up verifier mock: status=1 (CHALLENGER_WINS), bond_unlocked=false,
-    // bond_claimed=false.
     let mut verifier_games = HashMap::new();
     let mut state = mock_state(1, Address::ZERO, 100);
     state.bond_recipient = claim_addr;
     verifier_games.insert(game_addr, state);
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-    // Mock submitter with enough responses for unlock + withdraw.
-    // No resolve tx needed since the game is already resolved.
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
         Ok(tx_hash), // claimCredit (unlock) tx
         Ok(tx_hash), // claimCredit (withdraw) tx
@@ -1185,7 +1103,6 @@ async fn test_bond_manager_full_lifecycle() {
 
     let mut mgr = default_bond_manager(claim_addr);
 
-    // Track the game.
     assert!(mgr.track_game(game_addr, claim_addr));
     assert_eq!(mgr.tracked_count(), 1);
 
@@ -1217,8 +1134,6 @@ async fn test_bond_manager_full_lifecycle() {
 
 #[tokio::test]
 async fn test_bond_manager_skips_already_resolved_game() {
-    // When a game is already resolved on-chain (status != 0), the manager
-    // should skip resolve and advance directly to NeedsUnlock.
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
     let tx_hash = B256::repeat_byte(0xDD);
@@ -1229,20 +1144,19 @@ async fn test_bond_manager_skips_already_resolved_game() {
     verifier_games.insert(game_addr, state);
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-    // Only need 2 responses: unlock + withdraw (no resolve since already resolved).
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
-        Ok(tx_hash), // claimCredit (unlock) tx
-        Ok(tx_hash), // claimCredit (withdraw) tx
+        Ok(tx_hash), // unlock
+        Ok(tx_hash), // withdraw
     ]);
 
     let mut mgr = default_bond_manager(claim_addr);
     mgr.track_game(game_addr, claim_addr);
 
-    // Poll 1: NeedsResolve → sees status != 0 → advances to NeedsUnlock (no tx).
+    // Poll 1: NeedsResolve → status != 0 → NeedsUnlock (no tx).
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 2: NeedsUnlock → submits unlock tx → AwaitingDelay.
+    // Poll 2: NeedsUnlock → unlock tx → AwaitingDelay.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1);
 
@@ -1250,18 +1164,15 @@ async fn test_bond_manager_skips_already_resolved_game() {
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 4: NeedsWithdraw → submits withdraw tx → Completed → removed.
+    // Poll 4: NeedsWithdraw → withdraw tx → Completed → removed.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 0);
 
-    // Only 2 transactions submitted (no resolve).
     assert_eq!(submitter.recorded_calls().len(), 2);
 }
 
 #[tokio::test]
 async fn test_bond_manager_skips_already_unlocked_game() {
-    // When the bond is already unlocked on-chain, the manager should skip
-    // to AwaitingDelay.
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
     let tx_hash = B256::repeat_byte(0xDD);
@@ -1274,9 +1185,8 @@ async fn test_bond_manager_skips_already_unlocked_game() {
     verifier_games.insert(game_addr, state);
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-    // Only need 1 response: withdraw (resolve and unlock already done).
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
-        Ok(tx_hash), // claimCredit (withdraw) tx
+        Ok(tx_hash), // withdraw
     ]);
 
     let mut mgr = default_bond_manager(claim_addr);
@@ -1303,8 +1213,6 @@ async fn test_bond_manager_skips_already_unlocked_game() {
 
 #[tokio::test]
 async fn test_bond_manager_skips_already_claimed_game() {
-    // When the bond is already claimed on-chain, the manager should skip
-    // and complete immediately.
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
 
@@ -1317,20 +1225,15 @@ async fn test_bond_manager_skips_already_claimed_game() {
     verifier_games.insert(game_addr, state);
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-    // No responses needed — no transactions should be submitted.
     let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
 
     let mut mgr = default_bond_manager(claim_addr);
     mgr.track_game(game_addr, claim_addr);
 
-    // Poll 1: NeedsResolve → status != 0 → NeedsUnlock.
-    mgr.poll(&*verifier, &submitter).await;
-
-    // Poll 2: NeedsUnlock → bond_unlocked=true → AwaitingDelay.
-    mgr.poll(&*verifier, &submitter).await;
-
-    // Poll 3: AwaitingDelay (delay=0) → NeedsWithdraw.
-    mgr.poll(&*verifier, &submitter).await;
+    // Polls 1-3: NeedsResolve → NeedsUnlock → AwaitingDelay → NeedsWithdraw (no txs).
+    for _ in 0..3 {
+        mgr.poll(&*verifier, &submitter).await;
+    }
 
     // Poll 4: NeedsWithdraw → bond_claimed=true → Completed → removed.
     mgr.poll(&*verifier, &submitter).await;
@@ -1344,9 +1247,6 @@ async fn test_bond_manager_skips_already_claimed_game() {
 
 #[tokio::test]
 async fn test_bond_manager_tx_failure_retries() {
-    // When a bond transaction fails, the manager should retry on the next
-    // poll tick. Tests claimCredit (unlock) failure and retry from the
-    // NeedsUnlock phase.
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
     let tx_hash = B256::repeat_byte(0xDD);
@@ -1357,7 +1257,6 @@ async fn test_bond_manager_tx_failure_retries() {
     verifier_games.insert(game_addr, state);
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-    // First claimCredit attempt fails, second succeeds.
     let submitter = MockBondTransactionSubmitter::with_responses(vec![
         Err(base_tx_manager::TxManagerError::NonceTooLow.into()),
         Ok(tx_hash), // retry succeeds
@@ -1383,8 +1282,6 @@ async fn test_bond_manager_tx_failure_retries() {
 
 #[tokio::test]
 async fn test_bond_manager_ignores_non_claim_addresses() {
-    // Games whose bondRecipient is not in the claim addresses should not
-    // be tracked.
     let claim_addr = Address::repeat_byte(0xCC);
     let other_addr = Address::repeat_byte(0xDD);
     let game_addr = addr(0);
@@ -1396,9 +1293,7 @@ async fn test_bond_manager_ignores_non_claim_addresses() {
 
 #[tokio::test]
 async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
-    // When a game resolves as DEFENDER_WINS and the on-chain bondRecipient
-    // is in our claim addresses (i.e. we are the proposer), the manager
-    // should keep the game and advance it to NeedsUnlock — the bond is ours.
+    // DEFENDER_WINS but bondRecipient is ours → keep and advance to NeedsUnlock.
     let claim_addr = Address::repeat_byte(0xCC);
     let game_addr = addr(0);
 
@@ -1414,8 +1309,7 @@ async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
     mgr.track_game(game_addr, claim_addr);
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 1: NeedsResolve → status=2 (already resolved) → bondRecipient
-    // is in claim set → advance to NeedsUnlock (not removed).
+    // Poll 1: NeedsResolve → resolved, bondRecipient in claim set → NeedsUnlock.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(
         mgr.tracked_count(),
@@ -1426,10 +1320,7 @@ async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
 
 #[tokio::test]
 async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
-    // When a game is resolved and the on-chain bondRecipient is NOT in our
-    // claim addresses, the manager should remove the game from tracking.
-    // This covers the case where we matched via zkProver during the startup
-    // scan, but after resolve the bond goes to someone else.
+    // bondRecipient not in claim set → removed from tracking.
     let claim_addr = Address::repeat_byte(0xCC);
     let other_addr = Address::repeat_byte(0xDD);
     let game_addr = addr(0);
@@ -1440,15 +1331,13 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
     verifier_games.insert(game_addr, state);
     let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
 
-    // No responses needed — no transactions should be submitted.
     let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
 
     let mut mgr = default_bond_manager(claim_addr);
     mgr.track_game(game_addr, claim_addr);
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 1: NeedsResolve → already resolved → bondRecipient not in
-    // claim set → removed from tracking.
+    // Poll 1: NeedsResolve → resolved, bondRecipient not in claim set → removed.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(
         mgr.tracked_count(),
@@ -1464,8 +1353,6 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
 
 #[tokio::test]
 async fn test_driver_tracks_bond_after_successful_challenge() {
-    // After a successful challenge() submission, the driver should register
-    // the game with the bond manager.
     let (l2, factory, verifier) = invalid_game_mocks();
     let sender_addr = Address::ZERO; // MockTxManager returns ZERO as sender_address
 
@@ -1481,36 +1368,11 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
     let tx_hash = B256::repeat_byte(0xCC);
     let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, tx_hash)));
 
-    let scanner = GameScanner::new(
-        Arc::clone(&factory) as Arc<dyn base_proof_contracts::DisputeGameFactoryClient>,
-        Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        ScannerConfig { lookback_games: 1000 },
-    );
-    let validator = OutputValidator::new(l2);
-    let submitter = ChallengeSubmitter::new(tx_manager);
-
-    let config = DriverConfig {
-        poll_interval: Duration::from_millis(10),
-        cancel: CancellationToken::new(),
-        ready: Arc::new(AtomicBool::new(false)),
-    };
-
-    // Bond manager with the sender address as a claim address.
     let mut bond_manager = default_bond_manager(sender_addr);
     bond_manager.set_weth_delay(Duration::from_secs(3600));
 
-    let mut driver = Driver::new(
-        config,
-        DriverComponents {
-            scanner,
-            validator,
-            zk_prover: zk,
-            submitter,
-            tee: None,
-            verifier_client: verifier as Arc<dyn AggregateVerifierClient>,
-            bond_manager: Some(bond_manager),
-        },
-    );
+    let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
+    driver.bond_manager = Some(bond_manager);
 
     // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();
@@ -1522,7 +1384,6 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
     // Step 2: proof polled → Succeeded → challenge tx submitted → bond tracked.
     driver.step().await.unwrap();
 
-    // After a successful challenge, the bond_manager should be tracking the game.
     let bond_mgr = driver.bond_manager.as_ref().expect("bond_manager should be Some");
     assert!(
         bond_mgr.is_tracking(&addr(0)),
