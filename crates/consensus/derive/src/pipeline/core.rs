@@ -162,9 +162,6 @@ where
             Signal::FlushChannel => {
                 self.attributes.flush_channel().await?;
             }
-            Signal::ProvideBlock(block) => {
-                self.attributes.provide_block(block).await?;
-            }
         }
         Metrics::pipeline_signals(signal.to_string()).increment(1.0);
         Ok(())

@@ -280,7 +280,6 @@ async fn span_batch_rejected_before_delta() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     node.run_until_idle().await;
 
     assert_eq!(
@@ -324,7 +323,6 @@ async fn span_batch_derives_after_delta() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from span batch");
@@ -360,7 +358,6 @@ async fn single_batch_derives_with_fjord() {
     node.initialize().await;
 
     for i in 1..=2u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
@@ -434,7 +431,6 @@ async fn jovian_derivation_crosses_activation_boundary() {
     node.initialize().await;
 
     for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }

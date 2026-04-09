@@ -188,7 +188,7 @@ impl ActionTestHarness {
             .dap_source(dap_source)
             .l2_chain_provider(l2_provider)
             .builder(attrs_builder)
-            .build_indexed();
+            .build_polled();
 
         let engine = ActionEngineClient::new(
             Arc::clone(&rollup_config),

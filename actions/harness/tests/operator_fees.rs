@@ -393,7 +393,6 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     node.initialize().await;
 
     for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} must derive exactly one L2 block");
     }
@@ -485,8 +484,7 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // Signal L1 blocks 1–3. Blocks 1–2 are derived from their valid batches.
     // Block 3's batch is dropped (NonEmptyTransitionBlock) and the pipeline
     // stalls waiting for more L1 data (the seq window has not yet closed).
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=3 {
         node.run_until_idle().await;
     }
     assert_eq!(
@@ -497,7 +495,6 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
 
     // Signal L1 block 4. The epoch-0 window is now closed, so the pipeline
     // force-includes L2 slot 3 as a deposit-only block.
-    node.act_l1_head_signal(h.l1.block_info_at(4)).await;
     node.run_until_idle().await;
 
     assert!(
@@ -523,8 +520,8 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
 //
 // These tests verify that operator fee changes committed to L1 via
 // `ConfigUpdate` logs are reflected in the L1 info deposit transactions of
-// subsequently derived L2 blocks. The derivation pipeline's `IndexedTraversal`
-// stage reads `ConfigUpdate` logs from L1 receipts and updates its internal
+// subsequently derived L2 blocks. The derivation pipeline's traversal stage
+// reads `ConfigUpdate` logs from L1 receipts and updates its internal
 // `SystemConfig`; the `StatefulAttributesBuilder` uses the updated config to
 // generate the L1 info deposit for each new L2 block.
 // ---------------------------------------------------------------------------
@@ -638,8 +635,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     );
     node.initialize().await;
 
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=3 {
         node.run_until_idle().await;
     }
 

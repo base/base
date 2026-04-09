@@ -71,7 +71,6 @@ async fn holocene_derivation_crosses_activation_boundary() {
     node.initialize().await;
 
     for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block at/after Holocene");
     }
@@ -159,7 +158,6 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     chain.push(h.l1.tip().clone()); // L1 block 1: frames 0 and 2
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     // Frame 2 is pruned by FrameQueue — channel 0 only has frame 0.
@@ -175,8 +173,7 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     for _ in 0..12 {
         h.mine_and_push(&chain);
     }
-    for i in 2..=h.l1.latest_number() {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 2..=h.l1.latest_number() {
         node.run_until_idle().await;
     }
 
@@ -268,7 +265,6 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     chain.push(h.l1.tip().clone()); // L1 block 1: frame 0 of channel A
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     // Channel A is open but incomplete — safe head stays at genesis.
@@ -289,7 +285,6 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     batcher_b.confirm_staged(block_2_num).await;
     chain.push(h.l1.tip().clone()); // L1 block 2: all frames of channel B
 
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
     node.run_until_idle().await;
 
     // Channel A was abandoned (Holocene pruning). Channel B derived block B.
@@ -373,7 +368,6 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     // Channel is broken — safe head stays at genesis.
@@ -393,8 +387,7 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     for _ in 0..5 {
         h.mine_and_push(&chain);
     }
-    for i in 2..=h.l1.latest_number() {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 2..=h.l1.latest_number() {
         node.run_until_idle().await;
     }
     assert_eq!(
@@ -413,8 +406,6 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
-    let recovery_block_num = h.l1.latest_number();
-    node.act_l1_head_signal(h.l1.block_info_at(recovery_block_num)).await;
     node.run_until_idle().await;
 
     assert_eq!(

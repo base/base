@@ -37,7 +37,6 @@ async fn batcher_blob_da_end_to_end() {
     node.initialize().await;
 
     for i in 1..=3u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block via blob DA");
     }
@@ -85,7 +84,6 @@ async fn batcher_multi_blob_packing() {
     );
     node.initialize().await;
 
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 1, "expected 1 L2 block derived from packed multi-frame blob");
@@ -124,7 +122,6 @@ async fn batcher_calldata_da() {
     node.initialize().await;
 
     for i in 1..=3u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block via calldata DA");
     }
@@ -174,8 +171,7 @@ async fn batcher_da_switching() {
     node.initialize().await;
 
     let mut total_derived = 0;
-    for i in 1..=6u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=6u64 {
         total_derived += node.run_until_idle().await;
     }
 
@@ -245,7 +241,6 @@ async fn blob_da_channel_timeout() {
     chain.push(h.l1.tip().clone()); // L1 block 1: blob with frame 0 only
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 0, "incomplete blob channel should not advance safe head");
@@ -254,8 +249,7 @@ async fn blob_da_channel_timeout() {
     for _ in 0..3 {
         h.mine_and_push(&chain);
     }
-    for i in 2..=4 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 2..=4 {
         node.run_until_idle().await;
     }
 
@@ -264,7 +258,6 @@ async fn blob_da_channel_timeout() {
     h.l1.mine_block();
     chain.push(h.l1.tip().clone()); // L1 block 5: late blob frames
 
-    node.act_l1_head_signal(h.l1.block_info_at(5)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "late blob frames after channel timeout must be silently dropped");
 
@@ -277,7 +270,6 @@ async fn blob_da_channel_timeout() {
     h.l1.mine_block();
     chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
 
-    node.act_l1_head_signal(h.l1.block_info_at(6)).await;
     let recovered = node.run_until_idle().await;
 
     assert_eq!(recovered, 1, "resubmitted blob channel should derive L2 block 1");

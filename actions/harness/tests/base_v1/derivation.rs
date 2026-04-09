@@ -2,7 +2,7 @@
 
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder, block_info_from,
+    TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
@@ -45,8 +45,6 @@ async fn base_v1_derivation_crosses_activation_boundary() {
     node.initialize().await;
 
     for i in 1..=4u64 {
-        let l1_block = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        node.act_l1_head_signal(l1_block).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
 

@@ -157,8 +157,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     node.initialize().await;
 
     // Drive derivation through all 4 L1 blocks.
-    for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=4u64 {
         node.run_until_idle().await;
     }
 
@@ -235,7 +234,6 @@ async fn ecotone_derivation_crosses_activation_boundary() {
     node.initialize().await;
 
     for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
