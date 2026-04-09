@@ -45,10 +45,7 @@ impl AccountProofVerifier {
             code_hash: response.code_hash,
         };
 
-        let mut expected_value = Vec::new();
-        alloy_rlp::Encodable::encode(&account, &mut expected_value);
-
-        verify_proof(state_root, key, Some(expected_value), &response.account_proof)
+        verify_proof(state_root, key, Some(alloy_rlp::encode(&account)), &response.account_proof)
             .map_err(|e| AccountProofError::VerificationFailed(e.to_string()))
     }
 }
