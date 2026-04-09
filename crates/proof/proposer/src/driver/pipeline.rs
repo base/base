@@ -821,17 +821,14 @@ where
         };
 
         // Only cache if the walk completed naturally (found a gap or
-        // exhausted all games). When truncated by max_steps the proposer
-        // has not verified all games and should re-walk on the next tick
-        // to continue walking forward. The game map is always kept so
-        // the next tick can extend it incrementally.
+        // exhausted all games). When truncated by max_steps the entire
+        // cache (including the game map) is discarded so the next tick
+        // performs a full rescan and re-walk. This is intentional:
+        // truncation is rare (hitting max_steps means thousands of
+        // unverified games) and preserving a partial map adds complexity
+        // for little benefit.
         if truncated {
-            // Preserve the game map for incremental scanning but don't
-            // cache the walk result — force a re-walk next tick.
             *cache = None;
-            // We intentionally lose the map on truncation. This is rare
-            // (hitting max_steps means thousands of unverified games) and
-            // keeping a partial map adds complexity for little benefit.
         } else {
             *cache = Some(CachedRecovery { game_map, anchor_root: anchor.root, state });
         }
@@ -860,6 +857,18 @@ where
                     // reuse the map, just re-walk.
                     debug!("Anchor root changed, re-walking with existing game map");
                     return Ok(cached.game_map.clone());
+                }
+
+                // If the delta exceeds the lookback window (e.g. proposer
+                // was offline for an extended period), fall back to a full
+                // scan rather than issuing an unbounded number of RPCs.
+                if new_entries > self.config.max_game_recovery_lookback {
+                    warn!(
+                        new_entries,
+                        max = self.config.max_game_recovery_lookback,
+                        "Incremental delta exceeds lookback, falling back to full scan"
+                    );
+                    return self.full_scan(count).await;
                 }
 
                 // Incremental scan: only fetch the new factory entries.
@@ -1966,6 +1975,51 @@ mod tests {
             cache.as_ref().unwrap().game_map.scanned_up_to,
             1,
             "reorg: cache should reflect new count"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_cache_full_rescan_on_delta_exceeds_lookback() {
+        // Cache has scanned_up_to=1 but factory now has 3 games (delta=2).
+        // Set max_game_recovery_lookback=1 so the delta exceeds the
+        // lookback window, triggering a full rescan instead of an
+        // unbounded incremental scan.
+        let (games, info_map, output_roots) = game_chain(3);
+        let first_info = info_map[&proxy_addr(0)];
+
+        let cached_map = HashMap::from([(
+            TEST_BLOCK_INTERVAL,
+            vec![ScannedGame { proxy: proxy_addr(0), info: first_info }],
+        )]);
+
+        let mut cache = Some(CachedRecovery {
+            game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
+            anchor_root: B256::ZERO,
+            state: RecoveredState {
+                parent_address: proxy_addr(0),
+                output_root: first_info.root_claim,
+                l2_block_number: TEST_BLOCK_INTERVAL,
+            },
+        });
+
+        let mut pipeline = recovery_pipeline_with_roots(
+            MockDisputeGameFactory::with_games(games),
+            MockAggregateVerifier::with_game_info(info_map),
+            output_roots,
+        );
+        pipeline.config.max_game_recovery_lookback = 1; // delta of 2 exceeds this
+
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        // Full rescan with lookback=1 only sees the last factory entry
+        // (game at index 2, block 1536). That game's parent_address is
+        // proxy_addr(1) which doesn't match the anchor sentinel, so the
+        // walk finds no chain from anchor and falls back to anchor state.
+        assert_eq!(state.l2_block_number, 0, "should fall back to anchor state");
+        assert_eq!(
+            cache.as_ref().unwrap().game_map.scanned_up_to,
+            3,
+            "full rescan should set scanned_up_to to current count"
         );
     }
 
