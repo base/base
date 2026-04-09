@@ -180,15 +180,12 @@ async fn base_v1_clz_op_code() {
 
     // ── Batch and derive all 4 blocks ────────────────────────────────
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-    for block in [block1, block2, block3, block4] {
+    node.initialize().await;
+
+    for (block, i) in [(block1, 1u64), (block2, 2), (block3, 3), (block4, 4)] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
-    }
-
-    node.initialize().await;
-
-    for i in 1..=4u64 {
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }

@@ -468,7 +468,9 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                 err => panic!("TestRollupNode: pipeline error: {err}"),
             },
             StepResult::OriginAdvanceErr(err) => match err {
-                PipelineErrorKind::Temporary(PipelineError::Eof) => NodeStepResult::Idle,
+                PipelineErrorKind::Temporary(
+                    PipelineError::Eof | PipelineError::Provider(_),
+                ) => NodeStepResult::Idle,
                 err => panic!("TestRollupNode: origin advance error: {err}"),
             },
         }

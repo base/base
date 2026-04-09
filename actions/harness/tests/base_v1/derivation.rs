@@ -32,19 +32,17 @@ async fn base_v1_derivation_crosses_activation_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-    for _ in 1..=4u64 {
-        batcher.push_block(builder.build_next_block_with_single_transaction());
-        batcher.advance(&mut h.l1).await;
-    }
-
-    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
+    let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     node.initialize().await;
 
     for i in 1..=4u64 {
+        batcher.push_block(builder.build_next_block_with_single_transaction());
+        batcher.advance(&mut h.l1).await;
+        chain.push(h.l1.tip().clone());
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
 
