@@ -5,6 +5,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use url::Url;
+
 use base_alloy_chains::BaseChainConfig;
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -62,8 +64,10 @@ struct UpgradeSpec {
 #[derive(Debug)]
 struct ChainUpgrades {
     display_name: &'static str,
-    /// Default RPC URL used when the loaded config doesn't match this chain.
-    default_rpc: &'static str,
+    /// RPC URL for this chain, loaded from `~/.config/base/networks/{name}.yaml` at startup.
+    /// Falls back to a hardcoded public URL only for mainnet and sepolia.
+    /// `None` for internal networks (zeronet, devnet) when no user config is present.
+    rpc: Option<String>,
     specs: Vec<UpgradeSpec>,
 }
 
@@ -93,26 +97,43 @@ fn specs_from_config(cfg: &BaseChainConfig) -> Vec<UpgradeSpec> {
     ]
 }
 
+/// Reads the `rpc` field from `~/.config/base/networks/{name}.yaml` if it exists.
+fn user_config_rpc(name: &str) -> Option<String> {
+    let dir = dirs::home_dir()?.join(".config").join("base").join("networks");
+    let path = [dir.join(format!("{name}.yaml")), dir.join(format!("{name}.yml"))]
+        .into_iter()
+        .find(|p| p.exists())?;
+    let contents = std::fs::read_to_string(path).ok()?;
+    #[derive(serde::Deserialize)]
+    struct RpcOnly {
+        rpc: Url,
+    }
+    let parsed: RpcOnly = serde_yaml::from_str(&contents).ok()?;
+    Some(parsed.rpc.to_string())
+}
+
 fn all_chains() -> [ChainUpgrades; 4] {
     [
         ChainUpgrades {
             display_name: "Devnet",
-            default_rpc: "http://localhost:7545",
+            rpc: user_config_rpc("alpha").or_else(|| user_config_rpc("devnet")),
             specs: specs_from_config(BaseChainConfig::alpha()),
         },
         ChainUpgrades {
             display_name: "Zeronet",
-            default_rpc: "http://localhost:8545",
+            rpc: user_config_rpc("zeronet"),
             specs: specs_from_config(BaseChainConfig::zeronet()),
         },
         ChainUpgrades {
             display_name: "Sepolia",
-            default_rpc: "https://sepolia.base.org",
+            rpc: user_config_rpc("sepolia")
+                .or_else(|| Some("https://sepolia.base.org".to_string())),
             specs: specs_from_config(BaseChainConfig::sepolia()),
         },
         ChainUpgrades {
             display_name: "Mainnet",
-            default_rpc: "https://mainnet.base.org",
+            rpc: user_config_rpc("mainnet")
+                .or_else(|| Some("https://mainnet.base.org".to_string())),
             specs: specs_from_config(BaseChainConfig::mainnet()),
         },
     ]
@@ -321,14 +342,14 @@ impl UpgradesView {
         }
     }
 
-    fn rpc_for_selected(&self, resources: &Resources) -> String {
+    fn rpc_for_selected(&self, resources: &Resources) -> Option<String> {
         let chain = &self.chains[self.selected_chain];
         let loaded = resources.config.name.to_lowercase();
         let selected = chain.display_name.to_lowercase();
         if loaded == selected || (selected == "devnet" && loaded.contains("devnet")) {
-            resources.config.rpc.to_string()
+            Some(resources.config.rpc.to_string())
         } else {
-            chain.default_rpc.to_string()
+            chain.rpc.clone()
         }
     }
 }
@@ -361,8 +382,9 @@ impl View for UpgradesView {
                 }
             }
             KeyCode::Char('r') if !self.checks.running => {
-                let rpc = self.rpc_for_selected(resources);
-                self.checks.start(self.selected_chain, rpc);
+                if let Some(rpc) = self.rpc_for_selected(resources) {
+                    self.checks.start(self.selected_chain, rpc);
+                }
             }
             _ => {}
         }
