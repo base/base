@@ -359,14 +359,16 @@ impl View for UpgradesView {
             KeyCode::Char('r') if !self.checks.running => {
                 let now = now_unix();
                 let chain = &self.chains[self.selected_chain];
-                // Derive mode from V1's own timestamp so that a chain where V1 is
-                // active but a later fork is upcoming still runs checks in After mode.
-                if let Some(v1_ts) =
-                    chain.specs.iter().find(|s| s.name == "V1").and_then(|s| s.timestamp)
-                {
+                let v1_activated = chain
+                    .specs
+                    .iter()
+                    .find(|s| s.name == "V1")
+                    .and_then(|s| s.timestamp)
+                    .map(|ts| ts <= now)
+                    .unwrap_or(false);
+                if v1_activated {
                     let rpc = self.rpc_for_selected(resources);
-                    let mode = if v1_ts > now { CheckMode::Before } else { CheckMode::After };
-                    self.checks.start(self.selected_chain, rpc, mode);
+                    self.checks.start(self.selected_chain, rpc, CheckMode::After);
                 }
             }
             _ => {}
@@ -436,8 +438,15 @@ impl View for UpgradesView {
             .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
             .split(outer[2]);
 
+        let v1_active = chain
+            .specs
+            .iter()
+            .find(|s| s.name == "V1")
+            .and_then(|s| s.timestamp)
+            .map(|ts| ts <= now)
+            .unwrap_or(false);
         render_history(frame, bottom[0], chain, now);
-        render_checks_panel(frame, bottom[1], &self.checks, self.tick_count);
+        render_checks_panel(frame, bottom[1], &self.checks, self.tick_count, v1_active);
         render_footer(frame, outer[3], self.checks.running);
     }
 }
@@ -617,23 +626,44 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, chain: &ChainUpgrades, now:
     frame.render_widget(Table::new(rows, widths).block(block).header(header), area);
 }
 
-fn render_checks_panel(frame: &mut Frame<'_>, area: Rect, panel: &ChecksPanel, tick: u64) {
+fn render_checks_panel(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    panel: &ChecksPanel,
+    tick: u64,
+    v1_active: bool,
+) {
     let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
     // Panel is idle and has never been run.
     if panel.chain_idx.is_none() {
-        let lines: Vec<Line<'static>> = vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "Press [r] to run post-upgrade checks",
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Checks: CLZ opcode · MODEXP size/gas · P256VERIFY gas · eth_config",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ];
+        let lines: Vec<Line<'static>> = if v1_active {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Press [r] to run post-upgrade checks",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Checks: CLZ opcode · MODEXP size/gas · P256VERIFY gas · eth_config",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]
+        } else {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "V1 not yet activated",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Checks available after V1 activates",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]
+        };
         let block = Block::default()
             .title(" V1 Checks ")
             .borders(Borders::ALL)
