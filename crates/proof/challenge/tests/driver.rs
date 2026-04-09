@@ -15,8 +15,8 @@ use base_challenger::{
         MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState,
         MockL1HeadProvider, MockL2Provider, MockTeeProofProvider, MockTxManager,
         MockZkProofProvider, MockZkProofState, TEST_DISCOVERY_INTERVAL, addr,
-        build_test_header_and_account,
-        empty_factory, factory_game, mock_state, mock_state_with_tee, receipt_with_status,
+        build_test_header_and_account, empty_factory, factory_game, mock_state,
+        mock_state_with_tee, receipt_with_status,
     },
 };
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
@@ -437,10 +437,7 @@ async fn test_step_pending_proof_skips_prove_block() {
 
     let zk = Arc::new(MockZkProofProvider {
         session_id: "pending-session".to_string(),
-        state: Mutex::new(MockZkProofState {
-            receipt: vec![0xBE, 0xEF],
-            ..Default::default()
-        }),
+        state: Mutex::new(MockZkProofState { receipt: vec![0xBE, 0xEF], ..Default::default() }),
     });
 
     let tx_hash = B256::repeat_byte(0xDD);

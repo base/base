@@ -496,7 +496,9 @@ impl MockL1HeadProvider {
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
-        Self { block_number_results: Mutex::new(VecDeque::from([(None, Err(eyre::eyre!("{msg}")))])) }
+        Self {
+            block_number_results: Mutex::new(VecDeque::from([(None, Err(eyre::eyre!("{msg}")))])),
+        }
     }
 }
 
@@ -938,7 +940,6 @@ mod tests {
     /// returned as a [`GameCategory::FraudulentZkChallenge`] candidate.
     #[tokio::test]
     async fn test_scan_challenged_game_returns_fraudulent_zk_challenge() {
-
         let tee_addr = Address::repeat_byte(0xEE);
         let zk_addr = Address::repeat_byte(0xCC);
 
@@ -965,7 +966,6 @@ mod tests {
     /// returned as a [`GameCategory::InvalidZkProposal`] candidate.
     #[tokio::test]
     async fn test_scan_zk_proposal_returns_invalid_zk_proposal() {
-
         let zk_addr = Address::repeat_byte(0xCC);
 
         let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
@@ -987,7 +987,6 @@ mod tests {
     /// [`GameCategory::InvalidTeeProposal`].
     #[tokio::test]
     async fn test_scan_tee_proposal_returns_invalid_tee_proposal() {
-
         let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
 
         let mut verifier_games = HashMap::new();
