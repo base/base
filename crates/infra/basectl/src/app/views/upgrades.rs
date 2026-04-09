@@ -359,11 +359,8 @@ impl View for UpgradesView {
                 }
             }
             KeyCode::Char('r') if !self.checks.running => {
-                let chain = &self.chains[self.selected_chain];
-                if chain.v1_active(now_unix()) {
-                    let rpc = self.rpc_for_selected(resources);
-                    self.checks.start(self.selected_chain, rpc);
-                }
+                let rpc = self.rpc_for_selected(resources);
+                self.checks.start(self.selected_chain, rpc);
             }
             _ => {}
         }
@@ -624,33 +621,25 @@ fn render_checks_panel(
 
     // Panel is idle and has never been run.
     if panel.chain_idx.is_none() {
-        let lines: Vec<Line<'static>> = if v1_active {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Press [r] to run post-upgrade checks",
-                    Style::default().fg(Color::DarkGray),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Checks: CLZ opcode · MODEXP size/gas · P256VERIFY gas · eth_config",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ]
-        } else {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled(
-                    "V1 not yet activated",
-                    Style::default().fg(Color::DarkGray),
-                )),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Checks available after V1 activates",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ]
-        };
+        let mut lines: Vec<Line<'static>> = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "Press [r] to run post-upgrade checks",
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Checks: CLZ opcode · MODEXP size/gas · P256VERIFY gas · eth_config",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        if !v1_active {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "⚠ V1 not yet active — all checks will fail",
+                Style::default().fg(Color::Yellow),
+            )));
+        }
         let block = Block::default()
             .title(" V1 Checks ")
             .borders(Borders::ALL)
@@ -661,14 +650,15 @@ fn render_checks_panel(
 
     let passed = panel.results.values().filter(|r| r.passed == Some(true)).count();
     let failed = panel.results.values().filter(|r| r.passed == Some(false)).count();
+    let pre_tag = if v1_active { "" } else { "  ⚠ pre-activation" };
 
     let (title, border_color) = if panel.running {
         let spin = spinner[(tick / 2) as usize % spinner.len()];
-        (format!(" V1 Checks  {spin} running… "), Color::Yellow)
+        (format!(" V1 Checks{pre_tag}  {spin} running… "), Color::Yellow)
     } else if failed > 0 {
-        (format!(" V1 Checks  ✓ {passed}  ✗ {failed} "), Color::Red)
+        (format!(" V1 Checks{pre_tag}  ✓ {passed}  ✗ {failed} "), Color::Red)
     } else {
-        (format!(" V1 Checks  ✓ {passed} passed "), Color::LightGreen)
+        (format!(" V1 Checks{pre_tag}  ✓ {passed} passed "), Color::LightGreen)
     };
 
     let rows: Vec<Row<'static>> = V1_CHECK_NAMES
