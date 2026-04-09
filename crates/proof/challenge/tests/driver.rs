@@ -237,10 +237,8 @@ async fn test_step_valid_game_skipped() {
     // l2_block_number - starting_block_number < intermediate_block_interval
     // → expected_count = 0 → trivially valid, no proof requested.
     let factory = single_game_factory();
-    let verifier = single_game_verifier(MockGameState {
-        tee_prover: DEFAULT_TEE_PROVER,
-        ..game_state(14)
-    });
+    let verifier =
+        single_game_verifier(MockGameState { tee_prover: DEFAULT_TEE_PROVER, ..game_state(14) });
     let l2 = default_l2();
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
@@ -872,10 +870,8 @@ async fn test_step_valid_zk_proposal_skipped() {
     // A ZK-proposed game with valid intermediate roots should not trigger
     // any action.
     let factory = single_game_factory();
-    let verifier = single_game_verifier(MockGameState {
-        zk_prover: ZK_PROVER_ADDR,
-        ..game_state(14)
-    });
+    let verifier =
+        single_game_verifier(MockGameState { zk_prover: ZK_PROVER_ADDR, ..game_state(14) });
     let l2 = default_l2();
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
