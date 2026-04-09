@@ -153,11 +153,7 @@ const V1_CHECK_NAMES: &[&str] = &[
 ];
 
 /// Expected check names for Jovian, in execution order.
-const JOVIAN_CHECK_NAMES: &[&str] = &[
-    "bn256Pairing limit",
-    "extra data v1",
-    "GPO implementation",
-];
+const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GPO implementation"];
 
 fn check_names_for(hardfork: &str) -> &'static [&'static str] {
     match hardfork {
@@ -433,11 +429,8 @@ impl View for UpgradesView {
                 // Find the last hardfork that has a scheduled timestamp and has
                 // defined checks. This lets mainnet run Jovian checks instead of
                 // silently doing nothing when V1 has no timestamp.
-                if let Some(spec) = chain
-                    .specs
-                    .iter()
-                    .rev()
-                    .find(|s| s.timestamp.is_some() && !check_names_for(s.name).is_empty())
+                if let Some(spec) = target_hardfork(chain)
+                    .and_then(|name| chain.specs.iter().find(|s| s.name == name))
                 {
                     let ts = spec.timestamp.unwrap();
                     if let Some(rpc) = self.rpc_for_selected(resources) {
@@ -977,7 +970,7 @@ async fn run_checks_streaming(
 
 /// bn256Pairing precompile address (EIP-197).
 const BN256PAIRING_ADDR: &str = "0x0000000000000000000000000000000000000008";
-/// GasPriceOracle predeploy proxy address.
+/// `GasPriceOracle` predeploy proxy address.
 const GAS_PRICE_ORACLE_ADDR: &str = "0x420000000000000000000000000000000000000F";
 /// EIP-1967 logic/implementation storage slot.
 const EIP1967_IMPL_SLOT: &str =
@@ -987,19 +980,13 @@ const JOVIAN_GPO_IMPL: &str = "4f1db3c6abd250ba86e0928471a8f7db3afd88f1";
 /// Expected GPO implementation address under Isthmus (before Jovian).
 const ISTHMUS_GPO_IMPL: &str = "93e57a196454cb919193fa9946f14943cf733845";
 
-async fn eth_get_storage_at(
-    client: &HttpClient,
-    addr: &str,
-    slot: &str,
-) -> Result<String, String> {
+async fn eth_get_storage_at(client: &HttpClient, addr: &str, slot: &str) -> Result<String, String> {
     ClientT::request::<String, _>(client, "eth_getStorageAt", rpc_params![addr, slot, "latest"])
         .await
         .map_err(|e| e.to_string())
 }
 
-async fn eth_get_block_by_number_latest(
-    client: &HttpClient,
-) -> Result<serde_json::Value, String> {
+async fn eth_get_block_by_number_latest(client: &HttpClient) -> Result<serde_json::Value, String> {
     ClientT::request::<serde_json::Value, _>(
         client,
         "eth_getBlockByNumber",
@@ -1051,14 +1038,11 @@ async fn run_jovian_checks_streaming(
         }
     };
 
-    send_start!("RPC connection");
     match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
         Ok(_) => {}
         Err(e) => {
-            let conn_result = CheckResult {
-                passed: Some(false),
-                detail: format!("cannot reach {rpc_url}: {e}"),
-            };
+            let conn_result =
+                CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("bn256Pairing limit", conn_result);
             for &name in &JOVIAN_CHECK_NAMES[1..] {
                 send_result!(
@@ -1126,41 +1110,37 @@ async fn run_jovian_checks_streaming(
 
     // ── GasPriceOracle EIP-1967 implementation slot ───────────────────────────
     send_start!("GPO implementation");
-    let gpo_check = match eth_get_storage_at(&client, GAS_PRICE_ORACLE_ADDR, EIP1967_IMPL_SLOT)
-        .await
-    {
-        Err(e) => CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
-        Ok(slot_val) => {
-            let val = norm(&slot_val);
-            // Slot value is a zero-padded 32-byte address; last 40 hex chars = address.
-            let impl_addr = if val.len() >= 40 { &val[val.len() - 40..] } else { val.as_str() };
-            let expected = match mode {
-                CheckMode::After => JOVIAN_GPO_IMPL,
-                CheckMode::Before => ISTHMUS_GPO_IMPL,
-            };
-            let label = match mode {
-                CheckMode::After => "Jovian",
-                CheckMode::Before => "Isthmus",
-            };
-            if impl_addr == expected {
-                CheckResult {
-                    passed: Some(true),
-                    detail: format!(
-                        "→ 0x{}",
-                        impl_addr.get(..8).unwrap_or(impl_addr)
-                    ),
-                }
-            } else {
-                CheckResult {
-                    passed: Some(false),
-                    detail: format!(
-                        "impl=0x{} (expected {label})",
-                        impl_addr.get(..8).unwrap_or(impl_addr)
-                    ),
+    let gpo_check =
+        match eth_get_storage_at(&client, GAS_PRICE_ORACLE_ADDR, EIP1967_IMPL_SLOT).await {
+            Err(e) => CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
+            Ok(slot_val) => {
+                let val = norm(&slot_val);
+                // Slot value is a zero-padded 32-byte address; last 40 hex chars = address.
+                let impl_addr = if val.len() >= 40 { &val[val.len() - 40..] } else { val.as_str() };
+                let expected = match mode {
+                    CheckMode::After => JOVIAN_GPO_IMPL,
+                    CheckMode::Before => ISTHMUS_GPO_IMPL,
+                };
+                let label = match mode {
+                    CheckMode::After => "Jovian",
+                    CheckMode::Before => "Isthmus",
+                };
+                if impl_addr == expected {
+                    CheckResult {
+                        passed: Some(true),
+                        detail: format!("→ 0x{}", impl_addr.get(..8).unwrap_or(impl_addr)),
+                    }
+                } else {
+                    CheckResult {
+                        passed: Some(false),
+                        detail: format!(
+                            "impl=0x{} (expected {label})",
+                            impl_addr.get(..8).unwrap_or(impl_addr)
+                        ),
+                    }
                 }
             }
-        }
-    };
+        };
     send_result!("GPO implementation", gpo_check);
 }
 
@@ -1309,7 +1289,6 @@ async fn run_v1_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>)
     };
 
     // Verify the RPC is reachable with a quick eth_blockNumber call.
-    send_start!("RPC connection");
     match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
         Ok(_) => {}
         Err(e) => {
