@@ -317,18 +317,15 @@ impl<C: Clock> BondManager<C> {
     /// eligibility, returning one entry per evaluated game.
     async fn evaluate_bond_range(
         range: std::ops::Range<u64>,
-        factory_client: &Arc<dyn DisputeGameFactoryClient>,
+        factory_client: &dyn DisputeGameFactoryClient,
         verifier_client: &dyn AggregateVerifierClient,
         claim_addresses: &HashSet<Address>,
         clock: &C,
     ) -> Vec<Option<(Address, Address, Option<BondPhase>)>> {
         stream::iter(range)
-            .map(|i| {
-                let fc = &**factory_client;
-                async move {
-                    Self::evaluate_game_for_bonds(i, fc, verifier_client, claim_addresses, clock)
-                        .await
-                }
+            .map(|i| async move {
+                Self::evaluate_game_for_bonds(i, factory_client, verifier_client, claim_addresses, clock)
+                    .await
             })
             .buffer_unordered(GameScanner::SCAN_CONCURRENCY)
             .collect()
@@ -358,8 +355,7 @@ impl<C: Clock> BondManager<C> {
             return Ok(());
         }
 
-        let factory_client = Arc::clone(&self.factory_client);
-        let game_count = factory_client.game_count().await?;
+        let game_count = self.factory_client.game_count().await?;
         if game_count == 0 {
             info!("no games in factory, skipping bond startup scan");
             return Ok(());
@@ -370,23 +366,22 @@ impl<C: Clock> BondManager<C> {
 
         let results = Self::evaluate_bond_range(
             start_index..game_count,
-            &factory_client,
+            &*self.factory_client,
             verifier_client,
             &self.claim_addresses,
             &self.clock,
         )
         .await;
 
-        // Process results sequentially: insert tracked games and resolve the
-        // WETH delay from the first relevant game.
-        for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
-            // Resolve the WETH delay from the first available game,
-            // including already-claimed ones, so that the delay is
-            // bootstrapped as early as possible.
-            self.ensure_weth_delay(verifier_client, game_address).await;
+        // Resolve the WETH delay from the first available game so the
+        // delay is bootstrapped as early as possible.
+        if let Some((game_address, _, _)) = results.iter().flatten().next() {
+            self.ensure_weth_delay(verifier_client, *game_address).await;
+        }
 
+        for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
             let Some(phase) = phase else {
-                continue; // already claimed, skip
+                continue;
             };
 
             info!(
@@ -426,8 +421,7 @@ impl<C: Clock> BondManager<C> {
             return Ok(());
         }
 
-        let factory_client = Arc::clone(&self.factory_client);
-        let game_count = factory_client.game_count().await?;
+        let game_count = self.factory_client.game_count().await?;
         if game_count == 0 {
             debug!("no games found, skipping bond discovery scan");
             return Ok(());
@@ -481,7 +475,7 @@ impl<C: Clock> BondManager<C> {
 
         let results = Self::evaluate_bond_range(
             scan_start..scan_end,
-            &factory_client,
+            &*self.factory_client,
             verifier_client,
             &self.claim_addresses,
             &self.clock,
@@ -498,8 +492,6 @@ impl<C: Clock> BondManager<C> {
             let Some(phase) = phase else {
                 continue;
             };
-
-            self.ensure_weth_delay(verifier_client, game_address).await;
 
             info!(
                 game = %game_address,
@@ -541,8 +533,10 @@ impl<C: Clock> BondManager<C> {
         }
 
         // Lazily resolve the DelayedWETH delay if not yet known.
-        if let Some(&game_address) = self.tracked.keys().next() {
-            self.ensure_weth_delay(verifier_client, game_address).await;
+        if self.weth_delay.is_none() {
+            if let Some(&game_address) = self.tracked.keys().next() {
+                self.ensure_weth_delay(verifier_client, game_address).await;
+            }
         }
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
@@ -710,9 +704,11 @@ impl<C: Clock> BondManager<C> {
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<Option<RemovalReason>> {
         // Check if already unlocked onchain.
-        let unlocked = verifier_client.bond_unlocked(game_address).await?;
+        let (unlocked, resolved_at) = futures::try_join!(
+            verifier_client.bond_unlocked(game_address),
+            verifier_client.resolved_at(game_address),
+        )?;
         if unlocked {
-            let resolved_at = verifier_client.resolved_at(game_address).await?;
             let unlocked_at = Self::estimate_unlock_time(&self.clock, resolved_at);
             info!(
                 game = %game_address,
@@ -778,7 +774,6 @@ impl<C: Clock> BondManager<C> {
         let claimed = verifier_client.bond_claimed(game_address).await?;
         if claimed {
             info!(game = %game_address, "bond already claimed");
-            self.set_phase(game_address, BondPhase::Completed);
             return Ok(Some(RemovalReason::Completed));
         }
 
@@ -868,15 +863,14 @@ impl<C: Clock> BondManager<C> {
         game_address: Address,
         clock: &C,
     ) -> eyre::Result<Option<BondPhase>> {
-        let bond_claimed = verifier_client.bond_claimed(game_address).await?;
-        if bond_claimed {
-            return Ok(None);
-        }
-
-        let (resolved_at, bond_unlocked) = futures::try_join!(
+        let (bond_claimed, resolved_at, bond_unlocked) = futures::try_join!(
+            verifier_client.bond_claimed(game_address),
             verifier_client.resolved_at(game_address),
             verifier_client.bond_unlocked(game_address),
         )?;
+        if bond_claimed {
+            return Ok(None);
+        }
         if bond_unlocked {
             let unlocked_at = Self::estimate_unlock_time(clock, resolved_at);
             return Ok(Some(BondPhase::AwaitingDelay { unlocked_at }));
