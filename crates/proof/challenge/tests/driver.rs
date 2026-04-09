@@ -33,6 +33,26 @@ const DEFAULT_TX_HASH: B256 = B256::repeat_byte(0xDD);
 const BOGUS_ROOT: B256 = B256::repeat_byte(0xFF);
 const BOGUS_CLAIM: B256 = B256::repeat_byte(0x01);
 
+/// Returns a base [`MockGameState`] with standard test defaults.
+/// Override individual fields with struct update syntax:
+/// `MockGameState { tee_prover: DEFAULT_TEE_PROVER, ..game_state(20) }`.
+fn game_state(l2_block_number: u64) -> MockGameState {
+    MockGameState {
+        game_info: base_proof_contracts::GameInfo {
+            root_claim: BOGUS_CLAIM,
+            l2_block_number,
+            parent_index: 0,
+        },
+        starting_block_number: 10,
+        l1_head: DEFAULT_L1_HEAD,
+        ..Default::default()
+    }
+}
+
+fn empty_verifier() -> Arc<MockAggregateVerifier> {
+    Arc::new(MockAggregateVerifier { games: HashMap::new() })
+}
+
 /// Builds a test driver with the given mocks.
 fn test_driver(
     factory: Arc<MockDisputeGameFactory>,
@@ -173,15 +193,8 @@ fn invalid_game_mocks()
 
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
-        game_info: base_proof_contracts::GameInfo {
-            root_claim: BOGUS_CLAIM,
-            l2_block_number: 20,
-            parent_index: 0,
-        },
-        starting_block_number: 10,
-        l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![root_15, BOGUS_ROOT],
-        ..Default::default()
+        ..game_state(20)
     });
 
     (l2, factory, verifier)
@@ -203,7 +216,7 @@ fn driver_with_ready_proof(
 #[tokio::test]
 async fn test_step_no_candidates() {
     let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
-    let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
+    let verifier = empty_verifier();
     let l2 = Arc::new(MockL2Provider::new());
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
@@ -218,14 +231,7 @@ async fn test_step_valid_game_skipped() {
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
-        game_info: base_proof_contracts::GameInfo {
-            root_claim: BOGUS_CLAIM,
-            l2_block_number: 14,
-            parent_index: 0,
-        },
-        starting_block_number: 10,
-        l1_head: DEFAULT_L1_HEAD,
-        ..Default::default()
+        ..game_state(14)
     });
     let l2 = Arc::new(MockL2Provider::new());
 
@@ -241,15 +247,8 @@ async fn test_step_validation_error_blocks_not_available() {
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
-        game_info: base_proof_contracts::GameInfo {
-            root_claim: BOGUS_CLAIM,
-            l2_block_number: 20,
-            parent_index: 0,
-        },
-        starting_block_number: 10,
-        l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![BOGUS_ROOT, B256::repeat_byte(0xEE)],
-        ..Default::default()
+        ..game_state(20)
     });
 
     let mut l2 = MockL2Provider::new();
@@ -348,7 +347,7 @@ async fn test_step_scan_error_propagated() {
     }
 
     let factory = Arc::new(FailingFactory);
-    let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
+    let verifier = empty_verifier();
     let scanner = GameScanner::new(
         factory,
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
@@ -490,7 +489,7 @@ async fn test_poll_or_submit_drops_nullified_game() {
 #[tokio::test]
 async fn test_run_cancellation() {
     let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
-    let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
+    let verifier = empty_verifier();
     let l2 = Arc::new(MockL2Provider::new());
 
     let driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
@@ -667,16 +666,9 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
-        game_info: base_proof_contracts::GameInfo {
-            root_claim: BOGUS_CLAIM,
-            l2_block_number: 20,
-            parent_index: 0,
-        },
-        starting_block_number: 10,
-        l1_head: DEFAULT_L1_HEAD,
         // root_15 is correct, index 1 is bogus — invalid_index == 1
         intermediate_output_roots: vec![root_15, BOGUS_ROOT],
-        ..Default::default()
+        ..game_state(20)
     });
 
     let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
@@ -720,15 +712,8 @@ async fn test_step_nullified_game_not_reprocessed() {
     let (l2, factory, root_15, _root_20) = base_game_mocks();
 
     let verifier = single_game_verifier(MockGameState {
-        game_info: base_proof_contracts::GameInfo {
-            root_claim: BOGUS_CLAIM,
-            l2_block_number: 20,
-            parent_index: 0,
-        },
-        starting_block_number: 10,
-        l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![root_15, BOGUS_ROOT],
-        ..Default::default()
+        ..game_state(20)
     });
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
 
@@ -806,16 +791,9 @@ fn fraudulent_zk_challenge_mocks(
     let verifier = single_game_verifier(MockGameState {
         zk_prover: ZK_PROVER_ADDR,
         tee_prover: DEFAULT_TEE_PROVER,
-        game_info: base_proof_contracts::GameInfo {
-            root_claim: BOGUS_CLAIM,
-            l2_block_number: 20,
-            parent_index: 0,
-        },
-        starting_block_number: 10,
-        l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![root_15, onchain_root_at_20],
         countered_index: 2, // 1-based → challenged_index = 1
-        ..Default::default()
+        ..game_state(20)
     });
 
     (l2, factory, verifier)
@@ -871,15 +849,8 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
 
     let verifier = single_game_verifier(MockGameState {
         zk_prover: ZK_PROVER_ADDR,
-        game_info: base_proof_contracts::GameInfo {
-            root_claim: BOGUS_CLAIM,
-            l2_block_number: 20,
-            parent_index: 0,
-        },
-        starting_block_number: 10,
-        l1_head: DEFAULT_L1_HEAD,
         intermediate_output_roots: vec![root_15, BOGUS_ROOT],
-        ..Default::default()
+        ..game_state(20)
     });
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
@@ -897,14 +868,7 @@ async fn test_step_valid_zk_proposal_skipped() {
     let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let verifier = single_game_verifier(MockGameState {
         zk_prover: ZK_PROVER_ADDR,
-        game_info: base_proof_contracts::GameInfo {
-            root_claim: BOGUS_CLAIM,
-            l2_block_number: 14,
-            parent_index: 0,
-        },
-        starting_block_number: 10,
-        l1_head: DEFAULT_L1_HEAD,
-        ..Default::default()
+        ..game_state(14)
     });
     let l2 = Arc::new(MockL2Provider::new());
 
