@@ -11,7 +11,7 @@ set working-directory := '../../..'
 
 # Show load-test commands
 default:
-    @just load-test --list
+    @just --justfile {{source_file()}} --list
 
 # Run load test against devnet (local) - uses Anvil Account #1
 devnet *args:
