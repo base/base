@@ -540,9 +540,10 @@ impl<C: Clock> BondManager<C> {
 
         // Lazily resolve the DelayedWETH delay if not yet known.
         if self.weth_delay.is_none()
-            && let Some(&game_address) = self.tracked.keys().next() {
-                self.ensure_weth_delay(verifier_client, game_address).await;
-            }
+            && let Some(&game_address) = self.tracked.keys().next()
+        {
+            self.ensure_weth_delay(verifier_client, game_address).await;
+        }
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
         let mut removed = Vec::new();
@@ -895,9 +896,10 @@ impl<C: Clock> BondManager<C> {
         game_address: Address,
     ) {
         if self.weth_delay.is_none()
-            && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await {
-                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
-            }
+            && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
+        {
+            warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
+        }
     }
 
     /// Reads the `DelayedWETH` address from a game proxy and fetches the delay.

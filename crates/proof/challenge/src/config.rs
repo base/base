@@ -194,8 +194,7 @@ impl ChallengerConfig {
             ));
         }
 
-        let signing =
-            SignerConfig::try_from(cli.challenger.signer).map_err(ConfigError::Signer)?;
+        let signing = SignerConfig::try_from(cli.challenger.signer).map_err(ConfigError::Signer)?;
 
         let tx_manager =
             TxManagerConfig::try_from(cli.challenger.tx_manager).map_err(ConfigError::TxManager)?;

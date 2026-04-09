@@ -10,14 +10,12 @@
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, Bytes};
+use base_proof_primitives::PROOF_TYPE_ZK;
 use base_zk_client::{
     GetProofRequest, ProofJobStatus, ProveBlockRequest, ReceiptType, ZkProofProvider,
 };
 use tracing::warn;
 use uuid::Uuid;
-
-/// Proof type byte for ZK proofs (matches `AggregateVerifier.nullify` discriminator: `0` = TEE, `1` = ZK).
-const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
 
 /// The kind of proof being generated.
 #[derive(Debug, Clone)]
@@ -273,7 +271,7 @@ impl PendingProofs {
         let update = match status {
             ProofJobStatus::Succeeded => {
                 let mut raw = Vec::with_capacity(1 + response.receipt.len());
-                raw.push(ZK_PROOF_TYPE_BYTE);
+                raw.push(PROOF_TYPE_ZK);
                 raw.extend_from_slice(&response.receipt);
                 let proof_bytes = Bytes::from(raw);
 

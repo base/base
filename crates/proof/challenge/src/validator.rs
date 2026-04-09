@@ -210,9 +210,9 @@ impl<L2: L2Provider> OutputValidator<L2> {
         let account_result =
             self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
 
-        AccountProofVerifier::verify(&account_result, consensus_header.state_root).map_err(|e| {
-            ValidatorError::AccountProofFailed { block_number, reason: e.to_string() }
-        })?;
+        AccountProofVerifier::verify(&account_result, consensus_header.state_root).map_err(
+            |e| ValidatorError::AccountProofFailed { block_number, reason: e.to_string() },
+        )?;
 
         let storage_root = account_result.storage_hash;
         let output_root =
