@@ -2535,13 +2535,13 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-evm",
  "base-execution-payload-builder",
+ "base-execution-txpool",
  "base-node-core",
  "base-protocol",
  "base-revm",
  "base-runtime",
  "base-test-utils",
  "base-tx-manager",
- "base-txpool",
  "reth-basic-payload-builder",
  "reth-db",
  "reth-db-common",
@@ -2559,7 +2559,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-subscriber 0.3.23",
+ "tracing-subscriber 0.3.22",
 ]
 
 [[package]]
