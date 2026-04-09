@@ -22,7 +22,7 @@ use base_alloy_rpc_types_engine::{
 };
 use base_consensus_derive::{AttributesBuilder, StatefulAttributesBuilder};
 use base_consensus_genesis::RollupConfig;
-use base_consensus_node::{L1OriginSelector, SequencerEngineClient};
+use base_consensus_node::{L1OriginSelector, OriginSelector, SequencerEngineClient};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_execution_evm::OpEvmConfig;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
@@ -476,8 +476,6 @@ impl L2Sequencer {
         &mut self,
         user_txs: Vec<OpTxEnvelope>,
     ) -> Result<BaseBlock, L2SequencerError> {
-        use base_consensus_node::OriginSelector;
-
         // 1. Origin selection: use pinned origin if set, otherwise production L1OriginSelector.
         let l1_origin = if let Some(pin) = self.l1_origin_pin {
             pin

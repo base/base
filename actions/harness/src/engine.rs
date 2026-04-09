@@ -53,8 +53,9 @@ use reth_node_api::NodeTypesWithDBAdapter;
 use reth_payload_primitives::{BuiltPayload, PayloadBuilderAttributes};
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
-    BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory,
-    providers::BlockchainProvider, test_utils::create_test_provider_factory_with_node_types,
+    BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory, StateProvider,
+    StateProviderFactory, providers::BlockchainProvider,
+    test_utils::create_test_provider_factory_with_node_types,
 };
 use reth_transaction_pool::noop::NoopTransactionPool;
 
@@ -253,8 +254,6 @@ impl ActionEngineClient {
         address: Address,
         slot: alloy_primitives::U256,
     ) -> alloy_primitives::U256 {
-        use reth_provider::{StateProvider, StateProviderFactory};
-
         let slot_key: StorageKey = B256::from(slot);
         let inner = self.inner.lock().expect("engine client lock");
         let provider =
@@ -270,8 +269,6 @@ impl ActionEngineClient {
     ///
     /// Returns `true` if the account exists and has code, `false` otherwise.
     pub fn has_code(&self, address: Address) -> bool {
-        use reth_provider::{StateProvider, StateProviderFactory};
-
         let inner = self.inner.lock().expect("engine client lock");
         let provider =
             inner.blockchain_provider.latest().expect("failed to get latest state provider");
@@ -571,12 +568,12 @@ impl ActionEngineClient {
         }
     }
 
-    /// Look up a pending payload by ID, returning a transport error if not found.
-    fn get_pending(
-        inner: &ActionEngineClientInner,
+    /// Remove a pending payload by ID, returning a transport error if not found.
+    fn take_pending(
+        inner: &mut ActionEngineClientInner,
         payload_id: PayloadId,
-    ) -> TransportResult<&PendingPayload> {
-        inner.pending_payloads.get(&payload_id).ok_or_else(|| {
+    ) -> TransportResult<PendingPayload> {
+        inner.pending_payloads.remove(&payload_id).ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(&format!(
                 "ActionEngineClient: payload not found: {payload_id}"
             )))
@@ -791,7 +788,7 @@ impl OpEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
 
         // Update canonical head if the block is in our executed headers.
         if let Some(h) = guard.executed_headers.values().find(|h| h.hash_slow() == head).cloned() {
-            let block_hash = h.hash_slow();
+            let block_hash = head;
             guard.canonical_head = L2BlockInfo {
                 block_info: BlockInfo {
                     hash: block_hash,
@@ -829,36 +826,36 @@ impl OpEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<ExecutionPayloadEnvelopeV2> {
-        let guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let p = Self::get_pending(&guard, payload_id)?;
-        Ok(ExecutionPayloadEnvelopeV2::from(p.built.clone()))
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let p = Self::take_pending(&mut guard, payload_id)?;
+        Ok(ExecutionPayloadEnvelopeV2::from(p.built))
     }
 
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<OpExecutionPayloadEnvelopeV3> {
-        let guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let p = Self::get_pending(&guard, payload_id)?;
-        Ok(OpExecutionPayloadEnvelopeV3::from(p.built.clone()))
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let p = Self::take_pending(&mut guard, payload_id)?;
+        Ok(OpExecutionPayloadEnvelopeV3::from(p.built))
     }
 
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<OpExecutionPayloadEnvelopeV4> {
-        let guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let p = Self::get_pending(&guard, payload_id)?;
-        Ok(OpExecutionPayloadEnvelopeV4::from(p.built.clone()))
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let p = Self::take_pending(&mut guard, payload_id)?;
+        Ok(OpExecutionPayloadEnvelopeV4::from(p.built))
     }
 
     async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
     ) -> TransportResult<OpExecutionPayloadEnvelopeV5> {
-        let guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let p = Self::get_pending(&guard, payload_id)?;
-        Ok(OpExecutionPayloadEnvelopeV5::from(p.built.clone()))
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let p = Self::take_pending(&mut guard, payload_id)?;
+        Ok(OpExecutionPayloadEnvelopeV5::from(p.built))
     }
 
     async fn get_payload_bodies_by_hash_v1(
@@ -926,8 +923,8 @@ impl SequencerEngineClient for ActionEngineClient {
         payload_id: PayloadId,
         _attributes: AttributesWithParent,
     ) -> Result<OpExecutionPayloadEnvelope, NodeEngineClientError> {
-        let guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let pending = Self::get_pending(&guard, payload_id)
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let pending = Self::take_pending(&mut guard, payload_id)
             .map_err(|e| NodeEngineClientError::ResponseError(e.to_string()))?;
         let block = pending.built.block();
         let block_hash = block.hash();
