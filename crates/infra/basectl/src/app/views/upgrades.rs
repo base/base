@@ -1004,13 +1004,10 @@ async fn run_v1_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>)
     // ── MODEXP size limit ──────────────────────────────────────────────────────
     send_start!("MODEXP size limit");
     let r = eth_call(&client, MODEXP_ADDR, MODEXP_OVERSIZED).await;
-    let modexp_size = match r {
-        Err(_) => CheckResult {
-            passed: Some(true),
-            detail: "oversized input rejected (correct)".to_string(),
-        },
-        Ok(v) => CheckResult { passed: Some(false), detail: format!("unexpectedly accepted: {v}") },
-    };
+    let modexp_size = r.map_or_else(
+        |_| CheckResult { passed: Some(true), detail: "oversized input rejected (correct)".to_string() },
+        |v| CheckResult { passed: Some(false), detail: format!("unexpectedly accepted: {v}") },
+    );
     send_result!("MODEXP size limit", modexp_size);
 
     // ── MODEXP min gas (200 → 500) ─────────────────────────────────────────────
