@@ -176,6 +176,24 @@ pub enum TxnExecutionError {
     MeteringDataPending,
 }
 
+impl TxnExecutionError {
+    /// Returns `true` if this rejection is permanent — the transaction will never be includable
+    /// regardless of block/flashblock cumulative state. Permanent rejections are intrinsic to
+    /// the transaction itself (e.g. its size or predicted execution time exceeds the per-tx limit).
+    ///
+    /// Transient rejections depend on cumulative block state (gas used, DA used, etc.) and may
+    /// succeed in a future block or flashblock with different cumulative values.
+    pub const fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            Self::TransactionDASizeExceeded(_, _)
+                | Self::ExecutionMeteringLimitExceeded(
+                    ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
+                )
+        )
+    }
+}
+
 impl From<ExecutionMeteringLimitExceeded> for TxnExecutionError {
     fn from(err: ExecutionMeteringLimitExceeded) -> Self {
         Self::ExecutionMeteringLimitExceeded(err)

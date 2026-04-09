@@ -100,6 +100,12 @@ base_metrics::define_metrics! {
     metering_store_lru_evictions: counter,
     #[describe("Size of MeteringStore")]
     metering_store_size: gauge,
+    #[describe("Transactions inserted into the rejection cache")]
+    rejection_cache_insertions: counter,
+    #[describe("Transactions skipped by the rejection cache (P2P re-insertion prevented)")]
+    rejection_cache_hits: counter,
+    #[describe("Number of entries in the rejection cache")]
+    rejection_cache_size: gauge,
     #[describe("Transactions skipped because metering data has not yet arrived")]
     metering_data_pending_skip: counter,
     #[describe("Transactions rejected by per-tx DA size limit")]

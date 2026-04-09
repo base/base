@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
 
-use crate::{ExecutionMeteringMode, NoopMeteringProvider, SharedMeteringProvider};
+use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
 
 /// Configuration values for the flashblocks builder.
 #[derive(Clone)]
@@ -79,6 +79,10 @@ pub struct BuilderConfig {
 
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
+
+    /// Cache of permanently rejected transaction hashes, shared across blocks.
+    /// Transactions in this cache are skipped by the iterator without re-evaluation.
+    pub rejection_cache: RejectionCache,
 }
 
 impl BuilderConfig {
@@ -112,6 +116,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("metering_provider", &self.metering_provider)
+            .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .finish()
     }
 }
@@ -137,6 +142,7 @@ impl Default for BuilderConfig {
             max_uncompressed_block_size: None,
             metering_wait_duration: None,
             metering_provider: Arc::new(NoopMeteringProvider),
+            rejection_cache: RejectionCache::new(100_000, Duration::from_secs(1800)),
         }
     }
 }
