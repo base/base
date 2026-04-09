@@ -3,10 +3,14 @@
 //! Also provides a `rescue` subcommand for recovering stranded funds from
 //! test accounts after failed or interrupted load test runs.
 
-use std::{path::PathBuf, time::Duration, sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-},};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, TxHash, U256, utils::format_ether};
