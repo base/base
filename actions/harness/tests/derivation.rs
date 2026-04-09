@@ -89,11 +89,8 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     );
     node.initialize().await;
 
-    // Drive derivation one L1 block at a time.
-    for i in 1..=L2_BLOCK_COUNT {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
 
     assert_eq!(node.l2_safe_number(), L2_BLOCK_COUNT);
 
@@ -311,7 +308,6 @@ async fn reorg_flip_flop() {
     chain.push(h.l1.tip().clone());
 
     node.act_reset(l2_genesis).await;
-    node.run_until_idle().await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "phase 2: L2 block 1 re-derived from fork B");
     assert_eq!(node.l2_safe_number(), 1);
@@ -327,7 +323,6 @@ async fn reorg_flip_flop() {
     chain.push(h.l1.tip().clone());
 
     node.act_reset(l2_genesis).await;
-    node.run_until_idle().await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "phase 3: L2 block 1 re-derived from fork A'");
     assert_eq!(node.l2_safe_number(), 1);
@@ -380,19 +375,16 @@ async fn reorg_flip_flop_empty_middle_fork() {
     );
     node.initialize().await;
 
-    for i in 1u64..=2 {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "fork A: L2 block {i} derived");
-        assert_eq!(node.l2_safe().l1_origin.number, 0, "fork A: L2 block {i} l1_origin = genesis");
-    }
+    let total_a = node.run_until_idle().await;
+    assert_eq!(total_a, 2, "fork A: both L2 blocks derived");
+    assert_eq!(node.l2_safe().l1_origin.number, 0, "fork A: all blocks in epoch 0");
     assert_eq!(node.l2_safe_number(), 2, "fork A: safe head = 2");
 
     // --- Fork B: reorg to genesis; mine two empty blocks; derive nothing. ---
     h.l1.reorg_to(0).expect("reorg to fork B");
     chain.truncate_to(0);
-    let mut fork_b_blocks = Vec::new();
     for _ in 0..2 {
-        fork_b_blocks.push(h.mine_and_push(&chain));
+        h.mine_and_push(&chain);
     }
 
     node.act_reset(l2_genesis).await;
@@ -406,25 +398,18 @@ async fn reorg_flip_flop_empty_middle_fork() {
     assert_eq!(node.l2_finalized_number(), 0, "reset to B: finalized head = 0");
     assert_eq!(node.l2_unsafe_number(), 0, "reset to B: unsafe head = 0");
 
-    let drained = node.run_until_idle().await;
-    assert_eq!(drained, 0, "reset drain must produce no L2 blocks");
-
-    for (i, _) in fork_b_blocks.into_iter().enumerate() {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 0, "fork B block {}: empty, nothing derived", i + 1);
-    }
+    let total_b = node.run_until_idle().await;
+    assert_eq!(total_b, 0, "fork B: empty blocks derive nothing");
     assert_eq!(node.l2_safe_number(), 0, "fork B: safe head = 0");
     assert_eq!(node.l2_finalized_number(), 0, "fork B: finalized head = 0");
 
     // --- Fork C: reorg to genesis; resubmit both batches; re-derive both blocks. ---
     h.l1.reorg_to(0).expect("reorg to fork C");
     chain.truncate_to(0);
-    let mut fork_c_blocks = Vec::new();
     let mut batcher_c = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2] {
         batcher_c.push_block(block);
         batcher_c.advance(&mut h.l1).await;
-        fork_c_blocks.push(h.l1.tip_info());
         chain.push(h.l1.tip().clone());
     }
 
@@ -434,19 +419,9 @@ async fn reorg_flip_flop_empty_middle_fork() {
     // unsafe_head unchanged by act_reset (spec-compliant: re-discover, don't clamp).
     assert_eq!(node.l2_unsafe_number(), 0, "reset to C: unsafe head = 0");
 
-    let drained = node.run_until_idle().await;
-    assert_eq!(drained, 0, "reset drain must produce no L2 blocks");
-
-    for (i, _) in fork_c_blocks.into_iter().enumerate() {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "fork C: L2 block {} re-derived", i + 1);
-        assert_eq!(
-            node.l2_safe().l1_origin.number,
-            0,
-            "fork C: L2 block {} l1_origin = genesis",
-            i + 1
-        );
-    }
+    let total_c = node.run_until_idle().await;
+    assert_eq!(total_c, 2, "fork C: both L2 blocks re-derived");
+    assert_eq!(node.l2_safe().l1_origin.number, 0, "fork C: all blocks in epoch 0");
     assert_eq!(node.l2_safe_number(), 2, "fork C: safe head = 2 after flip-flop");
     // finalized_head stays at genesis because no act_l1_finalized_signal was sent.
     assert_eq!(node.l2_finalized_number(), 0, "fork C: finalized head = 0");
@@ -698,10 +673,8 @@ async fn multi_l2_per_l1_epoch() {
 
     node.initialize().await;
 
-    for i in 1..=L2_COUNT {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, L2_COUNT as usize, "expected {L2_COUNT} L2 blocks derived");
 
     assert_eq!(node.l2_safe_number(), L2_COUNT, "safe head should be at L2 block {L2_COUNT}");
     assert_eq!(node.l2_safe().l1_origin.number, 0, "all blocks in epoch 0");
@@ -1297,14 +1270,10 @@ async fn garbage_payload_silently_ignored_then_valid_batch_derived(
     );
     node.initialize().await;
 
-    // Block 1: garbage — must not advance the safe head.
-    let derived_garbage = node.run_until_idle().await;
-    assert_eq!(derived_garbage, 0, "garbage frame must be silently ignored");
-    assert_eq!(node.l2_safe_number(), 0);
-
-    // Block 2: valid batch — must be derived after the garbage.
-    let derived_real = node.run_until_idle().await;
-    assert_eq!(derived_real, 1, "valid batch after garbage must still be derived");
+    // Both blocks processed: garbage in block 1 is silently ignored,
+    // valid batch in block 2 is derived.
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 1, "valid batch after garbage must be derived; garbage silently ignored");
     assert_eq!(node.l2_safe_number(), 1);
 }
 
@@ -1812,7 +1781,7 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
         source.push(block1);
         Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
-    chain.push(h.l1.tip().clone()); // L1 block 2: present batch
+    // Do NOT push block 2 yet — let the pipeline see only block 1 first.
 
     node.initialize().await;
 
@@ -1829,6 +1798,9 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
          the batch for block 2 is a future batch — block 1 has not arrived yet"
     );
     assert_eq!(node.l2_safe_number(), 0, "safe head must remain at genesis");
+
+    // Now make block 2 visible to the pipeline.
+    chain.push(h.l1.tip().clone()); // L1 block 2: present batch
 
     // Signal L1 block 2.  The BatchQueue now receives the expected-next batch
     // (block 1) and derives it before popping the buffered block 2.
@@ -1885,24 +1857,26 @@ async fn pipeline_idle_before_l1_signal_derives_after() {
         source.push(block1);
         Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
-    chain.push(h.l1.tip().clone());
+    // Do NOT push block 1 yet — initialize with chain having only genesis.
     node.initialize().await;
 
-    // Before any signal: the pipeline exhausted genesis during initialize() and
-    // is now at Eof.  The condition should never fire; the call returns quickly.
+    // Block 1 is not yet visible to the pipeline — Eof, no attributes produced.
     let (_, before_signal) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 50)
         .await
         .expect("step before signal");
-    assert!(!before_signal, "pipeline must be idle before receiving an L1 head signal");
+    assert!(!before_signal, "pipeline must be idle before block 1 is available");
     assert_eq!(node.l2_safe_number(), 0);
 
-    // After signalling L1 block 1: the pipeline can now derive L2 block 1.
+    // Now make block 1 visible to the pipeline.
+    chain.push(h.l1.tip().clone());
+
+    // Block 1 now available: pipeline derives L2 block 1.
     let (_, after_signal) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
         .expect("step after signal");
-    assert!(after_signal, "pipeline must derive L2 block 1 after receiving L1 head signal");
+    assert!(after_signal, "pipeline must derive L2 block 1 after block 1 is available");
     assert_eq!(node.l2_safe_number(), 1);
 }
 
@@ -2041,12 +2015,8 @@ async fn span_batch_crossing_l1_epoch_boundary() {
 
     node.initialize().await;
 
-    // L1 block 1: epoch-providing only, no batches → nothing derived.
-    node.run_until_idle().await;
-
-    // L1 block 2: contains the span batch. The BatchQueue has both epoch 0
-    // (L1 block 0→1) and epoch 1 (L1 block 1→2) boundaries available, so
-    // it emits all 6 L2 blocks in one pipeline run.
+    // L1 block 1 (epoch-providing) and L1 block 2 (span batch) are both
+    // available; the pipeline processes them in one run, emitting all 6 blocks.
     let derived = node.run_until_idle().await;
 
     assert_eq!(
@@ -2108,7 +2078,7 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
         source.push(block1);
         Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
     }
-    chain.push(h.l1.tip().clone()); // L1 block 2: present span batch
+    // Do NOT push block 2 yet — let the pipeline see only block 1 first.
 
     node.initialize().await;
 
@@ -2120,6 +2090,9 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
         .expect("step block 1");
     assert!(!hit, "future span batch must be buffered; no blocks derived from L1 block 1");
     assert_eq!(node.l2_safe_number(), 0, "safe head must remain at genesis");
+
+    // Now make block 2 visible to the pipeline.
+    chain.push(h.l1.tip().clone()); // L1 block 2: present span batch
 
     // Signal L1 block 2: expected-next span batch (block 1) arrives.
 

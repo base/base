@@ -94,8 +94,9 @@ async fn test_rollup_node_gossip_then_derivation() {
         source.push(block);
     }
 
-    // Initialize drains the gossip channel; unsafe_head should be at 5.
+    // Initialize then step once to drain the gossip channel; unsafe_head should be at 5.
     node.initialize().await;
+    node.run_until_idle().await;
 
     assert_eq!(
         node.l2_unsafe_number(),

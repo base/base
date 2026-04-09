@@ -12,7 +12,8 @@ use base_alloy_provider::OpEngineApi;
 use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use base_consensus_derive::{
     ActivationSignal, DerivationPipeline, Pipeline, PipelineError, PipelineErrorKind,
-    PolledAttributesQueueStage, ResetSignal, SignalReceiver, StatefulAttributesBuilder, StepResult,
+    PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver,
+    StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_engine::{EngineForkchoiceVersion, EngineNewPayloadVersion};
 use base_consensus_genesis::RollupConfig;
@@ -221,8 +222,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         }
     }
 
-    /// Initialize the pipeline by sending the genesis activation signal and
-    /// draining the genesis L1 block.
+    /// Initialize the pipeline by sending the genesis activation signal.
     ///
     /// Must be called once before any [`step`] or [`run_until_idle`] calls.
     ///
@@ -233,7 +233,6 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
             .await
             .expect("TestRollupNode: initialize signal failed");
-        self.run_until_idle().await;
     }
 
     /// Return the current L2 safe head.
@@ -471,6 +470,13 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                 PipelineErrorKind::Temporary(PipelineError::Eof | PipelineError::Provider(_)) => {
                     NodeStepResult::Idle
                 }
+                PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
+                    self.pipeline
+                        .signal(ActivationSignal { l2_safe_head: self.safe_head }.signal())
+                        .await
+                        .expect("TestRollupNode: Holocene activation signal failed");
+                    NodeStepResult::AdvancedOrigin
+                }
                 err => panic!("TestRollupNode: origin advance error: {err}"),
             },
         }
@@ -566,8 +572,19 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
                     err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },
                 StepResult::OriginAdvanceErr(err) => match err {
-                    PipelineErrorKind::Temporary(PipelineError::Eof) => {
+                    PipelineErrorKind::Temporary(
+                        PipelineError::Eof | PipelineError::Provider(_),
+                    ) => {
                         return Ok((steps, false));
+                    }
+                    PipelineErrorKind::Reset(ResetError::HoloceneActivation) => {
+                        self.pipeline
+                            .signal(
+                                ActivationSignal { l2_safe_head: self.safe_head }.signal(),
+                            )
+                            .await
+                            .expect("TestRollupNode: Holocene activation signal failed");
+                        no_progress = 0;
                     }
                     err => return Err(VerifierError::Pipeline(Box::new(err))),
                 },

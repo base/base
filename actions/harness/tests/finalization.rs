@@ -265,7 +265,6 @@ async fn finalization_reorg_clears_state() {
     let l2_genesis = h.l2_genesis();
 
     node.act_reset(l2_genesis).await;
-    node.run_until_idle().await;
 
     // After reset, finalized head should be back to genesis (block 0).
     assert_eq!(

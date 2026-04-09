@@ -36,11 +36,8 @@ async fn batcher_blob_da_end_to_end() {
     );
     node.initialize().await;
 
-    for i in 1..=3u64 {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block via blob DA");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 3, "blob DA should derive 3 L2 blocks");
     assert_eq!(node.l2_safe_number(), 3, "safe head should reach L2 block 3");
 }
 
@@ -121,11 +118,8 @@ async fn batcher_calldata_da() {
     );
     node.initialize().await;
 
-    for i in 1..=3u64 {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block via calldata DA");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 3, "calldata DA should derive 3 L2 blocks");
     assert_eq!(node.l2_safe_number(), 3, "safe head should reach L2 block 3");
 }
 

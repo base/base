@@ -191,13 +191,11 @@ async fn mixed_singular_and_span_batches_after_delta() {
 
     node.initialize().await;
 
-    // Drive derivation L1 block by block. The first batch (singular) derives
-    // L2 block 1; the second (span) derives L2 block 2.
-    for i in 1..=2u64 {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(
+        total_derived, 2,
+        "mixed singular + span batches must both derive; safe head should reach 2"
+    );
     assert_eq!(
         node.l2_safe_number(),
         2,

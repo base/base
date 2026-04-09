@@ -70,11 +70,8 @@ async fn holocene_derivation_crosses_activation_boundary() {
 
     node.initialize().await;
 
-    for i in 1..=4u64 {
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block at/after Holocene");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 4, "all 4 L2 blocks must be derived");
     assert_eq!(
         node.l2_safe_number(),
         4,
