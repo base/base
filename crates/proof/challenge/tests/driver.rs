@@ -114,6 +114,16 @@ fn tee_config(
     TeeConfig { provider, l1_head_provider, request_timeout: Duration::from_secs(30) }
 }
 
+fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
+    PendingProof::ready(
+        Bytes::from_static(&[0x01, 0xDE, 0xAD]),
+        1,
+        B256::repeat_byte(0xEE),
+        default_prove_request(),
+        intent,
+    )
+}
+
 fn succeeded_zk_prover(session_id: &str, receipt: Vec<u8>) -> Arc<MockZkProofProvider> {
     Arc::new(MockZkProofProvider {
         session_id: session_id.to_string(),
@@ -188,16 +198,7 @@ fn driver_with_ready_proof(
     let verifier = single_game_verifier(game_state);
     let l2 = Arc::new(MockL2Provider::new());
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
-    driver.pending_proofs.insert(
-        addr(0),
-        PendingProof::ready(
-            Bytes::from_static(&[0x01, 0xDE, 0xAD]),
-            1,
-            B256::repeat_byte(0xEE),
-            default_prove_request(),
-            DisputeIntent::Challenge,
-        ),
-    );
+    driver.pending_proofs.insert(addr(0), default_ready_proof(DisputeIntent::Challenge));
     driver
 }
 
@@ -588,17 +589,13 @@ async fn test_step_invalid_game_tee_fails_zk_fallback() {
     let (l2, factory, verifier) = invalid_game_mocks();
 
     let tee = Arc::new(MockTeeProofProvider::failure("enclave unreachable"));
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "zk-fallback".to_string(),
-        ..Default::default()
-    });
 
     let tx_manager = default_tx_manager();
     let mut driver = test_driver_with_tee(
         factory,
         verifier,
         l2,
-        zk,
+        default_zk_prover(),
         tx_manager,
         Some(tee_config(tee, Arc::new(MockL1HeadProvider::failure("dummy")))),
     );
@@ -618,13 +615,8 @@ async fn test_step_invalid_game_no_tee_provider_zk_only() {
     // No TEE provider configured → go straight to ZK.
     let (l2, factory, verifier) = invalid_game_mocks();
 
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "zk-no-provider".to_string(),
-        ..Default::default()
-    });
-
     let tx_manager = default_tx_manager();
-    let mut driver = test_driver(factory, verifier, l2, zk, tx_manager);
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx_manager);
 
     driver.step().await.unwrap();
 
@@ -674,7 +666,6 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
 async fn test_step_invalid_game_tee_proof_succeeds() {
     // TEE proof succeeds → submitted directly without ZK.
     let (l2, factory, root_15, root_20) = base_game_mocks();
-    let l1_hash = DEFAULT_L1_HEAD;
 
     let verifier = single_game_verifier(MockGameState {
         tee_prover: DEFAULT_TEE_PROVER,
@@ -684,18 +675,18 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
             parent_index: 0,
         },
         starting_block_number: 10,
-        l1_head: l1_hash,
+        l1_head: DEFAULT_L1_HEAD,
         // root_15 is correct, index 1 is bogus — invalid_index == 1
         intermediate_output_roots: vec![root_15, BOGUS_ROOT],
         ..Default::default()
     });
 
-    let l1_head = Arc::new(MockL1HeadProvider::success(l1_hash, 100));
+    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
 
     let aggregate_proposal = Proposal {
         output_root: root_20,
         signature: Bytes::from(vec![0u8; 65]),
-        l1_origin_hash: l1_hash,
+        l1_origin_hash: DEFAULT_L1_HEAD,
         l1_origin_number: 1000,
         l2_block_number: 20,
         prev_output_root: root_15,
@@ -708,16 +699,11 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 
     let tx_manager = MockTxManager::new(Ok(receipt_with_status(true, DEFAULT_TX_HASH)));
 
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "should-not-be-called".to_string(),
-        ..Default::default()
-    });
-
     let mut driver = test_driver_with_tee(
         factory,
         verifier,
         l2,
-        zk,
+        default_zk_prover(),
         tx_manager,
         Some(tee_config(tee_provider, l1_head)),
     );
@@ -771,16 +757,7 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
     let verifier = single_game_verifier(game_state);
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
-    driver.pending_proofs.insert(
-        addr(0),
-        PendingProof::ready(
-            Bytes::from_static(&[0x01, 0xDE, 0xAD]),
-            1,
-            B256::repeat_byte(0xEE),
-            default_prove_request(),
-            DisputeIntent::Nullify,
-        ),
-    );
+    driver.pending_proofs.insert(addr(0), default_ready_proof(DisputeIntent::Nullify));
 
     driver.step().await.unwrap();
 
@@ -801,16 +778,7 @@ async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
 
     let tx = MockTxManager::new(Err(TxManagerError::NonceTooLow)); // Should never be called
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx);
-    driver.pending_proofs.insert(
-        addr(0),
-        PendingProof::ready(
-            Bytes::from_static(&[0x01, 0xDE, 0xAD]),
-            1,
-            B256::repeat_byte(0xEE),
-            default_prove_request(),
-            DisputeIntent::Challenge,
-        ),
-    );
+    driver.pending_proofs.insert(addr(0), default_ready_proof(DisputeIntent::Challenge));
 
     driver.step().await.unwrap();
 
@@ -878,12 +846,7 @@ async fn test_step_fraudulent_zk_challenge_nullifies() {
     // with DisputeIntent::Nullify.
     let (l2, factory, verifier) = fraudulent_zk_challenge_mocks(true);
 
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "nullify-fraudulent".to_string(),
-        ..Default::default()
-    });
-
-    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.step().await.unwrap();
 
     let entry = driver
@@ -906,17 +869,8 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
     // A game proposed with a ZK proof (tee_prover == ZERO, zk_prover != ZERO)
     // with invalid intermediate roots should trigger a ZK proof with
     // DisputeIntent::Nullify.
-    let (header_15, _account_15) = build_test_header_and_account(15, STORAGE_HASH);
-    let root_15 =
-        OutputRoot::from_parts(header_15.state_root, STORAGE_HASH, header_15.hash_slow()).hash();
-    let (header_20, account_20) = build_test_header_and_account(20, STORAGE_HASH);
+    let (l2, factory, root_15, _root_20) = base_game_mocks();
 
-    let mut l2 = MockL2Provider::new();
-    l2.insert_block(15, header_15, account_20.clone());
-    l2.insert_block(20, header_20, account_20);
-    let l2 = Arc::new(l2);
-
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
     let verifier = single_game_verifier(MockGameState {
         zk_prover: ZK_PROVER_ADDR,
         game_info: base_proof_contracts::GameInfo {
@@ -930,18 +884,13 @@ async fn test_step_invalid_zk_proposal_initiates_zk_nullification() {
         ..Default::default()
     });
 
-    let zk = Arc::new(MockZkProofProvider {
-        session_id: "zk-nullify-session".to_string(),
-        ..Default::default()
-    });
-
-    let mut driver = test_driver(factory, verifier, l2, zk, default_tx_manager());
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
     driver.step().await.unwrap();
 
-    // A pending proof should have been created with Nullify intent.
-    let entry = driver.pending_proofs.get(&addr(0));
-    assert!(entry.is_some(), "ZK nullification proof should be pending");
-    let entry = entry.unwrap();
+    let entry = driver
+        .pending_proofs
+        .get(&addr(0))
+        .expect("ZK nullification proof should be pending");
     assert_eq!(entry.intent, DisputeIntent::Nullify, "intent should be Nullify for ZK proposals");
 }
 
