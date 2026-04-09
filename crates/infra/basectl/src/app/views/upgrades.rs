@@ -238,6 +238,8 @@ const fn zone_message(remaining_secs: i64) -> &'static str {
     }
 }
 
+const SECS_FOUR_WEEKS: u64 = 28 * SECS_PER_DAY;
+
 const CYCLE_COLORS: &[Color] =
     &[Color::LightGreen, Color::Green, Color::Cyan, Color::Yellow, Color::LightGreen];
 
@@ -409,6 +411,23 @@ impl View for UpgradesView {
             ])
             .split(area);
 
+        // Dull the activated banner if the hardfork is stale (> 4 weeks old) or if a
+        // newer hardfork is already active on any other chain, meaning this network is
+        // running behind the frontier.
+        let dull = if let Some((_, lat_ts)) = latest_activated {
+            let stale = now.saturating_sub(lat_ts) > SECS_FOUR_WEEKS;
+            let superseded = self.chains.iter().enumerate().any(|(i, c)| {
+                i != self.selected_chain
+                    && c.specs
+                        .iter()
+                        .filter_map(|s| s.timestamp.filter(|&ts| ts > 0 && ts <= now))
+                        .any(|ts| ts > lat_ts)
+            });
+            stale || superseded
+        } else {
+            false
+        };
+
         render_chain_tabs(frame, outer[0], &self.chains, self.selected_chain);
 
         match upcoming {
@@ -425,6 +444,7 @@ impl View for UpgradesView {
                         ts,
                         now.saturating_sub(ts),
                         self.tick_count,
+                        dull,
                     );
                 }
                 None => render_tbd(frame, outer[1]),
@@ -526,7 +546,35 @@ fn render_activated(
     ts: u64,
     elapsed_secs: u64,
     tick: u64,
+    dull: bool,
 ) {
+    if dull {
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(""),
+            Line::from(""),
+            Line::from(Span::styled(
+                "✓  activated",
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("{name} is live"),
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                format!("activated {}  ·  {}", fmt_timestamp(ts), fmt_elapsed(elapsed_secs)),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        let block = Block::default()
+            .title(format!(" BASE {name} UPGRADE "))
+            .title_style(Style::default().fg(Color::DarkGray))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+        return;
+    }
+
     let cycle_color = CYCLE_COLORS[(tick / 4) as usize % CYCLE_COLORS.len()];
     let n = CONFETTI.len();
     let phase = (tick / 4) as usize;
