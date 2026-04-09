@@ -16,7 +16,8 @@ use crate::{
     actors::{
         SequencerEngineClient,
         sequencer::{
-            error::SequencerActorError, origin_selector::OriginSelector,
+            error::SequencerActorError,
+            origin_selector::{L1OriginSelectorError, OriginSelector},
             recovery::RecoveryModeGuard,
         },
     },
@@ -117,6 +118,15 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
             .await
         {
             Ok(l1_origin) => l1_origin,
+            Err(L1OriginSelectorError::OriginNotFound(hash)) => {
+                warn!(
+                    target: "sequencer",
+                    hash = %hash,
+                    "L1 origin block not found (reorg or sync lag), triggering engine reset"
+                );
+                self.engine_client.reset_engine_forkchoice().await?;
+                return Ok(None);
+            }
             Err(err) => {
                 warn!(
                     target: "sequencer",

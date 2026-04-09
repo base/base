@@ -125,8 +125,21 @@ impl BaseTxMetrics {
     ///
     /// The `name` is emitted as a `"name"` label on every metric, allowing
     /// multiple tx-manager instances to be distinguished in dashboards.
-    pub const fn new(name: &'static str) -> Self {
-        Self { name }
+    ///
+    /// All counters and gauges are zero-initialized so they appear
+    /// immediately in the metrics endpoint.
+    pub fn new(name: &'static str) -> Self {
+        let this = Self { name };
+        TxManagerMetrics::tx_gas_bump_count(name).absolute(0);
+        TxManagerMetrics::current_nonce(name).set(0.0);
+        TxManagerMetrics::tx_publish_error_count(name).absolute(0);
+        TxManagerMetrics::basefee_gwei(name).set(0.0);
+        TxManagerMetrics::tipcap_gwei(name).set(0.0);
+        TxManagerMetrics::blob_fee_gwei(name).set(0.0);
+        TxManagerMetrics::rpc_error_count(name).absolute(0);
+        TxManagerMetrics::tx_confirmed_count(name).absolute(0);
+        TxManagerMetrics::tx_failed_count(name).absolute(0);
+        this
     }
 }
 

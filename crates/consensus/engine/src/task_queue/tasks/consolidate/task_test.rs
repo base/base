@@ -26,6 +26,8 @@ use crate::{
 ///
 /// After the fix the reconcile path proceeds to `seal_and_canonicalize_block`
 /// directly, matching op-node's behaviour.
+///
+/// This test FAILS on unfixed main and PASSES after the fix lands.
 #[tokio::test]
 async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_mismatch() {
     let safe_head = crate::test_utils::test_block_info(34);
@@ -81,11 +83,13 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
     let result = task.execute(&mut state).await;
 
     // The task may still error (e.g. GetPayload fails in the mock) but it must
-    // NOT be the UnsafeHeadChangedSinceBuild error that caused the crash.
+    // NOT be the stale-unsafe-head error that caused the crash loop.
+    // The Display string for SealTaskError::UnsafeHeadChangedSinceBuild is
+    // "Unsafe head changed between build and seal".
     if let Err(ref err) = result {
         let err_msg = format!("{err}");
         assert!(
-            !err_msg.contains("UnsafeHeadChangedSinceBuild"),
+            !err_msg.contains("Unsafe head changed between build and seal"),
             "must not fail with UnsafeHeadChangedSinceBuild: {err}"
         );
     }

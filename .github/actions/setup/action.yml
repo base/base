@@ -84,6 +84,9 @@ runs:
       if: inputs.mold == 'true'
       uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
 
+    - name: Setup sccache
+      uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
     - name: Rust cache
       if: inputs.rust-cache-shared-key != ''
       uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
@@ -91,6 +94,7 @@ runs:
         cache-on-failure: true
         shared-key: ${{ inputs.rust-cache-shared-key }}
         save-if: ${{ inputs.rust-cache-save }}
+        cache-targets: "false"
 
     - name: Install just
       uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3

@@ -81,8 +81,4 @@ impl StageReset for TestNextBatchProvider {
         self.flushed = true;
         Ok(())
     }
-
-    async fn provide_block(&mut self, _: BlockInfo) -> PipelineResult<()> {
-        Ok(())
-    }
 }

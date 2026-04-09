@@ -7,7 +7,7 @@ mod core;
 pub(crate) use core::App;
 
 mod resources;
-pub(crate) use resources::Resources;
+pub(crate) use resources::{LoadTestTask, Resources};
 
 mod router;
 pub(crate) use router::Router;

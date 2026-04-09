@@ -3,13 +3,11 @@
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_proof_primitives::ECDSA_SIGNATURE_LENGTH;
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey, signature::hazmat::PrehashVerifier};
 use rand_08::CryptoRng;
 
-use crate::{
-    ECDSA_SIGNATURE_LENGTH,
-    error::{CryptoError, ProposalError, Result},
-};
+use crate::error::{CryptoError, ProposalError, Result};
 
 /// ECDSA secp256k1 operations.
 #[derive(Debug)]
@@ -92,10 +90,11 @@ impl Signing {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, b256};
+    use base_proof_primitives::{PROOF_JOURNAL_BASE_LENGTH, ProofJournal};
     use rand_08::rngs::OsRng;
 
     use super::*;
-    use crate::{NitroError, PROOF_JOURNAL_BASE_LENGTH, ProofJournal};
+    use crate::NitroError;
 
     fn test_journal() -> ProofJournal {
         ProofJournal {

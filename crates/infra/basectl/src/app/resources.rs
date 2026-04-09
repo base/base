@@ -1,8 +1,14 @@
-use std::collections::{HashSet, VecDeque};
+use std::{
+    collections::{HashSet, VecDeque},
+    sync::{Arc, atomic::AtomicBool},
+};
 
 use base_alloy_flashblocks::Flashblock;
 use base_consensus_genesis::SystemConfig;
-use tokio::sync::{mpsc, watch};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 
 use crate::{
     commands::common::{DaTracker, FlashblockEntry, LoadingState},
@@ -135,6 +141,14 @@ impl ProofsState {
     }
 }
 
+/// Handle to a running load test task and its stop signal, used by [`super::App`]
+/// to await drain completion on shutdown so funds are returned to the funder.
+#[derive(Debug)]
+pub(crate) struct LoadTestTask {
+    pub stop_flag: Arc<AtomicBool>,
+    pub handle: JoinHandle<()>,
+}
+
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
 pub(crate) struct Resources {
@@ -155,6 +169,8 @@ pub(crate) struct Resources {
     /// L1 system config fetched from the contract.
     pub system_config: Option<SystemConfig>,
     sys_config_rx: Option<mpsc::Receiver<SystemConfig>>,
+    /// Active load test task handle, set by [`super::views::LoadTestView`].
+    pub load_test_task: Option<LoadTestTask>,
 }
 
 /// State for DA (data availability) monitoring.
@@ -214,6 +230,7 @@ impl Resources {
             proofs: ProofsState::default(),
             system_config: None,
             sys_config_rx: None,
+            load_test_task: None,
         }
     }
 

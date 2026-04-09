@@ -26,7 +26,7 @@ base_metrics::define_metrics! {
     nullify_tx_submitted_total: counter,
 
     #[describe("Total number of nullify transaction outcomes")]
-    #[label(status)]
+    #[label(name = "status", default = ["success", "reverted", "error"])]
     nullify_tx_outcome_total: counter,
 
     #[describe("Latency in seconds for nullify transaction confirmation")]
@@ -36,7 +36,7 @@ base_metrics::define_metrics! {
     challenge_tx_submitted_total: counter,
 
     #[describe("Total number of challenge transaction outcomes")]
-    #[label(status)]
+    #[label(name = "status", default = ["success", "reverted", "error"])]
     challenge_tx_outcome_total: counter,
 
     #[describe("Latency in seconds for challenge transaction confirmation")]
@@ -64,14 +64,14 @@ base_metrics::define_metrics! {
     invalid_zk_proposal_detected_total: counter,
 
     #[describe("Total number of resolve transaction outcomes")]
-    #[label(status)]
+    #[label(name = "status", default = ["success", "reverted", "error", "already_resolved"])]
     resolve_tx_outcome_total: counter,
 
     #[describe("Total number of claimCredit transactions submitted")]
     claim_credit_tx_submitted_total: counter,
 
     #[describe("Total number of claimCredit transaction outcomes")]
-    #[label(status)]
+    #[label(name = "status", default = ["success", "reverted", "error"])]
     claim_credit_tx_outcome_total: counter,
 
     #[describe("Latency in seconds for bond transaction confirmation")]
@@ -87,14 +87,14 @@ base_metrics::define_metrics! {
     bonds_not_claimable_total: counter,
 
     #[describe("Total bond discovery scans performed")]
-    #[label(scan_type)]
+    #[label(name = "scan_type", default = ["full", "incremental"])]
     bond_discovery_scans_total: counter,
 
     #[describe("Total claimable games found by bond discovery")]
     bond_discovery_games_found_total: counter,
 
     #[describe("Total bond evaluation failures by error type")]
-    #[label(error_type)]
+    #[label(name = "error_type", default = ["game_fetch", "bond_read", "phase_read"])]
     bond_evaluation_errors_total: counter,
 
     #[describe("Challenger account balance in wei")]

@@ -199,7 +199,7 @@ impl ActionTestHarness {
             .dap_source(dap_source)
             .l2_chain_provider(l2_provider)
             .builder(attrs_builder)
-            .build_indexed();
+            .build_polled();
 
         // Create an independent engine client for the derivation node. The node uses
         // `execute_from_attrs` which passes the full `OpPayloadAttributes` (including

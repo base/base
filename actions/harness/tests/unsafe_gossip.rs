@@ -49,10 +49,6 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
     batcher.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
-    let l1_block_1 = h.l1.tip_info();
-
-    // Initialize: seed the genesis SystemConfig and drain the empty genesis
-    // L1 block so IndexedTraversal is ready for new block signals.
     node.initialize().await;
 
     // --- Phase 2: Gossip each block into the node. ---
@@ -68,7 +64,6 @@ async fn test_unsafe_chain_advances_safe_catches_up() {
     assert_eq!(node.l2_safe_number(), 0, "safe_head should still be at genesis before derivation");
 
     // --- Phase 3+4: Signal L1 head and run derivation. ---
-    node.act_l1_head_signal(l1_block_1).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} L2 blocks derived");
