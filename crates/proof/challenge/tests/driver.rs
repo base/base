@@ -93,20 +93,6 @@ fn single_game_verifier(state: MockGameState) -> Arc<MockAggregateVerifier> {
     Arc::new(MockAggregateVerifier { games: HashMap::from([(addr(0), state)]) })
 }
 
-fn default_prove_request() -> ProveBlockRequest {
-    let session_id = PendingProof::derive_session_id(addr(0), 1);
-
-    ProveBlockRequest {
-        start_block_number: 15,
-        number_of_blocks_to_prove: 5,
-        sequence_window: None,
-        proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
-        session_id: Some(session_id),
-        prover_address: Some(format!("{:#x}", addr(0))),
-        l1_head: Some(format!("{:#x}", DEFAULT_L1_HEAD)),
-    }
-}
-
 fn tee_config(
     provider: Arc<dyn ProverClient>,
     l1_head_provider: Arc<dyn L1HeadProvider>,
@@ -115,11 +101,23 @@ fn tee_config(
 }
 
 fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
+    let session_id = PendingProof::derive_session_id(addr(0), 1);
+
+    let request = ProveBlockRequest {
+        start_block_number: 15,
+        number_of_blocks_to_prove: 5,
+        sequence_window: None,
+        proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
+        session_id: Some(session_id),
+        prover_address: Some(format!("{:#x}", addr(0))),
+        l1_head: Some(format!("{:#x}", DEFAULT_L1_HEAD)),
+    };
+
     PendingProof::ready(
         Bytes::from_static(&[0x01, 0xDE, 0xAD]),
         1,
         B256::repeat_byte(0xEE),
-        default_prove_request(),
+        request,
         intent,
     )
 }
