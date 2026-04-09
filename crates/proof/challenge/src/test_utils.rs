@@ -332,7 +332,7 @@ impl DisputeGameFactoryClient for ErrorOnIndexFactory {
 /// Returns pre-configured headers by block number and account proofs by
 /// block hash. Block numbers in `error_blocks` will return a
 /// [`RpcError::BlockNotFound`] to simulate missing blocks.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MockL2Provider {
     /// Headers keyed by block number.
     pub headers: HashMap<u64, RpcHeader>,
@@ -345,7 +345,7 @@ pub struct MockL2Provider {
 impl MockL2Provider {
     /// Creates a new empty mock L2 provider.
     pub fn new() -> Self {
-        Self { headers: HashMap::new(), proofs: HashMap::new(), error_blocks: Vec::new() }
+        Self::default()
     }
 
     /// Inserts a block header and corresponding account proof.
@@ -366,11 +366,6 @@ impl MockL2Provider {
     }
 }
 
-impl Default for MockL2Provider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[async_trait]
 impl L2Provider for MockL2Provider {
@@ -666,7 +661,7 @@ impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
 mod tests {
 
     use super::*;
-    use crate::scanner::{GameScanner, ScannerConfig};
+    use crate::scanner::{GameCategory, GameScanner, ScannerConfig};
 
     /// Happy path: mixed games, only `IN_PROGRESS` / unchallenged returned.
     #[tokio::test]
@@ -941,7 +936,6 @@ mod tests {
     /// returned as a [`GameCategory::FraudulentZkChallenge`] candidate.
     #[tokio::test]
     async fn test_scan_challenged_game_returns_fraudulent_zk_challenge() {
-        use crate::scanner::GameCategory;
 
         let tee_addr = Address::repeat_byte(0xEE);
         let zk_addr = Address::repeat_byte(0xCC);
@@ -969,7 +963,6 @@ mod tests {
     /// returned as a [`GameCategory::InvalidZkProposal`] candidate.
     #[tokio::test]
     async fn test_scan_zk_proposal_returns_invalid_zk_proposal() {
-        use crate::scanner::GameCategory;
 
         let zk_addr = Address::repeat_byte(0xCC);
 
@@ -992,7 +985,6 @@ mod tests {
     /// [`GameCategory::InvalidTeeProposal`].
     #[tokio::test]
     async fn test_scan_tee_proposal_returns_invalid_tee_proposal() {
-        use crate::scanner::GameCategory;
 
         let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
 
