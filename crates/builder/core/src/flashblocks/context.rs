@@ -41,7 +41,7 @@ use tracing::{debug, error, trace, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
-    RejectedTxInfo, ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
+    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
 };
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
@@ -459,14 +459,14 @@ impl BasePayloadBuilderCtx {
     fn send_rejected_tx(&self, tx_hash: TxHash, reason: &str, metering: MeterBundleResponse) {
         if let Some(sender) = &self.rejected_tx_sender {
             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-            let info = RejectedTxInfo {
+            let rejected_tx = RejectedTransaction {
                 tx_hash,
                 block_number: self.block_number(),
                 reason: reason.to_string(),
                 timestamp: now,
                 metering,
             };
-            if let Err(e) = sender.try_send(info) {
+            if let Err(e) = sender.try_send(rejected_tx) {
                 warn!(
                     target: "payload_builder",
                     error = %e,
@@ -809,7 +809,7 @@ impl BasePayloadBuilderCtx {
                             &err_message,
                             resource_usage
                                 .clone()
-                                .expect("metering data must exist for metering-based rejection"),
+                                .unwrap_or_default(),
                         );
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;

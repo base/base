@@ -29,7 +29,7 @@ mod metering;
 pub use metering::{MeteringProvider, NoopMeteringProvider, SharedMeteringProvider};
 
 mod rejected_tx_forwarder;
-pub use rejected_tx_forwarder::{RejectedTxForwarder, RejectedTxInfo};
+pub use rejected_tx_forwarder::RejectedTxForwarder;
 
 mod flashblocks;
 pub use flashblocks::{

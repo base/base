@@ -5,30 +5,13 @@
 
 use core::time::Duration;
 
-use alloy_primitives::TxHash;
-use base_bundles::MeterBundleResponse;
+use base_bundles::RejectedTransaction;
 use jsonrpsee::{
     core::client::ClientT,
     http_client::{HttpClient, HttpClientBuilder},
 };
-use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
-
-/// Information about a rejected transaction to be forwarded to the audit-archiver.
-#[derive(Debug, Clone)]
-pub struct RejectedTxInfo {
-    /// The transaction hash.
-    pub tx_hash: TxHash,
-    /// The block number the transaction was intended for.
-    pub block_number: u64,
-    /// The reason the transaction was rejected.
-    pub reason: String,
-    /// Unix timestamp when the rejection occurred.
-    pub timestamp: u64,
-    /// The metering simulation response that informed the rejection decision.
-    pub metering: MeterBundleResponse,
-}
 
 /// Forwards rejected transactions to the audit-archiver via RPC.
 ///
@@ -57,22 +40,18 @@ impl RejectedTxForwarder {
     /// and forwarding each to the audit-archiver via RPC.
     pub async fn run(mut self) {
         info!("Rejected transaction forwarder started");
-        while let Some(info) = self.rx.recv().await {
-            let params = vec![json!({
-                "block_number": info.block_number,
-                "tx_hash": info.tx_hash,
-                "reason": info.reason,
-                "timestamp": info.timestamp,
-                "metering": info.metering,
-            })];
-
-            match self.client.request::<bool, _>("base_persistTransaction", params).await {
+        while let Some(rejected_tx) = self.rx.recv().await {
+            match self
+                .client
+                .request::<bool, _>("base_persistTransaction", vec![&rejected_tx])
+                .await
+            {
                 Ok(_) => {}
                 Err(e) => {
                     warn!(
                         error = %e,
-                        tx_hash = %info.tx_hash,
-                        block_number = info.block_number,
+                        tx_hash = %rejected_tx.tx_hash,
+                        block_number = rejected_tx.block_number,
                         "Failed to forward rejected transaction to audit-archiver"
                     );
                 }

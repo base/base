@@ -6,7 +6,9 @@
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use tracing::{error, info};
 
-use crate::{storage::S3EventReaderWriter, types::RejectedTransaction};
+use base_bundles::RejectedTransaction;
+
+use crate::storage::S3EventReaderWriter;
 
 /// RPC trait for the audit archiver.
 #[rpc(server, namespace = "base")]
