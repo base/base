@@ -108,7 +108,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// Determines and validates the L1 origin block for the provided L2 unsafe head.
     ///
     /// Returns `Ok(None)` for temporary errors that should be retried on the next tick.
-    async fn get_next_payload_l1_origin(
+    pub async fn get_next_payload_l1_origin(
         &mut self,
         unsafe_head: L2BlockInfo,
     ) -> Result<Option<BlockInfo>, SequencerActorError> {
@@ -158,7 +158,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     ///
     /// Returns `Ok(None)` if no attributes could be built at this time but future
     /// attempts may succeed.
-    async fn build_attributes(
+    pub async fn build_attributes(
         &mut self,
         unsafe_head: L2BlockInfo,
         l1_origin: BlockInfo,

@@ -115,7 +115,7 @@ mod tests {
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChainProvider};
 
-    pub(crate) fn test_legacy_tx(to: Address) -> TxEnvelope {
+    pub(super) fn test_legacy_tx(to: Address) -> TxEnvelope {
         let sig = Signature::test_signature();
         TxEnvelope::Legacy(Signed::new_unchecked(
             TxLegacy { to: TxKind::Call(to), ..Default::default() },
@@ -124,7 +124,7 @@ mod tests {
         ))
     }
 
-    pub(crate) fn test_eip2930_tx(to: Address) -> TxEnvelope {
+    pub(super) fn test_eip2930_tx(to: Address) -> TxEnvelope {
         let sig = Signature::test_signature();
         TxEnvelope::Eip2930(Signed::new_unchecked(
             TxEip2930 { to: TxKind::Call(to), ..Default::default() },
@@ -133,7 +133,7 @@ mod tests {
         ))
     }
 
-    pub(crate) fn test_eip7702_tx(to: Address) -> TxEnvelope {
+    pub(super) fn test_eip7702_tx(to: Address) -> TxEnvelope {
         let sig = Signature::test_signature();
         TxEnvelope::Eip7702(Signed::new_unchecked(
             TxEip7702 { to, ..Default::default() },
@@ -142,7 +142,7 @@ mod tests {
         ))
     }
 
-    pub(crate) fn test_blob_tx(to: Address) -> TxEnvelope {
+    pub(super) fn test_blob_tx(to: Address) -> TxEnvelope {
         let sig = Signature::test_signature();
         TxEnvelope::Eip4844(Signed::new_unchecked(
             TxEip4844Variant::TxEip4844(TxEip4844 { to, ..Default::default() }),
@@ -151,7 +151,7 @@ mod tests {
         ))
     }
 
-    pub(crate) fn default_test_calldata_source() -> CalldataSource<TestChainProvider> {
+    pub(super) fn default_test_calldata_source() -> CalldataSource<TestChainProvider> {
         CalldataSource::new(TestChainProvider::default(), Default::default())
     }
 

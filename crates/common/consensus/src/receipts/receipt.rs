@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 
 use alloy_consensus::{
-    Eip658Value, Eip2718DecodableReceipt, Eip2718EncodableReceipt, Receipt, ReceiptWithBloom,
-    RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
+    Eip658Value, Eip2718DecodableReceipt, Eip2718EncodableReceipt, InMemorySize, Receipt,
+    ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
 };
 use alloy_eips::eip2718::{Eip2718Error, Eip2718Result, IsTyped2718};
 use alloy_primitives::{Bloom, Log};
@@ -468,7 +468,7 @@ impl<T> From<ReceiptWithBloom<OpReceipt<T>>> for OpReceiptEnvelope<T> {
 
 /// Bincode-compatible serde implementations for opreceipt type.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub(crate) mod serde_bincode_compat {
+pub(super) mod serde_bincode_compat {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -575,6 +575,22 @@ pub(crate) mod serde_bincode_compat {
                 bincode::serde::decode_from_slice::<Data, _>(&encoded, bincode::config::legacy())
                     .unwrap();
             assert_eq!(decoded, data);
+        }
+    }
+}
+
+impl<T> InMemorySize for OpReceipt<T>
+where
+    Receipt<T>: InMemorySize,
+    OpDepositReceipt<T>: InMemorySize,
+{
+    fn size(&self) -> usize {
+        match self {
+            Self::Legacy(receipt)
+            | Self::Eip2930(receipt)
+            | Self::Eip1559(receipt)
+            | Self::Eip7702(receipt) => receipt.size(),
+            Self::Deposit(receipt) => receipt.size(),
         }
     }
 }

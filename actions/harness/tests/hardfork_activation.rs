@@ -270,8 +270,8 @@ async fn span_batch_rejected_before_delta() {
 
     // Both blocks in one source, one advance produces a span batch.
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block_with_single_transaction());
-    source.push(builder.build_next_block_with_single_transaction());
+    source.push(builder.build_next_block_with_single_transaction().await);
+    source.push(builder.build_next_block_with_single_transaction().await);
     let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
     batcher.advance(&mut h.l1).await;
 
@@ -280,7 +280,6 @@ async fn span_batch_rejected_before_delta() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     node.run_until_idle().await;
 
     assert_eq!(
@@ -314,8 +313,8 @@ async fn span_batch_derives_after_delta() {
 
     // Both blocks in one source → one span batch in one L1 block.
     let mut source = ActionL2Source::new();
-    source.push(builder.build_next_block_with_single_transaction());
-    source.push(builder.build_next_block_with_single_transaction());
+    source.push(builder.build_next_block_with_single_transaction().await);
+    source.push(builder.build_next_block_with_single_transaction().await);
     let mut batcher = Batcher::new(source, &h.rollup_config, span_cfg);
     batcher.advance(&mut h.l1).await;
 
@@ -324,7 +323,6 @@ async fn span_batch_derives_after_delta() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from span batch");
@@ -349,7 +347,7 @@ async fn single_batch_derives_with_fjord() {
 
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for _ in 0..2 {
-        batcher.push_block(builder.build_next_block_with_single_transaction());
+        batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
     }
 
@@ -359,12 +357,8 @@ async fn single_batch_derives_with_fjord() {
     );
     node.initialize().await;
 
-    for i in 1..=2u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 2, "both L2 blocks must be derived");
     assert_eq!(node.l2_safe_number(), 2, "safe head should advance to block 2");
 }
 
@@ -410,9 +404,9 @@ async fn jovian_derivation_crosses_activation_boundary() {
     for i in 1..=4u64 {
         let block = if i == 3 {
             // First Jovian block: must contain no user transactions.
-            builder.build_empty_block()
+            builder.build_empty_block().await
         } else {
-            builder.build_next_block_with_single_transaction()
+            builder.build_next_block_with_single_transaction().await
         };
         block_hashes[i as usize] = block.header.hash_slow();
         batcher.push_block(block);
@@ -433,12 +427,8 @@ async fn jovian_derivation_crosses_activation_boundary() {
     node.register_block_hash(4, block_hashes[4]);
     node.initialize().await;
 
-    for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 4, "all 4 L2 blocks must be derived");
     assert_eq!(
         node.l2_safe_number(),
         4,

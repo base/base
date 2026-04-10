@@ -172,7 +172,9 @@ where
                     self.pipeline.force_close_channel();
                     draining = true;
                 }
-                DriverEvent::Block(b) => self.on_block(b),
+                DriverEvent::Block(b) => {
+                    self.on_block(b);
+                }
                 DriverEvent::Flush => {
                     self.pipeline.force_close_channel();
                     debug!("flush signal received, force-closed channel");

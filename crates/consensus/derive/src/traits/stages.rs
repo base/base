@@ -29,9 +29,6 @@ pub trait StageReset {
 
     /// Flushes the currently active channel.
     async fn flush_channel(&mut self) -> PipelineResult<()>;
-
-    /// Provides a new L1 block to the traversal stage.
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()>;
 }
 
 /// Providers a way for the pipeline to accept a signal from the driver.

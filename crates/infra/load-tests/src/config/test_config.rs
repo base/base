@@ -115,12 +115,12 @@ pub struct TestConfig {
     #[serde(default)]
     pub looper_contract: Option<String>,
 
-    /// WebSocket JSON-RPC endpoint URL for block subscription.
-    #[serde(default = "default_rpc_ws_url", alias = "ws_url")]
-    pub rpc_ws_url: Url,
-    /// WebSocket URL for flashblocks subscription.
-    #[serde(default = "default_flashblocks_ws_url", alias = "flashblocks_url")]
-    pub flashblocks_ws_url: Url,
+    /// WebSocket JSON-RPC endpoint URL for block subscription (enables block latency tracking).
+    #[serde(default, alias = "ws_url")]
+    pub rpc_ws_url: Option<Url>,
+    /// WebSocket URL for flashblocks subscription (enables flashblock latency tracking).
+    #[serde(default, alias = "flashblocks_url")]
+    pub flashblocks_ws_url: Option<Url>,
 }
 
 impl Default for TestConfig {
@@ -138,8 +138,8 @@ impl Default for TestConfig {
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,
-            rpc_ws_url: default_rpc_ws_url(),
-            flashblocks_ws_url: default_flashblocks_ws_url(),
+            rpc_ws_url: None,
+            flashblocks_ws_url: None,
         }
     }
 }
@@ -241,14 +241,6 @@ const fn default_iterations() -> u32 {
     1
 }
 
-fn default_rpc_ws_url() -> Url {
-    Url::parse("ws://localhost:8546").expect("valid default rpc_ws_url")
-}
-
-fn default_flashblocks_ws_url() -> Url {
-    Url::parse("ws://localhost:7111").expect("valid default flashblocks_ws_url")
-}
-
 impl TestConfig {
     /// Loads configuration from a YAML file.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -272,7 +264,30 @@ impl TestConfig {
         if self.sender_count == 0 {
             return Err(BaselineError::Config("sender_count must be > 0".into()));
         }
+
+        if let Some(url) = &self.rpc_ws_url {
+            Self::validate_ws_url(url, "rpc_ws_url")?;
+        }
+        if let Some(url) = &self.flashblocks_ws_url {
+            Self::validate_ws_url(url, "flashblocks_ws_url")?;
+        }
+
         Ok(())
+    }
+
+    fn validate_ws_url(url: &Url, field_name: &str) -> Result<()> {
+        match url.scheme() {
+            "ws" | "wss" => Ok(()),
+            "http" => Err(BaselineError::Config(format!(
+                "{field_name} uses 'http://' scheme but requires 'ws://' for WebSocket connections"
+            ))),
+            "https" => Err(BaselineError::Config(format!(
+                "{field_name} uses 'https://' scheme but requires 'wss://' for secure WebSocket connections"
+            ))),
+            scheme => Err(BaselineError::Config(format!(
+                "{field_name} has invalid scheme '{scheme}', expected 'ws://' or 'wss://'"
+            ))),
+        }
     }
 
     /// Returns the funder key from the `FUNDER_KEY` environment variable.
@@ -544,5 +559,49 @@ transactions:
         }
 
         assert!(config.looper_contract.is_some());
+    }
+
+    #[test]
+    fn rejects_http_scheme_for_ws_url() {
+        let yaml = r#"
+rpc: http://localhost:8545
+rpc_ws_url: http://localhost:8546
+"#;
+        let err = TestConfig::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("rpc_ws_url"));
+        assert!(err.to_string().contains("ws://"));
+    }
+
+    #[test]
+    fn rejects_https_scheme_for_ws_url() {
+        let yaml = r#"
+rpc: http://localhost:8545
+rpc_ws_url: https://localhost:8546
+"#;
+        let err = TestConfig::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("rpc_ws_url"));
+        assert!(err.to_string().contains("wss://"));
+    }
+
+    #[test]
+    fn accepts_wss_scheme_for_ws_url() {
+        let yaml = r#"
+rpc: http://localhost:8545
+rpc_ws_url: wss://localhost:8546
+flashblocks_ws_url: wss://localhost:7111
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.rpc_ws_url.as_ref().unwrap().scheme(), "wss");
+        assert_eq!(config.flashblocks_ws_url.as_ref().unwrap().scheme(), "wss");
+    }
+
+    #[test]
+    fn accepts_omitted_ws_urls() {
+        let yaml = r#"
+rpc: http://localhost:8545
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert!(config.rpc_ws_url.is_none());
+        assert!(config.flashblocks_ws_url.is_none());
     }
 }

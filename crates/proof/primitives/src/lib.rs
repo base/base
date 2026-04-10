@@ -15,7 +15,7 @@ mod proposal;
 pub use proposal::{ECDSA_SIGNATURE_LENGTH, PROOF_JOURNAL_BASE_LENGTH, ProofJournal, Proposal};
 
 mod proof_encoder;
-pub use proof_encoder::{CryptoError, PROOF_TYPE_TEE, ProofEncoder};
+pub use proof_encoder::{CryptoError, PROOF_TYPE_TEE, PROOF_TYPE_ZK, ProofEncoder};
 
 mod prover;
 pub use prover::ProverBackend;

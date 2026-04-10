@@ -1,7 +1,8 @@
 //! Transaction receipt types for Base chains.
 
 use alloy_consensus::{
-    Eip658Value, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt,
+    Eip658Value, InMemorySize, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
+    TxReceipt,
 };
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
@@ -269,7 +270,7 @@ where
 
 /// Bincode-compatible [`OpDepositReceipt`] serde implementation.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub(crate) mod serde_bincode_compat {
+pub(super) mod serde_bincode_compat {
     use alloc::borrow::Cow;
 
     use alloy_consensus::Receipt;
@@ -386,6 +387,17 @@ pub(crate) mod serde_bincode_compat {
             .unwrap();
             assert_eq!(decoded, data);
         }
+    }
+}
+
+impl<T> InMemorySize for OpDepositReceipt<T>
+where
+    Receipt<T>: InMemorySize,
+{
+    fn size(&self) -> usize {
+        self.inner.size()
+            + core::mem::size_of_val(&self.deposit_nonce)
+            + core::mem::size_of_val(&self.deposit_receipt_version)
     }
 }
 

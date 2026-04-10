@@ -7,13 +7,19 @@ ZK-proof dispute game challenger.
 
 ## Overview
 
-- **Scanner**: Reads the `DisputeGameFactory` for new dispute games, filtering by `IN_PROGRESS` status and unchallenged state (`zkProver == zero`) to produce `CandidateGame`s for downstream processing.
+- **Driver**: Main polling loop that ties together scanning, validation, proof requests, and dispute submission.
+- **Scanner**: Scans the `DisputeGameFactory` for `IN_PROGRESS` dispute games and classifies each into a `GameCategory` (`InvalidTeeProposal`, `FraudulentZkChallenge`, or `InvalidZkProposal`) based on prover state.
 - **Validator**: Verifies final and intermediate output roots for each `CandidateGame` by fetching L2 block headers and `L2ToL1MessagePasser` storage proofs, recomputing expected roots via `OutputRoot`, and comparing them against onchain claims.
-- **Service**: Lifecycle orchestration for the challenger (init, health, metrics, shutdown).
-- **Config**: Validated runtime configuration with CLI argument parsing.
-- **Health**: HTTP liveness (`/healthz`) and readiness (`/readyz`) probes.
-- **Metrics**: Prometheus metric definitions and recording.
-- **CLI**: Command-line argument parsing and configuration validation.
+- **Pending**: Tracks in-flight proof sessions through a `ProofPhase` lifecycle (`AwaitingProof` → `ReadyToSubmit` or `NeedsRetry`).
+- **Submitter**: Submits dispute transactions onchain (`nullify()` / `challenge()`) for invalid games.
+- **Bond**: Multi-phase bond credit claim lifecycle (`NeedsResolve` → `NeedsUnlock` → `AwaitingDelay` → `NeedsWithdraw`).
+- **Tee**: `L1HeadProvider` trait for resolving L1 block numbers from hashes.
+- **Verify**: Account proof verification against a state root using Merkle Patricia Trie proofs.
+- **Error**: Challenge submission error types.
+- **Service**: Full challenger service lifecycle (init, wiring, driver loop, shutdown).
+- **Config**: Configuration types and validation.
+- **CLI**: CLI argument definitions (`BASE_CHALLENGER_` env-var prefix).
+- **Metrics**: Prometheus metric definitions.
 
 ## Usage
 

@@ -1,6 +1,10 @@
 //! Contains all updates to the [`crate::SystemConfig`] type.
 
 mod common;
+pub use common::{
+    EXPECTED_DATA_LENGTH, EXPECTED_POINTER, STANDARD_UPDATE_DATA_LEN, ValidatedUpdateData,
+    ValidationError, validate_update_data,
+};
 
 mod batcher;
 pub use batcher::BatcherUpdate;

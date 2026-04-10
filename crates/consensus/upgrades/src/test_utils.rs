@@ -16,7 +16,7 @@ use revm::{
 
 /// Runs an upgrade deposit transaction that deploys a contract in an in-memory EVM, and checks that
 /// the contract deploys to the expected address and with the expected codehash.
-pub(crate) fn check_deployment_code(
+pub fn check_deployment_code(
     deployment_tx: TxDeposit,
     expected_address: Address,
     expected_code_hash: B256,

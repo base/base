@@ -13,5 +13,5 @@ pub use store::MdbxProofsStorage;
 
 mod cursor;
 pub use cursor::{
-    BlockNumberVersionedCursor, MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
+    BlockNumberVersionedCursor, Dup, MdbxAccountCursor, MdbxStorageCursor, MdbxTrieCursor,
 };

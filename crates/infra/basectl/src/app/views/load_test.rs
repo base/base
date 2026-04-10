@@ -92,8 +92,12 @@ enum RunState {
         run_start: Option<Instant>,
         run_count: u32,
         stop_flag: Arc<AtomicBool>,
+        /// Shared with the background task; storing `false` causes the loop to
+        /// stop after the current run completes rather than starting another.
+        continuous_flag: Arc<AtomicBool>,
         phase_rx: watch::Receiver<RunPhase>,
         snap_rx: watch::Receiver<DisplaySnapshot>,
+        run_count_rx: watch::Receiver<u32>,
         done_rx: mpsc::Receiver<Result<MetricsSummary, String>>,
         current_snap: DisplaySnapshot,
         current_phase: RunPhase,
@@ -465,7 +469,11 @@ impl LoadTestView {
 
         let (phase_tx, phase_rx) = watch::channel(RunPhase::Bootstrap);
         let (snap_tx, snap_rx) = watch::channel(DisplaySnapshot::default());
+        let (run_count_tx, run_count_rx) = watch::channel(run_count);
         let (done_tx, done_rx) = mpsc::channel(1);
+
+        let continuous_flag = Arc::new(AtomicBool::new(self.continuous));
+        let continuous_for_task = Arc::clone(&continuous_flag);
 
         let task_handle = tokio::spawn(async move {
             // Fetch chain_id from the network's RPC — required for transaction signing.
@@ -501,7 +509,7 @@ impl LoadTestView {
                 }
             };
 
-            runner.replace_stop_flag(stop_flag_for_runner);
+            runner.replace_stop_flag(Arc::clone(&stop_flag_for_runner));
             runner.set_snapshot_tx(snap_tx);
 
             let is_local = is_local_rpc(&cfg.rpc);
@@ -518,45 +526,70 @@ impl LoadTestView {
 
             if let Some(ref funder) = funder {
                 runner.set_funder_address(funder.address().to_string());
+            }
 
-                // On local devnets, top up the funder from Hardhat reserve accounts if needed.
-                if is_local {
-                    let _ = phase_tx.send(RunPhase::Bootstrap);
-                    if let Err(e) = ensure_funder_balance(
-                        &client,
-                        cfg.rpc.clone(),
-                        funder.address(),
-                        funding_amount,
-                        sender_count,
-                        chain_id_val,
-                        max_gas_price,
-                    )
-                    .await
-                    {
-                        // Non-fatal: fund_accounts will surface a clearer error if truly short.
-                        let _ = phase_tx.send(RunPhase::Funding);
-                        let _ = done_tx.send(Err(format!("devnet bootstrap failed: {e}"))).await;
+            let mut current_run = run_count;
+            let mut last_result: Result<MetricsSummary, String>;
+
+            loop {
+                let _ = run_count_tx.send(current_run);
+
+                if let Some(ref funder) = funder {
+                    // On local devnets, top up the funder from Hardhat reserve accounts if
+                    // needed. This runs each iteration so the funder stays topped up over long
+                    // continuous sessions.
+                    if is_local {
+                        let _ = phase_tx.send(RunPhase::Bootstrap);
+                        if let Err(e) = ensure_funder_balance(
+                            &client,
+                            cfg.rpc.clone(),
+                            funder.address(),
+                            funding_amount,
+                            sender_count,
+                            chain_id_val,
+                            max_gas_price,
+                        )
+                        .await
+                        {
+                            // Non-fatal: fund_accounts will surface a clearer error if truly
+                            // short.
+                            let _ =
+                                done_tx.send(Err(format!("devnet bootstrap failed: {e}"))).await;
+                            return;
+                        }
+                    }
+
+                    let _ = phase_tx.send(RunPhase::Funding);
+                    if let Err(e) = runner.fund_accounts(funder.clone(), funding_amount).await {
+                        let _ = done_tx.send(Err(format!("funding failed: {e}"))).await;
                         return;
                     }
                 }
 
-                let _ = phase_tx.send(RunPhase::Funding);
-                if let Err(e) = runner.fund_accounts(funder.clone(), funding_amount).await {
-                    let _ = done_tx.send(Err(format!("funding failed: {e}"))).await;
-                    return;
+                let _ = phase_tx.send(RunPhase::Running);
+                let result = runner.run().await;
+                // run() always sets stop_flag=true on exit to signal the confirmer.
+                // Reset it here so the next iteration's run() starts clean, and so
+                // the break condition below only fires on a user-initiated stop
+                // (which stores false into continuous_for_task via stop_run()).
+                stop_flag_for_runner.store(false, Ordering::SeqCst);
+
+                // Drain accounts back to funder regardless of run outcome.
+                if let Some(ref funder) = funder {
+                    let _ = phase_tx.send(RunPhase::Draining);
+                    runner.drain_accounts(funder.clone()).await.ok();
                 }
+
+                last_result = result.map_err(|e| e.to_string());
+
+                if last_result.is_err() || !continuous_for_task.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                current_run += 1;
             }
 
-            let _ = phase_tx.send(RunPhase::Running);
-            let result = runner.run().await;
-
-            // Drain accounts back to funder regardless of run outcome.
-            if let Some(funder) = funder {
-                let _ = phase_tx.send(RunPhase::Draining);
-                runner.drain_accounts(funder).await.ok();
-            }
-
-            let _ = done_tx.send(result.map_err(|e| e.to_string())).await;
+            let _ = done_tx.send(last_result).await;
         });
 
         resources.load_test_task =
@@ -567,8 +600,10 @@ impl LoadTestView {
             run_start: None,
             run_count,
             stop_flag,
+            continuous_flag,
             phase_rx,
             snap_rx,
+            run_count_rx,
             done_rx,
             current_snap: DisplaySnapshot::default(),
             current_phase: RunPhase::Bootstrap,
@@ -582,9 +617,9 @@ impl LoadTestView {
     }
 
     fn stop_run(&mut self) {
-        if let RunState::Running { ref stop_flag, .. } = self.state {
+        if let RunState::Running { ref stop_flag, ref continuous_flag, .. } = self.state {
             stop_flag.store(true, Ordering::SeqCst);
-            // Mark continuous off so the completion handler does not restart.
+            continuous_flag.store(false, Ordering::SeqCst);
             self.continuous = false;
         }
     }
@@ -815,17 +850,23 @@ impl View for LoadTestView {
         let done = if let RunState::Running {
             ref mut snap_rx,
             ref mut phase_rx,
+            ref mut run_count_rx,
             ref mut done_rx,
             ref mut current_snap,
             ref mut current_phase,
             ref mut run_start,
-            run_count,
+            ref mut run_count,
             start,
             ..
         } = self.state
         {
             if phase_rx.has_changed().unwrap_or(false) {
                 let new_phase = phase_rx.borrow_and_update().clone();
+                // A new Bootstrap phase signals the start of the next loop iteration —
+                // reset run_start so the progress bar tracks only the current run.
+                if matches!(new_phase, RunPhase::Bootstrap) {
+                    *run_start = None;
+                }
                 if matches!(new_phase, RunPhase::Running) && run_start.is_none() {
                     *run_start = Some(Instant::now());
                 }
@@ -835,10 +876,14 @@ impl View for LoadTestView {
             if snap_rx.has_changed().unwrap_or(false) {
                 *current_snap = snap_rx.borrow_and_update().clone();
             }
+            // Update run count from the background task loop.
+            if run_count_rx.has_changed().unwrap_or(false) {
+                *run_count = *run_count_rx.borrow_and_update();
+            }
 
             // Check for completion.
             match done_rx.try_recv() {
-                Ok(Ok(summary)) => Some(Ok((summary, start.elapsed(), run_count))),
+                Ok(Ok(summary)) => Some(Ok((summary, start.elapsed(), *run_count))),
                 Ok(Err(e)) => Some(Err(e)),
                 Err(TryRecvError::Disconnected) => {
                     Some(Err("load test task exited unexpectedly".into()))
@@ -852,20 +897,14 @@ impl View for LoadTestView {
         if let Some(result) = done {
             match result {
                 Ok((summary, elapsed, run_count)) => {
-                    if self.continuous {
-                        // Restart immediately for the next run.
-                        self.state = RunState::Idle;
-                        self.start_run(run_count + 1, resources);
-                    } else {
-                        resources.load_test_task = None;
-                        resources.toasts.push(Toast::info(format!(
-                            "Load test complete in {:.1}s — {:.1} TPS / {:.0} GPS",
-                            elapsed.as_secs_f64(),
-                            summary.throughput.tps,
-                            summary.throughput.gps,
-                        )));
-                        self.state = RunState::Complete { summary, elapsed, run_count };
-                    }
+                    resources.load_test_task = None;
+                    resources.toasts.push(Toast::info(format!(
+                        "Load test complete in {:.1}s — {:.1} TPS / {:.0} GPS",
+                        elapsed.as_secs_f64(),
+                        summary.throughput.tps,
+                        summary.throughput.gps,
+                    )));
+                    self.state = RunState::Complete { summary, elapsed, run_count };
                 }
                 Err(e) => {
                     resources.load_test_task = None;

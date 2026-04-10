@@ -80,10 +80,6 @@ impl StageReset for TestAttributesProvider {
         self.flushed = true;
         Ok(())
     }
-
-    async fn provide_block(&mut self, _: BlockInfo) -> PipelineResult<()> {
-        Ok(())
-    }
 }
 
 #[async_trait]

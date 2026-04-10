@@ -32,17 +32,10 @@ alloy-eips = { workspace = true, features = ["serde"] }
 sha2.workspace = true
 k256 = { workspace = true, features = ["ecdsa", "arithmetic"] }
 
-# nsm / attestation
-openssl.workspace = true
-x509-cert.workspace = true
-aws-nitro-enclaves-cose.workspace = true
+# nsm
 aws-nitro-enclaves-nsm-api.workspace = true
 
 # encoding
-base64.workspace = true
-ciborium.workspace = true
-serde_bytes.workspace = true
-zip = { workspace = true, features = ["deflate"] }
 serde = { workspace = true, features = ["derive"] }
 bincode = { workspace = true, features = ["serde"] }
 

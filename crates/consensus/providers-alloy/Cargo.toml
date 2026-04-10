@@ -38,6 +38,7 @@ base-alloy-consensus.workspace = true
 
 # Misc
 lru.workspace = true
+reqwest.workspace = true
 url.workspace = true
 tower.workspace = true
 async-trait.workspace = true

@@ -248,13 +248,6 @@ where
         self.span = None;
         Ok(())
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.prev.provide_block(block).await?;
-        self.buffer.clear();
-        self.span = None;
-        Ok(())
-    }
 }
 
 #[cfg(test)]

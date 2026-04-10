@@ -7,7 +7,7 @@ _env := "--env-file etc/docker/devnet-env"
 
 # Show devnet commands
 default:
-    @just devnet --list
+    @just --justfile {{source_file()}} --list
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
 up: down _build-setup-image (_build-rust-images "devnet" "dev")

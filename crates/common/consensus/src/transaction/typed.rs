@@ -1,6 +1,7 @@
 use alloy_consensus::{
-    EthereumTypedTransaction, SignableTransaction, Signed, TxEip1559, TxEip2930, TxEip7702,
-    TxLegacy, Typed2718, TypedTransaction, error::ValueError, transaction::RlpEcdsaEncodableTx,
+    EthereumTypedTransaction, InMemorySize, SignableTransaction, Signed, TxEip1559, TxEip2930,
+    TxEip7702, TxLegacy, Typed2718, TypedTransaction, error::ValueError,
+    transaction::RlpEcdsaEncodableTx,
 };
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, ChainId, Signature, TxHash, bytes::BufMut};
@@ -300,5 +301,17 @@ impl SignableTransaction<Signature> for OpTypedTransaction {
     {
         let hash = self.tx_hash(&signature);
         Signed::new_unchecked(self, signature, hash)
+    }
+}
+
+impl InMemorySize for OpTypedTransaction {
+    fn size(&self) -> usize {
+        match self {
+            Self::Legacy(tx) => tx.size(),
+            Self::Eip2930(tx) => tx.size(),
+            Self::Eip1559(tx) => tx.size(),
+            Self::Eip7702(tx) => tx.size(),
+            Self::Deposit(tx) => tx.size(),
+        }
     }
 }

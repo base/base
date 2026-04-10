@@ -12,7 +12,7 @@ pub use version::*;
 mod storage;
 pub use storage::*;
 mod change_set;
-pub(crate) mod kv;
+mod kv;
 use std::fmt;
 
 use alloy_primitives::B256;

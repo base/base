@@ -189,12 +189,6 @@ where
         Metrics::pipeline_batch_reader_set().set(0);
         Ok(())
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.prev.provide_block(block).await?;
-        self.next_channel();
-        Ok(())
-    }
 }
 
 #[cfg(test)]

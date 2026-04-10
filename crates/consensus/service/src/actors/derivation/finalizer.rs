@@ -28,7 +28,7 @@ impl L2Finalizer {
     /// Enqueues a derived [`AttributesWithParent`] for finalization. When a new finalized L1
     /// block is observed that is `>=` the height of [`AttributesWithParent::derived_from`], the
     /// L2 block associated with the payload attributes will be finalized.
-    pub(crate) fn enqueue_for_finalization(&mut self, attributes: &AttributesWithParent) {
+    pub fn enqueue_for_finalization(&mut self, attributes: &AttributesWithParent) {
         self.awaiting_finalization
             .entry(
                 attributes.derived_from.map(|b| b.number).expect(
@@ -40,7 +40,7 @@ impl L2Finalizer {
     }
 
     /// Clears the finalization queue.
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.awaiting_finalization.clear();
     }
 
@@ -48,7 +48,7 @@ impl L2Finalizer {
     ///
     /// Returns `Some(l2_block_number)` if there is an L2 block that can be finalized,
     /// or `None` if no blocks are ready for finalization.
-    pub(crate) fn try_finalize_next(
+    pub fn try_finalize_next(
         &mut self,
         new_finalized_l1_block: BlockInfo,
     ) -> Option<L2BlockNumber> {

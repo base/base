@@ -44,7 +44,8 @@ fn sanitize_system_contracts_for_fork(
         // Base does not support L1-style deposit, consolidation, or withdrawal request contracts.
         SystemContract::ConsolidationRequestPredeploy
         | SystemContract::DepositContract
-        | SystemContract::WithdrawalRequestPredeploy => false,
+        | SystemContract::WithdrawalRequestPredeploy
+        | SystemContract::Other(_) => false,
     });
 }
 
@@ -159,7 +160,7 @@ mod tests {
         sanitize_system_contracts_for_fork(&chain_spec, &mut fork_config);
 
         assert_eq!(
-            fork_config.system_contracts.keys().copied().collect::<Vec<_>>(),
+            fork_config.system_contracts.keys().cloned().collect::<Vec<_>>(),
             vec![SystemContract::BeaconRoots]
         );
     }
@@ -172,7 +173,7 @@ mod tests {
         sanitize_system_contracts_for_fork(&chain_spec, &mut fork_config);
 
         assert_eq!(
-            fork_config.system_contracts.keys().copied().collect::<Vec<_>>(),
+            fork_config.system_contracts.keys().cloned().collect::<Vec<_>>(),
             vec![SystemContract::BeaconRoots, SystemContract::HistoryStorage]
         );
     }

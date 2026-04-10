@@ -56,7 +56,7 @@ where
     }
 
     /// Attempts to update the active stage of the mux.
-    pub(crate) fn attempt_update(&mut self) -> PipelineResult<()> {
+    pub fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to
@@ -161,18 +161,6 @@ where
             channel_assembler.flush_channel().await
         } else if let Some(channel_bank) = self.channel_bank.as_mut() {
             channel_bank.flush_channel().await
-        } else {
-            Err(PipelineError::NotEnoughData.temp())
-        }
-    }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.attempt_update()?;
-
-        if let Some(channel_assembler) = self.channel_assembler.as_mut() {
-            channel_assembler.provide_block(block).await
-        } else if let Some(channel_bank) = self.channel_bank.as_mut() {
-            channel_bank.provide_block(block).await
         } else {
             Err(PipelineError::NotEnoughData.temp())
         }

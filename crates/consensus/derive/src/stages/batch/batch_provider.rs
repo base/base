@@ -60,7 +60,7 @@ where
     }
 
     /// Attempts to update the active stage of the mux.
-    pub(crate) fn attempt_update(&mut self) -> PipelineResult<()> {
+    pub fn attempt_update(&mut self) -> PipelineResult<()> {
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         if let Some(prev) = self.prev.take() {
             // On the first call to `attempt_update`, we need to determine the active stage to
@@ -171,18 +171,6 @@ where
             batch_validator.flush_channel().await
         } else if let Some(batch_queue) = self.batch_queue.as_mut() {
             batch_queue.flush_channel().await
-        } else {
-            Err(PipelineError::NotEnoughData.temp())
-        }
-    }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.attempt_update()?;
-
-        if let Some(batch_validator) = self.batch_validator.as_mut() {
-            batch_validator.provide_block(block).await
-        } else if let Some(batch_queue) = self.batch_queue.as_mut() {
-            batch_queue.provide_block(block).await
         } else {
             Err(PipelineError::NotEnoughData.temp())
         }

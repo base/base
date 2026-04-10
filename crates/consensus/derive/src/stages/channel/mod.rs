@@ -18,16 +18,16 @@ use base_protocol::Frame;
 
 use crate::types::PipelineResult;
 
-pub(crate) mod channel_provider;
+mod channel_provider;
 pub use channel_provider::ChannelProvider;
 
-pub(crate) mod channel_bank;
-pub use channel_bank::ChannelBank;
+mod channel_bank;
+pub use channel_bank::{ChannelBank, FJORD_MAX_CHANNEL_BANK_SIZE, MAX_CHANNEL_BANK_SIZE};
 
-pub(crate) mod channel_assembler;
+mod channel_assembler;
 pub use channel_assembler::ChannelAssembler;
 
-pub(crate) mod channel_reader;
+mod channel_reader;
 pub use channel_reader::{ChannelReader, ChannelReaderProvider};
 
 /// Provides frames for the [`ChannelBank`] and [`ChannelAssembler`] stages.

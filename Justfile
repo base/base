@@ -26,7 +26,7 @@ alias ldc := load-test-devnet-continuous
 
 # Default to display help menu
 default:
-    @just --list
+    @just --list --list-submodules
 
 # Load test devnet in continuous mode (Ctrl-C to stop)
 load-test-devnet-continuous:

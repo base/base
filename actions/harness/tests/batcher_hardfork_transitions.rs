@@ -8,6 +8,7 @@ use base_action_harness::{
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_consensus_genesis::{HardForkConfig, RollupConfig};
 use base_protocol::BatchType;
+use tracing_subscriber::EnvFilter;
 
 // ---------------------------------------------------------------------------
 // A. Span batch with non-empty hardfork transition block is rejected
@@ -33,6 +34,10 @@ use base_protocol::BatchType;
 /// for earlier hardforks like Ecotone or Isthmus.
 #[tokio::test]
 async fn span_batch_with_non_empty_transition_block_rejected() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new("error"))
+        .with_test_writer()
+        .try_init();
     // All forks through Isthmus active at genesis. Jovian activates at ts=6
     // (L2 block 3 with block_time=2). Because only Jovian is "new" at ts=6,
     // `is_first_jovian_block(6)` returns true and the NonEmptyTransitionBlock
@@ -63,10 +68,10 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     // Build 4 L2 blocks. build_next_block_with_single_transaction() includes a user transaction in
     // every block. Block 3 (ts=6) is the first Jovian block, which must be
     // deposit-only — including a user tx here is the deliberate error.
-    let block1 = builder.build_next_block_with_single_transaction(); // ts=2
-    let block2 = builder.build_next_block_with_single_transaction(); // ts=4
-    let block3_invalid = builder.build_next_block_with_single_transaction(); // ts=6
-    let block4 = builder.build_next_block_with_single_transaction(); // ts=8
+    let block1 = builder.build_next_block_with_single_transaction().await; // ts=2
+    let block2 = builder.build_next_block_with_single_transaction().await; // ts=4
+    let block3_invalid = builder.build_next_block_with_single_transaction().await; // ts=6
+    let block4 = builder.build_next_block_with_single_transaction().await; // ts=8
 
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
@@ -92,7 +97,6 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     node.register_block_hash(4, B256::ZERO);
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     // Under Holocene, when the pipeline reaches block 3 in the span batch and
@@ -119,10 +123,10 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     {
         let l1_chain2 = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
         let mut builder2 = h.create_l2_sequencer(l1_chain2);
-        let _rb1 = builder2.build_next_block_with_single_transaction();
-        let _rb2 = builder2.build_next_block_with_single_transaction();
-        let block3_empty = builder2.build_empty_block();
-        let block4_recovery = builder2.build_next_block_with_single_transaction();
+        let _rb1 = builder2.build_next_block_with_single_transaction().await;
+        let _rb2 = builder2.build_next_block_with_single_transaction().await;
+        let block3_empty = builder2.build_empty_block().await;
+        let block4_recovery = builder2.build_next_block_with_single_transaction().await;
 
         let span_cfg = BatcherConfig { batch_type: BatchType::Span, ..batcher_cfg };
         let mut source = ActionL2Source::new();
@@ -132,7 +136,6 @@ async fn span_batch_with_non_empty_transition_block_rejected() {
     }
     chain.push(h.l1.tip().clone()); // L1 block 2: recovery span batch (blocks 3–4)
 
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 4, "after recovery submission, safe head must reach block 4");
@@ -165,8 +168,8 @@ async fn mixed_singular_and_span_batches_after_delta() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let block1 = builder.build_next_block_with_single_transaction();
-    let block2 = builder.build_next_block_with_single_transaction();
+    let block1 = builder.build_next_block_with_single_transaction().await;
+    let block2 = builder.build_next_block_with_single_transaction().await;
 
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
@@ -193,14 +196,11 @@ async fn mixed_singular_and_span_batches_after_delta() {
 
     node.initialize().await;
 
-    // Drive derivation L1 block by block. The first batch (singular) derives
-    // L2 block 1; the second (span) derives L2 block 2.
-    for i in 1..=2u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(
+        total_derived, 2,
+        "mixed singular + span batches must both derive; safe head should reach 2"
+    );
     assert_eq!(
         node.l2_safe_number(),
         2,
@@ -272,7 +272,7 @@ async fn granite_channel_timeout_enforced() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction();
+    let block = sequencer.build_next_block_with_single_transaction().await;
 
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
@@ -298,7 +298,6 @@ async fn granite_channel_timeout_enforced() {
     batcher.confirm_staged(block_1_num).await;
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 0, "incomplete channel should not advance safe head");
@@ -311,8 +310,7 @@ async fn granite_channel_timeout_enforced() {
     }
 
     // Signal all empty blocks to the verifier.
-    for i in 2..=52u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 2..=52u64 {
         node.run_until_idle().await;
     }
 
@@ -333,7 +331,6 @@ async fn granite_channel_timeout_enforced() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(late_block_num).await;
 
-    node.act_l1_head_signal(h.l1.block_info_at(late_block_num)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(
         derived, 0,
@@ -351,8 +348,6 @@ async fn granite_channel_timeout_enforced() {
     Batcher::new(source2, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
-    let recovery_num = h.l1.latest_number();
-    node.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
     let recovered = node.run_until_idle().await;
 
     assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
@@ -422,10 +417,10 @@ async fn jovian_single_batch_transition_block_deposit_only() {
     // Build 4 L2 blocks. build_next_block_with_single_transaction() includes a user transaction in
     // every block. Block 3 (ts=6) is the first Jovian block — including a
     // user tx is the deliberate error that derivation must handle.
-    let block1 = builder.build_next_block_with_single_transaction(); // ts=2
-    let block2 = builder.build_next_block_with_single_transaction(); // ts=4
-    let block3_invalid = builder.build_next_block_with_single_transaction(); // ts=6
-    let block4 = builder.build_next_block_with_single_transaction(); // ts=8
+    let block1 = builder.build_next_block_with_single_transaction().await; // ts=2
+    let block2 = builder.build_next_block_with_single_transaction().await; // ts=4
+    let block3_invalid = builder.build_next_block_with_single_transaction().await; // ts=6
+    let block4 = builder.build_next_block_with_single_transaction().await; // ts=8
 
     // Precondition: block 3 must contain at least one user transaction (deposits
     // don't count). If build_next_block_with_single_transaction() ever started returning empty blocks,
@@ -472,8 +467,7 @@ async fn jovian_single_batch_transition_block_deposit_only() {
 
     // Signal all L1 blocks to the node and drive derivation.
     let tip = h.l1.latest_number();
-    for i in 1..=tip {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=tip {
         node.run_until_idle().await;
     }
 

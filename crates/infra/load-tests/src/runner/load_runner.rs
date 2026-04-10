@@ -247,7 +247,7 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
         let max_gas_price = self.config.max_gas_price;
 
-        let pb_check = Self::progress_bar(total_accounts as u64, "Checking balances");
+        let pb_check = self.progress_bar(total_accounts as u64, "Checking balances");
 
         // Phase 1: Parallel balance + nonce queries.
         let addresses: Vec<(Address, usize)> =
@@ -368,7 +368,7 @@ impl LoadRunner {
             .collect();
 
         let total_txs = txs.len() as u64;
-        let pb_fund = Self::progress_bar(total_txs, "Funding accounts");
+        let pb_fund = self.progress_bar(total_txs, "Funding accounts");
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
             let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
@@ -453,7 +453,7 @@ impl LoadRunner {
         pb_fund.finish_and_clear();
 
         // Phase 5: Parallel post-funding state refresh.
-        let pb_refresh = Self::progress_bar(total_accounts as u64, "Refreshing account state");
+        let pb_refresh = self.progress_bar(total_accounts as u64, "Refreshing account state");
         let refresh_futs: Vec<_> = self
             .accounts
             .accounts()
@@ -535,29 +535,45 @@ impl LoadRunner {
         let flashblock_times: FlashblockTimes = Arc::new(RwLock::new(HashMap::new()));
         let block_first_seen: BlockFirstSeen = Arc::new(RwLock::new(BTreeMap::new()));
 
-        info!(url = %self.config.flashblocks_ws_url, "starting flashblock tracker");
-        let flashblock_tracker_task = FlashblockTracker::new(
-            self.config.flashblocks_ws_url.clone(),
-            Arc::clone(&flashblock_times),
-            self.cancel_token.clone(),
-        )
-        .start();
+        let flashblock_tracker_task = if let Some(url) = &self.config.flashblocks_ws_url {
+            info!(url = %url, "starting flashblock tracker");
+            Some(
+                FlashblockTracker::new(
+                    url.clone(),
+                    Arc::clone(&flashblock_times),
+                    self.cancel_token.clone(),
+                )
+                .start(),
+            )
+        } else {
+            info!("flashblocks_ws_url not configured, flashblock latency tracking disabled");
+            None
+        };
 
-        info!(url = %self.config.rpc_ws_url, "starting block watcher");
-        let block_watcher_task = BlockWatcher::new(
-            self.config.rpc_ws_url.clone(),
-            Arc::clone(&block_first_seen),
-            self.cancel_token.clone(),
-        )
-        .start();
+        let block_watcher_task = if let Some(url) = &self.config.rpc_ws_url {
+            info!(url = %url, "starting block watcher");
+            Some(
+                BlockWatcher::new(
+                    url.clone(),
+                    Arc::clone(&block_first_seen),
+                    self.cancel_token.clone(),
+                )
+                .start(),
+            )
+        } else {
+            info!("rpc_ws_url not configured, using block timestamps for latency");
+            None
+        };
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
-        let mut confirmer = Confirmer::with_timing_data(
+        let block_ws_enabled = block_watcher_task.is_some();
+        let mut confirmer = Confirmer::new(
             &sender_addresses,
             metrics_tx,
             Arc::clone(&self.stop_flag),
             Arc::clone(&flashblock_times),
             Arc::clone(&block_first_seen),
+            block_ws_enabled,
         );
         let confirmer_handle = confirmer.handle();
         let confirmer_handle_for_run = confirmer_handle.clone();
@@ -816,13 +832,17 @@ impl LoadRunner {
         // Now safe to stop WebSocket tasks — confirmer is done.
         self.cancel_token.cancel();
 
-        match tokio::time::timeout(Duration::from_secs(2), flashblock_tracker_task).await {
-            Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock tracker panicked"),
-            _ => {}
+        if let Some(task) = flashblock_tracker_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock tracker panicked"),
+                _ => {}
+            }
         }
-        match tokio::time::timeout(Duration::from_secs(2), block_watcher_task).await {
-            Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
-            _ => {}
+        if let Some(task) = block_watcher_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
+                _ => {}
+            }
         }
 
         let confirmed = self.collector.confirmed_count();
@@ -971,7 +991,7 @@ impl LoadRunner {
         let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);
 
         let total_accounts = self.accounts.len();
-        let pb_drain = Self::progress_bar(total_accounts as u64, "Draining accounts");
+        let pb_drain = self.progress_bar(total_accounts as u64, "Draining accounts");
 
         // Each account has its own signer, so drains are fully independent.
         let account_data: Vec<_> =
@@ -1052,7 +1072,7 @@ impl LoadRunner {
             return Ok(U256::ZERO);
         }
 
-        let pb_confirm = Self::progress_bar(pending_txs.len() as u64, "Confirming drain txs");
+        let pb_confirm = self.progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
         if let Err(e) = Self::await_confirmations(&client, &mut pending_txs, &pb_confirm).await {
@@ -1064,7 +1084,10 @@ impl LoadRunner {
         Ok(total_drained)
     }
 
-    fn progress_bar(total: u64, prefix: &str) -> ProgressBar {
+    fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
+        if self.snapshot_tx.is_some() {
+            return ProgressBar::hidden();
+        }
         let pb = ProgressBar::new(total);
         pb.set_style(
             ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")

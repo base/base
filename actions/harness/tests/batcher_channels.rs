@@ -30,7 +30,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction();
+    let block = sequencer.build_next_block_with_single_transaction().await;
 
     // Create node before any mining so all future blocks are pushed to chain.
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
@@ -57,7 +57,6 @@ async fn channel_timeout_triggers_channel_invalidation() {
     batcher.confirm_staged(block_1_num).await;
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 0, "incomplete channel should not advance safe head");
@@ -67,8 +66,7 @@ async fn channel_timeout_triggers_channel_invalidation() {
         h.mine_and_push(&chain);
     }
 
-    for i in 2..=4 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 2..=4 {
         node.run_until_idle().await;
     }
 
@@ -78,7 +76,6 @@ async fn channel_timeout_triggers_channel_invalidation() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_5_num).await;
 
-    node.act_l1_head_signal(h.l1.block_info_at(5)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "late frames after channel timeout must be ignored");
 
@@ -89,7 +86,6 @@ async fn channel_timeout_triggers_channel_invalidation() {
     batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
-    node.act_l1_head_signal(h.l1.block_info_at(6)).await;
     let recovered = node.run_until_idle().await;
 
     assert_eq!(recovered, 1, "resubmitted channel should derive L2 block 1");
@@ -118,7 +114,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction();
+    let block = sequencer.build_next_block_with_single_transaction().await;
 
     // Create node before any mining so all future blocks are pushed to chain.
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
@@ -151,8 +147,7 @@ async fn channel_timeout_recovery_resubmits_successfully() {
         h.mine_and_push(&chain);
     }
 
-    for i in 1..=h.l1.latest_number() {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=h.l1.latest_number() {
         node.run_until_idle().await;
     }
 
@@ -169,7 +164,6 @@ async fn channel_timeout_recovery_resubmits_successfully() {
     batcher2.advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
 
-    node.act_l1_head_signal(h.l1.block_info_at(h.l1.latest_number())).await;
     let recovered = node.run_until_idle().await;
 
     assert_eq!(recovered, 1, "recovery channel should derive L2 block 1");
@@ -199,8 +193,8 @@ async fn interleaved_channels_correctly_reassembled() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block_a = sequencer.build_next_block_with_single_transaction();
-    let block_b = sequencer.build_next_block_with_single_transaction();
+    let block_a = sequencer.build_next_block_with_single_transaction().await;
+    let block_b = sequencer.build_next_block_with_single_transaction().await;
 
     // Batcher A: block 1 in its own channel (distinct random channel ID).
     let mut source_a = ActionL2Source::new();
@@ -240,7 +234,6 @@ async fn interleaved_channels_correctly_reassembled() {
     );
     node.initialize().await;
 
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 2, "expected 2 L2 blocks derived from interleaved channels");
@@ -268,7 +261,7 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction();
+    let block = sequencer.build_next_block_with_single_transaction().await;
 
     // Create node before any mining so all future blocks are pushed to chain.
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
@@ -295,7 +288,6 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     batcher.confirm_staged(block_1_num).await;
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     assert_eq!(
@@ -310,7 +302,6 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(block_2_num).await;
 
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 1, "multi-block channel must yield 1 L2 block");
@@ -346,7 +337,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
 
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut sequencer = h.create_l2_sequencer(l1_chain);
-    let block = sequencer.build_next_block_with_single_transaction();
+    let block = sequencer.build_next_block_with_single_transaction().await;
 
     // Create node before any mining so all future blocks are pushed to chain.
     let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
@@ -374,7 +365,6 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     batcher.confirm_staged(block_1_num).await;
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     node.run_until_idle().await;
 
     assert_eq!(
@@ -402,8 +392,7 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     // Signal node for all L1 blocks. Track the total L2 blocks derived
     // to confirm exactly one block was produced across the 3-block span.
     let mut total_derived = 0usize;
-    for i in 2..=h.l1.latest_number() {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 2..=h.l1.latest_number() {
         total_derived += node.run_until_idle().await;
     }
 

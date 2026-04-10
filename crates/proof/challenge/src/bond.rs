@@ -317,18 +317,21 @@ impl<C: Clock> BondManager<C> {
     /// eligibility, returning one entry per evaluated game.
     async fn evaluate_bond_range(
         range: std::ops::Range<u64>,
-        factory_client: &Arc<dyn DisputeGameFactoryClient>,
+        factory_client: &dyn DisputeGameFactoryClient,
         verifier_client: &dyn AggregateVerifierClient,
         claim_addresses: &HashSet<Address>,
         clock: &C,
     ) -> Vec<Option<(Address, Address, Option<BondPhase>)>> {
         stream::iter(range)
-            .map(|i| {
-                let fc = &**factory_client;
-                async move {
-                    Self::evaluate_game_for_bonds(i, fc, verifier_client, claim_addresses, clock)
-                        .await
-                }
+            .map(|i| async move {
+                Self::evaluate_game_for_bonds(
+                    i,
+                    factory_client,
+                    verifier_client,
+                    claim_addresses,
+                    clock,
+                )
+                .await
             })
             .buffer_unordered(GameScanner::SCAN_CONCURRENCY)
             .collect()
@@ -358,8 +361,7 @@ impl<C: Clock> BondManager<C> {
             return Ok(());
         }
 
-        let factory_client = Arc::clone(&self.factory_client);
-        let game_count = factory_client.game_count().await?;
+        let game_count = self.factory_client.game_count().await?;
         if game_count == 0 {
             info!("no games in factory, skipping bond startup scan");
             return Ok(());
@@ -370,27 +372,22 @@ impl<C: Clock> BondManager<C> {
 
         let results = Self::evaluate_bond_range(
             start_index..game_count,
-            &factory_client,
+            &*self.factory_client,
             verifier_client,
             &self.claim_addresses,
             &self.clock,
         )
         .await;
 
-        // Process results sequentially: insert tracked games and resolve the
-        // WETH delay from the first relevant game.
-        for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
-            // Resolve the WETH delay from the first available game,
-            // including already-claimed ones, so that the delay is
-            // bootstrapped as early as possible.
-            if self.weth_delay.is_none()
-                && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
-            {
-                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
-            }
+        // Resolve the WETH delay from the first available game so the
+        // delay is bootstrapped as early as possible.
+        if let Some((game_address, _, _)) = results.iter().flatten().next() {
+            self.ensure_weth_delay(verifier_client, *game_address).await;
+        }
 
+        for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
             let Some(phase) = phase else {
-                continue; // already claimed, skip
+                continue;
             };
 
             info!(
@@ -402,8 +399,6 @@ impl<C: Clock> BondManager<C> {
             self.tracked.insert(game_address, TrackedGame { phase, bond_recipient });
         }
 
-        // Set the discovery watermark so continuous scanning starts from
-        // where startup left off.
         self.bond_scan_head = game_count;
         self.last_full_scan = self.clock.now();
 
@@ -432,8 +427,7 @@ impl<C: Clock> BondManager<C> {
             return Ok(());
         }
 
-        let factory_client = Arc::clone(&self.factory_client);
-        let game_count = factory_client.game_count().await?;
+        let game_count = self.factory_client.game_count().await?;
         if game_count == 0 {
             debug!("no games found, skipping bond discovery scan");
             return Ok(());
@@ -487,7 +481,7 @@ impl<C: Clock> BondManager<C> {
 
         let results = Self::evaluate_bond_range(
             scan_start..scan_end,
-            &factory_client,
+            &*self.factory_client,
             verifier_client,
             &self.claim_addresses,
             &self.clock,
@@ -497,7 +491,6 @@ impl<C: Clock> BondManager<C> {
         let mut discovered = 0u64;
 
         for (game_address, bond_recipient, phase) in results.into_iter().flatten() {
-            // Skip games already being tracked.
             if self.tracked.contains_key(&game_address) {
                 continue;
             }
@@ -505,12 +498,6 @@ impl<C: Clock> BondManager<C> {
             let Some(phase) = phase else {
                 continue;
             };
-
-            if self.weth_delay.is_none()
-                && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
-            {
-                warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
-            }
 
             info!(
                 game = %game_address,
@@ -523,8 +510,6 @@ impl<C: Clock> BondManager<C> {
             discovered += 1;
         }
 
-        // Advance watermark to the end of the scanned range (which may
-        // be less than `game_count` when the span was capped).
         self.bond_scan_head = scan_end;
 
         if is_full_rescan {
@@ -556,9 +541,8 @@ impl<C: Clock> BondManager<C> {
         // Lazily resolve the DelayedWETH delay if not yet known.
         if self.weth_delay.is_none()
             && let Some(&game_address) = self.tracked.keys().next()
-            && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
         {
-            warn!(error = %e, "failed to resolve DelayedWETH delay, will retry next poll");
+            self.ensure_weth_delay(verifier_client, game_address).await;
         }
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
@@ -619,8 +603,7 @@ impl<C: Clock> BondManager<C> {
                 self.try_unlock(game_address, verifier_client, submitter).await
             }
             BondPhase::AwaitingDelay { unlocked_at } => {
-                let unlocked_at = *unlocked_at;
-                self.check_delay(game_address, unlocked_at)
+                self.check_delay(game_address, *unlocked_at)
             }
             BondPhase::NeedsWithdraw => {
                 self.try_withdraw(game_address, verifier_client, submitter).await
@@ -642,53 +625,52 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<Option<RemovalReason>> {
-        // Check if already resolved onchain (e.g., someone else called it).
         let status = verifier_client.status(game_address).await?;
-        if status != GameScanner::STATUS_IN_PROGRESS {
+
+        if status == GameScanner::STATUS_IN_PROGRESS {
+            let game_over = verifier_client.game_over(game_address).await?;
+            if !game_over {
+                debug!(game = %game_address, "game dispute period not yet elapsed");
+                return Ok(None);
+            }
+
+            let calldata = encode_resolve_calldata();
+            info!(game = %game_address, "submitting resolve transaction");
+            match submitter.send_bond_tx(game_address, calldata).await {
+                Ok(tx_hash) => {
+                    info!(
+                        game = %game_address,
+                        tx_hash = %tx_hash,
+                        "resolve transaction confirmed"
+                    );
+                    ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
+                        .increment(1);
+                }
+                Err(e) => {
+                    warn!(
+                        game = %game_address,
+                        error = %e,
+                        "resolve transaction failed, will retry"
+                    );
+                    ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                        .increment(1);
+                    return Ok(None);
+                }
+            }
+        } else {
             ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
                 .increment(1);
-
-            // Re-read the onchain bondRecipient — resolve may have changed
-            // it (e.g. to the challenger on CHALLENGER_WINS). If it is no
-            // longer in our claim set, stop tracking this game.
-            if !self.is_bond_claimable(verifier_client, game_address).await? {
-                return Ok(Some(RemovalReason::NotClaimable));
-            }
-
-            info!(game = %game_address, status, "game already resolved, advancing to unlock phase");
-            self.set_phase(game_address, BondPhase::NeedsUnlock);
-            return Ok(None);
+            info!(game = %game_address, status, "game already resolved");
         }
 
-        // Check if the game is ready to resolve.
-        let game_over = verifier_client.game_over(game_address).await?;
-        if !game_over {
-            debug!(game = %game_address, "game dispute period not yet elapsed");
-            return Ok(None);
+        // Re-read the onchain bondRecipient — resolve may have changed it
+        // (e.g. to the challenger on CHALLENGER_WINS). If it is no longer
+        // in our claim set, stop tracking this game.
+        if !self.is_bond_claimable(verifier_client, game_address).await? {
+            return Ok(Some(RemovalReason::NotClaimable));
         }
 
-        // Submit resolve transaction.
-        let calldata = encode_resolve_calldata();
-        info!(game = %game_address, "submitting resolve transaction");
-        match submitter.send_bond_tx(game_address, calldata).await {
-            Ok(tx_hash) => {
-                info!(game = %game_address, tx_hash = %tx_hash, "resolve transaction confirmed");
-                ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
-                    .increment(1);
-
-                // Re-read bondRecipient to verify it's in our claim set.
-                if !self.is_bond_claimable(verifier_client, game_address).await? {
-                    return Ok(Some(RemovalReason::NotClaimable));
-                }
-
-                self.set_phase(game_address, BondPhase::NeedsUnlock);
-            }
-            Err(e) => {
-                warn!(game = %game_address, error = %e, "resolve transaction failed, will retry");
-                ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
-                    .increment(1);
-            }
-        }
+        self.set_phase(game_address, BondPhase::NeedsUnlock);
         Ok(None)
     }
 
@@ -729,20 +711,12 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<Option<RemovalReason>> {
-        // Check if already unlocked onchain.
-        let unlocked = verifier_client.bond_unlocked(game_address).await?;
+        let (unlocked, resolved_at) = futures::try_join!(
+            verifier_client.bond_unlocked(game_address),
+            verifier_client.resolved_at(game_address),
+        )?;
         if unlocked {
-            // Use `resolved_at` as a conservative lower bound for the unlock
-            // time. The unlock must have occurred after resolve, so this may
-            // cause one early withdrawal attempt that reverts, but is strictly
-            // better than resetting to "now" (which would re-impose the full
-            // delay after every restart).
-            let resolved_at = verifier_client.resolved_at(game_address).await?;
-            let unlocked_at = Self::unix_to_monotonic(
-                &self.clock,
-                resolved_at,
-                self.clock.wall_clock_unix_secs(),
-            );
+            let unlocked_at = Self::estimate_unlock_time(&self.clock, resolved_at);
             info!(
                 game = %game_address,
                 resolved_at,
@@ -772,7 +746,7 @@ impl<C: Clock> BondManager<C> {
         // succeed earlier than expected. If longer, the attempt will revert
         // and be retried on the next poll tick.
         let delay = self.weth_delay.unwrap_or_else(|| {
-            warn!(game = %game_address, "WETH delay not yet known, using default 7 days");
+            debug!(game = %game_address, "WETH delay not yet known, using default 7 days");
             Self::DEFAULT_WETH_DELAY
         });
 
@@ -803,11 +777,9 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) -> eyre::Result<Option<RemovalReason>> {
-        // Check if already claimed onchain.
         let claimed = verifier_client.bond_claimed(game_address).await?;
         if claimed {
             info!(game = %game_address, "bond already claimed");
-            self.set_phase(game_address, BondPhase::Completed);
             return Ok(Some(RemovalReason::Completed));
         }
 
@@ -876,6 +848,15 @@ impl<C: Clock> BondManager<C> {
         clock.now().saturating_sub(age)
     }
 
+    /// Estimates when the bond was unlocked using `resolved_at` as a
+    /// conservative lower bound. The unlock must have occurred after
+    /// resolve, so this may cause one early withdrawal attempt that
+    /// reverts, but is strictly better than resetting to "now" (which
+    /// would re-impose the full delay after every restart).
+    fn estimate_unlock_time(clock: &C, resolved_at: u64) -> Duration {
+        Self::unix_to_monotonic(clock, resolved_at, clock.wall_clock_unix_secs())
+    }
+
     /// Determines the bond phase from onchain state.
     ///
     /// Returns `None` if the bond has already been fully claimed. Otherwise
@@ -888,22 +869,16 @@ impl<C: Clock> BondManager<C> {
         game_address: Address,
         clock: &C,
     ) -> eyre::Result<Option<BondPhase>> {
-        let bond_claimed = verifier_client.bond_claimed(game_address).await?;
+        let (bond_claimed, resolved_at, bond_unlocked) = futures::try_join!(
+            verifier_client.bond_claimed(game_address),
+            verifier_client.resolved_at(game_address),
+            verifier_client.bond_unlocked(game_address),
+        )?;
         if bond_claimed {
             return Ok(None);
         }
-
-        let resolved_at = verifier_client.resolved_at(game_address).await?;
-
-        let bond_unlocked = verifier_client.bond_unlocked(game_address).await?;
         if bond_unlocked {
-            // Use `resolved_at` as a conservative lower bound for the unlock
-            // time. The unlock must have occurred after resolve, so this may
-            // cause one early withdrawal attempt that reverts, but is strictly
-            // better than resetting to "now" (which would re-impose the full
-            // delay after every restart).
-            let unlocked_at =
-                Self::unix_to_monotonic(clock, resolved_at, clock.wall_clock_unix_secs());
+            let unlocked_at = Self::estimate_unlock_time(clock, resolved_at);
             return Ok(Some(BondPhase::AwaitingDelay { unlocked_at }));
         }
 
@@ -912,6 +887,19 @@ impl<C: Clock> BondManager<C> {
         }
 
         Ok(Some(BondPhase::NeedsResolve))
+    }
+
+    /// Resolves the `DelayedWETH` delay if not yet known, logging on failure.
+    async fn ensure_weth_delay(
+        &mut self,
+        verifier_client: &dyn AggregateVerifierClient,
+        game_address: Address,
+    ) {
+        if self.weth_delay.is_none()
+            && let Err(e) = self.resolve_weth_delay(verifier_client, game_address).await
+        {
+            warn!(error = %e, "failed to read DelayedWETH delay, will retry later");
+        }
     }
 
     /// Reads the `DelayedWETH` address from a game proxy and fetches the delay.
@@ -951,7 +939,10 @@ mod tests {
     use futures::stream::BoxStream;
 
     use super::*;
-    use crate::test_utils::{MockDisputeGameFactory, TEST_DISCOVERY_INTERVAL, empty_factory};
+    use crate::test_utils::{
+        MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory,
+        TEST_DISCOVERY_INTERVAL, addr, empty_factory, factory_game, mock_state,
+    };
 
     /// A deterministic clock that always returns fixed values.
     ///
@@ -1148,10 +1139,6 @@ mod tests {
     }
 
     // ---- discover_claimable_games tests ----
-
-    use crate::test_utils::{
-        MockAggregateVerifier, MockBondTransactionSubmitter, addr, factory_game, mock_state,
-    };
 
     /// Builds a factory and verifier pair where each game has the given
     /// `bond_recipient` and `zk_prover`. All games are `IN_PROGRESS` (status 0)

@@ -43,15 +43,12 @@ async fn test_rollup_node_derives_batched_blocks() {
 
     let mut source = ActionL2Source::new();
     for _ in 0..L2_BLOCK_COUNT {
-        source.push(sequencer.build_next_block_with_single_transaction());
+        source.push(sequencer.build_next_block_with_single_transaction().await);
     }
 
     Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
-    let l1_head = h.l1.tip_info();
-
     node.initialize().await;
-    node.act_l1_head_signal(l1_head).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} blocks derived");
@@ -92,13 +89,14 @@ async fn test_rollup_node_gossip_then_derivation() {
     // Build blocks and gossip each one before any L1 batching.
     let mut source = ActionL2Source::new();
     for _ in 0..L2_BLOCK_COUNT {
-        let block = sequencer.build_next_block_with_single_transaction();
+        let block = sequencer.build_next_block_with_single_transaction().await;
         sequencer.broadcast_unsafe_block(&block);
         source.push(block);
     }
 
-    // Initialize drains the gossip channel; unsafe_head should be at 5.
+    // Initialize then step once to drain the gossip channel; unsafe_head should be at 5.
     node.initialize().await;
+    node.run_until_idle().await;
 
     assert_eq!(
         node.l2_unsafe_number(),
@@ -110,9 +108,6 @@ async fn test_rollup_node_gossip_then_derivation() {
     // Batch and mine so the pipeline can derive.
     Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
-    let l1_head = h.l1.tip_info();
-
-    node.act_l1_head_signal(l1_head).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} blocks derived");
@@ -141,9 +136,9 @@ async fn test_rollup_node_out_of_order_gossip_dropped() {
     let transport = h.create_supervised_p2p(&mut sequencer);
     let mut node = h.create_test_rollup_node(&sequencer, chain, transport);
 
-    let block1 = sequencer.build_next_block_with_single_transaction();
-    let _block2 = sequencer.build_next_block_with_single_transaction();
-    let block3 = sequencer.build_next_block_with_single_transaction();
+    let block1 = sequencer.build_next_block_with_single_transaction().await;
+    let _block2 = sequencer.build_next_block_with_single_transaction().await;
+    let block3 = sequencer.build_next_block_with_single_transaction().await;
 
     // Inject block 3 first — gap-jump, must be dropped.
     sequencer.broadcast_unsafe_block(&block3);

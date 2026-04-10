@@ -4,7 +4,8 @@
 use core::hash::Hash;
 
 use alloy_consensus::{
-    Extended, SignableTransaction, Signed, TransactionEnvelope, TxEip7702, TxEnvelope,
+    Extended, InMemorySize, SignableTransaction, Signed, TransactionEnvelope, TxEip7702,
+    TxEnvelope,
     error::ValueError,
     transaction::{TxEip1559, TxEip2930, TxHashRef, TxLegacy},
 };
@@ -246,6 +247,17 @@ impl<Tx> TryFrom<Extended<OpTxEnvelope, Tx>> for OpPooledTransaction {
         match _tx {
             Extended::BuiltIn(inner) => inner.try_into().map_err(|_| ()),
             Extended::Other(_tx) => Err(()),
+        }
+    }
+}
+
+impl InMemorySize for OpPooledTransaction {
+    fn size(&self) -> usize {
+        match self {
+            Self::Legacy(tx) => tx.size(),
+            Self::Eip2930(tx) => tx.size(),
+            Self::Eip1559(tx) => tx.size(),
+            Self::Eip7702(tx) => tx.size(),
         }
     }
 }

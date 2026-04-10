@@ -266,13 +266,6 @@ pub enum PipelineError {
     /// failures, API errors, and provider-specific issues.
     #[error("Provider error: {0}")]
     Provider(String),
-    /// The pipeline received an unsupported signal type.
-    ///
-    /// This error occurs when a pipeline stage receives a signal that it
-    /// cannot process or that is not supported in the current configuration.
-    /// It indicates a protocol version mismatch or configuration issue.
-    #[error("Unsupported signal")]
-    UnsupportedSignal,
 }
 
 impl PipelineError {

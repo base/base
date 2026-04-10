@@ -47,10 +47,11 @@ pub use deposits::{DepositDecodeError, Deposits};
 
 mod info;
 pub use info::{
-    BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoBedrockBaseFields,
-    L1BlockInfoBedrockFields, L1BlockInfoBedrockOnlyFields, L1BlockInfoEcotone,
-    L1BlockInfoEcotoneBaseFields, L1BlockInfoEcotoneFields, L1BlockInfoEcotoneOnlyFields,
-    L1BlockInfoIsthmus, L1BlockInfoIsthmusBaseFields, L1BlockInfoIsthmusFields, L1BlockInfoJovian,
+    BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoBedrockBase,
+    L1BlockInfoBedrockBaseFields, L1BlockInfoBedrockFields, L1BlockInfoBedrockOnlyFields,
+    L1BlockInfoEcotone, L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields,
+    L1BlockInfoEcotoneFields, L1BlockInfoEcotoneOnlyFields, L1BlockInfoIsthmus,
+    L1BlockInfoIsthmusBaseFields, L1BlockInfoIsthmusFields, L1BlockInfoJovian,
     L1BlockInfoJovianBaseFields, L1BlockInfoJovianFields, L1BlockInfoTx,
 };
 

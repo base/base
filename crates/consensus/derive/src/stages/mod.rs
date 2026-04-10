@@ -16,7 +16,7 @@
 //! 9. (Omitted) Engine Queue
 
 mod traversal;
-pub use traversal::{IndexedTraversal, PollingTraversal, TraversalStage};
+pub use traversal::PollingTraversal;
 
 mod l1_retrieval;
 pub use l1_retrieval::{L1Retrieval, L1RetrievalProvider};
@@ -27,7 +27,7 @@ pub use frame_queue::{FrameQueue, FrameQueueProvider};
 mod channel;
 pub use channel::{
     ChannelAssembler, ChannelBank, ChannelProvider, ChannelReader, ChannelReaderProvider,
-    NextFrameProvider,
+    FJORD_MAX_CHANNEL_BANK_SIZE, MAX_CHANNEL_BANK_SIZE, NextFrameProvider,
 };
 
 mod batch;

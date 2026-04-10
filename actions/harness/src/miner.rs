@@ -513,11 +513,7 @@ impl L1Miner {
 
     /// Return the current chain tip as a [`BlockInfo`].
     ///
-    /// Shorthand for `block_info_from(miner.tip())`. Use this as the argument
-    /// to [`TestRollupNode::act_l1_head_signal`] after [`mine_block`].
-    ///
-    /// [`TestRollupNode::act_l1_head_signal`]: crate::TestRollupNode::act_l1_head_signal
-    /// [`mine_block`]: L1Miner::mine_block
+    /// Shorthand for `block_info_from(miner.tip())`.
     pub fn tip_info(&self) -> BlockInfo {
         block_info_from(self.tip())
     }

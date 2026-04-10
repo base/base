@@ -10,7 +10,7 @@ use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::DepositReceipt;
 
 /// Calculates the receipt root for a header.
-pub(crate) fn calculate_receipt_root_optimism<R: DepositReceipt>(
+pub fn calculate_receipt_root_optimism<R: DepositReceipt>(
     receipts: &[ReceiptWithBloom<&R>],
     chain_spec: impl BaseUpgrades,
     timestamp: u64,

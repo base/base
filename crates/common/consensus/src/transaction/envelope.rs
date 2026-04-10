@@ -1,5 +1,5 @@
 use alloy_consensus::{
-    EthereumTxEnvelope, Extended, Sealable, Sealed, SignableTransaction, Signed,
+    EthereumTxEnvelope, Extended, InMemorySize, Sealable, Sealed, SignableTransaction, Signed,
     TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
     error::ValueError,
     transaction::{TransactionInfo, TxHashRef},
@@ -520,7 +520,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
 
 /// Bincode-compatible serde implementation for [`OpTxEnvelope`].
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub(crate) mod serde_bincode_compat {
+pub(super) mod serde_bincode_compat {
     use alloy_consensus::{
         Sealed, Signed,
         transaction::serde_bincode_compat::{TxEip1559, TxEip2930, TxEip7702, TxLegacy},
@@ -674,6 +674,18 @@ pub(crate) mod serde_bincode_compat {
                 bincode::serde::decode_from_slice::<Data, _>(&encoded, bincode::config::legacy())
                     .unwrap();
             assert_eq!(decoded, data);
+        }
+    }
+}
+
+impl InMemorySize for OpTxEnvelope {
+    fn size(&self) -> usize {
+        match self {
+            Self::Legacy(tx) => tx.size(),
+            Self::Eip2930(tx) => tx.size(),
+            Self::Eip1559(tx) => tx.size(),
+            Self::Eip7702(tx) => tx.size(),
+            Self::Deposit(tx) => tx.size(),
         }
     }
 }

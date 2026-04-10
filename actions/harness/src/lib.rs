@@ -12,6 +12,7 @@ pub use miner::{
 };
 
 mod l2;
+#[allow(deprecated)]
 pub use l2::{
     ActionL2Source, BlockHashInner, L2Sequencer, L2SequencerError, SharedBlockHashRegistry,
     StatefulL2Executor, TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY, TestAccount, compute_state_root,
@@ -41,7 +42,10 @@ mod p2p;
 pub use p2p::{SupervisedP2P, TestGossipTransport, TestGossipTransportError};
 
 mod engine;
-pub use engine::{ActionEngineClient, ActionEngineClientInner, PendingPayload};
+pub use engine::{
+    ActionEngineClient, ActionEngineClientInner, PendingPayload, TestBlockchainProvider,
+    TestNodeTypes, TestPool, TestProviderFactory,
+};
 
 mod node;
 pub use node::{

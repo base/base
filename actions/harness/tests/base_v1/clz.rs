@@ -3,7 +3,7 @@
 use alloy_primitives::{Bytes, TxKind, U256, hex};
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TEST_ACCOUNT_ADDRESS, TestRollupConfigBuilder, block_info_from,
+    TEST_ACCOUNT_ADDRESS, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
@@ -79,17 +79,10 @@ async fn base_v1_clz_op_code() {
             100_000,
         )
     };
-    let block1 = builder.build_next_block_with_transactions(vec![deploy_tx]);
+    let block1 = builder.build_next_block_with_transactions(vec![deploy_tx]).await;
 
     // Verify the contract code was deployed.
-    {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist in DB");
-        assert!(
-            acct.info.code.as_ref().is_some_and(|c| !c.is_empty()),
-            "deployed contract must have non-empty code"
-        );
-    }
+    assert!(builder.has_code(contract_addr), "deployed contract must have non-empty code");
 
     // ── Block 2 (ts=4, pre-fork): call CLZ(1) — must abort ──────────
     let call_pre = {
@@ -102,24 +95,14 @@ async fn base_v1_clz_op_code() {
             100_000,
         )
     };
-    let block2 = builder.build_next_block_with_transactions(vec![call_pre]);
+    let block2 = builder.build_next_block_with_transactions(vec![call_pre]).await;
 
     // Sentinel slot must remain zero — CLZ aborted before any SSTORE ran.
-    {
-        let db = builder.db();
-        let stored = db
-            .cache
-            .accounts
-            .get(&contract_addr)
-            .and_then(|a| a.storage.get(&CLZ_SENTINEL_SLOT))
-            .copied()
-            .unwrap_or(U256::ZERO);
-        assert_eq!(
-            stored,
-            U256::ZERO,
-            "sentinel must be zero: CLZ should abort as invalid opcode pre-fork"
-        );
-    }
+    assert_eq!(
+        builder.storage_at(contract_addr, CLZ_SENTINEL_SLOT),
+        U256::ZERO,
+        "sentinel must be zero: CLZ should abort as invalid opcode pre-fork"
+    );
 
     // ── Block 3 (ts=6, post-fork): call CLZ(1) — must succeed ───────
     let call_one = {
@@ -132,15 +115,13 @@ async fn base_v1_clz_op_code() {
             100_000,
         )
     };
-    let block3 = builder.build_next_block_with_transactions(vec![call_one]);
+    let block3 = builder.build_next_block_with_transactions(vec![call_one]).await;
 
     // Sentinel must now be 1 (CLZ completed), result slot must be 255.
     {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
-        let sentinel = acct.storage.get(&CLZ_SENTINEL_SLOT).copied().unwrap_or(U256::ZERO);
-        let result = acct.storage.get(&CLZ_RESULT_SLOT).copied().unwrap_or(U256::ZERO);
-        let gas_delta = acct.storage.get(&CLZ_GAS_DELTA_SLOT).copied().unwrap_or(U256::ZERO);
+        let sentinel = builder.storage_at(contract_addr, CLZ_SENTINEL_SLOT);
+        let result = builder.storage_at(contract_addr, CLZ_RESULT_SLOT);
+        let gas_delta = builder.storage_at(contract_addr, CLZ_GAS_DELTA_SLOT);
         assert_eq!(sentinel, U256::from(1), "sentinel must be 1 after successful CLZ");
         assert_eq!(result, U256::from(255), "CLZ(1) must equal 255");
         assert_eq!(
@@ -161,14 +142,12 @@ async fn base_v1_clz_op_code() {
             100_000,
         )
     };
-    let block4 = builder.build_next_block_with_transactions(vec![call_high]);
+    let block4 = builder.build_next_block_with_transactions(vec![call_high]).await;
 
     {
-        let db = builder.db();
-        let acct = db.cache.accounts.get(&contract_addr).expect("contract must exist");
-        let sentinel = acct.storage.get(&CLZ_SENTINEL_SLOT).copied().unwrap_or(U256::ZERO);
-        let result = acct.storage.get(&CLZ_RESULT_SLOT).copied().unwrap_or(U256::ZERO);
-        let gas_delta = acct.storage.get(&CLZ_GAS_DELTA_SLOT).copied().unwrap_or(U256::ZERO);
+        let sentinel = builder.storage_at(contract_addr, CLZ_SENTINEL_SLOT);
+        let result = builder.storage_at(contract_addr, CLZ_RESULT_SLOT);
+        let gas_delta = builder.storage_at(contract_addr, CLZ_GAS_DELTA_SLOT);
         assert_eq!(sentinel, U256::from(1), "sentinel must remain 1");
         assert_eq!(result, U256::ZERO, "CLZ(0x8000…0) must equal 0");
         assert_eq!(
@@ -180,17 +159,12 @@ async fn base_v1_clz_op_code() {
 
     // ── Batch and derive all 4 blocks ────────────────────────────────
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-    for block in [block1, block2, block3, block4] {
+    node.initialize().await;
+
+    for (block, i) in [(block1, 1u64), (block2, 2), (block3, 3), (block4, 4)] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
-    }
-
-    node.initialize().await;
-
-    for i in 1..=4u64 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        node.act_l1_head_signal(blk).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }

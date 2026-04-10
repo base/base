@@ -1,10 +1,10 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use alloy_primitives::{Address, TxHash};
@@ -41,6 +41,7 @@ pub struct Confirmer {
     flashblock_times: FlashblockTimes,
     block_first_seen: BlockFirstSeen,
     deferred_block_latencies: Vec<DeferredBlockLatency>,
+    block_ws_enabled: bool,
 }
 
 /// A confirmed tx whose block latency could not be computed yet because
@@ -49,6 +50,7 @@ struct DeferredBlockLatency {
     metrics: TransactionMetrics,
     block_number: u64,
     submit_time: Instant,
+    submit_timestamp: u64,
     deferred_at: Instant,
 }
 
@@ -71,8 +73,7 @@ struct PendingTx {
     tx_hash: TxHash,
     from: Address,
     submit_time: Instant,
-    /// Set when the tx is first seen in a pending/latest block.
-    /// Triggers eager receipt fetching rather than waiting for straggler timeout.
+    submit_timestamp: u64,
     included_at: Option<Instant>,
 }
 
@@ -93,7 +94,17 @@ impl ConfirmerHandle {
         }
         self.total_in_flight.fetch_add(1, Ordering::SeqCst);
 
-        let pending = PendingTx { tx_hash, from, submit_time: Instant::now(), included_at: None };
+        let submit_timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let pending = PendingTx {
+            tx_hash,
+            from,
+            submit_time: Instant::now(),
+            submit_timestamp,
+            included_at: None,
+        };
 
         if self.pending_tx.send(pending).await.is_err() {
             if let Some(counter) = self.in_flight_per_sender.get(&from) {
@@ -123,31 +134,18 @@ impl ConfirmerHandle {
 }
 
 impl Confirmer {
-    /// Creates a confirmer without shared timing data.
+    /// Creates a confirmer with shared timing data.
     ///
-    /// Block and flashblock latencies will always be `None`. Use
-    /// [`with_timing_data`](Self::with_timing_data) to enable latency tracking.
+    /// Set `block_ws_enabled` to `true` when the `BlockWatcher` is running (WebSocket
+    /// available). When `false`, block latency is calculated from block timestamps
+    /// fetched via RPC.
     pub fn new(
-        sender_addresses: &[Address],
-        metrics_tx: mpsc::Sender<TransactionMetrics>,
-        stop_flag: Arc<AtomicBool>,
-    ) -> Self {
-        Self::with_timing_data(
-            sender_addresses,
-            metrics_tx,
-            stop_flag,
-            Arc::new(RwLock::new(HashMap::new())),
-            Arc::new(RwLock::new(BTreeMap::new())),
-        )
-    }
-
-    /// Creates a confirmer with shared timing data from the WebSocket watchers.
-    pub fn with_timing_data(
         sender_addresses: &[Address],
         metrics_tx: mpsc::Sender<TransactionMetrics>,
         stop_flag: Arc<AtomicBool>,
         flashblock_times: FlashblockTimes,
         block_first_seen: BlockFirstSeen,
+        block_ws_enabled: bool,
     ) -> Self {
         let mut in_flight_map = HashMap::new();
         for addr in sender_addresses {
@@ -170,6 +168,7 @@ impl Confirmer {
             flashblock_times,
             block_first_seen,
             deferred_block_latencies: Vec::new(),
+            block_ws_enabled,
         }
     }
 
@@ -243,7 +242,7 @@ impl Confirmer {
     }
 
     async fn poll_confirmations(&mut self, client: &impl ReceiptProvider, draining: bool) {
-        self.resolve_deferred_block_latencies(draining).await;
+        self.resolve_deferred_block_latencies(client, draining).await;
 
         if self.pending.is_empty() {
             return;
@@ -364,6 +363,7 @@ impl Confirmer {
                             metrics,
                             block_number: bn,
                             submit_time: pending.submit_time,
+                            submit_timestamp: pending.submit_timestamp,
                             deferred_at: Instant::now(),
                         });
                     } else {
@@ -386,7 +386,11 @@ impl Confirmer {
         }
     }
 
-    async fn resolve_deferred_block_latencies(&mut self, flush: bool) {
+    async fn resolve_deferred_block_latencies(
+        &mut self,
+        client: &impl ReceiptProvider,
+        flush: bool,
+    ) {
         if self.deferred_block_latencies.is_empty() {
             return;
         }
@@ -395,10 +399,11 @@ impl Confirmer {
         let mut still_pending = Vec::new();
         let mut to_send = Vec::new();
 
-        {
-            let block_times = self.block_first_seen.read();
-            for mut deferred in self.deferred_block_latencies.drain(..) {
-                let block_latency = block_times
+        for mut deferred in self.deferred_block_latencies.drain(..) {
+            if self.block_ws_enabled {
+                let block_latency = self
+                    .block_first_seen
+                    .read()
                     .get(&deferred.block_number)
                     .and_then(|&t| t.checked_duration_since(deferred.submit_time));
 
@@ -408,7 +413,7 @@ impl Confirmer {
                         tx_hash = %deferred.metrics.tx_hash,
                         block = deferred.block_number,
                         block_latency_ms = latency.as_millis(),
-                        "deferred block latency resolved"
+                        "deferred block latency resolved via websocket"
                     );
                     to_send.push(deferred.metrics);
                 } else if flush
@@ -422,6 +427,56 @@ impl Confirmer {
                     to_send.push(deferred.metrics);
                 } else {
                     still_pending.push(deferred);
+                }
+            } else {
+                match client.get_block_timestamp(deferred.block_number).await {
+                    Ok(Some(block_ts)) if block_ts >= deferred.submit_timestamp => {
+                        let latency = Duration::from_secs(block_ts - deferred.submit_timestamp);
+                        deferred.metrics.block_latency = Some(latency);
+                        debug!(
+                            tx_hash = %deferred.metrics.tx_hash,
+                            block = deferred.block_number,
+                            block_latency_ms = latency.as_millis(),
+                            "block latency resolved via block timestamp"
+                        );
+                        to_send.push(deferred.metrics);
+                    }
+                    Ok(Some(block_ts)) => {
+                        debug!(
+                            tx_hash = %deferred.metrics.tx_hash,
+                            block = deferred.block_number,
+                            block_ts,
+                            submit_ts = deferred.submit_timestamp,
+                            "block timestamp before submit time (clock skew)"
+                        );
+                        to_send.push(deferred.metrics);
+                    }
+                    Ok(None)
+                        if flush
+                            || now.duration_since(deferred.deferred_at)
+                                > BLOCK_LATENCY_DEFER_TIMEOUT =>
+                    {
+                        to_send.push(deferred.metrics);
+                    }
+                    Ok(None) => {
+                        still_pending.push(deferred);
+                    }
+                    Err(e) => {
+                        warn!(
+                            tx_hash = %deferred.metrics.tx_hash,
+                            block = deferred.block_number,
+                            error = %e,
+                            "failed to fetch block timestamp"
+                        );
+                        if flush
+                            || now.duration_since(deferred.deferred_at)
+                                > BLOCK_LATENCY_DEFER_TIMEOUT
+                        {
+                            to_send.push(deferred.metrics);
+                        } else {
+                            still_pending.push(deferred);
+                        }
+                    }
                 }
             }
         }

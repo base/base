@@ -8,27 +8,27 @@ use alloy_primitives::Bytes;
 use crate::{BlobDecodingError, BlobProviderError};
 
 /// The blob encoding version
-pub(crate) const BLOB_ENCODING_VERSION: u8 = 0;
+pub const BLOB_ENCODING_VERSION: u8 = 0;
 
 /// Maximum blob data size
-pub(crate) const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130044
+pub const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4; // 130044
 
 /// Blob Encoding/Decoding Rounds
-pub(crate) const BLOB_ENCODING_ROUNDS: usize = 1024;
+pub const BLOB_ENCODING_ROUNDS: usize = 1024;
 
 /// The Blob Data
 #[derive(Default, Clone, Debug)]
 pub struct BlobData {
     /// The blob data
-    pub(crate) data: Option<Bytes>,
+    pub data: Option<Bytes>,
     /// The calldata
-    pub(crate) calldata: Option<Bytes>,
+    pub calldata: Option<Bytes>,
 }
 
 impl BlobData {
     /// Decodes the blob into raw byte data.
     /// Returns a [`BlobDecodingError`] if the blob is invalid.
-    pub(crate) fn decode(&self) -> Result<Bytes, BlobDecodingError> {
+    pub fn decode(&self) -> Result<Bytes, BlobDecodingError> {
         let data = self.data.as_ref().ok_or(BlobDecodingError::MissingData)?;
 
         // Validate the blob encoding version
@@ -105,7 +105,7 @@ impl BlobData {
     /// appropriate place in the output and checking the high order byte is valid.
     /// Returns a [`BlobDecodingError`] if a field element is seen with either of its
     /// two high order bits set.
-    pub(crate) fn decode_field_element(
+    pub fn decode_field_element(
         &self,
         output_pos: usize,
         input_pos: usize,
@@ -125,7 +125,7 @@ impl BlobData {
 
     /// Reassemble 4 by 6 bit encoded chunks into 3 bytes of output and place them in their
     /// appropriate output positions.
-    pub(crate) fn reassemble_bytes(
+    pub fn reassemble_bytes(
         &self,
         mut output_pos: usize,
         encoded_byte: &[u8],
@@ -144,11 +144,7 @@ impl BlobData {
     /// Fills in the pointers to the fetched blob bodies.
     /// There should be exactly one placeholder blobOrCalldata
     /// element for each blob, otherwise an error is returned.
-    pub(crate) fn fill(
-        &mut self,
-        blobs: &[Box<Blob>],
-        index: usize,
-    ) -> Result<bool, BlobProviderError> {
+    pub fn fill(&mut self, blobs: &[Box<Blob>], index: usize) -> Result<bool, BlobProviderError> {
         // Do not fill if there is calldata here
         if self.calldata.is_some() {
             return Ok(false);

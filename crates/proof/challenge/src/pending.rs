@@ -10,14 +10,12 @@
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, Bytes};
+use base_proof_primitives::PROOF_TYPE_ZK;
 use base_zk_client::{
     GetProofRequest, ProofJobStatus, ProveBlockRequest, ReceiptType, ZkProofProvider,
 };
 use tracing::warn;
 use uuid::Uuid;
-
-/// Proof type byte for ZK proofs (matches `AggregateVerifier.nullify` discriminator: `0` = TEE, `1` = ZK).
-const ZK_PROOF_TYPE_BYTE: u8 = 0x01;
 
 /// The kind of proof being generated.
 #[derive(Debug, Clone)]
@@ -154,22 +152,6 @@ impl PendingProof {
         }
     }
 
-    /// Returns the session ID if the proof is in the `AwaitingProof` phase.
-    pub fn session_id(&self) -> Option<&str> {
-        match &self.phase {
-            ProofPhase::AwaitingProof { session_id } => Some(session_id),
-            _ => None,
-        }
-    }
-
-    /// Returns the proof bytes if the proof is in the `ReadyToSubmit` phase.
-    pub const fn proof_bytes(&self) -> Option<&Bytes> {
-        match &self.phase {
-            ProofPhase::ReadyToSubmit { proof_bytes } => Some(proof_bytes),
-            _ => None,
-        }
-    }
-
     /// Returns `true` if the proof is in the `ReadyToSubmit` phase.
     pub const fn is_ready(&self) -> bool {
         matches!(self.phase, ProofPhase::ReadyToSubmit { .. })
@@ -177,7 +159,7 @@ impl PendingProof {
 }
 
 /// Collection of in-flight proof sessions keyed by dispute-game address.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct PendingProofs(HashMap<Address, PendingProof>);
 
 impl PendingProofs {
@@ -273,13 +255,14 @@ impl PendingProofs {
         let update = match status {
             ProofJobStatus::Succeeded => {
                 let mut raw = Vec::with_capacity(1 + response.receipt.len());
-                raw.push(ZK_PROOF_TYPE_BYTE);
+                raw.push(PROOF_TYPE_ZK);
                 raw.extend_from_slice(&response.receipt);
                 let proof_bytes = Bytes::from(raw);
+                let update = ProofUpdate::Ready(proof_bytes.clone());
 
-                pending.phase = ProofPhase::ReadyToSubmit { proof_bytes: proof_bytes.clone() };
+                pending.phase = ProofPhase::ReadyToSubmit { proof_bytes };
 
-                ProofUpdate::Ready(proof_bytes)
+                update
             }
             ProofJobStatus::Failed => {
                 warn!(game = %game, error_message = ?response.error_message, "proof job failed");

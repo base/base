@@ -13,7 +13,7 @@ use std::time::Instant;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 use base_tx_manager::{TxCandidate, TxManager};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{BondTransactionSubmitter, ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
 
@@ -84,7 +84,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
             ..Default::default()
         };
 
-        info!(
+        debug!(
             tx = ?candidate,
             "sending tx candidate",
         );
@@ -94,10 +94,10 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         let result = self.tx_manager.send(candidate).await;
         let latency = start.elapsed();
 
-        let status_label = match &result {
-            Ok(receipt) if receipt.inner.status() => ChallengerMetrics::STATUS_SUCCESS,
-            Ok(_) => ChallengerMetrics::STATUS_REVERTED,
-            Err(_) => ChallengerMetrics::STATUS_ERROR,
+        let (status_label, succeeded) = match &result {
+            Ok(receipt) if receipt.inner.status() => (ChallengerMetrics::STATUS_SUCCESS, true),
+            Ok(_) => (ChallengerMetrics::STATUS_REVERTED, false),
+            Err(_) => (ChallengerMetrics::STATUS_ERROR, false),
         };
         intent.record_outcome(status_label);
         intent.record_latency(latency.as_secs_f64());
@@ -105,7 +105,7 @@ impl<T: TxManager> ChallengeSubmitter<T> {
         let receipt = result?;
         let tx_hash = receipt.transaction_hash;
 
-        if !receipt.inner.status() {
+        if !succeeded {
             return Err(ChallengeSubmitError::TxReverted { tx_hash });
         }
 

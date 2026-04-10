@@ -211,12 +211,6 @@ where
         self.channel = None;
         Ok(())
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.prev.provide_block(block).await?;
-        self.channel = None;
-        Ok(())
-    }
 }
 
 #[cfg(test)]

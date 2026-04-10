@@ -154,15 +154,10 @@ impl<F: ChainProvider + Send> StageReset for PollingTraversal<F> {
     async fn flush_channel(&mut self) -> PipelineResult<()> {
         Ok(())
     }
-
-    async fn provide_block(&mut self, _block: BlockInfo) -> PipelineResult<()> {
-        warn!(target: "traversal", "ProvideBlock signal not supported in PollingTraversal stage.");
-        Err(PipelineError::UnsupportedSignal.temp())
-    }
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(super) mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;

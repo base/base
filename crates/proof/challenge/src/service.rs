@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder};
 use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
@@ -13,7 +13,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
     DisputeGameFactoryContractClient,
 };
-use base_proof_rpc::{L2Client, L2ClientConfig};
+use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig};
 use base_runtime::TokioRuntime;
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use base_zk_client::{ZkProofClient, ZkProofClientConfig};
@@ -74,26 +74,24 @@ impl ChallengerService {
         // ── 3. Construct tx-manager and challenge submitter ──────────────────
         let signer_config = config.signing;
         let sender_addr = signer_config.address();
+        let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
         let l1_provider = if config.metrics.enabled {
-            let (layer, balance_rx) = BalanceMonitorLayer::new(
+            let (layer, mut balance_rx) = BalanceMonitorLayer::new(
                 sender_addr,
                 cancel.clone(),
                 BalanceMonitorLayer::DEFAULT_POLL_INTERVAL,
             );
-            let provider = ProviderBuilder::new()
-                .layer(layer)
-                .connect_http(config.l1_eth_rpc.as_ref().clone());
+            let provider = ProviderBuilder::new().layer(layer).connect_http(l1_rpc_url.clone());
             tokio::spawn(async move {
-                let mut rx = balance_rx;
-                while rx.changed().await.is_ok() {
+                while balance_rx.changed().await.is_ok() {
                     ChallengerMetrics::account_balance_wei()
-                        .set(f64::from(*rx.borrow_and_update()));
+                        .set(f64::from(*balance_rx.borrow_and_update()));
                 }
             });
             info!(%sender_addr, "Balance monitor started");
             provider
         } else {
-            ProviderBuilder::new().connect_http(config.l1_eth_rpc.as_ref().clone())
+            ProviderBuilder::new().connect_http(l1_rpc_url.clone())
         };
         let chain_id = l1_provider
             .get_chain_id()
@@ -113,15 +111,14 @@ impl ChallengerService {
         // ── 4. Contract clients and onchain config ───────────────────────────
         let factory_client = DisputeGameFactoryContractClient::new(
             config.dispute_game_factory_addr,
-            config.l1_eth_rpc.as_ref().clone(),
+            l1_rpc_url.clone(),
         )?;
         info!(
             address = %config.dispute_game_factory_addr,
             "DisputeGameFactory client initialized"
         );
 
-        let verifier_client =
-            AggregateVerifierContractClient::new(config.l1_eth_rpc.as_ref().clone())?;
+        let verifier_client = AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
@@ -141,7 +138,7 @@ impl ChallengerService {
         info!(endpoint = %config.zk_rpc_url, "ZK proof client initialized");
 
         // ── 6b. TEE proof client (optional) ─────────────────────────────────
-        let tee: Option<crate::TeeConfig> = if let Some(ref tee_url) = config.tee_rpc_url {
+        let tee = if let Some(ref tee_url) = config.tee_rpc_url {
             let request_timeout = config.tee_request_timeout.ok_or_else(|| {
                 eyre::eyre!("tee_request_timeout must be set when tee_rpc_url is configured")
             })?;
@@ -150,10 +147,12 @@ impl ChallengerService {
                 .build(tee_url.as_str())
                 .map_err(|e| eyre::eyre!("failed to create TEE RPC client: {e}"))?;
             info!(endpoint = %tee_url, "TEE proof client initialized");
-            let tee_l1_provider = RootProvider::new_http(config.l1_eth_rpc.as_ref().clone());
+            let l1_config = L1ClientConfig::new(l1_rpc_url.clone());
+            let l1_client = L1Client::new(l1_config)
+                .map_err(|e| eyre::eyre!("failed to create TEE L1 client: {e}"))?;
             Some(crate::TeeConfig {
                 provider: Arc::new(client),
-                l1_head_provider: Arc::new(crate::RpcL1HeadProvider::new(tee_l1_provider)),
+                l1_head_provider: Arc::new(l1_client),
                 request_timeout,
             })
         } else {
@@ -166,7 +165,6 @@ impl ChallengerService {
 
         // ── 7b. Bond manager (optional) ─────────────────────────────────────
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
-            let l1_rpc_url = config.l1_eth_rpc.as_ref().clone();
             let mut bm = BondManager::new(
                 config.bond_claim_addresses,
                 l1_rpc_url,

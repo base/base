@@ -30,35 +30,41 @@ use base_protocol::L1BlockInfoTx;
 /// This assertion holds for every post-Granite pre-Isthmus fork. Running the
 /// same test across Granite, Holocene, and the pectra-blob-schedule patch keeps
 /// the invariant covered as later forks are added to the harness matrix.
-#[test]
-fn operator_fee_not_encoded_before_isthmus() {
+#[tokio::test]
+async fn operator_fee_not_encoded_before_isthmus() {
     let batcher_cfg = BatcherConfig::default();
-    ForkMatrix::pre_isthmus().run(|fork_name, hardforks| {
-        let rollup_cfg =
-            TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
-        let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-        let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-        let mut builder = h.create_l2_sequencer(l1_chain);
+    ForkMatrix::pre_isthmus()
+        .run_async(|fork_name, hardforks| {
+            let batcher_cfg = batcher_cfg.clone();
+            async move {
+                let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+                    .with_hardforks(hardforks)
+                    .build();
+                let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+                let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+                let mut builder = h.create_l2_sequencer(l1_chain);
 
-        // Build one block and verify it uses the Ecotone format with zero operator fees.
-        let block = builder.build_next_block_with_single_transaction();
-        let l1_info = ActionTestHarness::l1_info_from_block(&block);
+                // Build one block and verify it uses the Ecotone format with zero operator fees.
+                let block = builder.build_next_block_with_single_transaction().await;
+                let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
-        assert!(
-            matches!(l1_info, L1BlockInfoTx::Ecotone(_)),
-            "{fork_name}: pre-Isthmus L1 info must use Ecotone format, got {l1_info:?}"
-        );
-        assert_eq!(
-            l1_info.operator_fee_scalar(),
-            0,
-            "{fork_name}: operator_fee_scalar must be zero before Isthmus"
-        );
-        assert_eq!(
-            l1_info.operator_fee_constant(),
-            0,
-            "{fork_name}: operator_fee_constant must be zero before Isthmus"
-        );
-    });
+                assert!(
+                    matches!(l1_info, L1BlockInfoTx::Ecotone(_)),
+                    "{fork_name}: pre-Isthmus L1 info must use Ecotone format, got {l1_info:?}"
+                );
+                assert_eq!(
+                    l1_info.operator_fee_scalar(),
+                    0,
+                    "{fork_name}: operator_fee_scalar must be zero before Isthmus"
+                );
+                assert_eq!(
+                    l1_info.operator_fee_constant(),
+                    0,
+                    "{fork_name}: operator_fee_constant must be zero before Isthmus"
+                );
+            }
+        })
+        .await;
 }
 
 /// From Isthmus onward, L2 blocks carry the active hardfork's L1 info format
@@ -73,47 +79,53 @@ fn operator_fee_not_encoded_before_isthmus() {
 ///
 /// The matrix keeps the same invariant covered across both reachable post-Isthmus
 /// forks: Isthmus itself and Jovian.
-#[test]
-fn operator_fee_encoded_in_l1_info_from_isthmus_onward() {
+#[tokio::test]
+async fn operator_fee_encoded_in_l1_info_from_isthmus_onward() {
     const OPERATOR_FEE_SCALAR: u32 = 2_000;
     const OPERATOR_FEE_CONSTANT: u64 = 500;
 
     let batcher_cfg = BatcherConfig::default();
-    ForkMatrix::from_isthmus().run(|fork_name, hardforks| {
-        let mut rollup_cfg =
-            TestRollupConfigBuilder::base_mainnet(&batcher_cfg).with_hardforks(hardforks).build();
-        let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
-        sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
-        sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
+    ForkMatrix::from_isthmus()
+        .run_async(|fork_name, hardforks| {
+            let batcher_cfg = batcher_cfg.clone();
+            async move {
+                let mut rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+                    .with_hardforks(hardforks)
+                    .build();
+                let sys_cfg = rollup_cfg.genesis.system_config.as_mut().unwrap();
+                sys_cfg.operator_fee_scalar = Some(OPERATOR_FEE_SCALAR);
+                sys_cfg.operator_fee_constant = Some(OPERATOR_FEE_CONSTANT);
 
-        let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
-        let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
-        let mut builder = h.create_l2_sequencer(l1_chain);
+                let h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+                let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+                let mut builder = h.create_l2_sequencer(l1_chain);
 
-        // Build one block and verify it uses the active post-Isthmus format with
-        // the configured operator fee params.
-        let block = builder.build_next_block_with_single_transaction();
-        let l1_info = ActionTestHarness::l1_info_from_block(&block);
+                // Build one block and verify it uses the active post-Isthmus format with
+                // the configured operator fee params.
+                let block = builder.build_next_block_with_single_transaction().await;
+                let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
-        let expected_format = matches!(
-            (fork_name, &l1_info),
-            ("isthmus", L1BlockInfoTx::Isthmus(_)) | ("jovian", L1BlockInfoTx::Jovian(_))
-        );
-        assert!(
-            expected_format,
-            "{fork_name}: post-Isthmus L1 info must use the active hardfork format, got {l1_info:?}"
-        );
-        assert_eq!(
-            l1_info.operator_fee_scalar(),
-            OPERATOR_FEE_SCALAR,
-            "{fork_name}: operator_fee_scalar must match the system config"
-        );
-        assert_eq!(
-            l1_info.operator_fee_constant(),
-            OPERATOR_FEE_CONSTANT,
-            "{fork_name}: operator_fee_constant must match the system config"
-        );
-    });
+                let expected_format = matches!(
+                    (fork_name, &l1_info),
+                    ("isthmus", L1BlockInfoTx::Isthmus(_)) | ("jovian", L1BlockInfoTx::Jovian(_))
+                );
+                assert!(
+                    expected_format,
+                    "{fork_name}: post-Isthmus L1 info must use the active hardfork format, got {l1_info:?}"
+                );
+                assert_eq!(
+                    l1_info.operator_fee_scalar(),
+                    OPERATOR_FEE_SCALAR,
+                    "{fork_name}: operator_fee_scalar must match the system config"
+                );
+                assert_eq!(
+                    l1_info.operator_fee_constant(),
+                    OPERATOR_FEE_CONSTANT,
+                    "{fork_name}: operator_fee_constant must match the system config"
+                );
+            }
+        })
+        .await;
 }
 
 /// The L1 info format transitions from `Ecotone` to `Isthmus` across three
@@ -132,8 +144,8 @@ fn operator_fee_encoded_in_l1_info_from_isthmus_onward() {
 /// This test verifies all three stages explicitly. Note that Granite and
 /// Holocene are active from genesis so that no spurious cascade activation
 /// occurs at the Isthmus boundary.
-#[test]
-fn l1_info_format_transitions_at_isthmus_boundary() {
+#[tokio::test]
+async fn l1_info_format_transitions_at_isthmus_boundary() {
     const OPERATOR_FEE_SCALAR: u32 = 1_500;
     const OPERATOR_FEE_CONSTANT: u64 = 300;
 
@@ -154,7 +166,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
 
     // Stage 1: Blocks 1-2 (ts=2, 4) — pre-Isthmus → Ecotone format, zero operator fees.
     for i in 1u64..=2 {
-        let block = builder.build_next_block_with_single_transaction();
+        let block = builder.build_next_block_with_single_transaction().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -171,7 +183,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
     // the upgrade deposit transactions land in the same block to upgrade the
     // L1Block contract, enabling the Isthmus format from block 4 onwards.
     {
-        let block = builder.build_next_block_with_single_transaction();
+        let block = builder.build_next_block_with_single_transaction().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -192,7 +204,7 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
 
     // Stage 3: Block 4 (ts=8) — second Isthmus block, Isthmus format, fees active.
     {
-        let block = builder.build_next_block_with_single_transaction();
+        let block = builder.build_next_block_with_single_transaction().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -233,8 +245,8 @@ fn l1_info_format_transitions_at_isthmus_boundary() {
 /// multiplies `gas * scalar * 100` while Isthmus divides `gas * scalar / 1_000_000`
 /// — is an EVM execution detail, not a change in how values are encoded in the
 /// L1 info deposit.
-#[test]
-fn l1_info_format_transitions_at_jovian_boundary() {
+#[tokio::test]
+async fn l1_info_format_transitions_at_jovian_boundary() {
     const OPERATOR_FEE_SCALAR: u32 = 1_000;
     const OPERATOR_FEE_CONSTANT: u64 = 10;
 
@@ -255,7 +267,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
 
     // Stage 1: Blocks 1-2 (ts=2, 4) — Isthmus active, Jovian not yet → Isthmus format.
     for i in 1u64..=2 {
-        let block = builder.build_next_block_with_single_transaction();
+        let block = builder.build_next_block_with_single_transaction().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -271,7 +283,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     // branch and falls through to the Isthmus branch. The block must be empty
     // because the batch validator enforces `NonEmptyTransitionBlock` for Jovian.
     {
-        let block = builder.build_empty_block();
+        let block = builder.build_empty_block().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -286,7 +298,7 @@ fn l1_info_format_transitions_at_jovian_boundary() {
     // The operator fee scalar and constant are unchanged; only the EVM formula
     // differs (gas * scalar * 100 vs gas * scalar / 1_000_000 for Isthmus).
     {
-        let block = builder.build_next_block_with_single_transaction();
+        let block = builder.build_next_block_with_single_transaction().await;
         let l1_info = ActionTestHarness::l1_info_from_block(&block);
 
         assert!(
@@ -365,7 +377,7 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1..=4u64 {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
-        let block = builder.build_next_block_with_single_transaction();
+        let block = builder.build_next_block_with_single_transaction().await;
         if i == 3 {
             isthmus_block_hash = block.header.hash_slow();
         }
@@ -392,12 +404,8 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     node.register_block_hash(4, block4_hash);
     node.initialize().await;
 
-    for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} must derive exactly one L2 block");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 4, "all 4 L2 blocks must be derived");
     assert_eq!(
         node.l2_safe_number(),
         4,
@@ -459,7 +467,7 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     let mut jovian_block_hash = Default::default();
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1u64..=3 {
-        let block = builder.build_next_block_with_single_transaction();
+        let block = builder.build_next_block_with_single_transaction().await;
         if i == 3 {
             jovian_block_hash = block.header.hash_slow();
         }
@@ -467,11 +475,10 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
         batcher.advance(&mut h.l1).await;
     }
 
-    // Mine L1 block 4 (no batch). This closes the epoch-0 sequencing window
-    // (0 + seq_window_size 4 = 4), triggering force-inclusion for L2 slot 3.
-    h.l1.mine_block();
-
-    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+    // Create the node with only L1 blocks 0–3 visible. Block 4 (which closes
+    // the epoch-0 seq window) is pushed to the shared chain after verifying the
+    // intermediate state, so the first run_until_idle cannot see it yet.
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
@@ -485,19 +492,20 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // Signal L1 blocks 1–3. Blocks 1–2 are derived from their valid batches.
     // Block 3's batch is dropped (NonEmptyTransitionBlock) and the pipeline
     // stalls waiting for more L1 data (the seq window has not yet closed).
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        node.run_until_idle().await;
-    }
+    node.run_until_idle().await;
     assert_eq!(
         node.l2_safe_number(),
         2,
         "only blocks 1–2 derived from valid batches; block 3 pending (batch dropped)"
     );
 
+    // Mine L1 block 4 (no batch) and make it visible. This closes the epoch-0
+    // sequencing window (0 + seq_window_size 4 = 4), triggering force-inclusion.
+    h.l1.mine_block();
+    chain.push(h.l1.tip().clone());
+
     // Signal L1 block 4. The epoch-0 window is now closed, so the pipeline
     // force-includes L2 slot 3 as a deposit-only block.
-    node.act_l1_head_signal(h.l1.block_info_at(4)).await;
     node.run_until_idle().await;
 
     assert!(
@@ -523,8 +531,8 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
 //
 // These tests verify that operator fee changes committed to L1 via
 // `ConfigUpdate` logs are reflected in the L1 info deposit transactions of
-// subsequently derived L2 blocks. The derivation pipeline's `IndexedTraversal`
-// stage reads `ConfigUpdate` logs from L1 receipts and updates its internal
+// subsequently derived L2 blocks. The derivation pipeline's traversal stage
+// reads `ConfigUpdate` logs from L1 receipts and updates its internal
 // `SystemConfig`; the `StatefulAttributesBuilder` uses the updated config to
 // generate the L1 info deposit for each new L2 block.
 // ---------------------------------------------------------------------------
@@ -601,12 +609,12 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     // L2 blocks 1–5 (ts=2,4,6,8,10): epoch 0, OLD config.
     let mut epoch0_blocks: Vec<base_alloy_consensus::BaseBlock> = Vec::new();
     for _ in 0..5 {
-        let block = sequencer.build_next_block_with_single_transaction();
+        let block = sequencer.build_next_block_with_single_transaction().await;
         epoch0_blocks.push(block);
     }
 
     // L2 block 6 (ts=12): epoch 1, epoch change — NEW config from L1 block 1's receipts.
-    let block6 = sequencer.build_next_block_with_single_transaction();
+    let block6 = sequencer.build_next_block_with_single_transaction().await;
 
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..batcher_cfg.encoder.clone() },
@@ -638,8 +646,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     );
     node.initialize().await;
 
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=3 {
         node.run_until_idle().await;
     }
 

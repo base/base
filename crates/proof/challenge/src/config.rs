@@ -74,7 +74,7 @@ pub enum ConfigError {
     Metrics(&'static str),
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
-    Signer(#[from] base_tx_manager::ConfigError),
+    Signer(base_tx_manager::ConfigError),
     /// Invalid transaction manager configuration.
     #[error("invalid tx manager config: {0}")]
     TxManager(base_tx_manager::ConfigError),
@@ -194,7 +194,7 @@ impl ChallengerConfig {
             ));
         }
 
-        let signing = SignerConfig::try_from(cli.challenger.signer)?;
+        let signing = SignerConfig::try_from(cli.challenger.signer).map_err(ConfigError::Signer)?;
 
         let tx_manager =
             TxManagerConfig::try_from(cli.challenger.tx_manager).map_err(ConfigError::TxManager)?;

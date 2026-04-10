@@ -15,7 +15,7 @@ use crate::{
 };
 
 // Returns a test SequencerActor with mocks that can be used or overridden.
-pub(crate) fn test_actor() -> SequencerActor<
+pub(super) fn test_actor() -> SequencerActor<
     TestAttributesBuilder,
     MockConductor,
     MockOriginSelector,

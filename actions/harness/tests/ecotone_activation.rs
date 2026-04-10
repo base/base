@@ -26,8 +26,8 @@ use base_protocol::L1BlockInfoTx;
 ///
 /// `operator_fees.rs` tests the Isthmus→Jovian transition; this covers the
 /// earlier pre-Ecotone → Ecotone boundary.
-#[test]
-fn ecotone_l1_info_format_transitions_at_activation() {
+#[tokio::test]
+async fn ecotone_l1_info_format_transitions_at_activation() {
     let batcher_cfg = BatcherConfig::default();
 
     // Canyon and Delta active at genesis; Ecotone activates at ts=6 (block 3,
@@ -46,7 +46,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
     let mut builder = h.create_l2_sequencer(l1_chain);
 
     // Block 1: ts=2 — pre-Ecotone. Expect Bedrock format.
-    let block1 = builder.build_next_block_with_single_transaction();
+    let block1 = builder.build_next_block_with_single_transaction().await;
     let info1 = ActionTestHarness::l1_info_from_block(&block1);
     assert!(
         matches!(info1, L1BlockInfoTx::Bedrock(_)),
@@ -54,7 +54,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
     );
 
     // Block 2: ts=4 — still pre-Ecotone. Expect Bedrock format.
-    let block2 = builder.build_next_block_with_single_transaction();
+    let block2 = builder.build_next_block_with_single_transaction().await;
     let info2 = ActionTestHarness::l1_info_from_block(&block2);
     assert!(
         matches!(info2, L1BlockInfoTx::Bedrock(_)),
@@ -64,7 +64,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
     // Block 3: ts=6 — FIRST Ecotone block. Protocol rule: L1Block contract
     // upgrade tx is appended AFTER the L1 info deposit, so the contract is
     // still on the Bedrock ABI. The sequencer sends a Bedrock-format L1 info tx.
-    let block3 = builder.build_empty_block();
+    let block3 = builder.build_empty_block().await;
     assert_eq!(block3.header.timestamp, ecotone_time, "block 3 must be at ecotone_time");
     let info3 = ActionTestHarness::l1_info_from_block(&block3);
     assert!(
@@ -74,7 +74,7 @@ fn ecotone_l1_info_format_transitions_at_activation() {
 
     // Block 4: ts=8 — second Ecotone block. L1Block contract now upgraded.
     // Sequencer sends Ecotone-format L1 info tx.
-    let block4 = builder.build_next_block_with_single_transaction();
+    let block4 = builder.build_next_block_with_single_transaction().await;
     let info4 = ActionTestHarness::l1_info_from_block(&block4);
     assert!(
         matches!(info4, L1BlockInfoTx::Ecotone(_)),
@@ -131,14 +131,14 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
 
     // Blocks 1 and 2: pre-Ecotone, user txs OK.
     for _ in 1..=2u64 {
-        batcher.push_block(builder.build_next_block_with_single_transaction());
+        batcher.push_block(builder.build_next_block_with_single_transaction().await);
         batcher.advance(&mut h.l1).await;
     }
 
     // Block 3 at ts=6 (first Ecotone): build WITH a user tx. Unlike Jovian,
     // Ecotone has no NonEmptyTransitionBlock batch check, so this batch is
     // accepted and block 3 is NOT deposit-only.
-    let block3_with_user_tx = builder.build_next_block_with_single_transaction();
+    let block3_with_user_tx = builder.build_next_block_with_single_transaction().await;
     assert_eq!(
         block3_with_user_tx.header.timestamp, ecotone_time,
         "block 3 must land exactly at ecotone_time"
@@ -147,7 +147,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     batcher.advance(&mut h.l1).await;
 
     // Block 4: post-Ecotone, user txs OK.
-    batcher.push_block(builder.build_next_block_with_single_transaction());
+    batcher.push_block(builder.build_next_block_with_single_transaction().await);
     batcher.advance(&mut h.l1).await;
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
@@ -157,8 +157,7 @@ async fn ecotone_activation_block_user_txs_accepted_at_batch_layer() {
     node.initialize().await;
 
     // Drive derivation through all 4 L1 blocks.
-    for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=4u64 {
         node.run_until_idle().await;
     }
 
@@ -220,9 +219,9 @@ async fn ecotone_derivation_crosses_activation_boundary() {
         let block = if i == 3 {
             // First Ecotone block: must be deposit-only (no user txs) because
             // the pipeline prepends the Ecotone upgrade transactions here.
-            builder.build_empty_block()
+            builder.build_empty_block().await
         } else {
-            builder.build_next_block_with_single_transaction()
+            builder.build_next_block_with_single_transaction().await
         };
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
@@ -234,12 +233,8 @@ async fn ecotone_derivation_crosses_activation_boundary() {
     );
     node.initialize().await;
 
-    for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 4, "all 4 L2 blocks must be derived");
     assert_eq!(
         node.l2_safe_number(),
         4,
