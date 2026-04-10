@@ -40,7 +40,7 @@ impl Future for SendHandle {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.get_mut().rx)
             .poll(cx)
-            .map(|res| res.unwrap_or_else(|_| Err(TxManagerError::ChannelClosed)))
+            .map(|res| res.unwrap_or(Err(TxManagerError::ChannelClosed)))
     }
 }
 
