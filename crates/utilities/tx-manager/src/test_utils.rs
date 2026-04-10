@@ -5,6 +5,7 @@ use alloy_primitives::{Address, B256, Bloom};
 use alloy_rpc_types_eth::TransactionReceipt;
 
 /// Helpers for building test transaction receipts.
+#[derive(Debug)]
 pub struct StubReceipt;
 
 impl StubReceipt {
