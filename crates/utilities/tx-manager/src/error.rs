@@ -318,24 +318,14 @@ impl RpcErrorClassifier {
             }
             // No structured data — extract a plain-text reason from the
             // message text after the "execution reverted" marker.
-            // Search the original message case-insensitively to preserve
-            // the original casing of the reason string (e.g.
-            // "GameAlreadyExists") while avoiding byte-offset mismatches
-            // that `to_lowercase()` can introduce for non-ASCII input.
+            // `lowered` preserves byte offsets for ASCII, which covers
+            // all realistic RPC error messages.
             const MARKER: &str = "execution reverted";
-            let reason = payload
-                .message
-                .char_indices()
-                .find(|&(i, _)| {
-                    payload.message[i..]
-                        .get(..MARKER.len())
-                        .is_some_and(|s| s.eq_ignore_ascii_case(MARKER))
-                })
-                .and_then(|(pos, _)| {
-                    let after = &payload.message[pos + MARKER.len()..];
-                    let after = after.trim_start_matches(':').trim();
-                    if after.is_empty() { None } else { Some(after.to_string()) }
-                });
+            let reason = lowered.find(MARKER).and_then(|pos| {
+                let after = &payload.message[pos + MARKER.len()..];
+                let after = after.trim_start_matches(':').trim();
+                if after.is_empty() { None } else { Some(after.to_string()) }
+            });
             return TxManagerError::ExecutionReverted { reason, data: None };
         }
         if lowered.contains("fee too low") {
@@ -344,10 +334,7 @@ impl RpcErrorClassifier {
         if lowered.contains("max fee per gas less than block base fee") {
             return TxManagerError::MaxFeePerGasTooLow;
         }
-        if lowered.contains("already known") {
-            return TxManagerError::AlreadyKnown;
-        }
-        if lowered.contains("transaction already in pool") {
+        if lowered.contains("already known") || lowered.contains("transaction already in pool") {
             return TxManagerError::AlreadyKnown;
         }
 
