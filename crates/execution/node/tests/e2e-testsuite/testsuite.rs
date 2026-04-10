@@ -1,3 +1,5 @@
+//! Reth e2e testsuite integration tests for the execution node.
+
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B64, B256};
