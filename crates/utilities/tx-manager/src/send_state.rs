@@ -25,7 +25,7 @@ pub struct SendState {
 #[derive(Debug)]
 struct SendStateInner {
     mined_txs: HashSet<B256>,
-    successful_publish_count: u64,
+    has_published: bool,
     nonce_too_low_count: u64,
     nonce_too_high: bool,
     already_reserved: bool,
@@ -50,7 +50,7 @@ impl SendState {
         Ok(Self {
             inner: Mutex::new(SendStateInner {
                 mined_txs: HashSet::new(),
-                successful_publish_count: 0,
+                has_published: false,
                 nonce_too_low_count: 0,
                 nonce_too_high: false,
                 already_reserved: false,
@@ -143,7 +143,7 @@ impl SendState {
         if inner.nonce_too_high {
             return Some(TxManagerError::NonceTooHigh);
         }
-        if inner.successful_publish_count == 0 && inner.nonce_too_low_count > 0 {
+        if !inner.has_published && inner.nonce_too_low_count > 0 {
             return Some(TxManagerError::NonceTooLow);
         }
         if inner.nonce_too_low_count >= self.safe_abort_nonce_too_low_count {
@@ -165,10 +165,10 @@ impl SendState {
         !inner.mined_txs.is_empty()
     }
 
-    /// Records a successful transaction publication.
+    /// Records that a transaction was successfully published.
     pub fn record_successful_publish(&self) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.successful_publish_count += 1;
+        inner.has_published = true;
     }
 
     /// Records that a fee bump was performed, incrementing the bump counter
@@ -200,18 +200,11 @@ impl SendState {
         inner.mempool_deadline = Some(deadline);
     }
 
-    /// Returns the number of fee bumps performed so far.
+    /// Returns `true` if at least one transaction was successfully published.
     #[must_use]
-    pub fn bump_count(&self) -> u64 {
+    pub fn has_published(&self) -> bool {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.bump_count
-    }
-
-    /// Returns the number of successful transaction publications.
-    #[must_use]
-    pub fn successful_publish_count(&self) -> u64 {
-        let inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.successful_publish_count
+        inner.has_published
     }
 }
 
@@ -263,9 +256,9 @@ mod tests {
     }
 
     #[test]
-    fn fresh_state_bump_count_is_zero() {
+    fn fresh_state_has_not_published() {
         let state = SendState::new(3).unwrap();
-        assert_eq!(state.bump_count(), 0);
+        assert!(!state.has_published());
     }
 
     // ── Nonce-too-low threshold ─────────────────────────────────────────
@@ -581,11 +574,8 @@ mod tests {
     #[test]
     fn record_fee_bump_increments_and_returns_count() {
         let state = SendState::new(3).unwrap();
-        assert_eq!(state.bump_count(), 0);
-
         assert_eq!(state.record_fee_bump(), 1);
         assert_eq!(state.record_fee_bump(), 2);
-        assert_eq!(state.bump_count(), 2);
     }
 
     #[test]
@@ -603,14 +593,12 @@ mod tests {
     }
 
     #[test]
-    fn take_bump_fees_clears_flag_without_incrementing_count() {
+    fn take_bump_fees_clears_flag() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::Underpriced);
-        assert_eq!(state.bump_count(), 0);
 
         assert!(state.take_bump_fees());
         assert!(!state.take_bump_fees());
-        assert_eq!(state.bump_count(), 0);
     }
 
     #[test]
@@ -624,19 +612,19 @@ mod tests {
         assert!(state.take_bump_fees());
     }
 
-    // ── successful_publish_count ─────────────────────────────────────────
+    // ── has_published ───────────────────────────────────────────────────
 
     #[test]
-    fn successful_publish_count_tracks_publications() {
+    fn has_published_tracks_publication() {
         let state = SendState::new(3).unwrap();
-        assert_eq!(state.successful_publish_count(), 0);
+        assert!(!state.has_published());
 
         state.record_successful_publish();
-        assert_eq!(state.successful_publish_count(), 1);
+        assert!(state.has_published());
 
+        // Idempotent.
         state.record_successful_publish();
-        state.record_successful_publish();
-        assert_eq!(state.successful_publish_count(), 3);
+        assert!(state.has_published());
     }
 
     // ── is_waiting_for_confirmation ─────────────────────────────────────

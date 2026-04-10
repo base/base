@@ -992,7 +992,7 @@ where
             // For other errors, reset only if nothing was ever published.
             // Once a transaction is pending, the next send_tx will re-sync
             // via the chain's pending nonce anyway.
-            Err(_) => send_state.successful_publish_count() == 0,
+            Err(_) => !send_state.has_published(),
         }
     }
 
@@ -1018,7 +1018,7 @@ where
             // nonce is re-fetched, but advance_nonce() pops
             // returned_nonces first, reissuing the same invalid value.
             Ok(_) | Err(TxManagerError::NonceTooHigh | TxManagerError::NonceTooLow) => false,
-            Err(_) => send_state.successful_publish_count() == 0,
+            Err(_) => !send_state.has_published(),
         }
     }
 
@@ -1346,7 +1346,7 @@ where
 
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
-                if classified.is_already_known() && send_state.successful_publish_count() > 0 {
+                if classified.is_already_known() && send_state.has_published() {
                     let hash = last_tx_hash.ok_or_else(|| {
                         TxManagerError::InvalidConfig(
                             "AlreadyKnown but no prior tx hash available — caller must track the hash from publish_tx".into(),

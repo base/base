@@ -203,7 +203,7 @@ async fn publish_tx_success_returns_hash_and_records_publish() {
         manager.publish_tx(&send_state, &prepared.raw_tx, None).await.expect("should publish tx");
 
     assert_ne!(tx_hash, B256::ZERO, "published tx hash should be non-zero");
-    assert_eq!(send_state.successful_publish_count(), 1, "should record one successful publish");
+    assert!(send_state.has_published(), "should record a successful publish");
 }
 
 // ── query_receipt() ───────────────────────────────────────────────────
