@@ -59,6 +59,14 @@ pub struct GweiParser;
 impl GweiParser {
     /// Parses a gwei decimal string to wei (`u128`).
     ///
+    /// Suitable for use as a clap `value_parser`. Error context (which
+    /// flag failed) is provided by clap automatically.
+    pub fn parse_value(gwei: &str) -> Result<u128, ConfigError> {
+        Self::parse(gwei, "value")
+    }
+
+    /// Parses a gwei decimal string to wei (`u128`).
+    ///
     /// # Errors
     ///
     /// Returns [`ConfigError::InvalidGwei`] if the string is not a valid
