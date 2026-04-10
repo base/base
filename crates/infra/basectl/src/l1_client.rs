@@ -24,7 +24,7 @@ sol! {
 ///
 /// Uses Multicall3 via `CallBatchLayer` to batch all calls into a single RPC request.
 /// Fields that are absent on older contract versions fall back to their defaults.
-pub(crate) async fn fetch_full_system_config(
+pub async fn fetch_full_system_config(
     l1_rpc_url: &str,
     system_config_address: Address,
 ) -> Result<SystemConfig> {

@@ -8,7 +8,7 @@ use crate::{filter::FilterType, rate_limit::Ticket};
 pub struct ClientConnection {
     client_addr: IpAddr,
     _ticket: Ticket,
-    pub(crate) websocket: WebSocket,
+    pub websocket: WebSocket,
     /// The event filter this client is subscribed to.
     pub filter: FilterType,
 }

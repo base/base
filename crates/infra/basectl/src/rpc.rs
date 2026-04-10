@@ -28,7 +28,7 @@ const WS_RECONNECT_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const WS_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(30);
 
 /// Fetches the safe and latest L2 block numbers.
-pub(crate) async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
+pub async fn fetch_safe_and_latest(l2_rpc: &str) -> Result<(u64, u64)> {
     let provider = ProviderBuilder::new().connect(l2_rpc).await?;
 
     let safe_block = provider
@@ -63,7 +63,7 @@ async fn fetch_raw_block_info<P: Provider<Base>>(
 }
 
 /// Polls the L2 safe head block number at regular intervals.
-pub(crate) async fn run_safe_head_poller(
+pub async fn run_safe_head_poller(
     l2_rpc: String,
     tx: mpsc::Sender<u64>,
     toast_tx: mpsc::Sender<Toast>,
@@ -187,7 +187,7 @@ async fn run_flashblock_ws_inner<T: Send + 'static>(
 }
 
 /// Subscribes to flashblocks via WebSocket and forwards raw flashblocks.
-pub(crate) async fn run_flashblock_ws(
+pub async fn run_flashblock_ws(
     mut url_rx: watch::Receiver<String>,
     tx: mpsc::Sender<Flashblock>,
     toast_tx: mpsc::Sender<Toast>,
@@ -197,7 +197,7 @@ pub(crate) async fn run_flashblock_ws(
 
 /// A flashblock paired with its local receive timestamp.
 #[derive(Debug)]
-pub(crate) struct TimestampedFlashblock {
+pub struct TimestampedFlashblock {
     /// The decoded flashblock.
     pub flashblock: Flashblock,
     /// Local time when this flashblock was received.
@@ -205,7 +205,7 @@ pub(crate) struct TimestampedFlashblock {
 }
 
 /// Subscribes to flashblocks via WebSocket and forwards timestamped flashblocks.
-pub(crate) async fn run_flashblock_ws_timestamped(
+pub async fn run_flashblock_ws_timestamped(
     mut url_rx: watch::Receiver<String>,
     tx: mpsc::Sender<TimestampedFlashblock>,
     toast_tx: mpsc::Sender<Toast>,
@@ -224,7 +224,7 @@ pub(crate) async fn run_flashblock_ws_timestamped(
 /// The task exits immediately if no such nodes exist.
 /// Summary of the initial DA backlog between safe and latest blocks.
 #[derive(Debug, Clone)]
-pub(crate) struct InitialBacklog {
+pub struct InitialBacklog {
     /// Safe L2 block number.
     pub safe_block: u64,
     /// Total DA bytes across all backlog blocks.
@@ -233,7 +233,7 @@ pub(crate) struct InitialBacklog {
 
 /// Progress update during initial backlog fetch.
 #[derive(Debug, Clone)]
-pub(crate) struct BacklogProgress {
+pub struct BacklogProgress {
     /// Number of blocks fetched so far.
     pub current_block: u64,
     /// Total number of blocks to fetch.
@@ -242,7 +242,7 @@ pub(crate) struct BacklogProgress {
 
 /// Individual block data from backlog fetch.
 #[derive(Debug, Clone)]
-pub(crate) struct BacklogBlock {
+pub struct BacklogBlock {
     /// L2 block number.
     pub block_number: u64,
     /// DA bytes contributed by this block.
@@ -253,7 +253,7 @@ pub(crate) struct BacklogBlock {
 
 /// Result of initial backlog fetch - either progress or complete.
 #[derive(Debug, Clone)]
-pub(crate) enum BacklogFetchResult {
+pub enum BacklogFetchResult {
     /// Incremental progress update.
     Progress(BacklogProgress),
     /// A single fetched block.
@@ -265,7 +265,7 @@ pub(crate) enum BacklogFetchResult {
 }
 
 /// Fetches the initial DA backlog, sending progress updates and block data.
-pub(crate) async fn fetch_initial_backlog_with_progress(
+pub async fn fetch_initial_backlog_with_progress(
     l2_rpc: String,
     progress_tx: tokio::sync::mpsc::Sender<BacklogFetchResult>,
 ) {
@@ -342,7 +342,7 @@ pub(crate) async fn fetch_initial_backlog_with_progress(
 
 /// DA and gas information for a single L2 block.
 #[derive(Debug, Clone)]
-pub(crate) struct BlockDaInfo {
+pub struct BlockDaInfo {
     /// L2 block number.
     pub block_number: u64,
     /// Total DA bytes from all transactions.
@@ -352,7 +352,7 @@ pub(crate) struct BlockDaInfo {
 }
 
 /// Fetches DA info for requested block numbers and sends results back.
-pub(crate) async fn run_block_fetcher(
+pub async fn run_block_fetcher(
     l2_rpc: String,
     mut request_rx: mpsc::Receiver<u64>,
     result_tx: mpsc::Sender<BlockDaInfo>,
@@ -389,7 +389,7 @@ pub(crate) async fn run_block_fetcher(
 
 /// Information about an L1 block and its blob counts.
 #[derive(Debug, Clone)]
-pub(crate) struct L1BlockInfo {
+pub struct L1BlockInfo {
     /// L1 block number.
     pub block_number: u64,
     /// Unix timestamp of the L1 block.
@@ -402,7 +402,7 @@ pub(crate) struct L1BlockInfo {
 
 /// How the L1 watcher connects to the L1 node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum L1ConnectionMode {
+pub enum L1ConnectionMode {
     /// Connected via WebSocket subscription.
     WebSocket,
     /// Connected via HTTP polling.
@@ -414,7 +414,7 @@ fn http_to_ws(url: &str) -> String {
 }
 
 /// Watches L1 blocks for blob transactions, preferring WebSocket with polling fallback.
-pub(crate) async fn run_l1_blob_watcher(
+pub async fn run_l1_blob_watcher(
     l1_rpc: String,
     batcher_address: Address,
     result_tx: mpsc::Sender<L1BlockInfo>,
@@ -564,7 +564,7 @@ fn extract_l1_block_info(
 
 /// Summary of a single transaction within a block.
 #[derive(Debug, Clone)]
-pub(crate) struct TxSummary {
+pub struct TxSummary {
     /// Transaction hash.
     pub hash: B256,
     /// Sender address.
@@ -590,7 +590,7 @@ fn effective_priority_fee_per_gas(
 /// Decodes raw EIP-2718 encoded transaction bytes into summaries.
 ///
 /// Used to extract transaction details from flashblock stream data without RPC calls.
-pub(crate) fn decode_flashblock_transactions(
+pub fn decode_flashblock_transactions(
     raw_txs: &[Bytes],
     base_fee_per_gas: Option<u64>,
 ) -> Vec<TxSummary> {
@@ -623,7 +623,7 @@ pub(crate) fn decode_flashblock_transactions(
 }
 
 /// Fetches all transactions for a given block and sends summaries through the channel.
-pub(crate) async fn fetch_block_transactions(
+pub async fn fetch_block_transactions(
     l2_rpc: String,
     block_number: u64,
     tx: mpsc::Sender<Result<Vec<TxSummary>, String>>,
@@ -678,7 +678,7 @@ pub(crate) async fn fetch_block_transactions(
 
 /// Live status snapshot for a single node in an HA conductor cluster.
 #[derive(Debug, Clone)]
-pub(crate) struct ConductorNodeStatus {
+pub struct ConductorNodeStatus {
     /// Human-readable name for this node.
     pub name: String,
 
@@ -724,7 +724,7 @@ pub(crate) struct ConductorNodeStatus {
 /// is transferred to the named node via `conductor_transferLeaderToServer`.
 ///
 /// The result — `Ok(description)` or `Err(message)` — is sent to `result_tx`.
-pub(crate) async fn transfer_conductor_leader(
+pub async fn transfer_conductor_leader(
     nodes: Vec<ConductorNodeConfig>,
     target_name: Option<String>,
     result_tx: mpsc::Sender<Result<String, String>>,
@@ -783,7 +783,7 @@ pub(crate) async fn transfer_conductor_leader(
 /// waiting for each to become healthy before starting the next. This prevents
 /// op-conductor from crashing on startup because it tries to connect to the EL
 /// before the EL has bound its port.
-pub(crate) async fn restart_conductor_node(
+pub async fn restart_conductor_node(
     node: ConductorNodeConfig,
     result_tx: mpsc::Sender<Result<String, String>>,
 ) {
@@ -850,7 +850,7 @@ pub(crate) async fn restart_conductor_node(
 
 /// Peers saved when a sequencer node is paused, used to restore connectivity on unpause.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct PausedPeers {
+pub struct PausedPeers {
     /// Multiaddrs of the CL peers that were connected before pausing.
     /// Used to reconnect them on unpause via `opp2p_connectPeer`.
     pub cl_addrs: Vec<String>,
@@ -862,7 +862,7 @@ pub(crate) struct PausedPeers {
 /// Disconnects all p2p peers from the CL and EL of a node so that neither layer
 /// can advance.  Returns the saved peer addresses so they can be restored later
 /// via [`unpause_sequencer_node`].
-pub(crate) async fn pause_sequencer_node(
+pub async fn pause_sequencer_node(
     node: ConductorNodeConfig,
     result_tx: mpsc::Sender<Result<(String, PausedPeers), String>>,
 ) {
@@ -924,7 +924,7 @@ pub(crate) async fn pause_sequencer_node(
 
 /// Reconnects the CL and EL peers that were saved by [`pause_sequencer_node`],
 /// allowing the node to resume syncing to tip.
-pub(crate) async fn unpause_sequencer_node(
+pub async fn unpause_sequencer_node(
     node: ConductorNodeConfig,
     peers: PausedPeers,
     result_tx: mpsc::Sender<Result<String, String>>,
@@ -979,7 +979,7 @@ pub(crate) async fn unpause_sequencer_node(
 /// fires all per-node requests concurrently via [`futures::future::join_all`].
 /// Any individual RPC that times out or errors yields `None` for that field —
 /// the node is shown as offline when `is_leader` is `None`.
-pub(crate) async fn run_conductor_poller(
+pub async fn run_conductor_poller(
     nodes: Vec<ConductorNodeConfig>,
     tx: mpsc::Sender<Vec<ConductorNodeStatus>>,
 ) {
@@ -1097,7 +1097,7 @@ pub(crate) async fn run_conductor_poller(
 
 /// Live status snapshot for a single validator (non-sequencing) node.
 #[derive(Debug, Clone)]
-pub(crate) struct ValidatorNodeStatus {
+pub struct ValidatorNodeStatus {
     /// Human-readable name for this node.
     pub name: String,
 
@@ -1129,7 +1129,7 @@ pub(crate) struct ValidatorNodeStatus {
 }
 
 /// Polls all validator nodes every 200 ms and forwards status snapshots.
-pub(crate) async fn run_validator_poller(
+pub async fn run_validator_poller(
     nodes: Vec<ValidatorNodeConfig>,
     tx: mpsc::Sender<Vec<ValidatorNodeStatus>>,
 ) {
@@ -1254,7 +1254,7 @@ sol! {
 
 /// Snapshot of proof system state, fetched periodically.
 #[derive(Debug, Clone)]
-pub(crate) struct ProofsSnapshot {
+pub struct ProofsSnapshot {
     /// Current L1 block number.
     pub l1_block: Option<u64>,
     /// Current L2 latest (unsafe) block number.
@@ -1279,7 +1279,7 @@ pub(crate) struct ProofsSnapshot {
 
 /// Information about the most recent dispute game proposal.
 #[derive(Debug, Clone)]
-pub(crate) struct LatestProposal {
+pub struct LatestProposal {
     /// Address of the dispute game proxy contract.
     pub game_address: Address,
     /// L2 block number proposed.
@@ -1294,7 +1294,7 @@ pub(crate) struct LatestProposal {
 
 /// Polls proof system state (anchor state, dispute games, chain heads) at regular
 /// intervals and sends snapshots to the TUI.
-pub(crate) async fn run_proofs_poller(
+pub async fn run_proofs_poller(
     proofs_config: ProofsConfig,
     l1_rpc: Url,
     l2_rpc: Url,

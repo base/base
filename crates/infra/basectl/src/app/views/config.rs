@@ -19,7 +19,7 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 /// View displaying chain configuration and L1 system config parameters.
 #[derive(Debug)]
-pub(crate) struct ConfigView {
+pub struct ConfigView {
     needs_refresh: bool,
 }
 
@@ -31,7 +31,7 @@ impl Default for ConfigView {
 
 impl ConfigView {
     /// Creates a new config view.
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self { needs_refresh: true }
     }
 }

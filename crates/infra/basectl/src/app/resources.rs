@@ -25,7 +25,7 @@ const MAX_RECENT_DA_FLASHBLOCK_IDS: usize = 512;
 
 /// State for HA conductor cluster monitoring.
 #[derive(Debug, Default)]
-pub(crate) struct ConductorState {
+pub struct ConductorState {
     /// Most recent status snapshot for each conductor node.
     pub nodes: Vec<ConductorNodeStatus>,
     /// Original per-node configs, used to look up each node's `flashblocks_ws` URL.
@@ -41,7 +41,7 @@ pub(crate) struct ConductorState {
 
 impl ConductorState {
     /// Sets the channel for receiving conductor status updates.
-    pub(crate) fn set_channel(&mut self, rx: mpsc::Receiver<Vec<ConductorNodeStatus>>) {
+    pub fn set_channel(&mut self, rx: mpsc::Receiver<Vec<ConductorNodeStatus>>) {
         self.rx = Some(rx);
     }
 
@@ -49,7 +49,7 @@ impl ConductorState {
     ///
     /// After this is called, every `poll` will push the leader's `flashblocks_ws`
     /// URL into `tx` whenever it changes — replacing the separate polling task.
-    pub(crate) fn set_url_sender(
+    pub fn set_url_sender(
         &mut self,
         nodes_config: Vec<ConductorNodeConfig>,
         tx: watch::Sender<String>,
@@ -60,7 +60,7 @@ impl ConductorState {
 
     /// Drains the latest status snapshot from the background poller, then
     /// pushes the leader's flashblocks URL into the watch channel if it changed.
-    pub(crate) fn poll(&mut self) {
+    pub fn poll(&mut self) {
         let Some(ref mut rx) = self.rx else { return };
         // Drain all pending updates, keeping only the most recent snapshot.
         while let Ok(statuses) = rx.try_recv() {
@@ -70,7 +70,7 @@ impl ConductorState {
     }
 
     /// Returns the safe L2 block number reported by the current Raft leader, if known.
-    pub(crate) fn leader_safe_l2_block(&self) -> Option<u64> {
+    pub fn leader_safe_l2_block(&self) -> Option<u64> {
         self.nodes.iter().find(|n| n.is_leader == Some(true)).and_then(|n| n.safe_l2_block)
     }
 
@@ -97,7 +97,7 @@ impl ConductorState {
 
 /// State for validator node monitoring.
 #[derive(Debug, Default)]
-pub(crate) struct ValidatorState {
+pub struct ValidatorState {
     /// Most recent status snapshot for each validator node.
     pub nodes: Vec<ValidatorNodeStatus>,
     rx: Option<mpsc::Receiver<Vec<ValidatorNodeStatus>>>,
@@ -105,12 +105,12 @@ pub(crate) struct ValidatorState {
 
 impl ValidatorState {
     /// Sets the channel for receiving validator status updates.
-    pub(crate) fn set_channel(&mut self, rx: mpsc::Receiver<Vec<ValidatorNodeStatus>>) {
+    pub fn set_channel(&mut self, rx: mpsc::Receiver<Vec<ValidatorNodeStatus>>) {
         self.rx = Some(rx);
     }
 
     /// Drains the latest status snapshot from the background poller.
-    pub(crate) fn poll(&mut self) {
+    pub fn poll(&mut self) {
         let Some(ref mut rx) = self.rx else { return };
         while let Ok(statuses) = rx.try_recv() {
             self.nodes = statuses;
@@ -120,7 +120,7 @@ impl ValidatorState {
 
 /// State for proof system monitoring (dispute games, anchor state).
 #[derive(Debug, Default)]
-pub(crate) struct ProofsState {
+pub struct ProofsState {
     /// Most recent proof system snapshot.
     pub snapshot: Option<ProofsSnapshot>,
     rx: Option<mpsc::Receiver<ProofsSnapshot>>,
@@ -128,12 +128,12 @@ pub(crate) struct ProofsState {
 
 impl ProofsState {
     /// Sets the channel for receiving proof system snapshots.
-    pub(crate) fn set_channel(&mut self, rx: mpsc::Receiver<ProofsSnapshot>) {
+    pub fn set_channel(&mut self, rx: mpsc::Receiver<ProofsSnapshot>) {
         self.rx = Some(rx);
     }
 
     /// Drains the latest snapshot from the background poller.
-    pub(crate) fn poll(&mut self) {
+    pub fn poll(&mut self) {
         let Some(ref mut rx) = self.rx else { return };
         while let Ok(snapshot) = rx.try_recv() {
             self.snapshot = Some(snapshot);
@@ -144,14 +144,14 @@ impl ProofsState {
 /// Handle to a running load test task and its stop signal, used by [`super::App`]
 /// to await drain completion on shutdown so funds are returned to the funder.
 #[derive(Debug)]
-pub(crate) struct LoadTestTask {
+pub struct LoadTestTask {
     pub stop_flag: Arc<AtomicBool>,
     pub handle: JoinHandle<()>,
 }
 
 /// Shared resources available to all TUI views.
 #[derive(Debug)]
-pub(crate) struct Resources {
+pub struct Resources {
     /// Active chain configuration.
     pub config: ChainConfig,
     /// Data availability monitoring state.
@@ -175,7 +175,7 @@ pub(crate) struct Resources {
 
 /// State for DA (data availability) monitoring.
 #[derive(Debug)]
-pub(crate) struct DaState {
+pub struct DaState {
     /// Tracks L2 block DA contributions and backlog.
     pub tracker: DaTracker,
     /// Current backlog loading progress, if still loading.
@@ -199,7 +199,7 @@ pub(crate) struct DaState {
 
 /// State for the flashblocks stream display.
 #[derive(Debug)]
-pub(crate) struct FlashState {
+pub struct FlashState {
     /// Recent flashblock entries shown in the table.
     pub entries: VecDeque<FlashblockEntry>,
     /// Current block gas limit.
@@ -219,7 +219,7 @@ pub(crate) struct FlashState {
 
 impl Resources {
     /// Creates new resources with the given chain configuration.
-    pub(crate) fn new(config: ChainConfig) -> Self {
+    pub fn new(config: ChainConfig) -> Self {
         Self {
             config,
             da: DaState::new(),
@@ -235,17 +235,17 @@ impl Resources {
     }
 
     /// Returns the configured chain name.
-    pub(crate) fn chain_name(&self) -> &str {
+    pub fn chain_name(&self) -> &str {
         &self.config.name
     }
 
     /// Sets the channel for receiving L1 system config updates.
-    pub(crate) fn set_sys_config_channel(&mut self, rx: mpsc::Receiver<SystemConfig>) {
+    pub fn set_sys_config_channel(&mut self, rx: mpsc::Receiver<SystemConfig>) {
         self.sys_config_rx = Some(rx);
     }
 
     /// Polls for a new system config from the background task.
-    pub(crate) fn poll_sys_config(&mut self) {
+    pub fn poll_sys_config(&mut self) {
         if let Some(ref mut rx) = self.sys_config_rx
             && let Ok(cfg) = rx.try_recv()
         {
@@ -262,7 +262,7 @@ impl Default for DaState {
 
 impl DaState {
     /// Creates a new empty DA state.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             tracker: DaTracker::new(),
             loading: None,
@@ -283,7 +283,7 @@ impl DaState {
     }
 
     /// Sets the channels used for receiving DA monitoring data.
-    pub(crate) fn set_channels(
+    pub fn set_channels(
         &mut self,
         fb_rx: mpsc::Receiver<Flashblock>,
         sync_rx: mpsc::Receiver<u64>,
@@ -301,7 +301,7 @@ impl DaState {
     }
 
     /// Sets the channel for receiving L1 connection mode updates.
-    pub(crate) fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<L1ConnectionMode>) {
+    pub fn set_l1_mode_channel(&mut self, rx: mpsc::Receiver<L1ConnectionMode>) {
         self.l1_mode_rx = Some(rx);
     }
 
@@ -310,7 +310,7 @@ impl DaState {
     /// Called each tick when a conductor cluster is configured so the DA
     /// tracker does not have to wait for sequencer-0's EL to P2P-sync
     /// new blocks produced by whichever sequencer currently holds leadership.
-    pub(crate) fn apply_conductor_safe_head(&mut self, safe_block: u64) {
+    pub fn apply_conductor_safe_head(&mut self, safe_block: u64) {
         if self.loaded {
             self.tracker.update_safe_head(safe_block);
         } else {
@@ -319,7 +319,7 @@ impl DaState {
     }
 
     /// Drains all pending messages from background channels and updates state.
-    pub(crate) fn poll(&mut self) {
+    pub fn poll(&mut self) {
         let backlog_results: Vec<_> = self
             .backlog_rx
             .as_mut()
@@ -486,7 +486,7 @@ impl Default for FlashState {
 
 impl FlashState {
     /// Creates a new empty flashblock state.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             entries: VecDeque::with_capacity(MAX_FLASH_BLOCKS * 10),
             current_gas_limit: 0,
@@ -501,7 +501,7 @@ impl FlashState {
     }
 
     /// Sets the channel for receiving timestamped flashblocks.
-    pub(crate) fn set_channel(&mut self, fb_rx: mpsc::Receiver<TimestampedFlashblock>) {
+    pub fn set_channel(&mut self, fb_rx: mpsc::Receiver<TimestampedFlashblock>) {
         self.fb_rx = Some(fb_rx);
     }
 
@@ -512,12 +512,12 @@ impl FlashState {
     /// `last_flashblock` so the first flashblock from the new leader is not
     /// compared against the previous leader's index, preventing spurious
     /// missed-flashblock counts.
-    pub(crate) fn set_url_rx(&mut self, rx: watch::Receiver<String>) {
+    pub fn set_url_rx(&mut self, rx: watch::Receiver<String>) {
         self.url_rx = Some(rx);
     }
 
     /// Drains pending flashblocks from the channel unless paused.
-    pub(crate) fn poll(&mut self) {
+    pub fn poll(&mut self) {
         // Reset missed-flashblock tracking when the flashblocks endpoint changes
         // (i.e. leadership transferred to a different sequencer).  Each clone of
         // the watch receiver tracks its own "seen" state independently, so this
@@ -563,7 +563,7 @@ impl FlashState {
     }
 
     /// Processes a received flashblock and updates tracking state.
-    pub(crate) fn add_flashblock(&mut self, tsf: TimestampedFlashblock) {
+    pub fn add_flashblock(&mut self, tsf: TimestampedFlashblock) {
         let TimestampedFlashblock { flashblock: fb, received_at } = tsf;
 
         self.message_count += 1;

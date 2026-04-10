@@ -1,23 +1,23 @@
 //! Core application logic, actions, resources, and routing for basectl.
 
 mod action;
-pub(crate) use action::Action;
+pub use action::Action;
 
 mod core;
-pub(crate) use core::App;
+pub use core::App;
 
 mod resources;
-pub(crate) use resources::{LoadTestTask, Resources};
+pub use resources::{LoadTestTask, Resources};
 
 mod router;
-pub(crate) use router::Router;
+pub use router::Router;
 pub use router::ViewId;
 
 mod runner;
 pub use runner::{run_app, run_flashblocks_json};
 
 mod view;
-pub(crate) use view::View;
+pub use view::View;
 
 /// TUI view implementations.
 mod views;
