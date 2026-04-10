@@ -549,9 +549,8 @@ impl LoadTestView {
                         {
                             // Non-fatal: fund_accounts will surface a clearer error if truly
                             // short.
-                            let _ = done_tx
-                                .send(Err(format!("devnet bootstrap failed: {e}")))
-                                .await;
+                            let _ =
+                                done_tx.send(Err(format!("devnet bootstrap failed: {e}"))).await;
                             return;
                         }
                     }
