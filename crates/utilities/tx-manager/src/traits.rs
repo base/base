@@ -74,7 +74,7 @@ pub trait TxManager: Send + Sync + Debug {
     /// suitable for test managers and environments where txpool management is
     /// not needed.
     fn cancel_tx(&self) -> impl Future<Output = Result<(), TxManagerError>> + Send {
-        async { Ok(()) }
+        std::future::ready(Ok(()))
     }
 }
 
