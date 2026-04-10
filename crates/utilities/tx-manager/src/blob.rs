@@ -1,4 +1,4 @@
-//! EIP-4844 blob transaction sidecar construction.
+//! EIP-7594 blob transaction sidecar construction.
 //!
 //! [`BlobTxBuilder`] wraps alloy's KZG sidecar API to produce
 //! [`BlobTransactionSidecarEip7594`] sidecars
