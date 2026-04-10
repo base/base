@@ -173,9 +173,15 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 ///
 /// Addresses in `failing_addresses` will return a `ContractError::Validation`
 /// to simulate transient RPC failures.
+///
+/// `intermediate_roots_map` provides explicit intermediate output roots per
+/// game proxy. When not present, `intermediate_output_roots()` derives a
+/// default single-element vec from the game's `root_claim` (matching the
+/// contract behavior when `block_interval == intermediate_block_interval`).
 pub(crate) struct MockAggregateVerifier {
     pub game_info_map: std::collections::HashMap<Address, GameInfo>,
     pub failing_addresses: std::collections::HashSet<Address>,
+    pub intermediate_roots_map: std::collections::HashMap<Address, Vec<B256>>,
 }
 
 impl MockAggregateVerifier {
@@ -184,12 +190,17 @@ impl MockAggregateVerifier {
         Self {
             game_info_map: std::collections::HashMap::new(),
             failing_addresses: std::collections::HashSet::new(),
+            intermediate_roots_map: std::collections::HashMap::new(),
         }
     }
 
     /// Creates a verifier backed by an explicit address-to-info map.
     pub(crate) fn with_game_info(map: std::collections::HashMap<Address, GameInfo>) -> Self {
-        Self { game_info_map: map, failing_addresses: std::collections::HashSet::new() }
+        Self {
+            game_info_map: map,
+            failing_addresses: std::collections::HashSet::new(),
+            intermediate_roots_map: std::collections::HashMap::new(),
+        }
     }
 }
 
@@ -228,8 +239,17 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         Ok(512)
     }
-    async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
-        Ok(vec![])
+    async fn intermediate_output_roots(&self, addr: Address) -> Result<Vec<B256>, ContractError> {
+        // Explicit intermediate roots take priority.
+        if let Some(roots) = self.intermediate_roots_map.get(&addr) {
+            return Ok(roots.clone());
+        }
+        // Default: derive from game info (single root = root_claim), matching
+        // the contract behavior when block_interval == intermediate_block_interval.
+        if let Some(info) = self.game_info_map.get(&addr) {
+            return Ok(vec![info.root_claim]);
+        }
+        Ok(vec![B256::ZERO])
     }
     async fn countered_index(&self, _: Address) -> Result<u64, ContractError> {
         Ok(0)

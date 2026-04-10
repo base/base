@@ -29,7 +29,7 @@
 //! persistently failing.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -646,8 +646,9 @@ where
     ///      full scan of the most recent `MAX_FACTORY_SCAN_LOOKBACK` entries.
     /// 4. **Forward walk.** Walk from the anchor block, stepping by
     ///    `block_interval`. For each step, find a game whose
-    ///    `parent_address` matches the expected parent AND whose
-    ///    `root_claim` matches the canonical output root. Stop at the
+    ///    `parent_address` matches the expected parent, whose
+    ///    `root_claim` matches the canonical output root, AND whose
+    ///    intermediate output roots all match canonical. Stop at the
     ///    first missing, mismatched, or unchained game.
     ///
     /// The last verified game becomes the parent for the next proposal. If no
@@ -696,7 +697,13 @@ where
         // then fetch all their canonical output roots concurrently. The walk
         // itself becomes purely in-memory lookups against this pre-fetched
         // map, eliminating O(N) sequential RPCs.
+        //
+        // In addition to the game block numbers themselves, intermediate
+        // block numbers are included so that each game's intermediate output
+        // roots can be verified against the canonical chain.
         let block_interval = self.config.driver.block_interval;
+        let intermediate_block_interval = self.config.driver.intermediate_block_interval;
+        let intermediate_count = block_interval / intermediate_block_interval;
 
         let prefetch_blocks: Vec<u64> = {
             let mut blocks = Vec::new();
@@ -713,14 +720,32 @@ where
             blocks
         };
 
-        let canonical_roots: HashMap<u64, B256> = if prefetch_blocks.is_empty() {
+        // Expand to include intermediate block numbers for each game block.
+        // For a game at block B with parent at B - block_interval, the
+        // intermediate blocks are at parent + i * intermediate_block_interval
+        // for i in 1..=intermediate_count. The last one (i = count) equals B
+        // itself, so the set is a superset of `prefetch_blocks`.
+        let all_canonical_blocks: Vec<u64> = {
+            let mut blocks = HashSet::new();
+            for &game_block in &prefetch_blocks {
+                let parent = game_block - block_interval;
+                for i in 1..=intermediate_count {
+                    blocks.insert(parent + i * intermediate_block_interval);
+                }
+            }
+            blocks.into_iter().collect()
+        };
+
+        let canonical_roots: HashMap<u64, B256> = if all_canonical_blocks.is_empty() {
             HashMap::new()
         } else {
             debug!(
-                blocks = prefetch_blocks.len(),
+                blocks = all_canonical_blocks.len(),
+                game_blocks = prefetch_blocks.len(),
+                intermediate_count,
                 "Pre-fetching canonical output roots concurrently"
             );
-            stream::iter(prefetch_blocks)
+            stream::iter(all_canonical_blocks)
                 .map(|block_number| {
                     let rollup = &self.rollup_client;
                     async move {
@@ -736,11 +761,52 @@ where
                 .await?
         };
 
+        // ── Pre-fetch intermediate output roots from game contracts ─────
+        //
+        // For every game proxy that the walk could visit, fetch its on-chain
+        // intermediate output roots concurrently. These will be compared
+        // against the canonical roots during the walk to verify the game's
+        // intermediate state commitments.
+        let walk_proxies: Vec<Address> = prefetch_blocks
+            .iter()
+            .filter_map(|b| game_map.map.get(b))
+            .flat_map(|games| games.iter().map(|g| g.proxy))
+            .collect();
+
+        let intermediate_roots_map: HashMap<Address, Vec<B256>> = if walk_proxies.is_empty() {
+            HashMap::new()
+        } else {
+            debug!(
+                proxies = walk_proxies.len(),
+                "Pre-fetching intermediate output roots from game contracts"
+            );
+            stream::iter(walk_proxies)
+                .map(|proxy| {
+                    let verifier = &self.verifier_client;
+                    async move {
+                        verifier
+                            .intermediate_output_roots(proxy)
+                            .await
+                            .map(|roots| (proxy, roots))
+                            .map_err(|e| {
+                                ProposerError::Contract(format!(
+                                    "intermediate_output_roots failed for proxy {proxy}: {e}"
+                                ))
+                            })
+                    }
+                })
+                .buffered(RECOVERY_SCAN_CONCURRENCY)
+                .try_collect()
+                .await?
+        };
+
         // ── Forward walk ────────────────────────────────────────────────
         //
-        // Walk from the anchor root, verifying parent-chain linkage and
-        // output root correctness at each step. All output root lookups
-        // are served from the pre-fetched `canonical_roots` map above.
+        // Walk from the anchor root, verifying parent-chain linkage,
+        // output root correctness, and intermediate output root
+        // correctness at each step. All output root lookups are served
+        // from the pre-fetched `canonical_roots` map, and intermediate
+        // roots from the pre-fetched `intermediate_roots_map`.
         let mut parent_address = anchor_state_registry_address;
         let mut parent_output_root = anchor.root;
         let mut parent_block = anchor.l2_block_number;
@@ -816,6 +882,81 @@ where
                     canonical_root = ?canonical_root,
                     "Output root mismatch during forward walk, treating as gap"
                 );
+                break;
+            }
+
+            // Verify intermediate output roots against canonical.
+            //
+            // Each game commits to intermediate output roots at every
+            // `intermediate_block_interval` blocks between its parent and
+            // itself. A mismatch indicates the game could be challenged,
+            // so we treat it as a gap to avoid chaining off an invalid parent.
+            let onchain_intermediate = intermediate_roots_map.get(&proxy).ok_or_else(|| {
+                ProposerError::Internal(format!(
+                    "missing pre-fetched intermediate roots for proxy {proxy}"
+                ))
+            })?;
+
+            if onchain_intermediate.len() as u64 != intermediate_count {
+                warn!(
+                    l2_block_number = expected_block,
+                    game_proxy = %proxy,
+                    expected = intermediate_count,
+                    actual = onchain_intermediate.len(),
+                    "Unexpected intermediate root count, treating as gap"
+                );
+                break;
+            }
+
+            // The last intermediate root must equal root_claim (enforced
+            // on-chain by the contract). Verify this consistency invariant
+            // to catch any divergence between intermediateOutputRoots() and
+            // rootClaim(). This also makes the intermediate_count == 1 path
+            // non-trivial (where all intermediate blocks are skipped below).
+            if onchain_intermediate.last() != Some(&info.root_claim) {
+                warn!(
+                    l2_block_number = expected_block,
+                    game_proxy = %proxy,
+                    last_intermediate = ?onchain_intermediate.last(),
+                    root_claim = ?info.root_claim,
+                    "Last intermediate root does not match root_claim, treating as gap"
+                );
+                break;
+            }
+
+            let mut intermediate_mismatch = false;
+            for (i, onchain_root) in onchain_intermediate.iter().enumerate() {
+                let intermediate_block = (expected_block - block_interval)
+                    + (i as u64 + 1) * intermediate_block_interval;
+
+                // The last intermediate root equals root_claim, already
+                // verified above — skip the redundant check.
+                if intermediate_block == expected_block {
+                    continue;
+                }
+
+                let canonical = canonical_roots.get(&intermediate_block).ok_or_else(|| {
+                    ProposerError::Internal(format!(
+                        "missing canonical root for intermediate block {intermediate_block}"
+                    ))
+                })?;
+
+                if *onchain_root != *canonical {
+                    warn!(
+                        l2_block_number = expected_block,
+                        intermediate_block,
+                        intermediate_index = i,
+                        game_proxy = %proxy,
+                        onchain_root = ?onchain_root,
+                        canonical_root = ?canonical,
+                        "Intermediate root mismatch during forward walk, treating as gap"
+                    );
+                    intermediate_mismatch = true;
+                    break;
+                }
+            }
+
+            if intermediate_mismatch {
                 break;
             }
 
@@ -1525,6 +1666,7 @@ mod tests {
             output_roots,
             TEST_ANCHOR_BLOCK,
             TEST_BLOCK_INTERVAL,
+            TEST_BLOCK_INTERVAL,
         )
     }
 
@@ -1534,6 +1676,7 @@ mod tests {
         output_roots: HashMap<u64, B256>,
         anchor_block: u64,
         block_interval: u64,
+        intermediate_block_interval: u64,
     ) -> TestPipeline {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
@@ -1554,6 +1697,7 @@ mod tests {
                 driver: DriverConfig {
                     game_type: TEST_GAME_TYPE,
                     block_interval,
+                    intermediate_block_interval,
                     ..Default::default()
                 },
             },
@@ -2286,7 +2430,190 @@ mod tests {
         assert_eq!(cache.as_ref().unwrap().anchor_root, B256::ZERO);
     }
 
-    // ---- Intermediate output root validation tests ----
+    // ---- Recovery: intermediate output root verification ----
+
+    /// Block intervals for recovery tests with multiple intermediate roots.
+    const RECOVERY_BI: u64 = 4;
+    const RECOVERY_IBI: u64 = 2;
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_forward_walk_verifies_intermediate_roots() {
+        // block_interval = 4, intermediate_block_interval = 2
+        // → intermediate_count = 2 (roots at parent+2 and parent+4)
+        //
+        // Two games: block 4 (parent = anchor) and block 8 (parent = game 0).
+        // Both have correct root_claim AND correct intermediate roots.
+        // Walk should traverse both games.
+        let root_1 = B256::repeat_byte(0x01);
+        let root_2 = B256::repeat_byte(0x02);
+        let intermediate_at_2 = B256::repeat_byte(0xA1);
+        let intermediate_at_6 = B256::repeat_byte(0xA2);
+
+        let games = vec![game_entry(TEST_GAME_TYPE, 0), game_entry(TEST_GAME_TYPE, 1)];
+
+        let info_map = HashMap::from([
+            (
+                proxy_addr(0),
+                GameInfo {
+                    root_claim: root_1,
+                    l2_block_number: RECOVERY_BI,
+                    parent_address: Address::ZERO,
+                },
+            ),
+            (
+                proxy_addr(1),
+                GameInfo {
+                    root_claim: root_2,
+                    l2_block_number: RECOVERY_BI * 2,
+                    parent_address: proxy_addr(0),
+                },
+            ),
+        ]);
+
+        // Canonical output roots for all intermediate + game blocks.
+        let output_roots = HashMap::from([
+            (2, intermediate_at_2),
+            (RECOVERY_BI, root_1),
+            (6, intermediate_at_6),
+            (RECOVERY_BI * 2, root_2),
+        ]);
+
+        let mut verifier = MockAggregateVerifier::with_game_info(info_map);
+        // Game 0: intermediate roots at blocks 2 and 4 (= root_claim)
+        verifier.intermediate_roots_map.insert(proxy_addr(0), vec![intermediate_at_2, root_1]);
+        // Game 1: intermediate roots at blocks 6 and 8 (= root_claim)
+        verifier.intermediate_roots_map.insert(proxy_addr(1), vec![intermediate_at_6, root_2]);
+
+        let pipeline = recovery_pipeline_full(
+            MockDisputeGameFactory::with_games(games),
+            verifier,
+            output_roots,
+            TEST_ANCHOR_BLOCK,
+            RECOVERY_BI,
+            RECOVERY_IBI,
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        // Both games verified, walk should reach game 1.
+        assert_eq!(state.parent_address, proxy_addr(1));
+        assert_eq!(state.l2_block_number, RECOVERY_BI * 2);
+        assert_eq!(state.output_root, root_2);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_forward_walk_stops_at_intermediate_root_mismatch() {
+        // block_interval = 4, intermediate_block_interval = 2
+        // → intermediate_count = 2 (roots at parent+2 and parent+4)
+        //
+        // Game 0 at block 4: correct root_claim AND correct intermediate roots.
+        // Game 1 at block 8: correct root_claim BUT wrong intermediate root at
+        // block 6. Walk should stop at game 0.
+        let root_1 = B256::repeat_byte(0x01);
+        let root_2 = B256::repeat_byte(0x02);
+        let intermediate_at_2 = B256::repeat_byte(0xA1);
+        let canonical_at_6 = B256::repeat_byte(0xA2);
+        let wrong_intermediate = B256::repeat_byte(0xFF);
+
+        let games = vec![game_entry(TEST_GAME_TYPE, 0), game_entry(TEST_GAME_TYPE, 1)];
+
+        let info_map = HashMap::from([
+            (
+                proxy_addr(0),
+                GameInfo {
+                    root_claim: root_1,
+                    l2_block_number: RECOVERY_BI,
+                    parent_address: Address::ZERO,
+                },
+            ),
+            (
+                proxy_addr(1),
+                GameInfo {
+                    root_claim: root_2,
+                    l2_block_number: RECOVERY_BI * 2,
+                    parent_address: proxy_addr(0),
+                },
+            ),
+        ]);
+
+        // Canonical output roots.
+        let output_roots = HashMap::from([
+            (2, intermediate_at_2),
+            (RECOVERY_BI, root_1),
+            (6, canonical_at_6),
+            (RECOVERY_BI * 2, root_2),
+        ]);
+
+        let mut verifier = MockAggregateVerifier::with_game_info(info_map);
+        // Game 0: correct intermediate roots.
+        verifier.intermediate_roots_map.insert(proxy_addr(0), vec![intermediate_at_2, root_1]);
+        // Game 1: WRONG intermediate root at index 0 (block 6).
+        verifier.intermediate_roots_map.insert(proxy_addr(1), vec![wrong_intermediate, root_2]);
+
+        let pipeline = recovery_pipeline_full(
+            MockDisputeGameFactory::with_games(games),
+            verifier,
+            output_roots,
+            TEST_ANCHOR_BLOCK,
+            RECOVERY_BI,
+            RECOVERY_IBI,
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        // Walk should stop at game 0 because game 1 has wrong intermediate root.
+        assert_eq!(state.parent_address, proxy_addr(0));
+        assert_eq!(state.l2_block_number, RECOVERY_BI);
+        assert_eq!(state.output_root, root_1);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_forward_walk_stops_at_wrong_intermediate_root_count() {
+        // block_interval = 4, intermediate_block_interval = 2
+        // → intermediate_count = 2
+        //
+        // Game at block 4 returns only 1 intermediate root instead of the
+        // expected 2. Walk should treat this as a gap.
+        let root_1 = B256::repeat_byte(0x01);
+        let intermediate_at_2 = B256::repeat_byte(0xA1);
+
+        let games = vec![game_entry(TEST_GAME_TYPE, 0)];
+
+        let info_map = HashMap::from([(
+            proxy_addr(0),
+            GameInfo {
+                root_claim: root_1,
+                l2_block_number: RECOVERY_BI,
+                parent_address: Address::ZERO,
+            },
+        )]);
+
+        let output_roots = HashMap::from([(2, intermediate_at_2), (RECOVERY_BI, root_1)]);
+
+        let mut verifier = MockAggregateVerifier::with_game_info(info_map);
+        // Only 1 intermediate root instead of expected 2.
+        verifier.intermediate_roots_map.insert(proxy_addr(0), vec![root_1]);
+
+        let pipeline = recovery_pipeline_full(
+            MockDisputeGameFactory::with_games(games),
+            verifier,
+            output_roots,
+            TEST_ANCHOR_BLOCK,
+            RECOVERY_BI,
+            RECOVERY_IBI,
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        // Walk should not advance past anchor since game has wrong count.
+        assert_eq!(state.parent_address, Address::ZERO);
+        assert_eq!(state.l2_block_number, TEST_ANCHOR_BLOCK);
+    }
+
+    // ---- Intermediate output root validation (submission) tests ----
 
     /// Shared block intervals for submission validation tests.
     const SUBMIT_BLOCK_INTERVAL: u64 = 4;
