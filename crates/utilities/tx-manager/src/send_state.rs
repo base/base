@@ -132,6 +132,7 @@ impl SendState {
     /// 7. Otherwise, returns `None`.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
+        let now = Instant::now();
         let inner = self.inner.lock().expect("SendState mutex poisoned");
 
         if !inner.mined_txs.is_empty() {
@@ -150,7 +151,7 @@ impl SendState {
             return Some(TxManagerError::NonceTooLow);
         }
         if let Some(deadline) = inner.mempool_deadline
-            && Instant::now() >= deadline
+            && now >= deadline
         {
             return Some(TxManagerError::MempoolDeadlineExpired);
         }
