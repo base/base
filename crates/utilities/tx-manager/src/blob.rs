@@ -21,12 +21,6 @@ pub const MAX_BLOBS_PER_TX: usize = MAX_BLOBS_PER_TX_FUSAKA as usize;
 pub struct BlobTxBuilder;
 
 impl BlobTxBuilder {
-    /// Creates a new [`BlobTxBuilder`].
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-
     /// Builds an EIP-7594 cell-proof sidecar from boxed blobs.
     ///
     /// # Errors
@@ -58,11 +52,5 @@ mod tests {
         let blobs: Vec<Box<Blob>> = (0..n).map(|_| Box::default()).collect();
         let sidecar = BlobTxBuilder::build_sidecar(&blobs).unwrap();
         assert_eq!(sidecar.cell_proofs.len(), n * CELLS_PER_EXT_BLOB);
-    }
-
-    #[test]
-    fn blob_tx_builder_is_send_and_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<BlobTxBuilder>();
     }
 }
