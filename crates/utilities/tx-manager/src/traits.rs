@@ -38,12 +38,9 @@ impl Future for SendHandle {
     type Output = SendResponse;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // `oneshot::Receiver` is `Unpin`, so direct polling is safe.
-        match Pin::new(&mut self.get_mut().rx).poll(cx) {
-            Poll::Ready(Ok(result)) => Poll::Ready(result),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(TxManagerError::ChannelClosed)),
-            Poll::Pending => Poll::Pending,
-        }
+        Pin::new(&mut self.get_mut().rx)
+            .poll(cx)
+            .map(|res| res.unwrap_or_else(|_| Err(TxManagerError::ChannelClosed)))
     }
 }
 
