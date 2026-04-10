@@ -89,7 +89,7 @@ mod tests {
     async fn send_handle_yields_ok_on_success() {
         let (tx, rx) = oneshot::channel();
         let handle = SendHandle::new(rx);
-        let receipt = StubReceipt::new();
+        let receipt = StubReceipt::success();
         tx.send(Ok(receipt.clone())).unwrap();
         let result = handle.await;
         assert_eq!(result.unwrap(), receipt);

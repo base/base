@@ -9,7 +9,7 @@ pub struct StubReceipt;
 
 impl StubReceipt {
     /// Builds a minimal successful `TransactionReceipt`.
-    pub fn new() -> TransactionReceipt {
+    pub fn success() -> TransactionReceipt {
         let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
             receipt: Receipt {
                 status: Eip658Value::success(),

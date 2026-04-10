@@ -171,13 +171,13 @@ mod tests {
 
     impl TxManager for MockTxManager {
         async fn send(&self, _candidate: TxCandidate) -> SendResponse {
-            Ok(StubReceipt::new())
+            Ok(StubReceipt::success())
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             let (tx, rx) = tokio::sync::oneshot::channel();
-            tx.send(Ok(StubReceipt::new())).expect("receiver not dropped");
+            tx.send(Ok(StubReceipt::success())).expect("receiver not dropped");
             SendHandle::new(rx)
         }
 
@@ -211,7 +211,7 @@ mod tests {
 
     impl TxManager for GatedMockTxManager {
         async fn send(&self, _candidate: TxCandidate) -> SendResponse {
-            Ok(StubReceipt::new())
+            Ok(StubReceipt::success())
         }
 
         async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
@@ -220,7 +220,7 @@ mod tests {
             let (tx, rx) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
                 gate.notified().await;
-                let _ = tx.send(Ok(StubReceipt::new()));
+                let _ = tx.send(Ok(StubReceipt::success()));
             });
             SendHandle::new(rx)
         }
