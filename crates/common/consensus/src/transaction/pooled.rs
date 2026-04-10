@@ -4,7 +4,8 @@
 use core::hash::Hash;
 
 use alloy_consensus::{
-    Extended, InMemorySize, SignableTransaction, Signed, TransactionEnvelope, TxEip7702, TxEnvelope,
+    Extended, InMemorySize, SignableTransaction, Signed, TransactionEnvelope, TxEip7702,
+    TxEnvelope,
     error::ValueError,
     transaction::{TxEip1559, TxEip2930, TxHashRef, TxLegacy},
 };
