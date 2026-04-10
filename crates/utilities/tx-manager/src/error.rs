@@ -16,7 +16,7 @@ const REVERT_DATA_DISPLAY_LIMIT: usize = 128;
 ///   [`REVERT_DATA_DISPLAY_LIMIT`] bytes).
 /// - Empty string when neither is available.
 #[derive(Debug)]
-pub(crate) struct RevertDisplay<'a>(Option<&'a str>, Option<&'a Bytes>);
+pub struct RevertDisplay<'a>(Option<&'a str>, Option<&'a Bytes>);
 
 impl std::fmt::Display for RevertDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -307,7 +307,7 @@ impl RpcErrorClassifier {
         if lowered.contains("intrinsic gas too low") {
             return TxManagerError::IntrinsicGasTooLow;
         }
-        if lowered.contains("execution reverted") {
+        if let Some(pos) = lowered.find("execution reverted") {
             // Use alloy's structured revert data extraction from the
             // ErrorPayload's JSON data field, then decode with alloy's
             // standard decoder (handles Error(string), Panic(uint256),
@@ -318,14 +318,11 @@ impl RpcErrorClassifier {
             }
             // No structured data — extract a plain-text reason from the
             // message text after the "execution reverted" marker.
-            // `lowered` preserves byte offsets for ASCII, which covers
-            // all realistic RPC error messages.
-            const MARKER: &str = "execution reverted";
-            let reason = lowered.find(MARKER).and_then(|pos| {
-                let after = &payload.message[pos + MARKER.len()..];
-                let after = after.trim_start_matches(':').trim();
-                if after.is_empty() { None } else { Some(after.to_string()) }
-            });
+            // Byte offsets from `lowered` are safe to index into
+            // `payload.message` because RPC error messages are ASCII.
+            let after = &payload.message[pos + "execution reverted".len()..];
+            let after = after.trim_start_matches(':').trim();
+            let reason = if after.is_empty() { None } else { Some(after.to_string()) };
             return TxManagerError::ExecutionReverted { reason, data: None };
         }
         if lowered.contains("fee too low") {
