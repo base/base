@@ -243,7 +243,7 @@ impl BumpedFees {
 /// Used between fee calculation and transaction construction to carry
 /// the tip cap, base fee cap, and optional blob fee cap.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct GasPriceCaps {
     /// Maximum priority fee per gas (tip).
     pub gas_tip_cap: u128,

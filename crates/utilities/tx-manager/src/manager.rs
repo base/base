@@ -328,6 +328,25 @@ where
         )
     }
 
+    /// Checks both gas and blob fee ceilings relative to the raw provider
+    /// estimates in `caps`.
+    ///
+    /// Calls [`check_fee_limit`](Self::check_fee_limit) for the gas fee cap,
+    /// and when `blob_fee_cap` is `Some`, also checks the blob fee cap
+    /// against [`raw_blob_baseline`](Self::raw_blob_baseline).
+    fn check_fee_limits(
+        &self,
+        fee_cap: u128,
+        blob_fee_cap: Option<u128>,
+        caps: &GasPriceCaps,
+    ) -> TxManagerResult<()> {
+        self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
+        if let Some(blob_cap) = blob_fee_cap {
+            self.check_fee_limit(blob_cap, self.raw_blob_baseline(caps)?)?;
+        }
+        Ok(())
+    }
+
     /// Returns the raw (pre-minimum) blob fee cap from `caps`.
     ///
     /// # Errors
@@ -590,25 +609,14 @@ where
             is_blob,
         );
 
-        // Step 4: Enforce fee ceiling.
-        self.check_fee_limit(bumped_fee_cap, caps.raw_gas_fee_cap)?;
+        // Step 4: Bump blob fee cap separately with 100% minimum.
+        let blob_fee_cap = old_blob_fee_cap.map(|old_blob| {
+            let threshold = FeeCalculator::calc_threshold_value(old_blob, true);
+            caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob))
+        });
 
-        // Step 5: Bump blob fee cap separately with 100% minimum.
-        let blob_fee_cap = match old_blob_fee_cap {
-            Some(old_blob) => {
-                let threshold = FeeCalculator::calc_threshold_value(old_blob, true);
-                let bumped_blob =
-                    caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob));
-
-                // Enforce fee ceiling on blob fee cap using the raw
-                // (pre-minimum) blob fee cap as the baseline, mirroring
-                // the gas fee cap ceiling in Step 4.
-                self.check_fee_limit(bumped_blob, self.raw_blob_baseline(&caps)?)?;
-
-                Some(bumped_blob)
-            }
-            None => None,
-        };
+        // Step 5: Enforce fee ceilings on gas and blob fee caps.
+        self.check_fee_limits(bumped_fee_cap, blob_fee_cap, &caps)?;
 
         info!(
             %old_tip,
@@ -712,16 +720,7 @@ where
                 (caps.gas_tip_cap.max(fo.gas_tip_cap), caps.gas_fee_cap.max(fo.gas_fee_cap))
             });
 
-        // Step 3: Check fee limits.
-        //
-        // The `suggested` parameter is the raw gas_fee_cap computed from
-        // the provider's values before enforcing our configured minimums
-        // (`min_tip_cap`, `min_basefee`). This detects when enforced
-        // minimums or fee overrides inflate the fee cap beyond
-        // `fee_limit_multiplier × raw_provider_fee_cap`.
-        self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
-
-        // Step 3b: Compute blob fee cap with config minimum and override floor.
+        // Step 3: Compute blob fee cap with config minimum and override floor.
         let blob_fee_cap = if is_blob {
             let network = caps.blob_fee_cap.ok_or_else(|| {
                 TxManagerError::Unsupported(
@@ -734,10 +733,14 @@ where
             None
         };
 
-        // Step 3c: Enforce blob fee ceiling (mirrors Step 3 for gas fee cap).
-        if let Some(blob_cap) = blob_fee_cap {
-            self.check_fee_limit(blob_cap, self.raw_blob_baseline(&caps)?)?;
-        }
+        // Step 3b: Check fee limits.
+        //
+        // The `suggested` parameter is the raw gas_fee_cap computed from
+        // the provider's values before enforcing our configured minimums
+        // (`min_tip_cap`, `min_basefee`). This detects when enforced
+        // minimums or fee overrides inflate the fee cap beyond
+        // `fee_limit_multiplier × raw_provider_fee_cap`.
+        self.check_fee_limits(fee_cap, blob_fee_cap, &caps)?;
 
         // Step 4: Build TransactionRequest.
         let from = self.sender_address();
@@ -1963,7 +1966,7 @@ mod tests {
         };
 
         let prepared = manager
-            .prepare_with_initial_caps(&candidate, None, Some(caps.clone()), None, None)
+            .prepare_with_initial_caps(&candidate, None, Some(caps), None, None)
             .await
             .expect("should prepare tx using supplied caps");
         let tx = decode_eip1559(&prepared);
