@@ -1954,20 +1954,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aws-nitro-enclaves-cose"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8a94047bd9c3717c6ca3a145504c0e26b64a5e2d9eb9559b187748433fbc382"
-dependencies = [
- "openssl",
- "serde",
- "serde_bytes",
- "serde_cbor",
- "serde_repr",
- "serde_with",
-]
-
-[[package]]
 name = "aws-nitro-enclaves-nsm-api"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4719,7 +4705,6 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "async-trait",
- "aws-nitro-enclaves-cose",
  "aws-nitro-enclaves-nsm-api",
  "base-alloy-chains",
  "base-alloy-evm",
@@ -4729,25 +4714,19 @@ dependencies = [
  "base-proof-client",
  "base-proof-preimage",
  "base-proof-primitives",
- "base64 0.22.1",
  "bincode 2.0.1",
- "ciborium",
  "eyre",
  "hex",
  "k256",
- "openssl",
  "parking_lot",
  "rand 0.8.5",
  "serde",
- "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
  "tokio-vsock",
  "tracing",
- "x509-cert",
- "zip 8.2.0",
 ]
 
 [[package]]
@@ -7155,8 +7134,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid 0.9.6",
- "der_derive",
- "flagset",
  "pem-rfc7468 0.7.0",
  "zeroize",
 ]
@@ -7184,17 +7161,6 @@ dependencies = [
  "num-bigint 0.4.6",
  "num-traits",
  "rusticata-macros",
-]
-
-[[package]]
-name = "der_derive"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8034092389675178f570469e6c3b0465d3d30b4505c294a6550db47f3c17ad18"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]
@@ -8232,12 +8198,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
-name = "flagset"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
-
-[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8245,7 +8205,6 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide 0.8.9",
- "zlib-rs",
 ]
 
 [[package]]
@@ -17141,7 +17100,7 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "tracing",
- "zip 2.4.2",
+ "zip",
 ]
 
 [[package]]
@@ -20324,12 +20283,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
-name = "typed-path"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
-
-[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21779,18 +21732,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "x509-cert"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
-dependencies = [
- "const-oid 0.9.6",
- "der 0.7.10",
- "spki 0.7.3",
- "tls_codec",
-]
-
-[[package]]
 name = "x509-parser"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22035,26 +21976,6 @@ dependencies = [
  "thiserror 2.0.18",
  "zopfli",
 ]
-
-[[package]]
-name = "zip"
-version = "8.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b680f2a0cd479b4cff6e1233c483fdead418106eae419dc60200ae9850f6d004"
-dependencies = [
- "crc32fast",
- "flate2",
- "indexmap 2.13.0",
- "memchr",
- "typed-path",
- "zopfli",
-]
-
-[[package]]
-name = "zlib-rs"
-version = "0.6.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3be3d40e40a133f9c916ee3f9f4fa2d9d63435b5fbe1bfc6d9dae0aa0ada1513"
 
 [[package]]
 name = "zmij"
