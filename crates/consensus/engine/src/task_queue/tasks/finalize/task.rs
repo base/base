@@ -8,7 +8,7 @@ use base_protocol::L2BlockInfo;
 use derive_more::Constructor;
 
 use crate::{
-    EngineClient, EngineState, EngineTaskExt, FinalizeTaskError, SynchronizeTask,
+    EngineClient, EngineState, EngineTaskExt, FinalizeTaskError, Metrics, SynchronizeTask,
     state::EngineSyncStateUpdate,
 };
 
@@ -62,6 +62,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
         .execute(state)
         .await?;
         let fcu_duration = fcu_start.elapsed();
+        let total_duration = block_fetch_start.elapsed();
+        Metrics::engine_finalize_duration_seconds().record(total_duration.as_secs_f64());
 
         info!(
             target: "engine",

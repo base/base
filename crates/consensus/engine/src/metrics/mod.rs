@@ -31,6 +31,8 @@ base_metrics::define_metrics! {
     engine_reset_count: counter,
     #[describe("Payloads dropped because unsafe head changed between build and seal")]
     sequencer_unsafe_head_changed_total: counter,
+    #[describe("Total duration of the finalize task in seconds")]
+    engine_finalize_duration_seconds: histogram,
 }
 
 impl Metrics {
