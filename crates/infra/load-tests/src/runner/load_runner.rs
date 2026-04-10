@@ -535,29 +535,45 @@ impl LoadRunner {
         let flashblock_times: FlashblockTimes = Arc::new(RwLock::new(HashMap::new()));
         let block_first_seen: BlockFirstSeen = Arc::new(RwLock::new(BTreeMap::new()));
 
-        info!(url = %self.config.flashblocks_ws_url, "starting flashblock tracker");
-        let flashblock_tracker_task = FlashblockTracker::new(
-            self.config.flashblocks_ws_url.clone(),
-            Arc::clone(&flashblock_times),
-            self.cancel_token.clone(),
-        )
-        .start();
+        let flashblock_tracker_task = if let Some(url) = &self.config.flashblocks_ws_url {
+            info!(url = %url, "starting flashblock tracker");
+            Some(
+                FlashblockTracker::new(
+                    url.clone(),
+                    Arc::clone(&flashblock_times),
+                    self.cancel_token.clone(),
+                )
+                .start(),
+            )
+        } else {
+            info!("flashblocks_ws_url not configured, flashblock latency tracking disabled");
+            None
+        };
 
-        info!(url = %self.config.rpc_ws_url, "starting block watcher");
-        let block_watcher_task = BlockWatcher::new(
-            self.config.rpc_ws_url.clone(),
-            Arc::clone(&block_first_seen),
-            self.cancel_token.clone(),
-        )
-        .start();
+        let block_watcher_task = if let Some(url) = &self.config.rpc_ws_url {
+            info!(url = %url, "starting block watcher");
+            Some(
+                BlockWatcher::new(
+                    url.clone(),
+                    Arc::clone(&block_first_seen),
+                    self.cancel_token.clone(),
+                )
+                .start(),
+            )
+        } else {
+            info!("rpc_ws_url not configured, using block timestamps for latency");
+            None
+        };
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
-        let mut confirmer = Confirmer::with_timing_data(
+        let block_ws_enabled = block_watcher_task.is_some();
+        let mut confirmer = Confirmer::new(
             &sender_addresses,
             metrics_tx,
             Arc::clone(&self.stop_flag),
             Arc::clone(&flashblock_times),
             Arc::clone(&block_first_seen),
+            block_ws_enabled,
         );
         let confirmer_handle = confirmer.handle();
         let confirmer_handle_for_run = confirmer_handle.clone();
@@ -816,13 +832,17 @@ impl LoadRunner {
         // Now safe to stop WebSocket tasks — confirmer is done.
         self.cancel_token.cancel();
 
-        match tokio::time::timeout(Duration::from_secs(2), flashblock_tracker_task).await {
-            Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock tracker panicked"),
-            _ => {}
+        if let Some(task) = flashblock_tracker_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock tracker panicked"),
+                _ => {}
+            }
         }
-        match tokio::time::timeout(Duration::from_secs(2), block_watcher_task).await {
-            Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
-            _ => {}
+        if let Some(task) = block_watcher_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
+                _ => {}
+            }
         }
 
         let confirmed = self.collector.confirmed_count();

@@ -4,8 +4,11 @@
 
 rpc: https://sepolia.base.org
 
-# WebSocket endpoints for latency tracking
-rpc_ws_url: "wss://sepolia.base.org"
+# Block latency is tracked via block timestamps (no WebSocket required).
+# For more precise timing via WebSocket subscription, configure rpc_ws_url with a
+# provider that supports WebSocket (the public sepolia.base.org does not).
+#
+# rpc_ws_url: "wss://your-provider.example/ws"
 flashblocks_ws_url: "wss://sepolia.flashblocks.base.org/ws"
 
 sender_count: 10

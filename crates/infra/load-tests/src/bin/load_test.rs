@@ -183,6 +183,10 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
     }
 
+    // Brief cooldown so in-flight load-test transactions can land and
+    // mempool state settles before we query balances for the drain.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     println!();
     println!("Draining accounts back to funder...");
     match runner.drain_accounts(funding_key).await {
