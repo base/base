@@ -308,16 +308,10 @@ impl RpcErrorClassifier {
             return TxManagerError::IntrinsicGasTooLow;
         }
         if let Some(pos) = lowered.find("execution reverted") {
-            // Use alloy's structured revert data extraction from the
-            // ErrorPayload's JSON data field, then decode with alloy's
-            // standard decoder (handles Error(string), Panic(uint256),
-            // and Vyper UTF-8 reverts).
             if let Some(data) = payload.as_revert_data() {
                 let reason = alloy_sol_types::decode_revert_reason(&data);
                 return TxManagerError::ExecutionReverted { reason, data: Some(data) };
             }
-            // No structured data — extract a plain-text reason from the
-            // message text after the "execution reverted" marker.
             // Byte offsets from `lowered` are safe to index into
             // `payload.message` because RPC error messages are ASCII.
             let after = &payload.message[pos + "execution reverted".len()..];
