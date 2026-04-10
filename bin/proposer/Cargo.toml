@@ -17,6 +17,7 @@ workspace = true
 
 [dependencies]
 eyre.workspace = true
+base-cli-utils.workspace = true
 tokio = { workspace = true, features = ["full"] }
 clap = { workspace = true, features = ["derive", "env"] }
 base-proposer = { workspace = true, features = ["metrics"] }

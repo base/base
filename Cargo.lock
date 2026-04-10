@@ -4341,7 +4341,6 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-signer",
- "base-cli-utils",
  "base-common-consensus",
  "base-common-network",
  "base-common-rpc-types-engine",
@@ -4904,6 +4903,7 @@ dependencies = [
 name = "base-proposer-bin"
 version = "0.0.0"
 dependencies = [
+ "base-cli-utils",
  "base-proposer",
  "clap",
  "eyre",

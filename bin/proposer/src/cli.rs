@@ -14,7 +14,11 @@ pub(crate) struct Cli {
 impl Cli {
     /// Run the proposer service.
     pub(crate) async fn run(self) -> eyre::Result<()> {
-        base_proposer::ProposerService::run(base_proposer::ProposerConfig::from_cli(self.args)?)
-            .await
+        let config = base_proposer::ProposerConfig::from_cli(self.args)?;
+        config.log.init_tracing_subscriber()?;
+        config.metrics.init_with(|| {
+            base_cli_utils::register_version_metrics!();
+        })?;
+        base_proposer::ProposerService::run(config).await
     }
 }

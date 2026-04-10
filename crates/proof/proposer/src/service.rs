@@ -41,8 +41,6 @@ pub struct ProposerService;
 impl ProposerService {
     /// Runs the full proposer service lifecycle.
     pub async fn run(config: ProposerConfig) -> Result<()> {
-        config.log.init_tracing_subscriber()?;
-
         // Install the default rustls CryptoProvider before any TLS connections are created.
         // Required by rustls 0.23+ when custom TLS configs are used (e.g. skip_tls_verify).
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -69,12 +67,7 @@ impl ProposerService {
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
         // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
-        config
-            .metrics
-            .init_with(|| {
-                base_cli_utils::register_version_metrics!();
-            })
-            .wrap_err("failed to install Prometheus recorder")?;
+        config.metrics.init().wrap_err("failed to install Prometheus recorder")?;
 
         // ── 3. Create RPC clients ────────────────────────────────────────────
         let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())

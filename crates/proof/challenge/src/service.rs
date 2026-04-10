@@ -35,7 +35,7 @@ impl ChallengerService {
     ///
     /// # Lifecycle
     ///
-    /// 1. Initialise logging, TLS, and metrics
+    /// 1. Install TLS provider
     /// 2. Create L1 provider, tx-manager, and challenge submitter
     /// 3. Create contract clients and read onchain config
     /// 4. Create L2 and ZK clients
@@ -47,12 +47,9 @@ impl ChallengerService {
     ///
     /// # Errors
     ///
-    /// Returns an error if tracing initialisation fails, the Prometheus
-    /// recorder cannot be installed, RPC clients cannot connect, or
-    /// onchain configuration is invalid.
+    /// Returns an error if RPC clients cannot connect or onchain
+    /// configuration is invalid.
     pub async fn run(config: ChallengerConfig) -> Result<()> {
-        config.log.init_tracing_subscriber()?;
-
         // Install the default rustls CryptoProvider before any TLS connections are created.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -66,7 +63,6 @@ impl ChallengerService {
         config
             .metrics
             .init_with(|| {
-                base_cli_utils::register_version_metrics!();
                 ChallengerMetrics::up().set(1.0);
             })
             .map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;

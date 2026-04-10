@@ -39,6 +39,10 @@ fn main() {
         runner.install_ext::<MeteringStoreExtension>(metering_provider);
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
         runner.install_ext::<BuilderApiExtension>(());
+        runner.add_started_callback(|| {
+            base_cli_utils::register_version_metrics!();
+            Ok(())
+        });
 
         runner.run(builder).await
     })

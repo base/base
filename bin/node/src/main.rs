@@ -65,6 +65,10 @@ fn main() {
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
         runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);
+        runner.add_started_callback(|| {
+            base_cli_utils::register_version_metrics!();
+            Ok(())
+        });
 
         runner.run(builder).await
     })
