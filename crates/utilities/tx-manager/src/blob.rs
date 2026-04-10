@@ -4,10 +4,8 @@
 //! [`BlobTransactionSidecarEip7594`] sidecars
 //! (cell proofs, 128 proofs/blob) on all supported networks.
 
-use std::sync::Arc;
-
 use alloy_eips::{
-    eip4844::{Blob, env_settings::EnvKzgSettings},
+    eip4844::Blob,
     eip7594::{BlobTransactionSidecarEip7594, MAX_BLOBS_PER_TX_FUSAKA},
 };
 
@@ -36,13 +34,11 @@ impl BlobTxBuilder {
     /// Returns [`TxManagerError::Unsupported`] if KZG computation fails.
     pub fn build_sidecar(
         &self,
-        blobs: Arc<Vec<Box<Blob>>>,
+        blobs: Vec<Box<Blob>>,
     ) -> Result<BlobTransactionSidecarEip7594, TxManagerError> {
-        let settings = EnvKzgSettings::Default;
-        let kzg = settings.get();
-        let unboxed: Vec<Blob> = Arc::unwrap_or_clone(blobs).into_iter().map(|b| *b).collect();
+        let unboxed: Vec<Blob> = blobs.into_iter().map(|b| *b).collect();
 
-        BlobTransactionSidecarEip7594::try_from_blobs_with_settings(unboxed, kzg).map_err(|e| {
+        BlobTransactionSidecarEip7594::try_from_blobs(unboxed).map_err(|e| {
             TxManagerError::Unsupported(format!("EIP-7594 cell proof computation failed: {e}"))
         })
     }
@@ -66,7 +62,7 @@ mod tests {
     fn build_sidecar_n_blobs_uses_cell_proofs(#[case] n: usize) {
         let builder = builder();
         let blobs: Vec<Box<Blob>> = (0..n).map(|_| Box::default()).collect();
-        let sidecar = builder.build_sidecar(Arc::new(blobs)).unwrap();
+        let sidecar = builder.build_sidecar(blobs).unwrap();
         assert_eq!(sidecar.cell_proofs.len(), n * CELLS_PER_EXT_BLOB);
     }
 

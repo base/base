@@ -765,7 +765,7 @@ where
         let built_sidecar = if is_blob {
             let sidecar = match cached_sidecar {
                 Some(cached) => cached,
-                None => Arc::new(self.blob_builder.build_sidecar(Arc::clone(&candidate.blobs))?),
+                None => Arc::new(self.blob_builder.build_sidecar((*candidate.blobs).clone())?),
             };
             tx_request.sidecar = Some((*sidecar).clone().into());
             tx_request.populate_blob_hashes();
