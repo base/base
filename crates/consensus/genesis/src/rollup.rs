@@ -53,10 +53,7 @@ pub struct RollupConfig {
     /// The L2 chain ID
     #[cfg_attr(
         feature = "serde",
-        serde(
-            serialize_with = "chain_id_as_u64",
-            deserialize_with = "chain_id_from_u64"
-        )
+        serde(serialize_with = "chain_id_as_u64", deserialize_with = "chain_id_from_u64")
     )]
     pub l2_chain_id: Chain,
     /// Hardfork timestamps.
@@ -875,10 +872,7 @@ mod tests {
     fn test_l2_chain_id_serializes_as_number() {
         // Named chains (e.g. Base Sepolia, ID 84532) must serialize as a numeric JSON value,
         // not as the string "base-sepolia". op-batcher and other Go consumers expect *big.Int.
-        let cfg = RollupConfig {
-            l2_chain_id: Chain::from_id(84532),
-            ..Default::default()
-        };
+        let cfg = RollupConfig { l2_chain_id: Chain::from_id(84532), ..Default::default() };
         let json = serde_json::to_value(&cfg).unwrap();
         assert!(
             json["l2_chain_id"].is_number(),
