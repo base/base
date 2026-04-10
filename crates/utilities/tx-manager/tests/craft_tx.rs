@@ -119,7 +119,7 @@ async fn craft_tx_rejects_too_many_blobs() {
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new((0..7).map(|_| Box::<Blob>::default()).collect::<Vec<_>>()),
+        blobs: Arc::from((0..7).map(|_| Box::<Blob>::default()).collect::<Vec<_>>()),
         ..Default::default()
     };
 

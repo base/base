@@ -44,7 +44,8 @@ mod tests {
 
     #[test]
     fn candidate_with_blobs_is_type3() {
-        let candidate = TxCandidate { blobs: Arc::from(vec![Box::default()]), ..Default::default() };
+        let candidate =
+            TxCandidate { blobs: Arc::from(vec![Box::default()]), ..Default::default() };
 
         assert_eq!(candidate.blobs.len(), 1);
     }
