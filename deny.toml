@@ -82,7 +82,6 @@ skip = [
     # Crypto crates - version differences from different crypto stacks
     "block-buffer",
     "const-oid",
-    "cpufeatures",
     "crypto-common",
     "digest",
     "sha1",
@@ -94,6 +93,7 @@ skip = [
     "socket2",
     "bitflags",
     "redox_users",
+    "redox_syscall",
 
     # Network crates
     "tungstenite",
@@ -159,7 +159,6 @@ skip = [
     "toml",
     "toml_datetime",
     "toml_edit",
-    "winnow",
 
     # etcetera version mismatch: sqlx-mysql uses 0.8.x, testcontainers uses 0.11.x
     "etcetera",
