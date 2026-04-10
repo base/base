@@ -69,6 +69,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     pub fn enqueue(&mut self, task: EngineTask<EngineClient_>) {
         self.tasks.push(task);
         self.task_queue_length.send_replace(self.tasks.len());
+        Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
     }
 
     /// Resets the engine by finding a plausible sync starting point via
@@ -180,6 +181,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             self.tasks.pop();
 
             self.task_queue_length.send_replace(self.tasks.len());
+            Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
         }
 
         Ok(())
