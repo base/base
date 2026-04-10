@@ -94,6 +94,7 @@ skip = [
     "socket2",
     "bitflags",
     "redox_users",
+    "redox_syscall",
 
     # Network crates
     "tungstenite",
