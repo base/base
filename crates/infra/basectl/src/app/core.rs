@@ -38,7 +38,7 @@ impl NetworkPicker {
 // ---------------------------------------------------------------------------
 
 /// Main TUI application that manages views, routing, and the event loop.
-pub(crate) struct App {
+pub struct App {
     router: Router,
     resources: Resources,
     show_help: bool,
@@ -51,7 +51,7 @@ pub(crate) struct App {
 
 impl App {
     /// Creates a new application with the given resources and initial view.
-    pub(crate) fn new(resources: Resources, initial_view: ViewId) -> Self {
+    pub fn new(resources: Resources, initial_view: ViewId) -> Self {
         Self {
             router: Router::new(initial_view),
             resources,
@@ -63,7 +63,7 @@ impl App {
     }
 
     /// Runs the application event loop using the given view factory.
-    pub(crate) async fn run<F>(mut self, mut view_factory: F) -> Result<()>
+    pub async fn run<F>(mut self, mut view_factory: F) -> Result<()>
     where
         F: FnMut(ViewId) -> Box<dyn View>,
     {

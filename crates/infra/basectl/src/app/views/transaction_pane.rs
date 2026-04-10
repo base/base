@@ -19,7 +19,7 @@ use crate::{
 /// Fetches and displays the transactions for a single L2 block, with keyboard
 /// navigation, clipboard copy support, and focused/unfocused rendering states.
 #[derive(Debug)]
-pub(crate) struct TransactionPane {
+pub struct TransactionPane {
     /// The block number whose transactions are displayed.
     pub block_number: u64,
     /// Display title (e.g. "Block 123" or "Flashblock `123::2`").
@@ -63,7 +63,7 @@ impl TransactionPane {
     ///
     /// If `tx_range` is provided, only the specified slice of the block's transactions
     /// will be displayed (used for flashblock-specific views).
-    pub(crate) fn new(
+    pub fn new(
         block_number: u64,
         title_prefix: String,
         l2_rpc: &str,
@@ -95,7 +95,7 @@ impl TransactionPane {
     }
 
     /// Creates a pane with pre-decoded transaction data.
-    pub(crate) fn with_data(
+    pub fn with_data(
         block_number: u64,
         title_prefix: String,
         transactions: Vec<TxSummary>,
@@ -122,7 +122,7 @@ impl TransactionPane {
     ///
     /// DA block inspection intentionally avoids relying on streamed flashblock
     /// caches, which may be incomplete after reconnects or message gaps.
-    pub(crate) fn for_block(
+    pub fn for_block(
         block_number: u64,
         l2_rpc: &str,
         explorer_base_url: Option<&str>,
@@ -133,7 +133,7 @@ impl TransactionPane {
     }
 
     /// Polls background fetch channels for results.
-    pub(crate) fn poll(&mut self) {
+    pub fn poll(&mut self) {
         if let Some(ref mut rx) = self.rx
             && let Ok(txns) = rx.try_recv()
         {
@@ -162,7 +162,7 @@ impl TransactionPane {
     /// Returns `true` when the pane should be closed (Esc was pressed).
     /// The `toast_tx` callback is invoked to push toast notifications (e.g. after
     /// copying a transaction hash to the clipboard).
-    pub(crate) fn handle_key(&mut self, key: KeyEvent, toast_tx: &mut impl FnMut(Toast)) -> bool {
+    pub fn handle_key(&mut self, key: KeyEvent, toast_tx: &mut impl FnMut(Toast)) -> bool {
         let len = self.transactions.len();
 
         match key.code {
@@ -232,7 +232,7 @@ impl TransactionPane {
     ///
     /// When `is_focused` is true the border is highlighted and the selected row
     /// receives a distinct background color.
-    pub(crate) fn render(&mut self, frame: &mut Frame<'_>, area: Rect, is_focused: bool) {
+    pub fn render(&mut self, frame: &mut Frame<'_>, area: Rect, is_focused: bool) {
         let border_color = if is_focused { COLOR_ACTIVE_BORDER } else { Color::DarkGray };
 
         let title = if self.loading {

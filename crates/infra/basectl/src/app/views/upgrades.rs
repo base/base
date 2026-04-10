@@ -337,7 +337,7 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 /// Network upgrade activation countdown and history view.
 #[derive(Debug)]
-pub(crate) struct UpgradesView {
+pub struct UpgradesView {
     chains: [ChainUpgrades; 4],
     selected_chain: usize,
     tick_count: u64,
@@ -352,7 +352,7 @@ impl Default for UpgradesView {
 
 impl UpgradesView {
     /// Creates a new upgrades view.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             chains: all_chains(),
             selected_chain: 0,

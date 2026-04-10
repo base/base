@@ -34,7 +34,7 @@ pub async fn run_app(initial_view: ViewId, network: &str) -> Result<()> {
 /// safe-head polling, system config fetching, conductor polling, validator polling,
 /// and proof monitoring. All tasks communicate back through channels stored in
 /// `resources`.
-pub(crate) fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
+pub fn start_background_services(config: &ChainConfig, resources: &mut Resources) {
     let (fb_tx, fb_rx) = mpsc::channel::<TimestampedFlashblock>(100);
     let (da_fb_tx, da_fb_rx) = mpsc::channel::<Flashblock>(100);
     let (sync_tx, sync_rx) = mpsc::channel::<u64>(10);

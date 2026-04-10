@@ -20,11 +20,11 @@ const KEYBINDINGS: &[Keybinding] = &[
 /// Proof system monitoring view showing dispute game state, anchor state,
 /// and sync gap analysis.
 #[derive(Debug, Default)]
-pub(crate) struct ProofsView;
+pub struct ProofsView;
 
 impl ProofsView {
     /// Creates a new proofs view.
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }
