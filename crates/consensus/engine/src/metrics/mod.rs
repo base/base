@@ -33,6 +33,8 @@ base_metrics::define_metrics! {
     sequencer_unsafe_head_changed_total: counter,
     #[describe("Total duration of the finalize task in seconds")]
     engine_finalize_duration_seconds: histogram,
+    #[describe("Number of tasks currently pending in the engine task queue")]
+    engine_task_queue_depth: gauge,
 }
 
 impl Metrics {
