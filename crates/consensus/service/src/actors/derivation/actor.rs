@@ -137,14 +137,12 @@ where
         // first attributes are produced. All batches at and before the safe head will be
         // dropped, so the first payload will always be the disputed one.
         loop {
-            let step_result = base_metrics::time!(
-                Metrics::derivation_pipeline_step_duration_seconds(),
-                {
+            let step_result =
+                base_metrics::time!(Metrics::derivation_pipeline_step_duration_seconds(), {
                     self.pipeline
                         .step(self.derivation_state_machine.last_confirmed_safe_head())
                         .await
-                }
-            );
+                });
             match step_result {
                 StepResult::PreparedAttributes => { /* continue; attributes will be sent off. */ }
                 StepResult::AdvancedOrigin => {
