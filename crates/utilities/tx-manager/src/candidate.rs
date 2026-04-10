@@ -50,7 +50,6 @@ mod tests {
         let candidate = TxCandidate { blobs: Arc::new(vec![Box::default()]), ..Default::default() };
 
         assert_eq!(candidate.blobs.len(), 1);
-        // Struct-update preserves remaining defaults.
         assert!(candidate.tx_data.is_empty());
         assert!(candidate.to.is_none());
         assert_eq!(candidate.gas_limit, 0);
