@@ -83,13 +83,13 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::{TxManagerError, test_utils::stub_receipt};
+    use crate::{TxManagerError, test_utils::StubReceipt};
 
     #[tokio::test]
     async fn send_handle_yields_ok_on_success() {
         let (tx, rx) = oneshot::channel();
         let handle = SendHandle::new(rx);
-        let receipt = stub_receipt();
+        let receipt = StubReceipt::new();
         tx.send(Ok(receipt.clone())).unwrap();
         let result = handle.await;
         assert_eq!(result.unwrap(), receipt);

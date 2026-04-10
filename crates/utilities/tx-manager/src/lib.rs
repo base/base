@@ -47,3 +47,5 @@ pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
 
 #[cfg(test)]
 pub mod test_utils;
+#[cfg(test)]
+pub use test_utils::StubReceipt;
