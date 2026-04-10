@@ -17,7 +17,7 @@ use crate::TxManagerError;
 pub const MAX_BLOBS_PER_TX: usize = MAX_BLOBS_PER_TX_FUSAKA as usize;
 
 /// Builder for EIP-7594 blob sidecars.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug)]
 pub struct BlobTxBuilder;
 
 impl BlobTxBuilder {
