@@ -16,7 +16,7 @@ use crate::TxManagerError;
 /// Set to [`MAX_BLOBS_PER_TX_FUSAKA`] (6), the Fusaka per-transaction limit.
 pub const MAX_BLOBS_PER_TX: usize = MAX_BLOBS_PER_TX_FUSAKA as usize;
 
-/// Builder for Osaka-era EIP-4844 blob sidecars.
+/// Builder for EIP-7594 blob sidecars.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BlobTxBuilder;
 
@@ -27,16 +27,19 @@ impl BlobTxBuilder {
         Self
     }
 
-    /// Builds an Osaka-era EIP-7594 cell-proof sidecar.
+    /// Builds an EIP-7594 cell-proof sidecar.
+    ///
+    /// Accepts a slice of boxed blobs so callers behind an [`Arc`] can pass a
+    /// reference without cloning the blob data.
     ///
     /// # Errors
     ///
     /// Returns [`TxManagerError::Unsupported`] if KZG computation fails.
     pub fn build_sidecar(
         &self,
-        blobs: Vec<Box<Blob>>,
+        blobs: &[Box<Blob>],
     ) -> Result<BlobTransactionSidecarEip7594, TxManagerError> {
-        let unboxed: Vec<Blob> = blobs.into_iter().map(|b| *b).collect();
+        let unboxed: Vec<Blob> = blobs.iter().map(|b| *b.as_ref()).collect();
 
         BlobTransactionSidecarEip7594::try_from_blobs(unboxed).map_err(|e| {
             TxManagerError::Unsupported(format!("EIP-7594 cell proof computation failed: {e}"))
@@ -62,7 +65,7 @@ mod tests {
     fn build_sidecar_n_blobs_uses_cell_proofs(#[case] n: usize) {
         let builder = builder();
         let blobs: Vec<Box<Blob>> = (0..n).map(|_| Box::default()).collect();
-        let sidecar = builder.build_sidecar(blobs).unwrap();
+        let sidecar = builder.build_sidecar(&blobs).unwrap();
         assert_eq!(sidecar.cell_proofs.len(), n * CELLS_PER_EXT_BLOB);
     }
 
