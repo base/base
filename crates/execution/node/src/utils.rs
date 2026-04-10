@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use crate::OpNode as OtherOpNode;
 
 /// Base Node Helper type
-pub(crate) type OpNode =
+pub type OpNode =
     NodeHelperType<OtherOpNode, BlockchainProvider<NodeTypesWithDBAdapter<OtherOpNode, TmpDB>>>;
 
 /// Creates the initial setup with `num_nodes` of the node config, started and connected.
