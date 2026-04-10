@@ -837,6 +837,8 @@ where
         // Build the final block WITH state root computed
         let (final_payload, _) = build_block(state, ctx, info, true)?;
 
+        ctx.flush_rejected_txs(info);
+
         let elapsed = start_time.elapsed();
         info!(
             target: "payload_builder",

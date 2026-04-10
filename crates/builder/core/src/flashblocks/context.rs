@@ -7,7 +7,7 @@ use std::{
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_primitives::{B256, BlockHash, Bytes, TxHash, U256};
+use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
 use base_common_chains::Upgrades;
@@ -452,27 +452,40 @@ impl BasePayloadBuilderCtx {
         self.chain_spec.chain_id()
     }
 
-    /// Sends a rejected transaction to the audit-archiver forwarder (if configured).
-    ///
-    /// This is a fire-and-forget operation — errors are silently ignored to avoid
-    /// impacting block building performance.
-    fn send_rejected_tx(&self, tx_hash: TxHash, reason: &str, metering: MeterBundleResponse) {
+    fn record_rejected_tx(
+        &self,
+        info: &mut ExecutionInfo,
+        tx_hash: TxHash,
+        reason: RejectionReason,
+        metering: MeterBundleResponse,
+    ) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        info.rejected_txs.push(RejectedTransaction {
+            tx_hash,
+            block_number: self.block_number(),
+            reason,
+            timestamp: now,
+            metering,
+        });
+    }
+
+    /// Flushes all accumulated rejected transactions to the audit-archiver channel.
+    /// Called once after block finalization to batch all rejections into a single send.
+    pub fn flush_rejected_txs(&self, info: &mut ExecutionInfo) {
+        if info.rejected_txs.is_empty() {
+            return;
+        }
+
         if let Some(sender) = &self.rejected_tx_sender {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-            let rejected_tx = RejectedTransaction {
-                tx_hash,
-                block_number: self.block_number(),
-                reason: reason.to_string(),
-                timestamp: now,
-                metering,
-            };
-            if let Err(e) = sender.try_send(rejected_tx) {
+            let batch = std::mem::take(&mut info.rejected_txs);
+            let batch_len = batch.len();
+            if let Err(e) = sender.try_send(batch) {
                 BuilderMetrics::rejected_tx_channel_drops().increment(1);
                 warn!(
                     target: "payload_builder",
                     error = %e,
-                    tx_hash = %tx_hash,
-                    "Rejected tx channel full, dropping entry"
+                    count = batch_len,
+                    "Rejected tx batch channel full, dropping entries"
                 );
             }
         }
@@ -800,18 +813,24 @@ impl BasePayloadBuilderCtx {
                         if err.is_permanent() {
                             diag.permanently_rejected_txs.push(tx_hash);
                         }
-                        let err_message = err.to_string();
+
+                        if let ExecutionMeteringLimitExceeded::TransactionExecutionTime(
+                            tx_time_us,
+                            limit_us,
+                        ) = limit_err
+                        {
+                            self.record_rejected_tx(
+                                info,
+                                tx_hash,
+                                RejectionReason::ExecutionTimeExceeded {
+                                    tx_time_us: *tx_time_us,
+                                    limit_us: *limit_us,
+                                },
+                                resource_usage.clone().unwrap_or_default(),
+                            );
+                        }
+
                         log_txn(Err(err));
-                        // `ExecutionMeteringLimitExceeded` can only fire when
-                        // `tx.execution_time_us` or `tx.state_root_gas` is Some, which
-                        // requires `resource_usage` to be Some.
-                        //
-                        // We are only doing metering rejections for the audit trail for now
-                        self.send_rejected_tx(
-                            tx_hash,
-                            &err_message,
-                            resource_usage.clone().unwrap_or_default(),
-                        );
                         best_txs.mark_invalid(tx.signer(), tx.nonce());
                         continue;
                     }

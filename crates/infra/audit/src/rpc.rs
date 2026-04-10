@@ -1,7 +1,7 @@
 //! RPC server for the audit archiver.
 //!
-//! Exposes the `base_persistTransaction` method for receiving rejected
-//! transactions from the builder and persisting them to S3.
+//! Exposes the `base_persistRejectedTransactionBatch` method for receiving batches
+//! of rejected transactions from the builder and persisting them to S3.
 
 use base_bundles::RejectedTransaction;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
@@ -12,15 +12,17 @@ use crate::storage::S3EventReaderWriter;
 /// RPC trait for the audit archiver.
 #[rpc(server, namespace = "base")]
 pub trait AuditArchiverApi {
-    /// Persists a rejected transaction to S3 storage.
-    #[method(name = "persistTransaction")]
-    async fn persist_transaction(&self, rejected_tx: RejectedTransaction) -> RpcResult<bool>;
+    /// Persists a batch of rejected transactions to S3 storage.
+    #[method(name = "persistRejectedTransactionBatch")]
+    async fn persist_rejected_transaction_batch(
+        &self,
+        batch: Vec<RejectedTransaction>,
+    ) -> RpcResult<bool>;
 }
 
 /// RPC handler for audit archiver requests.
 #[derive(Debug)]
 pub struct AuditArchiverRpc {
-    /// S3 storage backend.
     storage: S3EventReaderWriter,
 }
 
@@ -33,26 +35,32 @@ impl AuditArchiverRpc {
 
 #[async_trait::async_trait]
 impl AuditArchiverApiServer for AuditArchiverRpc {
-    async fn persist_transaction(&self, rejected_tx: RejectedTransaction) -> RpcResult<bool> {
+    async fn persist_rejected_transaction_batch(
+        &self,
+        batch: Vec<RejectedTransaction>,
+    ) -> RpcResult<bool> {
+        if batch.is_empty() {
+            return Ok(true);
+        }
+
+        let batch_size = batch.len();
+        let block_number = batch.first().map(|tx| tx.block_number).unwrap_or(0);
+
         info!(
-            tx_hash = %rejected_tx.tx_hash,
-            block_number = rejected_tx.block_number,
-            reason = %rejected_tx.reason,
-            "Persisting rejected transaction"
+            batch_size,
+            block_number,
+            "Persisting rejected transaction batch"
         );
 
-        self.storage.store_rejected_transaction(&rejected_tx).await.map_err(|e| {
-            error!(
-                error = %e,
-                tx_hash = %rejected_tx.tx_hash,
-                "Failed to persist rejected transaction"
-            );
-            jsonrpsee::types::ErrorObject::owned(
-                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                "Failed to persist rejected transaction",
-                Some(e.to_string()),
-            )
-        })?;
+        for rejected_tx in batch {
+            if let Err(e) = self.storage.store_rejected_transaction(&rejected_tx).await {
+                error!(
+                    error = %e,
+                    tx_hash = %rejected_tx.tx_hash,
+                    "Failed to persist rejected transaction"
+                );
+            }
+        }
 
         Ok(true)
     }

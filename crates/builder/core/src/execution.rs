@@ -238,6 +238,8 @@ pub struct ExecutionInfo {
     pub extra: FlashblocksExecutionInfo,
     /// DA Footprint Scalar for Jovian
     pub da_footprint_scalar: Option<u16>,
+    /// Rejected transactions accumulated during block building, flushed after finalization.
+    pub rejected_txs: Vec<RejectedTransaction>,
 }
 
 impl ExecutionInfo {
@@ -255,6 +257,7 @@ impl ExecutionInfo {
             total_fees: U256::ZERO,
             extra: Default::default(),
             da_footprint_scalar: None,
+            rejected_txs: Vec::new(),
         }
     }
 
