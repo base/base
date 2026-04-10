@@ -199,9 +199,18 @@ impl Tracker {
 
     /// Track a transaction being included in a flashblock. This will not remove
     /// the tx from the cache.
+    ///
+    /// The `fb_included` flag on [`EventLog`] ensures that the metric is only
+    /// recorded once per transaction, even when [`PendingBlocks`] contains
+    /// transactions from earlier flashblocks that have already been measured.
     pub fn transaction_fb_included(&mut self, tx_hash: TxHash, received_at: Instant) {
-        // Only track if we have seen this transaction before
-        if let Some(event_log) = self.txs.peek(&tx_hash) {
+        // Only track if we have seen this transaction before and it hasn't
+        // already been recorded as included in a flashblock.
+        if let Some(event_log) = self.txs.get_mut(&tx_hash) {
+            if event_log.fb_included {
+                return;
+            }
+
             // Record `fb_inclusion_duration` metric if transaction was pending
             if let Some(pending_time) = event_log.pending_time {
                 let time_pending_to_fb_inclusion = received_at.duration_since(pending_time);
@@ -216,6 +225,8 @@ impl Tracker {
                     "Transaction included in flashblock"
                 );
             }
+
+            event_log.fb_included = true;
         }
     }
 
@@ -582,6 +593,29 @@ mod tests {
         // Only one should remain
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
+    }
+
+    #[test]
+    fn test_fb_inclusion_recorded_only_once() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        let first_received_at = Instant::now();
+
+        // First flashblock notification should mark the tx as fb-included.
+        tracker.transaction_fb_included(tx_hash, first_received_at);
+        let event_log = tracker.txs.get(&tx_hash).expect("tx should still be in cache");
+        assert!(event_log.fb_included, "should be marked as fb-included after first call");
+
+        // Simulate a later flashblock arriving — received_at is much later.
+        let later_received_at = first_received_at + Duration::from_millis(500);
+        tracker.transaction_fb_included(tx_hash, later_received_at);
+
+        // The tx should still be present and still marked — the second call
+        // must have been a no-op (no duplicate metric recording).
+        let event_log = tracker.txs.get(&tx_hash).expect("tx should still be in cache");
+        assert!(event_log.fb_included);
     }
 
     #[tokio::test]
