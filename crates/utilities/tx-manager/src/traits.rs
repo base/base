@@ -70,7 +70,7 @@ pub trait TxManager: Send + Sync + Debug {
     /// The default implementation is a no-op that immediately returns `Ok(())`,
     /// suitable for test managers and environments where txpool management is
     /// not needed.
-    fn cancel_tx(&self) -> impl Future<Output = Result<(), TxManagerError>> + Send {
+    fn cancel_tx(&self) -> impl Future<Output = TxManagerResult<()>> + Send {
         std::future::ready(Ok(()))
     }
 }
