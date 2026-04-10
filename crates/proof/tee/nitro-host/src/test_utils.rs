@@ -44,9 +44,7 @@ impl TEEProverRegistryClient for MockRegistry {
     ) -> Result<bool, base_proof_contracts::ContractError> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
         if self.should_fail.load(Ordering::Relaxed) {
-            return Err(base_proof_contracts::ContractError::Validation(
-                "mock RPC failure".into(),
-            ));
+            return Err(base_proof_contracts::ContractError::Validation("mock RPC failure".into()));
         }
         Ok(self.valid.load(Ordering::Relaxed))
     }

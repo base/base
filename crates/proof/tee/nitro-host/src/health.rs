@@ -69,8 +69,10 @@ mod tests {
     use base_proof_contracts::TEEProverRegistryClient;
 
     use super::*;
-    use crate::test_utils::{MockRegistry, TEST_SIGNER};
-    use crate::transport::NitroTransport;
+    use crate::{
+        test_utils::{MockRegistry, TEST_SIGNER},
+        transport::NitroTransport,
+    };
 
     fn test_healthz_with_mock(
         registry: impl TEEProverRegistryClient + 'static,
