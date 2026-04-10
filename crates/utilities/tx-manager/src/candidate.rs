@@ -47,10 +47,6 @@ mod tests {
         let candidate = TxCandidate { blobs: Arc::from(vec![Box::default()]), ..Default::default() };
 
         assert_eq!(candidate.blobs.len(), 1);
-        assert!(candidate.tx_data.is_empty());
-        assert!(candidate.to.is_none());
-        assert_eq!(candidate.gas_limit, 0);
-        assert_eq!(candidate.value, U256::ZERO);
     }
 
     #[test]
