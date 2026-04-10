@@ -3446,6 +3446,7 @@ dependencies = [
  "base-alloy-network",
  "base-alloy-provider",
  "base-alloy-rpc-types-engine",
+ "base-common-rpc-types",
  "base-consensus-derive",
  "base-consensus-disc",
  "base-consensus-engine",

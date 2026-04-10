@@ -14,8 +14,10 @@ pub use params::BaseFeeConfig;
 
 mod updates;
 pub use updates::{
-    BatcherUpdate, DaFootprintGasScalarUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate,
-    MinBaseFeeUpdate, OperatorFeeUpdate, UnsafeBlockSignerUpdate,
+    BatcherUpdate, DaFootprintGasScalarUpdate, EXPECTED_DATA_LENGTH, EXPECTED_POINTER,
+    Eip1559Update, GasConfigUpdate, GasLimitUpdate, MinBaseFeeUpdate, OperatorFeeUpdate,
+    STANDARD_UPDATE_DATA_LEN, UnsafeBlockSignerUpdate, ValidatedUpdateData, ValidationError,
+    validate_update_data,
 };
 
 mod system;

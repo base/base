@@ -468,7 +468,7 @@ impl<T> From<ReceiptWithBloom<OpReceipt<T>>> for OpReceiptEnvelope<T> {
 
 /// Bincode-compatible serde implementations for opreceipt type.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub(crate) mod serde_bincode_compat {
+pub(super) mod serde_bincode_compat {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 

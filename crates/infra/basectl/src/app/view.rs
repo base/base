@@ -30,6 +30,12 @@ pub(crate) trait View {
         false
     }
 
+    /// Returns true if this view is in a text-input mode and should receive all
+    /// character keys — including those the app normally intercepts (e.g. `n`).
+    fn captures_char_input(&self) -> bool {
+        false
+    }
+
     /// Renders this view into the given frame area.
     fn render(&mut self, frame: &mut Frame<'_>, area: Rect, resources: &Resources);
 }

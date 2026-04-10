@@ -48,10 +48,7 @@ async fn test_rollup_node_derives_batched_blocks() {
 
     Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
-    let l1_head = h.l1.tip_info();
-
     node.initialize().await;
-    node.act_l1_head_signal(l1_head).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} blocks derived");
@@ -97,8 +94,9 @@ async fn test_rollup_node_gossip_then_derivation() {
         source.push(block);
     }
 
-    // Initialize drains the gossip channel; unsafe_head should be at 5.
+    // Initialize then step once to drain the gossip channel; unsafe_head should be at 5.
     node.initialize().await;
+    node.run_until_idle().await;
 
     assert_eq!(
         node.l2_unsafe_number(),
@@ -110,9 +108,6 @@ async fn test_rollup_node_gossip_then_derivation() {
     // Batch and mine so the pipeline can derive.
     Batcher::new(source, &h.rollup_config, batcher_cfg).advance(&mut h.l1).await;
     chain.push(h.l1.tip().clone());
-    let l1_head = h.l1.tip_info();
-
-    node.act_l1_head_signal(l1_head).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected {L2_BLOCK_COUNT} blocks derived");

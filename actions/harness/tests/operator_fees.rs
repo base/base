@@ -392,12 +392,8 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     node.register_block_hash(4, block4_hash);
     node.initialize().await;
 
-    for i in 1..=4u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} must derive exactly one L2 block");
-    }
-
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, 4, "all 4 L2 blocks must be derived");
     assert_eq!(
         node.l2_safe_number(),
         4,
@@ -467,11 +463,10 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
         batcher.advance(&mut h.l1).await;
     }
 
-    // Mine L1 block 4 (no batch). This closes the epoch-0 sequencing window
-    // (0 + seq_window_size 4 = 4), triggering force-inclusion for L2 slot 3.
-    h.l1.mine_block();
-
-    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+    // Create the node with only L1 blocks 0–3 visible. Block 4 (which closes
+    // the epoch-0 seq window) is pushed to the shared chain after verifying the
+    // intermediate state, so the first run_until_idle cannot see it yet.
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
@@ -485,19 +480,20 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
     // Signal L1 blocks 1–3. Blocks 1–2 are derived from their valid batches.
     // Block 3's batch is dropped (NonEmptyTransitionBlock) and the pipeline
     // stalls waiting for more L1 data (the seq window has not yet closed).
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        node.run_until_idle().await;
-    }
+    node.run_until_idle().await;
     assert_eq!(
         node.l2_safe_number(),
         2,
         "only blocks 1–2 derived from valid batches; block 3 pending (batch dropped)"
     );
 
+    // Mine L1 block 4 (no batch) and make it visible. This closes the epoch-0
+    // sequencing window (0 + seq_window_size 4 = 4), triggering force-inclusion.
+    h.l1.mine_block();
+    chain.push(h.l1.tip().clone());
+
     // Signal L1 block 4. The epoch-0 window is now closed, so the pipeline
     // force-includes L2 slot 3 as a deposit-only block.
-    node.act_l1_head_signal(h.l1.block_info_at(4)).await;
     node.run_until_idle().await;
 
     assert!(
@@ -523,8 +519,8 @@ async fn jovian_non_empty_transition_batch_generates_deposit_only_block() {
 //
 // These tests verify that operator fee changes committed to L1 via
 // `ConfigUpdate` logs are reflected in the L1 info deposit transactions of
-// subsequently derived L2 blocks. The derivation pipeline's `IndexedTraversal`
-// stage reads `ConfigUpdate` logs from L1 receipts and updates its internal
+// subsequently derived L2 blocks. The derivation pipeline's traversal stage
+// reads `ConfigUpdate` logs from L1 receipts and updates its internal
 // `SystemConfig`; the `StatefulAttributesBuilder` uses the updated config to
 // generate the L1 info deposit for each new L2 block.
 // ---------------------------------------------------------------------------
@@ -638,8 +634,7 @@ async fn operator_fee_config_update_propagates_to_l1_info() {
     );
     node.initialize().await;
 
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=3 {
         node.run_until_idle().await;
     }
 

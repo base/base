@@ -49,8 +49,7 @@ async fn finalization_advances_with_multiple_l2_blocks_per_epoch() {
     assert_eq!(node.l2_finalized_number(), 0);
 
     // Derive all 3 L2 blocks.
-    for i in 1..=3u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=3u64 {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 3, "safe head should reach L2 block 3");
@@ -131,8 +130,7 @@ async fn finalization_advances_incrementally_with_l1_epochs() {
 
     // Signal and derive all L1 blocks: block 1 is the epoch-providing block,
     // blocks 2-7 contain batches.
-    for i in 1..=(1 + 6) {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=(1 + 6) {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 6, "safe head should reach L2 block 6");
@@ -194,8 +192,7 @@ async fn finalization_does_not_exceed_safe_head() {
     node.initialize().await;
 
     // Derive only 2 L2 blocks.
-    for i in 1..=2u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=2u64 {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 2, "safe head should be 2");
@@ -249,8 +246,7 @@ async fn finalization_reorg_clears_state() {
     node.initialize().await;
 
     // Derive both L2 blocks.
-    for i in 1..=2u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=2u64 {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 2);
@@ -269,7 +265,6 @@ async fn finalization_reorg_clears_state() {
     let l2_genesis = h.l2_genesis();
 
     node.act_reset(l2_genesis).await;
-    node.run_until_idle().await;
 
     // After reset, finalized head should be back to genesis (block 0).
     assert_eq!(
@@ -300,7 +295,6 @@ async fn finalization_reorg_clears_state() {
     chain.push(h.l1.tip().clone());
 
     let l1_block_1_new = h.l1.block_info_at(1);
-    node.act_l1_head_signal(l1_block_1_new).await;
     node.run_until_idle().await;
 
     assert_eq!(node.l2_safe_number(), 1, "safe head re-derived to 1");
@@ -375,8 +369,7 @@ async fn finalization_does_not_regress() {
     node.initialize().await;
 
     // Derive all L2 blocks. L1 block 1 is epoch-providing, blocks 2-7 have batches.
-    for i in 1..=(1 + 6) {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=(1 + 6) {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 6, "safe head should be 6");

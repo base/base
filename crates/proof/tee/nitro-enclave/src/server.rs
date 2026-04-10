@@ -9,11 +9,11 @@ use base_consensus_genesis::RollupConfig;
 use base_proof::BootInfo;
 use base_proof_client::Prologue;
 use base_proof_preimage::PreimageKey;
-use base_proof_primitives::PerChainConfig;
+use base_proof_primitives::{PerChainConfig, ProofJournal, ProofResult, Proposal};
 use tracing::info;
 
 use crate::{
-    Ecdsa, NsmRng, NsmSession, Oracle, ProofJournal, Proposal, Signing, TeeProofResult,
+    Ecdsa, NsmRng, NsmSession, Oracle, Signing,
     error::{NitroError, NsmError, ProposalError, Result},
 };
 
@@ -143,7 +143,7 @@ impl Server {
     pub async fn prove(
         &self,
         preimages: impl IntoIterator<Item = (PreimageKey, Vec<u8>)>,
-    ) -> Result<TeeProofResult> {
+    ) -> Result<ProofResult> {
         let oracle = Oracle::new(preimages)?;
 
         let boot_info =
@@ -247,7 +247,7 @@ impl Server {
             }
         };
 
-        Ok(TeeProofResult { aggregate_proposal, proposals })
+        Ok(ProofResult::Tee { aggregate_proposal, proposals })
     }
 }
 
@@ -306,6 +306,33 @@ mod tests {
             let cached = config_hash_for_chain(chain_id)
                 .unwrap_or_else(|_| panic!("missing config hash for chain {chain_id}"));
             assert_eq!(per_chain.hash(), cached, "config hash mismatch for chain {chain_id}");
+        }
+    }
+
+    /// Print config hashes for supported chains so they can be hardcoded in the
+    /// enclave server. Run with:
+    /// `cargo test -p base-proof-tee-nitro-enclave print_real_config_hashes -- --nocapture --ignored`
+    #[test]
+    #[ignore]
+    fn print_real_config_hashes() {
+        for cfg in BaseChainConfig::all() {
+            let chain_id = cfg.chain_id;
+            let rollup = match Registry::rollup_config(chain_id) {
+                Some(r) => r,
+                None => {
+                    println!("chain {chain_id}: skipped (no rollup config)");
+                    continue;
+                }
+            };
+            let mut per_chain = match PerChainConfig::from_rollup_config(rollup) {
+                Some(pc) => pc,
+                None => {
+                    println!("chain {chain_id}: skipped (no system_config)");
+                    continue;
+                }
+            };
+            per_chain.force_defaults();
+            println!("chain {chain_id}: {:?}", per_chain.hash());
         }
     }
 

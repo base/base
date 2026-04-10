@@ -129,11 +129,6 @@ async fn batcher_reorg_during_submission() {
     // Verify the node re-derives L2 block 1 from the new-fork submission.
     node.initialize().await;
 
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    let empty = node.run_until_idle().await;
-    assert_eq!(empty, 0, "empty block 1' has no batch data");
-
-    node.act_l1_head_signal(h.l1.block_info_at(recovery_num)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "same-batcher resubmission must derive L2 block 1");
     assert_eq!(

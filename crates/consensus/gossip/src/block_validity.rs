@@ -374,7 +374,7 @@ pub(crate) mod tests {
     }
 
     /// Make the block v2 compatible
-    pub(crate) fn v2_valid_block() -> Block<OpTxEnvelope> {
+    pub fn v2_valid_block() -> Block<OpTxEnvelope> {
         let mut block = v1_valid_block();
 
         block.body.withdrawals = Some(vec![].into());
@@ -388,7 +388,7 @@ pub(crate) mod tests {
     }
 
     /// Make the block v3 compatible
-    pub(crate) fn v3_valid_block() -> Block<OpTxEnvelope> {
+    pub fn v3_valid_block() -> Block<OpTxEnvelope> {
         let mut block = valid_block();
 
         block.body.withdrawals = Some(vec![].into());
@@ -411,7 +411,7 @@ pub(crate) mod tests {
     }
 
     /// Make the block v4 compatible
-    pub(crate) fn v4_valid_block() -> Block<OpTxEnvelope> {
+    pub fn v4_valid_block() -> Block<OpTxEnvelope> {
         v3_valid_block()
     }
 

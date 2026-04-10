@@ -247,7 +247,7 @@ impl LoadRunner {
         let chain_id = self.config.chain_id;
         let max_gas_price = self.config.max_gas_price;
 
-        let pb_check = Self::progress_bar(total_accounts as u64, "Checking balances");
+        let pb_check = self.progress_bar(total_accounts as u64, "Checking balances");
 
         // Phase 1: Parallel balance + nonce queries.
         let addresses: Vec<(Address, usize)> =
@@ -368,7 +368,7 @@ impl LoadRunner {
             .collect();
 
         let total_txs = txs.len() as u64;
-        let pb_fund = Self::progress_bar(total_txs, "Funding accounts");
+        let pb_fund = self.progress_bar(total_txs, "Funding accounts");
         let mut txs_remaining = txs.into_iter().peekable();
         while txs_remaining.peek().is_some() {
             let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
@@ -453,7 +453,7 @@ impl LoadRunner {
         pb_fund.finish_and_clear();
 
         // Phase 5: Parallel post-funding state refresh.
-        let pb_refresh = Self::progress_bar(total_accounts as u64, "Refreshing account state");
+        let pb_refresh = self.progress_bar(total_accounts as u64, "Refreshing account state");
         let refresh_futs: Vec<_> = self
             .accounts
             .accounts()
@@ -971,7 +971,7 @@ impl LoadRunner {
         let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);
 
         let total_accounts = self.accounts.len();
-        let pb_drain = Self::progress_bar(total_accounts as u64, "Draining accounts");
+        let pb_drain = self.progress_bar(total_accounts as u64, "Draining accounts");
 
         // Each account has its own signer, so drains are fully independent.
         let account_data: Vec<_> =
@@ -1052,7 +1052,7 @@ impl LoadRunner {
             return Ok(U256::ZERO);
         }
 
-        let pb_confirm = Self::progress_bar(pending_txs.len() as u64, "Confirming drain txs");
+        let pb_confirm = self.progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
         if let Err(e) = Self::await_confirmations(&client, &mut pending_txs, &pb_confirm).await {
@@ -1064,7 +1064,10 @@ impl LoadRunner {
         Ok(total_drained)
     }
 
-    fn progress_bar(total: u64, prefix: &str) -> ProgressBar {
+    fn progress_bar(&self, total: u64, prefix: &str) -> ProgressBar {
+        if self.snapshot_tx.is_some() {
+            return ProgressBar::hidden();
+        }
         let pb = ProgressBar::new(total);
         pb.set_style(
             ProgressStyle::with_template("{prefix} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")

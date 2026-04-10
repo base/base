@@ -209,16 +209,10 @@ where
         self.queue = VecDeque::default();
         Ok(())
     }
-
-    async fn provide_block(&mut self, block: BlockInfo) -> PipelineResult<()> {
-        self.prev.provide_block(block).await?;
-        self.queue = VecDeque::default();
-        Ok(())
-    }
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(super) mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;

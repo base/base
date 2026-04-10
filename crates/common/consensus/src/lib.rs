@@ -59,6 +59,11 @@ pub use transaction::serde_deposit_tx_rpc;
 pub mod serde_bincode_compat {
     pub use super::{
         receipts::serde_bincode_compat::{OpDepositReceipt, OpReceipt},
-        transaction::{serde_bincode_compat as transaction, serde_bincode_compat::TxDeposit},
+        transaction::serde_bincode_compat::TxDeposit,
     };
+
+    /// Bincode-compatible serde implementations for transaction types.
+    pub mod transaction {
+        pub use crate::transaction::serde_bincode_compat::*;
+    }
 }

@@ -106,8 +106,7 @@ async fn sequencer_drift_produces_deposit_only_blocks() {
 
     // Drive derivation through all L1 blocks.
     let mut total_derived = 0;
-    for i in 1..=h.l1.latest_number() {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=h.l1.latest_number() {
         total_derived += node.run_until_idle().await;
     }
 
@@ -191,8 +190,7 @@ async fn sequencer_drift_forced_empty_blocks_accepted() {
     node.initialize().await;
 
     let mut total_derived = 0;
-    for i in 1..=h.l1.latest_number() {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=h.l1.latest_number() {
         total_derived += node.run_until_idle().await;
     }
 

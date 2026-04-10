@@ -232,7 +232,7 @@ where
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+pub(super) mod tests {
     use alloc::vec;
 
     use alloy_consensus::{Blob, Signed, TxEip4844, TxEip4844Variant};

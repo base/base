@@ -10,7 +10,7 @@ use base_consensus_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     BaseBlockConversionError, L1BlockInfoBedrockOnlyFields as _, L1BlockInfoEcotoneBaseFields as _,
-    L1BlockInfoTx, SpanBatchError, SpanDecodingError,
+    L1BlockInfoTx, MAX_SPAN_BATCH_ELEMENTS, SpanBatchError, SpanDecodingError,
 };
 
 /// Converts the [`BaseBlock`] to a partial [`SystemConfig`].
@@ -117,6 +117,12 @@ pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, TxType), SpanBatchError> 
     let tx_payload = if rlp_header.list {
         // Grab the raw RLP for the transaction data from `r`. It was unaffected since we copied it.
         let payload_length_with_header = rlp_header.payload_length + rlp_header.length();
+        if payload_length_with_header > MAX_SPAN_BATCH_ELEMENTS as usize {
+            return Err(SpanBatchError::TooBigSpanBatchSize);
+        }
+        if payload_length_with_header > r.len() {
+            return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+        }
         let payload = r[0..payload_length_with_header].to_vec();
         r.advance(payload_length_with_header);
         Ok(payload)
@@ -142,7 +148,37 @@ mod tests {
     use base_consensus_genesis::{ChainGenesis, HardForkConfig};
 
     use super::*;
-    use crate::test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX};
+    use crate::{
+        MAX_SPAN_BATCH_ELEMENTS,
+        test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX},
+    };
+
+    #[test]
+    fn test_read_tx_data_truncated_payload() {
+        // An RLP list header claiming 3 bytes of payload, but the buffer only contains 3 bytes
+        // total (header + 2), so the slice would be out-of-bounds without the length guard.
+        let mut buf: &[u8] = &[0xc3, 0x01, 0x02];
+        let err = read_tx_data(&mut buf).unwrap_err();
+        assert_eq!(err, SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+    }
+
+    #[test]
+    fn test_read_tx_data_exceeds_max_span_batch_elements() {
+        // alloy_rlp's Header::decode validates that the buffer contains at least payload_length
+        // bytes before returning Ok, so the buffer must be fully sized for Header::decode to
+        // succeed and then our TooBigSpanBatchSize check fires.
+        // payload_length = MAX_SPAN_BATCH_ELEMENTS = 10_000_000 (0x98_96_80, 3-byte encoding).
+        // Total buffer: 4-byte header + 10_000_000 payload bytes = 10_000_004 bytes.
+        let payload_len = MAX_SPAN_BATCH_ELEMENTS as usize;
+        let mut buf = vec![0u8; 4 + payload_len];
+        buf[0] = 0xfa; // 0xf7 + 3: long list, 3-byte length field follows
+        buf[1] = (payload_len >> 16) as u8;
+        buf[2] = (payload_len >> 8) as u8;
+        buf[3] = payload_len as u8;
+        let mut buf: &[u8] = &buf;
+        let err = read_tx_data(&mut buf).unwrap_err();
+        assert_eq!(err, SpanBatchError::TooBigSpanBatchSize);
+    }
 
     #[test]
     fn test_to_system_config_invalid_genesis_hash() {

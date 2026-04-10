@@ -7,8 +7,8 @@ use thiserror::Error;
 /// Errors that can occur when submitting a challenge transaction.
 #[derive(Debug, Error)]
 pub enum ChallengeSubmitError {
-    /// The nullify transaction was mined but reverted on-chain.
-    #[error("nullify transaction reverted: {tx_hash}")]
+    /// A transaction was mined but reverted on-chain.
+    #[error("transaction reverted: {tx_hash}")]
     TxReverted {
         /// Hash of the reverted transaction.
         tx_hash: B256,

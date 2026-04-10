@@ -4,7 +4,7 @@
 //! of the pipeline. They allow the pipeline driver to perform actions such as
 //! resetting all stages in the pipeline through message passing.
 
-use base_protocol::{BlockInfo, L2BlockInfo};
+use base_protocol::L2BlockInfo;
 
 /// A signal to send to the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,8 +15,6 @@ pub enum Signal {
     Activation(ActivationSignal),
     /// Flush the currently active channel.
     FlushChannel,
-    /// Provide a new L1 block to the L1 traversal stage.
-    ProvideBlock(BlockInfo),
 }
 
 impl core::fmt::Display for Signal {
@@ -25,7 +23,6 @@ impl core::fmt::Display for Signal {
             Self::Reset(_) => write!(f, "reset"),
             Self::Activation(_) => write!(f, "activation"),
             Self::FlushChannel => write!(f, "flush_channel"),
-            Self::ProvideBlock(_) => write!(f, "provide_block"),
         }
     }
 }

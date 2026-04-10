@@ -20,6 +20,7 @@ use ratatui::{
 };
 use serde_json::json;
 use tokio::{sync::mpsc, task::JoinHandle};
+use url::Url;
 
 use crate::{
     app::{Action, Resources, View},
@@ -62,8 +63,10 @@ struct UpgradeSpec {
 #[derive(Debug)]
 struct ChainUpgrades {
     display_name: &'static str,
-    /// Default RPC URL used when the loaded config doesn't match this chain.
-    default_rpc: &'static str,
+    /// RPC URL for this chain, loaded from `~/.config/base/networks/{name}.yaml` at startup.
+    /// Falls back to a hardcoded public URL only for mainnet and sepolia.
+    /// `None` for internal networks (zeronet, devnet) when no user config is present.
+    rpc: Option<String>,
     specs: Vec<UpgradeSpec>,
 }
 
@@ -81,26 +84,43 @@ fn specs_from_config(cfg: &BaseChainConfig) -> Vec<UpgradeSpec> {
     ]
 }
 
+/// Reads the `rpc` field from `~/.config/base/networks/{name}.yaml` if it exists.
+fn user_config_rpc(name: &str) -> Option<String> {
+    let dir = dirs::home_dir()?.join(".config").join("base").join("networks");
+    let path = [dir.join(format!("{name}.yaml")), dir.join(format!("{name}.yml"))]
+        .into_iter()
+        .find(|p| p.exists())?;
+    let contents = std::fs::read_to_string(path).ok()?;
+    #[derive(serde::Deserialize)]
+    struct RpcOnly {
+        rpc: Url,
+    }
+    let parsed: RpcOnly = serde_yaml::from_str(&contents).ok()?;
+    Some(parsed.rpc.to_string())
+}
+
 fn all_chains() -> [ChainUpgrades; 4] {
     [
         ChainUpgrades {
             display_name: "Devnet",
-            default_rpc: "http://localhost:7545",
+            rpc: user_config_rpc("alpha").or_else(|| user_config_rpc("devnet")),
             specs: specs_from_config(BaseChainConfig::alpha()),
         },
         ChainUpgrades {
             display_name: "Zeronet",
-            default_rpc: "http://localhost:8545",
+            rpc: user_config_rpc("zeronet"),
             specs: specs_from_config(BaseChainConfig::zeronet()),
         },
         ChainUpgrades {
             display_name: "Sepolia",
-            default_rpc: "https://sepolia.base.org",
+            rpc: user_config_rpc("sepolia")
+                .or_else(|| Some("https://sepolia.base.org".to_string())),
             specs: specs_from_config(BaseChainConfig::sepolia()),
         },
         ChainUpgrades {
             display_name: "Mainnet",
-            default_rpc: "https://mainnet.base.org",
+            rpc: user_config_rpc("mainnet")
+                .or_else(|| Some("https://mainnet.base.org".to_string())),
             specs: specs_from_config(BaseChainConfig::mainnet()),
         },
     ]
@@ -119,6 +139,27 @@ const V1_CHECK_NAMES: &[&str] = &[
     "P256VERIFY gas",
     "eth_config",
 ];
+
+/// Expected check names for Jovian, in execution order.
+const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GPO implementation"];
+
+fn check_names_for(hardfork: &str) -> &'static [&'static str] {
+    match hardfork {
+        "V1" => V1_CHECK_NAMES,
+        "Jovian" => JOVIAN_CHECK_NAMES,
+        _ => &[],
+    }
+}
+
+/// Returns the last hardfork spec for a chain that has defined checks, or `None`.
+fn target_hardfork(chain: &ChainUpgrades) -> Option<&'static str> {
+    chain
+        .specs
+        .iter()
+        .rev()
+        .find(|s| s.timestamp.is_some() && !check_names_for(s.name).is_empty())
+        .map(|s| s.name)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CheckMode {
@@ -146,6 +187,8 @@ enum CheckUpdate {
 struct ChecksPanel {
     /// Chain index these checks were (or are being) run for.
     chain_idx: Option<usize>,
+    /// Which hardfork's checks are running.
+    hardfork: Option<&'static str>,
     mode: Option<CheckMode>,
     rpc_url: String,
     /// Name of the check currently executing.
@@ -158,16 +201,23 @@ struct ChecksPanel {
 }
 
 impl ChecksPanel {
-    fn start(&mut self, chain_idx: usize, rpc_url: String, mode: CheckMode) {
+    fn start(
+        &mut self,
+        chain_idx: usize,
+        rpc_url: String,
+        hardfork: &'static str,
+        mode: CheckMode,
+    ) {
         let (tx, rx) = mpsc::channel(64);
         self.chain_idx = Some(chain_idx);
+        self.hardfork = Some(hardfork);
         self.mode = Some(mode);
         self.rpc_url = rpc_url.clone();
         self.current = None;
         self.results.clear();
         self.running = true;
         self.rx = Some(rx);
-        self.handle = Some(tokio::spawn(run_v1_checks_streaming(rpc_url, mode, tx)));
+        self.handle = Some(tokio::spawn(run_checks_streaming(hardfork, rpc_url, mode, tx)));
     }
 
     fn reset(&mut self) {
@@ -175,6 +225,7 @@ impl ChecksPanel {
             h.abort();
         }
         self.chain_idx = None;
+        self.hardfork = None;
         self.mode = None;
         self.rpc_url.clear();
         self.current = None;
@@ -237,6 +288,8 @@ const fn zone_message(remaining_secs: i64) -> &'static str {
         _ => "under 10 minutes — THIS IS IT",
     }
 }
+
+const SECS_FOUR_WEEKS: u64 = 28 * SECS_PER_DAY;
 
 const CYCLE_COLORS: &[Color] =
     &[Color::LightGreen, Color::Green, Color::Cyan, Color::Yellow, Color::LightGreen];
@@ -306,6 +359,7 @@ impl UpgradesView {
             tick_count: 0,
             checks: ChecksPanel {
                 chain_idx: None,
+                hardfork: None,
                 mode: None,
                 rpc_url: String::new(),
                 current: None,
@@ -317,14 +371,14 @@ impl UpgradesView {
         }
     }
 
-    fn rpc_for_selected(&self, resources: &Resources) -> String {
+    fn rpc_for_selected(&self, resources: &Resources) -> Option<String> {
         let chain = &self.chains[self.selected_chain];
         let loaded = resources.config.name.to_lowercase();
         let selected = chain.display_name.to_lowercase();
         if loaded == selected || (selected == "devnet" && loaded.contains("devnet")) {
-            resources.config.rpc.to_string()
+            Some(resources.config.rpc.to_string())
         } else {
-            chain.default_rpc.to_string()
+            chain.rpc.clone()
         }
     }
 }
@@ -359,14 +413,17 @@ impl View for UpgradesView {
             KeyCode::Char('r') if !self.checks.running => {
                 let now = now_unix();
                 let chain = &self.chains[self.selected_chain];
-                // Derive mode from V1's own timestamp so that a chain where V1 is
-                // active but a later fork is upcoming still runs checks in After mode.
-                if let Some(v1_ts) =
-                    chain.specs.iter().find(|s| s.name == "V1").and_then(|s| s.timestamp)
+                // Find the last hardfork that has a scheduled timestamp and has
+                // defined checks. This lets mainnet run Jovian checks instead of
+                // silently doing nothing when V1 has no timestamp.
+                if let Some(spec) = target_hardfork(chain)
+                    .and_then(|name| chain.specs.iter().find(|s| s.name == name))
                 {
-                    let rpc = self.rpc_for_selected(resources);
-                    let mode = if v1_ts > now { CheckMode::Before } else { CheckMode::After };
-                    self.checks.start(self.selected_chain, rpc, mode);
+                    let ts = spec.timestamp.unwrap();
+                    if let Some(rpc) = self.rpc_for_selected(resources) {
+                        let mode = if ts > now { CheckMode::Before } else { CheckMode::After };
+                        self.checks.start(self.selected_chain, rpc, spec.name, mode);
+                    }
                 }
             }
             _ => {}
@@ -409,6 +466,23 @@ impl View for UpgradesView {
             ])
             .split(area);
 
+        // Dull the activated banner if the hardfork is stale (> 4 weeks old) or if a
+        // newer hardfork is already active on any other chain, meaning this network is
+        // running behind the frontier.
+        let dull = if let Some((_, lat_ts)) = latest_activated {
+            let stale = now.saturating_sub(lat_ts) > SECS_FOUR_WEEKS;
+            let superseded = self.chains.iter().enumerate().any(|(i, c)| {
+                i != self.selected_chain
+                    && c.specs
+                        .iter()
+                        .filter_map(|s| s.timestamp.filter(|&ts| ts > 0 && ts <= now))
+                        .any(|ts| ts > lat_ts)
+            });
+            stale || superseded
+        } else {
+            false
+        };
+
         render_chain_tabs(frame, outer[0], &self.chains, self.selected_chain);
 
         match upcoming {
@@ -425,6 +499,7 @@ impl View for UpgradesView {
                         ts,
                         now.saturating_sub(ts),
                         self.tick_count,
+                        dull,
                     );
                 }
                 None => render_tbd(frame, outer[1]),
@@ -437,7 +512,8 @@ impl View for UpgradesView {
             .split(outer[2]);
 
         render_history(frame, bottom[0], chain, now);
-        render_checks_panel(frame, bottom[1], &self.checks, self.tick_count);
+        let active_hf = target_hardfork(chain);
+        render_checks_panel(frame, bottom[1], &self.checks, self.tick_count, active_hf);
         render_footer(frame, outer[3], self.checks.running);
     }
 }
@@ -526,7 +602,35 @@ fn render_activated(
     ts: u64,
     elapsed_secs: u64,
     tick: u64,
+    dull: bool,
 ) {
+    if dull {
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(""),
+            Line::from(""),
+            Line::from(Span::styled(
+                "✓  activated",
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("{name} is live"),
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                format!("activated {}  ·  {}", fmt_timestamp(ts), fmt_elapsed(elapsed_secs)),
+                Style::default().fg(Color::DarkGray),
+            )),
+        ];
+        let block = Block::default()
+            .title(format!(" BASE {name} UPGRADE "))
+            .title_style(Style::default().fg(Color::DarkGray))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+        return;
+    }
+
     let cycle_color = CYCLE_COLORS[(tick / 4) as usize % CYCLE_COLORS.len()];
     let n = CONFETTI.len();
     let phase = (tick / 4) as usize;
@@ -617,30 +721,39 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, chain: &ChainUpgrades, now:
     frame.render_widget(Table::new(rows, widths).block(block).header(header), area);
 }
 
-fn render_checks_panel(frame: &mut Frame<'_>, area: Rect, panel: &ChecksPanel, tick: u64) {
+fn render_checks_panel(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    panel: &ChecksPanel,
+    tick: u64,
+    active_hardfork: Option<&'static str>,
+) {
     let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
     // Panel is idle and has never been run.
     if panel.chain_idx.is_none() {
+        let hf_name = active_hardfork.unwrap_or("?");
+        let check_list = check_names_for(hf_name).join(" · ");
+        let hint = format!("Press [r] to run {hf_name} post-upgrade checks");
         let lines: Vec<Line<'static>> = vec![
             Line::from(""),
-            Line::from(Span::styled(
-                "Press [r] to run post-upgrade checks",
-                Style::default().fg(Color::DarkGray),
-            )),
+            Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
             Line::from(""),
             Line::from(Span::styled(
-                "Checks: CLZ opcode · MODEXP size/gas · P256VERIFY gas · eth_config",
+                format!("Checks: {check_list}"),
                 Style::default().fg(Color::DarkGray),
             )),
         ];
         let block = Block::default()
-            .title(" V1 Checks ")
+            .title(format!(" {hf_name} Checks "))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray));
         frame.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
         return;
     }
+
+    let hf = panel.hardfork.unwrap_or("?");
+    let check_names = check_names_for(hf);
 
     let mode_str = match panel.mode {
         Some(CheckMode::Before) => "before",
@@ -653,14 +766,14 @@ fn render_checks_panel(frame: &mut Frame<'_>, area: Rect, panel: &ChecksPanel, t
 
     let (title, border_color) = if panel.running {
         let spin = spinner[(tick / 2) as usize % spinner.len()];
-        (format!(" V1 Checks ({mode_str})  {spin} running… "), Color::Yellow)
+        (format!(" {hf} Checks ({mode_str})  {spin} running… "), Color::Yellow)
     } else if failed > 0 {
-        (format!(" V1 Checks ({mode_str})  ✓ {passed}  ✗ {failed} "), Color::Red)
+        (format!(" {hf} Checks ({mode_str})  ✓ {passed}  ✗ {failed} "), Color::Red)
     } else {
-        (format!(" V1 Checks ({mode_str})  ✓ {passed} passed "), Color::LightGreen)
+        (format!(" {hf} Checks ({mode_str})  ✓ {passed} passed "), Color::LightGreen)
     };
 
-    let rows: Vec<Row<'static>> = V1_CHECK_NAMES
+    let rows: Vec<Row<'static>> = check_names
         .iter()
         .map(|&name| {
             panel.results.get(name).map_or_else(
@@ -824,6 +937,200 @@ fn clock_lines(
     lines
 }
 
+// ── Activation checks ─────────────────────────────────────────────────────────
+
+/// Route to the correct hardfork's streaming check function.
+async fn run_checks_streaming(
+    hardfork: &'static str,
+    rpc_url: String,
+    mode: CheckMode,
+    tx: mpsc::Sender<CheckUpdate>,
+) {
+    match hardfork {
+        "V1" => run_v1_checks_streaming(rpc_url, tx).await,
+        "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
+        _ => {}
+    }
+}
+
+// ── Jovian activation checks ──────────────────────────────────────────────────
+
+/// bn256Pairing precompile address (EIP-197).
+const BN256PAIRING_ADDR: &str = "0x0000000000000000000000000000000000000008";
+/// `GasPriceOracle` predeploy proxy address.
+const GAS_PRICE_ORACLE_ADDR: &str = "0x420000000000000000000000000000000000000F";
+/// EIP-1967 logic/implementation storage slot.
+const EIP1967_IMPL_SLOT: &str =
+    "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+/// Expected GPO implementation address after Jovian activation.
+const JOVIAN_GPO_IMPL: &str = "4f1db3c6abd250ba86e0928471a8f7db3afd88f1";
+/// Expected GPO implementation address under Isthmus (before Jovian).
+const ISTHMUS_GPO_IMPL: &str = "93e57a196454cb919193fa9946f14943cf733845";
+
+async fn eth_get_storage_at(client: &HttpClient, addr: &str, slot: &str) -> Result<String, String> {
+    ClientT::request::<String, _>(client, "eth_getStorageAt", rpc_params![addr, slot, "latest"])
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn eth_get_block_by_number_latest(client: &HttpClient) -> Result<serde_json::Value, String> {
+    ClientT::request::<serde_json::Value, _>(
+        client,
+        "eth_getBlockByNumber",
+        rpc_params!["latest", false],
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+async fn run_jovian_checks_streaming(
+    rpc_url: String,
+    mode: CheckMode,
+    tx: mpsc::Sender<CheckUpdate>,
+) {
+    macro_rules! send_start {
+        ($name:expr) => {
+            if tx.send(CheckUpdate::Starting($name.to_string())).await.is_err() {
+                return;
+            }
+        };
+    }
+    macro_rules! send_result {
+        ($name:expr, $result:expr) => {
+            if tx
+                .send(CheckUpdate::Completed { name: $name.to_string(), result: $result })
+                .await
+                .is_err()
+            {
+                return;
+            }
+        };
+    }
+
+    let client = match make_rpc_client(&rpc_url) {
+        Ok(c) => c,
+        Err(e) => {
+            let conn_result = CheckResult {
+                passed: Some(false),
+                detail: format!("cannot build client for {rpc_url}: {e}"),
+            };
+            send_result!("bn256Pairing limit", conn_result);
+            for &name in &JOVIAN_CHECK_NAMES[1..] {
+                send_result!(
+                    name,
+                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
+                );
+            }
+            return;
+        }
+    };
+
+    match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
+        Ok(_) => {}
+        Err(e) => {
+            let conn_result =
+                CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
+            send_result!("bn256Pairing limit", conn_result);
+            for &name in &JOVIAN_CHECK_NAMES[1..] {
+                send_result!(
+                    name,
+                    CheckResult { passed: None, detail: "skipped (no connection)".into() }
+                );
+            }
+            return;
+        }
+    }
+
+    // ── bn256Pairing size limit (427 pairs = 81984 bytes is the Jovian cap) ────
+    // 428 pairs × 192 bytes = 82176 bytes, which exceeds the Jovian limit.
+    // Identity points (all-zero) are valid in bn256Pairing per EIP-197.
+    send_start!("bn256Pairing limit");
+    let oversized = format!("0x{}", "00".repeat(428 * 192));
+    let r = eth_call(&client, BN256PAIRING_ADDR, &oversized).await;
+    let bn256_check = match (mode, r) {
+        (CheckMode::Before, Ok(_)) => CheckResult {
+            passed: Some(true),
+            detail: "oversized input accepted (expected before Jovian)".to_string(),
+        },
+        (CheckMode::Before, Err(e)) => {
+            CheckResult { passed: Some(false), detail: format!("unexpectedly rejected: {e}") }
+        }
+        (CheckMode::After, Err(_)) => CheckResult {
+            passed: Some(true),
+            detail: "oversized input rejected (correct)".to_string(),
+        },
+        (CheckMode::After, Ok(v)) => CheckResult {
+            passed: Some(false),
+            detail: format!("unexpectedly accepted: {}", v.get(..20).unwrap_or(&v)),
+        },
+    };
+    send_result!("bn256Pairing limit", bn256_check);
+
+    // ── Extra data version byte (0 → 1 at Jovian) ─────────────────────────────
+    send_start!("extra data v1");
+    let extra_check = match eth_get_block_by_number_latest(&client).await {
+        Err(e) => CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
+        Ok(block) => {
+            let extra_data = block["extraData"].as_str().unwrap_or("0x");
+            let hex_bytes = extra_data.trim_start_matches("0x");
+            let first_byte =
+                hex_bytes.get(..2).and_then(|s| u8::from_str_radix(s, 16).ok()).unwrap_or(0xFF);
+            match (mode, first_byte) {
+                (CheckMode::Before, 0) => {
+                    CheckResult { passed: Some(true), detail: "version=0 (expected)".to_string() }
+                }
+                (CheckMode::Before, v) => CheckResult {
+                    passed: Some(false),
+                    detail: format!("version={v} (expected 0 before Jovian)"),
+                },
+                (CheckMode::After, 1) => {
+                    CheckResult { passed: Some(true), detail: "version=1 (expected)".to_string() }
+                }
+                (CheckMode::After, v) => CheckResult {
+                    passed: Some(false),
+                    detail: format!("version={v} (expected 1 after Jovian)"),
+                },
+            }
+        }
+    };
+    send_result!("extra data v1", extra_check);
+
+    // ── GasPriceOracle EIP-1967 implementation slot ───────────────────────────
+    send_start!("GPO implementation");
+    let gpo_check =
+        match eth_get_storage_at(&client, GAS_PRICE_ORACLE_ADDR, EIP1967_IMPL_SLOT).await {
+            Err(e) => CheckResult { passed: Some(false), detail: format!("RPC error: {e}") },
+            Ok(slot_val) => {
+                let val = norm(&slot_val);
+                // Slot value is a zero-padded 32-byte address; last 40 hex chars = address.
+                let impl_addr = if val.len() >= 40 { &val[val.len() - 40..] } else { val.as_str() };
+                let expected = match mode {
+                    CheckMode::After => JOVIAN_GPO_IMPL,
+                    CheckMode::Before => ISTHMUS_GPO_IMPL,
+                };
+                let label = match mode {
+                    CheckMode::After => "Jovian",
+                    CheckMode::Before => "Isthmus",
+                };
+                if impl_addr == expected {
+                    CheckResult {
+                        passed: Some(true),
+                        detail: format!("→ 0x{}", impl_addr.get(..8).unwrap_or(impl_addr)),
+                    }
+                } else {
+                    CheckResult {
+                        passed: Some(false),
+                        detail: format!(
+                            "impl=0x{} (expected {label})",
+                            impl_addr.get(..8).unwrap_or(impl_addr)
+                        ),
+                    }
+                }
+            }
+        };
+    send_result!("GPO implementation", gpo_check);
+}
+
 // ── V1 activation checks (ported from v1.py run_v1_checks) ───────────────────
 
 const CLZ_PROBE_ADDR: &str = "0x000000000000000000000000000000000000001e";
@@ -851,15 +1158,6 @@ const MODEXP_OVERSIZED: &str = concat!(
     "0000000000000000000000000000000000000000000000000000000000000000",
     "0000000000000000000000000000000000000000000000000000000000000001",
 );
-
-fn not_activated(msg: &str) -> bool {
-    let m = msg.to_lowercase();
-    m.contains("notactivated")
-        || m.contains("invalid opcode")
-        || m.contains("undefined opcode")
-        || m.contains("opcode 0x1e")
-        || m.contains("unsupported opcode")
-}
 
 fn norm(h: &str) -> String {
     h.trim().trim_matches('"').to_lowercase()
@@ -906,18 +1204,10 @@ fn evaluate_opcode_check(
     _name: &str,
     result: &Result<String, String>,
     expected: &str,
-    mode: CheckMode,
 ) -> CheckResult {
-    let (passed, detail) = match (mode, result) {
-        (CheckMode::Before, Err(e)) if not_activated(e) => {
-            (true, "opcode unavailable (expected before V1)".to_string())
-        }
-        (CheckMode::Before, Err(e)) => (false, format!("unexpected error: {e}")),
-        (CheckMode::Before, Ok(actual)) => {
-            (false, format!("unexpectedly succeeded before V1: {actual}"))
-        }
-        (CheckMode::After, Err(e)) => (false, format!("call failed: {e}")),
-        (CheckMode::After, Ok(actual)) => {
+    let (passed, detail) = match result {
+        Err(e) => (false, format!("call failed: {e}")),
+        Ok(actual) => {
             if norm(actual) == norm(expected) {
                 (true, format!("→ {}", actual.get(..20).unwrap_or(actual)))
             } else {
@@ -930,9 +1220,7 @@ fn evaluate_opcode_check(
 
 fn evaluate_gas_probe(
     result: &Result<String, String>,
-    mode: CheckMode,
     gas_label: &str,
-    before_desc: &str,
     after_desc: &str,
 ) -> CheckResult {
     let actual = match result {
@@ -942,27 +1230,14 @@ fn evaluate_gas_probe(
     let success_val = norm(PROBE_SUCCESS);
 
     let (passed, detail) = if actual == success_val {
-        match mode {
-            CheckMode::Before => {
-                (true, format!("{gas_label} CALL succeeded ({before_desc} before V1)"))
-            }
-            CheckMode::After => (
-                false,
-                format!("{gas_label} CALL succeeded — expected OOG ({after_desc} after V1)"),
-            ),
-        }
+        (false, format!("{gas_label} CALL succeeded — expected OOG ({after_desc} after V1)"))
     } else {
-        match mode {
-            CheckMode::After => (true, format!("{gas_label} CALL OOG ({after_desc} after V1)")),
-            CheckMode::Before => {
-                (false, format!("{gas_label} CALL OOG — expected success ({before_desc})"))
-            }
-        }
+        (true, format!("{gas_label} CALL OOG ({after_desc} after V1)"))
     };
     CheckResult { passed: Some(passed), detail }
 }
 
-async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sender<CheckUpdate>) {
+async fn run_v1_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>) {
     macro_rules! send_start {
         ($name:expr) => {
             if tx.send(CheckUpdate::Starting($name.to_string())).await.is_err() {
@@ -1001,7 +1276,6 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
     };
 
     // Verify the RPC is reachable with a quick eth_blockNumber call.
-    send_start!("RPC connection");
     match ClientT::request::<String, _>(&client, "eth_blockNumber", rpc_params![]).await {
         Ok(_) => {}
         Err(e) => {
@@ -1029,28 +1303,19 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
         send_start!(name);
         let r =
             eth_call_override(&client, CLZ_PROBE_ADDR, calldata, CLZ_PROBE_ADDR, CLZ_RUNTIME).await;
-        send_result!(name, evaluate_opcode_check(name, &r, expected, mode));
+        send_result!(name, evaluate_opcode_check(name, &r, expected));
     }
 
     // ── MODEXP size limit ──────────────────────────────────────────────────────
     send_start!("MODEXP size limit");
     let r = eth_call(&client, MODEXP_ADDR, MODEXP_OVERSIZED).await;
-    let modexp_size = match (mode, r) {
-        (CheckMode::Before, Ok(_)) => CheckResult {
-            passed: Some(true),
-            detail: "oversized input accepted (expected before V1)".to_string(),
-        },
-        (CheckMode::Before, Err(e)) => {
-            CheckResult { passed: Some(false), detail: format!("unexpectedly rejected: {e}") }
-        }
-        (CheckMode::After, Err(_)) => CheckResult {
+    let modexp_size = r.map_or_else(
+        |_| CheckResult {
             passed: Some(true),
             detail: "oversized input rejected (correct)".to_string(),
         },
-        (CheckMode::After, Ok(v)) => {
-            CheckResult { passed: Some(false), detail: format!("unexpectedly accepted: {v}") }
-        }
-    };
+        |v| CheckResult { passed: Some(false), detail: format!("unexpectedly accepted: {v}") },
+    );
     send_result!("MODEXP size limit", modexp_size);
 
     // ── MODEXP min gas (200 → 500) ─────────────────────────────────────────────
@@ -1063,7 +1328,7 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
         MODEXP_GAS_PROBE_RUNTIME,
     )
     .await;
-    send_result!("MODEXP min gas", evaluate_gas_probe(&r, mode, "400-gas", "min=200", "min=500"));
+    send_result!("MODEXP min gas", evaluate_gas_probe(&r, "400-gas", "min=500"));
 
     // ── P256VERIFY gas (3450 → 6900) ───────────────────────────────────────────
     send_start!("P256VERIFY gas");
@@ -1075,10 +1340,7 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
         P256_GAS_PROBE_RUNTIME,
     )
     .await;
-    send_result!(
-        "P256VERIFY gas",
-        evaluate_gas_probe(&r, mode, "5000-gas", "cost=3450", "cost=6900")
-    );
+    send_result!("P256VERIFY gas", evaluate_gas_probe(&r, "5000-gas", "cost=6900"));
 
     // ── eth_config RPC method ──────────────────────────────────────────────────
     send_start!("eth_config");
@@ -1086,21 +1348,9 @@ async fn run_v1_checks_streaming(rpc_url: String, mode: CheckMode, tx: mpsc::Sen
         ClientT::request::<serde_json::Value, _>(&client, "eth_config", rpc_params![])
             .await
             .map_err(|e| e.to_string());
-    let eth_config_check = match (mode, cfg_result) {
-        (CheckMode::Before, Ok(_)) => CheckResult {
-            passed: Some(false),
-            detail: "unexpectedly available before V1".to_string(),
-        },
-        (CheckMode::Before, Err(_)) => CheckResult {
-            passed: Some(true),
-            detail: "unavailable before V1 (expected)".to_string(),
-        },
-        (CheckMode::After, Ok(_)) => {
-            CheckResult { passed: Some(true), detail: "available after V1".to_string() }
-        }
-        (CheckMode::After, Err(e)) => {
-            CheckResult { passed: Some(false), detail: format!("unavailable after V1: {e}") }
-        }
+    let eth_config_check = match cfg_result {
+        Ok(_) => CheckResult { passed: Some(true), detail: "available after V1".to_string() },
+        Err(e) => CheckResult { passed: Some(false), detail: format!("unavailable after V1: {e}") },
     };
     send_result!("eth_config", eth_config_check);
 }

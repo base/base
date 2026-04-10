@@ -40,15 +40,7 @@ async fn single_l2_block_derived_from_batcher_frame() {
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = h.l1.tip_info();
-
-    // Seed the genesis SystemConfig (batcher address) and drain the empty
-    // genesis L1 block so IndexedTraversal is ready for new block signals.
     node.initialize().await;
-
-    // Signal the new L1 head. IndexedTraversal validates the parent-hash chain,
-    // so this only succeeds because block 1's parent_hash equals genesis.hash().
-    node.act_l1_head_signal(l1_block_1).await;
 
     // Step the pipeline until it is idle.
     let derived = node.run_until_idle().await;
@@ -97,12 +89,11 @@ async fn multiple_l1_blocks_each_derive_one_l2_block() {
     );
     node.initialize().await;
 
-    // Drive derivation one L1 block at a time.
-    for i in 1..=L2_BLOCK_COUNT {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(
+        total_derived, L2_BLOCK_COUNT as usize,
+        "expected {L2_BLOCK_COUNT} L2 blocks derived"
+    );
 
     assert_eq!(node.l2_safe_number(), L2_BLOCK_COUNT);
 
@@ -138,8 +129,6 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
     // Reorg L1 back to genesis; mine an empty replacement block 1'.
     h.l1.reorg_to(0).expect("reorg to genesis");
     h.l1.mine_block();
-    let l1_block_1_prime = h.l1.tip_info();
-
     // The node is created from the miner's current (post-reorg) state, so
     // the orphaned block 1 is not present in the SharedL1Chain snapshot.
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
@@ -148,7 +137,6 @@ async fn batch_in_orphaned_l1_block_is_not_derived() {
     );
 
     node.initialize().await;
-    node.act_l1_head_signal(l1_block_1_prime).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 0, "batch was in orphaned block; nothing should be derived");
@@ -180,10 +168,7 @@ async fn reorg_reverts_derived_safe_head() {
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = h.l1.tip_info();
-
     node.initialize().await;
-    node.act_l1_head_signal(l1_block_1).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "L2 block 1 derived before reorg");
     assert_eq!(node.l2_safe_number(), 1);
@@ -191,8 +176,6 @@ async fn reorg_reverts_derived_safe_head() {
     // Reorg L1 back to genesis; mine an empty replacement block 1'.
     h.l1.reorg_to(0).expect("reorg to genesis");
     h.l1.mine_block();
-    let l1_block_1_prime = h.l1.tip_info();
-
     // Sync the SharedL1Chain that the node's providers read from.
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
@@ -205,7 +188,6 @@ async fn reorg_reverts_derived_safe_head() {
     node.run_until_idle().await;
 
     // Signal the new fork's empty block 1' and step.
-    node.act_l1_head_signal(l1_block_1_prime).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 0, "no batch in reorged fork");
@@ -240,7 +222,6 @@ async fn reorg_and_resubmit_rederives_l2_block() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1);
     assert_eq!(node.l2_safe_number(), 1);
@@ -248,7 +229,6 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     // --- Reorg: truncate L1 to genesis; mine an empty block 1'. ---
     h.l1.reorg_to(0).expect("reorg to genesis");
     h.l1.mine_block(); // block 1' (empty)
-    let l1_block_1_prime = h.l1.tip_info();
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
@@ -259,7 +239,6 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     node.run_until_idle().await;
 
     // Step over the empty block 1' — nothing derived.
-    node.act_l1_head_signal(l1_block_1_prime).await;
     let empty = node.run_until_idle().await;
     assert_eq!(empty, 0, "block 1' has no batch; nothing derived");
     assert_eq!(node.l2_safe_number(), 0);
@@ -275,7 +254,6 @@ async fn reorg_and_resubmit_rederives_l2_block() {
     chain.push(h.l1.tip().clone());
 
     // Derive L2 block 1 from the resubmitted batch in L1 block 2'.
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let rederived = node.run_until_idle().await;
 
     assert_eq!(rederived, 1, "L2 block 1 re-derived from resubmitted batch");
@@ -318,7 +296,6 @@ async fn reorg_flip_flop() {
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "phase 1: L2 block 1 derived from fork A");
     assert_eq!(node.l2_safe_number(), 1);
@@ -330,14 +307,10 @@ async fn reorg_flip_flop() {
         source.push(block1.clone());
         Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
-    let fork_b1 = h.l1.tip_info();
-
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
     node.act_reset(l2_genesis).await;
-    node.run_until_idle().await;
-    node.act_l1_head_signal(fork_b1).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "phase 2: L2 block 1 re-derived from fork B");
     assert_eq!(node.l2_safe_number(), 1);
@@ -349,14 +322,10 @@ async fn reorg_flip_flop() {
         source.push(block1);
         Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
-    let fork_a_prime1 = h.l1.tip_info();
-
     chain.truncate_to(0);
     chain.push(h.l1.tip().clone());
 
     node.act_reset(l2_genesis).await;
-    node.run_until_idle().await;
-    node.act_l1_head_signal(fork_a_prime1).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "phase 3: L2 block 1 re-derived from fork A'");
     assert_eq!(node.l2_safe_number(), 1);
@@ -409,20 +378,16 @@ async fn reorg_flip_flop_empty_middle_fork() {
     );
     node.initialize().await;
 
-    for i in 1u64..=2 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "fork A: L2 block {i} derived");
-        assert_eq!(node.l2_safe().l1_origin.number, 0, "fork A: L2 block {i} l1_origin = genesis");
-    }
+    let total_a = node.run_until_idle().await;
+    assert_eq!(total_a, 2, "fork A: both L2 blocks derived");
+    assert_eq!(node.l2_safe().l1_origin.number, 0, "fork A: all blocks in epoch 0");
     assert_eq!(node.l2_safe_number(), 2, "fork A: safe head = 2");
 
     // --- Fork B: reorg to genesis; mine two empty blocks; derive nothing. ---
     h.l1.reorg_to(0).expect("reorg to fork B");
     chain.truncate_to(0);
-    let mut fork_b_blocks = Vec::new();
     for _ in 0..2 {
-        fork_b_blocks.push(h.mine_and_push(&chain));
+        h.mine_and_push(&chain);
     }
 
     node.act_reset(l2_genesis).await;
@@ -436,26 +401,18 @@ async fn reorg_flip_flop_empty_middle_fork() {
     assert_eq!(node.l2_finalized_number(), 0, "reset to B: finalized head = 0");
     assert_eq!(node.l2_unsafe_number(), 0, "reset to B: unsafe head = 0");
 
-    let drained = node.run_until_idle().await;
-    assert_eq!(drained, 0, "reset drain must produce no L2 blocks");
-
-    for (i, blk_info) in fork_b_blocks.into_iter().enumerate() {
-        node.act_l1_head_signal(blk_info).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 0, "fork B block {}: empty, nothing derived", i + 1);
-    }
+    let total_b = node.run_until_idle().await;
+    assert_eq!(total_b, 0, "fork B: empty blocks derive nothing");
     assert_eq!(node.l2_safe_number(), 0, "fork B: safe head = 0");
     assert_eq!(node.l2_finalized_number(), 0, "fork B: finalized head = 0");
 
     // --- Fork C: reorg to genesis; resubmit both batches; re-derive both blocks. ---
     h.l1.reorg_to(0).expect("reorg to fork C");
     chain.truncate_to(0);
-    let mut fork_c_blocks = Vec::new();
     let mut batcher_c = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for block in [block1, block2] {
         batcher_c.push_block(block);
         batcher_c.advance(&mut h.l1).await;
-        fork_c_blocks.push(h.l1.tip_info());
         chain.push(h.l1.tip().clone());
     }
 
@@ -465,20 +422,9 @@ async fn reorg_flip_flop_empty_middle_fork() {
     // unsafe_head unchanged by act_reset (spec-compliant: re-discover, don't clamp).
     assert_eq!(node.l2_unsafe_number(), 0, "reset to C: unsafe head = 0");
 
-    let drained = node.run_until_idle().await;
-    assert_eq!(drained, 0, "reset drain must produce no L2 blocks");
-
-    for (i, blk_info) in fork_c_blocks.into_iter().enumerate() {
-        node.act_l1_head_signal(blk_info).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "fork C: L2 block {} re-derived", i + 1);
-        assert_eq!(
-            node.l2_safe().l1_origin.number,
-            0,
-            "fork C: L2 block {} l1_origin = genesis",
-            i + 1
-        );
-    }
+    let total_c = node.run_until_idle().await;
+    assert_eq!(total_c, 2, "fork C: both L2 blocks re-derived");
+    assert_eq!(node.l2_safe().l1_origin.number, 0, "fork C: all blocks in epoch 0");
     assert_eq!(node.l2_safe_number(), 2, "fork C: safe head = 2 after flip-flop");
     // finalized_head stays at genesis because no act_l1_finalized_signal was sent.
     assert_eq!(node.l2_finalized_number(), 0, "fork C: finalized head = 0");
@@ -527,8 +473,7 @@ async fn batch_accepted_at_last_seq_window_block() {
     node.initialize().await;
 
     // Signal blocks 1, 2, 3 and step after each.
-    for i in 1..=SEQ_WINDOW - 1 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=SEQ_WINDOW - 1 {
         node.run_until_idle().await;
     }
 
@@ -587,10 +532,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = h.l1.tip_info();
-
     node.initialize().await;
-    node.act_l1_head_signal(l1_block_1).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 1, "expected exactly one L2 block to be derived");
@@ -607,7 +549,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
 /// the new address are derived normally.
 ///
 /// The rotation is delivered as a real `ConfigUpdate` log in an L1 receipt.
-/// The [`IndexedTraversal`] stage reads receipts via `receipts_by_hash` when
+/// The traversal stage reads receipts via `receipts_by_hash` when
 /// advancing L1 origin, and calls `update_with_receipts` to update its
 /// internal [`SystemConfig`].  Subsequent calls to
 /// `DataAvailabilityProvider::next` receive the updated batcher address, so
@@ -620,7 +562,6 @@ async fn l1_deposit_included_in_derived_l2_block() {
 ///   L1 block 5:    batcher B submits  → DERIVED (1 derived)
 ///
 ///
-/// [`IndexedTraversal`]: base_consensus_derive::IndexedTraversal
 /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
 #[tokio::test]
 async fn batcher_key_rotation_accepts_new_batcher() {
@@ -668,14 +609,12 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     node.initialize().await;
 
     // Drive derivation through blocks 1-2 (batcher A frames derived).
-    for i in 1u64..=2 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=2 {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 2, "blocks 1-2 derived with batcher A");
 
     // Step over the rotation block — no batch, but system config updates to B.
-    node.act_l1_head_signal(h.l1.block_info_at(3)).await;
     let rotation_derived = node.run_until_idle().await;
     assert_eq!(rotation_derived, 0, "rotation block contains no batch");
 
@@ -687,7 +626,6 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     }
     chain.push(h.l1.tip().clone());
 
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived_a = node.run_until_idle().await;
     assert_eq!(derived_a, 0, "batcher A frame must be ignored after key rotation");
     assert_eq!(node.l2_safe_number(), 2, "safe head must not advance");
@@ -700,7 +638,6 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     }
     chain.push(h.l1.tip().clone());
 
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived_b = node.run_until_idle().await;
     assert_eq!(derived_b, 1, "batcher B frame must be derived after key rotation");
     assert_eq!(node.l2_safe_number(), 3, "safe head advances to 3");
@@ -739,11 +676,8 @@ async fn multi_l2_per_l1_epoch() {
 
     node.initialize().await;
 
-    for i in 1..=L2_COUNT {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        let derived = node.run_until_idle().await;
-        assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
-    }
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(total_derived, L2_COUNT as usize, "expected {L2_COUNT} L2 blocks derived");
 
     assert_eq!(node.l2_safe_number(), L2_COUNT, "safe head should be at L2 block {L2_COUNT}");
     assert_eq!(node.l2_safe().l1_origin.number, 0, "all blocks in epoch 0");
@@ -799,8 +733,7 @@ async fn batch_past_sequence_window_rejected() {
     node.initialize().await;
 
     let mut total_derived = 0;
-    for i in 1..=SEQ_WINDOW {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=SEQ_WINDOW {
         total_derived += node.run_until_idle().await;
     }
 
@@ -878,8 +811,7 @@ async fn multi_epoch_sequence() {
     // Drive derivation through all L1 blocks: blocks 1-2 are epoch-providing
     // (no batches), blocks 3-14 each contain one batch.
     let mut total_derived = 0;
-    for i in 1..=(2 + 12) {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=(2 + 12) {
         total_derived += node.run_until_idle().await;
     }
 
@@ -921,7 +853,6 @@ async fn same_epoch_multi_batch_one_l1_block() {
     );
     node.initialize().await;
 
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 3, "all 3 L2 blocks should be derived from one L1 block");
@@ -968,8 +899,7 @@ async fn deep_reorg_multi_block() {
     );
     node.initialize().await;
 
-    for i in 1..=5u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=5u64 {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 5, "pre-reorg: 5 L2 blocks derived");
@@ -994,8 +924,7 @@ async fn deep_reorg_multi_block() {
     }
 
     // Drive derivation on the new fork.
-    for i in 1..=5u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=5u64 {
         node.run_until_idle().await;
     }
 
@@ -1041,7 +970,6 @@ async fn garbage_frame_data_ignored() {
     });
     h.mine_and_push(&chain);
 
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "garbage frame must be silently ignored");
     assert_eq!(node.l2_safe_number(), 0);
@@ -1054,7 +982,6 @@ async fn garbage_frame_data_ignored() {
     }
     chain.push(h.l1.tip().clone());
 
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "real frame after garbage must still be derived");
     assert_eq!(node.l2_safe_number(), 1);
@@ -1069,9 +996,7 @@ async fn garbage_frame_data_ignored() {
 /// that a small `max_frame_size` causes the encoder to produce multiple frame
 /// transactions that the derivation pipeline reassembles correctly.
 ///
-/// NOTE: The `IndexedTraversal` mode clears the `ChannelBank` on each
-/// `ProvideBlock` signal, so multi-L1-block channels are not supported in this
-/// test harness. All frames must land in the same L1 block.
+/// NOTE: All frames must land in the same L1 block.
 #[tokio::test]
 async fn multi_frame_channel_reassembled() {
     let batcher_cfg = BatcherConfig {
@@ -1115,7 +1040,6 @@ async fn multi_frame_channel_reassembled() {
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 1, "multi-frame channel should be reassembled and derived");
     assert_eq!(node.l2_safe_number(), 1);
@@ -1151,7 +1075,6 @@ async fn single_l2_block_derived_from_span_batch() {
     );
     node.initialize().await;
 
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 1, "expected one L2 block from span batch");
@@ -1189,7 +1112,6 @@ async fn three_l2_blocks_derived_from_span_batch() {
     );
     node.initialize().await;
 
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 3, "expected 3 L2 blocks from span batch");
@@ -1246,8 +1168,7 @@ async fn gpo_params_change_does_not_disrupt_derivation() {
     );
     node.initialize().await;
 
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=3 {
         node.run_until_idle().await;
     }
 
@@ -1302,8 +1223,7 @@ async fn gas_limit_change_does_not_disrupt_derivation() {
     );
     node.initialize().await;
 
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=3 {
         node.run_until_idle().await;
     }
 
@@ -1353,16 +1273,13 @@ async fn garbage_payload_silently_ignored_then_valid_batch_derived(
     );
     node.initialize().await;
 
-    // Block 1: garbage — must not advance the safe head.
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    let derived_garbage = node.run_until_idle().await;
-    assert_eq!(derived_garbage, 0, "garbage frame must be silently ignored");
-    assert_eq!(node.l2_safe_number(), 0);
-
-    // Block 2: valid batch — must be derived after the garbage.
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
-    let derived_real = node.run_until_idle().await;
-    assert_eq!(derived_real, 1, "valid batch after garbage must still be derived");
+    // Both blocks processed: garbage in block 1 is silently ignored,
+    // valid batch in block 2 is derived.
+    let total_derived = node.run_until_idle().await;
+    assert_eq!(
+        total_derived, 1,
+        "valid batch after garbage must be derived; garbage silently ignored"
+    );
     assert_eq!(node.l2_safe_number(), 1);
 }
 
@@ -1456,8 +1373,7 @@ async fn l2_finalized_advances_via_l1_finalized_signal() {
     assert_eq!(node.l2_finalized_number(), 0);
 
     // Derive both L2 blocks.
-    for i in 1u64..=2 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=2 {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 2);
@@ -1619,7 +1535,7 @@ async fn derive_chain_from_near_l1_genesis() {
         .dap_source(dap_source)
         .l2_chain_provider(l2_provider)
         .builder(attrs_builder)
-        .build_indexed();
+        .build_polled();
     let (_, p2p) = TestGossipTransport::channel();
     let engine =
         ActionEngineClient::new(Arc::clone(&rollup_arc), genesis_head, block_hashes, chain);
@@ -1627,11 +1543,8 @@ async fn derive_chain_from_near_l1_genesis() {
     let mut node = TestRollupNode::new(pipeline, engine, p2p, genesis_head, rollup_arc);
     node.initialize().await;
 
-    // Signal L1 blocks #6 and #7, each containing one batch.
-    for i in 6u64..=7 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
-        node.run_until_idle().await;
-    }
+    // Step the pipeline until it derives both L2 blocks.
+    node.run_until_idle().await;
 
     assert_eq!(
         node.l2_safe_number(),
@@ -1662,10 +1575,7 @@ async fn single_l2_block_derived_from_blob() {
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = h.l1.tip_info();
-
     node.initialize().await;
-    node.act_l1_head_signal(l1_block_1).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, 1, "expected exactly one L2 block to be derived");
@@ -1697,10 +1607,7 @@ async fn multiple_l2_blocks_derived_from_blob() {
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    let l1_block_1 = h.l1.tip_info();
-
     node.initialize().await;
-    node.act_l1_head_signal(l1_block_1).await;
     let derived = node.run_until_idle().await;
 
     assert_eq!(derived, L2_BLOCK_COUNT as usize, "expected 3 L2 blocks to be derived");
@@ -1772,14 +1679,12 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     node.initialize().await;
 
     // Drive derivation through L1 blocks 1-2.
-    for i in 1u64..=2 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=2 {
         node.run_until_idle().await;
     }
     assert_eq!(node.l2_safe_number(), 2, "blocks 1-2 derived with batcher A");
 
     // Step over the rotation block — no batch, but system config updates to B.
-    node.act_l1_head_signal(h.l1.block_info_at(3)).await;
     let rotation_derived = node.run_until_idle().await;
     assert_eq!(rotation_derived, 0, "rotation block contains no batch");
 
@@ -1791,7 +1696,6 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     }
     chain.push(h.l1.tip().clone());
 
-    node.act_l1_head_signal(h.l1.tip_info()).await;
     let derived_a = node.run_until_idle().await;
     assert_eq!(derived_a, 0, "batcher A frame must be ignored after key rotation");
     assert_eq!(node.l2_safe_number(), 2, "safe head must not advance");
@@ -1822,8 +1726,7 @@ async fn batcher_config_update_rolled_back_on_reorg() {
     }
 
     // Drive derivation through L1 blocks 1', 2', 3' on the new fork.
-    for i in 1u64..=3 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1u64..=3 {
         node.run_until_idle().await;
     }
     assert_eq!(
@@ -1884,14 +1787,13 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
         source.push(block1);
         Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
-    chain.push(h.l1.tip().clone()); // L1 block 2: present batch
+    // Do NOT push block 2 yet — let the pipeline see only block 1 first.
 
     node.initialize().await;
 
     // Signal L1 block 1 and step until idle.  The BatchQueue sees a future
     // batch (block 2, timestamp 4 > expected 2) and buffers it.  No attributes
     // are produced; the pipeline returns Eof.
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let (_, hit) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
@@ -1903,9 +1805,11 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
     );
     assert_eq!(node.l2_safe_number(), 0, "safe head must remain at genesis");
 
+    // Now make block 2 visible to the pipeline.
+    chain.push(h.l1.tip().clone()); // L1 block 2: present batch
+
     // Signal L1 block 2.  The BatchQueue now receives the expected-next batch
     // (block 1) and derives it before popping the buffered block 2.
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
 
     // First PreparedAttributes: must be L2 block 1 (earliest timestamp).
     let (_, hit1) = node
@@ -1935,10 +1839,8 @@ async fn out_of_order_singular_batches_reordered_by_batch_queue() {
 ///
 /// This documents the Eof → data → attributes lifecycle and verifies that
 /// calling [`act_l2_pipeline_until`] before and after an
-/// [`act_l1_head_signal`] produces the expected pair of outcomes.
 ///
 /// [`act_l2_pipeline_until`]: TestRollupNode::act_l2_pipeline_until
-/// [`act_l1_head_signal`]: TestRollupNode::act_l1_head_signal
 #[tokio::test]
 async fn pipeline_idle_before_l1_signal_derives_after() {
     let batcher_cfg = BatcherConfig {
@@ -1961,25 +1863,26 @@ async fn pipeline_idle_before_l1_signal_derives_after() {
         source.push(block1);
         Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
     }
-    chain.push(h.l1.tip().clone());
+    // Do NOT push block 1 yet — initialize with chain having only genesis.
     node.initialize().await;
 
-    // Before any signal: the pipeline exhausted genesis during initialize() and
-    // is now at Eof.  The condition should never fire; the call returns quickly.
+    // Block 1 is not yet visible to the pipeline — Eof, no attributes produced.
     let (_, before_signal) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 50)
         .await
         .expect("step before signal");
-    assert!(!before_signal, "pipeline must be idle before receiving an L1 head signal");
+    assert!(!before_signal, "pipeline must be idle before block 1 is available");
     assert_eq!(node.l2_safe_number(), 0);
 
-    // After signalling L1 block 1: the pipeline can now derive L2 block 1.
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
+    // Now make block 1 visible to the pipeline.
+    chain.push(h.l1.tip().clone());
+
+    // Block 1 now available: pipeline derives L2 block 1.
     let (_, after_signal) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
         .expect("step after signal");
-    assert!(after_signal, "pipeline must derive L2 block 1 after receiving L1 head signal");
+    assert!(after_signal, "pipeline must derive L2 block 1 after block 1 is available");
     assert_eq!(node.l2_safe_number(), 1);
 }
 
@@ -2034,7 +1937,6 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
     node.initialize().await;
 
     // Signal and derive both L2 blocks from L1 block 1.
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let (_, hit1) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
@@ -2052,7 +1954,6 @@ async fn pipeline_l1_origin_advance_observable_after_epoch_exhausted() {
     // L1 block 1 is now fully exhausted.  Signal the empty L1 block 2 and
     // step until AdvancedOrigin: the pipeline advances the L1 origin from
     // block 1 to block 2 without producing any new L2 attributes.
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
     let (_, advanced) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::AdvancedOrigin), 50)
         .await
@@ -2120,14 +2021,8 @@ async fn span_batch_crossing_l1_epoch_boundary() {
 
     node.initialize().await;
 
-    // L1 block 1: epoch-providing only, no batches → nothing derived.
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
-    node.run_until_idle().await;
-
-    // L1 block 2: contains the span batch. The BatchQueue has both epoch 0
-    // (L1 block 0→1) and epoch 1 (L1 block 1→2) boundaries available, so
-    // it emits all 6 L2 blocks in one pipeline run.
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
+    // L1 block 1 (epoch-providing) and L1 block 2 (span batch) are both
+    // available; the pipeline processes them in one run, emitting all 6 blocks.
     let derived = node.run_until_idle().await;
 
     assert_eq!(
@@ -2189,13 +2084,12 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
         source.push(block1);
         Batcher::new(source, &h.rollup_config, span_cfg).advance(&mut h.l1).await;
     }
-    chain.push(h.l1.tip().clone()); // L1 block 2: present span batch
+    // Do NOT push block 2 yet — let the pipeline see only block 1 first.
 
     node.initialize().await;
 
     // Signal L1 block 1: span batch for block 2 is a future batch (ts=4 >
     // expected ts=2). The BatchQueue buffers it; no attributes produced.
-    node.act_l1_head_signal(h.l1.block_info_at(1)).await;
     let (_, hit) = node
         .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
         .await
@@ -2203,8 +2097,10 @@ async fn out_of_order_span_batches_reordered_by_batch_queue() {
     assert!(!hit, "future span batch must be buffered; no blocks derived from L1 block 1");
     assert_eq!(node.l2_safe_number(), 0, "safe head must remain at genesis");
 
+    // Now make block 2 visible to the pipeline.
+    chain.push(h.l1.tip().clone()); // L1 block 2: present span batch
+
     // Signal L1 block 2: expected-next span batch (block 1) arrives.
-    node.act_l1_head_signal(h.l1.block_info_at(2)).await;
 
     // First PreparedAttributes: L2 block 1 (earliest timestamp) must derive first.
     let (_, hit1) = node
@@ -2277,8 +2173,7 @@ async fn large_l1_gaps_within_sequence_window() {
 
     // Drive derivation through all 16 L1 blocks. The pipeline traverses 15
     // empty blocks before finding the channel in block 16.
-    for i in 1..=16u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=16u64 {
         node.run_until_idle().await;
     }
 
@@ -2327,8 +2222,7 @@ async fn extended_sequence_window_exhaustion_fills_with_deposit_only_blocks() {
     node.initialize().await;
 
     let mut total_derived = 0;
-    for i in 1..=20u64 {
-        node.act_l1_head_signal(h.l1.block_info_at(i)).await;
+    for _ in 1..=20u64 {
         total_derived += node.run_until_idle().await;
     }
 

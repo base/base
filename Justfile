@@ -254,6 +254,6 @@ bench-flashblocks:
 bench-proof-mpt:
     cargo bench -p base-proof-mpt --bench trie_node
 
-# Run basectl with specified config (mainnet, sepolia, devnet, or path)
-basectl config="mainnet":
-    cargo run -p basectl --release -- -c {{config}}
+# Run basectl TUI dashboard
+basectl:
+    cargo run -p basectl --release

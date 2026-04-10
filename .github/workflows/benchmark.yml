@@ -9,6 +9,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
   BENCHMARK_REPO: "base/benchmark"
   BENCHMARK_REF: "48f0e0405fc9df31bd8b3e59d686374695e06d64"
 

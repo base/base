@@ -269,7 +269,7 @@ where
 
 /// Bincode-compatible [`OpDepositReceipt`] serde implementation.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub(crate) mod serde_bincode_compat {
+pub(super) mod serde_bincode_compat {
     use alloc::borrow::Cow;
 
     use alloy_consensus::Receipt;

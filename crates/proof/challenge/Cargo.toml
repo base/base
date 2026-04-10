@@ -15,11 +15,29 @@ workspace = true
 # Alloy
 alloy-rlp.workspace = true
 alloy-provider.workspace = true
-alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-trie = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, optional = true }
+
+# Tx Manager
+base-tx-manager.workspace = true
+
+# Balance Monitor
+base-balance-monitor.workspace = true
+
+# Proof
+base-proof-rpc.workspace = true
+base-zk-client.workspace = true
+base-proof-contracts.workspace = true
+base-proof-primitives = { workspace = true, features = ["rpc-client"] }
+
+# Protocol
+base-protocol.workspace = true
+
+# JSON-RPC
+jsonrpsee.workspace = true
 
 # Async
 tokio.workspace = true
@@ -40,30 +58,6 @@ thiserror.workspace = true
 base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 
-# Contracts
-base-proof-contracts.workspace = true
-
-# Transaction management
-base-tx-manager.workspace = true
-
-# Balance Monitor
-base-balance-monitor.workspace = true
-
-# RPC
-base-proof-rpc.workspace = true
-
-# ZK proof client
-base-zk-client.workspace = true
-
-# Protocol
-base-protocol.workspace = true
-
-# Proof
-base-proof-primitives = { workspace = true, features = ["serde", "std", "rpc-client"] }
-
-# JSON-RPC
-jsonrpsee.workspace = true
-
 # Metrics
 base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
@@ -72,21 +66,17 @@ metrics = { workspace = true, optional = true }
 rustls = { workspace = true, features = ["ring"] }
 
 # Runtime
-base-runtime = { workspace = true, features = ["tokio"] }
-
-# Shutdown
 tokio-util.workspace = true
+base-runtime = { workspace = true, features = ["tokio"] }
 
 # Health
 base-health = { workspace = true, features = ["axum-server"] }
-
-# Derive
-derive_more = { workspace = true, features = ["debug"] }
 
 # Misc
 url.workspace = true
 humantime.workspace = true
 uuid = { workspace = true, features = ["v5"] }
+derive_more = { workspace = true, features = ["debug"] }
 
 # Test utilities (optional)
 serde_json = { workspace = true, optional = true }
@@ -98,4 +88,4 @@ base-challenger = { path = ".", features = ["test-utils"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
-test-utils = [ "base-protocol/test-utils", "serde_json" ]
+test-utils = [ "alloy-consensus", "base-protocol/test-utils", "serde_json" ]

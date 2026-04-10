@@ -101,7 +101,7 @@ impl TxDeposit {
 
     /// Outputs the length of the transaction's fields, without a RLP header or length of the
     /// eip155 fields.
-    pub(crate) fn rlp_encoded_fields_length(&self) -> usize {
+    pub fn rlp_encoded_fields_length(&self) -> usize {
         self.source_hash.length()
             + self.from.length()
             + self.to.length()
@@ -114,7 +114,7 @@ impl TxDeposit {
 
     /// Encodes only the transaction's fields into the desired buffer, without a RLP header.
     /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/deposits.md#the-deposited-transaction-type>
-    pub(crate) fn rlp_encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
+    pub fn rlp_encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
         self.source_hash.encode(out);
         self.from.encode(out);
         self.to.encode(out);
@@ -139,7 +139,7 @@ impl TxDeposit {
     }
 
     /// Get the transaction type
-    pub(crate) const fn tx_type(&self) -> OpTxType {
+    pub const fn tx_type(&self) -> OpTxType {
         OpTxType::Deposit
     }
 

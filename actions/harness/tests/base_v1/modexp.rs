@@ -3,7 +3,7 @@
 use alloy_primitives::{Bytes, TxKind, U256, hex};
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TEST_ACCOUNT_ADDRESS, TestRollupConfigBuilder, block_info_from,
+    TEST_ACCOUNT_ADDRESS, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 
@@ -175,17 +175,12 @@ async fn base_v1_modexp_upper_bound() {
 
     // ── Batch and derive ─────────────────────────────────────────────
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-    for block in [block1, block2, block3] {
+    node.initialize().await;
+
+    for (block, i) in [(block1, 1u64), (block2, 2), (block3, 3)] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
-    }
-
-    node.initialize().await;
-
-    for i in 1..=3u64 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        node.act_l1_head_signal(blk).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }
@@ -307,17 +302,12 @@ async fn base_v1_modexp_gas_cost_increase() {
 
     // ── Batch and derive ─────────────────────────────────────────────
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-    for block in [block1, block2, block3] {
+    node.initialize().await;
+
+    for (block, i) in [(block1, 1u64), (block2, 2), (block3, 3)] {
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
         chain.push(h.l1.tip().clone());
-    }
-
-    node.initialize().await;
-
-    for i in 1..=3u64 {
-        let blk = block_info_from(h.l1.block_by_number(i).expect("block exists"));
-        node.act_l1_head_signal(blk).await;
         let derived = node.run_until_idle().await;
         assert_eq!(derived, 1, "L1 block {i} should derive exactly one L2 block");
     }

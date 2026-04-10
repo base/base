@@ -8,6 +8,8 @@ base_metrics::define_metrics! {
     derivation_l1_origin: counter,
     #[describe("Critical errors in the derivation pipeline")]
     derivation_critical_errors: counter,
+    #[describe("Wall-clock duration of a single derivation pipeline step() call")]
+    derivation_pipeline_step_duration_seconds: histogram,
     #[describe("Tracks sequencer state flags")]
     #[label(active)]
     #[label(recovery)]

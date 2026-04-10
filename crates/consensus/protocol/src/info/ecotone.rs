@@ -139,7 +139,7 @@ impl L1BlockInfoEcotone {
 
     /// Construct from all values.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) const fn new(
+    pub const fn new(
         number: u64,
         time: u64,
         base_fee: u64,

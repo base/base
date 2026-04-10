@@ -57,4 +57,4 @@ mod utils;
 pub use utils::UpgradeCalldata;
 
 #[cfg(test)]
-mod test_utils;
+pub mod test_utils;

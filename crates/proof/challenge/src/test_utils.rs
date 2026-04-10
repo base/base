@@ -336,7 +336,7 @@ impl DisputeGameFactoryClient for ErrorOnIndexFactory {
 /// Returns pre-configured headers by block number and account proofs by
 /// block hash. Block numbers in `error_blocks` will return a
 /// [`RpcError::BlockNotFound`] to simulate missing blocks.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MockL2Provider {
     /// Headers keyed by block number.
     pub headers: HashMap<u64, RpcHeader>,
@@ -349,7 +349,7 @@ pub struct MockL2Provider {
 impl MockL2Provider {
     /// Creates a new empty mock L2 provider.
     pub fn new() -> Self {
-        Self { headers: HashMap::new(), proofs: HashMap::new(), error_blocks: Vec::new() }
+        Self::default()
     }
 
     /// Inserts a block header and corresponding account proof.
@@ -367,12 +367,6 @@ impl MockL2Provider {
             RpcHeader { hash: block_hash, inner: consensus_header, ..Default::default() };
         self.headers.insert(block_number, rpc_header);
         self.proofs.insert(block_hash, account_result);
-    }
-}
-
-impl Default for MockL2Provider {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -414,16 +408,29 @@ impl L2Provider for MockL2Provider {
 }
 
 /// Mock ZK proof provider for testing the driver.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MockZkProofProvider {
     /// Session ID returned by [`prove_block`](ZkProofProvider::prove_block).
     pub session_id: String,
+    /// Mutable proof state returned by [`get_proof`](ZkProofProvider::get_proof).
+    pub state: Mutex<MockZkProofState>,
+}
+
+/// Mutable state for [`MockZkProofProvider`].
+#[derive(Debug, Default, Clone)]
+pub struct MockZkProofState {
     /// Proof job status returned by [`get_proof`](ZkProofProvider::get_proof).
-    pub proof_status: Mutex<i32>,
+    pub proof_status: i32,
     /// Proof receipt bytes returned when status is `Succeeded`.
-    pub receipt: Mutex<Vec<u8>>,
+    pub receipt: Vec<u8>,
     /// Error message returned when status is `Failed`.
-    pub error_message: Mutex<Option<String>>,
+    pub error_message: Option<String>,
+}
+
+impl Default for MockZkProofProvider {
+    fn default() -> Self {
+        Self { session_id: String::new(), state: Mutex::new(MockZkProofState::default()) }
+    }
 }
 
 #[async_trait]
@@ -436,10 +443,12 @@ impl ZkProofProvider for MockZkProofProvider {
     }
 
     async fn get_proof(&self, _request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
-        let status = *self.proof_status.lock().unwrap();
-        let receipt = self.receipt.lock().unwrap().clone();
-        let error_message = self.error_message.lock().unwrap().clone();
-        Ok(GetProofResponse { status, receipt, error_message })
+        let state = self.state.lock().unwrap().clone();
+        Ok(GetProofResponse {
+            status: state.proof_status,
+            receipt: state.receipt,
+            error_message: state.error_message,
+        })
     }
 }
 
@@ -453,16 +462,12 @@ pub struct MockTeeProofProvider {
 impl MockTeeProofProvider {
     /// Creates a mock that returns a single successful result.
     pub fn success(result: ProofResult) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Ok(result));
-        Self { results: Mutex::new(q) }
+        Self { results: Mutex::new(VecDeque::from([Ok(result)])) }
     }
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Err(msg.into()));
-        Self { results: Mutex::new(q) }
+        Self { results: Mutex::new(VecDeque::from([Err(msg.into())])) }
     }
 }
 
@@ -490,16 +495,14 @@ impl MockL1HeadProvider {
     /// Creates a mock whose [`block_number_by_hash`](L1HeadProvider::block_number_by_hash)
     /// returns `number` and asserts it is called with `hash`.
     pub fn success(hash: B256, number: u64) -> Self {
-        let mut bq = VecDeque::new();
-        bq.push_back((Some(hash), Ok(number)));
-        Self { block_number_results: Mutex::new(bq) }
+        Self { block_number_results: Mutex::new(VecDeque::from([(Some(hash), Ok(number))])) }
     }
 
     /// Creates a mock that returns a single error.
     pub fn failure(msg: &str) -> Self {
-        let mut bq = VecDeque::new();
-        bq.push_back((None, Err(eyre::eyre!("{msg}"))));
-        Self { block_number_results: Mutex::new(bq) }
+        Self {
+            block_number_results: Mutex::new(VecDeque::from([(None, Err(eyre::eyre!("{msg}")))])),
+        }
     }
 }
 
@@ -532,9 +535,7 @@ pub struct MockTxManager {
 impl MockTxManager {
     /// Creates a new mock with a single pre-configured response.
     pub fn new(response: SendResponse) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(response);
-        Self { responses: Mutex::new(q) }
+        Self { responses: Mutex::new(VecDeque::from([response])) }
     }
 
     /// Creates a new mock with multiple responses returned in order.
@@ -634,9 +635,7 @@ pub struct MockBondTransactionSubmitter {
 impl MockBondTransactionSubmitter {
     /// Creates a mock that returns a single successful transaction hash.
     pub fn success(tx_hash: B256) -> Self {
-        let mut q = VecDeque::new();
-        q.push_back(Ok(tx_hash));
-        Self { responses: Mutex::new(q), calls: Mutex::new(Vec::new()) }
+        Self { responses: Mutex::new(VecDeque::from([Ok(tx_hash)])), calls: Mutex::new(Vec::new()) }
     }
 
     /// Creates a mock with multiple responses returned in order.
@@ -670,7 +669,7 @@ impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
 mod tests {
 
     use super::*;
-    use crate::scanner::{GameScanner, ScannerConfig};
+    use crate::scanner::{GameCategory, GameScanner, ScannerConfig};
 
     /// Happy path: mixed games, only `IN_PROGRESS` / unchallenged returned.
     #[tokio::test]
@@ -945,8 +944,6 @@ mod tests {
     /// returned as a [`GameCategory::FraudulentZkChallenge`] candidate.
     #[tokio::test]
     async fn test_scan_challenged_game_returns_fraudulent_zk_challenge() {
-        use crate::scanner::GameCategory;
-
         let tee_addr = Address::repeat_byte(0xEE);
         let zk_addr = Address::repeat_byte(0xCC);
 
@@ -973,8 +970,6 @@ mod tests {
     /// returned as a [`GameCategory::InvalidZkProposal`] candidate.
     #[tokio::test]
     async fn test_scan_zk_proposal_returns_invalid_zk_proposal() {
-        use crate::scanner::GameCategory;
-
         let zk_addr = Address::repeat_byte(0xCC);
 
         let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
@@ -996,8 +991,6 @@ mod tests {
     /// [`GameCategory::InvalidTeeProposal`].
     #[tokio::test]
     async fn test_scan_tee_proposal_returns_invalid_tee_proposal() {
-        use crate::scanner::GameCategory;
-
         let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
 
         let mut verifier_games = HashMap::new();

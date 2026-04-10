@@ -11,8 +11,8 @@ extern crate tracing;
 
 mod service;
 pub use service::{
-    DerivationDelegateConfig, FollowNode, L1Config, L1ConfigBuilder, NodeMode, RollupNode,
-    RollupNodeBuilder,
+    DerivationDelegateConfig, FollowNode, HEAD_STREAM_POLL_INTERVAL, L1Config, L1ConfigBuilder,
+    NodeMode, RollupNode, RollupNodeBuilder, ShutdownSignal,
 };
 
 mod actors;
