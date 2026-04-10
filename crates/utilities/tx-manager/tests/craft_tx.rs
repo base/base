@@ -141,7 +141,7 @@ async fn craft_tx_rejects_blob_without_recipient() {
 
     let candidate = TxCandidate {
         to: None,
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
@@ -170,7 +170,7 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
     let to = Address::with_last_byte(0x42);
     let candidate = TxCandidate {
         to: Some(to),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
@@ -223,7 +223,7 @@ async fn craft_tx_produces_cell_proof_sidecar_by_default() {
     let to = Address::with_last_byte(0x42);
     let candidate = TxCandidate {
         to: Some(to),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
@@ -543,7 +543,7 @@ async fn prepare_exits_immediately_on_non_retryable_error() {
     // Blob transactions without a recipient trigger Unsupported (non-retryable).
     let candidate = TxCandidate {
         to: None,
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
@@ -874,7 +874,7 @@ async fn increase_gas_price_bumps_blob_fee_cap() {
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
@@ -931,7 +931,7 @@ async fn blob_fee_bump_round_trip() {
 
     let candidate = TxCandidate {
         to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
