@@ -170,8 +170,6 @@ pub struct SimpleTxManager<P> {
     closed: Arc<AtomicBool>,
     /// Metrics collector for transaction lifecycle events.
     metrics: Arc<dyn TxMetrics>,
-    /// Builder for EIP-4844 blob transaction sidecars.
-    blob_builder: BlobTxBuilder,
 }
 
 impl<P> SimpleTxManager<P>
@@ -244,7 +242,6 @@ where
 
         let address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&wallet);
         let nonce_manager = NonceManager::new(provider.clone(), address, config.network_timeout);
-        let blob_builder = BlobTxBuilder::new();
         Ok(Self {
             provider,
             wallet,
@@ -253,7 +250,6 @@ where
             chain_id,
             closed: Arc::new(AtomicBool::new(false)),
             metrics,
-            blob_builder,
         })
     }
 
@@ -765,7 +761,7 @@ where
         let built_sidecar = if is_blob {
             let sidecar = match cached_sidecar {
                 Some(cached) => cached,
-                None => Arc::new(self.blob_builder.build_sidecar(&candidate.blobs)?),
+                None => Arc::new(BlobTxBuilder::build_sidecar(&candidate.blobs)?),
             };
             tx_request.sidecar = Some((*sidecar).clone().into());
             tx_request.populate_blob_hashes();

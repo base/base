@@ -27,16 +27,12 @@ impl BlobTxBuilder {
         Self
     }
 
-    /// Builds an EIP-7594 cell-proof sidecar.
-    ///
-    /// Accepts a slice of boxed blobs so callers behind an [`Arc`] can pass a
-    /// reference without cloning the blob data.
+    /// Builds an EIP-7594 cell-proof sidecar from boxed blobs.
     ///
     /// # Errors
     ///
     /// Returns [`TxManagerError::Unsupported`] if KZG computation fails.
     pub fn build_sidecar(
-        &self,
         blobs: &[Box<Blob>],
     ) -> Result<BlobTransactionSidecarEip7594, TxManagerError> {
         let unboxed: Vec<Blob> = blobs.iter().map(|b| *b.as_ref()).collect();
@@ -54,18 +50,13 @@ mod tests {
 
     use super::*;
 
-    fn builder() -> BlobTxBuilder {
-        BlobTxBuilder::new()
-    }
-
     #[rstest]
     #[case::single_blob(1)]
     #[case::two_blobs(2)]
     #[case::six_blobs(6)]
     fn build_sidecar_n_blobs_uses_cell_proofs(#[case] n: usize) {
-        let builder = builder();
         let blobs: Vec<Box<Blob>> = (0..n).map(|_| Box::default()).collect();
-        let sidecar = builder.build_sidecar(&blobs).unwrap();
+        let sidecar = BlobTxBuilder::build_sidecar(&blobs).unwrap();
         assert_eq!(sidecar.cell_proofs.len(), n * CELLS_PER_EXT_BLOB);
     }
 
