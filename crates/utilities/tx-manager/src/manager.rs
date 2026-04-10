@@ -1085,19 +1085,11 @@ where
                 return Ok(receipt);
             }
 
-            // Respond immediately to the should_bump_fees flag set by
-            // process_send_error on retryable errors (e.g. Underpriced,
-            // ReplacementUnderpriced), rather than waiting for the next
-            // resubmission timer tick.
-            //
-            // Clear the flag before attempting the bump so that a failed
-            // attempt (e.g. RPC timeout) does not immediately re-trigger
-            // on the next loop iteration — instead, the loop falls through
-            // to tokio::select! which waits for the resubmission timer or
-            // a receipt, providing natural backoff. If a new retryable
-            // error occurs later, process_send_error will re-set the flag.
-            if send_state.should_bump_fees() {
-                send_state.clear_bump_fees();
+            // Respond immediately to the bump-fees flag set by
+            // process_send_error on retryable errors, rather than waiting
+            // for the next resubmission timer tick. take_bump_fees clears
+            // the flag atomically so a failed bump does not re-trigger.
+            if send_state.take_bump_fees() {
                 if let Some(abort) =
                     self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
                 {
@@ -1260,10 +1252,10 @@ where
 
         // Record the bump and log only after the transaction has been
         // successfully published to avoid inflating the count on failure.
-        send_state.record_fee_bump();
+        let bump_count = send_state.record_fee_bump();
         self.metrics.record_gas_bump();
         info!(
-            bump_count = %send_state.bump_count(),
+            bump_count = %bump_count,
             old_tip = %old.tip,
             new_tip = %prepared.gas_tip_cap,
             old_fee_cap = %old.fee_cap,
