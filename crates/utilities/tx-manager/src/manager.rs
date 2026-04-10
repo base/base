@@ -564,7 +564,7 @@ where
         old_fee_cap: u128,
         old_blob_fee_cap: Option<u128>,
     ) -> TxManagerResult<BumpedFees> {
-        let is_blob = !candidate.blobs.is_empty();
+        let is_blob = candidate.is_blob();
 
         // Validate consistency: old_blob_fee_cap must be Some for blob txs
         // and None for non-blob txs.
@@ -676,7 +676,7 @@ where
         nonce_override: Option<u64>,
         cached_sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
     ) -> TxManagerResult<PreparedTx> {
-        let is_blob = !candidate.blobs.is_empty();
+        let is_blob = candidate.is_blob();
 
         // Blob transactions must have a recipient address (no contract creation).
         if is_blob && candidate.to.is_none() {
@@ -1235,14 +1235,7 @@ where
         let bumped =
             self.increase_gas_price(candidate, old.tip, old.fee_cap, old.blob_fee_cap).await?;
 
-        // Build fee overrides including blob fee cap and gas limit floor.
-        // The gas limit floor ensures the limit never decreases across bumps,
-        // avoiding a full candidate clone.
-        let mut fee_override = FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)
-            .with_gas_limit_floor(old.gas_limit);
-        if let Some(blob_cap) = bumped.blob_fee_cap {
-            fee_override = fee_override.with_blob_fee_cap(blob_cap);
-        }
+        let fee_override = bumped.to_fee_override(old.gas_limit);
 
         // Rebuild transaction with bumped fees as overrides and the fresh
         // caps to avoid a redundant provider round-trip.

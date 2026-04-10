@@ -27,6 +27,13 @@ pub struct TxCandidate {
     pub value: U256,
 }
 
+impl TxCandidate {
+    /// Returns `true` when this candidate carries blobs (EIP-4844 type-3 tx).
+    pub fn is_blob(&self) -> bool {
+        !self.blobs.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

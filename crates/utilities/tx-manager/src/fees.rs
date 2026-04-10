@@ -224,6 +224,20 @@ pub struct BumpedFees {
     pub caps: GasPriceCaps,
 }
 
+impl BumpedFees {
+    /// Converts the bumped fees into a [`FeeOverride`] suitable for
+    /// [`SimpleTxManager::prepare`](crate::SimpleTxManager::prepare).
+    ///
+    /// `gas_limit_floor` prevents the gas limit from decreasing across
+    /// replacement attempts.
+    #[must_use]
+    pub fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
+        let fo = FeeOverride::new(self.gas_tip_cap, self.gas_fee_cap)
+            .with_gas_limit_floor(gas_limit_floor);
+        self.blob_fee_cap.map_or(fo, |blob_cap| fo.with_blob_fee_cap(blob_cap))
+    }
+}
+
 /// Intermediate fee estimates computed during gas price suggestion.
 ///
 /// Used between fee calculation and transaction construction to carry
