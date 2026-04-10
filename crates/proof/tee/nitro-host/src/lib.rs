@@ -22,3 +22,6 @@ pub use transport::NitroTransport;
 mod vsock;
 #[cfg(target_os = "linux")]
 pub use vsock::VsockTransport;
+
+#[cfg(test)]
+pub mod test_utils;

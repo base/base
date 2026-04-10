@@ -181,66 +181,15 @@ impl RegistrationChecker {
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicUsize, Ordering},
-        },
+        sync::{Arc, atomic::Ordering},
         time::Instant,
     };
 
-    use alloy_primitives::{Address, address};
+    use alloy_primitives::Address;
     use base_proof_contracts::TEEProverRegistryClient;
-    use jsonrpsee::core::async_trait;
 
     use super::*;
-
-    #[derive(Clone)]
-    struct MockRegistry {
-        valid: Arc<AtomicBool>,
-        call_count: Arc<AtomicUsize>,
-        should_fail: Arc<AtomicBool>,
-    }
-
-    impl MockRegistry {
-        fn new(valid: bool) -> Self {
-            Self {
-                valid: Arc::new(AtomicBool::new(valid)),
-                call_count: Arc::new(AtomicUsize::new(0)),
-                should_fail: Arc::new(AtomicBool::new(false)),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl TEEProverRegistryClient for MockRegistry {
-        async fn is_valid_signer(
-            &self,
-            _signer: Address,
-        ) -> Result<bool, base_proof_contracts::ContractError> {
-            self.call_count.fetch_add(1, Ordering::Relaxed);
-            if self.should_fail.load(Ordering::Relaxed) {
-                return Err(base_proof_contracts::ContractError::Validation(
-                    "mock RPC failure".into(),
-                ));
-            }
-            Ok(self.valid.load(Ordering::Relaxed))
-        }
-
-        async fn is_registered_signer(
-            &self,
-            _signer: Address,
-        ) -> Result<bool, base_proof_contracts::ContractError> {
-            unimplemented!()
-        }
-
-        async fn get_registered_signers(
-            &self,
-        ) -> Result<Vec<Address>, base_proof_contracts::ContractError> {
-            unimplemented!()
-        }
-    }
-
-    const TEST_SIGNER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+    use crate::test_utils::{MockRegistry, TEST_SIGNER};
 
     fn test_checker_with_mock(
         registry: impl TEEProverRegistryClient + 'static,
