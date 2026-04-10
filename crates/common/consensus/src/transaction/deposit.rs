@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use core::mem;
 
-use alloy_consensus::{Sealable, Transaction, Typed2718};
+use alloy_consensus::{InMemorySize, Sealable, Transaction, Typed2718};
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
     eip2930::AccessList,
@@ -416,6 +416,13 @@ pub fn serde_deposit_tx_rpc<T: serde::Serialize, S: serde::Serializer>(
     }
 
     SerdeHelper { value, signature: TxDeposit::signature() }.serialize(serializer)
+}
+
+impl InMemorySize for TxDeposit {
+    #[inline]
+    fn size(&self) -> usize {
+        Self::size(self)
+    }
 }
 
 #[cfg(test)]

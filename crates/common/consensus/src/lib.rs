@@ -31,22 +31,23 @@ pub use transaction::{
     DEPOSIT_TX_TYPE_ID, DepositTransaction, OpDepositInfo, OpPooledTransaction, OpTransaction,
     OpTransactionInfo, OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit,
 };
+#[cfg(feature = "serde")]
+pub use transaction::serde_deposit_tx_rpc;
 
 mod extra;
 pub use extra::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 
 mod source;
-pub use source::*;
-
-mod size;
+pub use source::{
+    DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, UpgradeDepositSource,
+    UserDepositSource,
+};
 
 mod block;
 pub use block::BaseBlock;
 
 /// Signed transaction type alias for [`OpTxEnvelope`].
 pub type OpTransactionSigned = OpTxEnvelope;
-#[cfg(feature = "serde")]
-pub use transaction::serde_deposit_tx_rpc;
 
 /// Bincode-compatible serde implementations for consensus types.
 ///
