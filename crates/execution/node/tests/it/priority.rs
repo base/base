@@ -6,15 +6,15 @@ use alloy_consensus::{SignableTransaction, Transaction, TxEip1559, transaction::
 use alloy_genesis::Genesis;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, ChainId, TxKind};
-use base_execution_chainspec::OpChainSpecBuilder;
+use base_execution_chainspec::BaseChainSpecBuilder;
 use base_execution_payload_builder::builder::BasePayloadTransactions;
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
-    OpNode,
+    BaseNode,
     args::RollupArgs,
     node::{
-        OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder,
-        OpNodeTypes, OpPayloadBuilder, OpPoolBuilder,
+        BaseNodeTypes, OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder,
+        OpNodeComponentBuilder, OpPayloadBuilder, OpPoolBuilder,
     },
     utils::optimism_payload_attributes,
 };
@@ -91,7 +91,7 @@ fn build_components<Node>(
     chain_id: ChainId,
 ) -> OpNodeComponentBuilder<Node, OpPayloadBuilder<CustomTxPriority>>
 where
-    Node: FullNodeTypes<Types: OpNodeTypes>,
+    Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
     let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
         RollupArgs::default();
@@ -113,7 +113,7 @@ async fn test_custom_block_priority_config() {
 
     let genesis: Genesis = serde_json::from_str(include_str!("../assets/genesis.json")).unwrap();
     let chain_spec =
-        Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
+        Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
 
     // This wallet is going to send:
     // 1. L1 block info tx
@@ -138,9 +138,9 @@ async fn test_custom_block_priority_config() {
     let runtime = Runtime::test();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
+        .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
         .with_components(build_components(config.chain.chain_id()))
-        .with_add_ons(OpNode::new(Default::default()).add_ons())
+        .with_add_ons(BaseNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
                 runtime.clone(),

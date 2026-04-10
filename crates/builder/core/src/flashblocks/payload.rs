@@ -20,7 +20,7 @@ use base_alloy_flashblocks::{
 };
 use base_builder_publish::WebSocketPublisher;
 use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
-use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use either::Either;
 use eyre::WrapErr as _;
@@ -88,7 +88,7 @@ pub struct FlashblocksExecutionInfo {
 #[derive(Debug, Clone)]
 pub(super) struct OpPayloadBuilder<Pool, Client> {
     /// The type responsible for creating the evm.
-    pub evm_config: OpEvmConfig,
+    pub evm_config: BaseEvmConfig,
     /// The transaction pool
     pub pool: Pool,
     /// Node client
@@ -106,7 +106,7 @@ pub(super) struct OpPayloadBuilder<Pool, Client> {
 impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
     /// `OpPayloadBuilder` constructor.
     pub(super) const fn new(
-        evm_config: OpEvmConfig,
+        evm_config: BaseEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig,
@@ -1186,7 +1186,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
     use base_alloy_consensus::OpReceipt;
     use base_alloy_flashblocks::Metadata;
-    use base_execution_chainspec::OpChainSpec;
+    use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
     use reth_primitives_traits::SealedHeader;
     use reth_provider::noop::NoopProvider;
@@ -1195,13 +1195,13 @@ mod tests {
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::OpPayloadBuilderCtx};
 
-    /// Creates a minimal [`OpChainSpec`] with all L1 hardforks through Cancun
+    /// Creates a minimal [`BaseChainSpec`] with all L1 hardforks through Cancun
     /// active at genesis but **no** OP-specific hardforks (Bedrock, Canyon,
     /// Ecotone, Holocene, Isthmus, Jovian are all absent).
     ///
     /// This keeps `build_block` on the simplest code paths: no blob fields,
     /// default extra data, no withdrawals root calculation.
-    fn minimal_chain_spec() -> Arc<OpChainSpec> {
+    fn minimal_chain_spec() -> Arc<BaseChainSpec> {
         let genesis: serde_json::Value = serde_json::json!({
             "config": { "chainId": 901 },
             "gasLimit": "0x1C9C380",
@@ -1212,7 +1212,7 @@ mod tests {
         let inner =
             ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
 
-        Arc::new(OpChainSpec { inner })
+        Arc::new(BaseChainSpec { inner })
     }
 
     /// Builds a sealed genesis header consistent with [`minimal_chain_spec`].

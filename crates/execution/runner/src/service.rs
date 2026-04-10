@@ -11,7 +11,7 @@ use reth_node_builder::{
 
 use crate::{
     node::BaseNode,
-    types::{OpComponentsBuilder, OpNodeTypes},
+    types::{BaseNodeTypes, OpComponentsBuilder},
 };
 
 /// Trait for customizing the payload service used by the node.
@@ -24,8 +24,8 @@ use crate::{
 pub trait PayloadServiceBuilder: Send + 'static {
     /// The component builder type this produces.
     type ComponentsBuilder: NodeComponentsBuilder<
-            OpNodeTypes,
-            Components = <OpComponentsBuilder as NodeComponentsBuilder<OpNodeTypes>>::Components,
+            BaseNodeTypes,
+            Components = <OpComponentsBuilder as NodeComponentsBuilder<BaseNodeTypes>>::Components,
         >;
 
     /// Build components using the given [`BaseNode`] configuration.
@@ -38,7 +38,7 @@ pub struct DefaultPayloadServiceBuilder;
 
 impl PayloadServiceBuilder for DefaultPayloadServiceBuilder {
     type ComponentsBuilder = ComponentsBuilder<
-        OpNodeTypes,
+        BaseNodeTypes,
         OpPoolBuilder,
         BasicPayloadServiceBuilder<OpPayloadBuilder>,
         OpNetworkBuilder,

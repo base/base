@@ -13,8 +13,8 @@ use base_access_lists::FBALBuilderDb;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTransactionSigned, OpTxType};
 use base_alloy_evm::OpReceiptBuilder;
-use base_execution_chainspec::OpChainSpec;
-use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::BasePayloadBuilderError};
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
@@ -276,9 +276,9 @@ impl FlashblocksExtraCtx {
 #[derive(Debug)]
 pub struct OpPayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
-    pub evm_config: OpEvmConfig,
+    pub evm_config: BaseEvmConfig,
     /// The chainspec
-    pub chain_spec: Arc<OpChainSpec>,
+    pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
     pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
     /// Evm Settings
@@ -1038,8 +1038,8 @@ impl OpPayloadBuilderCtx {
     ///
     /// Derives the EVM environment from the given chain spec and parent header,
     /// using default builder attributes and a no-op cancellation token.
-    pub fn for_test(chain_spec: Arc<OpChainSpec>, parent: Arc<SealedHeader>) -> Self {
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+    pub fn for_test(chain_spec: Arc<BaseChainSpec>, parent: Arc<SealedHeader>) -> Self {
+        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
         let timestamp = parent.timestamp + 2;
 
         let attributes = OpPayloadBuilderAttributes {

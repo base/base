@@ -6,8 +6,8 @@ use alloy_consensus::Header;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_sol_types::SolCall;
 use base_access_lists::{FBALBuilderDb, FlashblockAccessList};
-use base_execution_chainspec::OpChainSpec;
-use base_execution_evm::OpEvmConfig;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::BaseEvmConfig;
 use base_revm::OpTransaction;
 use base_test_utils::{
     AccessListContract, ContractFactory, DEVNET_CHAIN_ID, Logic, Logic2, Proxy, SimpleStorage,
@@ -30,8 +30,8 @@ mod storage;
 mod transfers;
 
 /// Loads the test chain spec from the genesis configuration.
-fn load_chain_spec() -> Arc<OpChainSpec> {
-    Arc::new(OpChainSpec::from_genesis(build_test_genesis()))
+fn load_chain_spec() -> Arc<BaseChainSpec> {
+    Arc::new(BaseChainSpec::from_genesis(build_test_genesis()))
 }
 
 /// Executes a list of transactions and builds a `FlashblockAccessList` tracking all
@@ -45,7 +45,7 @@ pub fn execute_txns_build_access_list(
     storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
 ) -> Result<FlashblockAccessList> {
     let chain_spec = load_chain_spec();
-    let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+    let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
     let header = Header { base_fee_per_gas: Some(0), ..chain_spec.genesis_header().clone() };
 
     // Set up the underlying InMemoryDB with any overrides

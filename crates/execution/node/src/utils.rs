@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_execution_chainspec::OpChainSpecBuilder;
+use base_execution_chainspec::BaseChainSpecBuilder;
 use base_execution_payload_builder::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_e2e_test_utils::{
     NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
@@ -13,19 +13,19 @@ use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use tokio::sync::Mutex;
 
-use crate::OpNode as OtherOpNode;
+use crate::BaseNode as OtherOpNode;
 
 /// Base Node Helper type
-pub(crate) type OpNode =
+pub(crate) type BaseNode =
     NodeHelperType<OtherOpNode, BlockchainProvider<NodeTypesWithDBAdapter<OtherOpNode, TmpDB>>>;
 
 /// Creates the initial setup with `num_nodes` of the node config, started and connected.
-pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<OpNode>, Wallet)> {
+pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseNode>, Wallet)> {
     let genesis: Genesis =
         serde_json::from_str(include_str!("../tests/assets/genesis.json")).unwrap();
     reth_e2e_test_utils::setup_engine(
         num_nodes,
-        Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build()),
+        Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build()),
         false,
         Default::default(),
         optimism_payload_attributes,
@@ -36,7 +36,7 @@ pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<OpNode>, Wallet)> {
 /// Advance the chain with sequential payloads returning them in the end.
 pub async fn advance_chain(
     length: usize,
-    node: &mut OpNode,
+    node: &mut BaseNode,
     wallet: Arc<Mutex<Wallet>>,
 ) -> eyre::Result<Vec<OpBuiltPayload>> {
     node.advance(length as u64, |_| {

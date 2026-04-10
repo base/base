@@ -21,7 +21,7 @@ use base_alloy_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
     spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
 };
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
@@ -121,8 +121,8 @@ fn op_next_evm_env(
 
 /// Base EVM configuration.
 #[derive(Debug)]
-pub struct OpEvmConfig<
-    ChainSpec = OpChainSpec,
+pub struct BaseEvmConfig<
+    ChainSpec = BaseChainSpec,
     N: NodePrimitives = OpPrimitives,
     R = OpRethReceiptBuilder,
     EvmFactory = OpEvmFactory,
@@ -136,7 +136,7 @@ pub struct OpEvmConfig<
 }
 
 impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
-    for OpEvmConfig<ChainSpec, N, R, EvmFactory>
+    for BaseEvmConfig<ChainSpec, N, R, EvmFactory>
 {
     fn clone(&self) -> Self {
         Self {
@@ -147,15 +147,15 @@ impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
     }
 }
 
-impl<ChainSpec: BaseUpgrades> OpEvmConfig<ChainSpec> {
-    /// Creates a new [`OpEvmConfig`] with the given chain spec for Base chains.
+impl<ChainSpec: BaseUpgrades> BaseEvmConfig<ChainSpec> {
+    /// Creates a new [`BaseEvmConfig`] with the given chain spec for Base chains.
     pub fn optimism(chain_spec: Arc<ChainSpec>) -> Self {
         Self::new(chain_spec, OpRethReceiptBuilder::default())
     }
 }
 
-impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> OpEvmConfig<ChainSpec, N, R> {
-    /// Creates a new [`OpEvmConfig`] with the given chain spec.
+impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
+    /// Creates a new [`BaseEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
         Self {
             block_assembler: BaseBlockAssembler::new(Arc::clone(&chain_spec)),
@@ -169,7 +169,7 @@ impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> OpEvmConfig<ChainSpec, N, R>
     }
 }
 
-impl<ChainSpec, N, R, EvmFactory> OpEvmConfig<ChainSpec, N, R, EvmFactory>
+impl<ChainSpec, N, R, EvmFactory> BaseEvmConfig<ChainSpec, N, R, EvmFactory>
 where
     ChainSpec: BaseUpgrades,
     N: NodePrimitives,
@@ -180,7 +180,7 @@ where
     }
 }
 
-impl<ChainSpec, N, R, EvmF> ConfigureEvm for OpEvmConfig<ChainSpec, N, R, EvmF>
+impl<ChainSpec, N, R, EvmF> ConfigureEvm for BaseEvmConfig<ChainSpec, N, R, EvmF>
 where
     ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades,
     N: NodePrimitives<
@@ -257,7 +257,7 @@ where
 }
 
 #[cfg(feature = "std")]
-impl<ChainSpec, N, R> ConfigureEngineEvm<OpExecutionData> for OpEvmConfig<ChainSpec, N, R>
+impl<ChainSpec, N, R> ConfigureEngineEvm<OpExecutionData> for BaseEvmConfig<ChainSpec, N, R>
 where
     ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades,
     N: NodePrimitives<
@@ -349,7 +349,7 @@ mod tests {
         map::{AddressMap, B256Map, HashMap},
     };
     use base_alloy_consensus::{BaseBlock, OpPrimitives, OpReceipt};
-    use base_execution_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
+    use base_execution_chainspec::{BASE_MAINNET, BaseChainSpec, BaseChainSpecBuilder};
     use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;
     use reth_evm::execute::ProviderError;
@@ -367,20 +367,20 @@ mod tests {
 
     use super::*;
 
-    fn test_evm_config() -> OpEvmConfig {
-        OpEvmConfig::optimism(BASE_MAINNET.clone())
+    fn test_evm_config() -> BaseEvmConfig {
+        BaseEvmConfig::optimism(BASE_MAINNET.clone())
     }
 
     #[test]
     fn test_evm_env_uses_base_v1_for_genesis_chain_spec() {
         let chain_spec = Arc::new(
-            OpChainSpecBuilder::default()
+            BaseChainSpecBuilder::default()
                 .chain(0.into())
                 .genesis(Genesis::default())
                 .base_v1_activated()
                 .build(),
         );
-        let evm_config = OpEvmConfig::optimism(chain_spec);
+        let evm_config = BaseEvmConfig::optimism(chain_spec);
         let header = Header { timestamp: 0, ..Default::default() };
         let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
         assert_eq!(cfg_env.spec, OpSpecId::BASE_V1);
@@ -401,10 +401,10 @@ mod tests {
             .shanghai_activated()
             .build();
 
-        // Use the `OpEvmConfig` to create the `cfg_env` and `block_env` based on the ChainSpec,
+        // Use the `BaseEvmConfig` to create the `cfg_env` and `block_env` based on the ChainSpec,
         // Header, and total difficulty
         let EvmEnv { cfg_env, .. } =
-            OpEvmConfig::optimism(Arc::new(OpChainSpec { inner: chain_spec.clone() }))
+            BaseEvmConfig::optimism(Arc::new(BaseChainSpec { inner: chain_spec.clone() }))
                 .evm_env(&header)
                 .unwrap();
 

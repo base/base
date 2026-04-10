@@ -26,10 +26,10 @@ mod basefee;
 pub use basefee::*;
 
 mod builder;
-pub use builder::OpChainSpecBuilder;
+pub use builder::BaseChainSpecBuilder;
 
 mod dev;
 pub use dev::BASE_DEV;
 
 mod spec;
-pub use spec::{GenesisInfo, OpChainSpec, SUPPORTED_CHAINS};
+pub use spec::{BaseChainSpec, GenesisInfo, SUPPORTED_CHAINS};

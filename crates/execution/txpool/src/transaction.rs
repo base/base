@@ -427,7 +427,7 @@ mod tests {
     use alloy_primitives::{TxKind, U256};
     use base_alloy_consensus::{OpPrimitives, OpTransactionSigned, TxDeposit};
     use base_execution_chainspec::BASE_MAINNET;
-    use base_execution_evm::OpEvmConfig;
+    use base_execution_evm::BaseEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
@@ -440,7 +440,7 @@ mod tests {
         let client = MockEthProvider::<OpPrimitives>::new()
             .with_chain_spec(BASE_MAINNET.clone())
             .with_genesis_block();
-        let evm_config = OpEvmConfig::optimism(BASE_MAINNET.clone());
+        let evm_config = BaseEvmConfig::optimism(BASE_MAINNET.clone());
         let validator = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()

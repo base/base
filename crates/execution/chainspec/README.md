@@ -2,14 +2,14 @@
 
 ## Overview
 
-Provides `OpChainSpec`, the chain specification type for Base nodes, along with pre-built specs
+Provides `BaseChainSpec`, the chain specification type for Base nodes, along with pre-built specs
 for Base Mainnet (8453), Base Sepolia (84532), and a local dev chain. Includes hardfork-specific
 base fee computation helpers for Holocene and Jovian, and supported chain resolution from CLI
 strings.
 
 ## How it works
 
-`OpChainSpec` wraps reth's `ChainSpec` and adds Base-specific hardfork awareness via the
+`BaseChainSpec` wraps reth's `ChainSpec` and adds Base-specific hardfork awareness via the
 `BaseUpgrades` trait. Each network spec is constructed from a bundled genesis JSON file and a
 hardfork schedule:
 

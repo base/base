@@ -5,8 +5,8 @@ use std::{sync::Arc, time::Instant};
 use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
 use alloy_primitives::B256;
 use base_alloy_consensus::BaseBlock;
-use base_execution_chainspec::OpChainSpec;
-use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::Block as BlockT;
@@ -36,7 +36,7 @@ use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 /// the `state_root_time_us` value.
 pub fn meter_block<P>(
     provider: P,
-    chain_spec: Arc<OpChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     block: &BaseBlock,
 ) -> EyreResult<MeterBlockResponse>
 where
@@ -88,7 +88,7 @@ where
 
     let evm_start = Instant::now();
     {
-        let evm_config = OpEvmConfig::optimism(chain_spec);
+        let evm_config = BaseEvmConfig::optimism(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, &parent_header, attributes)?;
 
         builder.apply_pre_execution_changes()?;

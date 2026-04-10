@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_exex::OpProofsExEx;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
@@ -18,13 +18,13 @@ use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
 use tracing::info;
 
-use crate::{OpNode, args::RollupArgs};
+use crate::{BaseNode, args::RollupArgs};
 
 /// - no proofs history (plain node),
 /// - in-mem proofs storage,
 /// - MDBX proofs storage.
 pub async fn launch_node_with_proof_history(
-    builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
+    builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, BaseChainSpec>>,
     args: RollupArgs,
 ) -> eyre::Result<(), ErrReport> {
     let RollupArgs {
@@ -35,8 +35,8 @@ pub async fn launch_node_with_proof_history(
         ..
     } = args;
 
-    // Start from a plain OpNode builder
-    let mut node_builder = builder.node(OpNode::new(args.clone()));
+    // Start from a plain BaseNode builder
+    let mut node_builder = builder.node(BaseNode::new(args.clone()));
 
     if proofs_history {
         let path = args

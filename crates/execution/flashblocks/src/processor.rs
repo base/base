@@ -14,7 +14,7 @@ use arc_swap::ArcSwapOption;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_alloy_flashblocks::Flashblock;
-use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
@@ -359,7 +359,7 @@ where
             .map_err(|e| ProviderError::StateProvider(e.to_string()))?
             .ok_or(ProviderError::MissingCanonicalHeader { block_number: canonical_block })?;
 
-        let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
+        let evm_config = BaseEvmConfig::optimism(self.client.chain_spec());
         let state_provider = self
             .client
             .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))

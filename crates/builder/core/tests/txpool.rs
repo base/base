@@ -7,13 +7,13 @@ use base_builder_core::{
         setup_test_instance_with_node_config,
     },
 };
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use reth_node_builder::NodeConfig;
 use reth_node_core::args::TxPoolArgs;
 
 #[tokio::test]
 async fn pending_pool_limit() -> eyre::Result<()> {
-    let node_config = NodeConfig::<OpChainSpec> {
+    let node_config = NodeConfig::<BaseChainSpec> {
         txpool: TxPoolArgs { pending_max_count: 50, ..Default::default() },
         ..default_node_config()
     };

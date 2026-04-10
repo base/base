@@ -14,16 +14,16 @@ use reth_node_builder::{
     rpc::{RethRpcAddOns, RpcContext},
 };
 
-use crate::types::{OpAddOns, OpComponentsBuilder, OpNodeTypes};
+use crate::types::{BaseNodeTypes, OpAddOns, OpComponentsBuilder};
 
 /// Alias for the default OP components type.
-type BaseComponents = <OpComponentsBuilder as NodeComponentsBuilder<OpNodeTypes>>::Components;
+type BaseComponents = <OpComponentsBuilder as NodeComponentsBuilder<BaseNodeTypes>>::Components;
 
 /// Convenience alias for the OP node adapter type used by the reth builder.
 ///
 /// Because `Components` depends only on pool, network, executor, and consensus builders (not the
 /// payload service builder), this type is identical regardless of which payload service is used.
-pub(crate) type OpNodeAdapter = NodeAdapter<OpNodeTypes, BaseComponents>;
+pub(crate) type OpNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
 
 /// Convenience alias for the OP Eth API type exposed by the reth RPC add-ons.
 type OpEthApi = <OpAddOns as RethRpcAddOns<OpNodeAdapter>>::EthApi;
@@ -57,7 +57,7 @@ type BoxExExFactory = Box<
 /// This is generic over the `NodeComponentsBuilder` (`CB`) so that both the default payload and
 /// the flashblocks payload service can be used interchangeably.
 pub(crate) type RethNodeBuilder<CB> =
-    WithLaunchContext<NodeBuilderWithComponents<OpNodeTypes, CB, OpAddOns>>;
+    WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, CB, OpAddOns>>;
 
 /// Pure hook accumulator for the Base node builder.
 ///
@@ -91,7 +91,7 @@ impl NodeHooks {
     /// builder produces the same concrete `Components` type as the default OP builder.
     pub fn apply_to<CB>(self, mut builder: RethNodeBuilder<CB>) -> RethNodeBuilder<CB>
     where
-        CB: NodeComponentsBuilder<OpNodeTypes, Components = BaseComponents>,
+        CB: NodeComponentsBuilder<BaseNodeTypes, Components = BaseComponents>,
     {
         let Self { rpc_hooks, node_started_hooks, exex_hooks, add_ons_hooks } = self;
 

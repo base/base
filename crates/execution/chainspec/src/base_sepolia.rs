@@ -10,18 +10,18 @@ use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec, Hardfork};
 use reth_ethereum_forks::EthereumHardfork;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
-use crate::OpChainSpec;
+use crate::BaseChainSpec;
 
 /// The Base Sepolia spec
-pub static BASE_SEPOLIA: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
+pub static BASE_SEPOLIA: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
     let genesis = serde_json::from_str(BaseChainConfig::sepolia().genesis_json)
         .expect("Can't deserialize Base Sepolia genesis json");
     let hardforks = BASE_SEPOLIA_UPGRADES.clone();
-    OpChainSpec {
+    BaseChainSpec {
         inner: ChainSpec {
             chain: Chain::base_sepolia(),
             genesis_header: SealedHeader::new(
-                OpChainSpec::make_genesis_header(&genesis, &hardforks),
+                BaseChainSpec::make_genesis_header(&genesis, &hardforks),
                 b256!("0x0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4"),
             ),
             genesis,

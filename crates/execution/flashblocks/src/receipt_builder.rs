@@ -130,8 +130,8 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, TxKind, address};
     use base_alloy_consensus::TxDeposit;
-    use base_execution_chainspec::OpChainSpecBuilder;
-    use base_execution_evm::OpEvmConfig;
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_evm::BaseEvmConfig;
     use base_revm::OpHaltReason;
     use reth_evm::ConfigureEvm;
     use revm::database::InMemoryDB;
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_unified_receipt_builder_creation() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let builder = UnifiedReceiptBuilder::new(Arc::clone(&chain_spec));
         assert!(Arc::ptr_eq(builder.chain_spec(), &chain_spec));
     }
@@ -245,10 +245,10 @@ mod tests {
 
     /// Helper to create an EVM instance for testing
     fn create_test_evm(
-        chain_spec: Arc<base_execution_chainspec::OpChainSpec>,
+        chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
         db: &mut InMemoryDB,
     ) -> impl Evm<HaltReason = OpHaltReason, DB = &mut InMemoryDB> + '_ {
-        let evm_config = OpEvmConfig::optimism(chain_spec);
+        let evm_config = BaseEvmConfig::optimism(chain_spec);
         let header = Header::default();
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         evm_config.evm_with_env(db, evm_env)
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_build_legacy_receipt() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_build_deposit_receipt() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn test_build_deposit_receipt_with_canyon_active() {
         // Canyon activates deposit_receipt_version
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_build_failed_transaction_receipt() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
         let mut evm = create_test_evm(Arc::clone(&chain_spec), &mut db);
 

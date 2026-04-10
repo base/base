@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
 use base_builder_publish::WebSocketPublisher;
-use base_execution_evm::OpEvmConfig;
+use base_execution_evm::BaseEvmConfig;
 use base_node_core::{
     OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, node::OpPoolBuilder,
 };
-use base_node_runner::{BaseNode, OpNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder};
+use base_node_runner::{
+    BaseNode, BaseNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder,
+};
 use derive_more::Debug;
 use reth_node_api::NodeTypes;
 use reth_node_builder::{
@@ -45,7 +47,7 @@ impl FlashblocksServiceBuilder {
         let ws_pub: Arc<WebSocketPublisher> =
             WebSocketPublisher::new(self.0.flashblocks_ws_addr)?.into();
         let payload_builder = OpPayloadBuilder::new(
-            OpEvmConfig::optimism(ctx.chain_spec()),
+            BaseEvmConfig::optimism(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),
             self.0.clone(),
@@ -76,7 +78,7 @@ impl FlashblocksServiceBuilder {
     }
 }
 
-impl<Node, Pool> PayloadServiceBuilder<Node, Pool, OpEvmConfig> for FlashblocksServiceBuilder
+impl<Node, Pool> PayloadServiceBuilder<Node, Pool, BaseEvmConfig> for FlashblocksServiceBuilder
 where
     Node: NodeBounds,
     Pool: PoolBounds,
@@ -85,7 +87,7 @@ where
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        _: OpEvmConfig,
+        _: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         self.spawn_payload_builder_service(ctx, pool)
     }
@@ -93,7 +95,7 @@ where
 
 impl BasePayloadServiceBuilder for FlashblocksServiceBuilder {
     type ComponentsBuilder = ComponentsBuilder<
-        OpNodeTypes,
+        BaseNodeTypes,
         OpPoolBuilder,
         Self,
         OpNetworkBuilder,
@@ -102,6 +104,6 @@ impl BasePayloadServiceBuilder for FlashblocksServiceBuilder {
     >;
 
     fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {
-        base_node.components::<OpNodeTypes>().payload(self)
+        base_node.components::<BaseNodeTypes>().payload(self)
     }
 }

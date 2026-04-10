@@ -2,7 +2,7 @@
 
 use std::{fmt, sync::Arc};
 
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use clap::Subcommand;
 use reth_cli_commands::{
     config_cmd, db, dump_genesis, init_cmd,
@@ -61,7 +61,7 @@ pub enum Commands<Ext: clap::Args + fmt::Debug = NoArgs> {
 
 impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
     /// Returns the underlying chain being used for commands
-    pub fn chain_spec(&self) -> Option<&Arc<OpChainSpec>> {
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         match self {
             Self::Node(cmd) => cmd.chain_spec(),
             Self::Init(cmd) => cmd.chain_spec(),

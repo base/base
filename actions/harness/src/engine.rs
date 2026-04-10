@@ -34,13 +34,13 @@ use base_common_rpc_types::Transaction as OpTransaction;
 use base_consensus_engine::{EngineClient, EngineClientError, HyperAuthClient};
 use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{EngineClientError as NodeEngineClientError, SequencerEngineClient};
-use base_execution_chainspec::OpChainSpec;
-use base_execution_evm::OpEvmConfig;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
     OpBuiltPayload, OpPayloadBuilder, OpPayloadBuilderAttributes,
 };
 use base_execution_txpool::BasePooledTransaction;
-use base_node_core::OpNode;
+use base_node_core::BaseNode;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use base_test_utils::build_test_genesis;
 use reth_basic_payload_builder::{
@@ -62,7 +62,7 @@ use reth_transaction_pool::noop::NoopTransactionPool;
 use crate::{SharedBlockHashRegistry, SharedL1Chain};
 
 /// Type alias for the node type adapter used in tests.
-pub type TestNodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
+pub type TestNodeTypes = NodeTypesWithDBAdapter<BaseNode, Arc<TempDatabase<DatabaseEnv>>>;
 
 /// Type alias for the test provider factory used by the engine client.
 pub type TestProviderFactory = ProviderFactory<TestNodeTypes>;
@@ -89,8 +89,8 @@ pub struct ActionEngineClientInner {
     /// The blockchain provider wrapping the same factory, used by the builder
     /// since it implements `StateProviderFactory`.
     blockchain_provider: TestBlockchainProvider,
-    evm_config: OpEvmConfig,
-    chain_spec: Arc<OpChainSpec>,
+    evm_config: BaseEvmConfig,
+    chain_spec: Arc<BaseChainSpec>,
     canonical_head: L2BlockInfo,
     executed_headers: HashMap<u64, Header>,
     /// Payloads built via FCU-with-attrs (sequencer mode), keyed by `PayloadId`.
@@ -133,7 +133,7 @@ impl ActionEngineClient {
     ///
     /// Starts from [`build_test_genesis`] (pre-funded test accounts, all forks through
     /// Jovian at timestamp 0) and overrides each fork timestamp and the chain ID from the
-    /// rollup config so the resulting [`OpChainSpec`] matches the test's expectations.
+    /// rollup config so the resulting [`BaseChainSpec`] matches the test's expectations.
     fn build_genesis_for_rollup(rollup_config: &RollupConfig) -> Genesis {
         let mut genesis = build_test_genesis();
         genesis.config.chain_id = rollup_config.l2_chain_id.id();
@@ -148,7 +148,7 @@ impl ActionEngineClient {
         );
 
         let hf = &rollup_config.hardforks;
-        // Helper: set or clear a JSON extra-field that OpChainSpec::from_genesis reads.
+        // Helper: set or clear a JSON extra-field that BaseChainSpec::from_genesis reads.
         macro_rules! set_ts {
             ($key:expr, $val:expr) => {
                 match $val {
@@ -196,7 +196,7 @@ impl ActionEngineClient {
     /// `l2_safe_head.hash` matches the `parent_hash` encoded in batches by the sequencer.
     pub fn compute_l2_genesis_hash(rollup_config: &RollupConfig) -> B256 {
         let chain_spec =
-            Arc::new(OpChainSpec::from_genesis(Self::build_genesis_for_rollup(rollup_config)));
+            Arc::new(BaseChainSpec::from_genesis(Self::build_genesis_for_rollup(rollup_config)));
         chain_spec.genesis_header().hash_slow()
     }
 
@@ -214,13 +214,13 @@ impl ActionEngineClient {
         // build_test_genesis() provides the genesis accounts and sets all forks through
         // Jovian at timestamp 0; we override per-fork times and the chain ID here.
         let chain_spec =
-            Arc::new(OpChainSpec::from_genesis(Self::build_genesis_for_rollup(&rollup_config)));
+            Arc::new(BaseChainSpec::from_genesis(Self::build_genesis_for_rollup(&rollup_config)));
         let provider_factory =
-            create_test_provider_factory_with_node_types::<OpNode>(Arc::clone(&chain_spec));
+            create_test_provider_factory_with_node_types::<BaseNode>(Arc::clone(&chain_spec));
         init_genesis(&provider_factory).expect("failed to initialize genesis in action engine");
         let blockchain_provider = BlockchainProvider::new(provider_factory.clone())
             .expect("failed to create blockchain provider");
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
 
         let inner = Arc::new(Mutex::new(ActionEngineClientInner {
             provider_factory,

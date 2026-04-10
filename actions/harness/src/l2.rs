@@ -23,8 +23,8 @@ use base_alloy_rpc_types_engine::{
 use base_consensus_derive::{AttributesBuilder, StatefulAttributesBuilder};
 use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{L1OriginSelector, OriginSelector, SequencerEngineClient};
-use base_execution_chainspec::OpChainSpecBuilder;
-use base_execution_evm::OpEvmConfig;
+use base_execution_chainspec::BaseChainSpecBuilder;
+use base_execution_evm::BaseEvmConfig;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use base_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm as _, FromRecoveredTx};
@@ -724,14 +724,14 @@ impl StatefulL2Executor {
         parent_hash: B256,
     ) -> Result<(B256, u64), L2SequencerError> {
         let mut spec_builder =
-            OpChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id);
+            BaseChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id);
 
         if let Some(ts) = self.rollup_config.hardforks.base.v1 {
             spec_builder = spec_builder.with_fork(BaseUpgrade::V1, ForkCondition::Timestamp(ts));
         }
 
         let chain_spec = Arc::new(spec_builder.build());
-        let evm_config = OpEvmConfig::optimism(chain_spec);
+        let evm_config = BaseEvmConfig::optimism(chain_spec);
 
         let header = Header {
             number: block_number,

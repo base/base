@@ -2,13 +2,13 @@
 
 use base_alloy_consensus::OpPrimitives;
 use base_engine_tree::BaseEngineValidatorBuilder;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
 use base_execution_rpc::eth::OpEthApiBuilder;
 use base_execution_storage::OpStorage;
 use base_node_core::{
-    OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
-    OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder, OpNodeTypes,
+    BaseNodeTypes, OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
+    OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder,
     args::RollupArgs,
     node::{OpPayloadBuilder, OpPoolBuilder},
 };
@@ -62,7 +62,7 @@ impl BaseNode {
     /// Returns the components for the given [`RollupArgs`].
     pub fn components<Node>(&self) -> OpNodeComponentBuilder<Node>
     where
-        Node: FullNodeTypes<Types: OpNodeTypes>,
+        Node: FullNodeTypes<Types: BaseNodeTypes>,
     {
         let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
             self.args;
@@ -108,14 +108,14 @@ impl BaseNode {
     ///
     /// ```no_run
     /// use reth_db::open_db_read_only;
-    /// use base_execution_chainspec::OpChainSpecBuilder;
+    /// use base_execution_chainspec::BaseChainSpecBuilder;
     /// use base_node_runner::BaseNode;
     /// use reth_provider::providers::{RocksDBProvider, StaticFileProvider};
     /// use std::sync::Arc;
     ///
     /// let factory = BaseNode::provider_factory_builder()
     ///     .db(Arc::new(open_db_read_only("db", Default::default()).unwrap()))
-    ///     .chainspec(OpChainSpecBuilder::base_mainnet().build().into())
+    ///     .chainspec(BaseChainSpecBuilder::base_mainnet().build().into())
     ///     .static_file(StaticFileProvider::read_only("db/static_files", false).unwrap())
     ///     .rocksdb_provider(RocksDBProvider::new("db/rocksdb").unwrap())
     ///     .build_provider_factory();
@@ -127,7 +127,7 @@ impl BaseNode {
 
 impl<N> Node<N> for BaseNode
 where
-    N: FullNodeTypes<Types: OpNodeTypes>,
+    N: FullNodeTypes<Types: BaseNodeTypes>,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
@@ -157,7 +157,7 @@ where
 
 impl NodeTypes for BaseNode {
     type Primitives = OpPrimitives;
-    type ChainSpec = OpChainSpec;
+    type ChainSpec = BaseChainSpec;
     type Storage = OpStorage;
     type Payload = OpEngineTypes;
 }

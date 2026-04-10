@@ -1,9 +1,9 @@
 use std::{fmt, sync::Arc};
 
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
 use base_execution_evm::BaseExecutorProvider;
-use base_node_core::OpNode;
+use base_node_core::BaseNode;
 use eyre::{Result, eyre};
 use reth_cli_commands::launcher::Launcher;
 use reth_cli_runner::CliRunner;
@@ -73,7 +73,7 @@ where
         // Install the prometheus recorder to be sure to record all metrics
         install_prometheus_recorder();
 
-        let components = |spec: Arc<OpChainSpec>| {
+        let components = |spec: Arc<BaseChainSpec>| {
             (
                 BaseExecutorProvider::optimism(Arc::clone(&spec)),
                 Arc::new(OpBeaconConsensus::new(spec)),
@@ -93,30 +93,30 @@ where
                 runner.run_command_until_exit(|ctx| command.execute(ctx, launcher))
             }
             Commands::Init(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
             }
             Commands::InitState(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
             }
             Commands::DumpGenesis(command) => runner.run_blocking_until_ctrl_c(command.execute()),
             Commands::Db(command) => {
-                runner.run_blocking_command_until_exit(|ctx| command.execute::<OpNode>(ctx))
+                runner.run_blocking_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
             }
             Commands::Stage(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<OpNode, _>(ctx, components))
+                runner.run_command_until_exit(|ctx| command.execute::<BaseNode, _>(ctx, components))
             }
-            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<OpNode>()),
+            Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<BaseNode>()),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::Prune(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<OpNode>(ctx))
+                runner.run_command_until_exit(|ctx| command.execute::<BaseNode>(ctx))
             }
             #[cfg(feature = "dev")]
             Commands::TestVectors(command) => runner.run_until_ctrl_c(command.execute()),
             Commands::ReExecute(command) => {
-                runner.run_until_ctrl_c(command.execute::<OpNode>(components))
+                runner.run_until_ctrl_c(command.execute::<BaseNode>(components))
             }
             Commands::OpProofs(command) => {
-                runner.run_blocking_until_ctrl_c(command.execute::<OpNode>())
+                runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
             }
         }
     }

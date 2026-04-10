@@ -13,7 +13,7 @@ use alloy_primitives::Bytes;
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use base_common_rpc_types::OpTransactionRequest;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::TestHarnessBuilder;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis, build_test_genesis_v1};
 use eyre::Result;
@@ -39,7 +39,7 @@ fn sign_tx_with_gas_limit(from: Account, to: alloy_primitives::Address, gas_limi
 
 #[tokio::test]
 async fn v1_gas_limit_cap() -> Result<()> {
-    let chain_spec = Arc::new(OpChainSpec::from_genesis(build_test_genesis_v1()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
 
     // Reject tx above cap
@@ -57,7 +57,7 @@ async fn v1_gas_limit_cap() -> Result<()> {
 
 #[tokio::test]
 async fn pre_v1_accepts_tx_above_gas_limit_cap() -> Result<()> {
-    let chain_spec = Arc::new(OpChainSpec::from_genesis(build_test_genesis()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
 
     let raw_tx = sign_tx_with_gas_limit(Account::Alice, Account::Bob.address(), GAS_LIMIT_CAP + 1);

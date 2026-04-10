@@ -9,8 +9,8 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction as _};
 use alloy_primitives::{Address, B256, U256};
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
-use base_execution_chainspec::OpChainSpec;
-use base_execution_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use base_revm::L1BlockInfo;
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
@@ -197,7 +197,7 @@ fn add_state_root_trie_update_counts(
 /// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics.
 pub fn meter_bundle<SP>(
     state_provider: SP,
-    chain_spec: Arc<OpChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     bundle: ParsedBundle,
     header: &SealedHeader,
     parent_beacon_block_root: Option<B256>,
@@ -314,7 +314,7 @@ where
 
     let total_start = Instant::now();
     {
-        let evm_config = OpEvmConfig::optimism(chain_spec);
+        let evm_config = BaseEvmConfig::optimism(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, header, attributes)?;
 
         // Cap the base fee at MIN_BASEFEE so transactions aren't rejected for

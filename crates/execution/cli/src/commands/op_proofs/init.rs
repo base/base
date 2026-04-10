@@ -3,7 +3,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use base_alloy_consensus::OpPrimitives;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     InitializationJob, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
 };
@@ -36,7 +36,7 @@ pub struct InitCommand<C: ChainSpecParser> {
     pub storage_path: PathBuf,
 }
 
-impl<C: ChainSpecParser<ChainSpec = OpChainSpec>> InitCommand<C> {
+impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
     /// Execute `initialize-op-proofs` command
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = OpPrimitives>>(
         self,

@@ -10,7 +10,7 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 use alloy_primitives::hex::ToHexExt;
 use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
 use base_node_core::{args::RollupArgs, node::OpPoolBuilder};
 use base_node_runner::BaseNode;
@@ -256,18 +256,18 @@ fn clear_otel_env_vars() {
     }
 }
 
-fn parse_genesis(genesis_json: &[u8]) -> Result<Arc<OpChainSpec>> {
+fn parse_genesis(genesis_json: &[u8]) -> Result<Arc<BaseChainSpec>> {
     let genesis: alloy_genesis::Genesis =
         serde_json::from_slice(genesis_json).wrap_err("Invalid genesis JSON")?;
-    Ok(Arc::new(OpChainSpec::from_genesis(genesis)))
+    Ok(Arc::new(BaseChainSpec::from_genesis(genesis)))
 }
 
 fn create_node_config(
-    chain_spec: Arc<OpChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     data_path: &std::path::Path,
     jwt_path: &std::path::Path,
     config: &InProcessBuilderConfig,
-) -> Result<NodeConfig<OpChainSpec>> {
+) -> Result<NodeConfig<BaseChainSpec>> {
     let mut rpc =
         if config.http_port.is_some() || config.ws_port.is_some() || config.auth_port.is_some() {
             RpcServerArgs::default().with_http().with_ws()
@@ -318,7 +318,7 @@ fn create_node_config(
         pprof_dumps_path: None,
     };
 
-    let mut node_config = NodeConfig::<OpChainSpec>::new(chain_spec)
+    let mut node_config = NodeConfig::<BaseChainSpec>::new(chain_spec)
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network);

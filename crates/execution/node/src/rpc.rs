@@ -16,8 +16,8 @@
 //!     rpc::{EthApiBuilder, EthApiCtx},
 //! };
 //! use base_execution_chainspec::BASE_SEPOLIA;
-//! use base_execution_evm::OpEvmConfig;
-//! use base_node_core::{BaseNetworkPrimitives, OpExecutorBuilder, OpNode};
+//! use base_execution_evm::BaseEvmConfig;
+//! use base_node_core::{BaseNetworkPrimitives, OpExecutorBuilder, BaseNode};
 //! use base_execution_rpc::OpEthApiBuilder;
 //! use base_execution_txpool::BasePooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;
@@ -38,19 +38,19 @@
 //!         .with_loaded_toml_config(sepolia)
 //!         .unwrap()
 //!         .attach(Arc::new(db))
-//!         .with_provider_factory::<_, OpEvmConfig>(ChangesetCache::new())
+//!         .with_provider_factory::<_, BaseEvmConfig>(ChangesetCache::new())
 //!         .await
 //!         .unwrap()
 //!         .with_genesis()
 //!         .unwrap()
 //!         .with_metrics_task() // todo: shouldn't be req to set up blockchain db
-//!         .with_blockchain_db::<RethFullAdapter<_, OpNode>, _>(move |provider_factory| {
+//!         .with_blockchain_db::<RethFullAdapter<_, BaseNode>, _>(move |provider_factory| {
 //!             Ok(BlockchainProvider::new(provider_factory).unwrap())
 //!         })
 //!         .unwrap()
 //!         .with_components(
 //!             ComponentsBuilder::default()
-//!                 .node_types::<RethFullAdapter<_, OpNode>>()
+//!                 .node_types::<RethFullAdapter<_, BaseNode>>()
 //!                 .noop_pool::<BasePooledTransaction>()
 //!                 .executor(OpExecutorBuilder::default())
 //!                 .noop_consensus()

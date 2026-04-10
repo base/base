@@ -10,18 +10,18 @@ use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec};
 use reth_ethereum_forks::{EthereumHardfork, Hardfork};
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 
-use crate::OpChainSpec;
+use crate::BaseChainSpec;
 
 /// The Base mainnet spec
-pub static BASE_MAINNET: LazyLock<Arc<OpChainSpec>> = LazyLock::new(|| {
+pub static BASE_MAINNET: LazyLock<Arc<BaseChainSpec>> = LazyLock::new(|| {
     let genesis = serde_json::from_str(BaseChainConfig::mainnet().genesis_json)
         .expect("Can't deserialize Base genesis json");
     let hardforks = BASE_MAINNET_UPGRADES.clone();
-    OpChainSpec {
+    BaseChainSpec {
         inner: ChainSpec {
             chain: Chain::base_mainnet(),
             genesis_header: SealedHeader::new(
-                OpChainSpec::make_genesis_header(&genesis, &hardforks),
+                BaseChainSpec::make_genesis_header(&genesis, &hardforks),
                 b256!("0xf712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd"),
             ),
             genesis,

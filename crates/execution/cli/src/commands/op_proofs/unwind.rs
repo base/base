@@ -3,7 +3,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use base_alloy_consensus::OpPrimitives;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{OpProofsStorage, OpProofsStore, db::MdbxProofsStorage};
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
@@ -62,7 +62,7 @@ impl<C: ChainSpecParser> UnwindCommand<C> {
     }
 }
 
-impl<C: ChainSpecParser<ChainSpec = OpChainSpec>> UnwindCommand<C> {
+impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
     /// Execute [`UnwindCommand`].
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = OpPrimitives>>(
         self,

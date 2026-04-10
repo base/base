@@ -80,13 +80,13 @@ impl GenesisInfo {
 
 /// Base chain spec type.
 #[derive(Debug, Clone, Deref, Into, Constructor, PartialEq, Eq)]
-pub struct OpChainSpec {
+pub struct BaseChainSpec {
     /// [`ChainSpec`].
     pub inner: ChainSpec,
 }
 
-impl OpChainSpec {
-    /// Converts the given [`Genesis`] into an [`OpChainSpec`].
+impl BaseChainSpec {
+    /// Converts the given [`Genesis`] into an [`BaseChainSpec`].
     pub fn from_genesis(genesis: Genesis) -> Self {
         genesis.into()
     }
@@ -112,7 +112,7 @@ impl OpChainSpec {
         header
     }
 
-    /// Parses a chain name into an [`OpChainSpec`], if recognized.
+    /// Parses a chain name into an [`BaseChainSpec`], if recognized.
     pub fn parse_chain(s: &str) -> Option<Arc<Self>> {
         match s {
             "dev" => Some(BASE_DEV.clone()),
@@ -130,7 +130,7 @@ impl OpChainSpec {
     }
 }
 
-impl EthChainSpec for OpChainSpec {
+impl EthChainSpec for BaseChainSpec {
     type Header = Header;
 
     fn chain(&self) -> Chain {
@@ -196,7 +196,7 @@ impl EthChainSpec for OpChainSpec {
     }
 }
 
-impl Hardforks for OpChainSpec {
+impl Hardforks for BaseChainSpec {
     fn fork<H: Hardfork>(&self, fork: H) -> ForkCondition {
         self.inner.fork(fork)
     }
@@ -218,19 +218,19 @@ impl Hardforks for OpChainSpec {
     }
 }
 
-impl EthereumHardforks for OpChainSpec {
+impl EthereumHardforks for BaseChainSpec {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
         self.fork(fork)
     }
 }
 
-impl BaseUpgrades for OpChainSpec {
+impl BaseUpgrades for BaseChainSpec {
     fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
         self.fork(fork)
     }
 }
 
-impl From<Genesis> for OpChainSpec {
+impl From<Genesis> for BaseChainSpec {
     fn from(genesis: Genesis) -> Self {
         let optimism_genesis_info = GenesisInfo::extract_from(&genesis);
         let genesis_info =
@@ -326,7 +326,7 @@ impl From<Genesis> for OpChainSpec {
     }
 }
 
-impl From<ChainSpec> for OpChainSpec {
+impl From<ChainSpec> for BaseChainSpec {
     fn from(value: ChainSpec) -> Self {
         Self { inner: value }
     }
@@ -352,7 +352,7 @@ mod tests {
     };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
-    use crate::{BASE_MAINNET, BASE_SEPOLIA, BASE_ZERONET, OpChainSpec, OpChainSpecBuilder};
+    use crate::{BASE_MAINNET, BASE_SEPOLIA, BASE_ZERONET, BaseChainSpec, BaseChainSpecBuilder};
 
     #[test]
     fn test_storage_root_consistency() {
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn base_mainnet_forkids() {
-        let mut base_mainnet = OpChainSpecBuilder::base_mainnet().build();
+        let mut base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         base_mainnet.inner.genesis_header.set_hash(BASE_MAINNET.genesis_hash());
         test_fork_ids(
             &BASE_MAINNET,
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn latest_base_mainnet_fork_id_with_builder() {
-        let base_mainnet = OpChainSpecBuilder::base_mainnet().build();
+        let base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         assert_eq!(
             ForkId { hash: ForkHash(hex!("1cfeafc9")), next: 0 },
             base_mainnet.latest_fork_id()
@@ -589,7 +589,7 @@ mod tests {
     }
     "#;
         let genesis: Genesis = serde_json::from_str(geth_genesis).unwrap();
-        let chain_spec: OpChainSpec = genesis.into();
+        let chain_spec: BaseChainSpec = genesis.into();
 
         assert_eq!(
             chain_spec.base_fee_params,
@@ -669,7 +669,7 @@ mod tests {
             })
         );
 
-        let chain_spec: OpChainSpec = genesis.into();
+        let chain_spec: BaseChainSpec = genesis.into();
 
         assert_eq!(
             chain_spec.base_fee_params,
@@ -731,7 +731,7 @@ mod tests {
     }
     "#;
         let genesis: Genesis = serde_json::from_str(geth_genesis).unwrap();
-        let chainspec = OpChainSpec::from(genesis.clone());
+        let chainspec = BaseChainSpec::from(genesis.clone());
 
         let actual_chain_id = genesis.config.chain_id;
         assert_eq!(actual_chain_id, 8453);
@@ -817,7 +817,7 @@ mod tests {
             ..Default::default()
         };
 
-        let chain_spec: OpChainSpec = genesis.into();
+        let chain_spec: BaseChainSpec = genesis.into();
 
         let hardforks: Vec<_> = chain_spec.hardforks.forks_iter().map(|(h, _)| h).collect();
         let expected_hardforks = vec![
@@ -912,7 +912,7 @@ mod tests {
         "#;
 
         let genesis: Genesis = serde_json::from_str(geth_genesis).unwrap();
-        let chainspec = OpChainSpec::from_genesis(genesis);
+        let chainspec = BaseChainSpec::from_genesis(genesis);
         assert!(BaseUpgrades::is_holocene_active_at_timestamp(&chainspec, 1732633200));
     }
 
@@ -970,7 +970,7 @@ mod tests {
         "#;
 
         let genesis: Genesis = serde_json::from_str(geth_genesis).unwrap();
-        let chainspec = OpChainSpec::from_genesis(genesis);
+        let chainspec = BaseChainSpec::from_genesis(genesis);
         assert!(chainspec.is_holocene_active_at_timestamp(1732633200));
 
         assert!(chainspec.is_shanghai_active_at_timestamp(0));

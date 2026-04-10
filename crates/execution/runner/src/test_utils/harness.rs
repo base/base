@@ -11,7 +11,7 @@ use alloy_rpc_types_engine::PayloadAttributes;
 use base_alloy_consensus::BaseBlock;
 use base_alloy_network::Base;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
@@ -33,7 +33,7 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct TestHarnessBuilder {
     extensions: Vec<Box<dyn BaseNodeExtension>>,
-    chain_spec: Option<Arc<OpChainSpec>>,
+    chain_spec: Option<Arc<BaseChainSpec>>,
 }
 
 impl TestHarnessBuilder {
@@ -59,7 +59,7 @@ impl TestHarnessBuilder {
     /// Set a custom chain spec for the test harness.
     ///
     /// If not provided, the default genesis is built programmatically.
-    pub fn with_chain_spec(mut self, chain_spec: Arc<OpChainSpec>) -> Self {
+    pub fn with_chain_spec(mut self, chain_spec: Arc<BaseChainSpec>) -> Self {
         self.chain_spec = Some(chain_spec);
         self
     }
@@ -70,7 +70,7 @@ impl TestHarnessBuilder {
 
         let chain_spec = self.chain_spec.unwrap_or_else(|| {
             let genesis = build_test_genesis();
-            Arc::new(OpChainSpec::from_genesis(genesis))
+            Arc::new(BaseChainSpec::from_genesis(genesis))
         });
 
         let node = LocalNode::new(self.extensions, chain_spec).await?;
@@ -233,7 +233,7 @@ impl TestHarness {
     }
 
     /// Return the chain specification used by the harness.
-    pub fn chain_spec(&self) -> Arc<OpChainSpec> {
+    pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.node.blockchain_provider().chain_spec()
     }
 

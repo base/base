@@ -1,7 +1,7 @@
 //! Base block execution strategy.
 
 /// Helper type with backwards compatible methods to obtain executor providers.
-pub type BaseExecutorProvider = crate::OpEvmConfig;
+pub type BaseExecutorProvider = crate::BaseEvmConfig;
 
 #[cfg(test)]
 mod tests {
@@ -11,14 +11,14 @@ mod tests {
     use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
     use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, b256};
     use base_alloy_consensus::{OpReceipt, OpTransactionSigned, TxDeposit};
-    use base_execution_chainspec::{OpChainSpec, OpChainSpecBuilder};
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_revm::L1_BLOCK_CONTRACT;
     use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_evm::execute::{BasicBlockExecutor, Executor};
     use reth_primitives_traits::{Account, RecoveredBlock};
     use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
 
-    use crate::{OpEvmConfig, OpRethReceiptBuilder};
+    use crate::{BaseEvmConfig, OpRethReceiptBuilder};
 
     fn create_op_state_provider() -> StateProviderTest {
         let mut db = StateProviderTest::default();
@@ -47,8 +47,8 @@ mod tests {
         db
     }
 
-    fn evm_config(chain_spec: Arc<OpChainSpec>) -> OpEvmConfig {
-        OpEvmConfig::new(chain_spec, OpRethReceiptBuilder::default())
+    fn evm_config(chain_spec: Arc<BaseChainSpec>) -> BaseEvmConfig {
+        BaseEvmConfig::new(chain_spec, OpRethReceiptBuilder::default())
     }
 
     #[test]
@@ -70,7 +70,8 @@ mod tests {
         let account = Account { balance: U256::MAX, ..Account::default() };
         db.insert_account(addr, account, None, HashMap::default());
 
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().regolith_activated().build());
+        let chain_spec =
+            Arc::new(BaseChainSpecBuilder::base_mainnet().regolith_activated().build());
 
         let tx: OpTransactionSigned = TxEip1559 {
             chain_id: chain_spec.chain.id(),
@@ -143,7 +144,7 @@ mod tests {
 
         db.insert_account(addr, account, None, HashMap::default());
 
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().canyon_activated().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().canyon_activated().build());
 
         let tx: OpTransactionSigned = TxEip1559 {
             chain_id: chain_spec.chain.id(),

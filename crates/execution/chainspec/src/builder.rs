@@ -7,16 +7,16 @@ use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_primitives_traits::SealedHeader;
 
-use crate::OpChainSpec;
+use crate::BaseChainSpec;
 
 /// Chain spec builder for an OP stack chain.
 #[derive(Debug, Default, From)]
-pub struct OpChainSpecBuilder {
+pub struct BaseChainSpecBuilder {
     /// [`ChainSpecBuilder`]
     inner: ChainSpecBuilder,
 }
 
-impl OpChainSpecBuilder {
+impl BaseChainSpecBuilder {
     /// Construct a new builder from the Base Mainnet chain spec.
     pub fn base_mainnet() -> Self {
         let mut inner = ChainSpecBuilder::default()
@@ -130,18 +130,18 @@ impl OpChainSpecBuilder {
         self
     }
 
-    /// Build the resulting [`OpChainSpec`].
+    /// Build the resulting [`BaseChainSpec`].
     ///
     /// # Panics
     ///
     /// This function panics if the chain ID and genesis is not set ([`Self::chain`] and
     /// [`Self::genesis`]).
-    pub fn build(self) -> OpChainSpec {
+    pub fn build(self) -> BaseChainSpec {
         let mut inner = self.inner.build();
-        inner.genesis_header = SealedHeader::seal_slow(OpChainSpec::make_genesis_header(
+        inner.genesis_header = SealedHeader::seal_slow(BaseChainSpec::make_genesis_header(
             &inner.genesis,
             &inner.hardforks,
         ));
-        OpChainSpec { inner }
+        BaseChainSpec { inner }
     }
 }

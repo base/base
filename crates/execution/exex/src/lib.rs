@@ -119,7 +119,7 @@ where
 /// use reth_node_builder::{NodeBuilder, NodeConfig};
 /// use base_execution_chainspec::BASE_MAINNET;
 /// use base_execution_exex::OpProofsExEx;
-/// use base_node_core::{OpNode, args::RollupArgs};
+/// use base_node_core::{BaseNode, args::RollupArgs};
 /// use base_execution_trie::{InMemoryProofsStorage, OpProofsStorage, db::MdbxProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
@@ -127,7 +127,7 @@ where
 /// let config = NodeConfig::new(BASE_MAINNET.clone());
 /// let db = create_test_rw_db();
 /// let args = RollupArgs::default();
-/// let op_node = OpNode::new(args);
+/// let op_node = BaseNode::new(args);
 ///
 /// // Create in-memory or persistent storage
 /// let storage: OpProofsStorage<Arc<InMemoryProofsStorage>> =
@@ -152,7 +152,7 @@ where
 /// // Set this based on your configuration or CLI args
 /// let _builder = NodeBuilder::new(config)
 ///     .with_database(db)
-///     .with_types_and_provider::<OpNode, BlockchainProvider<NodeTypesWithDBAdapter<OpNode, _>>>()
+///     .with_types_and_provider::<BaseNode, BlockchainProvider<NodeTypesWithDBAdapter<BaseNode, _>>>()
 ///     .with_components(op_node.components())
 ///     .install_exex("proofs-history", move |exex_context| async move {
 ///         Ok(OpProofsExEx::builder(exex_context, storage_exec)

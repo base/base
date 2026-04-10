@@ -2,7 +2,7 @@
 
 use alloy_consensus::Header;
 use base_alloy_consensus::{OpPrimitives, OpTransactionSigned};
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BundleTransaction, OpPooledTx, TimestampedTransaction};
 use base_node_core::OpEngineTypes;
 use reth_node_api::{FullNodeTypes, NodeTypes};
@@ -13,7 +13,7 @@ use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 /// Composite trait bound for a full node type compatible with the Base builder.
 pub trait NodeBounds:
     FullNodeTypes<
-    Types: NodeTypes<Payload = OpEngineTypes, ChainSpec = OpChainSpec, Primitives = OpPrimitives>,
+    Types: NodeTypes<Payload = OpEngineTypes, ChainSpec = BaseChainSpec, Primitives = OpPrimitives>,
 >
 {
 }
@@ -22,7 +22,7 @@ impl<T> NodeBounds for T where
     T: FullNodeTypes<
         Types: NodeTypes<
             Payload = OpEngineTypes,
-            ChainSpec = OpChainSpec,
+            ChainSpec = BaseChainSpec,
             Primitives = OpPrimitives,
         >,
     >
@@ -59,7 +59,7 @@ where
 /// Composite trait bound for state provider clients used by the Base builder.
 pub trait ClientBounds:
     StateProviderFactory
-    + ChainSpecProvider<ChainSpec = OpChainSpec>
+    + ChainSpecProvider<ChainSpec = BaseChainSpec>
     + BlockReaderIdExt<Header = Header>
     + Clone
 {
@@ -67,7 +67,7 @@ pub trait ClientBounds:
 
 impl<T> ClientBounds for T where
     T: StateProviderFactory
-        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + ChainSpecProvider<ChainSpec = BaseChainSpec>
         + BlockReaderIdExt<Header = Header>
         + Clone
 {

@@ -18,7 +18,7 @@ use alloy_consensus::{
 use alloy_primitives::B64;
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::DepositReceipt;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
     validate_against_parent_eip1559_base_fee, validate_against_parent_hash_number,
@@ -45,14 +45,14 @@ pub use error::BaseConsensusError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpBeaconConsensus {
     /// Configuration
-    chain_spec: Arc<OpChainSpec>,
+    chain_spec: Arc<BaseChainSpec>,
     /// Maximum allowed extra data size in bytes
     max_extra_data_size: usize,
 }
 
 impl OpBeaconConsensus {
     /// Create a new instance of [`OpBeaconConsensus`]
-    pub const fn new(chain_spec: Arc<OpChainSpec>) -> Self {
+    pub const fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self { chain_spec, max_extra_data_size: MAXIMUM_EXTRA_DATA_SIZE }
     }
 
@@ -232,7 +232,7 @@ mod tests {
         HoloceneExtraData, JovianExtraData, OpPrimitives, OpReceipt, OpTransactionSigned,
         OpTypedTransaction,
     };
-    use base_execution_chainspec::{BASE_MAINNET, OpChainSpecBuilder};
+    use base_execution_chainspec::{BASE_MAINNET, BaseChainSpecBuilder};
     use reth_chainspec::BaseFeeParams;
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_block_blob_gas_used_validation_isthmus() {
-        let chain_spec = OpChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .isthmus_activated()
             .genesis(BASE_MAINNET.genesis.clone())
             .chain(BASE_MAINNET.chain)
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_block_blob_gas_used_validation_failure_isthmus() {
-        let chain_spec = OpChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .isthmus_activated()
             .genesis(BASE_MAINNET.genesis.clone())
             .chain(BASE_MAINNET.chain)
@@ -341,7 +341,7 @@ mod tests {
         const BLOB_GAS_USED: u64 = 1000;
         const GAS_USED: u64 = 10;
 
-        let chain_spec = OpChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .jovian_activated()
             .genesis(BASE_MAINNET.genesis.clone())
             .chain(BASE_MAINNET.chain)
@@ -412,7 +412,7 @@ mod tests {
         const BLOB_GAS_USED: u64 = 1000;
         const GAS_USED: u64 = 10;
 
-        let chain_spec = OpChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .jovian_activated()
             .genesis(BASE_MAINNET.genesis.clone())
             .chain(BASE_MAINNET.chain)
@@ -486,7 +486,7 @@ mod tests {
     fn test_header_min_base_fee_validation() {
         const MIN_BASE_FEE: u64 = 1000;
 
-        let chain_spec = OpChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .jovian_activated()
             .genesis(BASE_MAINNET.genesis.clone())
             .chain(BASE_MAINNET.chain)
@@ -557,7 +557,7 @@ mod tests {
     fn test_header_min_base_fee_validation_failure() {
         const MIN_BASE_FEE: u64 = 1000;
 
-        let chain_spec = OpChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .jovian_activated()
             .genesis(BASE_MAINNET.genesis.clone())
             .chain(BASE_MAINNET.chain)
@@ -634,7 +634,7 @@ mod tests {
         const DA_FOOTPRINT: u64 = GAS_LIMIT - 1;
         const GAS_LIMIT: u64 = 100_000_000;
 
-        let chain_spec = OpChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .jovian_activated()
             .genesis(BASE_MAINNET.genesis.clone())
             .chain(BASE_MAINNET.chain)
@@ -708,7 +708,7 @@ mod tests {
         const DA_FOOTPRINT: u64 = GAS_LIMIT - 1;
         const GAS_LIMIT: u64 = 100_000_000;
 
-        let chain_spec = OpChainSpecBuilder::default()
+        let chain_spec = BaseChainSpecBuilder::default()
             .isthmus_activated()
             .genesis(BASE_MAINNET.genesis.clone())
             .chain(BASE_MAINNET.chain)

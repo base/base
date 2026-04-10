@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_eips::eip7910::{EthConfig, EthForkConfig, SystemContract};
 use alloy_provider::Provider;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::TestHarnessBuilder;
 use base_test_utils::build_test_genesis_v1;
 use eyre::Result;
@@ -90,7 +90,7 @@ fn assert_sanitized_system_contracts(config: &EthConfig) {
 #[tokio::test]
 async fn eth_config_available_on_base_v1_node() -> Result<()> {
     let harness = TestHarnessBuilder::new()
-        .with_chain_spec(Arc::new(OpChainSpec::from_genesis(build_test_genesis_v1())))
+        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1())))
         .build()
         .await?;
     let provider = harness.provider();

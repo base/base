@@ -1,7 +1,7 @@
 //! RPC integration tests.
 
 use base_execution_chainspec::BASE_MAINNET;
-use base_node_core::OpNode;
+use base_node_core::BaseNode;
 use reth_network::types::NatResolver;
 use reth_node_builder::{NodeBuilder, NodeHandle};
 use reth_node_core::{
@@ -31,7 +31,7 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
         .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 
     let NodeHandle { node, node_exit_future: _ } =
-        NodeBuilder::new(node_config).testing_node(exec).node(OpNode::default()).launch().await?;
+        NodeBuilder::new(node_config).testing_node(exec).node(BaseNode::default()).launch().await?;
 
     let api = node.add_ons_handle.admin_api();
 

@@ -12,7 +12,7 @@ use base_execution_rpc::{
     witness::OpDebugWitnessApi,
 };
 use base_execution_txpool::OpPooledTx;
-use base_node_core::{OpEngineApiBuilder, OpEngineValidatorBuilder, OpNodeTypes};
+use base_node_core::{BaseNodeTypes, OpEngineApiBuilder, OpEngineValidatorBuilder};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
@@ -70,7 +70,7 @@ where
 
 impl<N> Default for BaseAddOns<N, OpEthApiBuilder, OpEngineValidatorBuilder>
 where
-    N: FullNodeComponents<Types: OpNodeTypes>,
+    N: FullNodeComponents<Types: BaseNodeTypes>,
     OpEthApiBuilder: EthApiBuilder<N>,
 {
     fn default() -> Self {
@@ -87,7 +87,7 @@ impl<N, NetworkT, RpcMiddleware>
         RpcMiddleware,
     >
 where
-    N: FullNodeComponents<Types: OpNodeTypes>,
+    N: FullNodeComponents<Types: BaseNodeTypes>,
     OpEthApiBuilder<NetworkT>: EthApiBuilder<N>,
 {
     /// Build a [`OpAddOns`] using [`BaseAddOnsBuilder`].
@@ -181,12 +181,13 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: OpNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
+            Types: BaseNodeTypes
+                       + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     Attrs,
                     HeaderTy<N::Types>,
-                    base_execution_chainspec::OpChainSpec,
+                    base_execution_chainspec::BaseChainSpec,
                 >,
             >,
             Pool: TransactionPool<Transaction: OpPooledTx>,
@@ -260,12 +261,13 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: OpNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
+            Types: BaseNodeTypes
+                       + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     Attrs,
                     HeaderTy<N::Types>,
-                    base_execution_chainspec::OpChainSpec,
+                    base_execution_chainspec::BaseChainSpec,
                 >,
             >,
         >,

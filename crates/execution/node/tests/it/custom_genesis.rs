@@ -5,8 +5,8 @@ use std::sync::Arc;
 use alloy_consensus::BlockHeader;
 use alloy_genesis::Genesis;
 use alloy_primitives::B256;
-use base_execution_chainspec::OpChainSpecBuilder;
-use base_node_core::{OpNode, utils::optimism_payload_attributes};
+use base_execution_chainspec::BaseChainSpecBuilder;
+use base_node_core::{BaseNode, utils::optimism_payload_attributes};
 use reth_chainspec::EthChainSpec;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_e2e_test_utils::{
@@ -32,7 +32,7 @@ async fn test_op_node_custom_genesis_number() {
     genesis.parent_hash = Some(B256::random());
 
     let chain_spec =
-        Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
+        Arc::new(BaseChainSpecBuilder::base_mainnet().genesis(genesis).ecotone_activated().build());
 
     let wallet = Arc::new(Mutex::new(Wallet::default().with_chain_id(chain_spec.chain().into())));
 
@@ -51,9 +51,9 @@ async fn test_op_node_custom_genesis_number() {
     let runtime = reth_tasks::Runtime::test();
     let node_handle = NodeBuilder::new(config.clone())
         .with_database(db)
-        .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
-        .with_components(OpNode::default().components())
-        .with_add_ons(OpNode::new(Default::default()).add_ons())
+        .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
+        .with_components(BaseNode::default().components())
+        .with_add_ons(BaseNode::new(Default::default()).add_ons())
         .launch_with_fn(|builder| {
             let launcher = EngineNodeLauncher::new(
                 runtime.clone(),

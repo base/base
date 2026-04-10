@@ -83,16 +83,16 @@ mod tests {
     use reth_chainspec::{ChainSpec, ForkCondition, Hardfork};
 
     use super::*;
-    use crate::{BASE_SEPOLIA, OpChainSpec};
+    use crate::{BASE_SEPOLIA, BaseChainSpec};
 
     const JOVIAN_TIMESTAMP: u64 = 1900000000;
 
-    fn get_chainspec() -> Arc<OpChainSpec> {
+    fn get_chainspec() -> Arc<BaseChainSpec> {
         let mut base_sepolia_spec = BASE_SEPOLIA.inner.clone();
         base_sepolia_spec
             .hardforks
             .insert(BaseUpgrade::Jovian.boxed(), ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
-        Arc::new(OpChainSpec {
+        Arc::new(BaseChainSpec {
             inner: ChainSpec {
                 chain: base_sepolia_spec.chain,
                 genesis: base_sepolia_spec.genesis,

@@ -22,7 +22,7 @@ use base_alloy_evm::{
     BaseBlockExecutor, BaseBlockExecutorFactory, OpEvm, OpEvmFactory, OpTxResult,
 };
 use base_alloy_rpc_types_engine::OpExecutionData;
-use base_execution_chainspec::OpChainSpec;
+use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::OpRethReceiptBuilder;
 use base_flashblocks::FlashblocksState;
 use base_node_core::OpEngineTypes;
@@ -135,14 +135,14 @@ where
         + StateProviderFactory
         + StateReader
         + HashedPostStateProvider
-        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + ChainSpecProvider<ChainSpec = BaseChainSpec>
         + Clone
         + 'static,
     Evm: ConfigureEvm<
             Primitives = OpPrimitives,
             BlockExecutorFactory = BaseBlockExecutorFactory<
                 OpRethReceiptBuilder,
-                Arc<OpChainSpec>,
+                Arc<BaseChainSpec>,
                 OpEvmFactory,
             >,
         > + 'static,
@@ -1475,14 +1475,17 @@ where
         + ChangeSetReader
         + BlockNumReader
         + HashedPostStateProvider
-        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + ChainSpecProvider<ChainSpec = BaseChainSpec>
         + Clone
         + 'static,
     V: PayloadValidator<Types, Block = BaseBlock>,
     Evm: ConfigureEngineEvm<
             OpExecutionData,
             Primitives = OpPrimitives,
-            BlockExecutorFactory = BaseBlockExecutorFactory<OpRethReceiptBuilder, Arc<OpChainSpec>>,
+            BlockExecutorFactory = BaseBlockExecutorFactory<
+                OpRethReceiptBuilder,
+                Arc<BaseChainSpec>,
+            >,
         > + 'static,
     Types: PayloadTypes<
             BuiltPayload: BuiltPayload<Primitives = OpPrimitives>,
@@ -1569,14 +1572,14 @@ where
     Node: FullNodeComponents<
             Types: NodeTypes<
                 Payload = OpEngineTypes,
-                ChainSpec = OpChainSpec,
+                ChainSpec = BaseChainSpec,
                 Primitives = OpPrimitives,
             >,
             Evm: ConfigureEngineEvm<OpExecutionData>
                      + ConfigureEvm<
                 BlockExecutorFactory = BaseBlockExecutorFactory<
                     OpRethReceiptBuilder,
-                    Arc<OpChainSpec>,
+                    Arc<BaseChainSpec>,
                 >,
             >,
         >,

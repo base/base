@@ -399,8 +399,8 @@ mod tests {
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
-    use base_execution_chainspec::OpChainSpecBuilder;
-    use base_execution_evm::OpEvmConfig;
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use base_execution_evm::BaseEvmConfig;
     use base_revm::L1BlockInfo;
     use reth_evm::ConfigureEvm;
     use reth_revm::State;
@@ -433,8 +433,8 @@ mod tests {
     fn apply_pre_execution_changes_stores_beacon_root_in_eip4788_contract() {
         let db = make_db_with_beacon_roots_contract();
 
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
+        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
         let header = Header { timestamp: POST_ECOTONE_TIMESTAMP, number: 1, ..Default::default() };
         let evm_env = evm_config.evm_env(&header).expect("failed to build evm env");
         let evm = evm_config.evm_with_env(db, evm_env);
@@ -489,8 +489,8 @@ mod tests {
         // In this regime None is valid (no beacon root contract call is made).
         let pre_ecotone_timestamp = BASE_MAINNET_ECOTONE_TIMESTAMP - 1;
 
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
+        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
         let header = Header { timestamp: pre_ecotone_timestamp, number: 1, ..Default::default() };
         let evm_env = evm_config.evm_env(&header).expect("failed to build evm env");
         let evm = evm_config.evm_with_env(db, evm_env);
@@ -550,8 +550,8 @@ mod tests {
 
     #[test]
     fn cached_execute_transaction_preserves_timing_from_prev_pending_blocks() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
+        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
 
         let header = Header {
             number: 1,
@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn flashblock_tx_has_nonzero_blob_gas_used_when_jovian_active() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().jovian_activated().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().jovian_activated().build());
         let mut db = InMemoryDB::default();
 
         let sender_info = AccountInfo {
@@ -673,7 +673,7 @@ mod tests {
             base_fee_per_gas: Some(1_000_000_000),
             ..Default::default()
         };
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         let evm = evm_config.evm_with_env(db, evm_env);
 
@@ -701,7 +701,7 @@ mod tests {
 
     #[test]
     fn flashblock_tx_has_zero_blob_gas_used_when_jovian_inactive() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().build());
         let mut db = InMemoryDB::default();
 
         let sender_info = AccountInfo {
@@ -716,7 +716,7 @@ mod tests {
             base_fee_per_gas: Some(1_000_000_000),
             ..Default::default()
         };
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         let evm = evm_config.evm_with_env(db, evm_env);
 
@@ -744,7 +744,7 @@ mod tests {
 
     #[test]
     fn flashblock_deposit_tx_has_zero_blob_gas_used_when_jovian_active() {
-        let chain_spec = Arc::new(OpChainSpecBuilder::base_mainnet().jovian_activated().build());
+        let chain_spec = Arc::new(BaseChainSpecBuilder::base_mainnet().jovian_activated().build());
         let mut db = InMemoryDB::default();
 
         let deposit_sender: Address = address!("0x1234567890123456789012345678901234567890");
@@ -772,7 +772,7 @@ mod tests {
             base_fee_per_gas: Some(1_000_000_000),
             ..Default::default()
         };
-        let evm_config = OpEvmConfig::optimism(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         let evm = evm_config.evm_with_env(db, evm_env);
 
