@@ -92,6 +92,9 @@ enum RunState {
         run_start: Option<Instant>,
         run_count: u32,
         stop_flag: Arc<AtomicBool>,
+        /// Shared with the background task; storing `false` causes the loop to
+        /// stop after the current run completes rather than starting another.
+        continuous_flag: Arc<AtomicBool>,
         phase_rx: watch::Receiver<RunPhase>,
         snap_rx: watch::Receiver<DisplaySnapshot>,
         run_count_rx: watch::Receiver<u32>,
@@ -469,7 +472,8 @@ impl LoadTestView {
         let (run_count_tx, run_count_rx) = watch::channel(run_count);
         let (done_tx, done_rx) = mpsc::channel(1);
 
-        let continuous = self.continuous;
+        let continuous_flag = Arc::new(AtomicBool::new(self.continuous));
+        let continuous_for_task = Arc::clone(&continuous_flag);
 
         let task_handle = tokio::spawn(async move {
             // Fetch chain_id from the network's RPC — required for transaction signing.
@@ -564,6 +568,11 @@ impl LoadTestView {
 
                 let _ = phase_tx.send(RunPhase::Running);
                 let result = runner.run().await;
+                // run() always sets stop_flag=true on exit to signal the confirmer.
+                // Reset it here so the next iteration's run() starts clean, and so
+                // the break condition below only fires on a user-initiated stop
+                // (which stores false into continuous_for_task via stop_run()).
+                stop_flag_for_runner.store(false, Ordering::SeqCst);
 
                 // Drain accounts back to funder regardless of run outcome.
                 if let Some(ref funder) = funder {
@@ -573,10 +582,7 @@ impl LoadTestView {
 
                 last_result = result.map_err(|e| e.to_string());
 
-                if last_result.is_err()
-                    || stop_flag_for_runner.load(Ordering::SeqCst)
-                    || !continuous
-                {
+                if last_result.is_err() || !continuous_for_task.load(Ordering::SeqCst) {
                     break;
                 }
 
@@ -594,6 +600,7 @@ impl LoadTestView {
             run_start: None,
             run_count,
             stop_flag,
+            continuous_flag,
             phase_rx,
             snap_rx,
             run_count_rx,
@@ -610,8 +617,9 @@ impl LoadTestView {
     }
 
     fn stop_run(&mut self) {
-        if let RunState::Running { ref stop_flag, .. } = self.state {
+        if let RunState::Running { ref stop_flag, ref continuous_flag, .. } = self.state {
             stop_flag.store(true, Ordering::SeqCst);
+            continuous_flag.store(false, Ordering::SeqCst);
             self.continuous = false;
         }
     }
