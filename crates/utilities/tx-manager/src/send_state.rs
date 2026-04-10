@@ -5,7 +5,7 @@
 //! [`std::sync::Mutex`] (not `tokio`) since critical sections are CPU-bound
 //! with no `.await` points.
 
-use std::{collections::HashSet, sync::Mutex, time::Instant};
+use std::{sync::Mutex, time::Instant};
 
 use alloy_primitives::B256;
 
@@ -24,7 +24,7 @@ pub struct SendState {
 
 #[derive(Debug)]
 struct SendStateInner {
-    mined_txs: HashSet<B256>,
+    mined_txs: Vec<B256>,
     has_published: bool,
     nonce_too_low_count: u64,
     nonce_too_high: bool,
@@ -49,7 +49,7 @@ impl SendState {
         }
         Ok(Self {
             inner: Mutex::new(SendStateInner {
-                mined_txs: HashSet::new(),
+                mined_txs: Vec::new(),
                 has_published: false,
                 nonce_too_low_count: 0,
                 nonce_too_high: false,
@@ -95,7 +95,9 @@ impl SendState {
     /// onchain.
     pub fn tx_mined(&self, tx_hash: B256) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.mined_txs.insert(tx_hash);
+        if !inner.mined_txs.contains(&tx_hash) {
+            inner.mined_txs.push(tx_hash);
+        }
     }
 
     /// Records that a previously-mined transaction is no longer onchain
@@ -107,9 +109,11 @@ impl SendState {
     /// removals of hashes that were never tracked.
     pub fn tx_not_mined(&self, tx_hash: B256) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        let was_present = inner.mined_txs.remove(&tx_hash);
-        if was_present && inner.mined_txs.is_empty() {
-            inner.nonce_too_low_count = 0;
+        if let Some(idx) = inner.mined_txs.iter().position(|h| *h == tx_hash) {
+            inner.mined_txs.swap_remove(idx);
+            if inner.mined_txs.is_empty() {
+                inner.nonce_too_low_count = 0;
+            }
         }
     }
 
