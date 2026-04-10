@@ -564,9 +564,11 @@ where
         old_fee_cap: u128,
         old_blob_fee_cap: Option<u128>,
     ) -> TxManagerResult<BumpedFees> {
+        let is_blob = !candidate.blobs.is_empty();
+
         // Validate consistency: old_blob_fee_cap must be Some for blob txs
         // and None for non-blob txs.
-        if old_blob_fee_cap.is_some() == candidate.blobs.is_empty() {
+        if old_blob_fee_cap.is_some() != is_blob {
             return Err(TxManagerError::Unsupported(
                 "old_blob_fee_cap must be Some for blob transactions and None for non-blob transactions"
                     .into(),
@@ -574,13 +576,12 @@ where
         }
 
         // Step 1: Fetch fresh network fees.
-        let caps = self.suggest_gas_price_caps_for(!candidate.blobs.is_empty()).await?;
+        let caps = self.suggest_gas_price_caps_for(is_blob).await?;
 
         // Step 2: Derive effective base fee from the caps.
         let new_base_fee = FeeCalculator::base_fee_from_caps(caps.gas_fee_cap, caps.gas_tip_cap);
 
         // Step 3: Compute bumped tip and fee cap.
-        let is_blob = !candidate.blobs.is_empty();
         let (bumped_tip, bumped_fee_cap) = FeeCalculator::update_fees(
             old_tip,
             old_fee_cap,
