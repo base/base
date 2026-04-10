@@ -19,7 +19,6 @@ base-common-rpc-types.workspace = true
 base-alloy-consensus = { workspace = true, features = ["alloy-compat", "std"] }
 
 # Alloy
-alloy-signer.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
