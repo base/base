@@ -38,8 +38,7 @@ mod metrics;
 pub use metrics::Metrics;
 
 mod service;
-pub use service::run;
+pub use service::ProposerService;
 
-/// Shared mock implementations for tests.
 #[cfg(test)]
 pub mod test_utils;
