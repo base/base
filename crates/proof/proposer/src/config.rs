@@ -14,12 +14,10 @@ use crate::cli::{Cli, ProposerArgs};
 #[derive(Debug, Error)]
 pub enum ConfigError {
     /// Invalid URL format.
-    #[error("invalid {field} URL: {reason}")]
+    #[error("invalid {field} URL: missing host")]
     InvalidUrl {
         /// The field name that contains the invalid URL.
         field: &'static str,
-        /// The reason the URL is invalid.
-        reason: String,
     },
     /// A field value is out of the allowed range.
     #[error("{field} must be {constraint}, got {value}")]
@@ -29,7 +27,7 @@ pub enum ConfigError {
         /// The constraint description.
         constraint: &'static str,
         /// The actual value.
-        value: String,
+        value: &'static str,
     },
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
@@ -104,7 +102,7 @@ impl ProposerConfig {
             return Err(ConfigError::OutOfRange {
                 field: "max-parallel-proofs",
                 constraint: "at least 1",
-                value: "0".to_string(),
+                value: "0",
             });
         }
 
@@ -114,7 +112,7 @@ impl ProposerConfig {
             return Err(ConfigError::OutOfRange {
                 field: "anchor-state-registry-addr",
                 constraint: "non-zero address",
-                value: format!("{}", Address::ZERO),
+                value: "0x0000000000000000000000000000000000000000",
             });
         }
 
@@ -122,7 +120,7 @@ impl ProposerConfig {
             return Err(ConfigError::OutOfRange {
                 field: "poll-interval",
                 constraint: "greater than 0",
-                value: "0".to_string(),
+                value: "0",
             });
         }
 
@@ -130,7 +128,7 @@ impl ProposerConfig {
             return Err(ConfigError::OutOfRange {
                 field: "metrics-port",
                 constraint: "non-zero when metrics are enabled",
-                value: "0".to_string(),
+                value: "0",
             });
         }
 
@@ -138,7 +136,7 @@ impl ProposerConfig {
             return Err(ConfigError::OutOfRange {
                 field: "health-port",
                 constraint: "non-zero",
-                value: "0".to_string(),
+                value: "0",
             });
         }
 
@@ -146,7 +144,7 @@ impl ProposerConfig {
             return Err(ConfigError::OutOfRange {
                 field: "admin-port",
                 constraint: "non-zero when admin is enabled",
-                value: "0".to_string(),
+                value: "0",
             });
         }
 
@@ -195,7 +193,7 @@ impl ProposerConfig {
 /// (e.g. `file:///path`).
 fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
     if url.host().is_none() {
-        return Err(ConfigError::InvalidUrl { field, reason: "missing host".to_string() });
+        return Err(ConfigError::InvalidUrl { field });
     }
 
     Ok(())
