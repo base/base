@@ -298,10 +298,7 @@ mod tests {
         cli.metrics.enabled = true;
         cli.metrics.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "metrics-port", .. })
-        ));
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "metrics-port", .. })));
     }
 
     #[test]
@@ -319,10 +316,7 @@ mod tests {
         let mut cli = minimal_cli();
         cli.health.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "health-port", .. })
-        ));
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "health-port", .. })));
     }
 
     #[test]
@@ -331,10 +325,7 @@ mod tests {
         cli.admin.enabled = true;
         cli.admin.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(
-            result,
-            Err(ConfigError::OutOfRange { field: "admin-port", .. })
-        ));
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "admin-port", .. })));
     }
 
     #[test]
