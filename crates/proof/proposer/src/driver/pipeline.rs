@@ -29,7 +29,7 @@
 //! persistently failing.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
 
@@ -731,14 +731,15 @@ where
         // for i in 1..=intermediate_count. The last one (i = count) equals B
         // itself, so the set is a superset of `prefetch_blocks`.
         let all_canonical_blocks: Vec<u64> = {
-            let mut blocks = HashSet::new();
+            let mut blocks =
+                Vec::with_capacity(prefetch_blocks.len() * intermediate_count as usize);
             for &game_block in &prefetch_blocks {
                 let parent = game_block - block_interval;
                 for i in 1..=intermediate_count {
-                    blocks.insert(parent + i * intermediate_block_interval);
+                    blocks.push(parent + i * intermediate_block_interval);
                 }
             }
-            blocks.into_iter().collect()
+            blocks
         };
 
         // ── Pre-fetch canonical and intermediate roots concurrently ─────
@@ -1176,16 +1177,26 @@ where
         agreed_output_root: B256,
         target_block: u64,
     ) -> Result<ProofRequest, ProposerError> {
-        let agreed_l2_head = self
-            .l2_client
-            .header_by_number(Some(starting_block_number))
-            .await
-            .map_err(ProposerError::Rpc)?;
-
-        let claimed_output =
-            self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)?;
-
-        let l1_head = self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc)?;
+        let (agreed_l2_head, claimed_output, l1_head) = tokio::try_join!(
+            async {
+                self.l2_client
+                    .header_by_number(Some(starting_block_number))
+                    .await
+                    .map_err(ProposerError::Rpc)
+            },
+            async {
+                self.rollup_client
+                    .output_at_block(target_block)
+                    .await
+                    .map_err(ProposerError::Rpc)
+            },
+            async {
+                self.l1_client
+                    .header_by_number(None)
+                    .await
+                    .map_err(ProposerError::Rpc)
+            },
+        )?;
 
         let request = ProofRequest {
             l1_head: l1_head.hash,
