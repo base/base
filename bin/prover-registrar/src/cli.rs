@@ -20,8 +20,8 @@ use base_proof_tee_nitro_attestation_prover::{
 };
 use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CrlConfig,
-    DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_RECOVERY_ATTEMPTS,
-    DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
+    DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
+    DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, ProverClient, ProvingConfig,
     RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
@@ -204,6 +204,16 @@ struct BoundlessArgs {
     /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
     #[arg(long, env = cli_env!("NITRO_VERIFIER_ADDRESS"))]
     nitro_verifier_address: Option<Address>,
+
+    /// Maximum age (in seconds) of a recovered proof's attestation timestamp
+    /// before it is considered stale. Should be slightly below the on-chain
+    /// `MAX_AGE` to account for clock skew. Defaults to 3300 s (55 minutes).
+    #[arg(
+        long,
+        env = cli_env!("MAX_ATTESTATION_AGE_SECS"),
+        default_value_t = DEFAULT_MAX_ATTESTATION_AGE_SECS
+    )]
+    max_attestation_age_secs: u64,
 }
 
 /// CRL (Certificate Revocation List) checking CLI arguments.
@@ -310,6 +320,9 @@ impl Cli {
                     timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
                     nitro_verifier_address: self.boundless.nitro_verifier_address,
                     max_recovery_attempts: self.boundless.boundless_max_recovery_attempts,
+                    max_attestation_age: Duration::from_secs(
+                        self.boundless.max_attestation_age_secs,
+                    ),
                 }))
             }
             ProvingMode::Direct => {
@@ -495,7 +508,9 @@ impl Cli {
                 timeout: boundless.timeout,
                 trusted_certs_prefix_len: DEFAULT_TRUSTED_CERTS_PREFIX,
                 max_recovery_attempts: boundless.max_recovery_attempts,
+                max_attestation_age: boundless.max_attestation_age,
                 submit_lock: Arc::new(tokio::sync::Mutex::new(())),
+                recovery_blocked: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             }),
             ProvingConfig::Direct { ref elf_path } => {
                 let elf = std::fs::read(elf_path).map_err(|e| {

@@ -17,11 +17,11 @@
 //! [`generate_proof_for_signer`](AttestationProofProvider::generate_proof_for_signer)
 //! override on [`BoundlessProver`] for details.
 
-use std::{fmt, sync::Arc, time::Duration};
+use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_signer_local::PrivateKeySigner;
-use base_proof_tee_nitro_verifier::VerifierInput;
+use base_proof_tee_nitro_verifier::{VerifierInput, VerifierJournal};
 // `boundless-market` re-exports `alloy` (`pub use alloy`) but does not
 // re-export `DynProvider` directly — access it via the SDK's alloy so
 // the type in our alias matches the one inside `Client`.
@@ -77,11 +77,22 @@ pub struct BoundlessProver {
     /// Maximum number of deterministic request-ID slots to probe when
     /// recovering in-flight proofs after an instance rotation.
     pub max_recovery_attempts: u32,
+    /// Maximum age of an attestation timestamp for a recovered proof to
+    /// be considered fresh enough for on-chain submission. Proofs whose
+    /// journal timestamp is older than this are skipped during recovery.
+    /// Should be set slightly below the on-chain `MAX_AGE` to account
+    /// for clock skew and processing time.
+    pub max_attestation_age: Duration,
     /// Serialises the `submit_onchain` call so that concurrent proof
     /// requests do not race on the Boundless wallet nonce. The lock is
     /// released immediately after submission, allowing the long-running
     /// fulfillment poll to proceed concurrently.
     pub submit_lock: Arc<Mutex<()>>,
+    /// Signers whose recovered proofs have been rejected on-chain.
+    /// When a signer is in this set, recovery is skipped and a fresh
+    /// proof is generated instead. Cleared on process restart, giving
+    /// recovered proofs one new attempt after each restart.
+    pub recovery_blocked: Arc<std::sync::Mutex<HashSet<Address>>>,
 }
 
 impl fmt::Debug for BoundlessProver {
@@ -98,6 +109,7 @@ impl fmt::Debug for BoundlessProver {
             .field("timeout", &self.timeout)
             .field("trusted_certs_prefix_len", &self.trusted_certs_prefix_len)
             .field("max_recovery_attempts", &self.max_recovery_attempts)
+            .field("max_attestation_age", &self.max_attestation_age)
             .finish()
     }
 }
@@ -312,6 +324,39 @@ impl BoundlessProver {
         on_chain_expiry.map_or(timeout_at, |e| e.min(timeout_at))
     }
 
+    /// Returns `true` if the proof's attestation timestamp is within
+    /// [`max_attestation_age`](Self::max_attestation_age) of the current
+    /// wall-clock time. Returns `false` (stale) when the journal cannot
+    /// be decoded, since an undecodable proof is unlikely to verify
+    /// on-chain.
+    fn is_journal_fresh(&self, proof: &AttestationProof) -> bool {
+        let journal = match VerifierJournal::decode(&proof.output) {
+            Ok(j) => j,
+            Err(e) => {
+                warn!(error = %e, "failed to decode VerifierJournal from recovered proof, treating as stale");
+                return false;
+            }
+        };
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let age = Duration::from_millis(now_ms.saturating_sub(journal.timestamp));
+
+        if age > self.max_attestation_age {
+            info!(
+                age_secs = age.as_secs(),
+                max_age_secs = self.max_attestation_age.as_secs(),
+                timestamp_ms = journal.timestamp,
+                "recovered proof attestation is stale, skipping"
+            );
+            return false;
+        }
+
+        true
+    }
+
     /// Acquires the submit lock, submits a proof request on-chain, then
     /// waits for fulfillment and fetches the set inclusion receipt.
     ///
@@ -391,6 +436,19 @@ impl AttestationProofProvider for BoundlessProver {
     ) -> Result<AttestationProof> {
         let (client, params) = self.build_client_and_params(attestation_bytes).await?;
 
+        let recovery_is_blocked = self
+            .recovery_blocked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&signer_address);
+
+        if recovery_is_blocked {
+            info!(
+                target_signer = %signer_address,
+                "recovery blocked for signer, will skip recovered proofs"
+            );
+        }
+
         // Probe deterministic request-ID slots for recovery.
         let mut first_unknown_attempt: Option<u32> = None;
         for attempt in 0..self.max_recovery_attempts {
@@ -425,8 +483,19 @@ impl AttestationProofProvider for BoundlessProver {
                     // requestDeadline calls, causing a
                     // RequestIsNotLocked revert. Treat this as
                     // evidence the request is in-flight/fulfilled and
-                    // jump directly to wait_and_fetch.
+                    // jump directly to wait_and_fetch — unless
+                    // recovery is blocked.
                     if Self::is_request_not_locked_error(&e) {
+                        if recovery_is_blocked {
+                            debug!(
+                                attempt,
+                                request_id = %request_id,
+                                target_signer = %signer_address,
+                                "RequestIsNotLocked during scan, \
+                                 skipping (recovery blocked)"
+                            );
+                            continue;
+                        }
                         info!(
                             attempt,
                             request_id = %request_id,
@@ -464,6 +533,15 @@ impl AttestationProofProvider for BoundlessProver {
 
             match status {
                 RequestStatus::Locked => {
+                    if recovery_is_blocked {
+                        debug!(
+                            attempt,
+                            request_id = %request_id,
+                            target_signer = %signer_address,
+                            "slot is Locked, skipping (recovery blocked)"
+                        );
+                        continue;
+                    }
                     info!(
                         attempt,
                         request_id = %request_id,
@@ -486,14 +564,15 @@ impl AttestationProofProvider for BoundlessProver {
                     }
                 }
                 RequestStatus::Fulfilled => {
-                    // Safety: the recovered proof is guaranteed to match
-                    // the current `attestation_bytes` because the request-
-                    // ID slots are keyed on `signer_address`, which is
-                    // derived from the enclave's key pair. If the enclave
-                    // restarts it gets a new key pair → new signer address
-                    // → entirely different slots. Same signer address
-                    // therefore implies the same enclave instance and the
-                    // same attestation document.
+                    if recovery_is_blocked {
+                        debug!(
+                            attempt,
+                            request_id = %request_id,
+                            target_signer = %signer_address,
+                            "slot is Fulfilled, skipping (recovery blocked)"
+                        );
+                        continue;
+                    }
                     info!(
                         attempt,
                         request_id = %request_id,
@@ -501,7 +580,12 @@ impl AttestationProofProvider for BoundlessProver {
                         "recovered fulfilled proof, fetching receipt"
                     );
                     match self.fetch_and_encode_receipt(&client, request_id).await {
-                        Ok(proof) => return Ok(proof),
+                        Ok(proof) => {
+                            if !self.is_journal_fresh(&proof) {
+                                continue;
+                            }
+                            return Ok(proof);
+                        }
                         Err(e) => {
                             warn!(
                                 error = %e,
@@ -586,6 +670,14 @@ impl AttestationProofProvider for BoundlessProver {
 
         self.submit_and_wait(&client, params).await
     }
+
+    fn block_recovery_for_signer(&self, signer: Address) {
+        info!(
+            signer = %signer,
+            "blocking proof recovery for signer after on-chain rejection"
+        );
+        self.recovery_blocked.lock().unwrap_or_else(|e| e.into_inner()).insert(signer);
+    }
 }
 
 #[cfg(test)]
@@ -608,6 +700,8 @@ mod tests {
     const DEFAULT_TRUSTED_PREFIX: u8 = 1;
     const TEST_MAX_RECOVERY_ATTEMPTS: u32 = 5;
 
+    const TEST_MAX_ATTESTATION_AGE: Duration = Duration::from_secs(3300);
+
     #[fixture]
     fn prover() -> BoundlessProver {
         BoundlessProver {
@@ -619,7 +713,9 @@ mod tests {
             timeout: TEST_TIMEOUT,
             trusted_certs_prefix_len: DEFAULT_TRUSTED_PREFIX,
             max_recovery_attempts: TEST_MAX_RECOVERY_ATTEMPTS,
+            max_attestation_age: TEST_MAX_ATTESTATION_AGE,
             submit_lock: Arc::new(Mutex::new(())),
+            recovery_blocked: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
     }
 

@@ -12,7 +12,7 @@ use alloy_sol_types::SolCall;
 use base_proof_contracts::{INitroEnclaveVerifier, ITEEProverRegistry};
 use base_proof_tee_nitro_attestation_prover::AttestationProofProvider;
 use base_proof_tee_nitro_verifier::AttestationReport;
-use base_tx_manager::{TxCandidate, TxManager};
+use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use futures::stream::StreamExt;
 use rand::random;
 use tokio_util::sync::CancellationToken;
@@ -579,6 +579,18 @@ where
                     // funds, config errors, fee limits, etc.) cannot be
                     // resolved by retrying with the same calldata.
                     if !e.is_retryable() {
+                        // If the contract reverted execution, the proof
+                        // itself is likely invalid (wrong image ID, stale
+                        // attestation, etc.). Block recovery for this
+                        // signer so the next cycle generates a fresh
+                        // proof instead of re-recovering the same one.
+                        if matches!(e, TxManagerError::ExecutionReverted { .. }) {
+                            warn!(
+                                signer = %signer_address,
+                                "execution reverted, blocking proof recovery for signer"
+                            );
+                            self.proof_provider.block_recovery_for_signer(signer_address);
+                        }
                         return Err(RegistrarError::from(e));
                     }
 

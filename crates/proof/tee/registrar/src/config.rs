@@ -25,6 +25,13 @@ pub struct AwsDiscoveryConfig {
 /// recovering in-flight Boundless proofs after an instance rotation.
 pub const DEFAULT_MAX_RECOVERY_ATTEMPTS: u32 = 5;
 
+/// Default maximum age (in seconds) of a recovered proof's attestation
+/// timestamp before it is considered stale and skipped.
+///
+/// Set to 3300 s (55 minutes), slightly under the on-chain `MAX_AGE` of
+/// 60 minutes, to account for clock skew and processing delays.
+pub const DEFAULT_MAX_ATTESTATION_AGE_SECS: u64 = 3300;
+
 /// Boundless Network configuration for ZK proof generation.
 #[derive(Clone)]
 pub struct BoundlessConfig {
@@ -46,6 +53,10 @@ pub struct BoundlessConfig {
     /// Maximum number of deterministic request-ID slots to probe when
     /// recovering in-flight proofs after an instance rotation.
     pub max_recovery_attempts: u32,
+    /// Maximum age of a recovered proof's attestation timestamp before it
+    /// is considered stale and skipped. Should be set slightly below the
+    /// on-chain `MAX_AGE` to account for clock skew.
+    pub max_attestation_age: Duration,
 }
 
 impl std::fmt::Debug for BoundlessConfig {
@@ -59,6 +70,7 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("timeout", &self.timeout)
             .field("nitro_verifier_address", &self.nitro_verifier_address)
             .field("max_recovery_attempts", &self.max_recovery_attempts)
+            .field("max_attestation_age", &self.max_attestation_age)
             .finish()
     }
 }
