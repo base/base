@@ -36,6 +36,11 @@ pub enum ProposerError {
 }
 
 impl ProposerError {
+    /// Returns true if this error indicates the game already exists.
+    pub const fn is_game_already_exists(&self) -> bool {
+        matches!(self, Self::GameAlreadyExists)
+    }
+
     /// Returns the metrics label for this error variant.
     pub const fn metric_label(&self) -> &'static str {
         match self {

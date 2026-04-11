@@ -15,12 +15,12 @@ mod config;
 pub use config::{ConfigError, ProposerConfig};
 
 mod constants;
-pub use constants::*;
+pub use constants::{
+    MAX_FACTORY_SCAN_LOOKBACK, PROPOSAL_TIMEOUT, PROVER_TIMEOUT, RECOVERY_SCAN_CONCURRENCY,
+};
 
 mod output_proposer;
-pub use output_proposer::{
-    DryRunProposer, OutputProposer, ProposalSubmitter, build_proof_data, is_game_already_exists,
-};
+pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
 
 mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
@@ -29,7 +29,7 @@ mod pipeline;
 pub use pipeline::{PipelineConfig, ProvingPipeline};
 
 mod error;
-pub use error::*;
+pub use error::{ProposerError, ProposerResult};
 
 mod admin;
 pub use admin::{AdminServer, ProposerAdminApiServer, ProposerAdminApiServerImpl};

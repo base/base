@@ -52,7 +52,7 @@ use crate::{
     constants::{MAX_FACTORY_SCAN_LOOKBACK, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
-    output_proposer::{OutputProposer, is_game_already_exists},
+    output_proposer::OutputProposer,
 };
 
 /// Configuration for the parallel proving pipeline.
@@ -1445,7 +1445,7 @@ where
                 Ok(())
             }
             Ok(Err(e)) => {
-                if is_game_already_exists(&e) {
+                if e.is_game_already_exists() {
                     drop(propose_timer);
                     info!(
                         target_block,

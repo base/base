@@ -65,11 +65,6 @@ pub fn build_proof_data(proposal: &Proposal) -> Result<Bytes, ProposerError> {
     .map_err(|e| ProposerError::Internal(e.to_string()))
 }
 
-/// Returns true if the error indicates the game already exists.
-pub const fn is_game_already_exists(e: &ProposerError) -> bool {
-    matches!(e, ProposerError::GameAlreadyExists)
-}
-
 /// Trait for submitting output proposals to L1 via dispute game creation.
 #[async_trait]
 pub trait OutputProposer: Send + Sync {
@@ -438,6 +433,6 @@ mod tests {
     #[case::game_already_exists(ProposerError::GameAlreadyExists, true)]
     #[case::other_error(ProposerError::Contract("other".into()), false)]
     fn test_is_game_already_exists(#[case] err: ProposerError, #[case] expected: bool) {
-        assert_eq!(is_game_already_exists(&err), expected);
+        assert_eq!(err.is_game_already_exists(), expected);
     }
 }
