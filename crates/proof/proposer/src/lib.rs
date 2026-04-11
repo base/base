@@ -32,7 +32,7 @@ mod error;
 pub use error::*;
 
 mod admin;
-pub use admin::AdminState;
+pub use admin::{AdminServer, ProposerAdminApiServer, ProposerAdminApiServerImpl};
 
 mod metrics;
 pub use metrics::Metrics;

@@ -45,7 +45,7 @@ base-proof-primitives = { workspace = true, features = ["rpc-client"] }
 base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # JSON-RPC
-jsonrpsee.workspace = true
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
 
 # Async
 tokio.workspace = true
@@ -85,7 +85,6 @@ hex.workspace = true
 url.workspace = true
 bytes.workspace = true
 humantime.workspace = true
-axum = { workspace = true, features = ["http1", "json", "tokio"] }
 
 [dev-dependencies]
 rstest.workspace = true

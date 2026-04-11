@@ -270,21 +270,13 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     };
 
     // ── 8. Start admin RPC server (separate listener, localhost-only) ───
-    let admin_handle: Option<JoinHandle<Result<()>>> = config.admin_addr.map(|admin_addr| {
+    let admin_server = if let Some(admin_addr) = config.admin_addr {
         info!("Admin RPC enabled");
         let driver = Arc::clone(&driver_handle);
-        let admin_cancel = cancel.clone();
-        tokio::spawn(async move {
-            let app = crate::admin::AdminState::router(driver);
-            let listener = tokio::net::TcpListener::bind(admin_addr).await?;
-            info!(%admin_addr, "Admin RPC server started");
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move { admin_cancel.cancelled().await })
-                .await?;
-            info!("Admin RPC server stopped");
-            Ok(())
-        })
-    });
+        Some(crate::admin::AdminServer::spawn(admin_addr, driver).await?)
+    } else {
+        None
+    };
 
     // ── 10. Start the driver loop ────────────────────────────────────────
     driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
@@ -311,13 +303,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         warn!(error = %e, "Error stopping proposer driver");
     }
 
-    if let Some(handle) = admin_handle {
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => warn!(error = %e, "Admin RPC server error during shutdown"),
-            Err(e) => warn!(error = %e, "Admin RPC server task panicked"),
-        }
-    }
+    drop(admin_server);
 
     match health_handle.await {
         Ok(Ok(())) => {}
