@@ -1,6 +1,5 @@
 //! Error types for the proposer.
 
-use base_proof_contracts::ContractError;
 use base_proof_rpc::RpcError;
 use thiserror::Error;
 
@@ -40,18 +39,6 @@ pub enum ProposerError {
     /// Transaction manager error (nonce, fees, RPC, signing, etc.).
     #[error(transparent)]
     TxManager(#[from] base_tx_manager::TxManagerError),
-}
-
-impl From<ContractError> for ProposerError {
-    fn from(err: ContractError) -> Self {
-        Self::Contract(err.to_string())
-    }
-}
-
-impl From<eyre::Error> for ProposerError {
-    fn from(err: eyre::Error) -> Self {
-        Self::Internal(err.to_string())
-    }
 }
 
 impl ProposerError {

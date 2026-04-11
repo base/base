@@ -687,7 +687,11 @@ where
             .map_err(|e| ProposerError::Contract(format!("recovery game_count failed: {e}")))?;
 
         // Read the anchor root early so it can be included in the cache key.
-        let anchor = self.anchor_registry.get_anchor_root().await?;
+        let anchor = self
+            .anchor_registry
+            .get_anchor_root()
+            .await
+            .map_err(|e| ProposerError::Contract(format!("get_anchor_root failed: {e}")))?;
         let anchor_state_registry_address = self.config.driver.anchor_state_registry_address;
 
         // Fast path: both game_count and anchor_root unchanged AND a valid
