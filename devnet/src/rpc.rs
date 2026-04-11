@@ -3,7 +3,7 @@
 use alloy_network::Network;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_consensus_rpc::SyncStatusApiClient;
 use base_protocol::SyncStatus;
 use eyre::{Result, WrapErr};

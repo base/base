@@ -7,7 +7,6 @@ use std::{
 
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, DaThrottle, ThrottleConfig, ThrottleController,
     ThrottleStrategy,
@@ -20,6 +19,7 @@ use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
 };
 use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
+use base_common_consensus::BaseBlock;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},

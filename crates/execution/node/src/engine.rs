@@ -3,9 +3,9 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::BaseBlock;
-use base_alloy_rpc_types_engine::{
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::BaseBlock;
+use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BasePayloadAttributes, ExecutionData,
 };
@@ -303,7 +303,7 @@ pub fn validate_withdrawals_presence(
 mod tests {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_alloy_chains::BaseChainConfig;
+    use base_common_chains::BaseChainConfig;
     use base_execution_chainspec::BASE_SEPOLIA;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::BlockNumber;
-use base_alloy_flashblocks::Flashblock;
+use base_common_flashblocks::Flashblock;
 
 /// Maximum number of blocks ahead of the latest canonical block for which
 /// flashblocks may be cached. Flashblocks further ahead than this are rejected
@@ -99,7 +99,7 @@ impl FlashblockCache {
 #[cfg(test)]
 mod tests {
     use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_flashblocks::{ExecutionPayloadFlashblockDeltaV1, Metadata};
+    use base_common_flashblocks::{ExecutionPayloadFlashblockDeltaV1, Metadata};
 
     use super::*;
 

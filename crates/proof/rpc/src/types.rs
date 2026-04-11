@@ -3,7 +3,7 @@
 use alloy_network::Ethereum;
 use alloy_primitives::B256;
 use alloy_provider::RootProvider;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use serde::{Deserialize, Serialize};
 
 /// Shared type alias for the L1 HTTP provider.

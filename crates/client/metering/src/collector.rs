@@ -4,7 +4,7 @@ use std::{collections::HashMap, fmt, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Bytes, U256, keccak256};
-use base_alloy_flz::flz_compress_len;
+use base_common_flz::flz_compress_len;
 use base_flashblocks::PendingBlocks;
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
@@ -278,8 +278,8 @@ mod tests {
     use alloy_consensus::{Header, Receipt, ReceiptWithBloom, Sealed};
     use alloy_primitives::{Address, B256, Bloom, Bytes, Signature};
     use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_consensus::BaseTxEnvelope;
-    use base_alloy_flashblocks::{
+    use base_common_consensus::BaseTxEnvelope;
+    use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, Transaction};
@@ -355,7 +355,7 @@ mod tests {
             let receipt = BaseTransactionReceipt {
                 inner: alloy_rpc_types_eth::TransactionReceipt {
                     inner: ReceiptWithBloom {
-                        receipt: base_alloy_consensus::BaseReceipt::Legacy(Receipt {
+                        receipt: base_common_consensus::BaseReceipt::Legacy(Receipt {
                             status: alloy_consensus::Eip658Value::Eip658(true),
                             cumulative_gas_used: 21000,
                             logs: vec![],

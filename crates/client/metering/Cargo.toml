@@ -42,10 +42,10 @@ alloy-consensus = { workspace = true, features = ["std"] }
 jsonrpsee.workspace = true
 
 # base-alloy
-base-alloy-consensus.workspace = true
+base-common-consensus.workspace = true
 
 # DA calculation
-base-alloy-flz.workspace = true
+base-common-flz.workspace = true
 
 # metrics
 base-metrics.workspace = true
@@ -65,14 +65,14 @@ tracing = { workspace = true, features = ["std"] }
 [dev-dependencies]
 # workspace
 base-test-utils.workspace = true
-base-alloy-flashblocks.workspace = true
+base-common-flashblocks.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 
 # reth
 base-node-core.workspace = true
 reth-db-common.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
-base-alloy-consensus = { workspace = true, features = ["reth"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 
 # revm

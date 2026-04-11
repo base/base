@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_chains::BaseChainConfig;
-use base_alloy_evm::BaseEvmFactory;
+use base_common_chains::BaseChainConfig;
+use base_common_evm::BaseEvmFactory;
 use base_consensus_genesis::RollupConfig;
 use base_proof::BootInfo;
 use base_proof_client::Prologue;

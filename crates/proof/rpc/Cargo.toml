@@ -23,7 +23,7 @@ alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 
 # Base Alloy
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 
 # Consensus

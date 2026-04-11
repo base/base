@@ -7,7 +7,7 @@
 use alloc::string::String;
 
 use alloy_evm::block::BlockExecutionError;
-use base_alloy_consensus::EIP1559ParamError;
+use base_common_consensus::EIP1559ParamError;
 use base_proof_mpt::TrieNodeError;
 use revm::context::DBErrorMarker;
 use thiserror::Error;

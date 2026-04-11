@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use alloy_primitives::{Address, B256};
-use base_alloy_rpc_types_engine::NetworkPayloadEnvelope;
+use base_common_rpc_types_engine::NetworkPayloadEnvelope;
 use base_consensus_genesis::RollupConfig;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
@@ -142,7 +142,7 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::{B256, Signature};
     use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
-    use base_alloy_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
 
     use super::*;
     use crate::{v2_valid_block, v3_valid_block, v4_valid_block};

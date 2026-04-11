@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base_alloy_chains::BaseChainConfig;
+use base_common_chains::BaseChainConfig;
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
 use jsonrpsee::{

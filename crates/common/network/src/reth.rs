@@ -1,6 +1,6 @@
 use core::convert::Infallible;
 
-use base_alloy_consensus::{BaseReceipt, BaseTxEnvelope};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
 use reth_rpc_convert::{TryFromReceiptResponse, TryFromTransactionResponse};
 
 use crate::Base;

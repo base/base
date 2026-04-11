@@ -1,7 +1,7 @@
 //! Trait bounds for Base builder components.
 
 use alloy_consensus::Header;
-use base_alloy_consensus::{BasePrimitives, BaseTransactionSigned};
+use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BundleTransaction, OpPooledTx, TimestampedTransaction};
 use base_node_core::OpEngineTypes;

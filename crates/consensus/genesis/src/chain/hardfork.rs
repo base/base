@@ -3,7 +3,7 @@
 use alloc::string::{String, ToString};
 use core::fmt::Display;
 
-use base_alloy_chains::BaseChainConfig;
+use base_common_chains::BaseChainConfig;
 
 /// Hardfork configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]

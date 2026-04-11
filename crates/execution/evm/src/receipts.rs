@@ -1,7 +1,7 @@
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
-use base_alloy_consensus::{BaseReceipt, BaseTransactionSigned, BaseTxType};
-use base_alloy_evm::BaseReceiptBuilder;
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned, BaseTxType};
+use base_common_evm::BaseReceiptBuilder;
 use reth_evm::Evm;
 
 /// A builder that operates on op-reth primitive types, specifically [`BaseTransactionSigned`] and
@@ -40,7 +40,7 @@ impl BaseReceiptBuilder for OpRethReceiptBuilder {
         }
     }
 
-    fn build_deposit_receipt(&self, inner: base_alloy_consensus::DepositReceipt) -> Self::Receipt {
+    fn build_deposit_receipt(&self, inner: base_common_consensus::DepositReceipt) -> Self::Receipt {
         BaseReceipt::Deposit(inner)
     }
 }

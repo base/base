@@ -5,7 +5,7 @@ use alloy_provider::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use ark_ff::{BigInteger, PrimeField};
-use base_alloy_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};

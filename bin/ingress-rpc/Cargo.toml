@@ -26,6 +26,6 @@ base-bundles.workspace = true
 alloy-provider.workspace = true
 base-cli-utils.workspace = true
 ingress-rpc-lib.workspace = true
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 audit-archiver-lib.workspace = true
 tracing = { workspace = true, features = ["std"] }

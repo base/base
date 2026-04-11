@@ -1,6 +1,6 @@
 //! The batcher pipeline trait.
 
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 
 use crate::{BatchSubmission, ReorgError, StepError, StepResult, SubmissionId};
 

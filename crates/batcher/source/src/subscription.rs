@@ -1,6 +1,6 @@
 //! Block subscription trait for keepalive-aware streaming.
 
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 use futures::stream::BoxStream;
 
 use crate::SourceError;

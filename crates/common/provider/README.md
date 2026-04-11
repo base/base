@@ -1,4 +1,4 @@
-# `base-alloy-provider`
+# `base-common-provider`
 
 Base chain providers for the engine API, adopted from L1, and Base-unique engine API extensions.
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-provider = { workspace = true }
+base-common-provider = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_provider::OpEngineApi;
+use base_common_provider::OpEngineApi;
 
 let payload_id = client.fork_choice_updated_v3(state, attrs).await?;
 ```

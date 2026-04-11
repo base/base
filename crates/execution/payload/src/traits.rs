@@ -1,5 +1,5 @@
 use alloy_consensus::BlockBody;
-use base_alloy_consensus::{BaseTransaction, DepositReceiptExt};
+use base_common_consensus::{BaseTransaction, DepositReceiptExt};
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives_traits::{FullBlockHeader, NodePrimitives, SignedTransaction, WithEncoded};
 

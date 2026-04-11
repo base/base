@@ -42,7 +42,7 @@ tracing.workspace = true
 
 # reth test-vectors
 proptest = { workspace = true, optional = true }
-base-alloy-consensus = { workspace = true, features = ["reth"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 
 [dev-dependencies]
 tempfile.workspace = true
@@ -72,11 +72,11 @@ jemalloc-symbols = [ "jemalloc-prof", "reth-node-metrics/jemalloc-symbols" ]
 tracy = [ "reth-node-core/tracy", "reth-tracing/tracy" ]
 
 dev = [
-	"base-alloy-consensus/arbitrary",
+	"base-common-consensus/arbitrary",
 	"dep:proptest",
 	"reth-cli-commands/arbitrary",
 ]
 
-serde = [ "base-alloy-consensus/serde", "base-execution-chainspec/serde" ]
+serde = [ "base-common-consensus/serde", "base-execution-chainspec/serde" ]
 
 edge = [ "reth-cli-commands/edge", "reth-node-core/edge" ]

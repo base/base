@@ -1,7 +1,7 @@
 //! Internal driver event type produced by the `tokio::select!` I/O phase.
 
-use base_alloy_consensus::BaseBlock;
 use base_batcher_encoder::SubmissionId;
+use base_common_consensus::BaseBlock;
 use base_protocol::L2BlockInfo;
 
 use crate::TxOutcome;

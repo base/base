@@ -3,7 +3,7 @@
 use std::{str::FromStr, time::Duration};
 
 use backon::{ExponentialBuilder, Retryable};
-use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::{P2pRpcRequest, PeerDump, PeerInfo};
 use base_consensus_node::{NetworkActorError, NetworkInboundData};
 use discv5::Enr;

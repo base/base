@@ -12,10 +12,10 @@ use alloy_evm::{
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope};
-use base_alloy_evm::ensure_create2_deployer;
-use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope};
+use base_common_evm::ensure_create2_deployer;
+use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_execution_rpc::BaseReceiptBuilder as OpRpcReceiptBuilder;
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason};
@@ -154,7 +154,7 @@ where
     /// Applies EIP-4788, EIP-2935, and Canyon create2 deployer pre-execution changes to the EVM.
     ///
     /// Must be called once per block, before executing any transactions. This mirrors the
-    /// `apply_pre_execution_changes` behavior of [`base_alloy_evm::BaseBlockExecutor`] to ensure
+    /// `apply_pre_execution_changes` behavior of [`base_common_evm::BaseBlockExecutor`] to ensure
     /// that the cached execution results match what the validator computes.
     pub fn apply_pre_execution_changes(
         &mut self,
@@ -395,8 +395,8 @@ mod tests {
     use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_CODE};
     use alloy_primitives::{Address, B256, TxKind, U256, address, uint};
     use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_consensus::BaseTxEnvelope;
-    use base_alloy_flashblocks::{
+    use base_common_consensus::BaseTxEnvelope;
+    use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
     use base_execution_chainspec::BaseChainSpecBuilder;
@@ -787,7 +787,7 @@ mod tests {
             StateOverride::default(),
         );
 
-        let deposit_tx = base_alloy_consensus::TxDeposit {
+        let deposit_tx = base_common_consensus::TxDeposit {
             source_hash: B256::ZERO,
             from: deposit_sender,
             to: TxKind::Call(Address::ZERO),

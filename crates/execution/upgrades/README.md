@@ -5,7 +5,7 @@ Chain upgrade definitions for Base.
 ## Overview
 
 Provides execution-layer upgrade utilities by re-exporting and extending the base upgrade
-definitions from `base-alloy-chains`. Exposes pre-configured upgrade activation schedules
+definitions from `base-common-chains`. Exposes pre-configured upgrade activation schedules
 for Base Mainnet (`BASE_MAINNET_UPGRADES`), Base Sepolia (`BASE_SEPOLIA_UPGRADES`), and local
 devnets (`DEV_UPGRADES`), along with extension traits for querying activation status.
 

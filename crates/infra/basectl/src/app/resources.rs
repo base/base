@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-use base_alloy_flashblocks::Flashblock;
+use base_common_flashblocks::Flashblock;
 use base_consensus_genesis::SystemConfig;
 use tokio::{
     sync::{mpsc, watch},

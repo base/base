@@ -4,9 +4,9 @@ use alloy_provider::ProviderBuilder;
 use audit_archiver_lib::{
     AuditConnector, BundleEvent, KafkaBundleEventPublisher, load_kafka_config_from_file,
 };
-use base_alloy_network::Base;
 use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
+use base_common_network::Base;
 use clap::Parser;
 use ingress_rpc_lib::{
     BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, KafkaMessageQueue,

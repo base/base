@@ -6,7 +6,7 @@ use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use base_alloy_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
+use base_common_rpc_types_engine::{BaseExecutionPayloadV4, ExecutionData};
 use derive_more::Constructor;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, server::RpcModule};
@@ -188,7 +188,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
     /// Returns the [`BaseExecutionPayloadEnvelopeV5`], which uses
-    /// [`BaseExecutionPayloadV4`](base_alloy_rpc_types_engine::BaseExecutionPayloadV4) for the
+    /// [`BaseExecutionPayloadV4`](base_common_rpc_types_engine::BaseExecutionPayloadV4) for the
     /// execution payload and otherwise follows the V5 envelope shape.
     #[method(name = "getPayloadV5")]
     async fn get_payload_v5(

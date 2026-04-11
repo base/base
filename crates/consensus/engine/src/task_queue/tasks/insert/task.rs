@@ -7,8 +7,8 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, PayloadStatusEnum, PraguePayloadFields,
 };
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
-use base_alloy_rpc_types_engine::{
+use base_common_consensus::BaseBlock;
+use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
 };
 use base_consensus_genesis::RollupConfig;

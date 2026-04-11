@@ -3,7 +3,7 @@ use core::{future::Future, marker::PhantomData};
 use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
-use base_alloy_rpc_types_engine::BaseExecutionPayloadV4;
+use base_common_rpc_types_engine::BaseExecutionPayloadV4;
 use base_execution_rpc::BaseEngineApiClient;
 use base_node_core::OpEngineTypes;
 use jsonrpsee::{

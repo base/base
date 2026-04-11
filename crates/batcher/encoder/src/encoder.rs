@@ -8,7 +8,7 @@ use std::{
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
-use base_alloy_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_comp::{
     BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
 };
@@ -711,7 +711,7 @@ impl BatchPipeline for BatchEncoder {
 mod tests {
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_primitives::{Bytes, Sealed, Signature};
-    use base_alloy_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_comp::BatchComposeError;
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;

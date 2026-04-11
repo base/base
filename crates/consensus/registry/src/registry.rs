@@ -3,7 +3,7 @@
 use alloy_chains::NamedChain;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, map::HashMap};
-use base_alloy_chains::BaseChainConfig;
+use base_common_chains::BaseChainConfig;
 use base_consensus_genesis::RollupConfig;
 use spin::Lazy;
 
@@ -32,7 +32,7 @@ static L1_CONFIGS: Lazy<HashMap<u64, ChainConfig>> = Lazy::new(|| {
 ///
 /// Provides access to rollup configs, L1 chain configs, and the unsafe block signer
 /// for supported chain IDs. Rollup configs are derived from the compile-time
-/// [`BaseChainConfig`] instances in `base-alloy-chains`.
+/// [`BaseChainConfig`] instances in `base-common-chains`.
 #[derive(Debug)]
 pub struct Registry;
 
@@ -65,7 +65,7 @@ mod tests {
         holesky::{HOLESKY_BPO1_TIMESTAMP, HOLESKY_BPO2_TIMESTAMP},
         sepolia::{SEPOLIA_BPO1_TIMESTAMP, SEPOLIA_BPO2_TIMESTAMP},
     };
-    use base_alloy_chains::BaseChainConfig;
+    use base_common_chains::BaseChainConfig;
 
     use super::*;
 

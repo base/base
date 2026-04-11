@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-signer"
+name = "base-common-signer"
 description = "Remote transaction signer for EthereumWallet integration via eth_signTransaction"
 
 version.workspace = true
@@ -23,7 +23,7 @@ alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # Base
-base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client", "signer"] }
+base-common-rpc-jsonrpsee = { workspace = true, features = ["client", "signer"] }
 
 # External
 url.workspace = true

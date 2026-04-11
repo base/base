@@ -10,7 +10,7 @@ use alloy_transport_http::{
     AuthLayer, Http, HyperClient,
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_providers::OnlineBeaconClient;
 use base_consensus_rpc::RpcBuilder;

@@ -33,7 +33,7 @@ alloy-consensus = { workspace = true, features = ["std"], optional = true }
 alloy-rpc-types-engine = { workspace = true, features = ["std"], optional = true }
 
 # base-alloy
-base-alloy-consensus = { workspace = true, optional = true, features = ["reth"] }
+base-common-consensus = { workspace = true, optional = true, features = ["reth"] }
 
 # tokio
 tokio.workspace = true
@@ -45,7 +45,7 @@ tracing = { workspace = true, features = ["std"] }
 # test-utils (optional)
 eyre = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }
-base-alloy-flashblocks = { workspace = true, optional = true }
+base-common-flashblocks = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["deref"], optional = true }
 
 [dev-dependencies]
@@ -83,7 +83,7 @@ alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base-alloy
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 
 # tokio
@@ -109,8 +109,8 @@ test-utils = [
 	"dep:alloy-eips",
 	"dep:alloy-primitives",
 	"dep:alloy-rpc-types-engine",
-	"dep:base-alloy-consensus",
-	"dep:base-alloy-flashblocks",
+	"dep:base-common-consensus",
+	"dep:base-common-flashblocks",
 	"dep:base-execution-chainspec",
 	"dep:base-test-utils",
 	"dep:derive_more",

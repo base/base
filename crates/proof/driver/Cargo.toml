@@ -24,8 +24,8 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
 # Base Alloy
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine.workspace = true
 
 # Misc
 spin.workspace = true
@@ -39,8 +39,8 @@ std = [
 	"alloy-evm/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
-	"base-alloy-consensus/std",
-	"base-alloy-rpc-types-engine/std",
+	"base-common-consensus/std",
+	"base-common-rpc-types-engine/std",
 	"base-consensus-genesis/std",
 	"base-proof-executor/std",
 	"base-protocol/std",

@@ -6,7 +6,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use alloy_transport::{Transport, TransportResult};
-use base_alloy_rpc_types_engine::{
+use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
 };
@@ -144,7 +144,7 @@ pub trait BaseEngineApi<N, T> {
     ///
     /// OP modifications:
     /// - the response type is [`BaseExecutionPayloadEnvelopeV5`], which uses
-    ///   [`BaseExecutionPayloadV4`](base_alloy_rpc_types_engine::BaseExecutionPayloadV4) for the
+    ///   [`BaseExecutionPayloadV4`](base_common_rpc_types_engine::BaseExecutionPayloadV4) for the
     ///   execution payload and otherwise follows the V5 envelope shape.
     async fn get_payload_v5(
         &self,

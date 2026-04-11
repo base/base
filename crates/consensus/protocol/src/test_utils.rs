@@ -4,7 +4,7 @@ use alloc::{boxed::Box, format, string::String, sync::Arc, vec::Vec};
 
 use alloy_primitives::hex;
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 use spin::Mutex;
 use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::{Layer, layer::Context};

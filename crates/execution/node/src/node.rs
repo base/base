@@ -4,10 +4,10 @@ use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::BasePrimitives;
-use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
-use base_alloy_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::BasePrimitives;
+use base_common_rpc_jsonrpsee::MinerApiExtServer;
+use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, OpRethReceiptBuilder};
@@ -106,7 +106,7 @@ impl<N> BaseFullNodeTypes for N where
 ///
 /// This mirrors the upstream `LocalPayloadAttributesBuilder` for
 /// `op_alloy_rpc_types_engine::BasePayloadAttributes`, but targets
-/// `base_alloy_rpc_types_engine::BasePayloadAttributes`.
+/// `base_common_rpc_types_engine::BasePayloadAttributes`.
 #[derive(Debug)]
 pub struct BaseLocalPayloadAttributesBuilder {
     chain_spec: Arc<BaseChainSpec>,
@@ -330,7 +330,7 @@ impl<N> DebugNode<N> for BaseNode
 where
     N: FullNodeComponents<Types = Self>,
 {
-    type RpcBlock = alloy_rpc_types_eth::Block<base_alloy_consensus::BaseTxEnvelope>;
+    type RpcBlock = alloy_rpc_types_eth::Block<base_common_consensus::BaseTxEnvelope>;
 
     fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> reth_node_api::BlockTy<Self> {
         rpc_block.into_consensus()

@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use base_alloy_consensus::BaseBlock;
 use base_batcher_source::{BlockSubscription, SourceError};
+use base_common_consensus::BaseBlock;
 use futures::{StreamExt, stream::BoxStream};
 
 /// A [`BlockSubscription`] backed by a WebSocket provider.

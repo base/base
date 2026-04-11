@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use tokio::sync::mpsc;
 
 use crate::{EngineActorRequest, EngineClientError, EngineClientResult};

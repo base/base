@@ -173,18 +173,18 @@ incremental = false
 [workspace.dependencies]
 # Base Primitives
 base-bundles = { path = "crates/common/bundles" }
-base-alloy-signer = { path = "crates/common/signer" }
-base-alloy-network = { path = "crates/common/network" }
-base-alloy-provider = { path = "crates/common/provider" }
-base-alloy-chains = { path = "crates/common/chains" }
+base-common-signer = { path = "crates/common/signer" }
+base-common-network = { path = "crates/common/network" }
+base-common-provider = { path = "crates/common/provider" }
+base-common-chains = { path = "crates/common/chains" }
 base-common-rpc-types = { path = "crates/common/rpc-types" }
 base-access-lists = { path = "crates/common/access-lists" }
-base-alloy-flashblocks = { path = "crates/common/flashblocks" }
-base-alloy-rpc-jsonrpsee = { path = "crates/common/rpc-jsonrpsee" }
-base-alloy-evm = { path = "crates/common/evm", default-features = false }
-base-alloy-flz = { path = "crates/common/flz", default-features = false }
-base-alloy-consensus = { path = "crates/common/consensus", default-features = false }
-base-alloy-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
+base-common-flashblocks = { path = "crates/common/flashblocks" }
+base-common-rpc-jsonrpsee = { path = "crates/common/rpc-jsonrpsee" }
+base-common-evm = { path = "crates/common/evm", default-features = false }
+base-common-flz = { path = "crates/common/flz", default-features = false }
+base-common-consensus = { path = "crates/common/consensus", default-features = false }
+base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
 
 # Builder
 base-builder-core = { path = "crates/builder/core" }

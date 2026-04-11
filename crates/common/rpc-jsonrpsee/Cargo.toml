@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-rpc-jsonrpsee"
+name = "base-common-rpc-jsonrpsee"
 description = "Base RPC Client"
 
 version.workspace = true

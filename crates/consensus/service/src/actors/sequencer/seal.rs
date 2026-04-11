@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 
 use crate::{
     Metrics, UnsafePayloadGossipClient,

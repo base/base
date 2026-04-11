@@ -21,7 +21,7 @@ base-protocol = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["debug"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-base-alloy-consensus = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 alloy-consensus.workspace = true

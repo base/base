@@ -3,7 +3,7 @@
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_alloy_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
+use base_common_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
 
 use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig};
 
@@ -68,7 +68,7 @@ pub struct RollupConfig {
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        use base_alloy_chains::BaseChainConfig;
+        use base_common_chains::BaseChainConfig;
         let chain_op_config = match u32::arbitrary(u)? % 2 {
             0 => BaseFeeConfig::from(BaseChainConfig::mainnet()),
             _ => BaseFeeConfig::from(BaseChainConfig::sepolia()),

@@ -1,4 +1,4 @@
-# `base-alloy-rpc-jsonrpsee`
+# `base-common-rpc-jsonrpsee`
 
 Base chain JSON-RPC server and client implementations.
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-rpc-jsonrpsee = { workspace = true }
+base-common-rpc-jsonrpsee = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_rpc_jsonrpsee::{BaseAdminApiServer, MinerApiExtServer};
+use base_common_rpc_jsonrpsee::{BaseAdminApiServer, MinerApiExtServer};
 
 #[async_trait]
 impl MinerApiExtServer for MyHandler {

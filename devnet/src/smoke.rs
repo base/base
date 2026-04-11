@@ -6,7 +6,7 @@ use alloy_network::Ethereum;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use tempfile::TempDir;
