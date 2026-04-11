@@ -61,6 +61,7 @@ base_metrics::define_metrics! {
 }
 
 impl Metrics {
+    /// Records that the proposer service has started by setting the `up` gauge to 1.
     pub fn record_startup() {
         Self::up().set(1.0);
     }
