@@ -62,7 +62,6 @@ base_metrics::define_metrics! {
 }
 
 impl Metrics {
-    /// Sets the `up` gauge to indicate the proposer is running.
     pub fn record_startup() {
         Self::up().set(1.0);
     }
