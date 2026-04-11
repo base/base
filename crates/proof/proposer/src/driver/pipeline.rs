@@ -1308,22 +1308,9 @@ where
         // to avoid sequential RPC calls per intermediate block. The last
         // intermediate block equals target_block, so reuse the already-fetched
         // canonical output root instead of fetching it again.
-        let interval = self.config.driver.intermediate_block_interval;
-        let intermediate_blocks: Vec<u64> = (0..intermediate_roots.len())
-            .map(|i| {
-                starting_block_number
-                    .checked_add((i as u64 + 1).checked_mul(interval).ok_or_else(|| {
-                        SubmitAction::Failed(ProposerError::Internal(
-                            "overflow computing intermediate root block number".into(),
-                        ))
-                    })?)
-                    .ok_or_else(|| {
-                        SubmitAction::Failed(ProposerError::Internal(
-                            "overflow computing intermediate root block number".into(),
-                        ))
-                    })
-            })
-            .collect::<Result<_, _>>()?;
+        let intermediate_blocks = self
+            .intermediate_block_numbers(starting_block_number)
+            .map_err(SubmitAction::Failed)?;
 
         // Fetch canonical roots for non-target intermediate blocks only;
         // the target block was already fetched for the JIT check above.
@@ -1441,6 +1428,38 @@ where
         }
     }
 
+    /// Returns intermediate block numbers between `starting_block_number` and
+    /// the next proposal target, stepping by `intermediate_block_interval`.
+    fn intermediate_block_numbers(
+        &self,
+        starting_block_number: u64,
+    ) -> Result<Vec<u64>, ProposerError> {
+        let interval = self.config.driver.intermediate_block_interval;
+        if interval == 0 {
+            return Err(ProposerError::Config(
+                "intermediate_block_interval must not be zero".into(),
+            ));
+        }
+        let count = self.config.driver.block_interval / interval;
+        (1..=count)
+            .map(|i| {
+                starting_block_number
+                    .checked_add(
+                        i.checked_mul(interval).ok_or_else(|| {
+                            ProposerError::Internal(
+                                "overflow computing intermediate block number".into(),
+                            )
+                        })?,
+                    )
+                    .ok_or_else(|| {
+                        ProposerError::Internal(
+                            "overflow computing intermediate block number".into(),
+                        )
+                    })
+            })
+            .collect()
+    }
+
     /// Extracts intermediate output roots from per-block proposals.
     ///
     /// Samples at every `intermediate_block_interval` within the range.
@@ -1449,23 +1468,9 @@ where
         starting_block_number: u64,
         proposals: &[base_proof_primitives::Proposal],
     ) -> Result<Vec<B256>, ProposerError> {
-        let interval = self.config.driver.intermediate_block_interval;
-        if interval == 0 {
-            return Err(ProposerError::Config(
-                "intermediate_block_interval must not be zero".into(),
-            ));
-        }
-        let count = self.config.driver.block_interval / interval;
-        let mut roots = Vec::with_capacity(count as usize);
-        for i in 1..=count {
-            let target_block = starting_block_number
-                .checked_add(i.checked_mul(interval).ok_or_else(|| {
-                    ProposerError::Internal("overflow computing intermediate root target".into())
-                })?)
-                .ok_or_else(|| {
-                    ProposerError::Internal("overflow computing intermediate root target".into())
-                })?;
-
+        let blocks = self.intermediate_block_numbers(starting_block_number)?;
+        let mut roots = Vec::with_capacity(blocks.len());
+        for target_block in blocks {
             let idx = target_block.checked_sub(starting_block_number + 1).ok_or_else(|| {
                 ProposerError::Internal(format!(
                     "underflow computing proposal index for block {target_block}"
