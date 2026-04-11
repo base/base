@@ -7,7 +7,7 @@ use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, BaseTxEnvelope};
 use base_consensus_derive::L2ChainProvider;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_proof_driver::PipelineCursor;
@@ -131,7 +131,7 @@ impl<T: CommsClient + Send + Sync> BatchValidationProvider for OracleL2ChainProv
         let transactions = trie_walker
             .into_iter()
             .map(|(_, rlp)| {
-                let res = OpTxEnvelope::decode_2718(&mut rlp.as_ref())?;
+                let res = BaseTxEnvelope::decode_2718(&mut rlp.as_ref())?;
                 Ok(res)
             })
             .collect::<Result<Vec<_>, _>>()
@@ -267,7 +267,7 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
     fn hint_execution_witness(
         &self,
         parent_hash: B256,
-        op_payload_attributes: &base_alloy_rpc_types_engine::OpPayloadAttributes,
+        op_payload_attributes: &base_alloy_rpc_types_engine::BasePayloadAttributes,
     ) -> Result<(), Self::Error> {
         crate::block_on(async move {
             let encoded_attributes =

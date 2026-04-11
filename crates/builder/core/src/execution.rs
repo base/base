@@ -8,7 +8,7 @@ use ExecutionMeteringLimitExceeded::{
     BlockStateRootGas, FlashblockExecutionTime, TransactionExecutionTime,
 };
 use alloy_primitives::{Address, U256};
-use base_alloy_consensus::{OpReceipt, OpTransactionSigned};
+use base_alloy_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_revm::OpTransactionError;
 use derive_more::Display;
 use thiserror::Error;
@@ -215,11 +215,11 @@ pub enum TxnOutcome {
 #[derive(Default, Debug)]
 pub struct ExecutionInfo {
     /// All executed transactions (unrecovered).
-    pub executed_transactions: Vec<OpTransactionSigned>,
+    pub executed_transactions: Vec<BaseTransactionSigned>,
     /// The recovered senders for the executed transactions.
     pub executed_senders: Vec<Address>,
     /// The transaction receipts
-    pub receipts: Vec<OpReceipt>,
+    pub receipts: Vec<BaseReceipt>,
     /// All gas used so far
     pub cumulative_gas_used: u64,
     /// Estimated DA size

@@ -8,7 +8,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, PayloadStatusEnum,
 };
 use base_alloy_network::Base;
-use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
+use base_alloy_rpc_types_engine::BaseExecutionPayloadV4;
 use futures::{StreamExt, TryStreamExt};
 use testcontainers::bollard::{
     Docker,
@@ -214,7 +214,7 @@ impl ExternalNode {
 
     /// Posts a block to the external validation node for validation and sets it as the latest block
     /// in the fork choice.
-    pub async fn post_block(&self, payload: &OpExecutionPayloadV4) -> eyre::Result<()> {
+    pub async fn post_block(&self, payload: &BaseExecutionPayloadV4) -> eyre::Result<()> {
         let result = self
             .engine_api
             .new_payload(payload.clone(), vec![], B256::ZERO, Requests::default())
@@ -423,7 +423,10 @@ async fn cleanup(tempdir: PathBuf, docker: Docker, container_id: String) {
 trait BaseProviderExt {
     async fn hash_at_height(&self, height: u64) -> eyre::Result<B256>;
     async fn latest_block_hash_and_number(&self) -> eyre::Result<(B256, u64)>;
-    async fn execution_payload_for_block(&self, number: u64) -> eyre::Result<OpExecutionPayloadV4>;
+    async fn execution_payload_for_block(
+        &self,
+        number: u64,
+    ) -> eyre::Result<BaseExecutionPayloadV4>;
 }
 
 impl BaseProviderExt for RootProvider<Base> {
@@ -443,7 +446,10 @@ impl BaseProviderExt for RootProvider<Base> {
         Ok((block.header.hash, block.header.number))
     }
 
-    async fn execution_payload_for_block(&self, number: u64) -> eyre::Result<OpExecutionPayloadV4> {
+    async fn execution_payload_for_block(
+        &self,
+        number: u64,
+    ) -> eyre::Result<BaseExecutionPayloadV4> {
         let block = self
             .get_block_by_number(BlockNumberOrTag::Number(number))
             .full()
@@ -462,7 +468,7 @@ impl BaseProviderExt for RootProvider<Base> {
             keccak256(&buf)
         };
 
-        let payload = OpExecutionPayloadV4 {
+        let payload = BaseExecutionPayloadV4 {
             payload_inner: ExecutionPayloadV3 {
                 payload_inner: ExecutionPayloadV2 {
                     payload_inner: ExecutionPayloadV1 {

@@ -6,8 +6,8 @@ use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_alloy_chains::BaseUpgrades;
 use base_alloy_consensus::BaseBlock;
 use base_alloy_rpc_types_engine::{
-    OpExecutionData, OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4,
-    OpExecutionPayloadEnvelopeV5, OpPayloadAttributes,
+    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
+    BasePayloadAttributes, ExecutionData,
 };
 use base_execution_consensus::isthmus;
 use base_execution_payload_builder::{BasePayloadTypes, OpExecutionPayloadValidator};
@@ -33,7 +33,7 @@ pub struct OpEngineTypes<T: PayloadTypes = BasePayloadTypes> {
     _marker: PhantomData<T>,
 }
 
-impl<T: PayloadTypes<ExecutionData = OpExecutionData>> PayloadTypes for OpEngineTypes<T> {
+impl<T: PayloadTypes<ExecutionData = ExecutionData>> PayloadTypes for OpEngineTypes<T> {
     type ExecutionData = T::ExecutionData;
     type BuiltPayload = T::BuiltPayload;
     type PayloadAttributes = T::PayloadAttributes;
@@ -44,28 +44,25 @@ impl<T: PayloadTypes<ExecutionData = OpExecutionData>> PayloadTypes for OpEngine
             <<Self::BuiltPayload as BuiltPayload>::Primitives as NodePrimitives>::Block,
         >,
     ) -> <T as PayloadTypes>::ExecutionData {
-        OpExecutionData::from_block_unchecked(
-            block.hash(),
-            &block.into_block().into_ethereum_block(),
-        )
+        ExecutionData::from_block_unchecked(block.hash(), &block.into_block().into_ethereum_block())
     }
 }
 
-impl<T: PayloadTypes<ExecutionData = OpExecutionData>> EngineTypes for OpEngineTypes<T>
+impl<T: PayloadTypes<ExecutionData = ExecutionData>> EngineTypes for OpEngineTypes<T>
 where
     T::BuiltPayload: BuiltPayload<Primitives: NodePrimitives<Block = BaseBlock>>
         + TryInto<ExecutionPayloadV1>
         + TryInto<ExecutionPayloadEnvelopeV2>
-        + TryInto<OpExecutionPayloadEnvelopeV3>
-        + TryInto<OpExecutionPayloadEnvelopeV4>
-        + TryInto<OpExecutionPayloadEnvelopeV5>,
+        + TryInto<BaseExecutionPayloadEnvelopeV3>
+        + TryInto<BaseExecutionPayloadEnvelopeV4>
+        + TryInto<BaseExecutionPayloadEnvelopeV5>,
 {
     type ExecutionPayloadEnvelopeV1 = ExecutionPayloadV1;
     type ExecutionPayloadEnvelopeV2 = ExecutionPayloadEnvelopeV2;
-    type ExecutionPayloadEnvelopeV3 = OpExecutionPayloadEnvelopeV3;
-    type ExecutionPayloadEnvelopeV4 = OpExecutionPayloadEnvelopeV4;
-    type ExecutionPayloadEnvelopeV5 = OpExecutionPayloadEnvelopeV5;
-    type ExecutionPayloadEnvelopeV6 = OpExecutionPayloadEnvelopeV5;
+    type ExecutionPayloadEnvelopeV3 = BaseExecutionPayloadEnvelopeV3;
+    type ExecutionPayloadEnvelopeV4 = BaseExecutionPayloadEnvelopeV4;
+    type ExecutionPayloadEnvelopeV5 = BaseExecutionPayloadEnvelopeV5;
+    type ExecutionPayloadEnvelopeV6 = BaseExecutionPayloadEnvelopeV5;
 }
 
 /// Validator for Base engine API.
@@ -121,7 +118,7 @@ where
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
     ChainSpec: BaseUpgrades + Send + Sync + 'static,
-    Types: PayloadTypes<ExecutionData = OpExecutionData>,
+    Types: PayloadTypes<ExecutionData = ExecutionData>,
 {
     type Block = alloy_consensus::Block<Tx>;
 
@@ -157,7 +154,7 @@ where
 
     fn convert_payload_to_block(
         &self,
-        payload: OpExecutionData,
+        payload: ExecutionData,
     ) -> Result<SealedBlock<Self::Block>, NewPayloadError> {
         self.inner.ensure_well_formed_payload(payload).map_err(NewPayloadError::other)
     }
@@ -166,8 +163,8 @@ where
 impl<Types, P, Tx, ChainSpec> EngineApiValidator<Types> for OpEngineValidator<P, Tx, ChainSpec>
 where
     Types: PayloadTypes<
-            PayloadAttributes = OpPayloadAttributes,
-            ExecutionData = OpExecutionData,
+            PayloadAttributes = BasePayloadAttributes,
+            ExecutionData = ExecutionData,
             BuiltPayload: BuiltPayload<Primitives: NodePrimitives<SignedTx = Tx>>,
         >,
     P: StateProviderFactory + Unpin + 'static,
@@ -207,7 +204,7 @@ where
         validate_version_specific_fields(
             self.chain_spec(),
             version,
-            PayloadOrAttributes::<OpExecutionData, OpPayloadAttributes>::PayloadAttributes(
+            PayloadOrAttributes::<ExecutionData, BasePayloadAttributes>::PayloadAttributes(
                 attributes,
             ),
         )?;
@@ -330,8 +327,8 @@ mod tests {
         eip_1559_params: Option<B64>,
         min_base_fee: Option<u64>,
         timestamp: u64,
-    ) -> OpPayloadAttributes {
-        OpPayloadAttributes {
+    ) -> BasePayloadAttributes {
+        BasePayloadAttributes {
             gas_limit: Some(1000),
             eip_1559_params,
             min_base_fee,

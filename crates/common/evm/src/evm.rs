@@ -17,15 +17,15 @@ use revm::{
 ///
 /// This is a wrapper type around the `revm` evm with optional [`Inspector`] (tracing)
 /// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
-/// [`OpEvm`](base_revm::OpEvm) type.
+/// [`BaseEvm`](base_revm::OpEvm) type.
 #[allow(missing_debug_implementations)] // missing revm::OpContext Debug impl
-pub struct OpEvm<DB: Database, I, P = BasePrecompiles> {
+pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
     pub(crate) inner:
         base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
     pub(crate) inspect: bool,
 }
 
-impl<DB: Database, I, P> OpEvm<DB, I, P> {
+impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     /// Provides a reference to the EVM context.
     pub const fn ctx(&self) -> &OpContext<DB> {
         &self.inner.0.ctx
@@ -37,11 +37,11 @@ impl<DB: Database, I, P> OpEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> OpEvm<DB, I, P> {
+impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     /// Creates a new OP EVM instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
-    /// [`OpEvm`](base_revm::OpEvm) should be invoked on [`Evm::transact`].
+    /// [`BaseEvm`](base_revm::OpEvm) should be invoked on [`Evm::transact`].
     pub const fn new(
         evm: base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
         inspect: bool,
@@ -50,7 +50,7 @@ impl<DB: Database, I, P> OpEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> Deref for OpEvm<DB, I, P> {
+impl<DB: Database, I, P> Deref for BaseEvm<DB, I, P> {
     type Target = OpContext<DB>;
 
     #[inline]
@@ -59,14 +59,14 @@ impl<DB: Database, I, P> Deref for OpEvm<DB, I, P> {
     }
 }
 
-impl<DB: Database, I, P> DerefMut for OpEvm<DB, I, P> {
+impl<DB: Database, I, P> DerefMut for BaseEvm<DB, I, P> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.ctx_mut()
     }
 }
 
-impl<DB, I, P> Evm for OpEvm<DB, I, P>
+impl<DB, I, P> Evm for BaseEvm<DB, I, P>
 where
     DB: Database,
     I: Inspector<OpContext<DB>>,
@@ -147,7 +147,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::OpEvmFactory;
+    use crate::BaseEvmFactory;
 
     #[rstest]
     #[case::bn254_pair(*bn254_pair::JOVIAN.address(), bn254_pair::JOVIAN_MAX_INPUT_SIZE)]
@@ -155,7 +155,7 @@ mod tests {
     #[case::bls12_g2_msm(*bls12_381::JOVIAN_G2_MSM.address(), bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
     #[case::bls12_pairing(*bls12_381::JOVIAN_PAIRING.address(), bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE)]
     fn precompile_jovian_at_max_input(#[case] address: Address, #[case] max_size: usize) {
-        let mut evm = OpEvmFactory::default().create_evm(
+        let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
         );
@@ -180,7 +180,7 @@ mod tests {
     #[case::bls12_g2_msm(*bls12_381::JOVIAN_G2_MSM.address(), bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
     #[case::bls12_pairing(*bls12_381::JOVIAN_PAIRING.address(), bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE)]
     fn precompile_jovian_over_max_input(#[case] address: Address, #[case] max_size: usize) {
-        let mut evm = OpEvmFactory::default().create_evm(
+        let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
             EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
         );

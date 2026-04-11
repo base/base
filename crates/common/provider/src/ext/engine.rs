@@ -7,8 +7,8 @@ use alloy_rpc_types_engine::{
 };
 use alloy_transport::{Transport, TransportResult};
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadEnvelopeV5,
-    OpExecutionPayloadV4, OpPayloadAttributes,
+    BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
+    BaseExecutionPayloadV4, BasePayloadAttributes,
 };
 
 /// Extension trait for engine API RPC methods.
@@ -20,7 +20,7 @@ use base_alloy_rpc_types_engine::{
 /// <https://specs.optimism.io/protocol/exec-engine.html#engine-api>
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-pub trait OpEngineApi<N, T> {
+pub trait BaseEngineApi<N, T> {
     /// Sends the given payload to the execution layer client, as specified for the Shanghai fork.
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2>
@@ -57,7 +57,7 @@ pub trait OpEngineApi<N, T> {
     /// - execution requests MUST be an empty array.
     async fn new_payload_v4(
         &self,
-        payload: OpExecutionPayloadV4,
+        payload: BaseExecutionPayloadV4,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus>;
 
@@ -69,12 +69,12 @@ pub trait OpEngineApi<N, T> {
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_forkchoiceupdatedv2>
     ///
     /// OP modifications:
-    /// - The `payload_attributes` parameter is extended with the [`OpPayloadAttributes`] type
+    /// - The `payload_attributes` parameter is extended with the [`BasePayloadAttributes`] type
     ///   as described in <https://specs.optimism.io/protocol/exec-engine.html#extended-payloadattributesv2>
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OpPayloadAttributes>,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated>;
 
     /// Updates the execution layer client with the given fork choice, as specified for the Cancun
@@ -85,12 +85,12 @@ pub trait OpEngineApi<N, T> {
     /// OP modifications:
     /// - Must be called with an Ecotone payload
     /// - Attributes must contain the parent beacon block root field
-    /// - The `payload_attributes` parameter is extended with the [`OpPayloadAttributes`] type
+    /// - The `payload_attributes` parameter is extended with the [`BasePayloadAttributes`] type
     ///   as described in <https://specs.optimism.io/protocol/exec-engine.html#extended-payloadattributesv2>
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OpPayloadAttributes>,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated>;
 
     /// Retrieves an execution payload from a previously started build process, as specified for the
@@ -116,11 +116,11 @@ pub trait OpEngineApi<N, T> {
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
     /// OP modifications:
-    /// - the response type is extended to [`OpExecutionPayloadEnvelopeV3`].
+    /// - the response type is extended to [`BaseExecutionPayloadEnvelopeV3`].
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV3>;
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV3>;
 
     /// Returns the most recent version of the payload that is available in the corresponding
     /// payload build process at the time of receiving this call.
@@ -131,11 +131,11 @@ pub trait OpEngineApi<N, T> {
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
     /// OP modifications:
-    /// - the response type is extended to [`OpExecutionPayloadEnvelopeV4`].
+    /// - the response type is extended to [`BaseExecutionPayloadEnvelopeV4`].
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV4>;
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV4>;
 
     /// Returns the most recent version of the payload that is available in the corresponding
     /// payload build process at the time of receiving this call.
@@ -143,13 +143,13 @@ pub trait OpEngineApi<N, T> {
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/osaka.md#engine_getpayloadv5>
     ///
     /// OP modifications:
-    /// - the response type is [`OpExecutionPayloadEnvelopeV5`], which uses
-    ///   [`OpExecutionPayloadV4`](base_alloy_rpc_types_engine::OpExecutionPayloadV4) for the
+    /// - the response type is [`BaseExecutionPayloadEnvelopeV5`], which uses
+    ///   [`BaseExecutionPayloadV4`](base_alloy_rpc_types_engine::BaseExecutionPayloadV4) for the
     ///   execution payload and otherwise follows the V5 envelope shape.
     async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV5>;
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV5>;
 
     /// Returns the execution payload bodies by the given hash.
     ///
@@ -199,7 +199,7 @@ pub trait OpEngineApi<N, T> {
 
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-impl<N, T, P> OpEngineApi<N, T> for P
+impl<N, T, P> BaseEngineApi<N, T> for P
 where
     N: Network,
     T: Transport + Clone,
@@ -227,7 +227,7 @@ where
 
     async fn new_payload_v4(
         &self,
-        payload: OpExecutionPayloadV4,
+        payload: BaseExecutionPayloadV4,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
         // Note: The `versioned_hashes`, `execution_requests` parameters are always an empty array
@@ -246,7 +246,7 @@ where
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OpPayloadAttributes>,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         self.client()
             .request("engine_forkchoiceUpdatedV2", (fork_choice_state, payload_attributes))
@@ -256,7 +256,7 @@ where
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OpPayloadAttributes>,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         self.client()
             .request("engine_forkchoiceUpdatedV3", (fork_choice_state, payload_attributes))
@@ -273,21 +273,21 @@ where
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV3> {
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
         self.client().request("engine_getPayloadV3", (payload_id,)).await
     }
 
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV4> {
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV4> {
         self.client().request("engine_getPayloadV4", (payload_id,)).await
     }
 
     async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV5> {
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
         self.client().request("engine_getPayloadV5", (payload_id,)).await
     }
 

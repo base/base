@@ -7,14 +7,14 @@ use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
         ExecutableTx, OnStateHook, StateChangePostBlockSource, StateChangeSource, StateDB,
-        SystemCaller, TxResult,
+        SystemCaller, TxResult as TxResultTrait,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
 use alloy_primitives::Address;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::OpDepositReceipt;
+use base_alloy_consensus::DepositReceipt;
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_revm::{DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo};
 use revm::{
@@ -23,11 +23,13 @@ use revm::{
     database::DatabaseCommitExt,
 };
 
-use crate::{BaseBlockExecutionCtx, BaseBlockExecutionError, OpReceiptBuilder, OpTxEnv, canyon};
+use crate::{
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv, canyon,
+};
 
 /// The result of executing an OP transaction.
 #[derive(Debug)]
-pub struct OpTxResult<H, T> {
+pub struct BaseTxResult<H, T> {
     /// The inner result of the transaction execution.
     pub inner: EthTxResult<H, T>,
     /// Whether the transaction is a deposit transaction.
@@ -36,7 +38,7 @@ pub struct OpTxResult<H, T> {
     pub sender: Address,
 }
 
-impl<H, T> TxResult for OpTxResult<H, T> {
+impl<H, T> TxResultTrait for BaseTxResult<H, T> {
     type HaltReason = H;
 
     fn result(&self) -> &ResultAndState<Self::HaltReason> {
@@ -46,7 +48,7 @@ impl<H, T> TxResult for OpTxResult<H, T> {
 
 /// Block executor for Base.
 #[derive(Debug)]
-pub struct BaseBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
+pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
     /// Spec.
     pub spec: Spec,
     /// Receipt builder.
@@ -73,7 +75,7 @@ pub struct BaseBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
 impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
     E: Evm,
-    R: OpReceiptBuilder,
+    R: BaseReceiptBuilder,
     Spec: BaseUpgrades + Clone,
 {
     /// Creates a new [`BaseBlockExecutor`].
@@ -97,9 +99,9 @@ impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
     E: Evm<
             DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + OpTxEnv,
+            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
         >,
-    R: OpReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
+    R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: BaseUpgrades,
 {
     fn jovian_da_footprint_estimation(
@@ -132,15 +134,15 @@ impl<E, R, Spec> BlockExecutor for BaseBlockExecutor<E, R, Spec>
 where
     E: Evm<
             DB: Database + DatabaseCommit + StateDB,
-            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + OpTxEnv,
+            Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
         >,
-    R: OpReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
+    R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: BaseUpgrades,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
     type Evm = E;
-    type Result = OpTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
+    type Result = BaseTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         // Set state clear flag if the block is after the Spurious Dragon hardfork.
@@ -214,7 +216,7 @@ where
             BlockExecutionError::evm(err, hash)
         })?;
 
-        Ok(OpTxResult {
+        Ok(BaseTxResult {
             inner: EthTxResult {
                 result,
                 blob_gas_used: da_footprint_used,
@@ -226,7 +228,7 @@ where
     }
 
     fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
-        let OpTxResult {
+        let BaseTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             is_deposit,
             sender,
@@ -273,7 +275,7 @@ where
                         logs: ctx.result.into_logs(),
                     };
 
-                    self.receipt_builder.build_deposit_receipt(OpDepositReceipt {
+                    self.receipt_builder.build_deposit_receipt(DepositReceipt {
                         inner: receipt,
                         deposit_nonce: depositor.map(|account| account.nonce),
                         // The deposit receipt version was introduced in Canyon to indicate an
@@ -357,7 +359,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_alloy_chains::{BaseChainUpgrades, BaseUpgrade};
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_consensus::BaseTxEnvelope;
     use base_revm::{
         BASE_FEE_SCALAR_OFFSET, Builder, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
         ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
@@ -373,21 +375,21 @@ mod tests {
     };
 
     use super::*;
-    use crate::{BaseBlockExecutorFactory, OpAlloyReceiptBuilder, OpEvm, OpEvmFactory};
+    use crate::{AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory};
 
     #[test]
     fn test_with_encoded() {
         let executor_factory = BaseBlockExecutorFactory::new(
-            OpAlloyReceiptBuilder::default(),
+            AlloyReceiptBuilder::default(),
             BaseChainUpgrades::mainnet(),
-            OpEvmFactory::default(),
+            BaseEvmFactory::default(),
         );
         let mut db =
             revm::database::State::builder().with_database(CacheDB::<EmptyDB>::default()).build();
         let evm = executor_factory.evm_factory().create_evm(&mut db, EvmEnv::default());
         let mut executor = executor_factory.create_executor(evm, BaseBlockExecutionCtx::default());
         let tx = Recovered::new_unchecked(
-            OpTxEnvelope::Legacy(TxLegacy::default().into_signed(Signature::new(
+            BaseTxEnvelope::Legacy(TxLegacy::default().into_signed(Signature::new(
                 Default::default(),
                 Default::default(),
                 Default::default(),
@@ -445,13 +447,13 @@ mod tests {
 
     fn build_executor<'a>(
         db: &'a mut revm::database::State<InMemoryDB>,
-        receipt_builder: &'a OpAlloyReceiptBuilder,
+        receipt_builder: &'a AlloyReceiptBuilder,
         op_chain_hardforks: &'a BaseChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
-        OpEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector>,
-        &'a OpAlloyReceiptBuilder,
+        BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector>,
+        &'a AlloyReceiptBuilder,
         &'a BaseChainUpgrades,
     > {
         let ctx = Context::op()
@@ -468,7 +470,7 @@ mod tests {
             })
             .modify_cfg_chained(|cfg| cfg.spec = OpSpecId::JOVIAN);
 
-        let evm = OpEvm::new(ctx.build_op_with_inspector(NoOpInspector {}), true);
+        let evm = BaseEvm::new(ctx.build_op_with_inspector(NoOpInspector {}), true);
 
         BaseBlockExecutor::new(
             evm,
@@ -491,7 +493,7 @@ mod tests {
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
-        let receipt_builder = OpAlloyReceiptBuilder::default();
+        let receipt_builder = AlloyReceiptBuilder::default();
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
@@ -503,7 +505,7 @@ mod tests {
         let tx_inner = TxLegacy { gas_limit: GAS_LIMIT, ..Default::default() };
 
         let tx = Recovered::new_unchecked(
-            OpTxEnvelope::Legacy(tx_inner.into_signed(Signature::new(
+            BaseTxEnvelope::Legacy(tx_inner.into_signed(Signature::new(
                 Default::default(),
                 Default::default(),
                 Default::default(),
@@ -536,7 +538,7 @@ mod tests {
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
-        let receipt_builder = OpAlloyReceiptBuilder::default();
+        let receipt_builder = AlloyReceiptBuilder::default();
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
@@ -548,7 +550,7 @@ mod tests {
         let tx_inner = TxLegacy { gas_limit: GAS_LIMIT, ..Default::default() };
 
         let tx = Recovered::new_unchecked(
-            OpTxEnvelope::Legacy(tx_inner.into_signed(Signature::new(
+            BaseTxEnvelope::Legacy(tx_inner.into_signed(Signature::new(
                 Default::default(),
                 Default::default(),
                 Default::default(),
@@ -593,7 +595,7 @@ mod tests {
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
         );
 
-        let receipt_builder = OpAlloyReceiptBuilder::default();
+        let receipt_builder = AlloyReceiptBuilder::default();
         let mut executor = build_executor(
             &mut db,
             &receipt_builder,
@@ -605,7 +607,7 @@ mod tests {
         let tx_inner = TxLegacy { gas_limit: GAS_LIMIT, ..Default::default() };
 
         let tx = Recovered::new_unchecked(
-            OpTxEnvelope::Legacy(tx_inner.into_signed(Signature::new(
+            BaseTxEnvelope::Legacy(tx_inner.into_signed(Signature::new(
                 Default::default(),
                 Default::default(),
                 Default::default(),

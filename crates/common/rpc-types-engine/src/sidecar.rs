@@ -12,23 +12,23 @@ use alloy_rpc_types_engine::{
 /// Default is equivalent to pre-ecotone, payloads v1 and v2.
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct OpExecutionPayloadSidecar {
+pub struct BaseExecutionPayloadSidecar {
     /// Ecotone request params, inherited from Cancun, introduced in `engine_newPayloadV3` that are
     /// not present in the [`ExecutionPayloadV3`](alloy_rpc_types_engine::ExecutionPayloadV3).
     ///
     /// NOTE: Blob versioned hashes should always be empty. See <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv3>.
     ecotone: MaybeCancunPayloadFields,
     /// Isthmus request params, inherited from Prague, introduced in `engine_newPayloadV4` that are
-    /// not present in the [`OpExecutionPayloadV4`](crate::OpExecutionPayloadV4).
+    /// not present in the [`OpExecutionPayloadV4`](crate::BaseExecutionPayloadV4).
     ///
     /// NOTE: These fields, i.e. the EL request hashes, should always be empty. See <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>.
     isthmus: MaybePraguePayloadFields,
 }
 
-impl OpExecutionPayloadSidecar {
-    /// Extracts the [`OpExecutionPayloadSidecar`] from the given [`Block`].
+impl BaseExecutionPayloadSidecar {
+    /// Extracts the [`BaseExecutionPayloadSidecar`] from the given [`Block`].
     ///
-    /// Returns `OpExecutionPayloadSidecar::default` if the block does not contain any sidecar
+    /// Returns `BaseExecutionPayloadSidecar::default` if the block does not contain any sidecar
     /// fields (pre-ecotone).
     pub fn from_block<T, H>(block: &Block<T, H>) -> Self
     where
@@ -98,13 +98,13 @@ impl OpExecutionPayloadSidecar {
     }
 
     /// Returns the EL request hash. Should always be empty root hash, see docs for
-    /// [`OpExecutionPayloadSidecar`] isthmus fields.
+    /// [`BaseExecutionPayloadSidecar`] isthmus fields.
     pub fn requests_hash(&self) -> Option<B256> {
         self.isthmus.requests_hash()
     }
 
     /// Returns the blob versioned hashes. Should always be empty array, see docs for
-    /// [`OpExecutionPayloadSidecar`] ecotone fields.
+    /// [`BaseExecutionPayloadSidecar`] ecotone fields.
     pub fn versioned_hashes(&self) -> Option<&Vec<B256>> {
         self.ecotone.versioned_hashes()
     }

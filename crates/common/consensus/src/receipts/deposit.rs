@@ -7,22 +7,22 @@ use alloy_consensus::{
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 
-use super::OpTxReceipt;
-use crate::transaction::OpDepositInfo;
+use super::BaseTxReceipt;
+use crate::transaction::DepositInfo;
 
-/// [`OpDepositReceipt`] with calculated bloom filter, modified for Base.
+/// [`DepositReceipt`] with calculated bloom filter, modified for Base.
 ///
 /// This convenience type allows us to lazily calculate the bloom filter for a
 /// receipt, similar to [`Sealed`].
 ///
 /// [`Sealed`]: alloy_consensus::Sealed
-pub type OpDepositReceiptWithBloom<T = Log> = ReceiptWithBloom<OpDepositReceipt<T>>;
+pub type DepositReceiptWithBloom<T = Log> = ReceiptWithBloom<DepositReceipt<T>>;
 
 /// Receipt containing result of transaction execution.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct OpDepositReceipt<T = Log> {
+pub struct DepositReceipt<T = Log> {
     /// The inner receipt type.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub inner: Receipt<T>,
@@ -52,29 +52,29 @@ pub struct OpDepositReceipt<T = Log> {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl OpDepositReceipt {
-    /// Calculates [`Log`]'s bloom filter. this is slow operation and [`OpDepositReceiptWithBloom`]
+impl DepositReceipt {
+    /// Calculates [`Log`]'s bloom filter. this is slow operation and [`DepositReceiptWithBloom`]
     /// can be used to cache this value.
     pub fn bloom_slow(&self) -> Bloom {
         self.inner.logs.iter().collect()
     }
 
-    /// Calculates the bloom filter for the receipt and returns the [`OpDepositReceiptWithBloom`]
+    /// Calculates the bloom filter for the receipt and returns the [`DepositReceiptWithBloom`]
     /// container type.
-    pub fn with_bloom(self) -> OpDepositReceiptWithBloom {
+    pub fn with_bloom(self) -> DepositReceiptWithBloom {
         self.into()
     }
 }
 
-impl<T> OpDepositReceipt<T> {
+impl<T> DepositReceipt<T> {
     /// Maps the inner receipt value of this receipt.
     ///
     /// This is mainly useful for mapping the receipt log type to the rpc variant.
-    pub fn map_inner<U, F>(self, f: F) -> OpDepositReceipt<U>
+    pub fn map_inner<U, F>(self, f: F) -> DepositReceipt<U>
     where
         F: FnOnce(Receipt<T>) -> Receipt<U>,
     {
-        OpDepositReceipt {
+        DepositReceipt {
             inner: f(self.inner),
             deposit_nonce: self.deposit_nonce,
             deposit_receipt_version: self.deposit_receipt_version,
@@ -92,8 +92,8 @@ impl<T> OpDepositReceipt<T> {
     }
 
     /// Returns the deposit info for this receipt.
-    pub const fn deposit_info(&self) -> OpDepositInfo {
-        OpDepositInfo {
+    pub const fn deposit_info(&self) -> DepositInfo {
+        DepositInfo {
             deposit_nonce: self.deposit_nonce,
             deposit_receipt_version: self.deposit_receipt_version,
         }
@@ -102,12 +102,12 @@ impl<T> OpDepositReceipt<T> {
     /// Converts the receipt's log type by applying a function to each log.
     ///
     /// Returns the receipt with the new log type
-    pub fn map_logs<U>(self, f: impl FnMut(T) -> U) -> OpDepositReceipt<U> {
+    pub fn map_logs<U>(self, f: impl FnMut(T) -> U) -> DepositReceipt<U> {
         self.map_inner(|r| r.map_logs(f))
     }
 }
 
-impl<T: Encodable> OpDepositReceipt<T> {
+impl<T: Encodable> DepositReceipt<T> {
     /// Returns length of RLP-encoded receipt fields with the given [`Bloom`] without an RLP header.
     pub fn rlp_encoded_fields_length_with_bloom(&self, bloom: &Bloom) -> usize {
         self.inner.rlp_encoded_fields_length_with_bloom(bloom)
@@ -133,7 +133,7 @@ impl<T: Encodable> OpDepositReceipt<T> {
     }
 }
 
-impl<T: Decodable> OpDepositReceipt<T> {
+impl<T: Decodable> DepositReceipt<T> {
     /// RLP-decodes receipt's field with a [`Bloom`].
     ///
     /// Does not expect an RLP header.
@@ -154,19 +154,19 @@ impl<T: Decodable> OpDepositReceipt<T> {
     }
 }
 
-impl<T> AsRef<Receipt<T>> for OpDepositReceipt<T> {
+impl<T> AsRef<Receipt<T>> for DepositReceipt<T> {
     fn as_ref(&self) -> &Receipt<T> {
         &self.inner
     }
 }
 
-impl<T> From<OpDepositReceipt<T>> for Receipt<T> {
-    fn from(value: OpDepositReceipt<T>) -> Self {
+impl<T> From<DepositReceipt<T>> for Receipt<T> {
+    fn from(value: DepositReceipt<T>) -> Self {
         value.into_inner()
     }
 }
 
-impl<T> TxReceipt for OpDepositReceipt<T>
+impl<T> TxReceipt for DepositReceipt<T>
 where
     T: AsRef<Log> + Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
 {
@@ -193,7 +193,7 @@ where
     }
 }
 
-impl<T: Encodable> RlpEncodableReceipt for OpDepositReceipt<T> {
+impl<T: Encodable> RlpEncodableReceipt for DepositReceipt<T> {
     fn rlp_encoded_length_with_bloom(&self, bloom: &Bloom) -> usize {
         self.rlp_header_with_bloom(bloom).length_with_payload()
     }
@@ -204,7 +204,7 @@ impl<T: Encodable> RlpEncodableReceipt for OpDepositReceipt<T> {
     }
 }
 
-impl<T: Decodable> RlpDecodableReceipt for OpDepositReceipt<T> {
+impl<T: Decodable> RlpDecodableReceipt for DepositReceipt<T> {
     fn rlp_decode_with_bloom(buf: &mut &[u8]) -> alloy_rlp::Result<ReceiptWithBloom<Self>> {
         let header = Header::decode(buf)?;
         if !header.list {
@@ -230,7 +230,7 @@ impl<T: Decodable> RlpDecodableReceipt for OpDepositReceipt<T> {
     }
 }
 
-impl OpTxReceipt for OpDepositReceipt {
+impl BaseTxReceipt for DepositReceipt {
     fn deposit_nonce(&self) -> Option<u64> {
         self.deposit_nonce
     }
@@ -240,14 +240,14 @@ impl OpTxReceipt for OpDepositReceipt {
     }
 }
 
-impl<T> From<ReceiptWithBloom<Self>> for OpDepositReceipt<T> {
+impl<T> From<ReceiptWithBloom<Self>> for DepositReceipt<T> {
     fn from(value: ReceiptWithBloom<Self>) -> Self {
         value.receipt
     }
 }
 
 #[cfg(feature = "arbitrary")]
-impl<'a, T> arbitrary::Arbitrary<'a> for OpDepositReceipt<T>
+impl<'a, T> arbitrary::Arbitrary<'a> for DepositReceipt<T>
 where
     T: arbitrary::Arbitrary<'a>,
 {
@@ -268,7 +268,7 @@ where
     }
 }
 
-/// Bincode-compatible [`OpDepositReceipt`] serde implementation.
+/// Bincode-compatible [`DepositReceipt`] serde implementation.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub(super) mod serde_bincode_compat {
     use alloc::borrow::Cow;
@@ -277,23 +277,23 @@ pub(super) mod serde_bincode_compat {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
-    /// Bincode-compatible [`super::OpDepositReceipt`] serde implementation.
+    /// Bincode-compatible [`super::DepositReceipt`] serde implementation.
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use base_alloy_consensus::{OpDepositReceipt, serde_bincode_compat};
+    /// use base_alloy_consensus::{DepositReceipt, serde_bincode_compat};
     /// use serde::{Deserialize, Serialize, de::DeserializeOwned};
     /// use serde_with::serde_as;
     ///
     /// #[serde_as]
     /// #[derive(Serialize, Deserialize)]
     /// struct Data<T: Serialize + DeserializeOwned + Clone + 'static> {
-    ///     #[serde_as(as = "serde_bincode_compat::OpDepositReceipt<'_, T>")]
-    ///     receipt: OpDepositReceipt<T>,
+    ///     #[serde_as(as = "serde_bincode_compat::DepositReceipt<'_, T>")]
+    ///     receipt: DepositReceipt<T>,
     /// }
     /// ```
     #[derive(Debug, Serialize, Deserialize)]
-    pub struct OpDepositReceipt<'a, T: Clone> {
+    pub struct DepositReceipt<'a, T: Clone> {
         logs: Cow<'a, [T]>,
         status: bool,
         cumulative_gas_used: u64,
@@ -301,8 +301,8 @@ pub(super) mod serde_bincode_compat {
         deposit_receipt_version: Option<u64>,
     }
 
-    impl<'a, T: Clone> From<&'a super::OpDepositReceipt<T>> for OpDepositReceipt<'a, T> {
-        fn from(value: &'a super::OpDepositReceipt<T>) -> Self {
+    impl<'a, T: Clone> From<&'a super::DepositReceipt<T>> for DepositReceipt<'a, T> {
+        fn from(value: &'a super::DepositReceipt<T>) -> Self {
             Self {
                 logs: Cow::Borrowed(&value.inner.logs),
                 // OP has no post state root variant
@@ -314,8 +314,8 @@ pub(super) mod serde_bincode_compat {
         }
     }
 
-    impl<'a, T: Clone> From<OpDepositReceipt<'a, T>> for super::OpDepositReceipt<T> {
-        fn from(value: OpDepositReceipt<'a, T>) -> Self {
+    impl<'a, T: Clone> From<DepositReceipt<'a, T>> for super::DepositReceipt<T> {
+        fn from(value: DepositReceipt<'a, T>) -> Self {
             Self {
                 inner: Receipt {
                     status: value.status.into(),
@@ -328,26 +328,26 @@ pub(super) mod serde_bincode_compat {
         }
     }
 
-    impl<T: Serialize + Clone> SerializeAs<super::OpDepositReceipt<T>> for OpDepositReceipt<'_, T> {
+    impl<T: Serialize + Clone> SerializeAs<super::DepositReceipt<T>> for DepositReceipt<'_, T> {
         fn serialize_as<S>(
-            source: &super::OpDepositReceipt<T>,
+            source: &super::DepositReceipt<T>,
             serializer: S,
         ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            OpDepositReceipt::<'_, T>::from(source).serialize(serializer)
+            DepositReceipt::<'_, T>::from(source).serialize(serializer)
         }
     }
 
-    impl<'de, T: Deserialize<'de> + Clone> DeserializeAs<'de, super::OpDepositReceipt<T>>
-        for OpDepositReceipt<'de, T>
+    impl<'de, T: Deserialize<'de> + Clone> DeserializeAs<'de, super::DepositReceipt<T>>
+        for DepositReceipt<'de, T>
     {
-        fn deserialize_as<D>(deserializer: D) -> Result<super::OpDepositReceipt<T>, D::Error>
+        fn deserialize_as<D>(deserializer: D) -> Result<super::DepositReceipt<T>, D::Error>
         where
             D: Deserializer<'de>,
         {
-            OpDepositReceipt::<'_, T>::deserialize(deserializer).map(Into::into)
+            DepositReceipt::<'_, T>::deserialize(deserializer).map(Into::into)
         }
     }
 
@@ -359,21 +359,21 @@ pub(super) mod serde_bincode_compat {
         use serde::{Deserialize, Serialize, de::DeserializeOwned};
         use serde_with::serde_as;
 
-        use super::super::{OpDepositReceipt, serde_bincode_compat};
+        use super::super::{DepositReceipt, serde_bincode_compat};
 
         #[test]
         fn test_tx_deposit_bincode_roundtrip() {
             #[serde_as]
             #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
             struct Data<T: Serialize + DeserializeOwned + Clone + 'static> {
-                #[serde_as(as = "serde_bincode_compat::OpDepositReceipt<'_,T>")]
-                transaction: OpDepositReceipt<T>,
+                #[serde_as(as = "serde_bincode_compat::DepositReceipt<'_,T>")]
+                transaction: DepositReceipt<T>,
             }
 
             let mut bytes = [0u8; 1024];
             rand::rng().fill(bytes.as_mut_slice());
             let mut data = Data {
-                transaction: OpDepositReceipt::arbitrary(&mut arbitrary::Unstructured::new(&bytes))
+                transaction: DepositReceipt::arbitrary(&mut arbitrary::Unstructured::new(&bytes))
                     .unwrap(),
             };
             // ensure we don't have an invalid poststate variant
@@ -390,7 +390,7 @@ pub(super) mod serde_bincode_compat {
     }
 }
 
-impl<T> InMemorySize for OpDepositReceipt<T>
+impl<T> InMemorySize for DepositReceipt<T>
 where
     Receipt<T>: InMemorySize,
 {
@@ -420,8 +420,8 @@ mod tests {
         );
 
         // EIP658Receipt
-        let expected = OpDepositReceiptWithBloom {
-            receipt: OpDepositReceipt {
+        let expected = DepositReceiptWithBloom {
+            receipt: DepositReceipt {
                 inner: Receipt {
                     status: false.into(),
                     cumulative_gas_used: 0x1,
@@ -446,13 +446,13 @@ mod tests {
             logs_bloom: [0; 256].into(),
         };
 
-        let receipt = OpDepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let receipt = DepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
         assert_eq!(receipt, expected);
     }
 
     #[test]
     fn gigantic_receipt() {
-        let receipt = OpDepositReceipt {
+        let receipt = DepositReceipt {
             inner: Receipt {
                 cumulative_gas_used: 16747627,
                 status: true.into(),
@@ -485,7 +485,7 @@ mod tests {
         let mut data = vec![];
 
         receipt.encode(&mut data);
-        let decoded = OpDepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let decoded = DepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
 
         // receipt.clone().to_compact(&mut data);
         // let (decoded, _) = Receipt::from_compact(&data[..], data.len());
@@ -499,8 +499,8 @@ mod tests {
         );
 
         // Deposit Receipt (post-regolith)
-        let expected = OpDepositReceiptWithBloom {
-            receipt: OpDepositReceipt {
+        let expected = DepositReceiptWithBloom {
+            receipt: DepositReceipt {
                 inner: Receipt::<Log> {
                     cumulative_gas_used: 46913,
                     logs: vec![],
@@ -512,7 +512,7 @@ mod tests {
             logs_bloom: [0; 256].into(),
         };
 
-        let receipt = OpDepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let receipt = DepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
         assert_eq!(receipt, expected);
 
         let mut buf = Vec::new();
@@ -527,8 +527,8 @@ mod tests {
         );
 
         // Deposit Receipt (post-regolith)
-        let expected = OpDepositReceiptWithBloom {
-            receipt: OpDepositReceipt {
+        let expected = DepositReceiptWithBloom {
+            receipt: DepositReceipt {
                 inner: Receipt::<Log> {
                     cumulative_gas_used: 46913,
                     logs: vec![],
@@ -540,7 +540,7 @@ mod tests {
             logs_bloom: [0; 256].into(),
         };
 
-        let receipt = OpDepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let receipt = DepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
         assert_eq!(receipt, expected);
 
         let mut buf = Vec::new();

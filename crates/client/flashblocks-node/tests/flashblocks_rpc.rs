@@ -16,7 +16,7 @@ use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_alloy_network::Base;
-use base_common_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::BaseTransactionRequest;
 use base_flashblocks_node::test_harness::FlashblocksHarness;
 use base_node_runner::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
 use base_test_utils::{Account, DoubleCounter};
@@ -195,7 +195,7 @@ impl TestSetup {
         // Alice's ETH transfer at nonce 0
         let (eth_transfer_tx, eth_transfer_hash) = alice
             .sign_txn_request(
-                OpTransactionRequest::default()
+                BaseTransactionRequest::default()
                     .from(alice.address())
                     .transaction_type(TransactionType::Eip1559.into())
                     .gas_limit(100_000)
@@ -224,7 +224,7 @@ impl TestSetup {
         // Call LogEmitterA at deployer nonce 5 to trigger logs
         let (log_trigger_tx, log_trigger_hash) = deployer
             .sign_txn_request(
-                OpTransactionRequest::default()
+                BaseTransactionRequest::default()
                     .from(deployer.address())
                     .transaction_type(TransactionType::Eip1559.into())
                     .gas_limit(100_000)
@@ -236,7 +236,7 @@ impl TestSetup {
         // Balance transfer: alice sends PENDING_BALANCE wei to TEST_ADDRESS at nonce 1
         let (balance_transfer_tx, _) = alice
             .sign_txn_request(
-                OpTransactionRequest::default()
+                BaseTransactionRequest::default()
                     .from(alice.address())
                     .transaction_type(TransactionType::Eip1559.into())
                     .gas_limit(21_000)
@@ -322,13 +322,13 @@ impl TestSetup {
         }
     }
 
-    fn count1(&self) -> OpTransactionRequest {
+    fn count1(&self) -> BaseTransactionRequest {
         let counter =
             DoubleCounterInstance::new(self.txn_details.counter_address, self.harness.provider());
         counter.count1().into_transaction_request()
     }
 
-    fn count2(&self) -> OpTransactionRequest {
+    fn count2(&self) -> BaseTransactionRequest {
         let counter =
             DoubleCounterInstance::new(self.txn_details.counter_address, self.harness.provider());
         counter.count2().into_transaction_request()
@@ -535,7 +535,7 @@ async fn test_eth_call() -> Result<()> {
     let provider = setup.harness.provider();
 
     // Initially, the big spend will succeed because we haven't sent the test payloads yet
-    let big_spend = OpTransactionRequest::default()
+    let big_spend = BaseTransactionRequest::default()
         .from(Account::Alice.address())
         .transaction_type(0)
         .gas_limit(200000)
@@ -576,7 +576,7 @@ async fn test_eth_estimate_gas() -> Result<()> {
     let provider = setup.harness.provider();
 
     // We ensure that eth_estimate_gas will succeed because we are on plain state
-    let send_estimate_gas = OpTransactionRequest::default()
+    let send_estimate_gas = BaseTransactionRequest::default()
         .from(Account::Alice.address())
         .transaction_type(0)
         .gas_limit(200000)
@@ -621,7 +621,7 @@ async fn test_eth_simulate_v1() -> Result<()> {
                 // read count1() from counter contract
                 setup.count1().into(),
                 // increment() value in contract
-                OpTransactionRequest::default()
+                BaseTransactionRequest::default()
                     .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
                     .transaction_type(0)
                     .gas_limit(200000)

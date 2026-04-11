@@ -7,7 +7,7 @@ use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
 use audit_archiver_lib::BundleEvent;
-use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_consensus::BaseTxEnvelope;
 use base_alloy_network::Base;
 use base_bundles::{AcceptedBundle, Bundle, BundleExtensions, MeterBundleResponse, ParsedBundle};
 use jsonrpsee::{
@@ -248,12 +248,12 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
 }
 
 impl<Q: MessageQueue> IngressService<Q> {
-    async fn get_tx(&self, data: &Bytes) -> RpcResult<Recovered<OpTxEnvelope>> {
+    async fn get_tx(&self, data: &Bytes) -> RpcResult<Recovered<BaseTxEnvelope>> {
         if data.is_empty() {
             return Err(EthApiError::EmptyRawTransactionData.into_rpc_err());
         }
 
-        let envelope = OpTxEnvelope::decode_2718_exact(data.iter().as_slice())
+        let envelope = BaseTxEnvelope::decode_2718_exact(data.iter().as_slice())
             .map_err(|_| EthApiError::FailedToDecodeSignedTransaction.into_rpc_err())?;
 
         let transaction = envelope

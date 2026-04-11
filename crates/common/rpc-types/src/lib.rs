@@ -14,10 +14,10 @@ mod genesis;
 pub use genesis::{BaseChainInfo, BaseFeeInfo, BaseGenesisInfo, BaseHardforkInfo};
 
 mod receipt;
-pub use receipt::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
+pub use receipt::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};
 
 mod transaction;
-pub use transaction::{BaseTransactionFields, OpTransactionRequest, Transaction};
+pub use transaction::{BaseTransactionFields, BaseTransactionRequest, Transaction};
 
 #[cfg(feature = "reth")]
 mod reth;

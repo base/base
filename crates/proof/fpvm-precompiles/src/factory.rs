@@ -1,7 +1,7 @@
 //! Factory for creating EVM instances with FPVM-accelerated precompiles enabled.
 
 use alloy_evm::{Database, EvmEnv, EvmFactory};
-use base_alloy_evm::OpEvm;
+use base_alloy_evm::BaseEvm;
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
 use base_revm::{
     Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
@@ -55,7 +55,7 @@ where
     H: HintWriterClient + Clone + Send + Sync + 'static,
     O: PreimageOracleClient + Clone + Send + Sync + 'static,
 {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = OpEvm<DB, I, FpvmPrecompiles<H, O>>;
+    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = BaseEvm<DB, I, FpvmPrecompiles<H, O>>;
     type Context<DB: Database> = OpContext<DB>;
     type Tx = OpTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
@@ -71,7 +71,7 @@ where
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
-        OpEvm::new(
+        BaseEvm::new(
             Context::op()
                 .with_db(db)
                 .with_block(input.block_env)
@@ -93,7 +93,7 @@ where
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
-        OpEvm::new(
+        BaseEvm::new(
             Context::op()
                 .with_db(db)
                 .with_block(input.block_env)

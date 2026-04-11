@@ -24,7 +24,7 @@ base_metrics::define_metrics! {
     #[label(name = "type", default = ["connected", "outgoing_error", "incoming_error", "closed"])]
     gossipsub_connection: gauge,
 
-    #[describe("Number of OpNetworkPayloadEnvelope gossipped out through the libp2p Swarm")]
+    #[describe("Number of NetworkPayloadEnvelope gossipped out through the libp2p Swarm")]
     unsafe_block_published: gauge,
 
     #[describe("Number of peers connected to the libp2p gossip Swarm")]

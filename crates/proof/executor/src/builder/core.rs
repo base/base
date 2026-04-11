@@ -12,11 +12,11 @@ use alloy_evm::{
     EvmFactory, FromRecoveredTx, FromTxWithEncoded,
     block::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory},
 };
-use base_alloy_consensus::{OpReceiptEnvelope, OpTxEnvelope};
+use base_alloy_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
 use base_alloy_evm::{
-    BaseBlockExecutionCtx, BaseBlockExecutorFactory, OpAlloyReceiptBuilder, OpTxEnv,
+    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseTxEnv,
 };
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_proof_mpt::TrieHinter;
 use base_revm::{OpSpecId, RollupConfigExt};
@@ -50,7 +50,7 @@ where
     /// The trie database providing stateless access to L2 state via Merkle proofs.
     pub(crate) trie_db: TrieDB<P, H>,
     /// The block executor factory for creating Base execution environments.
-    pub(crate) factory: BaseBlockExecutorFactory<OpAlloyReceiptBuilder, RollupConfig, Evm>,
+    pub(crate) factory: BaseBlockExecutorFactory<AlloyReceiptBuilder, RollupConfig, Evm>,
 }
 
 impl<'a, P, H, Evm> StatelessL2Builder<'a, P, H, Evm>
@@ -59,7 +59,7 @@ where
     H: TrieHinter + Debug,
     Evm: EvmFactory<Spec = OpSpecId, BlockEnv = BlockEnv> + 'static,
     <Evm as EvmFactory>::Tx:
-        FromTxWithEncoded<OpTxEnvelope> + FromRecoveredTx<OpTxEnvelope> + OpTxEnv,
+        FromTxWithEncoded<BaseTxEnvelope> + FromRecoveredTx<BaseTxEnvelope> + BaseTxEnv,
 {
     /// Creates a new stateless L2 block builder instance.
     ///
@@ -81,7 +81,7 @@ where
     ) -> Self {
         let trie_db = TrieDB::new(parent_header, provider, hinter);
         let factory = BaseBlockExecutorFactory::new(
-            OpAlloyReceiptBuilder::default(),
+            AlloyReceiptBuilder::default(),
             config.clone(),
             evm_factory,
         );
@@ -102,7 +102,7 @@ where
     /// * `Err(ExecutorError)` - Block building or execution failure
     pub fn build_block(
         &mut self,
-        attrs: OpPayloadAttributes,
+        attrs: BasePayloadAttributes,
     ) -> ExecutorResult<BlockBuildingOutcome> {
         // Step 1. Set up the execution environment.
         let (base_fee_params, min_base_fee) = Self::active_base_fee_params(
@@ -195,12 +195,12 @@ pub struct BlockBuildingOutcome {
     /// The block header.
     pub header: Sealed<Header>,
     /// The block execution result.
-    pub execution_result: BlockExecutionResult<OpReceiptEnvelope>,
+    pub execution_result: BlockExecutionResult<BaseReceiptEnvelope>,
 }
 
-impl From<(Sealed<Header>, BlockExecutionResult<OpReceiptEnvelope>)> for BlockBuildingOutcome {
+impl From<(Sealed<Header>, BlockExecutionResult<BaseReceiptEnvelope>)> for BlockBuildingOutcome {
     fn from(
-        (header, execution_result): (Sealed<Header>, BlockExecutionResult<OpReceiptEnvelope>),
+        (header, execution_result): (Sealed<Header>, BlockExecutionResult<BaseReceiptEnvelope>),
     ) -> Self {
         Self { header, execution_result }
     }

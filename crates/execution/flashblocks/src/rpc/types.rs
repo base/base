@@ -100,7 +100,7 @@ mod tests {
         Address, B256, Bytes, Log as PrimitiveLog, LogData, Signature, TxKind, U256,
     };
     use alloy_rpc_types_eth::Log;
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_consensus::BaseTxEnvelope;
     use base_common_rpc_types::Transaction;
 
     use super::*;
@@ -116,8 +116,11 @@ mod tests {
             input: Bytes::new(),
         };
         let hash = B256::with_last_byte(0xAA);
-        let envelope =
-            OpTxEnvelope::Legacy(Signed::new_unchecked(legacy, Signature::test_signature(), hash));
+        let envelope = BaseTxEnvelope::Legacy(Signed::new_unchecked(
+            legacy,
+            Signature::test_signature(),
+            hash,
+        ));
         let recovered = Recovered::new_unchecked(envelope, Address::with_last_byte(0xCC));
         let tx = Transaction {
             inner: alloy_rpc_types_eth::Transaction {

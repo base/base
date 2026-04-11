@@ -10,15 +10,15 @@ use revm::{
     inspector::NoOpInspector,
 };
 
-use crate::OpEvm;
+use crate::BaseEvm;
 
-/// Factory producing [`OpEvm`]s.
+/// Factory producing [`BaseEvm`]s.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct OpEvmFactory;
+pub struct BaseEvmFactory;
 
-impl EvmFactory for OpEvmFactory {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = OpEvm<DB, I, PrecompilesMap>;
+impl EvmFactory for BaseEvmFactory {
+    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = BaseEvm<DB, I, PrecompilesMap>;
     type Context<DB: Database> = OpContext<DB>;
     type Tx = OpTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
@@ -34,7 +34,7 @@ impl EvmFactory for OpEvmFactory {
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
-        OpEvm {
+        BaseEvm {
             inner: Context::op()
                 .with_db(db)
                 .with_block(input.block_env)
@@ -54,7 +54,7 @@ impl EvmFactory for OpEvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
-        OpEvm {
+        BaseEvm {
             inner: Context::op()
                 .with_db(db)
                 .with_block(input.block_env)

@@ -7,7 +7,7 @@ use alloy_provider::{Provider, ProviderBuilder, network::TransactionResponse};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_sol_types::sol;
 use anyhow::Result;
-use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_consensus::BaseTxEnvelope;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
 use base_consensus_rpc::{BaseP2PApiClient, ConductorApiClient, RollupNodeApiClient};
@@ -597,7 +597,7 @@ pub(crate) fn decode_flashblock_transactions(
     raw_txs
         .iter()
         .filter_map(|tx_bytes| {
-            let envelope = OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref())
+            let envelope = BaseTxEnvelope::decode_2718(&mut tx_bytes.as_ref())
                 .inspect_err(|e| warn!(error = %e, "failed to decode transaction"))
                 .ok()?;
             let hash = envelope.tx_hash();

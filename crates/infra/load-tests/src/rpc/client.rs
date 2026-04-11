@@ -8,7 +8,7 @@ use alloy_provider::{
 };
 use alloy_rpc_types::BlockNumberOrTag;
 use base_alloy_network::Base;
-use base_common_rpc_types::OpTransactionReceipt;
+use base_common_rpc_types::BaseTransactionReceipt;
 use parking_lot::RwLock;
 use tracing::instrument;
 use url::Url;
@@ -29,7 +29,7 @@ pub trait ReceiptProvider: Send + Sync {
     fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> impl Future<Output = Result<Option<OpTransactionReceipt>>> + Send;
+    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>>> + Send;
 
     /// Fetches the block timestamp (unix seconds) for a given block number.
     fn get_block_timestamp(
@@ -42,7 +42,7 @@ pub trait ReceiptProvider: Send + Sync {
 ///
 /// Uses Ethereum network type because `send_transaction` works identically
 /// for both Ethereum and Base networks. Only `RpcClient` uses the Base network
-/// type since it needs `OpTransactionReceipt` for receipt handling.
+/// type since it needs `BaseTransactionReceipt` for receipt handling.
 pub type WalletProvider = FillProvider<
     JoinFill<JoinFill<Identity, ChainIdFiller>, WalletFiller<EthereumWallet>>,
     RootProvider<Ethereum>,
@@ -114,7 +114,7 @@ impl RpcClient {
     pub async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> Result<Option<OpTransactionReceipt>> {
+    ) -> Result<Option<BaseTransactionReceipt>> {
         self.provider
             .get_transaction_receipt(tx_hash)
             .await
@@ -179,7 +179,7 @@ impl ReceiptProvider for RpcClient {
     async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> Result<Option<OpTransactionReceipt>> {
+    ) -> Result<Option<BaseTransactionReceipt>> {
         self.get_transaction_receipt(tx_hash).await
     }
 

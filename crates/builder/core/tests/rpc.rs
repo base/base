@@ -4,7 +4,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
 use alloy_rpc_client::RpcClient;
-use base_alloy_consensus::{OpTransactionSigned, OpTypedTransaction, TxDeposit};
+use base_alloy_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
 use base_builder_core::BuilderApiExtension;
 use base_execution_txpool::ValidatedTransaction;
 use base_node_runner::test_utils::TestHarness;
@@ -30,7 +30,7 @@ fn create_deposit_tx() -> (Address, Bytes) {
         is_system_transaction: false,
         input: Default::default(),
     };
-    let signed_tx: OpTransactionSigned = deposit_tx.into();
+    let signed_tx: BaseTransactionSigned = deposit_tx.into();
     let encoded = signed_tx.encoded_2718();
     (sender, Bytes::from(encoded))
 }
@@ -50,7 +50,7 @@ fn create_eip1559_tx(chain_id: u64) -> (Address, Bytes) {
         input: Default::default(),
     };
     let sig = Signature::new(U256::from(1), U256::from(2), false);
-    let signed = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip1559(tx), sig);
+    let signed = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip1559(tx), sig);
     let encoded = signed.encoded_2718();
     (sender, Bytes::from(encoded))
 }

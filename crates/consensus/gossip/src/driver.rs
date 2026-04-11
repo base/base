@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, hex};
-use base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope;
+use base_alloy_rpc_types_engine::NetworkPayloadEnvelope;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_peers::{EnrValidation, PeerMonitoring, PeerUtils};
 use derive_more::Debug;
@@ -116,7 +116,7 @@ where
     pub fn publish(
         &mut self,
         selector: impl FnOnce(&BlockHandler) -> IdentTopic,
-        payload: Option<OpNetworkPayloadEnvelope>,
+        payload: Option<NetworkPayloadEnvelope>,
     ) -> Result<Option<MessageId>, PublishError> {
         let Some(payload) = payload else {
             return Ok(None);
@@ -284,7 +284,7 @@ where
         }
     }
 
-    fn handle_gossip_event(&mut self, event: Event) -> Option<OpNetworkPayloadEnvelope> {
+    fn handle_gossip_event(&mut self, event: Event) -> Option<NetworkPayloadEnvelope> {
         match event {
             Event::Gossipsub(e) => return self.handle_gossipsub_event(*e),
             Event::Ping(libp2p::ping::Event { peer, result, .. }) => {
@@ -341,7 +341,7 @@ where
     fn handle_gossipsub_event(
         &mut self,
         event: libp2p::gossipsub::Event,
-    ) -> Option<OpNetworkPayloadEnvelope> {
+    ) -> Option<NetworkPayloadEnvelope> {
         match event {
             libp2p::gossipsub::Event::Message {
                 propagation_source: src,
@@ -381,7 +381,7 @@ where
     }
 
     /// Handles the [`SwarmEvent<Event>`].
-    pub fn handle_event(&mut self, event: SwarmEvent<Event>) -> Option<OpNetworkPayloadEnvelope> {
+    pub fn handle_event(&mut self, event: SwarmEvent<Event>) -> Option<NetworkPayloadEnvelope> {
         match event {
             SwarmEvent::Behaviour(behavior_event) => {
                 return self.handle_gossip_event(behavior_event);

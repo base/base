@@ -61,7 +61,7 @@ use alloy_rpc_types::{
 };
 use alloy_rpc_types_eth::{Filter, Log};
 use base_alloy_network::Base;
-use base_common_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::BaseTransactionRequest;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -130,7 +130,7 @@ pub trait EthApiOverride {
     #[method(name = "call")]
     async fn call(
         &self,
-        transaction: OpTransactionRequest,
+        transaction: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
@@ -140,7 +140,7 @@ pub trait EthApiOverride {
     #[method(name = "estimateGas")]
     async fn estimate_gas(
         &self,
-        transaction: OpTransactionRequest,
+        transaction: BaseTransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> RpcResult<U256>;
@@ -149,7 +149,7 @@ pub trait EthApiOverride {
     #[method(name = "simulateV1")]
     async fn simulate_v1(
         &self,
-        opts: SimulatePayload<OpTransactionRequest>,
+        opts: SimulatePayload<BaseTransactionRequest>,
         block_number: Option<BlockId>,
     ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Base>>>>;
 
@@ -376,7 +376,7 @@ where
 
     async fn call(
         &self,
-        transaction: OpTransactionRequest,
+        transaction: BaseTransactionRequest,
         block_number: Option<BlockId>,
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
@@ -419,7 +419,7 @@ where
 
     async fn estimate_gas(
         &self,
-        transaction: OpTransactionRequest,
+        transaction: BaseTransactionRequest,
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> RpcResult<U256> {
@@ -452,7 +452,7 @@ where
 
     async fn simulate_v1(
         &self,
-        opts: SimulatePayload<OpTransactionRequest>,
+        opts: SimulatePayload<BaseTransactionRequest>,
         block_number: Option<BlockId>,
     ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Eth::NetworkTypes>>>> {
         debug!(
@@ -472,7 +472,7 @@ where
         }
 
         // Prepend flashblocks pending overrides to the block state calls
-        let mut block_state_calls: Vec<SimBlock<OpTransactionRequest>> = Vec::new();
+        let mut block_state_calls: Vec<SimBlock<BaseTransactionRequest>> = Vec::new();
         for sim_block in opts.block_state_calls {
             let mut state_overrides_builder =
                 StateOverridesBuilder::new(pending_overrides.state.clone().unwrap_or_default());

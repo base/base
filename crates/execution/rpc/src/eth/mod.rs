@@ -17,7 +17,7 @@ use std::{
 use alloy_primitives::U256;
 use base_alloy_network::Base;
 use eyre::WrapErr;
-pub use receipt::{OpReceiptBuilder, ReceiptFieldsBuilder};
+pub use receipt::{BaseReceiptBuilder, ReceiptFieldsBuilder};
 use reth_chainspec::{EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes};

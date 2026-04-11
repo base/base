@@ -1,6 +1,6 @@
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Bytes, TxHash};
-use base_alloy_consensus::OpTransactionSigned;
+use base_alloy_consensus::BaseTransactionSigned;
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,
@@ -178,7 +178,7 @@ where
         validate_bundle_request(&bundle, current_block)?;
 
         let raw = &bundle.txs[0];
-        let consensus_tx = OpTransactionSigned::decode_2718(&mut raw.as_ref()).map_err(|e| {
+        let consensus_tx = BaseTransactionSigned::decode_2718(&mut raw.as_ref()).map_err(|e| {
             rpc_err(ErrorCode::InvalidParams, format!("failed to decode transaction: {e:?}"))
         })?;
 

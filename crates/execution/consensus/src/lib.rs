@@ -17,7 +17,7 @@ use alloy_consensus::{
 };
 use alloy_primitives::B64;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::DepositReceipt;
+use base_alloy_consensus::DepositReceiptExt;
 use base_execution_chainspec::BaseChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
@@ -70,7 +70,7 @@ impl OpBeaconConsensus {
 
 impl<N> FullConsensus<N> for OpBeaconConsensus
 where
-    N: NodePrimitives<BlockHeader = Header, Receipt: DepositReceipt>,
+    N: NodePrimitives<BlockHeader = Header, Receipt: DepositReceiptExt>,
 {
     fn validate_block_post_execution(
         &self,
@@ -229,8 +229,8 @@ mod tests {
     use alloy_eips::{eip4895::Withdrawals, eip7685::Requests};
     use alloy_primitives::{Address, Bytes, Log, Signature, U256};
     use base_alloy_consensus::{
-        HoloceneExtraData, JovianExtraData, OpPrimitives, OpReceipt, OpTransactionSigned,
-        OpTypedTransaction,
+        BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
+        HoloceneExtraData, JovianExtraData,
     };
     use base_execution_chainspec::{BASE_MAINNET, BaseChainSpecBuilder};
     use reth_chainspec::BaseFeeParams;
@@ -240,7 +240,7 @@ mod tests {
 
     use crate::OpBeaconConsensus;
 
-    fn mock_tx(nonce: u64) -> OpTransactionSigned {
+    fn mock_tx(nonce: u64) -> BaseTransactionSigned {
         let tx = TxEip7702 {
             chain_id: 1u64,
             nonce,
@@ -256,7 +256,7 @@ mod tests {
 
         let signature = Signature::new(U256::default(), U256::default(), true);
 
-        OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip7702(tx), signature)
+        BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature)
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
 
         let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: GAS_USED,
             logs: vec![],
@@ -381,7 +381,7 @@ mod tests {
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
 
-        let result = BlockExecutionResult::<OpReceipt> {
+        let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: BLOB_GAS_USED,
             receipts: vec![receipt],
             requests: Requests::default(),
@@ -396,7 +396,7 @@ mod tests {
         let block = RecoveredBlock::new_sealed(block, vec![Address::default()]);
 
         let post_execution =
-            <OpBeaconConsensus as FullConsensus<OpPrimitives>>::validate_block_post_execution(
+            <OpBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
                 &beacon_consensus,
                 &block,
                 &result,
@@ -423,7 +423,7 @@ mod tests {
 
         let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: GAS_USED,
             logs: vec![],
@@ -452,7 +452,7 @@ mod tests {
 
         let block = SealedBlock::seal_slow(alloy_consensus::Block { header, body });
 
-        let result = BlockExecutionResult::<OpReceipt> {
+        let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: BLOB_GAS_USED + 1,
             receipts: vec![receipt],
             requests: Requests::default(),
@@ -467,7 +467,7 @@ mod tests {
         let block = RecoveredBlock::new_sealed(block, vec![Address::default()]);
 
         let post_execution =
-            <OpBeaconConsensus as FullConsensus<OpPrimitives>>::validate_block_post_execution(
+            <OpBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
                 &beacon_consensus,
                 &block,
                 &result,
@@ -497,7 +497,7 @@ mod tests {
 
         let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: 0,
             logs: vec![],
@@ -568,7 +568,7 @@ mod tests {
 
         let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: 0,
             logs: vec![],
@@ -645,7 +645,7 @@ mod tests {
 
         let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: 0,
             logs: vec![],
@@ -719,7 +719,7 @@ mod tests {
 
         let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
 
-        let receipt = OpReceipt::Eip7702(Receipt::<Log> {
+        let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
             cumulative_gas_used: 0,
             logs: vec![],

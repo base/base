@@ -69,7 +69,7 @@ impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
         };
         let signature = sender.sign_transaction_sync(&mut end_of_block_tx).unwrap();
         let end_of_block_tx = BasePooledTransaction::from_pooled(Recovered::new_unchecked(
-            base_alloy_consensus::OpPooledTransaction::Eip1559(
+            base_alloy_consensus::BasePooledTransaction::Eip1559(
                 end_of_block_tx.into_signed(signature),
             ),
             sender.address(),

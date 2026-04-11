@@ -14,7 +14,7 @@ use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{OpReceipt, OpTransactionSigned};
+use base_alloy_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
@@ -122,7 +122,7 @@ where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
 {
-    type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
+    type Attributes = OpPayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
 
     fn try_build(
@@ -155,7 +155,7 @@ where
     fn get_op_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
-            OpPayloadBuilderAttributes<base_alloy_consensus::OpTxEnvelope>,
+            OpPayloadBuilderAttributes<base_alloy_consensus::BaseTxEnvelope>,
         >,
         cancel: CancellationToken,
         extra: FlashblocksExtraCtx,
@@ -214,7 +214,7 @@ where
     /// a result indicating success with the payload or an error in case of failure.
     async fn build_payload(
         &self,
-        args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
+        args: BuildArguments<OpPayloadBuilderAttributes<BaseTransactionSigned>, OpBuiltPayload>,
         best_payload: BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
@@ -896,7 +896,7 @@ where
     Pool: PoolBounds,
     Client: ClientBounds,
 {
-    type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
+    type Attributes = OpPayloadBuilderAttributes<BaseTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
 
     async fn try_build(
@@ -912,7 +912,7 @@ where
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata {
     /// Receipts for transactions in this flashblock (removed in Base 1.0)
-    receipts: Option<HashMap<B256, OpReceipt>>,
+    receipts: Option<HashMap<B256, BaseReceipt>>,
     /// Changed account balances (removed in Base 1.0)
     new_account_balances: Option<HashMap<Address, U256>>,
     /// The block number this flashblock belongs to
@@ -1050,7 +1050,7 @@ where
     };
 
     // seal the block
-    let block = alloy_consensus::Block::<OpTransactionSigned>::new(
+    let block = alloy_consensus::Block::<BaseTransactionSigned>::new(
         header,
         BlockBody {
             transactions: info.executed_transactions.clone(),
@@ -1108,7 +1108,7 @@ where
         .iter()
         .zip(new_receipts.iter())
         .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
-        .collect::<HashMap<B256, OpReceipt>>();
+        .collect::<HashMap<B256, BaseReceipt>>();
 
     // finalize and build the FAL
     let fal_builder = std::mem::take(&mut info.extra.access_list_builder);
@@ -1184,7 +1184,7 @@ mod tests {
 
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
-    use base_alloy_consensus::OpReceipt;
+    use base_alloy_consensus::BaseReceipt;
     use base_alloy_flashblocks::Metadata;
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
@@ -1354,7 +1354,7 @@ mod tests {
         let tx_hash = B256::from([0xAA; 32]);
         let address = Address::from([0xBB; 20]);
 
-        let receipt = OpReceipt::Eip1559(Receipt {
+        let receipt = BaseReceipt::Eip1559(Receipt {
             status: true.into(),
             cumulative_gas_used: 21_000,
             logs: Vec::<Log>::new(),

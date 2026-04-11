@@ -521,7 +521,7 @@ async fn test_eth_call_sees_flashblock_state_changes() {
     use alloy_eips::BlockNumberOrTag;
     use alloy_provider::Provider;
     use alloy_rpc_types_eth::TransactionInput;
-    use base_common_rpc_types::OpTransactionRequest;
+    use base_common_rpc_types::BaseTransactionRequest;
 
     let test = FlashblocksBuilderTestHarness::new().await;
     let provider = test.node.provider();
@@ -564,7 +564,7 @@ async fn test_eth_call_sees_flashblock_state_changes() {
     // Try to transfer more than Bob's canonical balance (but less than pending).
     // This would fail if eth_call can't see the pending state.
     let transfer_amount = canonical_balance + U256::from(100_000u64);
-    let call_request = OpTransactionRequest::default()
+    let call_request = BaseTransactionRequest::default()
         .from(bob_address)
         .to(charlie_address)
         .value(transfer_amount)

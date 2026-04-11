@@ -408,7 +408,7 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::ExecutionPayloadV1;
-    use base_alloy_rpc_types_engine::{OpExecutionPayload, OpExecutionPayloadEnvelope};
+    use base_alloy_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L2BlockInfo};
     use mockall::predicate::*;
     use tokio::sync::mpsc;
@@ -430,7 +430,7 @@ mod tests {
         }
     }
 
-    fn dummy_payload_envelope(block_number: u64) -> OpExecutionPayloadEnvelope {
+    fn dummy_payload_envelope(block_number: u64) -> BaseExecutionPayloadEnvelope {
         let payload = ExecutionPayloadV1 {
             parent_hash: B256::ZERO,
             fee_recipient: alloy_primitives::Address::ZERO,
@@ -447,9 +447,9 @@ mod tests {
             block_hash: B256::from([block_number as u8; 32]),
             transactions: vec![],
         };
-        OpExecutionPayloadEnvelope {
+        BaseExecutionPayloadEnvelope {
             parent_beacon_block_root: None,
-            execution_payload: OpExecutionPayload::V1(payload),
+            execution_payload: BaseExecutionPayload::V1(payload),
         }
     }
 

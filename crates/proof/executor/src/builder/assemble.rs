@@ -7,8 +7,8 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_evm::{EvmFactory, block::BlockExecutionResult};
 use alloy_primitives::{B256, Sealable, U256, logs_bloom};
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_alloy_consensus::OpReceiptEnvelope;
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_consensus::BaseReceiptEnvelope;
+use base_alloy_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
 use base_protocol::{OutputRoot, Predeploys};
@@ -26,14 +26,14 @@ where
     H: TrieHinter,
     Evm: EvmFactory,
 {
-    /// Seals the block executed from the given [`OpPayloadAttributes`] and [`BlockEnv`], returning
+    /// Seals the block executed from the given [`BasePayloadAttributes`] and [`BlockEnv`], returning
     /// the computed [Header].
     pub(crate) fn seal_block(
         &mut self,
-        attrs: &OpPayloadAttributes,
+        attrs: &BasePayloadAttributes,
         parent_hash: B256,
         block_env: &BlockEnv,
-        ex_result: &BlockExecutionResult<OpReceiptEnvelope>,
+        ex_result: &BlockExecutionResult<BaseReceiptEnvelope>,
         bundle: BundleState,
     ) -> ExecutorResult<Sealed<Header>> {
         let timestamp = block_env.timestamp.saturating_to::<u64>();
@@ -169,7 +169,7 @@ where
 
 /// Computes the receipts root from the given set of receipts.
 pub fn compute_receipts_root(
-    receipts: &[OpReceiptEnvelope],
+    receipts: &[BaseReceiptEnvelope],
     config: &RollupConfig,
     timestamp: u64,
 ) -> B256 {
@@ -182,9 +182,9 @@ pub fn compute_receipts_root(
             .iter()
             .cloned()
             .map(|receipt| match receipt {
-                OpReceiptEnvelope::Deposit(mut deposit_receipt) => {
+                BaseReceiptEnvelope::Deposit(mut deposit_receipt) => {
                     deposit_receipt.receipt.deposit_nonce = None;
-                    OpReceiptEnvelope::Deposit(deposit_receipt)
+                    BaseReceiptEnvelope::Deposit(deposit_receipt)
                 }
                 _ => receipt,
             })

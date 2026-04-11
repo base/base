@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
 
 use crate::{
     Metrics, UnsafePayloadGossipClient,
@@ -45,14 +45,14 @@ impl SealState {
 #[derive(Debug)]
 pub struct PayloadSealer {
     /// The sealed execution payload being driven through the pipeline.
-    pub envelope: OpExecutionPayloadEnvelope,
+    pub envelope: BaseExecutionPayloadEnvelope,
     /// Current pipeline stage.
     pub state: SealState,
 }
 
 impl PayloadSealer {
     /// Creates a new sealer starting at the [`SealState::Sealed`] stage.
-    pub const fn new(envelope: OpExecutionPayloadEnvelope) -> Self {
+    pub const fn new(envelope: BaseExecutionPayloadEnvelope) -> Self {
         Self { envelope, state: SealState::Sealed }
     }
 

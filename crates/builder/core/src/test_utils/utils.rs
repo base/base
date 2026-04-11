@@ -5,7 +5,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use alloy_sol_types::SolCall;
-use base_alloy_consensus::{OpTypedTransaction, TxDeposit};
+use base_alloy_consensus::{BaseTypedTransaction, TxDeposit};
 use base_common_rpc_types::Transaction;
 use base_execution_chainspec::BaseChainSpec;
 use reth_db::{
@@ -139,7 +139,7 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
             };
 
             let signer = PrivateKeySigner::random();
-            let signed_tx = sign_op_tx(&signer, OpTypedTransaction::Deposit(deposit))?;
+            let signed_tx = sign_op_tx(&signer, BaseTypedTransaction::Deposit(deposit))?;
             let signed_tx_rlp = signed_tx.encoded_2718();
             txs.push(signed_tx_rlp.into());
         }
@@ -160,7 +160,7 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
         };
 
         let signer = PrivateKeySigner::random();
-        let signed_tx = sign_op_tx(&signer, OpTypedTransaction::Deposit(deposit))?;
+        let signed_tx = sign_op_tx(&signer, BaseTypedTransaction::Deposit(deposit))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
         Ok(self.build_new_block_with_txs(vec![signed_tx_rlp.into()]).await?.header.hash)
     }

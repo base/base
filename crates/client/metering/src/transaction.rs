@@ -20,7 +20,7 @@ pub enum TxValidationError {
 /// - The transaction's execution cost is less than the account's balance
 /// - The transaction's L1 gas cost is less than the account's balance
 ///   
-/// Note: We don't need to check for EIP-4844 because bundle transactions are Recovered<OpTxEnvelope>
+/// Note: We don't need to check for EIP-4844 because bundle transactions are Recovered<BaseTxEnvelope>
 /// which only includes Legacy, Eip2930, Eip1559, Eip7702, and Deposit.
 pub fn validate_tx<T: Transaction + Encodable2718>(
     account: Account,
@@ -56,7 +56,7 @@ mod tests {
     };
     use alloy_network::TxSignerSync;
     use alloy_primitives::{Address, U256, bytes};
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_consensus::BaseTxEnvelope;
     use base_test_utils::Account as BaseAccount;
 
     use super::*;
@@ -92,7 +92,7 @@ mod tests {
         let txn_cost = tx.value().saturating_add(U256::from(max_fee));
 
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
-        let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
         assert_eq!(
             validate_tx(account, &recovered_tx, &mut l1_block_info),
@@ -127,7 +127,7 @@ mod tests {
         let l1_cost = txn_cost.saturating_add(l1_cost_addition);
 
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
-        let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
 
         assert_eq!(
@@ -156,7 +156,7 @@ mod tests {
         let mut l1_block_info = create_l1_block_info();
 
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();
-        let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered_tx = envelope.try_into_recovered().unwrap();
 
         assert_eq!(validate_tx(account, &recovered_tx, &mut l1_block_info), Ok(()));

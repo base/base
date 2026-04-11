@@ -12,7 +12,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use base_alloy_consensus::OpTransactionSigned;
+use base_alloy_consensus::BaseTransactionSigned;
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
@@ -52,8 +52,8 @@ pub fn unix_time_millis() -> u128 {
 ///  - Estimated compressed size of this transaction
 #[derive(Debug, Clone, derive_more::Deref)]
 pub struct BasePooledTransaction<
-    Cons = OpTransactionSigned,
-    Pooled = base_alloy_consensus::OpPooledTransaction,
+    Cons = BaseTransactionSigned,
+    Pooled = base_alloy_consensus::BasePooledTransaction,
 > {
     #[deref]
     inner: EthPooledTransaction<Cons>,
@@ -425,7 +425,7 @@ mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
-    use base_alloy_consensus::{OpPrimitives, OpTransactionSigned, TxDeposit};
+    use base_alloy_consensus::{BasePrimitives, BaseTransactionSigned, TxDeposit};
     use base_execution_chainspec::BASE_MAINNET;
     use base_execution_evm::BaseEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
@@ -437,7 +437,7 @@ mod tests {
     use crate::{BasePooledTransaction, OpTransactionValidator};
     #[tokio::test]
     async fn validate_base_transaction() {
-        let client = MockEthProvider::<OpPrimitives>::new()
+        let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(BASE_MAINNET.clone())
             .with_genesis_block();
         let evm_config = BaseEvmConfig::optimism(BASE_MAINNET.clone());
@@ -459,7 +459,7 @@ mod tests {
             is_system_transaction: false,
             input: Default::default(),
         };
-        let signed_tx: OpTransactionSigned = deposit_tx.into();
+        let signed_tx: BaseTransactionSigned = deposit_tx.into();
         let signed_recovered = Recovered::new_unchecked(signed_tx, signer);
         let len = signed_recovered.encode_2718_len();
         let pooled_tx: BasePooledTransaction = BasePooledTransaction::new(signed_recovered, len);

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
     BuildTask, ConsolidateInput, ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate,
@@ -43,7 +43,7 @@ pub enum EngineProcessingRequest {
     /// Request to process the finalized L2 block with the provided block number.
     ProcessFinalizedL2BlockNumber(Box<u64>),
     /// Request to process a received unsafe L2 block.
-    ProcessUnsafeL2Block(Box<OpExecutionPayloadEnvelope>),
+    ProcessUnsafeL2Block(Box<BaseExecutionPayloadEnvelope>),
     /// Request to reset the forkchoice.
     Reset(Box<ResetRequest>),
     /// Request to seal a block.
@@ -252,7 +252,7 @@ where
         Ok(())
     }
 
-    fn log_follower_upgrade_activation(&self, envelope: &OpExecutionPayloadEnvelope) {
+    fn log_follower_upgrade_activation(&self, envelope: &BaseExecutionPayloadEnvelope) {
         if self.unsafe_head_tx.is_some() {
             return;
         }

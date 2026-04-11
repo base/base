@@ -1,13 +1,13 @@
 //! Versioned execution payloads
 
 mod error;
-pub use error::OpPayloadError;
+pub use error::BasePayloadError;
 
 mod v3;
-pub use v3::OpExecutionPayloadEnvelopeV3;
+pub use v3::BaseExecutionPayloadEnvelopeV3;
 
 mod v4;
-pub use v4::{OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4};
+pub use v4::{BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4};
 
 mod v5;
 use alloc::vec::Vec;
@@ -19,18 +19,18 @@ use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PayloadError,
 };
-pub use v5::OpExecutionPayloadEnvelopeV5;
+pub use v5::BaseExecutionPayloadEnvelopeV5;
 
-use crate::OpExecutionPayloadSidecar;
+use crate::BaseExecutionPayloadSidecar;
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
-/// [`OpExecutionPayloadV4`].
+/// [`BaseExecutionPayloadV4`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "std", derive(ssz_derive::Encode, ssz_derive::Decode))]
 #[cfg_attr(feature = "std", ssz(enum_behaviour = "transparent"))]
 #[cfg_attr(feature = "serde", serde(untagged))]
-pub enum OpExecutionPayload {
+pub enum BaseExecutionPayload {
     /// V1 payload
     V1(ExecutionPayloadV1),
     /// V2 payload
@@ -38,11 +38,11 @@ pub enum OpExecutionPayload {
     /// V3 payload
     V3(ExecutionPayloadV3),
     /// V4 payload
-    V4(OpExecutionPayloadV4),
+    V4(BaseExecutionPayloadV4),
 }
 
 #[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
+impl<'de> serde::Deserialize<'de> for BaseExecutionPayload {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -50,10 +50,10 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
         struct ExecutionPayloadVisitor;
 
         impl<'de> serde::de::Visitor<'de> for ExecutionPayloadVisitor {
-            type Value = OpExecutionPayload;
+            type Value = BaseExecutionPayload;
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                formatter.write_str("a valid OpExecutionPayload object")
+                formatter.write_str("a valid BaseExecutionPayload object")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -251,12 +251,12 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
 
                         // If `withdrawals_root` is present, wrap into V4; otherwise, return V3
                         if let Some(withdrawals_root) = withdrawals_root {
-                            Ok(OpExecutionPayload::V4(OpExecutionPayloadV4 {
+                            Ok(BaseExecutionPayload::V4(BaseExecutionPayloadV4 {
                                 payload_inner: payload_v3,
                                 withdrawals_root,
                             }))
                         } else {
-                            Ok(OpExecutionPayload::V3(payload_v3))
+                            Ok(BaseExecutionPayload::V3(payload_v3))
                         }
                     }
                     // If one is missing, reject as invalid
@@ -264,7 +264,7 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
                         Err(serde::de::Error::custom("invalid enum variant"))
                     }
                     // If neither are present, return V2
-                    (None, None) => Ok(OpExecutionPayload::V2(payload_v2)),
+                    (None, None) => Ok(BaseExecutionPayload::V2(payload_v2)),
                 }
             }
         }
@@ -290,18 +290,18 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
             "withdrawalsRoot",
         ];
 
-        deserializer.deserialize_struct("OpExecutionPayload", FIELDS, ExecutionPayloadVisitor)
+        deserializer.deserialize_struct("BaseExecutionPayload", FIELDS, ExecutionPayloadVisitor)
     }
 }
 
-impl OpExecutionPayload {
+impl BaseExecutionPayload {
     /// Conversion from [`alloy_consensus::Block`]. Also returns the
-    /// [`OpExecutionPayloadSidecar`] extracted from the block.
+    /// [`BaseExecutionPayloadSidecar`] extracted from the block.
     ///
-    /// See also [`from_block_unchecked`](OpExecutionPayload::from_block_unchecked).
+    /// See also [`from_block_unchecked`](BaseExecutionPayload::from_block_unchecked).
     ///
     /// Note: This re-calculates the block hash.
-    pub fn from_block_slow<T, H>(block: &Block<T, H>) -> (Self, OpExecutionPayloadSidecar)
+    pub fn from_block_slow<T, H>(block: &Block<T, H>) -> (Self, BaseExecutionPayloadSidecar)
     where
         T: Encodable2718 + Transaction,
         H: BlockHeader + Sealable,
@@ -310,24 +310,24 @@ impl OpExecutionPayload {
     }
 
     /// Conversion from [`alloy_consensus::Block`]. Also returns the
-    /// [`OpExecutionPayloadSidecar`] extracted from the block.
+    /// [`BaseExecutionPayloadSidecar`] extracted from the block.
     ///
     /// See also [`ExecutionPayload::from_block_unchecked`].
-    /// See also [`OpExecutionPayloadSidecar::from_block`].
+    /// See also [`BaseExecutionPayloadSidecar::from_block`].
     pub fn from_block_unchecked<T, H>(
         block_hash: B256,
         block: &Block<T, H>,
-    ) -> (Self, OpExecutionPayloadSidecar)
+    ) -> (Self, BaseExecutionPayloadSidecar)
     where
         T: Encodable2718 + Transaction,
         H: BlockHeader,
     {
-        let sidecar = OpExecutionPayloadSidecar::from_block(block);
+        let sidecar = BaseExecutionPayloadSidecar::from_block(block);
 
         let execution_payload = match block.withdrawals_root() {
             Some(withdrawals_root) if sidecar.isthmus().is_some() => {
                 // block with (empty) request hashes: V4
-                Self::V4(OpExecutionPayloadV4::from_v3_with_withdrawals_root(
+                Self::V4(BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
                     ExecutionPayloadV3::from_block_unchecked(block_hash, block),
                     withdrawals_root,
                 ))
@@ -371,7 +371,7 @@ impl OpExecutionPayload {
     /// Creates a new instance from `newPayloadV4` payload, i.e. [`V4`](Self::V4) variant.
     ///
     /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>
-    pub const fn v4(payload: OpExecutionPayloadV4) -> Self {
+    pub const fn v4(payload: BaseExecutionPayloadV4) -> Self {
         Self::V4(payload)
     }
 
@@ -434,7 +434,7 @@ impl OpExecutionPayload {
     }
 
     /// Returns a reference to the V4 payload, if any.
-    pub const fn as_v4(&self) -> Option<&OpExecutionPayloadV4> {
+    pub const fn as_v4(&self) -> Option<&BaseExecutionPayloadV4> {
         match self {
             Self::V1(_) | Self::V2(_) | Self::V3(_) => None,
             Self::V4(payload) => Some(payload),
@@ -442,7 +442,7 @@ impl OpExecutionPayload {
     }
 
     /// Returns a mutable reference to the V4 payload, if any.
-    pub const fn as_v4_mut(&mut self) -> Option<&mut OpExecutionPayloadV4> {
+    pub const fn as_v4_mut(&mut self) -> Option<&mut BaseExecutionPayloadV4> {
         match self {
             Self::V1(_) | Self::V2(_) | Self::V3(_) => None,
             Self::V4(payload) => Some(payload),
@@ -524,13 +524,13 @@ impl OpExecutionPayload {
         }
     }
 
-    /// Converts [`OpExecutionPayload`] to [`Block`] with raw transactions.
+    /// Converts [`BaseExecutionPayload`] to [`Block`] with raw transactions.
     ///
     /// Caution: This does not set fields that are not part of the payload and only part of the
-    /// [`OpExecutionPayloadSidecar`]:
+    /// [`BaseExecutionPayloadSidecar`]:
     /// - `parent_beacon_block_root`
     ///
-    /// See also: [`OpExecutionPayload::into_block_with_sidecar_raw`]
+    /// See also: [`BaseExecutionPayload::into_block_with_sidecar_raw`]
     pub fn into_block_raw(self) -> Result<Block<alloy_primitives::Bytes>, PayloadError> {
         match self {
             Self::V1(payload) => payload.into_block_raw(),
@@ -546,15 +546,15 @@ impl OpExecutionPayload {
     /// This sets the `parent_beacon_block_root` and `requests_hash` if present in the sidecar.
     /// Also validates that L1 withdrawals are empty.
     ///
-    /// See also: [`OpExecutionPayload::try_into_block_with_sidecar`]
+    /// See also: [`BaseExecutionPayload::try_into_block_with_sidecar`]
     pub fn into_block_with_sidecar_raw(
         self,
-        sidecar: &OpExecutionPayloadSidecar,
-    ) -> Result<Block<alloy_primitives::Bytes>, OpPayloadError> {
+        sidecar: &BaseExecutionPayloadSidecar,
+    ) -> Result<Block<alloy_primitives::Bytes>, BasePayloadError> {
         if let Some(payload) = self.as_v2()
             && !payload.withdrawals.is_empty()
         {
-            return Err(OpPayloadError::NonEmptyL1Withdrawals);
+            return Err(BasePayloadError::NonEmptyL1Withdrawals);
         }
 
         let mut block = self.into_block_raw()?;
@@ -562,11 +562,11 @@ impl OpExecutionPayload {
         if let Some(blobs_hashes) = sidecar.versioned_hashes()
             && !blobs_hashes.is_empty()
         {
-            return Err(OpPayloadError::NonEmptyBlobVersionedHashes);
+            return Err(BasePayloadError::NonEmptyBlobVersionedHashes);
         }
         if let Some(reqs_hash) = sidecar.requests_hash() {
             if reqs_hash != EMPTY_REQUESTS_HASH {
-                return Err(OpPayloadError::NonEmptyELRequests);
+                return Err(BasePayloadError::NonEmptyELRequests);
             }
             block.header.requests_hash = Some(EMPTY_REQUESTS_HASH)
         }
@@ -576,18 +576,20 @@ impl OpExecutionPayload {
     }
 
     #[allow(rustdoc::broken_intra_doc_links)]
-    /// Converts [`OpExecutionPayload`] to [`Block`].
+    /// Converts [`BaseExecutionPayload`] to [`Block`].
     ///
     /// Checks that payload doesn't contain:
     /// - blob transactions
     /// - L1 withdrawals
     ///
     /// Caution: This does not set fields that are not part of the payload and only part of the
-    /// [`OpExecutionPayloadSidecar`]:
+    /// [`BaseExecutionPayloadSidecar`]:
     /// - `parent_beacon_block_root`
     ///
-    /// See also: [`OpExecutionPayload::try_into_block_with_sidecar`]
-    pub fn try_into_block<T: Decodable2718 + Typed2718>(self) -> Result<Block<T>, OpPayloadError> {
+    /// See also: [`BaseExecutionPayload::try_into_block_with_sidecar`]
+    pub fn try_into_block<T: Decodable2718 + Typed2718>(
+        self,
+    ) -> Result<Block<T>, BasePayloadError> {
         self.try_into_block_with(|tx| {
             T::decode_2718_exact(tx.as_ref())
                 .map_err(alloy_rlp::Error::from)
@@ -596,18 +598,18 @@ impl OpExecutionPayload {
     }
 
     #[allow(rustdoc::broken_intra_doc_links)]
-    /// Converts [`OpExecutionPayload`] to [`Block`] with a custom transaction mapper.
+    /// Converts [`BaseExecutionPayload`] to [`Block`] with a custom transaction mapper.
     ///
     /// Checks that payload doesn't contain:
     /// - blob transactions
     /// - L1 withdrawals
     ///
     /// Caution: This does not set fields that are not part of the payload and only part of the
-    /// [`OpExecutionPayloadSidecar`]:
+    /// [`BaseExecutionPayloadSidecar`]:
     /// - `parent_beacon_block_root`
     ///
-    /// See also: [`OpExecutionPayload::try_into_block_with_sidecar_with`]
-    pub fn try_into_block_with<T, F, E>(self, f: F) -> Result<Block<T>, OpPayloadError>
+    /// See also: [`BaseExecutionPayload::try_into_block_with_sidecar_with`]
+    pub fn try_into_block_with<T, F, E>(self, f: F) -> Result<Block<T>, BasePayloadError>
     where
         T: Typed2718,
         F: FnMut(alloy_primitives::Bytes) -> Result<T, E>,
@@ -616,7 +618,7 @@ impl OpExecutionPayload {
         if let Some(payload) = self.as_v2()
             && !payload.withdrawals.is_empty()
         {
-            return Err(OpPayloadError::NonEmptyL1Withdrawals);
+            return Err(BasePayloadError::NonEmptyL1Withdrawals);
         }
         let block = match self {
             Self::V1(payload) => return Ok(payload.try_into_block_with(f)?),
@@ -625,7 +627,7 @@ impl OpExecutionPayload {
             Self::V4(payload) => payload.try_into_block_with(f)?,
         };
         if block.body.has_eip4844_transactions() {
-            return Err(OpPayloadError::BlobTransaction);
+            return Err(BasePayloadError::BlobTransaction);
         }
 
         Ok(block)
@@ -633,7 +635,7 @@ impl OpExecutionPayload {
 
     /// Tries to create a new unsealed block from the given payload and payload sidecar.
     ///
-    /// Additional to checks performed in [`OpExecutionPayload::try_into_block`], which is called
+    /// Additional to checks performed in [`BaseExecutionPayload::try_into_block`], which is called
     /// under the hood, also checks that sidecar doesn't contain:
     /// - blob versioned hashes
     /// - execution layer requests
@@ -642,8 +644,8 @@ impl OpExecutionPayload {
     /// [`ExecutionPayload::try_into_block_with_sidecar`](alloy_rpc_types_engine::ExecutionPayload::try_into_block_with_sidecar).
     pub fn try_into_block_with_sidecar<T: Decodable2718 + Typed2718>(
         self,
-        sidecar: &OpExecutionPayloadSidecar,
-    ) -> Result<Block<T>, OpPayloadError> {
+        sidecar: &BaseExecutionPayloadSidecar,
+    ) -> Result<Block<T>, BasePayloadError> {
         self.try_into_block_with_sidecar_with(sidecar, |tx| {
             T::decode_2718_exact(tx.as_ref())
                 .map_err(alloy_rlp::Error::from)
@@ -654,7 +656,7 @@ impl OpExecutionPayload {
     /// Tries to create a new unsealed block from the given payload and payload sidecar with a
     /// custom transaction mapper.
     ///
-    /// Additional to checks performed in [`OpExecutionPayload::try_into_block_with`], which is
+    /// Additional to checks performed in [`BaseExecutionPayload::try_into_block_with`], which is
     /// called under the hood, also checks that sidecar doesn't contain:
     /// - blob versioned hashes
     /// - execution layer requests
@@ -663,9 +665,9 @@ impl OpExecutionPayload {
     /// [`ExecutionPayload::try_into_block_with_sidecar_with`](alloy_rpc_types_engine::ExecutionPayload::try_into_block_with_sidecar_with).
     pub fn try_into_block_with_sidecar_with<T, F, E>(
         self,
-        sidecar: &OpExecutionPayloadSidecar,
+        sidecar: &BaseExecutionPayloadSidecar,
         f: F,
-    ) -> Result<Block<T>, OpPayloadError>
+    ) -> Result<Block<T>, BasePayloadError>
     where
         T: Typed2718,
         F: FnMut(alloy_primitives::Bytes) -> Result<T, E>,
@@ -675,11 +677,11 @@ impl OpExecutionPayload {
         if let Some(blobs_hashes) = sidecar.versioned_hashes()
             && !blobs_hashes.is_empty()
         {
-            return Err(OpPayloadError::NonEmptyBlobVersionedHashes);
+            return Err(BasePayloadError::NonEmptyBlobVersionedHashes);
         }
         if let Some(reqs_hash) = sidecar.requests_hash() {
             if reqs_hash != EMPTY_REQUESTS_HASH {
-                return Err(OpPayloadError::NonEmptyELRequests);
+                return Err(BasePayloadError::NonEmptyELRequests);
             }
             base_payload.header.requests_hash = Some(EMPTY_REQUESTS_HASH)
         }
@@ -767,11 +769,11 @@ mod tests {
     fn serde_payload_input_enum_v4() {
         let response_v4 = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0","withdrawalsRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119"}"#;
 
-        let payload: OpExecutionPayload = serde_json::from_str(response_v4).unwrap();
+        let payload: BaseExecutionPayload = serde_json::from_str(response_v4).unwrap();
         assert!(payload.as_v4().is_some());
         assert_eq!(serde_json::to_string(&payload).unwrap(), response_v4);
 
-        let payload_v4: OpExecutionPayloadV4 = serde_json::from_str(response_v4).unwrap();
+        let payload_v4: BaseExecutionPayloadV4 = serde_json::from_str(response_v4).unwrap();
         assert_eq!(payload.as_v4().unwrap(), &payload_v4);
     }
 
@@ -780,7 +782,7 @@ mod tests {
     fn serde_payload_input_enum_v3() {
         let response_v3 = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0"}"#;
 
-        let payload: OpExecutionPayload = serde_json::from_str(response_v3).unwrap();
+        let payload: BaseExecutionPayload = serde_json::from_str(response_v3).unwrap();
         assert!(payload.as_v3().is_some());
         assert_eq!(serde_json::to_string(&payload).unwrap(), response_v3);
 
@@ -793,7 +795,7 @@ mod tests {
     fn serde_payload_input_enum_v2() {
         let response_v2 = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[]}"#;
 
-        let payload: OpExecutionPayload = serde_json::from_str(response_v2).unwrap();
+        let payload: BaseExecutionPayload = serde_json::from_str(response_v2).unwrap();
         assert!(payload.as_v3().is_none());
         assert_eq!(serde_json::to_string(&payload).unwrap(), response_v2);
 
@@ -807,7 +809,7 @@ mod tests {
         // incomplete V3 payload should be rejected even if it has all V2 fields
         let response_faulty = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[], "blobGasUsed": "0x0"}"#;
 
-        let payload: Result<OpExecutionPayload, serde_json::Error> =
+        let payload: Result<BaseExecutionPayload, serde_json::Error> =
             serde_json::from_str(response_faulty);
         assert!(payload.is_err());
     }
@@ -818,7 +820,7 @@ mod tests {
         // incomplete V3 payload should be rejected even if it has all V1 fields
         let response_faulty = r#"{"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"blobGasUsed": "0x0"}"#;
 
-        let payload: Result<OpExecutionPayload, serde_json::Error> =
+        let payload: Result<BaseExecutionPayload, serde_json::Error> =
             serde_json::from_str(response_faulty);
         assert!(payload.is_err());
     }

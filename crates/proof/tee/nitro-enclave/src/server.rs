@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_chains::BaseChainConfig;
-use base_alloy_evm::OpEvmFactory;
+use base_alloy_evm::BaseEvmFactory;
 use base_consensus_genesis::RollupConfig;
 use base_proof::BootInfo;
 use base_proof_client::Prologue;
@@ -151,7 +151,7 @@ impl Server {
         let config_hash = config_hash_for_chain(boot_info.chain_id)?;
         let agreed_l2_output_root = boot_info.agreed_l2_output_root;
 
-        let prologue = Prologue::new(oracle.clone(), oracle, OpEvmFactory::default());
+        let prologue = Prologue::new(oracle.clone(), oracle, BaseEvmFactory::default());
         let driver = prologue.load().await.map_err(|e| NitroError::ProofPipeline(e.to_string()))?;
         let (epilogue, block_results) = driver
             .execute_with_intermediates()

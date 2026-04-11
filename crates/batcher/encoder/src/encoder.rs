@@ -8,7 +8,7 @@ use std::{
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, BaseTxEnvelope};
 use base_comp::{
     BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
 };
@@ -701,7 +701,7 @@ impl BatchPipeline for BatchEncoder {
             .iter()
             .skip(self.block_cursor)
             .flat_map(|b| &b.body.transactions)
-            .filter(|tx| !matches!(tx, OpTxEnvelope::Deposit(_)))
+            .filter(|tx| !matches!(tx, BaseTxEnvelope::Deposit(_)))
             .map(|tx| tx.encode_2718_len() as u64)
             .sum()
     }
@@ -711,16 +711,16 @@ impl BatchPipeline for BatchEncoder {
 mod tests {
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_primitives::{Bytes, Sealed, Signature};
-    use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
+    use base_alloy_consensus::{BaseTxEnvelope, TxDeposit};
     use base_comp::BatchComposeError;
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 
     use super::*;
 
-    fn make_deposit_tx() -> OpTxEnvelope {
+    fn make_deposit_tx() -> BaseTxEnvelope {
         let calldata = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default()).encode_calldata();
-        OpTxEnvelope::Deposit(Sealed::new(TxDeposit { input: calldata, ..Default::default() }))
+        BaseTxEnvelope::Deposit(Sealed::new(TxDeposit { input: calldata, ..Default::default() }))
     }
 
     fn make_block(parent_hash: B256) -> BaseBlock {
@@ -733,7 +733,7 @@ mod tests {
     fn make_block_with_user_tx(parent_hash: B256) -> BaseBlock {
         let user_tx = {
             let signed = TxLegacy::default().into_signed(Signature::test_signature());
-            OpTxEnvelope::Legacy(signed)
+            BaseTxEnvelope::Legacy(signed)
         };
 
         BaseBlock {
@@ -1150,7 +1150,7 @@ mod tests {
     fn make_non_deposit_block(parent_hash: B256) -> BaseBlock {
         let user_tx = {
             let signed = TxLegacy::default().into_signed(Signature::test_signature());
-            OpTxEnvelope::Legacy(signed)
+            BaseTxEnvelope::Legacy(signed)
         };
         BaseBlock {
             header: Header { parent_hash, ..Default::default() },
@@ -1159,7 +1159,7 @@ mod tests {
     }
 
     fn make_bad_calldata_block(parent_hash: B256) -> BaseBlock {
-        let deposit = OpTxEnvelope::Deposit(Sealed::new(TxDeposit {
+        let deposit = BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
             input: Bytes::new(),
             ..Default::default()
         }));
@@ -1422,8 +1422,10 @@ mod tests {
 
     fn make_numbered_block(parent_hash: B256, number: u64) -> BaseBlock {
         let calldata = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock::default()).encode_calldata();
-        let deposit =
-            OpTxEnvelope::Deposit(Sealed::new(TxDeposit { input: calldata, ..Default::default() }));
+        let deposit = BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+            input: calldata,
+            ..Default::default()
+        }));
         BaseBlock {
             header: Header { parent_hash, number, ..Default::default() },
             body: BlockBody { transactions: vec![deposit], ..Default::default() },

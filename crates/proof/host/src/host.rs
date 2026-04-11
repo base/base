@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_provider::{Network, RootProvider};
-use base_alloy_evm::OpEvmFactory;
+use base_alloy_evm::BaseEvmFactory;
 use base_alloy_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
@@ -155,7 +155,7 @@ impl Host {
     {
         let _timer = base_metrics::timed!(Metrics::replay_duration_seconds());
         let driver =
-            Prologue::new(recording.clone(), recording, OpEvmFactory::default()).load().await?;
+            Prologue::new(recording.clone(), recording, BaseEvmFactory::default()).load().await?;
         let epilogue = driver.execute().await?;
         epilogue.validate().map_err(|e| *e)?;
         Ok(())

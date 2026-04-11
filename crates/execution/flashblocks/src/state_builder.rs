@@ -13,11 +13,11 @@ use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{OpPrimitives, OpReceipt, OpTxEnvelope};
+use base_alloy_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope};
 use base_alloy_evm::ensure_create2_deployer;
 use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
-use base_common_rpc_types::{OpTransactionReceipt, Transaction};
-use base_execution_rpc::OpReceiptBuilder as OpRpcReceiptBuilder;
+use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
+use base_execution_rpc::BaseReceiptBuilder as OpRpcReceiptBuilder;
 use base_revm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason};
 use reth_evm::{Evm, FromRecoveredTx};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
@@ -38,7 +38,7 @@ pub struct ExecutedPendingTransaction {
     /// The RPC transaction.
     pub rpc_transaction: Transaction,
     /// The receipt of the transaction.
-    pub receipt: OpTransactionReceipt,
+    pub receipt: BaseTransactionReceipt,
     /// The updated EVM state.
     pub state: EvmState,
     /// The execution result of the transaction.
@@ -49,7 +49,7 @@ pub struct ExecutedPendingTransaction {
 
 #[derive(Debug)]
 struct CachedTransactionExecution {
-    receipt: OpTransactionReceipt,
+    receipt: BaseTransactionReceipt,
     state: EvmState,
     result: ExecutionResult<OpHaltReason>,
     execution_time_us: Option<u128>,
@@ -62,7 +62,7 @@ pub struct PendingStateBuilder<E, ChainSpec> {
     next_log_index: usize,
 
     evm: E,
-    pending_block: Block<OpTxEnvelope, Header>,
+    pending_block: Block<BaseTxEnvelope, Header>,
     l1_block_info: L1BlockInfo,
     receipt_builder: UnifiedReceiptBuilder<ChainSpec>,
     chain_spec: ChainSpec,
@@ -75,14 +75,14 @@ impl<E, ChainSpec, DB> PendingStateBuilder<E, ChainSpec>
 where
     E: Evm<DB = DB, HaltReason = OpHaltReason>,
     DB: Database + DatabaseCommit,
-    E::Tx: FromRecoveredTx<OpTxEnvelope>,
+    E::Tx: FromRecoveredTx<BaseTxEnvelope>,
     ChainSpec: BaseUpgrades + Clone,
 {
     /// Creates a new pending state builder.
     pub fn new(
         chain_spec: ChainSpec,
         evm: E,
-        pending_block: Block<OpTxEnvelope, Header>,
+        pending_block: Block<BaseTxEnvelope, Header>,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         l1_block_info: L1BlockInfo,
         state_overrides: StateOverride,
@@ -116,7 +116,7 @@ where
     pub fn execute_transaction(
         &mut self,
         idx: usize,
-        transaction: Recovered<OpTxEnvelope>,
+        transaction: Recovered<BaseTxEnvelope>,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
         let tx_hash = transaction.tx_hash();
 
@@ -186,7 +186,7 @@ where
     /// Builds transaction result from cached receipt and state data.
     fn execute_with_cached_data(
         &mut self,
-        transaction: Recovered<OpTxEnvelope>,
+        transaction: Recovered<BaseTxEnvelope>,
         cached_execution: CachedTransactionExecution,
         idx: usize,
         effective_gas_price: u128,
@@ -195,7 +195,7 @@ where
             cached_execution;
 
         let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-            let OpReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
+            let BaseReceipt::Deposit(deposit_receipt) = &receipt.inner.inner.receipt else {
                 return Err(ExecutionError::DepositReceiptMismatch.into());
             };
 
@@ -233,7 +233,7 @@ where
 
     fn jovian_da_footprint_estimation(
         &mut self,
-        tx_env: &Recovered<OpTxEnvelope>,
+        tx_env: &Recovered<BaseTxEnvelope>,
     ) -> Result<u64, StateProcessorError> {
         // Try to use the enveloped tx if it exists, otherwise use the encoded 2718 bytes
         let encoded = estimate_tx_compressed_size(tx_env.into_encoded().encoded_bytes())
@@ -259,7 +259,7 @@ where
     /// Executes the transaction through the EVM and builds the result from scratch.
     fn execute_with_evm(
         &mut self,
-        transaction: Recovered<OpTxEnvelope>,
+        transaction: Recovered<BaseTxEnvelope>,
         idx: usize,
         effective_gas_price: u128,
     ) -> Result<ExecutedPendingTransaction, StateProcessorError> {
@@ -326,7 +326,7 @@ where
                 };
 
                 let sender = transaction.signer();
-                let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
+                let input: ConvertReceiptInput<'_, BasePrimitives> = ConvertReceiptInput {
                     receipt: receipt.clone(),
                     tx: Recovered::new_unchecked(&transaction, sender),
                     gas_used,
@@ -346,7 +346,7 @@ where
                 self.next_log_index += receipt.logs().len();
 
                 let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-                    let OpReceipt::Deposit(deposit_receipt) = &op_receipt.inner.inner.receipt
+                    let BaseReceipt::Deposit(deposit_receipt) = &op_receipt.inner.inner.receipt
                     else {
                         return Err(ExecutionError::DepositReceiptMismatch.into());
                     };
@@ -395,7 +395,7 @@ mod tests {
     use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, BEACON_ROOTS_CODE};
     use alloy_primitives::{Address, B256, TxKind, U256, address, uint};
     use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_consensus::BaseTxEnvelope;
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
@@ -440,7 +440,7 @@ mod tests {
         let evm = evm_config.evm_with_env(db, evm_env);
         let pending_block = Block {
             header: Header { timestamp: POST_ECOTONE_TIMESTAMP, number: 1, ..Default::default() },
-            body: BlockBody::<OpTxEnvelope>::default(),
+            body: BlockBody::<BaseTxEnvelope>::default(),
         };
         let mut builder = PendingStateBuilder::new(
             chain_spec,
@@ -496,7 +496,7 @@ mod tests {
         let evm = evm_config.evm_with_env(db, evm_env);
         let pending_block = Block {
             header: Header { timestamp: pre_ecotone_timestamp, number: 1, ..Default::default() },
-            body: BlockBody::<OpTxEnvelope>::default(),
+            body: BlockBody::<BaseTxEnvelope>::default(),
         };
         let mut builder = PendingStateBuilder::new(
             chain_spec,
@@ -528,7 +528,7 @@ mod tests {
 
     const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = uint!(8_U256);
 
-    fn create_legacy_tx() -> alloy_consensus::transaction::Recovered<OpTxEnvelope> {
+    fn create_legacy_tx() -> alloy_consensus::transaction::Recovered<BaseTxEnvelope> {
         let tx = alloy_consensus::TxLegacy {
             chain_id: Some(8453),
             nonce: 0,
@@ -539,7 +539,7 @@ mod tests {
             input: Default::default(),
         };
 
-        let envelope = OpTxEnvelope::Legacy(Signed::new_unchecked(
+        let envelope = BaseTxEnvelope::Legacy(Signed::new_unchecked(
             tx,
             alloy_primitives::Signature::test_signature(),
             B256::ZERO,
@@ -799,7 +799,7 @@ mod tests {
         };
 
         let sealed = alloy_consensus::Sealed::new_unchecked(deposit_tx, B256::ZERO);
-        let envelope = OpTxEnvelope::Deposit(sealed);
+        let envelope = BaseTxEnvelope::Deposit(sealed);
         let tx = alloy_consensus::transaction::Recovered::new_unchecked(envelope, deposit_sender);
 
         let result = builder.execute_transaction(0, tx).expect("deposit execution failed");

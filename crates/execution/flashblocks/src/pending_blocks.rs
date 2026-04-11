@@ -11,11 +11,11 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
-use base_alloy_consensus::OpTxType;
-use base_alloy_evm::OpTxResult;
+use base_alloy_consensus::BaseTxType;
+use base_alloy_evm::BaseTxResult;
 use base_alloy_flashblocks::Flashblock;
 use base_alloy_network::Base;
-use base_common_rpc_types::{OpTransactionReceipt, Transaction};
+use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_revm::OpHaltReason;
 use reth_evm::eth::EthTxResult;
 use reth_revm::db::BundleState;
@@ -39,7 +39,7 @@ pub struct PendingBlocksBuilder {
     transactions: Vec<Transaction>,
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
-    transaction_receipts: HashMap<B256, OpTransactionReceipt>,
+    transaction_receipts: HashMap<B256, BaseTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
@@ -126,7 +126,7 @@ impl PendingBlocksBuilder {
 
     /// Stores the receipt for a transaction.
     #[inline]
-    pub fn with_receipt(&mut self, hash: B256, receipt: OpTransactionReceipt) -> &Self {
+    pub fn with_receipt(&mut self, hash: B256, receipt: BaseTransactionReceipt) -> &Self {
         self.transaction_receipts.insert(hash, receipt);
         self
     }
@@ -217,7 +217,7 @@ pub struct PendingBlocks {
 
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
-    transaction_receipts: HashMap<B256, OpTransactionReceipt>,
+    transaction_receipts: HashMap<B256, BaseTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
@@ -332,7 +332,7 @@ impl PendingBlocks {
     }
 
     /// Returns the receipt for a transaction.
-    pub fn get_receipt(&self, tx_hash: TxHash) -> Option<&OpTransactionReceipt> {
+    pub fn get_receipt(&self, tx_hash: TxHash) -> Option<&BaseTransactionReceipt> {
         self.transaction_receipts.get(&tx_hash)
     }
 
@@ -352,7 +352,10 @@ impl PendingBlocks {
     }
 
     /// Returns the receipt and state for a transaction.
-    pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+    pub fn get_op_tx_result(
+        &self,
+        tx_hash: &B256,
+    ) -> Option<BaseTxResult<OpHaltReason, BaseTxType>> {
         let (((result, state), tx), sender) = self
             .get_transaction_result(tx_hash)
             .zip(self.get_transaction_state(tx_hash))
@@ -371,7 +374,7 @@ impl PendingBlocks {
         };
 
         let op_tx_result =
-            OpTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
+            BaseTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
 
         Some(op_tx_result)
     }
@@ -595,11 +598,11 @@ mod tests {
     };
     use alloy_provider::network::TransactionResponse;
     use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_consensus::{OpReceipt, OpTxEnvelope, TxDeposit};
+    use base_alloy_consensus::{BaseReceipt, BaseTxEnvelope, TxDeposit};
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
-    use base_common_rpc_types::{L1BlockInfo, OpTransactionReceipt, Transaction};
+    use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, Transaction};
     use revm::context_interface::result::ExecutionResult;
 
     use super::*;
@@ -642,7 +645,7 @@ mod tests {
         Transaction {
             inner: alloy_rpc_types_eth::Transaction {
                 inner: Recovered::new_unchecked(
-                    OpTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+                    BaseTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
                         alloy_consensus::TxLegacy::default(),
                         Signature::test_signature(),
                         B256::ZERO,
@@ -670,8 +673,11 @@ mod tests {
             value: U256::ZERO,
             input: Bytes::new(),
         };
-        let envelope =
-            OpTxEnvelope::Legacy(Signed::new_unchecked(legacy, Signature::test_signature(), hash));
+        let envelope = BaseTxEnvelope::Legacy(Signed::new_unchecked(
+            legacy,
+            Signature::test_signature(),
+            hash,
+        ));
         let recovered = Recovered::new_unchecked(envelope, Address::ZERO);
         Transaction {
             inner: alloy_rpc_types_eth::Transaction {
@@ -700,7 +706,7 @@ mod tests {
         Transaction {
             inner: alloy_rpc_types_eth::Transaction {
                 inner: Recovered::new_unchecked(
-                    OpTxEnvelope::Deposit(Sealed::new_unchecked(deposit, B256::ZERO)),
+                    BaseTxEnvelope::Deposit(Sealed::new_unchecked(deposit, B256::ZERO)),
                     test_sender(),
                 ),
                 block_hash: None,
@@ -713,11 +719,11 @@ mod tests {
         }
     }
 
-    fn test_receipt(tx_hash: B256, blob_gas_used: Option<u64>) -> OpTransactionReceipt {
-        OpTransactionReceipt {
+    fn test_receipt(tx_hash: B256, blob_gas_used: Option<u64>) -> BaseTransactionReceipt {
+        BaseTransactionReceipt {
             inner: alloy_rpc_types_eth::TransactionReceipt {
                 inner: ReceiptWithBloom {
-                    receipt: OpReceipt::Legacy(Receipt {
+                    receipt: BaseReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
                         cumulative_gas_used: 21000,
                         logs: vec![],
@@ -740,8 +746,8 @@ mod tests {
         }
     }
 
-    /// Creates an [`OpTransactionReceipt`] with a single log emitted from `log_address`.
-    fn test_receipt_with_log(tx_hash: B256, log_address: Address) -> OpTransactionReceipt {
+    /// Creates an [`BaseTransactionReceipt`] with a single log emitted from `log_address`.
+    fn test_receipt_with_log(tx_hash: B256, log_address: Address) -> BaseTransactionReceipt {
         let log = Log {
             inner: PrimitiveLog {
                 address: log_address,
@@ -756,10 +762,10 @@ mod tests {
             removed: false,
         };
 
-        OpTransactionReceipt {
+        BaseTransactionReceipt {
             inner: alloy_rpc_types_eth::TransactionReceipt {
                 inner: ReceiptWithBloom {
-                    receipt: OpReceipt::Legacy(Receipt {
+                    receipt: BaseReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
                         cumulative_gas_used: 21_000,
                         logs: vec![log],
@@ -830,7 +836,7 @@ mod tests {
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, da_footprint);
-        assert_eq!(result.inner.tx_type, OpTxType::Legacy);
+        assert_eq!(result.inner.tx_type, BaseTxType::Legacy);
         assert!(!result.is_deposit);
         assert_eq!(result.sender, test_sender());
         assert_eq!(result.inner.result.result.gas_used(), 21000);
@@ -843,7 +849,7 @@ mod tests {
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, 0);
-        assert_eq!(result.inner.tx_type, OpTxType::Deposit);
+        assert_eq!(result.inner.tx_type, BaseTxType::Deposit);
         assert!(result.is_deposit);
         assert_eq!(result.sender, test_sender());
         assert_eq!(result.inner.result.result.gas_used(), 21000);
@@ -881,7 +887,7 @@ mod tests {
         tx_hash: B256,
         log_address: Address,
         topic0: B256,
-    ) -> OpTransactionReceipt {
+    ) -> BaseTransactionReceipt {
         let log = Log {
             inner: PrimitiveLog {
                 address: log_address,
@@ -896,10 +902,10 @@ mod tests {
             removed: false,
         };
 
-        OpTransactionReceipt {
+        BaseTransactionReceipt {
             inner: alloy_rpc_types_eth::TransactionReceipt {
                 inner: ReceiptWithBloom {
-                    receipt: OpReceipt::Legacy(Receipt {
+                    receipt: BaseReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
                         cumulative_gas_used: 21_000,
                         logs: vec![log],
@@ -1034,10 +1040,10 @@ mod tests {
             removed: false,
         };
 
-        let receipt = OpTransactionReceipt {
+        let receipt = BaseTransactionReceipt {
             inner: alloy_rpc_types_eth::TransactionReceipt {
                 inner: ReceiptWithBloom {
-                    receipt: OpReceipt::Legacy(Receipt {
+                    receipt: BaseReceipt::Legacy(Receipt {
                         status: alloy_consensus::Eip658Value::Eip658(true),
                         cumulative_gas_used: 42_000,
                         logs: vec![log_match, log_other],

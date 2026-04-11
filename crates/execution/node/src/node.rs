@@ -5,9 +5,9 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256};
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{OpPooledTransaction, OpPrimitives};
+use base_alloy_consensus::BasePrimitives;
 use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
-use base_alloy_rpc_types_engine::{OpExecutionData, OpPayloadAttributes};
+use base_alloy_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::OpBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, OpRethReceiptBuilder};
@@ -71,12 +71,12 @@ use crate::{
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
 pub trait BaseNodeTypes:
-    NodeTypes<Payload = OpEngineTypes, ChainSpec = BaseChainSpec, Primitives = OpPrimitives>
+    NodeTypes<Payload = OpEngineTypes, ChainSpec = BaseChainSpec, Primitives = BasePrimitives>
 {
 }
 /// Blanket impl for all node types that conform to the Base spec.
 impl<N> BaseNodeTypes for N where
-    N: NodeTypes<Payload = OpEngineTypes, ChainSpec = BaseChainSpec, Primitives = OpPrimitives>
+    N: NodeTypes<Payload = OpEngineTypes, ChainSpec = BaseChainSpec, Primitives = BasePrimitives>
 {
 }
 
@@ -87,7 +87,7 @@ pub trait BaseFullNodeTypes:
         ChainSpec = BaseChainSpec,
         Primitives: PayloadPrimitives,
         Storage = OpStorage,
-        Payload: EngineTypes<ExecutionData = OpExecutionData>,
+        Payload: EngineTypes<ExecutionData = ExecutionData>,
     >
 {
 }
@@ -97,7 +97,7 @@ impl<N> BaseFullNodeTypes for N where
             ChainSpec = BaseChainSpec,
             Primitives: PayloadPrimitives,
             Storage = OpStorage,
-            Payload: EngineTypes<ExecutionData = OpExecutionData>,
+            Payload: EngineTypes<ExecutionData = ExecutionData>,
         >
 {
 }
@@ -105,8 +105,8 @@ impl<N> BaseFullNodeTypes for N where
 /// Local payload attributes builder for Base.
 ///
 /// This mirrors the upstream `LocalPayloadAttributesBuilder` for
-/// `op_alloy_rpc_types_engine::OpPayloadAttributes`, but targets
-/// `base_alloy_rpc_types_engine::OpPayloadAttributes`.
+/// `op_alloy_rpc_types_engine::BasePayloadAttributes`, but targets
+/// `base_alloy_rpc_types_engine::BasePayloadAttributes`.
 #[derive(Debug)]
 pub struct BaseLocalPayloadAttributesBuilder {
     chain_spec: Arc<BaseChainSpec>,
@@ -119,8 +119,8 @@ impl BaseLocalPayloadAttributesBuilder {
     }
 }
 
-impl PayloadAttributesBuilder<OpPayloadAttributes> for BaseLocalPayloadAttributesBuilder {
-    fn build(&self, parent: &SealedHeader<alloy_consensus::Header>) -> OpPayloadAttributes {
+impl PayloadAttributesBuilder<BasePayloadAttributes> for BaseLocalPayloadAttributesBuilder {
+    fn build(&self, parent: &SealedHeader<alloy_consensus::Header>) -> BasePayloadAttributes {
         /// Dummy system transaction for dev mode.
         const TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_1: [u8; 349] = alloy_primitives::hex!(
             "7ef90159a024fa2288af14732611c4b9a8f99b2c929eaf2af8fb45981a752a01417994df3b94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b90104015d8eb900000000000000000000000000000000000000000000000000000000010ac02800000000000000000000000000000000000000000000000000000000648a5ce300000000000000000000000000000000000000000000000000000003ded24b5e5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc3077100000000000000000000000000000000000000000000000000000000000000010000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c900000000000000000000000000000000000000000000000000000000000000bc00000000000000000000000000000000000000000000000000000000000a6fe0"
@@ -147,7 +147,7 @@ impl PayloadAttributesBuilder<OpPayloadAttributes> for BaseLocalPayloadAttribute
         eip1559_bytes[4..8].copy_from_slice(&elasticity.to_be_bytes());
         let eip_1559_params = Some(B64::from(eip1559_bytes));
 
-        OpPayloadAttributes {
+        BasePayloadAttributes {
             payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
                 timestamp,
                 prev_randao: B256::random(),
@@ -330,7 +330,7 @@ impl<N> DebugNode<N> for BaseNode
 where
     N: FullNodeComponents<Types = Self>,
 {
-    type RpcBlock = alloy_rpc_types_eth::Block<base_alloy_consensus::OpTxEnvelope>;
+    type RpcBlock = alloy_rpc_types_eth::Block<base_alloy_consensus::BaseTxEnvelope>;
 
     fn rpc_to_primitive_block(rpc_block: Self::RpcBlock) -> reth_node_api::BlockTy<Self> {
         rpc_block.into_consensus()
@@ -344,7 +344,7 @@ where
 }
 
 impl NodeTypes for BaseNode {
-    type Primitives = OpPrimitives;
+    type Primitives = BasePrimitives;
     type ChainSpec = BaseChainSpec;
     type Storage = OpStorage;
     type Payload = OpEngineTypes;
@@ -1152,7 +1152,7 @@ where
     Node: FullNodeComponents<
         Types: NodeTypes<
             ChainSpec: BaseUpgrades,
-            Payload: PayloadTypes<ExecutionData = OpExecutionData>,
+            Payload: PayloadTypes<ExecutionData = ExecutionData>,
         >,
     >,
 {
@@ -1171,4 +1171,4 @@ where
 }
 
 /// Network primitive types used by Base networks.
-pub type BaseNetworkPrimitives = BasicNetworkPrimitives<OpPrimitives, OpPooledTransaction>;
+pub type BaseNetworkPrimitives = BasicNetworkPrimitives<BasePrimitives, BasePooledTransaction>;

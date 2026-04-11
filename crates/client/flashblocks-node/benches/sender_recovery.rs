@@ -5,14 +5,14 @@
 
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{Address, B256};
-use base_alloy_consensus::OpTransactionSigned;
+use base_alloy_consensus::BaseTransactionSigned;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::*;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use serde_json::Value;
 
 /// Generate signed transactions from multiple unique signers.
-fn generate_transactions(count: usize) -> Vec<OpTransactionSigned> {
+fn generate_transactions(count: usize) -> Vec<BaseTransactionSigned> {
     (0..count)
         .map(|i| {
             // Create unique signer for each transaction to simulate varying senders
@@ -36,23 +36,23 @@ fn generate_transactions(count: usize) -> Vec<OpTransactionSigned> {
                 .expect("should convert to eip1559")
                 .clone();
 
-            OpTransactionSigned::Eip1559(txn)
+            BaseTransactionSigned::Eip1559(txn)
         })
         .collect()
 }
 
 /// Sequential sender recovery (baseline)
-fn recover_senders_sequential(txs: &[OpTransactionSigned]) -> Vec<Address> {
+fn recover_senders_sequential(txs: &[BaseTransactionSigned]) -> Vec<Address> {
     txs.iter().map(|tx| tx.recover_signer().expect("valid signature")).collect()
 }
 
 /// Parallel sender recovery using rayon
-fn recover_senders_parallel(txs: &[OpTransactionSigned]) -> Vec<Address> {
+fn recover_senders_parallel(txs: &[BaseTransactionSigned]) -> Vec<Address> {
     txs.par_iter().map(|tx| tx.recover_signer().expect("valid signature")).collect()
 }
 
 /// Load real transactions from Base mainnet blocks fixture
-fn load_real_transactions() -> Vec<OpTransactionSigned> {
+fn load_real_transactions() -> Vec<BaseTransactionSigned> {
     let fixture_data = include_str!("./fixtures/base_mainnet_blocks.json");
     let json: Value = serde_json::from_str(fixture_data).expect("valid JSON");
 
@@ -65,7 +65,7 @@ fn load_real_transactions() -> Vec<OpTransactionSigned> {
                 for tx_value in txs {
                     // Try direct deserialization first
                     if let Ok(signed_tx) =
-                        serde_json::from_value::<OpTransactionSigned>(tx_value.clone())
+                        serde_json::from_value::<BaseTransactionSigned>(tx_value.clone())
                     {
                         transactions.push(signed_tx);
                     }

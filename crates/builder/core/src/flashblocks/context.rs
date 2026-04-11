@@ -11,8 +11,8 @@ use alloy_primitives::{B256, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{OpDepositReceipt, OpReceipt, OpTransactionSigned, OpTxType};
-use base_alloy_evm::OpReceiptBuilder;
+use base_alloy_consensus::{BaseReceipt, BaseTransactionSigned, BaseTxType, DepositReceipt};
+use base_alloy_evm::BaseReceiptBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::BasePayloadBuilderError};
@@ -280,7 +280,7 @@ pub struct OpPayloadBuilderCtx {
     /// The chainspec
     pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,
+    pub config: PayloadConfig<OpPayloadBuilderAttributes<BaseTransactionSigned>>,
     /// Evm Settings
     pub evm_env: EvmEnv<OpSpecId>,
     /// Block env attributes for the current block.
@@ -326,7 +326,7 @@ impl OpPayloadBuilderCtx {
     }
 
     /// Returns the builder attributes.
-    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
+    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<BaseTransactionSigned> {
         &self.config.attributes
     }
 
@@ -452,9 +452,9 @@ impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
+        ctx: ReceiptBuilderCtx<'_, BaseTxType, E>,
         deposit_nonce: Option<u64>,
-    ) -> OpReceipt {
+    ) -> BaseReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();
         match receipt_builder.build_receipt(ctx) {
             Ok(receipt) => receipt,
@@ -467,7 +467,7 @@ impl OpPayloadBuilderCtx {
                     logs: ctx.result.into_logs(),
                 };
 
-                receipt_builder.build_deposit_receipt(OpDepositReceipt {
+                receipt_builder.build_deposit_receipt(DepositReceipt {
                     inner: receipt,
                     deposit_nonce,
                     // The deposit receipt version was introduced in Canyon to indicate an

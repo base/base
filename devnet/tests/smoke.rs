@@ -10,7 +10,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_alloy_network::Base;
-use base_common_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::BaseTransactionRequest;
 use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
@@ -104,7 +104,7 @@ async fn send_l2_transaction_via_client(
     let nonce = client_provider.get_transaction_count(sender_address).await?;
 
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
-    let tx_request = OpTransactionRequest::default()
+    let tx_request = BaseTransactionRequest::default()
         .from(sender_address)
         .to(recipient)
         .value(U256::from(1_000_000_000u64))

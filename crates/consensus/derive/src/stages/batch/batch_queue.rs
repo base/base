@@ -479,7 +479,7 @@ mod tests {
     use alloy_eips::{BlockNumHash, eip2718::Decodable2718};
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256};
     use alloy_rlp::{BytesMut, Encodable};
-    use base_alloy_consensus::{BaseBlock, OpTxEnvelope, OpTxType, TxDeposit};
+    use base_alloy_consensus::{BaseBlock, BaseTxEnvelope, BaseTxType, TxDeposit};
     use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
     use tracing::Level;
@@ -1027,7 +1027,7 @@ mod tests {
         };
         let mut buf = BytesMut::new();
         tx.encode(&mut buf);
-        let prefixed = [&[OpTxType::Deposit as u8], &buf[..]].concat();
+        let prefixed = [&[BaseTxType::Deposit as u8], &buf[..]].concat();
         second_batch_txs.insert(0, Bytes::copy_from_slice(&prefixed));
         let mut mock = TestNextBatchProvider::new(batch_vec);
         let origin_check =
@@ -1062,11 +1062,11 @@ mod tests {
         };
         let batch_txs = batch_txs
             .into_iter()
-            .map(|tx| OpTxEnvelope::decode_2718(&mut &tx[..]).unwrap())
+            .map(|tx| BaseTxEnvelope::decode_2718(&mut &tx[..]).unwrap())
             .collect();
         let second_batch_txs = second_batch_txs
             .into_iter()
-            .map(|tx| OpTxEnvelope::decode_2718(&mut &tx[..]).unwrap())
+            .map(|tx| BaseTxEnvelope::decode_2718(&mut &tx[..]).unwrap())
             .collect();
         let block = BaseBlock {
             header: Header { number: 8, ..Default::default() },

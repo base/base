@@ -16,9 +16,9 @@ use core::fmt::Debug;
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{DepositReceipt, EIP1559ParamError, OpPrimitives};
+use base_alloy_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_alloy_evm::{
-    BaseBlockExecutionCtx, BaseBlockExecutorFactory, OpEvmFactory, OpReceiptBuilder, OpTxEnv,
+    BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder, BaseTxEnv,
     spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
 };
 use base_execution_chainspec::BaseChainSpec;
@@ -33,7 +33,7 @@ use revm::context::{BlockEnv, TxEnv};
 use {
     alloy_eips::Decodable2718,
     alloy_primitives::{Bytes, U256},
-    base_alloy_rpc_types_engine::OpExecutionData,
+    base_alloy_rpc_types_engine::ExecutionData,
     reth_evm::{EvmEnvFor, ExecutionCtxFor},
     reth_primitives_traits::{TxTy, WithEncoded},
     reth_storage_errors::any::AnyError,
@@ -123,9 +123,9 @@ fn op_next_evm_env(
 #[derive(Debug)]
 pub struct BaseEvmConfig<
     ChainSpec = BaseChainSpec,
-    N: NodePrimitives = OpPrimitives,
+    N: NodePrimitives = BasePrimitives,
     R = OpRethReceiptBuilder,
-    EvmFactory = OpEvmFactory,
+    EvmFactory = BaseEvmFactory,
 > {
     /// Inner [`BaseBlockExecutorFactory`].
     pub executor_factory: BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
@@ -162,7 +162,7 @@ impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, 
             executor_factory: BaseBlockExecutorFactory::new(
                 receipt_builder,
                 chain_spec,
-                OpEvmFactory::default(),
+                BaseEvmFactory::default(),
             ),
             _pd: core::marker::PhantomData,
         }
@@ -191,12 +191,12 @@ where
             Block = alloy_consensus::Block<R::Transaction>,
         >,
     OpTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: OpReceiptBuilder<Receipt: DepositReceipt, Transaction: SignedTransaction>,
+    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction>,
     EvmF: EvmFactory<
             Tx: FromRecoveredTx<R::Transaction>
                     + FromTxWithEncoded<R::Transaction>
                     + TransactionEnv
-                    + OpTxEnv,
+                    + BaseTxEnv,
             Precompiles = PrecompilesMap,
             Spec = OpSpecId,
             BlockEnv = BlockEnv,
@@ -257,7 +257,7 @@ where
 }
 
 #[cfg(feature = "std")]
-impl<ChainSpec, N, R> ConfigureEngineEvm<OpExecutionData> for BaseEvmConfig<ChainSpec, N, R>
+impl<ChainSpec, N, R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<ChainSpec, N, R>
 where
     ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades,
     N: NodePrimitives<
@@ -268,13 +268,10 @@ where
             Block = alloy_consensus::Block<R::Transaction>,
         >,
     OpTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
-    R: OpReceiptBuilder<Receipt: DepositReceipt, Transaction: SignedTransaction>,
+    R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction>,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
-    fn evm_env_for_payload(
-        &self,
-        payload: &OpExecutionData,
-    ) -> Result<EvmEnvFor<Self>, Self::Error> {
+    fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();
 
@@ -311,7 +308,7 @@ where
 
     fn context_for_payload<'a>(
         &self,
-        payload: &'a OpExecutionData,
+        payload: &'a ExecutionData,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
         Ok(BaseBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
@@ -322,7 +319,7 @@ where
 
     fn tx_iterator_for_payload(
         &self,
-        payload: &OpExecutionData,
+        payload: &ExecutionData,
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
         let transactions = payload.payload.transactions().clone();
         let convert = |encoded: Bytes| {
@@ -348,7 +345,7 @@ mod tests {
         Address, B256, LogData, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_alloy_consensus::{BaseBlock, OpPrimitives, OpReceipt};
+    use base_alloy_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
     use base_execution_chainspec::{BASE_MAINNET, BaseChainSpec, BaseChainSpecBuilder};
     use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;
@@ -572,14 +569,14 @@ mod tests {
         block2.set_hash(block2_hash);
 
         // Create a random receipt object, receipt1
-        let receipt1 = OpReceipt::Legacy(Receipt::<Log> {
+        let receipt1 = BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
         });
 
         // Create another random receipt object, receipt2
-        let receipt2 = OpReceipt::Legacy(Receipt::<Log> {
+        let receipt2 = BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 1325345,
             logs: vec![],
             status: true.into(),
@@ -590,7 +587,7 @@ mod tests {
 
         // Create an ExecutionOutcome object with the created bundle, receipts, an empty requests
         // vector, and first_block set to 10
-        let execution_outcome = ExecutionOutcome::<OpReceipt> {
+        let execution_outcome = ExecutionOutcome::<BaseReceipt> {
             bundle: Default::default(),
             receipts,
             requests: vec![],
@@ -599,7 +596,7 @@ mod tests {
 
         // Create a Chain object with a BTreeMap of blocks mapped to their block numbers,
         // including block1_hash and block2_hash, and the execution_outcome
-        let chain: Chain<OpPrimitives> =
+        let chain: Chain<BasePrimitives> =
             Chain::new([block1, block2], execution_outcome.clone(), BTreeMap::new());
 
         // Assert that the proper receipt vector is returned for block1_hash
@@ -630,7 +627,7 @@ mod tests {
         );
 
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(OpReceipt::Legacy(Receipt::<Log> {
+        let receipts = vec![vec![Some(BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
@@ -688,7 +685,7 @@ mod tests {
     #[test]
     fn test_block_number_to_index() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(OpReceipt::Legacy(Receipt::<Log> {
+        let receipts = vec![vec![Some(BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
@@ -719,7 +716,7 @@ mod tests {
     #[test]
     fn test_get_logs() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![OpReceipt::Legacy(Receipt::<Log> {
+        let receipts = vec![vec![BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![Log::<LogData>::default()],
             status: true.into(),
@@ -747,7 +744,7 @@ mod tests {
     #[test]
     fn test_receipts_by_block() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(OpReceipt::Legacy(Receipt::<Log> {
+        let receipts = vec![vec![Some(BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![Log::<LogData>::default()],
             status: true.into(),
@@ -771,7 +768,7 @@ mod tests {
         // Assert that the receipts for block number 123 match the expected receipts
         assert_eq!(
             receipts_by_block,
-            vec![&Some(OpReceipt::Legacy(Receipt::<Log> {
+            vec![&Some(BaseReceipt::Legacy(Receipt::<Log> {
                 cumulative_gas_used: 46913,
                 logs: vec![Log::<LogData>::default()],
                 status: true.into(),
@@ -782,7 +779,7 @@ mod tests {
     #[test]
     fn test_receipts_len() {
         // Create a Receipts object with a vector of receipt vectors
-        let receipts = vec![vec![Some(OpReceipt::Legacy(Receipt::<Log> {
+        let receipts = vec![vec![Some(BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![Log::<LogData>::default()],
             status: true.into(),
@@ -810,7 +807,7 @@ mod tests {
         assert!(!exec_res.is_empty());
 
         // Create a ExecutionOutcome object with an empty Receipts object
-        let exec_res_empty_receipts: ExecutionOutcome<OpReceipt> = ExecutionOutcome {
+        let exec_res_empty_receipts: ExecutionOutcome<BaseReceipt> = ExecutionOutcome {
             bundle: Default::default(), // Default value for bundle
             receipts: receipts_empty,   // Include the empty receipts
             requests: vec![],           // Empty vector for requests
@@ -827,7 +824,7 @@ mod tests {
     #[test]
     fn test_revert_to() {
         // Create a random receipt object
-        let receipt = OpReceipt::Legacy(Receipt::<Log> {
+        let receipt = BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
@@ -872,7 +869,7 @@ mod tests {
     #[test]
     fn test_extend_execution_outcome() {
         // Create a Receipt object with specific attributes.
-        let receipt = OpReceipt::Legacy(Receipt::<Log> {
+        let receipt = BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),
@@ -912,7 +909,7 @@ mod tests {
     #[test]
     fn test_split_at_execution_outcome() {
         // Create a random receipt object
-        let receipt = OpReceipt::Legacy(Receipt::<Log> {
+        let receipt = BaseReceipt::Legacy(Receipt::<Log> {
             cumulative_gas_used: 46913,
             logs: vec![],
             status: true.into(),

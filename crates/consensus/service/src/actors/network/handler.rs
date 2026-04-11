@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use alloy_primitives::Address;
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope, PayloadHash,
+    BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
 };
 use base_consensus_disc::{Discv5Handler, HandlerRequest};
 use base_consensus_gossip::{
@@ -112,7 +112,7 @@ impl NetworkHandler {
 impl GossipTransport for NetworkHandler {
     type Error = NetworkActorError;
 
-    async fn publish(&mut self, block: OpExecutionPayloadEnvelope) -> Result<(), Self::Error> {
+    async fn publish(&mut self, block: BaseExecutionPayloadEnvelope) -> Result<(), Self::Error> {
         let timestamp = block.execution_payload.timestamp();
         let selector = |handler: &BlockHandler| handler.topic(timestamp);
 
@@ -126,7 +126,7 @@ impl GossipTransport for NetworkHandler {
         let payload_hash: PayloadHash = block.payload_hash();
         let signature = signer.sign_block(payload_hash, chain_id, sender_address).await?;
 
-        let payload = OpNetworkPayloadEnvelope {
+        let payload = NetworkPayloadEnvelope {
             payload: block.execution_payload,
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
@@ -141,7 +141,7 @@ impl GossipTransport for NetworkHandler {
         Ok(())
     }
 
-    async fn next_unsafe_block(&mut self) -> Option<OpNetworkPayloadEnvelope> {
+    async fn next_unsafe_block(&mut self) -> Option<NetworkPayloadEnvelope> {
         loop {
             let has_peer_monitoring = self.gossip.peer_monitoring.as_ref().is_some();
             select! {

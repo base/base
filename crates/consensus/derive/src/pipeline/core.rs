@@ -252,7 +252,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_alloy_rpc_types_engine::OpPayloadAttributes;
+    use base_alloy_rpc_types_engine::BasePayloadAttributes;
     use base_consensus_genesis::{RollupConfig, SystemConfig};
     use base_protocol::{AttributesWithParent, L2BlockInfo};
 
@@ -264,7 +264,7 @@ mod tests {
 
     fn default_test_payload_attributes() -> AttributesWithParent {
         AttributesWithParent {
-            attributes: OpPayloadAttributes {
+            attributes: BasePayloadAttributes {
                 payload_attributes: PayloadAttributes {
                     timestamp: 0,
                     prev_randao: Default::default(),

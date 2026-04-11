@@ -1,5 +1,5 @@
 use alloy_rpc_types_engine::PayloadId;
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{BuildTaskError, ConsolidateInput, EngineQueries, SealTaskError};
 use base_protocol::AttributesWithParent;
 use thiserror::Error;
@@ -50,7 +50,7 @@ pub enum EngineActorRequest {
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
     /// Request to insert the provided unsafe block.
-    ProcessUnsafeL2BlockRequest(Box<OpExecutionPayloadEnvelope>),
+    ProcessUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
     /// Request for the engine to process the provided RPC request.
@@ -94,7 +94,7 @@ pub struct SealRequest {
     /// The attributes necessary for the seal operation.
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
-    pub result_tx: mpsc::Sender<Result<OpExecutionPayloadEnvelope, SealTaskError>>,
+    pub result_tx: mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>,
 }
 
 /// A request to get the sealed payload without inserting it into the engine.
@@ -106,5 +106,5 @@ pub struct GetPayloadRequest {
     /// The attributes associated with the payload.
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
-    pub result_tx: mpsc::Sender<Result<OpExecutionPayloadEnvelope, SealTaskError>>,
+    pub result_tx: mpsc::Sender<Result<BaseExecutionPayloadEnvelope, SealTaskError>>,
 }

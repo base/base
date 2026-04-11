@@ -10,7 +10,7 @@ use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_alloy_consensus::BaseBlock;
 use base_alloy_network::Base;
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
 use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
@@ -157,7 +157,7 @@ impl TestHarness {
         let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
             | (base_fee_params.elasticity_multiplier as u64);
 
-        let payload_attributes = OpPayloadAttributes {
+        let payload_attributes = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_timestamp,
                 parent_beacon_block_root: Some(parent_beacon_block_root),
