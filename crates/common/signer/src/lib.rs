@@ -12,3 +12,6 @@ pub use error::RemoteSignerError;
 
 mod signer;
 pub use signer::RemoteSigner;
+
+mod traits;
+pub use traits::EthSignerApiClient;

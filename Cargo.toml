@@ -180,7 +180,6 @@ base-common-chains = { path = "crates/common/chains" }
 base-common-rpc-types = { path = "crates/common/rpc-types" }
 base-access-lists = { path = "crates/common/access-lists" }
 base-common-flashblocks = { path = "crates/common/flashblocks" }
-base-common-rpc-jsonrpsee = { path = "crates/common/rpc-jsonrpsee" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
 base-common-consensus = { path = "crates/common/consensus", default-features = false }

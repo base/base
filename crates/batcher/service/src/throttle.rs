@@ -5,6 +5,16 @@ use base_batcher_core::ThrottleClient;
 use base_common_rpc_jsonrpsee::MinerApiExtClient;
 use futures::future::BoxFuture;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee::proc_macros::rpc;
+
+/// Client-side jsonrpsee trait for the miner API extension.
+#[rpc(client, namespace = "miner")]
+trait MinerApiExt {
+    /// Sets the maximum data availability size of any tx allowed in a block, and the total max l1
+    /// data size of the block. 0 means no maximum.
+    #[method(name = "setMaxDASize")]
+    async fn set_max_da_size(&self, max_tx_size: U64, max_block_size: U64) -> RpcResult<bool>;
+}
 
 /// Production [`ThrottleClient`] that calls `miner_setMaxDASize` on the L2
 /// execution node via the typed [`MinerApiExtClient`].

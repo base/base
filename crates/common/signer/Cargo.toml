@@ -22,15 +22,12 @@ alloy-eips = { workspace = true, features = ["std"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
-# Base
-base-common-rpc-jsonrpsee = { workspace = true, features = ["client", "signer"] }
-
 # External
 url.workspace = true
 async-trait.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-jsonrpsee = { workspace = true, features = ["http-client"] }
+jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
 alloy-signer-local.workspace = true

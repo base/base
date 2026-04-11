@@ -61,7 +61,6 @@ alloy-primitives.workspace = true
 base-common-chains.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
-base-common-rpc-jsonrpsee.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
 

@@ -1,10 +1,29 @@
 //! Miner API extension for OP.
 
 use alloy_primitives::U64;
-use base_common_rpc_jsonrpsee::MinerApiExtServer;
 use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
+use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use tracing::debug;
+
+/// Op API extension for controlling the miner.
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "miner"))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "miner"))]
+pub trait MinerApiExt {
+    /// Sets the maximum data availability size of any tx allowed in a block, and the total max l1
+    /// data size of the block. 0 means no maximum.
+    #[method(name = "setMaxDASize")]
+    async fn set_max_da_size(&self, max_tx_size: U64, max_block_size: U64) -> RpcResult<bool>;
+
+    /// Returns the current maximum data availability size limits as (`max_tx_size`,
+    /// `max_block_size`). Returns 0 for either value when no limit is set.
+    #[method(name = "getMaxDASize")]
+    async fn get_max_da_size(&self) -> RpcResult<(U64, U64)>;
+
+    /// Sets the gas limit for future blocks produced by the miner.
+    #[method(name = "setGasLimit")]
+    async fn set_gas_limit(&self, gas_limit: U64) -> RpcResult<bool>;
+}
 
 base_metrics::define_metrics! {
     base_rpc.miner,

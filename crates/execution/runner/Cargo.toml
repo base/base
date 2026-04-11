@@ -56,7 +56,6 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = [
 ] }
 
 # base-alloy
-base-common-rpc-jsonrpsee.workspace = true
 base-common-network = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, optional = true }

@@ -29,14 +29,13 @@ derive_more = { workspace = true, features = ["debug"] }
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
 base-consensus-genesis = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
-base-common-rpc-jsonrpsee = { workspace = true, features = ["client"] }
+jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [features]
 metrics = [

@@ -19,6 +19,9 @@ pub mod state;
 pub mod witness;
 
 pub use config::{BaseEthConfigApiServer, BaseEthConfigHandler};
+pub use miner::MinerApiExtServer;
+#[cfg(feature = "client")]
+pub use miner::MinerApiExtClient;
 #[cfg(feature = "client")]
 pub use engine::BaseEngineApiClient;
 pub use engine::{BaseEngineApi, BaseEngineApiServer, OP_ENGINE_CAPABILITIES};
