@@ -4,7 +4,7 @@
 //! [`PrecompileProvider`]: revm::handler::PrecompileProvider
 
 mod provider;
-pub use provider::OpFpvmPrecompiles;
+pub use provider::FpvmPrecompiles;
 
 mod bls12_g1_add;
 mod bls12_g1_msm;

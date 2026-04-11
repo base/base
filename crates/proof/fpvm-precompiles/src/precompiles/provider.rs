@@ -17,7 +17,7 @@ use super::{ecrecover::ECRECOVER_ADDR, kzg_point_eval::KZG_POINT_EVAL_ADDR};
 
 /// The FPVM-accelerated precompiles.
 #[derive(Debug)]
-pub struct OpFpvmPrecompiles<H, O> {
+pub struct FpvmPrecompiles<H, O> {
     /// The default [`EthPrecompiles`] provider.
     inner: EthPrecompiles,
     /// The accelerated precompiles for the current [`OpSpecId`].
@@ -30,7 +30,7 @@ pub struct OpFpvmPrecompiles<H, O> {
     oracle_reader: O,
 }
 
-impl<H, O> OpFpvmPrecompiles<H, O>
+impl<H, O> FpvmPrecompiles<H, O>
 where
     H: HintWriterClient + Clone + Send + Sync + 'static,
     O: PreimageOracleClient + Clone + Send + Sync + 'static,
@@ -78,7 +78,7 @@ where
     }
 }
 
-impl<CTX, H, O> PrecompileProvider<CTX> for OpFpvmPrecompiles<H, O>
+impl<CTX, H, O> PrecompileProvider<CTX> for FpvmPrecompiles<H, O>
 where
     H: HintWriterClient + Clone + Send + Sync + 'static,
     O: PreimageOracleClient + Clone + Send + Sync + 'static,
@@ -328,8 +328,8 @@ mod tests {
     #[test]
     fn test_jovian_and_base_v1_use_different_precompile_sets() {
         let (hw, or_) = make_hw_or();
-        let jovian = OpFpvmPrecompiles::new_with_spec(OpSpecId::JOVIAN, hw.clone(), or_.clone());
-        let base_v1 = OpFpvmPrecompiles::new_with_spec(OpSpecId::BASE_V1, hw, or_);
+        let jovian = FpvmPrecompiles::new_with_spec(OpSpecId::JOVIAN, hw.clone(), or_.clone());
+        let base_v1 = FpvmPrecompiles::new_with_spec(OpSpecId::BASE_V1, hw, or_);
 
         assert!(
             !core::ptr::eq(jovian.precompiles(), base_v1.precompiles()),
@@ -340,8 +340,8 @@ mod tests {
     #[test]
     fn test_base_v1_modexp_enforces_eip7823_size_limit() {
         let (hw, or_) = make_hw_or();
-        let jovian = OpFpvmPrecompiles::new_with_spec(OpSpecId::JOVIAN, hw.clone(), or_.clone());
-        let base_v1 = OpFpvmPrecompiles::new_with_spec(OpSpecId::BASE_V1, hw, or_);
+        let jovian = FpvmPrecompiles::new_with_spec(OpSpecId::JOVIAN, hw.clone(), or_.clone());
+        let base_v1 = FpvmPrecompiles::new_with_spec(OpSpecId::BASE_V1, hw, or_);
 
         let modexp_berlin = modexp::BERLIN;
         let addr = modexp_berlin.address();

@@ -13,23 +13,23 @@ use revm::{
     inspector::NoOpInspector,
 };
 
-use crate::OpFpvmPrecompiles;
+use crate::FpvmPrecompiles;
 
 /// Factory for creating EVM instances with FPVM-accelerated precompile overrides enabled.
 #[derive(Debug, Clone)]
-pub struct FpvmOpEvmFactory<H, O> {
+pub struct FpvmEvmFactory<H, O> {
     /// The hint writer.
     hint_writer: H,
     /// The oracle reader.
     oracle_reader: O,
 }
 
-impl<H, O> FpvmOpEvmFactory<H, O>
+impl<H, O> FpvmEvmFactory<H, O>
 where
     H: HintWriterClient + Clone + Send + Sync + 'static,
     O: PreimageOracleClient + Clone + Send + Sync + 'static,
 {
-    /// Creates a new [`FpvmOpEvmFactory`].
+    /// Creates a new [`FpvmEvmFactory`].
     pub const fn new(hint_writer: H, oracle_reader: O) -> Self {
         Self { hint_writer, oracle_reader }
     }
@@ -44,18 +44,18 @@ where
         &self.oracle_reader
     }
 
-    /// Returns a new [`OpFpvmPrecompiles`] instance for the given spec.
-    pub fn create_precompiles(&self, spec: OpSpecId) -> OpFpvmPrecompiles<H, O> {
-        OpFpvmPrecompiles::new_with_spec(spec, self.hint_writer.clone(), self.oracle_reader.clone())
+    /// Returns a new [`FpvmPrecompiles`] instance for the given spec.
+    pub fn create_precompiles(&self, spec: OpSpecId) -> FpvmPrecompiles<H, O> {
+        FpvmPrecompiles::new_with_spec(spec, self.hint_writer.clone(), self.oracle_reader.clone())
     }
 }
 
-impl<H, O> EvmFactory for FpvmOpEvmFactory<H, O>
+impl<H, O> EvmFactory for FpvmEvmFactory<H, O>
 where
     H: HintWriterClient + Clone + Send + Sync + 'static,
     O: PreimageOracleClient + Clone + Send + Sync + 'static,
 {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = OpEvm<DB, I, OpFpvmPrecompiles<H, O>>;
+    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = OpEvm<DB, I, FpvmPrecompiles<H, O>>;
     type Context<DB: Database> = OpContext<DB>;
     type Tx = OpTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
@@ -63,7 +63,7 @@ where
     type HaltReason = OpHaltReason;
     type Spec = OpSpecId;
     type BlockEnv = BlockEnv;
-    type Precompiles = OpFpvmPrecompiles<H, O>;
+    type Precompiles = FpvmPrecompiles<H, O>;
 
     fn create_evm<DB: Database>(
         &self,
@@ -77,7 +77,7 @@ where
                 .with_block(input.block_env)
                 .with_cfg(input.cfg_env)
                 .build_op_with_inspector(NoOpInspector {})
-                .with_precompiles(OpFpvmPrecompiles::new_with_spec(
+                .with_precompiles(FpvmPrecompiles::new_with_spec(
                     spec_id,
                     self.hint_writer.clone(),
                     self.oracle_reader.clone(),
@@ -99,7 +99,7 @@ where
                 .with_block(input.block_env)
                 .with_cfg(input.cfg_env)
                 .build_op_with_inspector(inspector)
-                .with_precompiles(OpFpvmPrecompiles::new_with_spec(
+                .with_precompiles(FpvmPrecompiles::new_with_spec(
                     spec_id,
                     self.hint_writer.clone(),
                     self.oracle_reader.clone(),

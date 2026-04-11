@@ -4,7 +4,7 @@
 extern crate alloc;
 
 mod precompiles;
-pub use precompiles::OpFpvmPrecompiles;
+pub use precompiles::FpvmPrecompiles;
 
 mod factory;
-pub use factory::FpvmOpEvmFactory;
+pub use factory::FpvmEvmFactory;
