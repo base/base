@@ -184,7 +184,7 @@ impl BuilderConnector {
                         }
 
                         let tx_hash = event.results[0].tx_hash;
-                        let Ok(permit) = semaphore.clone().acquire_owned().await else {
+                        let Ok(permit) = Arc::clone(&semaphore).acquire_owned().await else {
                             break;
                         };
                         let builder = builder.clone();
