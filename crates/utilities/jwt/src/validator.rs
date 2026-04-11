@@ -79,7 +79,7 @@ impl JwtValidator {
         use backon::{ExponentialBuilder, Retryable};
         use base_alloy_network::Base;
         use base_alloy_provider::OpEngineApi;
-        use base_consensus_engine::{HyperAuthClient, BaseEngineClient};
+        use base_consensus_engine::{BaseEngineClient, HyperAuthClient};
         use tracing::{debug, error};
 
         // Convert WebSocket URLs to HTTP for validation.
