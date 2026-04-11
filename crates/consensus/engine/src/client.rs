@@ -92,11 +92,11 @@ pub trait EngineClient: OpEngineApi<Base, Http<HyperAuthClient>> + Send + Sync {
 
 /// An Engine API client that provides authenticated HTTP communication with an execution layer.
 ///
-/// The [`OpEngineClient`] handles JWT authentication and manages connections to both L1 and L2
+/// The [`BaseEngineClient`] handles JWT authentication and manages connections to both L1 and L2
 /// execution layers. It automatically selects the appropriate Engine API version based on the
 /// rollup configuration and block timestamps.
 #[derive(Clone, Debug)]
-pub struct OpEngineClient<L1Provider, L2Provider>
+pub struct BaseEngineClient<L1Provider, L2Provider>
 where
     L1Provider: Provider,
     L2Provider: Provider<Base>,
@@ -109,7 +109,7 @@ where
     cfg: Arc<RollupConfig>,
 }
 
-impl<L1Provider, L2Provider> OpEngineClient<L1Provider, L2Provider>
+impl<L1Provider, L2Provider> BaseEngineClient<L1Provider, L2Provider>
 where
     L1Provider: Provider,
     L2Provider: Provider<Base>,
@@ -126,7 +126,7 @@ where
     }
 }
 
-/// The builder for the [`OpEngineClient`].
+/// The builder for the [`BaseEngineClient`].
 #[derive(Debug, Clone)]
 pub struct EngineClientBuilder {
     /// The L2 Engine API endpoint URL.
@@ -140,24 +140,24 @@ pub struct EngineClientBuilder {
 }
 
 impl EngineClientBuilder {
-    /// Creates a new [`OpEngineClient`] with authenticated HTTP connections.
+    /// Creates a new [`BaseEngineClient`] with authenticated HTTP connections.
     ///
     /// Sets up JWT-authenticated connections to the Engine API endpoint along with an
     /// unauthenticated connection to the L1 chain.
-    pub fn build(self) -> OpEngineClient<RootProvider, RootProvider<Base>> {
-        let engine = OpEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
+    pub fn build(self) -> BaseEngineClient<RootProvider, RootProvider<Base>> {
+        let engine = BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
             self.l2,
             self.l2_jwt,
         );
 
         let l1_provider = RootProvider::new_http(self.l1_rpc);
 
-        OpEngineClient { engine, l1_provider, cfg: self.cfg }
+        BaseEngineClient { engine, l1_provider, cfg: self.cfg }
     }
 }
 
 #[async_trait]
-impl<L1Provider, L2Provider> EngineClient for OpEngineClient<L1Provider, L2Provider>
+impl<L1Provider, L2Provider> EngineClient for BaseEngineClient<L1Provider, L2Provider>
 where
     L1Provider: Provider,
     L2Provider: Provider<Base>,
@@ -207,7 +207,7 @@ where
 
 #[async_trait::async_trait]
 impl<L1Provider, L2Provider> OpEngineApi<Base, Http<HyperAuthClient>>
-    for OpEngineClient<L1Provider, L2Provider>
+    for BaseEngineClient<L1Provider, L2Provider>
 where
     L1Provider: Provider,
     L2Provider: Provider<Base>,
