@@ -20,7 +20,7 @@ mod service;
 pub use service::{DefaultPayloadServiceBuilder, PayloadServiceBuilder};
 
 mod types;
-pub use types::{BaseNodeBuilder, BaseProvider, OpAddOns, OpComponentsBuilder, BaseNodeTypes};
+pub use types::{BaseNodeBuilder, BaseNodeTypes, BaseProvider, OpAddOns, OpComponentsBuilder};
 
 mod node;
 pub use node::BaseNode;
