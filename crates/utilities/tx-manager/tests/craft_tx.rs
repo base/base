@@ -32,7 +32,7 @@ fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
 fn single_blob_candidate() -> TxCandidate {
     TxCandidate {
         to: Some(TEST_RECIPIENT),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     }
 }
@@ -87,7 +87,7 @@ async fn craft_tx_rejects_too_many_blobs() {
 
     let candidate = TxCandidate {
         to: Some(TEST_RECIPIENT),
-        blobs: Arc::new((0..7).map(|_| Box::<Blob>::default()).collect::<Vec<_>>()),
+        blobs: Arc::from((0..7).map(|_| Box::<Blob>::default()).collect::<Vec<_>>()),
         ..Default::default()
     };
 
@@ -104,7 +104,7 @@ async fn craft_tx_rejects_blob_without_recipient() {
 
     let candidate = TxCandidate {
         to: None,
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
@@ -416,7 +416,7 @@ async fn prepare_exits_immediately_on_non_retryable_error() {
     // Blob transactions without a recipient trigger Unsupported (non-retryable).
     let candidate = TxCandidate {
         to: None,
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
