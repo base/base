@@ -763,7 +763,7 @@ where
         let intermediate_count = block_interval / intermediate_block_interval;
 
         let prefetch_blocks: Vec<u64> = {
-            let mut blocks = Vec::new();
+            let mut blocks = Vec::with_capacity(game_map.map.len());
             let mut block = anchor.l2_block_number;
             while let Some(next) = block.checked_add(block_interval) {
                 if game_map.map.contains_key(&next) {
