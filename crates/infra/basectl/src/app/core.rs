@@ -118,7 +118,7 @@ impl App {
             self.resources.proofs.poll();
             // When a conductor cluster is configured, bridge the Raft leader's
             // safe head into the DA tracker each tick.  The conductor poller
-            // already queries `op_sync_status` from every node's CL, so the
+            // already queries `sync_status` from every node's CL, so the
             // leader's value is available here without an extra RPC.  This
             // ensures the DA monitor advances even before sequencer-0's EL has
             // P2P-synced blocks that were produced by a different leader.

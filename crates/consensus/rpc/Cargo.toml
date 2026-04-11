@@ -41,6 +41,7 @@ getrandom = { workspace = true, features = ["wasm_js"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 
 [dev-dependencies]
+rstest.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 
 [features]

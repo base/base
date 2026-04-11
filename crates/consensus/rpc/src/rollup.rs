@@ -67,7 +67,7 @@ impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
 impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     for RollupRpc<EngineRpcClient_>
 {
-    async fn op_output_at_block(&self, block_num: BlockNumberOrTag) -> RpcResult<OutputResponse> {
+    async fn output_at_block(&self, block_num: BlockNumberOrTag) -> RpcResult<OutputResponse> {
         Metrics::rpc_calls("op_outputAtBlock").increment(1.0);
 
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
@@ -87,7 +87,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
         Ok(OutputResponse::from_v0(output_root, sync_status, l2_block_info))
     }
 
-    async fn op_safe_head_at_l1_block(
+    async fn safe_head_at_l1_block(
         &self,
         block_num: BlockNumberOrTag,
     ) -> RpcResult<SafeHeadResponse> {
@@ -118,7 +118,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
         })
     }
 
-    async fn op_sync_status(&self) -> RpcResult<SyncStatus> {
+    async fn sync_status(&self) -> RpcResult<SyncStatus> {
         Metrics::rpc_calls("op_syncStatus").increment(1.0);
 
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
@@ -138,13 +138,13 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
         return Ok(Self::sync_status_from_actor_queries(l1_sync_status, l2_sync_status));
     }
 
-    async fn op_rollup_config(&self) -> RpcResult<RollupConfig> {
+    async fn rollup_config(&self) -> RpcResult<RollupConfig> {
         Metrics::rpc_calls("op_rollupConfig").increment(1.0);
 
         self.engine_client.get_config().await
     }
 
-    async fn op_version(&self) -> RpcResult<String> {
+    async fn version(&self) -> RpcResult<String> {
         Metrics::rpc_calls("op_version").increment(1.0);
 
         const RPC_VERSION: &str = env!("CARGO_PKG_VERSION");

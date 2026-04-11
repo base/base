@@ -245,7 +245,7 @@ impl InProcessConsensus {
         // (non-zero unsafe head hash), then pass the real value.
         let mut unsafe_head = B256::ZERO;
         for _ in 0..40 {
-            match client.op_sync_status().await {
+            match client.sync_status().await {
                 Ok(status) if status.unsafe_l2.block_info.hash != B256::ZERO => {
                     unsafe_head = status.unsafe_l2.block_info.hash;
                     break;

@@ -1037,7 +1037,7 @@ pub async fn run_conductor_poller(
                 ) = tokio::join!(
                     ConductorApiClient::conductor_leader(conductor_client),
                     ConductorApiClient::conductor_active(conductor_client),
-                    RollupNodeApiClient::op_sync_status(cl_client),
+                    RollupNodeApiClient::sync_status(cl_client),
                     BaseP2PApiClient::opp2p_peer_stats(cl_client),
                     async {
                         if let Some(el) = el_client {
@@ -1168,7 +1168,7 @@ pub async fn run_validator_poller(
         let statuses = futures::future::join_all(clients.iter().map(
             |(name, cl_client, el_client)| async move {
                 let (sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) = tokio::join!(
-                    RollupNodeApiClient::op_sync_status(cl_client),
+                    RollupNodeApiClient::sync_status(cl_client),
                     BaseP2PApiClient::opp2p_peer_stats(cl_client),
                     async {
                         if let Some(el) = el_client {
