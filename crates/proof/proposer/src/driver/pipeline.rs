@@ -1295,17 +1295,11 @@ where
                     self.config.driver.block_interval
                 )))
             })?;
-        let intermediate_roots = self
-            .extract_intermediate_roots(starting_block_number, proposals)
-            .map_err(SubmitAction::Failed)?;
-
-        // JIT validation: check that each intermediate output root matches
-        // the canonical chain. Pre-fetch all canonical roots concurrently
-        // to avoid sequential RPC calls per intermediate block. The last
-        // intermediate block equals target_block, so reuse the already-fetched
-        // canonical output root instead of fetching it again.
         let intermediate_blocks = self
             .intermediate_block_numbers(starting_block_number)
+            .map_err(SubmitAction::Failed)?;
+        let intermediate_roots = self
+            .extract_intermediate_roots(starting_block_number, proposals, &intermediate_blocks)
             .map_err(SubmitAction::Failed)?;
 
         // Fetch canonical roots for non-target intermediate blocks only;
@@ -1463,10 +1457,10 @@ where
         &self,
         starting_block_number: u64,
         proposals: &[base_proof_primitives::Proposal],
+        blocks: &[u64],
     ) -> Result<Vec<B256>, ProposerError> {
-        let blocks = self.intermediate_block_numbers(starting_block_number)?;
         let mut roots = Vec::with_capacity(blocks.len());
-        for target_block in blocks {
+        for &target_block in blocks {
             let idx = target_block.checked_sub(starting_block_number + 1).ok_or_else(|| {
                 ProposerError::Internal(format!(
                     "underflow computing proposal index for block {target_block}"
