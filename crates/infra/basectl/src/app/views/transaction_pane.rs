@@ -122,11 +122,7 @@ impl TransactionPane {
     ///
     /// DA block inspection intentionally avoids relying on streamed flashblock
     /// caches, which may be incomplete after reconnects or message gaps.
-    pub fn for_block(
-        block_number: u64,
-        l2_rpc: &str,
-        explorer_base_url: Option<&str>,
-    ) -> Self {
+    pub fn for_block(block_number: u64, l2_rpc: &str, explorer_base_url: Option<&str>) -> Self {
         // DA block inspection should default to authoritative RPC data.
         // Streamed flashblock caches can be incomplete during reconnects or gaps.
         Self::new(block_number, format!("Block {block_number}"), l2_rpc, None, explorer_base_url)

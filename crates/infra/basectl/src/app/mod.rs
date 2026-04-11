@@ -12,8 +12,7 @@ pub use resources::{
 };
 
 mod router;
-pub use router::Router;
-pub use router::ViewId;
+pub use router::{Router, ViewId};
 
 mod runner;
 pub use runner::{run_app, run_flashblocks_json, start_background_services};

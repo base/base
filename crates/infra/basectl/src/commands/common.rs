@@ -411,12 +411,7 @@ impl DaTracker {
     }
 
     /// Updates an existing block's DA bytes with accurate data from a full fetch.
-    pub fn update_block_info(
-        &mut self,
-        block_number: u64,
-        accurate_da_bytes: u64,
-        timestamp: u64,
-    ) {
+    pub fn update_block_info(&mut self, block_number: u64, accurate_da_bytes: u64, timestamp: u64) {
         for contrib in &mut self.block_contributions {
             if contrib.block_number == block_number {
                 let diff = accurate_da_bytes as i64 - contrib.da_bytes as i64;
@@ -582,10 +577,7 @@ impl DaTracker {
     }
 
     /// Returns an iterator over L1 blocks matching the given filter.
-    pub fn filtered_l1_blocks(
-        &self,
-        filter: L1BlockFilter,
-    ) -> impl Iterator<Item = &L1Block> {
+    pub fn filtered_l1_blocks(&self, filter: L1BlockFilter) -> impl Iterator<Item = &L1Block> {
         self.l1_blocks.iter().filter(move |b| match filter {
             L1BlockFilter::All => true,
             L1BlockFilter::WithBlobs => b.has_blobs(),
