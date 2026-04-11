@@ -156,9 +156,8 @@ where
 mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
-    use alloy_primitives::{B256, Bytes};
-    use async_trait::async_trait;
-    use base_proof_primitives::{ProofResult, Proposal, ProverClient};
+    use alloy_primitives::B256;
+    use base_proof_primitives::ProverClient;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -166,36 +165,9 @@ mod tests {
         driver::{core::DriverConfig, pipeline::PipelineConfig},
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+            MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_sync_status,
         },
     };
-
-    #[derive(Debug)]
-    struct InstantMockProver;
-
-    #[async_trait]
-    impl ProverClient for InstantMockProver {
-        async fn prove(
-            &self,
-            request: base_proof_primitives::ProofRequest,
-        ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
-            let n = request.claimed_l2_block_number;
-            let proposal = Proposal {
-                output_root: B256::repeat_byte(n as u8),
-                signature: Bytes::from(vec![0xab; 65]),
-                l1_origin_hash: B256::repeat_byte(0x02),
-                l1_origin_number: 100 + n,
-                l2_block_number: n,
-                prev_output_root: B256::repeat_byte(0x03),
-                config_hash: B256::repeat_byte(0x04),
-            };
-            let start = n.saturating_sub(512);
-            let proposals: Vec<Proposal> = ((start + 1)..=n)
-                .map(|b| Proposal { output_root: B256::repeat_byte(b as u8), ..proposal.clone() })
-                .collect();
-            Ok(ProofResult::Tee { aggregate_proposal: proposal, proposals })
-        }
-    }
 
     fn test_pipeline_handle(
         global_cancel: CancellationToken,
@@ -208,7 +180,8 @@ mod tests {
     > {
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(InstantMockProver);
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: Duration::ZERO, block_interval: 512 });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
             output_roots: HashMap::new(),

@@ -741,69 +741,71 @@ where
             blocks.into_iter().collect()
         };
 
-        let canonical_roots: HashMap<u64, B256> = if all_canonical_blocks.is_empty() {
-            HashMap::new()
-        } else {
-            debug!(
-                blocks = all_canonical_blocks.len(),
-                game_blocks = prefetch_blocks.len(),
-                intermediate_count,
-                "Pre-fetching canonical output roots concurrently"
-            );
-            stream::iter(all_canonical_blocks)
-                .map(|block_number| {
-                    let rollup = &self.rollup_client;
-                    async move {
-                        rollup
-                            .output_at_block(block_number)
-                            .await
-                            .map(|out| (block_number, out.output_root))
-                            .map_err(ProposerError::Rpc)
-                    }
-                })
-                .buffered(RECOVERY_SCAN_CONCURRENCY)
-                .try_collect()
-                .await?
-        };
-
-        // ── Pre-fetch intermediate output roots from game contracts ─────
+        // ── Pre-fetch canonical and intermediate roots concurrently ─────
         //
-        // For every game proxy that the walk could visit, fetch its on-chain
-        // intermediate output roots concurrently. These will be compared
-        // against the canonical roots during the walk to verify the game's
-        // intermediate state commitments.
+        // These two fetches are independent (canonical roots come from the
+        // rollup node, intermediate roots from L1 game contracts), so run
+        // them in parallel to halve recovery latency.
         let walk_proxies: Vec<Address> = prefetch_blocks
             .iter()
             .filter_map(|b| game_map.map.get(b))
             .flat_map(|games| games.iter().map(|g| g.proxy))
             .collect();
 
-        let intermediate_roots_map: HashMap<Address, Vec<B256>> = if walk_proxies.is_empty() {
-            HashMap::new()
-        } else {
-            debug!(
-                proxies = walk_proxies.len(),
-                "Pre-fetching intermediate output roots from game contracts"
-            );
-            stream::iter(walk_proxies)
-                .map(|proxy| {
-                    let verifier = &self.verifier_client;
-                    async move {
-                        verifier
-                            .intermediate_output_roots(proxy)
-                            .await
-                            .map(|roots| (proxy, roots))
-                            .map_err(|e| {
-                                ProposerError::Contract(format!(
-                                    "intermediate_output_roots failed for proxy {proxy}: {e}"
-                                ))
-                            })
-                    }
-                })
-                .buffered(RECOVERY_SCAN_CONCURRENCY)
-                .try_collect()
-                .await?
-        };
+        let (canonical_roots, intermediate_roots_map) = tokio::try_join!(
+            async {
+                if all_canonical_blocks.is_empty() {
+                    return Ok(HashMap::new());
+                }
+                debug!(
+                    blocks = all_canonical_blocks.len(),
+                    game_blocks = prefetch_blocks.len(),
+                    intermediate_count,
+                    "Pre-fetching canonical output roots concurrently"
+                );
+                stream::iter(all_canonical_blocks)
+                    .map(|block_number| {
+                        let rollup = &self.rollup_client;
+                        async move {
+                            rollup
+                                .output_at_block(block_number)
+                                .await
+                                .map(|out| (block_number, out.output_root))
+                                .map_err(ProposerError::Rpc)
+                        }
+                    })
+                    .buffered(RECOVERY_SCAN_CONCURRENCY)
+                    .try_collect()
+                    .await
+            },
+            async {
+                if walk_proxies.is_empty() {
+                    return Ok(HashMap::new());
+                }
+                debug!(
+                    proxies = walk_proxies.len(),
+                    "Pre-fetching intermediate output roots from game contracts"
+                );
+                stream::iter(walk_proxies)
+                    .map(|proxy| {
+                        let verifier = &self.verifier_client;
+                        async move {
+                            verifier
+                                .intermediate_output_roots(proxy)
+                                .await
+                                .map(|roots| (proxy, roots))
+                                .map_err(|e| {
+                                    ProposerError::Contract(format!(
+                                        "intermediate_output_roots failed for proxy {proxy}: {e}"
+                                    ))
+                                })
+                        }
+                    })
+                    .buffered(RECOVERY_SCAN_CONCURRENCY)
+                    .try_collect()
+                    .await
+            },
+        )?;
 
         // ── Forward walk ────────────────────────────────────────────────
         //
@@ -1295,7 +1297,9 @@ where
 
         // JIT validation: check that each intermediate output root matches
         // the canonical chain. Pre-fetch all canonical roots concurrently
-        // to avoid sequential RPC calls per intermediate block.
+        // to avoid sequential RPC calls per intermediate block. The last
+        // intermediate block equals target_block, so reuse the already-fetched
+        // canonical output root instead of fetching it again.
         let interval = self.config.driver.intermediate_block_interval;
         let intermediate_blocks: Vec<u64> = (0..intermediate_roots.len())
             .map(|i| {
@@ -1313,28 +1317,37 @@ where
             })
             .collect::<Result<_, _>>()?;
 
-        let canonical_intermediates: Vec<B256> =
-            stream::iter(intermediate_blocks.iter().copied())
+        // Fetch canonical roots for non-target intermediate blocks only;
+        // the target block was already fetched for the JIT check above.
+        let non_target_blocks: Vec<u64> =
+            intermediate_blocks.iter().copied().filter(|&b| b != target_block).collect();
+
+        let mut canonical_map: HashMap<u64, B256> =
+            stream::iter(non_target_blocks)
                 .map(|block| {
                     let rollup = &self.rollup_client;
                     async move {
                         rollup
                             .output_at_block(block)
                             .await
-                            .map(|out| out.output_root)
+                            .map(|out| (block, out.output_root))
                             .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))
                     }
                 })
                 .buffered(RECOVERY_SCAN_CONCURRENCY)
                 .try_collect()
                 .await?;
+        canonical_map.insert(target_block, canonical_output.output_root);
 
-        for (i, (root, canonical)) in
-            intermediate_roots.iter().zip(canonical_intermediates.iter()).enumerate()
-        {
+        for (root, block) in intermediate_roots.iter().zip(intermediate_blocks.iter()) {
+            let canonical = canonical_map.get(block).ok_or_else(|| {
+                SubmitAction::Failed(ProposerError::Internal(format!(
+                    "missing canonical root for intermediate block {block}"
+                )))
+            })?;
             if *root != *canonical {
                 warn!(
-                    intermediate_block = intermediate_blocks[i],
+                    intermediate_block = *block,
                     proposal_root = ?root,
                     canonical_root = ?canonical,
                     target_block,
@@ -1509,8 +1522,7 @@ enum SubmitOutcome {
 mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
-    use alloy_primitives::{Address, B256, Bytes};
-    use async_trait::async_trait;
+    use alloy_primitives::{Address, B256};
     use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
     use rstest::rstest;
@@ -1519,7 +1531,8 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+        MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_proposal,
+        test_sync_status,
     };
 
     // ---- Named constants for test data ----
@@ -1538,44 +1551,6 @@ mod tests {
 
     /// Default mock prover delay for recovery tests (minimal).
     const MOCK_PROVER_DELAY: Duration = Duration::from_millis(1);
-
-    fn test_proposal(block_number: u64) -> Proposal {
-        Proposal {
-            output_root: B256::repeat_byte(block_number as u8),
-            signature: Bytes::from(vec![0xab; 65]),
-            l1_origin_hash: B256::repeat_byte(0x02),
-            l1_origin_number: 100 + block_number,
-            l2_block_number: block_number,
-            prev_output_root: B256::repeat_byte(0x03),
-            config_hash: B256::repeat_byte(0x04),
-        }
-    }
-
-    /// A mock prover that returns immediately with a configurable delay.
-    #[derive(Debug)]
-    struct MockProver {
-        delay: Duration,
-    }
-
-    #[async_trait]
-    impl ProverClient for MockProver {
-        async fn prove(
-            &self,
-            request: base_proof_primitives::ProofRequest,
-        ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
-            tokio::time::sleep(self.delay).await;
-
-            let block_number = request.claimed_l2_block_number;
-            let aggregate_proposal = test_proposal(block_number);
-
-            // Generate per-block proposals.
-            let start = block_number.saturating_sub(TEST_BLOCK_INTERVAL);
-            let proposals: Vec<Proposal> =
-                ((start + 1)..=block_number).map(test_proposal).collect();
-
-            Ok(ProofResult::Tee { aggregate_proposal, proposals })
-        }
-    }
 
     // ---- Helper builders for game data ----
 
@@ -1637,8 +1612,10 @@ mod tests {
     ) -> TestPipeline {
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: Duration::from_millis(10) });
+        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
+            delay: Duration::from_millis(10),
+            block_interval: pipeline_config.driver.block_interval,
+        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_block_number, B256::ZERO),
             output_roots: HashMap::new(),
@@ -1689,7 +1666,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver { delay: MOCK_PROVER_DELAY });
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
@@ -2628,37 +2606,13 @@ mod tests {
     const SUBMIT_INTERMEDIATE_INTERVAL: u64 = 2;
 
     fn submit_pipeline(output_roots: HashMap<u64, B256>) -> TestPipeline {
-        let cancel = CancellationToken::new();
-        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver { delay: MOCK_PROVER_DELAY });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(0, B256::ZERO),
+        recovery_pipeline_full(
+            MockDisputeGameFactory::with_count(0),
+            MockAggregateVerifier::empty(),
             output_roots,
-        });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
-
-        ProvingPipeline::new(
-            PipelineConfig {
-                max_parallel_proofs: 1,
-                max_retries: 1,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    block_interval: SUBMIT_BLOCK_INTERVAL,
-                    intermediate_block_interval: SUBMIT_INTERMEDIATE_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            prover,
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            Arc::new(MockDisputeGameFactory::with_count(0)),
-            Arc::new(MockAggregateVerifier::empty()),
-            Arc::new(MockOutputProposer),
-            cancel,
+            TEST_ANCHOR_BLOCK,
+            SUBMIT_BLOCK_INTERVAL,
+            SUBMIT_INTERMEDIATE_INTERVAL,
         )
     }
 
