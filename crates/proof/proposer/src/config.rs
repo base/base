@@ -66,7 +66,7 @@ pub struct ProposerConfig {
     pub rollup_rpc: Url,
     /// Skip TLS certificate verification.
     pub skip_tls_verify: bool,
-    /// Logging configuration (from base-cli-utils).
+    /// Logging configuration.
     pub log: LogConfig,
     /// Metrics server configuration.
     pub metrics: MetricsConfig,
