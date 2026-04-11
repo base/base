@@ -100,6 +100,8 @@ where
     F: DisputeGameFactoryClient + 'static,
 {
     async fn start_proposer(&self) -> Result<(), String> {
+        let mut session = self.session.lock().await;
+
         if self
             .running
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -119,7 +121,6 @@ where
             result
         });
 
-        let mut session = self.session.lock().await;
         session.cancel = cancel;
         session.task = Some(handle);
 
@@ -128,6 +129,8 @@ where
     }
 
     async fn stop_proposer(&self) -> Result<(), String> {
+        let mut session = self.session.lock().await;
+
         if self
             .running
             .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
@@ -136,7 +139,6 @@ where
             return Err("proposer is not running".into());
         }
 
-        let mut session = self.session.lock().await;
         session.cancel.cancel();
 
         if let Some(task) = session.task.take() {
