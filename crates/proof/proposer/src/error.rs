@@ -9,15 +9,15 @@ use crate::Metrics;
 #[derive(Debug, Error)]
 pub enum ProposerError {
     /// RPC connection error.
-    #[error("RPC error: {0}")]
+    #[error("rpc error: {0}")]
     Rpc(#[from] RpcError),
 
     /// Prover server communication error.
-    #[error("Prover error: {0}")]
+    #[error("prover error: {0}")]
     Prover(String),
 
     /// Contract interaction error.
-    #[error("Contract error: {0}")]
+    #[error("contract error: {0}")]
     Contract(String),
 
     /// Transaction was included but reverted on-chain.
@@ -29,11 +29,11 @@ pub enum ProposerError {
     GameAlreadyExists,
 
     /// Configuration error.
-    #[error("Configuration error: {0}")]
+    #[error("config error: {0}")]
     Config(String),
 
     /// Internal error.
-    #[error("Internal error: {0}")]
+    #[error("internal error: {0}")]
     Internal(String),
 
     /// Transaction manager error (nonce, fees, RPC, signing, etc.).
