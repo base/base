@@ -93,12 +93,14 @@ pub struct ProposerConfig {
 impl ProposerConfig {
     /// Create a validated configuration from CLI arguments.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
-        validate_url(&cli.proposer.prover_rpc, "prover-rpc")?;
-        validate_url(&cli.proposer.l1_eth_rpc, "l1-eth-rpc")?;
-        validate_url(&cli.proposer.l2_eth_rpc, "l2-eth-rpc")?;
-        validate_url(&cli.proposer.rollup_rpc, "rollup-rpc")?;
+        let Cli { proposer, logging, metrics, health, admin } = cli;
 
-        if cli.proposer.max_parallel_proofs == 0 {
+        validate_url(&proposer.prover_rpc, "prover-rpc")?;
+        validate_url(&proposer.l1_eth_rpc, "l1-eth-rpc")?;
+        validate_url(&proposer.l2_eth_rpc, "l2-eth-rpc")?;
+        validate_url(&proposer.rollup_rpc, "rollup-rpc")?;
+
+        if proposer.max_parallel_proofs == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "max-parallel-proofs",
                 constraint: "at least 1",
@@ -108,7 +110,7 @@ impl ProposerConfig {
 
         // A zero address would be indistinguishable from an unconfigured value,
         // and is used as the "no parent" sentinel for the first game from anchor state.
-        if cli.proposer.anchor_state_registry_addr == Address::ZERO {
+        if proposer.anchor_state_registry_addr == Address::ZERO {
             return Err(ConfigError::OutOfRange {
                 field: "anchor-state-registry-addr",
                 constraint: "non-zero address",
@@ -116,7 +118,7 @@ impl ProposerConfig {
             });
         }
 
-        if cli.proposer.poll_interval.is_zero() {
+        if proposer.poll_interval.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "poll-interval",
                 constraint: "greater than 0",
@@ -124,7 +126,7 @@ impl ProposerConfig {
             });
         }
 
-        if cli.metrics.enabled && cli.metrics.port == 0 {
+        if metrics.enabled && metrics.port == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "metrics-port",
                 constraint: "non-zero when metrics are enabled",
@@ -132,7 +134,7 @@ impl ProposerConfig {
             });
         }
 
-        if cli.health.port == 0 {
+        if health.port == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "health-port",
                 constraint: "non-zero",
@@ -140,7 +142,7 @@ impl ProposerConfig {
             });
         }
 
-        if cli.admin.enabled && cli.admin.port == 0 {
+        if admin.enabled && admin.port == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "admin-port",
                 constraint: "non-zero when admin is enabled",
@@ -148,41 +150,41 @@ impl ProposerConfig {
             });
         }
 
-        let retry = RetryConfig::from(&cli.proposer);
+        let retry = RetryConfig::from(&proposer);
 
-        let (signing, tx_manager) = if cli.proposer.dry_run {
+        let (signing, tx_manager) = if proposer.dry_run {
             (None, None)
         } else {
-            let s = base_tx_manager::SignerConfig::try_from(cli.proposer.signer)
+            let s = base_tx_manager::SignerConfig::try_from(proposer.signer)
                 .map_err(ConfigError::Signing)?;
-            let t = base_tx_manager::TxManagerConfig::try_from(cli.proposer.tx_manager)
+            let t = base_tx_manager::TxManagerConfig::try_from(proposer.tx_manager)
                 .map_err(ConfigError::TxManager)?;
             (Some(s), Some(t))
         };
 
         Ok(Self {
-            dry_run: cli.proposer.dry_run,
-            allow_non_finalized: cli.proposer.allow_non_finalized,
-            prover_rpc: cli.proposer.prover_rpc,
-            l1_eth_rpc: cli.proposer.l1_eth_rpc,
-            l2_eth_rpc: cli.proposer.l2_eth_rpc,
-            anchor_state_registry_addr: cli.proposer.anchor_state_registry_addr,
-            dispute_game_factory_addr: cli.proposer.dispute_game_factory_addr,
-            game_type: cli.proposer.game_type,
-            tee_image_hash: cli.proposer.tee_image_hash,
-            poll_interval: cli.proposer.poll_interval,
-            rpc_timeout: cli.proposer.rpc_timeout,
-            rollup_rpc: cli.proposer.rollup_rpc,
-            skip_tls_verify: cli.proposer.skip_tls_verify,
-            log: LogConfig::from(cli.logging),
-            metrics: cli.metrics.into(),
-            health_addr: cli.health.socket_addr(),
-            admin_addr: cli.admin.enabled.then(|| cli.admin.socket_addr()),
+            dry_run: proposer.dry_run,
+            allow_non_finalized: proposer.allow_non_finalized,
+            prover_rpc: proposer.prover_rpc,
+            l1_eth_rpc: proposer.l1_eth_rpc,
+            l2_eth_rpc: proposer.l2_eth_rpc,
+            anchor_state_registry_addr: proposer.anchor_state_registry_addr,
+            dispute_game_factory_addr: proposer.dispute_game_factory_addr,
+            game_type: proposer.game_type,
+            tee_image_hash: proposer.tee_image_hash,
+            poll_interval: proposer.poll_interval,
+            rpc_timeout: proposer.rpc_timeout,
+            rollup_rpc: proposer.rollup_rpc,
+            skip_tls_verify: proposer.skip_tls_verify,
+            log: LogConfig::from(logging),
+            metrics: metrics.into(),
+            health_addr: health.socket_addr(),
+            admin_addr: admin.enabled.then(|| admin.socket_addr()),
             retry,
             signing,
             tx_manager,
-            max_parallel_proofs: cli.proposer.max_parallel_proofs,
-            tee_prover_registry_address: cli.proposer.tee_prover_registry_address,
+            max_parallel_proofs: proposer.max_parallel_proofs,
+            tee_prover_registry_address: proposer.tee_prover_registry_address,
         })
     }
 }
