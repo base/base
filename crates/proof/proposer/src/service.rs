@@ -178,9 +178,9 @@ impl ProposerService {
                 info!("Dry-run mode enabled — proofs will be sourced but NOT submitted on-chain");
                 (Arc::new(crate::DryRunProposer), None)
             } else {
-                let signing = config
-                    .signing
-                    .ok_or_else(|| eyre::eyre!("signing config required when not in dry-run mode"))?;
+                let signing = config.signing.ok_or_else(|| {
+                    eyre::eyre!("signing config required when not in dry-run mode")
+                })?;
                 let tx_config = config.tx_manager.ok_or_else(|| {
                     eyre::eyre!("tx manager config required when not in dry-run mode")
                 })?;
