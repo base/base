@@ -11,7 +11,7 @@ use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info, warn};
 
 use super::pipeline::ProvingPipeline;
 
@@ -29,6 +29,13 @@ pub trait ProposerDriverControl: Send + Sync {
     fn is_running(&self) -> bool;
 }
 
+/// Active session state: the cancellation token and spawned task for a running
+/// pipeline.
+struct Session {
+    cancel: CancellationToken,
+    task: Option<JoinHandle<Result<()>>>,
+}
+
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
 /// and stopped at runtime (e.g. via the admin RPC).
 pub struct PipelineHandle<L1, L2, R, ASR, F>
@@ -39,11 +46,9 @@ where
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
-    #[allow(clippy::type_complexity)]
-    pipeline: Arc<TokioMutex<ProvingPipeline<L1, L2, R, ASR, F>>>,
-    session_cancel: TokioMutex<CancellationToken>,
+    pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
+    session: TokioMutex<Session>,
     global_cancel: CancellationToken,
-    task: TokioMutex<Option<JoinHandle<Result<()>>>>,
     running: Arc<AtomicBool>,
 }
 
@@ -75,12 +80,11 @@ where
         pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
         global_cancel: CancellationToken,
     ) -> Self {
-        let session_cancel = global_cancel.child_token();
+        let session = Session { cancel: global_cancel.child_token(), task: None };
         Self {
-            pipeline: Arc::new(TokioMutex::new(pipeline)),
-            session_cancel: TokioMutex::new(session_cancel),
+            pipeline,
+            session: TokioMutex::new(session),
             global_cancel,
-            task: TokioMutex::new(None),
             running: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -98,55 +102,57 @@ where
     async fn start_proposer(&self) -> Result<(), String> {
         if self
             .running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
             return Err("proposer is already running".into());
         }
 
         let cancel = self.global_cancel.child_token();
-        {
-            let mut pipeline = self.pipeline.lock().await;
-            pipeline.set_cancel(cancel.clone());
-        }
-        *self.session_cancel.lock().await = cancel;
+        let mut pipeline = self.pipeline.clone();
+        pipeline.set_cancel(cancel.clone());
 
-        let pipeline = Arc::clone(&self.pipeline);
         let running = Arc::clone(&self.running);
-
         let handle = tokio::spawn(async move {
-            let guard = pipeline.lock().await;
-            let result = guard.run().await;
-            running.store(false, Ordering::SeqCst);
+            let result = pipeline.run().await;
+            running.store(false, Ordering::Release);
             result
         });
 
-        *self.task.lock().await = Some(handle);
-        info!("Proving pipeline started");
+        let mut session = self.session.lock().await;
+        session.cancel = cancel;
+        session.task = Some(handle);
+
+        info!("proving pipeline started");
         Ok(())
     }
 
     async fn stop_proposer(&self) -> Result<(), String> {
         if self
             .running
-            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
             return Err("proposer is not running".into());
         }
 
-        self.session_cancel.lock().await.cancel();
+        let mut session = self.session.lock().await;
+        session.cancel.cancel();
 
-        if let Some(task) = self.task.lock().await.take() {
-            let _ = task.await;
+        if let Some(task) = session.task.take() {
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!(error = %e, "proving pipeline exited with error"),
+                Err(e) => error!(error = %e, "proving pipeline task panicked"),
+            }
         }
 
-        info!("Proving pipeline stopped");
+        info!("proving pipeline stopped");
         Ok(())
     }
 
     fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+        self.running.load(Ordering::Acquire)
     }
 }
 
