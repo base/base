@@ -17,6 +17,7 @@ use base_execution_payload_builder::{
     config::{BaseBuilderConfig, GasLimitConfig, OpDAConfig},
 };
 use base_execution_rpc::{
+    MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::OpEthApiBuilder,
     miner::OpMinerExtApi,

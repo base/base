@@ -4,8 +4,10 @@ use alloy_primitives::U64;
 use base_batcher_core::ThrottleClient;
 use base_common_rpc_jsonrpsee::MinerApiExtClient;
 use futures::future::BoxFuture;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use jsonrpsee::proc_macros::rpc;
+use jsonrpsee::{
+    http_client::{HttpClient, HttpClientBuilder},
+    proc_macros::rpc,
+};
 
 /// Client-side jsonrpsee trait for the miner API extension.
 #[rpc(client, namespace = "miner")]
