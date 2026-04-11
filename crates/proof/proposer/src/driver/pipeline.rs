@@ -754,29 +754,13 @@ where
 
         let (canonical_roots, intermediate_roots_map) = tokio::try_join!(
             async {
-                if all_canonical_blocks.is_empty() {
-                    return Ok(HashMap::new());
-                }
                 debug!(
                     blocks = all_canonical_blocks.len(),
                     game_blocks = prefetch_blocks.len(),
                     intermediate_count,
                     "Pre-fetching canonical output roots concurrently"
                 );
-                stream::iter(all_canonical_blocks)
-                    .map(|block_number| {
-                        let rollup = &self.rollup_client;
-                        async move {
-                            rollup
-                                .output_at_block(block_number)
-                                .await
-                                .map(|out| (block_number, out.output_root))
-                                .map_err(ProposerError::Rpc)
-                        }
-                    })
-                    .buffered(RECOVERY_SCAN_CONCURRENCY)
-                    .try_collect()
-                    .await
+                self.fetch_canonical_roots(all_canonical_blocks).await
             },
             async {
                 if walk_proxies.is_empty() {
@@ -1162,6 +1146,30 @@ where
         }
     }
 
+    /// Concurrently fetches canonical output roots for the given block numbers.
+    async fn fetch_canonical_roots(
+        &self,
+        blocks: Vec<u64>,
+    ) -> Result<HashMap<u64, B256>, ProposerError> {
+        if blocks.is_empty() {
+            return Ok(HashMap::new());
+        }
+        stream::iter(blocks)
+            .map(|block_number| {
+                let rollup = &self.rollup_client;
+                async move {
+                    rollup
+                        .output_at_block(block_number)
+                        .await
+                        .map(|out| (block_number, out.output_root))
+                        .map_err(ProposerError::Rpc)
+                }
+            })
+            .buffered(RECOVERY_SCAN_CONCURRENCY)
+            .try_collect()
+            .await
+    }
+
     async fn build_proof_request_for(
         &self,
         starting_block_number: u64,
@@ -1322,21 +1330,10 @@ where
         let non_target_blocks: Vec<u64> =
             intermediate_blocks.iter().copied().filter(|&b| b != target_block).collect();
 
-        let mut canonical_map: HashMap<u64, B256> =
-            stream::iter(non_target_blocks)
-                .map(|block| {
-                    let rollup = &self.rollup_client;
-                    async move {
-                        rollup
-                            .output_at_block(block)
-                            .await
-                            .map(|out| (block, out.output_root))
-                            .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))
-                    }
-                })
-                .buffered(RECOVERY_SCAN_CONCURRENCY)
-                .try_collect()
-                .await?;
+        let mut canonical_map: HashMap<u64, B256> = self
+            .fetch_canonical_roots(non_target_blocks)
+            .await
+            .map_err(SubmitAction::Failed)?;
         canonical_map.insert(target_block, canonical_output.output_root);
 
         for (root, block) in intermediate_roots.iter().zip(intermediate_blocks.iter()) {
