@@ -51,20 +51,6 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     ProposerError::TxManager(err)
 }
 
-/// Builds the proof data for `AggregateVerifier.initialize()`.
-///
-/// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)` = 130 bytes.
-///
-/// Matches Go's `buildProofData()` in `driver.go`.
-pub fn build_proof_data(proposal: &Proposal) -> Result<Bytes, ProposerError> {
-    ProofEncoder::encode_proof_bytes(
-        &proposal.signature,
-        proposal.l1_origin_hash,
-        proposal.l1_origin_number,
-    )
-    .map_err(|e| ProposerError::Internal(e.to_string()))
-}
-
 /// Trait for submitting output proposals to L1 via dispute game creation.
 #[async_trait]
 pub trait OutputProposer: Send + Sync {
@@ -111,6 +97,22 @@ pub struct ProposalSubmitter<T> {
     init_bond: U256,
 }
 
+impl<T> ProposalSubmitter<T> {
+    /// Builds the proof data for `AggregateVerifier.initialize()`.
+    ///
+    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)` = 130 bytes.
+    ///
+    /// Matches Go's `buildProofData()` in `driver.go`.
+    pub fn build_proof_data(proposal: &Proposal) -> Result<Bytes, ProposerError> {
+        ProofEncoder::encode_proof_bytes(
+            &proposal.signature,
+            proposal.l1_origin_hash,
+            proposal.l1_origin_number,
+        )
+        .map_err(|e| ProposerError::Internal(e.to_string()))
+    }
+}
+
 impl<T: TxManager> ProposalSubmitter<T> {
     /// Creates a new [`ProposalSubmitter`] backed by the given transaction manager.
     pub const fn new(
@@ -132,7 +134,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
-        let proof_data = build_proof_data(proposal)?;
+        let proof_data = Self::build_proof_data(proposal)?;
         let extra_data = encode_extra_data(l2_block_number, parent_address, intermediate_roots);
         let calldata =
             encode_create_calldata(self.game_type, proposal.output_root, extra_data, proof_data);
@@ -294,13 +296,13 @@ mod tests {
 
     #[test]
     fn test_build_proof_data_length() {
-        let proof = build_proof_data(&test_proposal()).unwrap();
+        let proof = ProposalSubmitter::<MockTxManager>::build_proof_data(&test_proposal()).unwrap();
         assert_eq!(proof.len(), EXPECTED_PROOF_DATA_LEN);
     }
 
     #[test]
     fn test_build_proof_data_type_byte() {
-        let proof = build_proof_data(&test_proposal()).unwrap();
+        let proof = ProposalSubmitter::<MockTxManager>::build_proof_data(&test_proposal()).unwrap();
         assert_eq!(proof[0], PROOF_TYPE_TEE);
     }
 
@@ -312,7 +314,7 @@ mod tests {
     #[case::v_5_rejected(5, None)]
     fn test_build_proof_data_v_value(#[case] v_input: u8, #[case] expected: Option<u8>) {
         let proposal = proposal_with_v(v_input);
-        let result = build_proof_data(&proposal);
+        let result = ProposalSubmitter::<MockTxManager>::build_proof_data(&proposal);
 
         match expected {
             Some(v) => {
