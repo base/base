@@ -19,17 +19,17 @@ workspace = true
 [dependencies]
 # alloy
 alloy-network.workspace = true
-alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
+alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base
 base-tx-manager.workspace = true
 base-alloy-network.workspace = true
-base-alloy-flashblocks.workspace = true
 base-common-rpc-types.workspace = true
+base-alloy-flashblocks.workspace = true
 
 # display
 indicatif.workspace = true
@@ -42,15 +42,15 @@ eyre.workspace = true
 rand.workspace = true
 revm.workspace = true
 serde.workspace = true
-tokio = { workspace = true, features = ["signal"] }
 futures.workspace = true
 tracing.workspace = true
 humantime.workspace = true
 thiserror.workspace = true
 tokio-util.workspace = true
-parking_lot.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+parking_lot.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 
 [dev-dependencies]

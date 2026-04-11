@@ -13,8 +13,8 @@ workspace = true
 
 [dependencies]
 # workspace
-base-execution-txpool.workspace = true
 base-node-runner.workspace = true
+base-execution-txpool.workspace = true
 
 # misc
 url.workspace = true

@@ -14,8 +14,8 @@ workspace = true
 # alloy
 alloy-rlp.workspace = true
 alloy-trie.workspace = true
-alloy-primitives.workspace = true
 alloy-provider.workspace = true
+alloy-primitives.workspace = true
 alloy-rpc-client.workspace = true
 alloy-transport-http.workspace = true
 
@@ -28,5 +28,5 @@ hex.workspace = true
 eyre.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true, features = ["derive"] }

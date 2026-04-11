@@ -25,8 +25,8 @@ base-builder-metering.workspace = true
 
 # reth
 base-reth-cli.workspace = true
-base-node-core.workspace = true
 reth-cli-util.workspace = true
+base-node-core.workspace = true
 base-execution-cli = { workspace = true, features = ["otlp"] }
 
 # cli
@@ -37,12 +37,12 @@ eyre.workspace = true
 
 [dev-dependencies]
 # workspace
-base-builder-core = { workspace = true, features = ["test-utils"] }
 base-bundles.workspace = true
+base-builder-core = { workspace = true, features = ["test-utils"] }
 
 # misc
-alloy-primitives.workspace = true
 rstest.workspace = true
+alloy-primitives.workspace = true
 
 [features]
 default = [ "jemalloc" ]

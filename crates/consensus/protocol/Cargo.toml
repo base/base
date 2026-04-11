@@ -30,9 +30,9 @@ base-alloy-rpc-types-engine.workspace = true
 
 # misc
 tracing.workspace = true
+thiserror.workspace = true
 ambassador.workspace = true
 async-trait.workspace = true
-thiserror.workspace = true
 unsigned-varint.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 
@@ -58,8 +58,8 @@ brotli = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
 arbitrary = { workspace = true, features = ["derive"] }
 rand = { workspace = true, features = ["std", "std_rng"] }
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
+alloy-primitives = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = [ "std" ]

@@ -23,8 +23,8 @@ alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 bytes.workspace = true
 serde = { workspace = true, features = ["std"] }
 brotli = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true

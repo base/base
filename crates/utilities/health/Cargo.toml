@@ -31,9 +31,9 @@ axum = { workspace = true, features = ["http1", "tokio"], optional = true }
 [dev-dependencies]
 rstest.workspace = true
 reqwest.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-transport-http = { workspace = true, features = ["reqwest"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]
 axum-server = [

@@ -19,8 +19,8 @@ alloy-chains = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
 base-consensus-genesis = { workspace = true }
-serde = { workspace = true, optional = true, features = ["derive"] }
 jsonrpsee = { workspace = true, optional = true }
+serde = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
 hex.workspace = true

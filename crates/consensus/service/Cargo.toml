@@ -19,9 +19,9 @@ base-consensus-disc.workspace = true
 base-consensus-peers.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
-base-consensus-sources.workspace = true
 base-consensus-derive.workspace = true
 base-consensus-safedb.workspace = true
+base-consensus-sources.workspace = true
 base-consensus-genesis.workspace = true
 base-consensus-providers.workspace = true
 base-consensus-rpc = { workspace = true, features = ["client"] }
@@ -34,8 +34,8 @@ alloy-consensus.workspace = true
 alloy-rpc-client.workspace = true
 alloy-primitives.workspace = true
 alloy-signer-local.workspace = true
-alloy-chains = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
+alloy-chains = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
 alloy-provider = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
@@ -43,28 +43,28 @@ alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustl
 
 # base-alloy
 base-alloy-chains.workspace = true
-base-alloy-provider.workspace = true
 base-alloy-network.workspace = true
+base-alloy-provider.workspace = true
 base-alloy-consensus.workspace = true
 base-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # general
-serde.workspace = true
 url.workspace = true
-futures.workspace = true
 http.workspace = true
+serde.workspace = true
 tower.workspace = true
 bytes.workspace = true
 discv5.workspace = true
-http-body.workspace = true
 backon.workspace = true
 libp2p.workspace = true
+futures.workspace = true
+http-body.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
 tokio-stream.workspace = true
-http-body-util.workspace = true
 libp2p-stream.workspace = true
+http-body-util.workspace = true
 tracing = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true, features = ["std"] }

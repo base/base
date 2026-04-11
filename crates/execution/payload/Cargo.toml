@@ -19,37 +19,37 @@ reth-storage-api.workspace = true
 reth-payload-util.workspace = true
 reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
-reth-primitives-traits.workspace = true
 reth-transaction-pool.workspace = true
-reth-payload-primitives.workspace = true
+reth-primitives-traits.workspace = true
 reth-payload-validator.workspace = true
+reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
 reth-revm = { workspace = true, features = ["witness"] }
 
 # op-reth
-base-execution-txpool.workspace = true
 base-revm.workspace = true
 base-protocol.workspace = true
 base-execution-evm.workspace = true
+base-execution-txpool.workspace = true
 
 # ethereum
 revm.workspace = true
 alloy-rlp.workspace = true
 alloy-evm.workspace = true
 alloy-eips.workspace = true
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
-alloy-rpc-types-engine.workspace = true
-alloy-rpc-types-debug.workspace = true
+alloy-primitives.workspace = true
 base-alloy-chains.workspace = true
+alloy-rpc-types-debug.workspace = true
+alloy-rpc-types-engine.workspace = true
 base-alloy-consensus = { workspace = true, features = ["reth"] }
 base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
 
 # misc
-serde.workspace = true
 sha2.workspace = true
-tracing.workspace = true
+serde.workspace = true
 either.workspace = true
-derive_more.workspace = true
+tracing.workspace = true
 thiserror.workspace = true
+derive_more.workspace = true

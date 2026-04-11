@@ -24,8 +24,8 @@ reth-node-api.workspace = true
 reth-provider.workspace = true
 reth-chainspec.workspace = true
 reth-storage-api.workspace = true
-reth-primitives-traits.workspace = true
 reth-transaction-pool.workspace = true
+reth-primitives-traits.workspace = true
 
 # revm
 base-revm.workspace = true
@@ -36,14 +36,14 @@ base-execution-evm.workspace = true
 base-alloy-consensus = { workspace = true, features = ["reth"] }
 
 # metrics
-metrics = { workspace = true, optional = true }
 base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
 
 # misc
-futures.workspace = true
 url.workspace = true
 serde.workspace = true
 c-kzg.workspace = true
+futures.workspace = true
 tracing.workspace = true
 tokio-util.workspace = true
 async-trait.workspace = true

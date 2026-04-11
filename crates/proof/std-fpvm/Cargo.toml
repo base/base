@@ -16,8 +16,8 @@ base-proof-preimage.workspace = true
 
 # External
 cfg-if.workspace = true
-async-trait.workspace = true
 thiserror.workspace = true
+async-trait.workspace = true
 buddy_system_allocator.workspace = true
 
 # `tracing` feature dependencies

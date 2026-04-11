@@ -20,13 +20,13 @@ futures.workspace = true
 backoff.workspace = true
 tokio-util.workspace = true
 tokio-tungstenite.workspace = true
-brotli = { workspace = true, features = ["std"] }
-tracing = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["full"] }
-serde_json = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
-serde = { workspace = true, features = ["derive", "std"] }
 metrics = { workspace = true, optional = true }
+brotli = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }
 

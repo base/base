@@ -16,16 +16,16 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-base-batcher-core.workspace = true
-base-batcher-service = { workspace = true, features = ["metrics"] }
-base-batcher-encoder = { workspace = true, features = ["clap"] }
-base-cli-utils.workspace = true
+url.workspace = true
+eyre.workspace = true
 base-protocol.workspace = true
-base-runtime = { workspace = true, features = ["tokio"] }
+base-cli-utils.workspace = true
+base-batcher-core.workspace = true
 alloy-signer-local.workspace = true
-alloy-primitives = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+base-runtime = { workspace = true, features = ["tokio"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
-tracing = { workspace = true, features = ["std"] }
-eyre.workspace = true
-url.workspace = true
+alloy-primitives = { workspace = true, features = ["std"] }
+base-batcher-encoder = { workspace = true, features = ["clap"] }
+base-batcher-service = { workspace = true, features = ["metrics"] }

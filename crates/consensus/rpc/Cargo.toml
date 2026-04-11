@@ -32,9 +32,9 @@ backon.workspace = true
 libp2p.workspace = true
 async-trait.workspace = true
 serde = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["time"] }
 
 # RPC
 getrandom = { workspace = true, features = ["wasm_js"] }

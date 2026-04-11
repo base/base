@@ -14,8 +14,8 @@ workspace = true
 # Reth
 reth-evm.workspace = true
 reth-chainspec.workspace = true
-reth-execution-types.workspace = true
 reth-storage-errors.workspace = true
+reth-execution-types.workspace = true
 reth-execution-errors.workspace = true
 reth-primitives-traits.workspace = true
 
@@ -24,8 +24,8 @@ reth-rpc-eth-api = { workspace = true, optional = true }
 # ethereum
 alloy-evm.workspace = true
 alloy-eips.workspace = true
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-primitives.workspace = true
 base-alloy-chains.workspace = true
 base-alloy-evm = { workspace = true, features = ["std", "reth"] }
 base-alloy-consensus = { workspace = true, features = ["evm", "reth"] }

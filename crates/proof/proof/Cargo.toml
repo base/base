@@ -24,8 +24,8 @@ base-consensus-genesis = { workspace = true, features = ["serde"] }
 # Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
-alloy-genesis.workspace = true
 alloy-trie.workspace = true
+alloy-genesis.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
@@ -59,8 +59,8 @@ tokio = { workspace = true, features = ["full"], optional = true }
 rand.workspace = true
 rayon.workspace = true
 rstest.workspace = true
-tokio = { workspace = true, features = ["full"] }
 c-kzg = { workspace = true, features = [] }
+tokio = { workspace = true, features = ["full"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
 
 [features]

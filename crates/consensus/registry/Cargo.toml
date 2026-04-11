@@ -19,8 +19,8 @@ base-consensus-genesis = { workspace = true, features = ["serde"] }
 
 # Alloy
 alloy-eips.workspace = true
-alloy-genesis.workspace = true
 alloy-chains.workspace = true
+alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
 base-alloy-chains.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }

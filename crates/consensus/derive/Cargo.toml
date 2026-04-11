@@ -31,8 +31,8 @@ base-alloy-consensus = { workspace = true, features = ["k256"] }
 
 # General
 tracing.workspace = true
-async-trait.workspace = true
 thiserror.workspace = true
+async-trait.workspace = true
 serde = { workspace = true, optional = true }
 
 # `test-utils` feature dependencies
@@ -47,8 +47,8 @@ spin.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 base-consensus-registry.workspace = true
-tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["std"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitrary"] }
 
