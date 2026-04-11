@@ -372,7 +372,13 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             GameCategory::InvalidZkProposal => {
                 ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
             }
-            _ => {}
+            GameCategory::FraudulentZkChallenge { .. } => {
+                debug_assert!(
+                    false,
+                    "unexpected category in process_invalid_proposal: {:?}",
+                    candidate.category
+                );
+            }
         }
 
         self.initiate_proof(candidate, invalid_index, expected_root, intent).await
