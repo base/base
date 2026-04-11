@@ -20,7 +20,7 @@ pub use constants::{
 };
 
 mod output_proposer;
-pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter};
+pub use output_proposer::{DryRunProposer, OutputProposer, ProposalSubmitter, build_proof_data};
 
 mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
