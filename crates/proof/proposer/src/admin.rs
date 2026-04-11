@@ -99,7 +99,7 @@ impl AdminServer {
     }
 
     /// Returns the local address the server is bound to.
-    pub fn local_addr(&self) -> SocketAddr {
+    pub const fn local_addr(&self) -> SocketAddr {
         self.addr
     }
 
@@ -155,9 +155,7 @@ mod tests {
     async fn test_admin_start_stop() {
         let driver: Arc<dyn ProposerDriverControl> = Arc::new(MockDriverControl::new());
         let server =
-            AdminServer::spawn("127.0.0.1:0".parse().unwrap(), Arc::clone(&driver))
-                .await
-                .unwrap();
+            AdminServer::spawn("127.0.0.1:0".parse().unwrap(), Arc::clone(&driver)).await.unwrap();
         let addr = server.local_addr();
         let client = reqwest::Client::new();
 
@@ -210,8 +208,7 @@ mod tests {
     #[tokio::test]
     async fn test_admin_unknown_method() {
         let driver: Arc<dyn ProposerDriverControl> = Arc::new(MockDriverControl::new());
-        let server =
-            AdminServer::spawn("127.0.0.1:0".parse().unwrap(), driver).await.unwrap();
+        let server = AdminServer::spawn("127.0.0.1:0".parse().unwrap(), driver).await.unwrap();
         let addr = server.local_addr();
 
         let client = reqwest::Client::new();
