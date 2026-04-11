@@ -287,7 +287,7 @@ impl RpcErrorClassifier {
             return TxManagerError::Rpc(error.to_string());
         };
 
-        let lowered = payload.message.to_lowercase();
+        let lowered = payload.message.to_ascii_lowercase();
 
         if lowered.contains("replacement transaction underpriced") {
             return TxManagerError::ReplacementUnderpriced;
@@ -312,8 +312,8 @@ impl RpcErrorClassifier {
                 let reason = alloy_sol_types::decode_revert_reason(&data);
                 return TxManagerError::ExecutionReverted { reason, data: Some(data) };
             }
-            // Byte offsets from `lowered` are safe to index into
-            // `payload.message` because RPC error messages are ASCII.
+            // `to_ascii_lowercase()` is byte-offset-preserving, so
+            // offsets from `lowered` are safe to index `payload.message`.
             let after = &payload.message[pos + "execution reverted".len()..];
             let after = after.trim_start_matches(':').trim();
             let reason = if after.is_empty() { None } else { Some(after.to_string()) };
