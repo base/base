@@ -279,8 +279,10 @@ where
             total_gas_used: output.total_gas_used,
             total_execution_time_us,
             state_root_time_us: output.state_root_time_us,
-            state_root_account_node_count: output.state_root_account_node_count,
-            state_root_storage_node_count: output.state_root_storage_node_count,
+            state_root_account_leaf_count: output.state_root_account_leaf_count,
+            state_root_account_branch_count: output.state_root_account_branch_count,
+            state_root_storage_leaf_count: output.state_root_storage_leaf_count,
+            state_root_storage_branch_count: output.state_root_storage_branch_count,
         })
     }
 
@@ -1093,8 +1095,10 @@ mod tests {
             total_gas_used: 21_000,
             total_execution_time_us: 123,
             state_root_time_us: 45,
-            state_root_account_node_count: 7,
-            state_root_storage_node_count: 11,
+            state_root_account_leaf_count: 3,
+            state_root_account_branch_count: 4,
+            state_root_storage_leaf_count: 6,
+            state_root_storage_branch_count: 5,
             ..Default::default()
         };
 
