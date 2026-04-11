@@ -435,7 +435,7 @@ tracing-subscriber = "0.3.22"
 tracing = { version = "0.1.43", default-features = false }
 
 # Metrics
-metrics-derive = "0.1.0"
+metrics-derive = "0.1.1"
 metrics = { version = "0.24.3", default-features = false }
 metrics-process = { version = "2.4.3", default-features = false }
 metrics-exporter-prometheus = { version = "0.18.1", default-features = false }
@@ -489,9 +489,9 @@ libp2p-identity = "0.2.12"
 bincode = "2"
 serde_bytes = "0.11"
 serde_with = "3.8.1"
-ethereum_ssz = "0.9"
+ethereum_ssz = "0.10.1"
 serde_yaml = "0.9.34"
-ethereum_ssz_derive = "0.9"
+ethereum_ssz_derive = "0.10.1"
 serde = { version = "1.0.228", default-features = false }
 serde_json = { version = "1.0.145", default-features = false }
 
@@ -499,7 +499,7 @@ serde_json = { version = "1.0.145", default-features = false }
 arbtest = "0.3"
 test-case = "3"
 mockall = "0.14"
-tempfile = "3.8"
+tempfile = "3.20"
 rstest = "0.26.1"
 criterion = "0.8"
 serial_test = "3"
