@@ -29,7 +29,8 @@ where
     Ext: clap::Args + fmt::Debug,
     Rpc: RpcModuleValidator,
 {
-    pub(crate) fn new(cli: Cli<Ext, Rpc>) -> Self {
+    /// Creates a new [`CliApp`] wrapping the given parsed CLI.
+    pub fn new(cli: Cli<Ext, Rpc>) -> Self {
         Self { cli, runner: None, layers: Some(Layers::new()), guard: None }
     }
 

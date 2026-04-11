@@ -23,7 +23,7 @@ use crate::{
 };
 
 /// Generic alias for dup cursor for T
-pub(crate) type Dup<'tx, T> = <<DatabaseEnv as Database>::TX as DbTx>::DupCursor<T>;
+pub type Dup<'tx, T> = <<DatabaseEnv as Database>::TX as DbTx>::DupCursor<T>;
 
 /// Iterates versioned dup-sorted rows and returns the latest value (<= `max_block_number`),
 /// skipping tombstones.

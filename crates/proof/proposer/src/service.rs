@@ -54,7 +54,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
         poll_interval = ?config.poll_interval,
         rpc_timeout = ?config.rpc_timeout,
         max_parallel_proofs = config.max_parallel_proofs,
-        max_game_recovery_lookback = config.max_game_recovery_lookback,
         health_addr = %config.health_addr,
         admin_addr = ?config.admin_addr,
         tee_prover_registry = ?config.tee_prover_registry_address,
@@ -232,7 +231,6 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     // ── 6. Create proving pipeline ─────────────────────────────────────────
     let pipeline_config = PipelineConfig {
         max_parallel_proofs: config.max_parallel_proofs,
-        max_game_recovery_lookback: config.max_game_recovery_lookback,
         max_retries: 3,
         tee_prover_registry_address: config.tee_prover_registry_address,
         driver: DriverConfig {
@@ -244,6 +242,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
             allow_non_finalized: config.allow_non_finalized,
             proposer_address: proposer_address.unwrap_or_default(),
             tee_image_hash: config.tee_image_hash,
+            anchor_state_registry_address: config.anchor_state_registry_addr,
         },
     };
     let pipeline = ProvingPipeline::new(
@@ -310,7 +309,7 @@ pub async fn run(config: ProposerConfig) -> Result<()> {
     if driver_handle.is_running()
         && let Err(e) = driver_handle.stop_proposer().await
     {
-        warn!(error = e, "Error stopping proposer driver");
+        warn!(error = %e, "Error stopping proposer driver");
     }
 
     if let Some(handle) = admin_handle {

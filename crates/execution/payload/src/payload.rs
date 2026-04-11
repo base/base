@@ -170,13 +170,13 @@ impl<OpTransactionSigned> From<EthPayloadBuilderAttributes>
 #[derive(Debug, Clone)]
 pub struct OpBuiltPayload<N: NodePrimitives = OpPrimitives> {
     /// Identifier of the payload
-    pub(crate) id: PayloadId,
+    pub id: PayloadId,
     /// Sealed block
-    pub(crate) block: Arc<SealedBlock<N::Block>>,
+    pub block: Arc<SealedBlock<N::Block>>,
     /// Block execution data for the payload, if any.
-    pub(crate) executed_block: Option<BuiltPayloadExecutedBlock<N>>,
+    pub executed_block: Option<BuiltPayloadExecutedBlock<N>>,
     /// The fees of the block
-    pub(crate) fees: U256,
+    pub fees: U256,
 }
 
 // === impl BuiltPayload ===

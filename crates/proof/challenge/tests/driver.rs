@@ -41,7 +41,7 @@ fn game_state(l2_block_number: u64) -> MockGameState {
         game_info: base_proof_contracts::GameInfo {
             root_claim: BOGUS_CLAIM,
             l2_block_number,
-            parent_index: 0,
+            parent_address: Address::ZERO,
         },
         starting_block_number: 10,
         l1_head: DEFAULT_L1_HEAD,

@@ -37,6 +37,10 @@ pub struct RollupConfig {
     /// The L1 chain ID
     pub l1_chain_id: u64,
     /// The L2 chain ID
+    #[cfg_attr(
+        feature = "serde",
+        serde(serialize_with = "chain_id_as_u64", deserialize_with = "chain_id_from_u64")
+    )]
     pub l2_chain_id: Chain,
     /// Hardfork timestamps.
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -444,6 +448,23 @@ impl From<&BaseChainConfig> for RollupConfig {
             chain_op_config: BaseFeeConfig::from(cfg),
         }
     }
+}
+
+/// Serializes a [`Chain`] as its numeric chain ID.
+///
+/// `alloy_chains::Chain` serializes named chains (e.g. Base Sepolia) as a string like
+/// `"base-sepolia"`, but external consumers such as op-batcher expect a plain integer.
+/// This helper forces numeric serialization for all chains.
+#[cfg(feature = "serde")]
+fn chain_id_as_u64<S: serde::Serializer>(chain: &Chain, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_u64(chain.id())
+}
+
+/// Deserializes a [`Chain`] from its numeric chain ID.
+#[cfg(feature = "serde")]
+fn chain_id_from_u64<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Chain, D::Error> {
+    let id = <u64 as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(Chain::from_id(id))
 }
 
 #[cfg(test)]
@@ -872,6 +893,25 @@ mod tests {
 
         let err = serde_json::from_str::<RollupConfig>(raw).unwrap_err();
         assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_l2_chain_id_serializes_as_number() {
+        // Named chains (e.g. Base Sepolia, ID 84532) must serialize as a numeric JSON value,
+        // not as the string "base-sepolia". op-batcher and other Go consumers expect *big.Int.
+        let cfg = RollupConfig { l2_chain_id: Chain::from_id(84532), ..Default::default() };
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert!(
+            json["l2_chain_id"].is_number(),
+            "l2_chain_id must serialize as a number, got: {}",
+            json["l2_chain_id"]
+        );
+        assert_eq!(json["l2_chain_id"], 84532u64);
+
+        // Round-trip: deserializing from a numeric l2_chain_id must also work.
+        let round_tripped: RollupConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(round_tripped.l2_chain_id.id(), 84532);
     }
 
     #[test]

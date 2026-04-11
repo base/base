@@ -23,7 +23,7 @@ type BaseComponents = <OpComponentsBuilder as NodeComponentsBuilder<BaseNodeType
 ///
 /// Because `Components` depends only on pool, network, executor, and consensus builders (not the
 /// payload service builder), this type is identical regardless of which payload service is used.
-pub(crate) type OpNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
+pub type OpNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
 
 /// Convenience alias for the OP Eth API type exposed by the reth RPC add-ons.
 type OpEthApi = <OpAddOns as RethRpcAddOns<OpNodeAdapter>>::EthApi;
@@ -56,7 +56,7 @@ type BoxExExFactory = Box<
 ///
 /// This is generic over the `NodeComponentsBuilder` (`CB`) so that both the default payload and
 /// the flashblocks payload service can be used interchangeably.
-pub(crate) type RethNodeBuilder<CB> =
+pub type RethNodeBuilder<CB> =
     WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, CB, OpAddOns>>;
 
 /// Pure hook accumulator for the Base node builder.

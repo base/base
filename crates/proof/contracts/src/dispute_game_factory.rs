@@ -43,7 +43,7 @@ sol! {
 }
 
 /// Information about a game at a factory index.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct GameAtIndex {
     /// The game type ID.
     pub game_type: u32,
@@ -136,17 +136,21 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
 
 /// Encodes the `extraData` for `DisputeGameFactory.createWithInitData()`.
 ///
-/// Format: `l2BlockNumber(32) + parentIndex(4) + intermediateRoots(32 * N)`.
+/// Format: `l2BlockNumber(32) + parentAddress(20) + intermediateRoots(32 * N)`.
+///
+/// This is **packed encoding** (not ABI-encoded). The Solidity contract
+/// reads these fields at fixed byte offsets via clone-with-immutable-args
+/// (CWIA).
 pub fn encode_extra_data(
     l2_block_number: u64,
-    parent_index: u32,
+    parent_address: Address,
     intermediate_roots: &[B256],
 ) -> Bytes {
-    let mut data = vec![0u8; 36 + 32 * intermediate_roots.len()];
+    let mut data = vec![0u8; 52 + 32 * intermediate_roots.len()];
     data[..32].copy_from_slice(&U256::from(l2_block_number).to_be_bytes::<32>());
-    data[32..36].copy_from_slice(&parent_index.to_be_bytes());
+    data[32..52].copy_from_slice(parent_address.as_slice());
     for (i, root) in intermediate_roots.iter().enumerate() {
-        data[36 + i * 32..36 + (i + 1) * 32].copy_from_slice(root.as_slice());
+        data[52 + i * 32..52 + (i + 1) * 32].copy_from_slice(root.as_slice());
     }
     Bytes::from(data)
 }
@@ -173,29 +177,32 @@ mod tests {
 
     #[test]
     fn test_encode_extra_data() {
-        let data = encode_extra_data(1000, 42, &[]);
-        assert_eq!(data.len(), 36);
+        let parent = Address::repeat_byte(0x42);
+        let data = encode_extra_data(1000, parent, &[]);
+        assert_eq!(data.len(), 52);
 
         assert_eq!(&data[24..32], &1000u64.to_be_bytes());
-        assert_eq!(&data[32..36], &42u32.to_be_bytes());
+        assert_eq!(&data[32..52], parent.as_slice());
     }
 
     #[test]
     fn test_encode_extra_data_no_parent() {
-        let data = encode_extra_data(500, 0xFFFFFFFF, &[]);
-        assert_eq!(&data[32..36], &[0xFF, 0xFF, 0xFF, 0xFF]);
+        let registry = Address::repeat_byte(0xAA);
+        let data = encode_extra_data(500, registry, &[]);
+        assert_eq!(&data[32..52], registry.as_slice());
     }
 
     #[test]
     fn test_encode_extra_data_with_intermediate_roots() {
+        let parent = Address::repeat_byte(0x42);
         let roots = vec![B256::repeat_byte(0xAA), B256::repeat_byte(0xBB)];
-        let data = encode_extra_data(1000, 42, &roots);
-        assert_eq!(data.len(), 36 + 64);
+        let data = encode_extra_data(1000, parent, &roots);
+        assert_eq!(data.len(), 52 + 64);
 
         assert_eq!(&data[24..32], &1000u64.to_be_bytes());
-        assert_eq!(&data[32..36], &42u32.to_be_bytes());
-        assert_eq!(&data[36..68], roots[0].as_slice());
-        assert_eq!(&data[68..100], roots[1].as_slice());
+        assert_eq!(&data[32..52], parent.as_slice());
+        assert_eq!(&data[52..84], roots[0].as_slice());
+        assert_eq!(&data[84..116], roots[1].as_slice());
     }
 
     #[test]

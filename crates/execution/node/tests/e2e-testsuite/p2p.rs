@@ -1,3 +1,5 @@
+//! P2P sync integration tests for the execution node.
+
 use std::sync::Arc;
 
 use base_node_core::utils::{advance_chain, setup};

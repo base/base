@@ -155,7 +155,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         }
         self.games
             .get(index as usize)
-            .cloned()
+            .copied()
             .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
     }
     async fn init_bonds(&self, _: u32) -> Result<U256, ContractError> {
@@ -173,9 +173,15 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 ///
 /// Addresses in `failing_addresses` will return a `ContractError::Validation`
 /// to simulate transient RPC failures.
+///
+/// `intermediate_roots_map` provides explicit intermediate output roots per
+/// game proxy. When not present, `intermediate_output_roots()` derives a
+/// default single-element vec from the game's `root_claim` (matching the
+/// contract behavior when `block_interval == intermediate_block_interval`).
 pub(crate) struct MockAggregateVerifier {
     pub game_info_map: std::collections::HashMap<Address, GameInfo>,
     pub failing_addresses: std::collections::HashSet<Address>,
+    pub intermediate_roots_map: std::collections::HashMap<Address, Vec<B256>>,
 }
 
 impl MockAggregateVerifier {
@@ -184,12 +190,17 @@ impl MockAggregateVerifier {
         Self {
             game_info_map: std::collections::HashMap::new(),
             failing_addresses: std::collections::HashSet::new(),
+            intermediate_roots_map: std::collections::HashMap::new(),
         }
     }
 
     /// Creates a verifier backed by an explicit address-to-info map.
     pub(crate) fn with_game_info(map: std::collections::HashMap<Address, GameInfo>) -> Self {
-        Self { game_info_map: map, failing_addresses: std::collections::HashSet::new() }
+        Self {
+            game_info_map: map,
+            failing_addresses: std::collections::HashSet::new(),
+            intermediate_roots_map: std::collections::HashMap::new(),
+        }
     }
 }
 
@@ -201,10 +212,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
                 "mock: simulated game_info failure for {addr}"
             )));
         }
-        Ok(self.game_info_map.get(&addr).cloned().unwrap_or(GameInfo {
+        Ok(self.game_info_map.get(&addr).copied().unwrap_or(GameInfo {
             root_claim: B256::ZERO,
             l2_block_number: 0,
-            parent_index: 0,
+            parent_address: Address::ZERO,
         }))
     }
     async fn status(&self, _: Address) -> Result<u8, ContractError> {
@@ -228,8 +239,17 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         Ok(512)
     }
-    async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
-        Ok(vec![])
+    async fn intermediate_output_roots(&self, addr: Address) -> Result<Vec<B256>, ContractError> {
+        // Explicit intermediate roots take priority.
+        if let Some(roots) = self.intermediate_roots_map.get(&addr) {
+            return Ok(roots.clone());
+        }
+        // Default: derive from game info (single root = root_claim), matching
+        // the contract behavior when block_interval == intermediate_block_interval.
+        if let Some(info) = self.game_info_map.get(&addr) {
+            return Ok(vec![info.root_claim]);
+        }
+        Ok(vec![B256::ZERO])
     }
     async fn countered_index(&self, _: Address) -> Result<u64, ContractError> {
         Ok(0)
@@ -307,7 +327,7 @@ impl OutputProposer for MockOutputProposer {
         &self,
         _proposal: &Proposal,
         _l2_block_number: u64,
-        _parent_index: u32,
+        _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         Ok(())

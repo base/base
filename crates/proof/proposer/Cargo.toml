@@ -66,13 +66,13 @@ eyre.workspace = true
 thiserror.workspace = true
 
 # CLI
-clap = { workspace = true, features = ["derive", "env"] }
 base-cli-utils.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
 
 # Metrics
 base-metrics.workspace = true
-metrics = { workspace = true, optional = true }
 metrics-exporter-prometheus.workspace = true
+metrics = { workspace = true, optional = true }
 
 # TLS
 rustls = { workspace = true, features = ["ring"] }
@@ -84,12 +84,11 @@ base-health = { workspace = true, features = ["axum-server"] }
 hex.workspace = true
 url.workspace = true
 bytes.workspace = true
-backon.workspace = true
 humantime.workspace = true
-moka = { workspace = true, features = ["future"] }
 axum = { workspace = true, features = ["http1", "json", "tokio"] }
 
 [dev-dependencies]
+rstest.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
 

@@ -77,7 +77,11 @@ impl Default for MockGameState {
             status: 0,
             zk_prover: Address::ZERO,
             tee_prover: Address::ZERO,
-            game_info: GameInfo { root_claim: B256::ZERO, l2_block_number: 0, parent_index: 0 },
+            game_info: GameInfo {
+                root_claim: B256::ZERO,
+                l2_block_number: 0,
+                parent_address: Address::ZERO,
+            },
             starting_block_number: 0,
             l1_head: B256::ZERO,
             intermediate_output_roots: vec![],
@@ -111,7 +115,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
         self.games
             .get(index as usize)
-            .cloned()
+            .copied()
             .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
     }
 
@@ -147,7 +151,7 @@ impl MockAggregateVerifier {
 #[async_trait]
 impl AggregateVerifierClient for MockAggregateVerifier {
     async fn game_info(&self, game_address: Address) -> Result<GameInfo, ContractError> {
-        self.get(game_address, |s| s.game_info.clone())
+        self.get(game_address, |s| s.game_info)
     }
 
     async fn status(&self, game_address: Address) -> Result<u8, ContractError> {
@@ -278,7 +282,7 @@ pub const fn mock_state_with_tee(
         game_info: GameInfo {
             root_claim: B256::repeat_byte(block_number as u8),
             l2_block_number: block_number,
-            parent_index: 0,
+            parent_address: Address::ZERO,
         },
         starting_block_number: block_number.saturating_sub(10),
         l1_head: DEFAULT_L1_HEAD,

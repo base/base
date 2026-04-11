@@ -150,18 +150,6 @@ pub struct ProposerArgs {
     )]
     pub max_parallel_proofs: usize,
 
-    /// Maximum number of games to scan backwards when recovering state on startup.
-    /// Must be greater than the maximum number of pending (unresolved) dispute games
-    /// that could exist at any given time. For production deployments with high game
-    /// volume, increase this beyond the default to ensure the proposer can always
-    /// find and resume from its most recent game after a restart.
-    #[arg(
-        long = "max-game-recovery-lookback",
-        env = cli_env!("MAX_GAME_RECOVERY_LOOKBACK"),
-        default_value = "5000"
-    )]
-    pub max_game_recovery_lookback: u64,
-
     /// Address of the `TEEProverRegistry` contract on L1.
     /// When set, the proposer validates signers before on-chain submission.
     #[arg(
@@ -265,7 +253,6 @@ mod tests {
         assert!(!cli.proposer.skip_tls_verify);
         assert_eq!(cli.proposer.game_type, 1);
         assert_eq!(cli.proposer.max_parallel_proofs, 1);
-        assert_eq!(cli.proposer.max_game_recovery_lookback, 5000);
 
         assert_eq!(cli.logging.level, 3);
         assert_eq!(cli.logging.stdout_format, LogFormat::Full);
