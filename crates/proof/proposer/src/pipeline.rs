@@ -47,10 +47,10 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
-use super::core::{DriverConfig, RecoveredState};
 use crate::{
     Metrics,
     constants::{MAX_FACTORY_SCAN_LOOKBACK, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
+    driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::{OutputProposer, is_game_already_exists},
 };
@@ -277,7 +277,7 @@ where
 
     /// Replaces the cancellation token.
     ///
-    /// Used by [`super::PipelineHandle`] to create fresh sessions when the
+    /// Used by [`crate::PipelineHandle`] to create fresh sessions when the
     /// pipeline is restarted via the admin RPC.
     pub fn set_cancel(&mut self, cancel: CancellationToken) {
         self.cancel = cancel;

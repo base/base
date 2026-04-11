@@ -29,10 +29,9 @@ use tracing::{info, warn};
 use crate::{
     Metrics,
     config::ProposerConfig,
-    driver::{
-        DriverConfig, PipelineConfig, PipelineHandle, ProposerDriverControl, ProvingPipeline,
-    },
+    driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::ProposalSubmitter,
+    pipeline::{PipelineConfig, ProvingPipeline},
 };
 
 /// Runs the full proposer service lifecycle.
