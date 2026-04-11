@@ -489,9 +489,9 @@ libp2p-identity = "0.2.12"
 bincode = "2"
 serde_bytes = "0.11"
 serde_with = "3.8.1"
-ethereum_ssz = "0.10.1"
+ethereum_ssz = "0.9"
 serde_yaml = "0.9.34"
-ethereum_ssz_derive = "0.10.1"
+ethereum_ssz_derive = "0.9"
 serde = { version = "1.0.228", default-features = false }
 serde_json = { version = "1.0.145", default-features = false }
 
