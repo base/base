@@ -31,7 +31,7 @@ use base_tx_manager::TxManager;
 use base_zk_client::{ProofType, ProveBlockRequest, ZkProofProvider};
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     BondManager, CandidateGame, ChallengeSubmitter, ChallengerMetrics, DisputeIntent, GameCategory,
@@ -373,11 +373,20 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
             }
             GameCategory::FraudulentZkChallenge { .. } => {
+                error!(
+                    category = ?candidate.category,
+                    game = %game_address,
+                    "unexpected category in process_invalid_proposal"
+                );
                 debug_assert!(
                     false,
                     "unexpected category in process_invalid_proposal: {:?}",
                     candidate.category
                 );
+                return Err(eyre::eyre!(
+                    "unexpected category in process_invalid_proposal: {:?}",
+                    candidate.category
+                ));
             }
         }
 
