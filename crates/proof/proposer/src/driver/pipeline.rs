@@ -611,10 +611,8 @@ where
         &self,
         cache: &mut Option<CachedRecovery>,
     ) -> Option<(RecoveredState, u64)> {
-        let (state_result, safe_head_result) = tokio::join!(
-            self.recover_latest_state(cache),
-            self.latest_safe_block_number(),
-        );
+        let (state_result, safe_head_result) =
+            tokio::join!(self.recover_latest_state(cache), self.latest_safe_block_number(),);
 
         let state = match state_result {
             Ok(s) => s,
@@ -808,22 +806,20 @@ where
             // Look up the pre-fetched canonical root and game candidates.
             // Either missing means there is no game at this block — the gap
             // where the next proposal should start.
-            let (canonical_root, candidates) = match (
-                canonical_roots.get(&expected_block),
-                game_map.map.get(&expected_block),
-            ) {
-                (Some(root), Some(c)) => (*root, c),
-                _ => {
-                    info!(
-                        gap_block = expected_block,
-                        parent_block,
-                        parent_address = %parent_address,
-                        games_verified = steps,
-                        "Found first missing game, will propose from here"
-                    );
-                    break;
-                }
-            };
+            let (canonical_root, candidates) =
+                match (canonical_roots.get(&expected_block), game_map.map.get(&expected_block)) {
+                    (Some(root), Some(c)) => (*root, c),
+                    _ => {
+                        info!(
+                            gap_block = expected_block,
+                            parent_block,
+                            parent_address = %parent_address,
+                            games_verified = steps,
+                            "Found first missing game, will propose from here"
+                        );
+                        break;
+                    }
+                };
 
             // Filter to candidates that reference our expected parent.
             let mut matching =
@@ -1185,17 +1181,9 @@ where
                     .map_err(ProposerError::Rpc)
             },
             async {
-                self.rollup_client
-                    .output_at_block(target_block)
-                    .await
-                    .map_err(ProposerError::Rpc)
+                self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)
             },
-            async {
-                self.l1_client
-                    .header_by_number(None)
-                    .await
-                    .map_err(ProposerError::Rpc)
-            },
+            async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
         )?;
 
         let request = ProofRequest {
@@ -1341,10 +1329,8 @@ where
         let non_target_blocks: Vec<u64> =
             intermediate_blocks.iter().copied().filter(|&b| b != target_block).collect();
 
-        let mut canonical_map: HashMap<u64, B256> = self
-            .fetch_canonical_roots(non_target_blocks)
-            .await
-            .map_err(SubmitAction::Failed)?;
+        let mut canonical_map: HashMap<u64, B256> =
+            self.fetch_canonical_roots(non_target_blocks).await.map_err(SubmitAction::Failed)?;
         canonical_map.insert(target_block, canonical_output.output_root);
 
         for (root, block) in intermediate_roots.iter().zip(intermediate_blocks.iter()) {

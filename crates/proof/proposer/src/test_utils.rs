@@ -352,8 +352,7 @@ impl ProverClient for MockProver {
         let aggregate_proposal = test_proposal(block_number);
 
         let start = block_number.saturating_sub(self.block_interval);
-        let proposals: Vec<Proposal> =
-            ((start + 1)..=block_number).map(test_proposal).collect();
+        let proposals: Vec<Proposal> = ((start + 1)..=block_number).map(test_proposal).collect();
 
         Ok(ProofResult::Tee { aggregate_proposal, proposals })
     }
