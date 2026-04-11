@@ -57,6 +57,9 @@ base_metrics::define_metrics! {
     #[describe("Total number of TEE proof failures that fell back to ZK")]
     tee_proof_fallback_total: counter,
 
+    #[describe("Total number of invalid TEE proposals detected (Path 1)")]
+    invalid_tee_proposal_detected_total: counter,
+
     #[describe("Total number of fraudulent ZK challenges detected (Path 2)")]
     fraudulent_zk_challenge_detected_total: counter,
 

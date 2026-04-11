@@ -365,8 +365,14 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             "invalid intermediate root detected, requesting proof"
         );
 
-        if intent == DisputeIntent::Nullify {
-            ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
+        match candidate.category {
+            GameCategory::InvalidTeeProposal => {
+                ChallengerMetrics::invalid_tee_proposal_detected_total().increment(1);
+            }
+            GameCategory::InvalidZkProposal => {
+                ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
+            }
+            _ => {}
         }
 
         self.initiate_proof(candidate, invalid_index, expected_root, intent).await
