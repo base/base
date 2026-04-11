@@ -101,11 +101,9 @@ pub struct ProposerConfig {
 impl ProposerConfig {
     /// Create a validated configuration from CLI arguments.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
-        // Validate URLs have scheme and host
         validate_url(&cli.proposer.prover_rpc, "prover-rpc")?;
         validate_url(&cli.proposer.l1_eth_rpc, "l1-eth-rpc")?;
         validate_url(&cli.proposer.l2_eth_rpc, "l2-eth-rpc")?;
-
         validate_url(&cli.proposer.rollup_rpc, "rollup-rpc")?;
 
         if cli.proposer.max_parallel_proofs == 0 {
@@ -116,9 +114,8 @@ impl ProposerConfig {
             });
         }
 
-        // The anchor state registry address is used as the "no parent"
-        // sentinel for the first game from anchor state. A zero address
-        // would be indistinguishable from an unconfigured value.
+        // A zero address would be indistinguishable from an unconfigured value,
+        // and is used as the "no parent" sentinel for the first game from anchor state.
         if cli.proposer.anchor_state_registry_addr == Address::ZERO {
             return Err(ConfigError::OutOfRange {
                 field: "anchor-state-registry-addr",
@@ -127,7 +124,6 @@ impl ProposerConfig {
             });
         }
 
-        // Validate poll_interval > 0
         if cli.proposer.poll_interval.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "poll-interval",
@@ -136,26 +132,22 @@ impl ProposerConfig {
             });
         }
 
-        // Validate metrics port when enabled
         if cli.metrics.enabled && cli.metrics.port == 0 {
             return Err(ConfigError::Metrics(
                 "metrics port must be non-zero when metrics are enabled".to_string(),
             ));
         }
 
-        // Validate health port (health server is always started)
         if cli.health.port == 0 {
             return Err(ConfigError::Rpc("health server port must be non-zero".to_string()));
         }
 
-        // Validate admin port when admin is enabled
         if cli.admin.enabled && cli.admin.port == 0 {
             return Err(ConfigError::Rpc(
                 "admin RPC port must be non-zero when admin is enabled".to_string(),
             ));
         }
 
-        // Extract retry config before moving signer out of proposer
         let retry = RetryConfig::from(&cli.proposer);
 
         let (signing, tx_manager) = if cli.proposer.dry_run {
@@ -180,27 +172,26 @@ impl ProposerConfig {
             tee_image_hash: cli.proposer.tee_image_hash,
             poll_interval: cli.proposer.poll_interval,
             rpc_timeout: cli.proposer.rpc_timeout,
-            retry,
-            signing,
-            tx_manager,
             rollup_rpc: cli.proposer.rollup_rpc,
             skip_tls_verify: cli.proposer.skip_tls_verify,
-            max_parallel_proofs: cli.proposer.max_parallel_proofs,
-            tee_prover_registry_address: cli.proposer.tee_prover_registry_address,
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),
             health_addr: cli.health.socket_addr(),
             admin_addr: cli.admin.enabled.then(|| cli.admin.socket_addr()),
+            retry,
+            signing,
+            tx_manager,
+            max_parallel_proofs: cli.proposer.max_parallel_proofs,
+            tee_prover_registry_address: cli.proposer.tee_prover_registry_address,
         })
     }
 }
 
-/// Validate that a URL has a scheme and host.
+/// Validate that a URL has a host component.
+///
+/// Scheme is guaranteed present by `url::Url::parse`, but host can be absent
+/// (e.g. `file:///path`).
 fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
-    if url.scheme().is_empty() {
-        return Err(ConfigError::InvalidUrl { field, reason: "missing scheme".to_string() });
-    }
-
     if url.host().is_none() {
         return Err(ConfigError::InvalidUrl { field, reason: "missing host".to_string() });
     }
