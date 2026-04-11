@@ -29,7 +29,7 @@ confirmation.
 - **`FeeCalculator`** — pure arithmetic for EIP-1559/EIP-4844 fee caps, replacement
   thresholds, fee bumps, and fee limit enforcement.
 - **`GasPriceCaps`** — intermediate fee estimates passed between estimation and construction.
-- **`FeeOverride`** — optional per-field fee overrides applied as a floor.
+- **`FeeOverride`** — optional per-field fee and gas-limit overrides applied as a floor.
 - **`BumpedFees`** — result of a fee bump calculation.
 
 ### Error handling
@@ -43,8 +43,8 @@ confirmation.
 ### Nonce management
 
 - **`NonceManager`** — lazy-initialized nonce cache with mutex-guarded allocation.
-- **`NonceGuard`** — RAII guard holding a reserved nonce; drop to release or call
-  `rollback()` on failure.
+- **`NonceGuard`** — RAII guard holding a reserved nonce; drop consumes it, or
+  call `rollback()` on failure to return it for reuse.
 - **`NonceState`** — snapshot of the current nonce state.
 
 ### Send state
@@ -59,7 +59,7 @@ confirmation.
 - **`BlobTxBuilder`** — builds EIP-7594 cell-proof sidecars from raw blobs.
 - **`MAX_BLOBS_PER_TX`** — maximum blobs per transaction (Fusaka limit).
 
-### Configuration
+### Config types
 
 - **`TxManagerConfig`** — validated runtime configuration with public fields.
 - **`ConfigError`** — validation error for out-of-range or invalid config values.
@@ -144,11 +144,11 @@ use alloy_primitives::{bytes, Address, U256};
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::{
-    BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManager, TxManagerConfig,
+    BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManagerConfig,
 };
 
 let provider = RootProvider::new_http("http://localhost:8545".parse()?);
-let signer_config = SignerConfig::local("0x01".parse::<PrivateKeySigner>()?);
+let signer_config = SignerConfig::local("0x0101010101010101010101010101010101010101010101010101010101010101".parse::<PrivateKeySigner>()?);
 let config = TxManagerConfig::default();
 let metrics = Arc::new(BaseTxMetrics::new("my_service"));
 let manager = SimpleTxManager::new(provider, signer_config, config, 1, metrics).await?;
