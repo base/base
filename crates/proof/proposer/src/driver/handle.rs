@@ -127,7 +127,11 @@ where
     }
 
     async fn stop_proposer(&self) -> Result<(), String> {
-        if !self.running.load(Ordering::SeqCst) {
+        if self
+            .running
+            .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return Err("proposer is not running".into());
         }
 
