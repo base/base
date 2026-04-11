@@ -39,8 +39,7 @@ base_metrics::define_metrics! {
             "tx_reverted",
             "config",
             "internal",
-            "tx_manager",
-            "game_already_exists"
+            "tx_manager"
         ]
     )]
     errors_total: counter,
