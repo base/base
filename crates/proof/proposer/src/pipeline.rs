@@ -36,8 +36,8 @@ use std::{
 use alloy_primitives::{Address, B256, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameInfo,
-    ITEEProverRegistry,
+    AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, DisputeGameFactoryClient,
+    GameInfo, ITEEProverRegistry,
 };
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
@@ -106,13 +106,26 @@ struct CachedGameMap {
 /// the anchor root changes or a new game is added. A full factory rescan
 /// only happens on the first startup or after an L1 reorg that reduces
 /// `game_count`.
+///
+/// The walk result is stored separately from the game map so that a
+/// failed walk/prefetch can preserve the game map for incremental reuse
+/// on the next tick without forcing a full factory rescan.
 #[derive(Debug, Clone)]
 struct CachedRecovery {
     /// Cached factory game map (incrementally updated).
     game_map: CachedGameMap,
-    /// The anchor root hash used for the most recent walk.
+    /// Walk result from the most recent successful forward walk, paired
+    /// with the anchor root used to produce it. `None` when the last
+    /// walk or prefetch failed — the game map is still valid for reuse.
+    walk: Option<CachedWalk>,
+}
+
+/// Successful walk result cached alongside the anchor root that produced it.
+#[derive(Debug, Clone, Copy)]
+struct CachedWalk {
+    /// The anchor root hash used for this walk.
     anchor_root: B256,
-    /// The walk result derived from `game_map` + `anchor_root`.
+    /// The recovered on-chain state from the walk.
     state: RecoveredState,
 }
 
@@ -433,8 +446,8 @@ where
         }
 
         let recovered = match &state.cached_recovery {
-            Some(c) => c.state,
-            None => return,
+            Some(CachedRecovery { walk: Some(w), .. }) => w.state,
+            _ => return,
         };
 
         let next_to_submit =
@@ -677,22 +690,59 @@ where
         let anchor = self.anchor_registry.get_anchor_root().await?;
         let anchor_state_registry_address = self.config.driver.anchor_state_registry_address;
 
-        // Fast path: both game_count and anchor_root unchanged → return
-        // cached walk result with zero factory RPCs.
+        // Fast path: both game_count and anchor_root unchanged AND a valid
+        // walk result exists → return the cached state with zero RPCs.
         if let Some(cached) = cache.as_ref()
-            && cached.anchor_root == anchor.root
+            && let Some(walk) = &cached.walk
+            && walk.anchor_root == anchor.root
             && cached.game_map.scanned_up_to == count
         {
             debug!(game_count = count, "No changes since last recovery, returning cached state");
-            return Ok(cached.state);
+            return Ok(walk.state);
         }
 
         // ── Game map update ─────────────────────────────────────────────
         //
         // Reuse the cached map when possible, scanning only new entries.
         // A full rescan is needed only on cold start or L1 reorg.
-        let game_map = self.updated_game_map(cache.take(), count).await?;
+        let game_map = self.updated_game_map(cache.take().map(|c| c.game_map), count).await?;
 
+        // ── Pre-fetch and forward walk ─────────────────────────────────
+        //
+        // Run the walk as a separate method so `game_map` ownership stays
+        // here. On success, cache both the map and the walk result. On
+        // failure, preserve the game map so the next tick can reuse it
+        // (incremental scan) rather than paying a full factory rescan.
+        match self.forward_walk(&game_map, &anchor, anchor_state_registry_address).await {
+            Ok(state) => {
+                let walk = CachedWalk { anchor_root: anchor.root, state };
+                *cache = Some(CachedRecovery { game_map, walk: Some(walk) });
+                Ok(state)
+            }
+            Err(e) => {
+                // Preserve the game map for the next tick. The walk result
+                // is set to `None` so the fast-path check cannot return
+                // stale state — the next tick will fall through to
+                // `updated_game_map` (which reuses the scanned entries)
+                // and retry the walk.
+                warn!(error = %e, "Forward walk failed, preserving game map cache");
+                *cache = Some(CachedRecovery { game_map, walk: None });
+                Err(e)
+            }
+        }
+    }
+
+    /// Pre-fetches canonical and intermediate roots, then performs a forward
+    /// walk from the anchor to find the latest verified game.
+    ///
+    /// Takes the game map by reference so the caller retains ownership and
+    /// can preserve it in the cache even when this method fails.
+    async fn forward_walk(
+        &self,
+        game_map: &CachedGameMap,
+        anchor: &AnchorRoot,
+        anchor_state_registry_address: Address,
+    ) -> Result<RecoveredState, ProposerError> {
         // ── Pre-fetch canonical output roots ───────────────────────────
         //
         // Compute the set of block numbers the forward walk *could* visit
@@ -953,15 +1003,11 @@ where
             );
         }
 
-        let state = RecoveredState {
+        Ok(RecoveredState {
             parent_address,
             output_root: parent_output_root,
             l2_block_number: parent_block,
-        };
-
-        *cache = Some(CachedRecovery { game_map, anchor_root: anchor.root, state });
-
-        Ok(state)
+        })
     }
 
     /// Returns an up-to-date game map, reusing the cached map when possible.
@@ -974,18 +1020,18 @@ where
     ///   as-is — no factory RPCs needed.
     async fn updated_game_map(
         &self,
-        cache: Option<CachedRecovery>,
+        cached_map: Option<CachedGameMap>,
         count: u64,
     ) -> Result<CachedGameMap, ProposerError> {
-        match cache {
-            Some(cached) if count >= cached.game_map.scanned_up_to => {
-                let scanned_up_to = cached.game_map.scanned_up_to;
+        match cached_map {
+            Some(game_map) if count >= game_map.scanned_up_to => {
+                let scanned_up_to = game_map.scanned_up_to;
                 let new_entries = count - scanned_up_to;
                 if new_entries == 0 {
                     // Anchor root changed but game_count is the same —
                     // reuse the map, just re-walk.
                     debug!("Anchor root changed, re-walking with existing game map");
-                    return Ok(cached.game_map);
+                    return Ok(game_map);
                 }
 
                 // If the delta exceeds the lookback window (e.g. proposer
@@ -1007,15 +1053,15 @@ where
                     new_entries,
                     "Incrementally scanning new factory entries"
                 );
-                let mut map = cached.game_map.map;
+                let mut map = game_map.map;
                 self.scan_factory_range(scanned_up_to, count, &mut map).await?;
                 Ok(CachedGameMap { scanned_up_to: count, map })
             }
-            Some(cached) => {
+            Some(game_map) => {
                 // game_count decreased — L1 reorg. Full rescan needed
                 // because we can't know which entries were removed.
                 warn!(
-                    cached_count = cached.game_map.scanned_up_to,
+                    cached_count = game_map.scanned_up_to,
                     current_count = count,
                     "Game count decreased (possible L1 reorg), performing full rescan"
                 );
@@ -2020,12 +2066,14 @@ mod tests {
 
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(99), // stale — will be recomputed
-                output_root: B256::repeat_byte(0xDD),
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(99), // stale — will be recomputed
+                    output_root: B256::repeat_byte(0xDD),
+                    l2_block_number: TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         let pipeline = recovery_pipeline_with_roots(
@@ -2053,12 +2101,14 @@ mod tests {
 
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 5, map: HashMap::new() },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(99),
-                output_root: B256::repeat_byte(0xDD),
-                l2_block_number: 5 * TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(99),
+                    output_root: B256::repeat_byte(0xDD),
+                    l2_block_number: 5 * TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         let pipeline = recovery_pipeline_with_roots(
@@ -2100,12 +2150,14 @@ mod tests {
 
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(0),
-                output_root: first_info.root_claim,
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(0),
+                    output_root: first_info.root_claim,
+                    l2_block_number: TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         let pipeline = recovery_pipeline_with_roots(
@@ -2140,12 +2192,14 @@ mod tests {
 
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(0),
-                output_root: first_info.root_claim,
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(0),
+                    output_root: first_info.root_claim,
+                    l2_block_number: TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         let pipeline = recovery_pipeline_with_roots(
@@ -2248,12 +2302,14 @@ mod tests {
         let mut state = PipelineState::new();
         state.cached_recovery = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 10, map: HashMap::new() },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(5),
-                output_root: B256::repeat_byte(0x11),
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(5),
+                    output_root: B256::repeat_byte(0x11),
+                    l2_block_number: TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         state.reset();
@@ -2385,12 +2441,14 @@ mod tests {
         )]);
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::repeat_byte(0xAA), // different from test_anchor_root
-            state: RecoveredState {
-                parent_address: proxy_addr(99), // stale — will be recomputed
-                output_root: B256::repeat_byte(0xDD),
-                l2_block_number: 9999,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::repeat_byte(0xAA), // different from test_anchor_root
+                state: RecoveredState {
+                    parent_address: proxy_addr(99), // stale — will be recomputed
+                    output_root: B256::repeat_byte(0xDD),
+                    l2_block_number: 9999,
+                },
+            }),
         });
 
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -2400,7 +2458,7 @@ mod tests {
         assert_eq!(state.parent_address, proxy_addr(0));
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
         // Cache should be repopulated with the new anchor root.
-        assert_eq!(cache.as_ref().unwrap().anchor_root, B256::ZERO);
+        assert_eq!(cache.as_ref().unwrap().walk.as_ref().unwrap().anchor_root, B256::ZERO);
     }
 
     // ---- Recovery: intermediate output root verification ----
