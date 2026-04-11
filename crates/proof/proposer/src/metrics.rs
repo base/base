@@ -47,6 +47,7 @@ base_metrics::define_metrics! {
 
     #[describe("Total output root mismatches detected at submit time")]
     root_mismatch_total: counter,
+
     #[describe("Time to generate a single proof (seconds)")]
     proof_duration_seconds: histogram,
 
@@ -61,23 +62,6 @@ base_metrics::define_metrics! {
 }
 
 impl Metrics {
-    /// Label for RPC errors.
-    pub const ERROR_TYPE_RPC: &str = "rpc";
-    /// Label for prover errors.
-    pub const ERROR_TYPE_PROVER: &str = "prover";
-    /// Label for contract interaction errors.
-    pub const ERROR_TYPE_CONTRACT: &str = "contract";
-    /// Label for reverted transactions.
-    pub const ERROR_TYPE_TX_REVERTED: &str = "tx_reverted";
-    /// Label for configuration errors.
-    pub const ERROR_TYPE_CONFIG: &str = "config";
-    /// Label for internal errors.
-    pub const ERROR_TYPE_INTERNAL: &str = "internal";
-    /// Label for transaction manager errors.
-    pub const ERROR_TYPE_TX_MANAGER: &str = "tx_manager";
-    /// Label for duplicate game errors.
-    pub const ERROR_TYPE_GAME_ALREADY_EXISTS: &str = "game_already_exists";
-
     /// Sets the `up` gauge to indicate the proposer is running.
     pub fn record_startup() {
         Self::up().set(1.0);
