@@ -395,7 +395,6 @@ where
                         "Dispatching proof task"
                     );
                     state.inflight.insert(target);
-                    state.record_gauges();
                     state.prove_tasks.spawn(async move {
                         let mut proof_timer =
                             base_metrics::timed!(Metrics::proof_duration_seconds());
@@ -424,6 +423,7 @@ where
                 None => break,
             };
         }
+        state.record_gauges();
         Ok(())
     }
 
@@ -724,18 +724,14 @@ where
         };
 
         // Expand to include intermediate block numbers for each game block.
-        // For a game at block B with parent at B - block_interval, the
-        // intermediate blocks are at parent + i * intermediate_block_interval
-        // for i in 1..=intermediate_count. The last one (i = count) equals B
-        // itself, so the set is a superset of `prefetch_blocks`.
+        // The last intermediate block equals the game block itself, so the
+        // result is a superset of `prefetch_blocks`.
         let all_canonical_blocks: Vec<u64> = {
             let mut blocks =
                 Vec::with_capacity(prefetch_blocks.len() * intermediate_count as usize);
             for &game_block in &prefetch_blocks {
                 let parent = game_block - block_interval;
-                for i in 1..=intermediate_count {
-                    blocks.push(parent + i * intermediate_block_interval);
-                }
+                blocks.extend(self.intermediate_block_numbers(parent)?);
             }
             blocks
         };
