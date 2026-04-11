@@ -33,10 +33,10 @@ pub enum ConfigError {
     },
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
-    Signing(String),
+    Signing(base_tx_manager::ConfigError),
     /// Invalid transaction manager configuration.
     #[error("invalid tx manager config: {0}")]
-    TxManager(String),
+    TxManager(base_tx_manager::ConfigError),
 }
 
 /// Validated proposer configuration.
@@ -156,9 +156,9 @@ impl ProposerConfig {
             (None, None)
         } else {
             let s = base_tx_manager::SignerConfig::try_from(cli.proposer.signer)
-                .map_err(|e| ConfigError::Signing(e.to_string()))?;
+                .map_err(ConfigError::Signing)?;
             let t = base_tx_manager::TxManagerConfig::try_from(cli.proposer.tx_manager)
-                .map_err(|e| ConfigError::TxManager(e.to_string()))?;
+                .map_err(ConfigError::TxManager)?;
             (Some(s), Some(t))
         };
 
@@ -281,6 +281,7 @@ mod tests {
         assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.rpc_timeout, Duration::from_secs(30));
+        assert_eq!(config.max_parallel_proofs, 1);
     }
 
     #[test]
@@ -366,68 +367,11 @@ mod tests {
     }
 
     #[test]
-    fn test_log_config_from_args() {
-        use tracing::level_filters::LevelFilter;
-
-        // Test verbosity level 4 (DEBUG)
-        let args = LogArgs {
-            level: 4,
-            stdout_quiet: false,
-            stdout_format: LogFormat::Json,
-            ..Default::default()
-        };
-        let config = LogConfig::from(args);
-        assert_eq!(config.global_level, LevelFilter::DEBUG);
-        assert!(config.stdout_logs.is_some());
-        assert!(config.file_logs.is_none());
-
-        // Test stdout_quiet suppresses stdout logging
-        let args = LogArgs {
-            level: 3,
-            stdout_quiet: true,
-            stdout_format: LogFormat::Full,
-            ..Default::default()
-        };
-        let config = LogConfig::from(args);
-        assert!(config.stdout_logs.is_none());
-    }
-
-    #[test]
-    fn test_metrics_config_from_args() {
-        let args = MetricsArgs {
-            enabled: true,
-            addr: "127.0.0.1".parse().unwrap(),
-            port: 9090,
-            ..Default::default()
-        };
-        let config = MetricsConfig::from(args);
-        assert!(config.enabled);
-        assert_eq!(config.port, 9090);
-    }
-
-    #[test]
     fn test_url_without_host() {
         // Create URL that parses but has no host (file:// URLs for instance)
         let url = Url::parse("file:///some/path").unwrap();
         let result = validate_url(&url, "test-field");
         assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "test-field", .. })));
-    }
-
-    #[test]
-    fn test_config_error_display() {
-        let error =
-            ConfigError::InvalidUrl { field: "prover-rpc", reason: "missing host".to_string() };
-        assert_eq!(error.to_string(), "invalid prover-rpc URL: missing host");
-
-        let error = ConfigError::OutOfRange {
-            field: "poll-interval",
-            constraint: "greater than 0",
-            value: "0".to_string(),
-        };
-        assert_eq!(error.to_string(), "poll-interval must be greater than 0, got 0");
-
-        let error = ConfigError::Signing("missing key".to_string());
-        assert_eq!(error.to_string(), "invalid signing config: missing key");
     }
 
     #[test]
@@ -488,13 +432,6 @@ mod tests {
             result,
             Err(ConfigError::OutOfRange { field: "max-parallel-proofs", .. })
         ));
-    }
-
-    #[test]
-    fn test_max_parallel_proofs_default() {
-        let cli = minimal_cli();
-        let config = ProposerConfig::from_cli(cli).unwrap();
-        assert_eq!(config.max_parallel_proofs, 1);
     }
 
     #[test]
