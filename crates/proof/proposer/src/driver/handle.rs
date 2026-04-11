@@ -96,7 +96,11 @@ where
     F: DisputeGameFactoryClient + 'static,
 {
     async fn start_proposer(&self) -> Result<(), String> {
-        if self.running.load(Ordering::SeqCst) {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return Err("proposer is already running".into());
         }
 
@@ -109,7 +113,6 @@ where
 
         let pipeline = Arc::clone(&self.pipeline);
         let running = Arc::clone(&self.running);
-        running.store(true, Ordering::SeqCst);
 
         let handle = tokio::spawn(async move {
             let guard = pipeline.lock().await;
