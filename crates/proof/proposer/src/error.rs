@@ -8,15 +8,12 @@ use crate::Metrics;
 /// Main error type for the proposer.
 #[derive(Debug, Error)]
 pub enum ProposerError {
-    /// RPC connection error.
     #[error("rpc error: {0}")]
     Rpc(#[from] RpcError),
 
-    /// Prover server communication error.
     #[error("prover error: {0}")]
     Prover(String),
 
-    /// Contract interaction error.
     #[error("contract error: {0}")]
     Contract(String),
 
@@ -28,15 +25,12 @@ pub enum ProposerError {
     #[error("game already exists")]
     GameAlreadyExists,
 
-    /// Configuration error.
     #[error("config error: {0}")]
     Config(String),
 
-    /// Internal error.
     #[error("internal error: {0}")]
     Internal(String),
 
-    /// Transaction manager error (nonce, fees, RPC, signing, etc.).
     #[error(transparent)]
     TxManager(#[from] base_tx_manager::TxManagerError),
 }
