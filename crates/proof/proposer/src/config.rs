@@ -139,7 +139,11 @@ impl ProposerConfig {
         }
 
         if cli.health.port == 0 {
-            return Err(ConfigError::Rpc("health server port must be non-zero".to_string()));
+            return Err(ConfigError::OutOfRange {
+                field: "health-port",
+                constraint: "non-zero",
+                value: "0".to_string(),
+            });
         }
 
         if cli.admin.enabled && cli.admin.port == 0 {
@@ -313,7 +317,10 @@ mod tests {
         let mut cli = minimal_cli();
         cli.health.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Rpc(_))));
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "health-port", .. })
+        ));
     }
 
     #[test]
