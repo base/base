@@ -145,7 +145,9 @@ impl ProofsState {
 /// to await drain completion on shutdown so funds are returned to the funder.
 #[derive(Debug)]
 pub struct LoadTestTask {
+    /// Flag to signal the load test to stop.
     pub stop_flag: Arc<AtomicBool>,
+    /// Handle to the running load test task.
     pub handle: JoinHandle<()>,
 }
 

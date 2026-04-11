@@ -35,6 +35,7 @@ const KEYBINDINGS: &[Keybinding] = &[
 ];
 
 /// View for displaying the live flashblocks stream with gas usage.
+#[derive(Debug)]
 pub struct FlashblocksView {
     table_state: TableState,
     auto_scroll: bool,

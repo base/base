@@ -2,7 +2,7 @@
 
 /// Application frame layout and help sidebar.
 mod app_frame;
-pub use app_frame::AppFrame;
+pub use app_frame::{AppFrame, AppLayout};
 
 /// Keybinding display types.
 mod keybinding;
@@ -14,4 +14,4 @@ pub use terminal::{restore_terminal, setup_terminal};
 
 /// Toast notification system.
 mod toast;
-pub use toast::{Toast, ToastState};
+pub use toast::{Toast, ToastLevel, ToastState};

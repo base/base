@@ -359,6 +359,12 @@ pub struct LoadTestView {
     funder_key_override: Option<String>,
 }
 
+impl Default for LoadTestView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoadTestView {
     /// Creates a new load test view. Config discovery is deferred to the first tick.
     pub const fn new() -> Self {
