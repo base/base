@@ -611,7 +611,12 @@ where
         &self,
         cache: &mut Option<CachedRecovery>,
     ) -> Option<(RecoveredState, u64)> {
-        let state = match self.recover_latest_state(cache).await {
+        let (state_result, safe_head_result) = tokio::join!(
+            self.recover_latest_state(cache),
+            self.latest_safe_block_number(),
+        );
+
+        let state = match state_result {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
@@ -619,7 +624,7 @@ where
             }
         };
 
-        let safe_head = match self.latest_safe_block_number().await {
+        let safe_head = match safe_head_result {
             Ok(n) => n,
             Err(e) => {
                 warn!(error = %e, "Failed to fetch safe head, retrying next tick");
@@ -813,28 +818,15 @@ where
         let mut steps: u64 = 0;
 
         while let Some(expected_block) = parent_block.checked_add(block_interval) {
-            // Look up the pre-fetched canonical root. A missing entry means
-            // the block had no game in the map (the pre-fetch stopped there).
-            let canonical_root = match canonical_roots.get(&expected_block) {
-                Some(root) => *root,
-                None => {
-                    info!(
-                        gap_block = expected_block,
-                        parent_block,
-                        parent_address = %parent_address,
-                        games_verified = steps,
-                        "Found first missing game, will propose from here"
-                    );
-                    break;
-                }
-            };
-
-            // Look up all games at this block number, then find one whose
-            // parent_address matches the expected parent.
-            let candidates = match game_map.map.get(&expected_block) {
-                Some(c) => c,
-                None => {
-                    // No game exists for this block number — this is the gap.
+            // Look up the pre-fetched canonical root and game candidates.
+            // Either missing means there is no game at this block — the gap
+            // where the next proposal should start.
+            let (canonical_root, candidates) = match (
+                canonical_roots.get(&expected_block),
+                game_map.map.get(&expected_block),
+            ) {
+                (Some(root), Some(c)) => (*root, c),
+                _ => {
                     info!(
                         gap_block = expected_block,
                         parent_block,
@@ -1302,33 +1294,49 @@ where
             .map_err(SubmitAction::Failed)?;
 
         // JIT validation: check that each intermediate output root matches
-        // the canonical chain.  This catches TEE prover bugs or reorgs that
-        // occurred between proving and submission.
+        // the canonical chain. Pre-fetch all canonical roots concurrently
+        // to avoid sequential RPC calls per intermediate block.
         let interval = self.config.driver.intermediate_block_interval;
-        for (i, root) in intermediate_roots.iter().enumerate() {
-            let block = starting_block_number
-                .checked_add((i as u64 + 1).checked_mul(interval).ok_or_else(|| {
-                    SubmitAction::Failed(ProposerError::Internal(
-                        "overflow computing intermediate root block number".into(),
-                    ))
-                })?)
-                .ok_or_else(|| {
-                    SubmitAction::Failed(ProposerError::Internal(
-                        "overflow computing intermediate root block number".into(),
-                    ))
-                })?;
+        let intermediate_blocks: Vec<u64> = (0..intermediate_roots.len())
+            .map(|i| {
+                starting_block_number
+                    .checked_add((i as u64 + 1).checked_mul(interval).ok_or_else(|| {
+                        SubmitAction::Failed(ProposerError::Internal(
+                            "overflow computing intermediate root block number".into(),
+                        ))
+                    })?)
+                    .ok_or_else(|| {
+                        SubmitAction::Failed(ProposerError::Internal(
+                            "overflow computing intermediate root block number".into(),
+                        ))
+                    })
+            })
+            .collect::<Result<_, _>>()?;
 
-            let canonical = self
-                .rollup_client
-                .output_at_block(block)
-                .await
-                .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))?;
+        let canonical_intermediates: Vec<B256> =
+            stream::iter(intermediate_blocks.iter().copied())
+                .map(|block| {
+                    let rollup = &self.rollup_client;
+                    async move {
+                        rollup
+                            .output_at_block(block)
+                            .await
+                            .map(|out| out.output_root)
+                            .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))
+                    }
+                })
+                .buffered(RECOVERY_SCAN_CONCURRENCY)
+                .try_collect()
+                .await?;
 
-            if *root != canonical.output_root {
+        for (i, (root, canonical)) in
+            intermediate_roots.iter().zip(canonical_intermediates.iter()).enumerate()
+        {
+            if *root != *canonical {
                 warn!(
-                    intermediate_block = block,
+                    intermediate_block = intermediate_blocks[i],
                     proposal_root = ?root,
-                    canonical_root = ?canonical.output_root,
+                    canonical_root = ?canonical,
                     target_block,
                     "Intermediate output root does not match canonical chain at submit time"
                 );
