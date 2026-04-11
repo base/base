@@ -102,13 +102,10 @@ where
     async fn start_proposer(&self) -> Result<(), String> {
         let mut session = self.session.lock().await;
 
-        if self
-            .running
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        if self.running.load(Ordering::Acquire) {
             return Err("proposer is already running".into());
         }
+        self.running.store(true, Ordering::Release);
 
         let cancel = self.global_cancel.child_token();
         let mut pipeline = self.pipeline.clone();
@@ -131,11 +128,7 @@ where
     async fn stop_proposer(&self) -> Result<(), String> {
         let mut session = self.session.lock().await;
 
-        if self
-            .running
-            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        if !self.running.load(Ordering::Acquire) {
             return Err("proposer is not running".into());
         }
 
@@ -149,6 +142,7 @@ where
             }
         }
 
+        self.running.store(false, Ordering::Release);
         info!("proving pipeline stopped");
         Ok(())
     }
