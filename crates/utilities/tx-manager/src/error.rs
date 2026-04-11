@@ -16,7 +16,7 @@ const REVERT_DATA_DISPLAY_LIMIT: usize = 128;
 ///   [`REVERT_DATA_DISPLAY_LIMIT`] bytes).
 /// - Empty string when neither is available.
 #[derive(Debug)]
-pub(crate) struct RevertDisplay<'a>(Option<&'a str>, Option<&'a Bytes>);
+pub struct RevertDisplay<'a>(Option<&'a str>, Option<&'a Bytes>);
 
 impl std::fmt::Display for RevertDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -287,7 +287,7 @@ impl RpcErrorClassifier {
             return TxManagerError::Rpc(error.to_string());
         };
 
-        let lowered = payload.message.to_lowercase();
+        let lowered = payload.message.to_ascii_lowercase();
 
         if lowered.contains("replacement transaction underpriced") {
             return TxManagerError::ReplacementUnderpriced;
@@ -307,35 +307,16 @@ impl RpcErrorClassifier {
         if lowered.contains("intrinsic gas too low") {
             return TxManagerError::IntrinsicGasTooLow;
         }
-        if lowered.contains("execution reverted") {
-            // Use alloy's structured revert data extraction from the
-            // ErrorPayload's JSON data field, then decode with alloy's
-            // standard decoder (handles Error(string), Panic(uint256),
-            // and Vyper UTF-8 reverts).
+        if let Some(pos) = lowered.find("execution reverted") {
             if let Some(data) = payload.as_revert_data() {
                 let reason = alloy_sol_types::decode_revert_reason(&data);
                 return TxManagerError::ExecutionReverted { reason, data: Some(data) };
             }
-            // No structured data — extract a plain-text reason from the
-            // message text after the "execution reverted" marker.
-            // Search the original message case-insensitively to preserve
-            // the original casing of the reason string (e.g.
-            // "GameAlreadyExists") while avoiding byte-offset mismatches
-            // that `to_lowercase()` can introduce for non-ASCII input.
-            const MARKER: &str = "execution reverted";
-            let reason = payload
-                .message
-                .char_indices()
-                .find(|&(i, _)| {
-                    payload.message[i..]
-                        .get(..MARKER.len())
-                        .is_some_and(|s| s.eq_ignore_ascii_case(MARKER))
-                })
-                .and_then(|(pos, _)| {
-                    let after = &payload.message[pos + MARKER.len()..];
-                    let after = after.trim_start_matches(':').trim();
-                    if after.is_empty() { None } else { Some(after.to_string()) }
-                });
+            // `to_ascii_lowercase()` is byte-offset-preserving, so
+            // offsets from `lowered` are safe to index `payload.message`.
+            let after = &payload.message[pos + "execution reverted".len()..];
+            let after = after.trim_start_matches(':').trim();
+            let reason = if after.is_empty() { None } else { Some(after.to_string()) };
             return TxManagerError::ExecutionReverted { reason, data: None };
         }
         if lowered.contains("fee too low") {
@@ -344,10 +325,7 @@ impl RpcErrorClassifier {
         if lowered.contains("max fee per gas less than block base fee") {
             return TxManagerError::MaxFeePerGasTooLow;
         }
-        if lowered.contains("already known") {
-            return TxManagerError::AlreadyKnown;
-        }
-        if lowered.contains("transaction already in pool") {
+        if lowered.contains("already known") || lowered.contains("transaction already in pool") {
             return TxManagerError::AlreadyKnown;
         }
 

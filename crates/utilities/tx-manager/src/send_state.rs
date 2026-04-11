@@ -5,22 +5,14 @@
 //! [`std::sync::Mutex`] (not `tokio`) since critical sections are CPU-bound
 //! with no `.await` points.
 
-use std::{collections::HashSet, sync::Mutex, time::Instant};
+use std::{sync::Mutex, time::Instant};
 
 use alloy_primitives::B256;
 
 use crate::{TxManagerError, TxManagerResult};
 
 /// Tracks the publication state of a single logical transaction through its
-/// lifecycle.
-///
-/// `SendState` is the state machine the send loop uses to decide whether to
-/// continue retrying, bump fees, or abort. It tracks mined transaction hashes,
-/// nonce-too-low error counts, mempool deadline expiry, successful publish
-/// counts, fee bump state, and the already-reserved flag.
-///
-/// All mutable fields are wrapped in a [`std::sync::Mutex`] (not `tokio`)
-/// since all critical sections are CPU-bound with no `.await` points.
+/// lifecycle: mined hashes, nonce errors, fee bumps, and mempool deadlines.
 #[derive(Debug)]
 pub struct SendState {
     /// Mutable interior state protected by a std Mutex.
@@ -30,27 +22,15 @@ pub struct SendState {
     safe_abort_nonce_too_low_count: u64,
 }
 
-/// Interior mutable state for [`SendState`], protected by a [`Mutex`].
-///
-/// This type is intentionally private — it is an implementation detail behind
-/// the Mutex with no standalone meaning.
 #[derive(Debug)]
 struct SendStateInner {
-    /// Hashes of transactions that have been observed onchain.
-    mined_txs: HashSet<B256>,
-    /// Number of times the transaction was successfully published.
-    successful_publish_count: u64,
-    /// Number of nonce-too-low errors encountered.
+    mined_txs: Vec<B256>,
+    has_published: bool,
     nonce_too_low_count: u64,
-    /// Whether a nonce-too-high error was encountered.
     nonce_too_high: bool,
-    /// Whether the nonce slot was already reserved by another sender.
     already_reserved: bool,
-    /// Whether the next send attempt should bump fees.
     bump_fees: bool,
-    /// Number of fee bumps performed.
     bump_count: u64,
-    /// Optional deadline for mempool inclusion.
     mempool_deadline: Option<Instant>,
 }
 
@@ -63,14 +43,14 @@ impl SendState {
     /// `safe_abort_nonce_too_low_count` is 0. A zero threshold would cause the
     /// send loop to abort on the very first nonce-too-low error after a
     /// successful publish, making fee bumps impossible.
-    pub fn new(safe_abort_nonce_too_low_count: u64) -> TxManagerResult<Self> {
+    pub const fn new(safe_abort_nonce_too_low_count: u64) -> TxManagerResult<Self> {
         if safe_abort_nonce_too_low_count == 0 {
             return Err(TxManagerError::InvalidSafeAbortNonceTooLowCount);
         }
         Ok(Self {
             inner: Mutex::new(SendStateInner {
-                mined_txs: HashSet::new(),
-                successful_publish_count: 0,
+                mined_txs: Vec::new(),
+                has_published: false,
                 nonce_too_low_count: 0,
                 nonce_too_high: false,
                 already_reserved: false,
@@ -115,7 +95,9 @@ impl SendState {
     /// onchain.
     pub fn tx_mined(&self, tx_hash: B256) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.mined_txs.insert(tx_hash);
+        if !inner.mined_txs.contains(&tx_hash) {
+            inner.mined_txs.push(tx_hash);
+        }
     }
 
     /// Records that a previously-mined transaction is no longer onchain
@@ -127,9 +109,11 @@ impl SendState {
     /// removals of hashes that were never tracked.
     pub fn tx_not_mined(&self, tx_hash: B256) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        let was_present = inner.mined_txs.remove(&tx_hash);
-        if was_present && inner.mined_txs.is_empty() {
-            inner.nonce_too_low_count = 0;
+        if let Some(idx) = inner.mined_txs.iter().position(|h| *h == tx_hash) {
+            inner.mined_txs.swap_remove(idx);
+            if inner.mined_txs.is_empty() {
+                inner.nonce_too_low_count = 0;
+            }
         }
     }
 
@@ -152,43 +136,30 @@ impl SendState {
     /// 7. Otherwise, returns `None`.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
+        let now = Instant::now();
         let inner = self.inner.lock().expect("SendState mutex poisoned");
 
-        // 1. Mined tx suppression: a tx is onchain, wait for confirmation.
         if !inner.mined_txs.is_empty() {
             return None;
         }
-
-        // 2. Nonce slot already reserved by another sender.
         if inner.already_reserved {
             return Some(TxManagerError::AlreadyReserved);
         }
-
-        // 3. Nonce too high: the nonce is ahead of chain state. No tx
-        //    entered the mempool, so retry is pointless without a reset.
         if inner.nonce_too_high {
             return Some(TxManagerError::NonceTooHigh);
         }
-
-        // 4. Pre-publish immediate abort: nonce consumed before any successful
-        //    publish.
-        if inner.successful_publish_count == 0 && inner.nonce_too_low_count > 0 {
+        if !inner.has_published && inner.nonce_too_low_count > 0 {
             return Some(TxManagerError::NonceTooLow);
         }
-
-        // 5. Nonce-too-low threshold reached after successful publishes.
         if inner.nonce_too_low_count >= self.safe_abort_nonce_too_low_count {
             return Some(TxManagerError::NonceTooLow);
         }
-
-        // 6. Mempool deadline expired.
         if let Some(deadline) = inner.mempool_deadline
-            && Instant::now() >= deadline
+            && now >= deadline
         {
             return Some(TxManagerError::MempoolDeadlineExpired);
         }
 
-        // 7. No critical error — continue sending.
         None
     }
 
@@ -199,42 +170,33 @@ impl SendState {
         !inner.mined_txs.is_empty()
     }
 
-    /// Records a successful transaction publication.
+    /// Records that a transaction was successfully published.
     pub fn record_successful_publish(&self) {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.successful_publish_count += 1;
+        inner.has_published = true;
     }
 
     /// Records that a fee bump was performed, incrementing the bump counter
-    /// and clearing the bump-fees flag.
-    pub fn record_fee_bump(&self) {
+    /// and returning the new count.
+    pub fn record_fee_bump(&self) -> u64 {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
         inner.bump_count += 1;
-        inner.bump_fees = false;
+        inner.bump_count
     }
 
-    /// Returns `true` if the next send attempt should bump fees.
-    #[must_use]
-    pub fn should_bump_fees(&self) -> bool {
-        let inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.bump_fees
-    }
-
-    /// Clears the bump-fees flag without incrementing the bump counter.
+    /// Atomically reads and clears the bump-fees flag. Returns `true` if
+    /// fees should be bumped.
     ///
-    /// Called before attempting a fee bump so that a failed attempt
-    /// (e.g., RPC timeout in [`suggest_gas_price_caps`]) does not
-    /// immediately re-trigger the bump on the next loop iteration. If
-    /// the bump succeeds, [`record_fee_bump`] will also clear the flag
-    /// (a harmless no-op) and increment the counter. If a new retryable
-    /// error occurs later, [`process_send_error`] will re-set the flag.
+    /// Clearing eagerly prevents a failed bump attempt (e.g. RPC timeout)
+    /// from immediately re-triggering on the next loop iteration. If a new
+    /// retryable error occurs later, [`process_send_error`] will re-set the
+    /// flag.
     ///
-    /// [`suggest_gas_price_caps`]: crate::SimpleTxManager::suggest_gas_price_caps
-    /// [`record_fee_bump`]: Self::record_fee_bump
     /// [`process_send_error`]: Self::process_send_error
-    pub fn clear_bump_fees(&self) {
+    #[must_use]
+    pub fn take_bump_fees(&self) -> bool {
         let mut inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.bump_fees = false;
+        std::mem::take(&mut inner.bump_fees)
     }
 
     /// Sets the mempool inclusion deadline.
@@ -243,18 +205,11 @@ impl SendState {
         inner.mempool_deadline = Some(deadline);
     }
 
-    /// Returns the number of fee bumps performed so far.
+    /// Returns `true` if at least one transaction was successfully published.
     #[must_use]
-    pub fn bump_count(&self) -> u64 {
+    pub fn has_published(&self) -> bool {
         let inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.bump_count
-    }
-
-    /// Returns the number of successful transaction publications.
-    #[must_use]
-    pub fn successful_publish_count(&self) -> u64 {
-        let inner = self.inner.lock().expect("SendState mutex poisoned");
-        inner.successful_publish_count
+        inner.has_published
     }
 }
 
@@ -302,13 +257,13 @@ mod tests {
     #[test]
     fn fresh_state_should_not_bump_fees() {
         let state = SendState::new(3).unwrap();
-        assert!(!state.should_bump_fees());
+        assert!(!state.take_bump_fees());
     }
 
     #[test]
-    fn fresh_state_bump_count_is_zero() {
+    fn fresh_state_has_not_published() {
         let state = SendState::new(3).unwrap();
-        assert_eq!(state.bump_count(), 0);
+        assert!(!state.has_published());
     }
 
     // ── Nonce-too-low threshold ─────────────────────────────────────────
@@ -551,7 +506,7 @@ mod tests {
     fn nonce_too_high_does_not_set_bump_fees() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::NonceTooHigh);
-        assert!(!state.should_bump_fees());
+        assert!(!state.take_bump_fees());
     }
 
     // ── AlreadyReserved ─────────────────────────────────────────────────
@@ -616,77 +571,65 @@ mod tests {
     #[case::rpc(TxManagerError::Rpc("any rpc error".to_string()))]
     fn retryable_error_sets_bump_fees(#[case] err: TxManagerError) {
         let state = SendState::new(3).unwrap();
-        assert!(!state.should_bump_fees());
+        assert!(!state.take_bump_fees());
         state.process_send_error(&err);
-        assert!(state.should_bump_fees());
+        assert!(state.take_bump_fees());
     }
 
     #[test]
-    fn record_fee_bump_clears_flag_and_increments_count() {
+    fn record_fee_bump_increments_and_returns_count() {
         let state = SendState::new(3).unwrap();
-        state.process_send_error(&TxManagerError::Underpriced);
-        assert!(state.should_bump_fees());
-        assert_eq!(state.bump_count(), 0);
-
-        state.record_fee_bump();
-        assert!(!state.should_bump_fees());
-        assert_eq!(state.bump_count(), 1);
+        assert_eq!(state.record_fee_bump(), 1);
+        assert_eq!(state.record_fee_bump(), 2);
     }
 
     #[test]
     fn nonce_too_low_does_not_set_bump_fees() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::NonceTooLow);
-        assert!(!state.should_bump_fees());
+        assert!(!state.take_bump_fees());
     }
 
     #[test]
     fn non_retryable_error_does_not_set_bump_fees() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::InsufficientFunds);
-        assert!(!state.should_bump_fees());
+        assert!(!state.take_bump_fees());
     }
 
     #[test]
-    fn clear_bump_fees_clears_flag_without_incrementing_count() {
+    fn take_bump_fees_clears_flag() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::Underpriced);
-        assert!(state.should_bump_fees());
-        assert_eq!(state.bump_count(), 0);
 
-        // clear_bump_fees clears the flag but does not touch the counter.
-        state.clear_bump_fees();
-        assert!(!state.should_bump_fees());
-        assert_eq!(state.bump_count(), 0, "bump_count should not increment on clear");
+        assert!(state.take_bump_fees());
+        assert!(!state.take_bump_fees());
     }
 
     #[test]
-    fn clear_bump_fees_allows_flag_to_be_re_set() {
+    fn take_bump_fees_allows_flag_to_be_re_set() {
         let state = SendState::new(3).unwrap();
         state.process_send_error(&TxManagerError::Underpriced);
-        assert!(state.should_bump_fees());
-
-        state.clear_bump_fees();
-        assert!(!state.should_bump_fees());
+        assert!(state.take_bump_fees());
 
         // A new retryable error re-sets the flag.
         state.process_send_error(&TxManagerError::ReplacementUnderpriced);
-        assert!(state.should_bump_fees());
+        assert!(state.take_bump_fees());
     }
 
-    // ── successful_publish_count ─────────────────────────────────────────
+    // ── has_published ───────────────────────────────────────────────────
 
     #[test]
-    fn successful_publish_count_tracks_publications() {
+    fn has_published_tracks_publication() {
         let state = SendState::new(3).unwrap();
-        assert_eq!(state.successful_publish_count(), 0);
+        assert!(!state.has_published());
 
         state.record_successful_publish();
-        assert_eq!(state.successful_publish_count(), 1);
+        assert!(state.has_published());
 
+        // Idempotent.
         state.record_successful_publish();
-        state.record_successful_publish();
-        assert_eq!(state.successful_publish_count(), 3);
+        assert!(state.has_published());
     }
 
     // ── is_waiting_for_confirmation ─────────────────────────────────────

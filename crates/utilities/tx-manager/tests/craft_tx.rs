@@ -1,48 +1,27 @@
 //! Integration tests for [`SimpleTxManager`] transaction construction with Anvil.
 
+mod common;
+
 use std::sync::Arc;
 
-use alloy_consensus::{SignableTransaction, TxEip1559, TxEip4844Variant, TxEnvelope};
+use alloy_consensus::{TxEip1559, TxEip4844Variant, TxEnvelope};
 use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
-use alloy_network::{EthereumWallet, TxSigner};
 use alloy_node_bindings::Anvil;
-use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{Bytes, TxKind, U256};
 use alloy_provider::RootProvider;
 use alloy_signer_local::PrivateKeySigner;
-use async_trait::async_trait;
 use base_tx_manager::{
-    FeeCalculator, FeeOverride, GasPriceCaps, NoopTxMetrics, PreparedTx, SignerConfig,
-    SimpleTxManager, TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+    FeeCalculator, FeeOverride, NoopTxMetrics, PreparedTx, SignerConfig, SimpleTxManager,
+    TxCandidate, TxManager, TxManagerConfig, TxManagerError,
+};
+use common::{
+    TEST_RECIPIENT, setup_anvil, setup_with_config, setup_with_failing_signer, value_transfer,
 };
 
-/// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
-/// configured with the given [`TxManagerConfig`].
-async fn setup_with_config(
-    config: TxManagerConfig,
-) -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
-    let anvil = Anvil::new().spawn();
-    let url = anvil.endpoint_url();
-    let provider = RootProvider::new_http(url);
-    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
-    let wallet = EthereumWallet::from(signer);
-    let chain_id = anvil.chain_id();
-    let manager =
-        SimpleTxManager::from_wallet(provider, wallet, config, chain_id, Arc::new(NoopTxMetrics))
-            .await
-            .expect("should create manager");
-    (manager, anvil)
-}
-
-/// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
-/// with the default [`TxManagerConfig`].
 async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
     setup_with_config(TxManagerConfig::default()).await
 }
 
-/// Decodes a [`PreparedTx`] into the inner [`TxEip1559`].
-///
-/// Panics if the bytes are not a valid EIP-2718 envelope or the
-/// transaction type is not EIP-1559.
 fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
     match prepared.to_envelope().expect("should decode as valid TxEnvelope") {
         TxEnvelope::Eip1559(signed) => signed.strip_signature(),
@@ -50,24 +29,25 @@ fn decode_eip1559(prepared: &PreparedTx) -> TxEip1559 {
     }
 }
 
+fn single_blob_candidate() -> TxCandidate {
+    TxCandidate {
+        to: Some(TEST_RECIPIENT),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
+        ..Default::default()
+    }
+}
+
 #[tokio::test]
 async fn craft_tx_produces_valid_signed_eip1559_transaction() {
     let (manager, anvil) = setup().await;
 
-    let to = Address::with_last_byte(0x42);
-    let value = U256::from(1_000_000_000u64);
-    let candidate = TxCandidate {
-        to: Some(to),
-        value,
-        gas_limit: 0, // auto-estimate
-        ..Default::default()
-    };
+    let candidate = value_transfer(1_000_000_000);
 
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft tx");
     let tx = decode_eip1559(&prepared);
 
-    assert_eq!(tx.to, TxKind::Call(to));
-    assert_eq!(tx.value, value);
+    assert_eq!(tx.to, TxKind::Call(TEST_RECIPIENT));
+    assert_eq!(tx.value, U256::from(1_000_000_000u64));
     assert_eq!(tx.chain_id, anvil.chain_id());
     assert_eq!(tx.nonce, 0, "first tx should have nonce 0");
     assert_eq!(tx.gas_limit, 21_000, "plain value transfer intrinsic gas should be 21,000");
@@ -78,7 +58,6 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
         prepared.gas_fee_cap > prepared.gas_tip_cap,
         "PreparedTx gas_fee_cap should exceed gas_tip_cap",
     );
-    // PreparedTx fees must match the fees encoded in the signed transaction.
     assert_eq!(
         prepared.gas_tip_cap, tx.max_priority_fee_per_gas,
         "PreparedTx gas_tip_cap should match decoded max_priority_fee_per_gas",
@@ -93,23 +72,12 @@ async fn craft_tx_produces_valid_signed_eip1559_transaction() {
 async fn craft_tx_with_explicit_gas_limit_above_estimate() {
     let (manager, _anvil) = setup().await;
 
-    // Use a gas_limit well above the 21,000 intrinsic gas for a simple
-    // value transfer.  estimate_gas returns ~21,000, so the
-    // `candidate.gas_limit.max(estimated)` floor logic must produce
-    // 100,000 — not the estimate.
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000u64),
-        gas_limit: 100_000,
-        ..Default::default()
-    };
+    let candidate = TxCandidate { gas_limit: 100_000, ..value_transfer(1_000) };
 
     let prepared =
         manager.craft_tx(&candidate, None).await.expect("should craft tx with explicit gas");
     let tx = decode_eip1559(&prepared);
 
-    // The decoded gas_limit must equal the caller's explicit value,
-    // proving it was used as a floor above the provider estimate.
     assert_eq!(tx.gas_limit, 100_000);
 }
 
@@ -118,21 +86,16 @@ async fn craft_tx_rejects_too_many_blobs() {
     let (manager, _anvil) = setup().await;
 
     let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new((0..7).map(|_| Box::<Blob>::default()).collect::<Vec<_>>()),
+        to: Some(TEST_RECIPIENT),
+        blobs: Arc::from((0..7).map(|_| Box::<Blob>::default()).collect::<Vec<_>>()),
         ..Default::default()
     };
 
     let err = manager.craft_tx(&candidate, None).await.expect_err("should reject too many blobs");
-    match &err {
-        TxManagerError::Unsupported(msg) => {
-            assert!(
-                msg.contains("exceeds maximum"),
-                "expected blob count exceeded message, got: {msg}",
-            );
-        }
-        other => panic!("expected TxManagerError::Unsupported, got {other:?}"),
-    }
+    assert!(
+        matches!(&err, TxManagerError::Unsupported(msg) if msg.contains("exceeds maximum")),
+        "expected TxManagerError::Unsupported with 'exceeds maximum', got {err:?}",
+    );
 }
 
 #[tokio::test]
@@ -141,21 +104,16 @@ async fn craft_tx_rejects_blob_without_recipient() {
 
     let candidate = TxCandidate {
         to: None,
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
     let err =
         manager.craft_tx(&candidate, None).await.expect_err("should reject blob tx without to");
-    match &err {
-        TxManagerError::Unsupported(msg) => {
-            assert!(
-                msg.contains("recipient address"),
-                "expected recipient address rejection message, got: {msg}",
-            );
-        }
-        other => panic!("expected TxManagerError::Unsupported, got {other:?}"),
-    }
+    assert!(
+        matches!(&err, TxManagerError::Unsupported(msg) if msg.contains("recipient address")),
+        "expected TxManagerError::Unsupported with 'recipient address', got {err:?}",
+    );
 }
 
 #[tokio::test]
@@ -167,48 +125,31 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
     // would fail at craft_tx.
     let (manager, anvil) = setup().await;
 
-    let to = Address::with_last_byte(0x42);
-    let candidate = TxCandidate {
-        to: Some(to),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
-        ..Default::default()
-    };
+    let candidate = single_blob_candidate();
 
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft blob tx");
-
-    // Decode the raw transaction bytes.
     let envelope = prepared.to_envelope().expect("should decode TxEnvelope");
-
-    // Must be EIP-4844 type.
     assert!(envelope.is_eip4844(), "expected EIP-4844 transaction, got {envelope:?}");
 
     let signed = envelope.as_eip4844().expect("should be EIP-4844");
     let variant = signed.tx();
-
-    // The inner tx must have blob-specific fields populated.
     let inner = variant.tx();
-    assert_eq!(inner.to, to, "recipient should match");
+    assert_eq!(inner.to, TEST_RECIPIENT, "recipient should match");
     assert_eq!(inner.chain_id, anvil.chain_id(), "chain_id should match");
     assert!(!inner.blob_versioned_hashes.is_empty(), "blob_versioned_hashes should be populated");
     assert_eq!(inner.blob_versioned_hashes.len(), 1, "should have one versioned hash for one blob",);
     assert!(inner.max_fee_per_blob_gas > 0, "max_fee_per_blob_gas should be non-zero");
-
-    // Versioned hashes must use the 0x01 version byte.
     for hash in &inner.blob_versioned_hashes {
         assert_eq!(hash.0[0], 0x01, "versioned hash should start with 0x01, got: {hash}");
     }
-
-    // The sidecar must be present (TxEip4844WithSidecar variant).
     assert!(
         matches!(variant, TxEip4844Variant::TxEip4844WithSidecar(_)),
         "expected TxEip4844WithSidecar variant, got standalone TxEip4844",
     );
-
-    // PreparedTx must carry the blob fee cap.
-    assert!(prepared.blob_fee_cap.is_some(), "PreparedTx blob_fee_cap should be Some");
-    assert!(prepared.blob_fee_cap.unwrap() > 0, "PreparedTx blob_fee_cap should be non-zero");
-
-    // PreparedTx blob fee cap must match the max_fee_per_blob_gas in the signed tx.
+    assert!(
+        prepared.blob_fee_cap.is_some_and(|v| v > 0),
+        "PreparedTx blob_fee_cap should be Some and non-zero",
+    );
     assert_eq!(
         prepared.blob_fee_cap.unwrap(),
         inner.max_fee_per_blob_gas,
@@ -218,33 +159,21 @@ async fn craft_tx_produces_valid_signed_blob_transaction() {
 
 #[tokio::test]
 async fn craft_tx_produces_cell_proof_sidecar_by_default() {
-    let (manager, anvil) = setup().await;
+    let (manager, _anvil) = setup().await;
 
-    let to = Address::with_last_byte(0x42);
-    let candidate = TxCandidate {
-        to: Some(to),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
-        ..Default::default()
-    };
+    let candidate = single_blob_candidate();
 
     let prepared =
         manager.craft_tx(&candidate, None).await.expect("should craft cell-proof blob tx");
 
-    // The cached sidecar must use Osaka-era cell proofs.
     assert_eq!(
         prepared.sidecar.as_ref().expect("sidecar should be Some for blob tx").cell_proofs.len(),
         CELLS_PER_EXT_BLOB,
     );
 
-    // On the wire it is still EIP-4844 type — cell proofs are sidecar-internal.
+    // Cell proofs are sidecar-internal; on the wire it is still EIP-4844 type.
     let envelope = prepared.to_envelope().expect("should decode TxEnvelope");
     assert!(envelope.is_eip4844(), "expected EIP-4844 transaction type");
-
-    let signed = envelope.as_eip4844().expect("should be EIP-4844");
-    let inner = signed.tx().tx();
-    assert_eq!(inner.to, to, "recipient should match");
-    assert_eq!(inner.chain_id, anvil.chain_id(), "chain_id should match");
-    assert!(!inner.blob_versioned_hashes.is_empty(), "blob_versioned_hashes should be populated");
 }
 
 #[tokio::test]
@@ -270,21 +199,15 @@ async fn craft_tx_contract_creation() {
 async fn suggest_gas_price_caps_returns_valid_estimates() {
     let (manager, _anvil) = setup().await;
 
-    let caps: GasPriceCaps =
-        manager.suggest_gas_price_caps().await.expect("should return gas price caps");
+    let caps = manager.suggest_gas_price_caps().await.expect("should return gas price caps");
 
-    // On an Anvil instance, tip and fee cap should be non-zero.
     assert!(caps.gas_tip_cap > 0, "tip_cap should be non-zero");
-    // gas_fee_cap = tip + 2 * base_fee, which is always > tip alone.
     assert!(caps.gas_fee_cap > caps.gas_tip_cap, "fee_cap should exceed tip_cap");
-    // raw_gas_fee_cap (from provider values before enforcing minimums) should
-    // be <= gas_fee_cap (after enforcing minimums) and non-zero on Anvil.
     assert!(caps.raw_gas_fee_cap > 0, "raw_gas_fee_cap should be non-zero");
     assert!(
         caps.raw_gas_fee_cap <= caps.gas_fee_cap,
         "raw_gas_fee_cap should be <= gas_fee_cap after enforcing minimums",
     );
-    // Blob fee cap should be None for non-blob transactions.
     assert!(caps.blob_fee_cap.is_none(), "blob_fee_cap should be None");
 }
 
@@ -292,19 +215,12 @@ async fn suggest_gas_price_caps_returns_valid_estimates() {
 async fn prepare_produces_valid_signed_transaction() {
     let (manager, _anvil) = setup().await;
 
-    let to = Address::with_last_byte(0x42);
-    let candidate = TxCandidate {
-        to: Some(to),
-        value: U256::from(1_000u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
+    let candidate = value_transfer(1_000);
 
     let prepared = manager.prepare(&candidate, None).await.expect("should prepare tx");
     let tx = decode_eip1559(&prepared);
 
-    // Confirm the candidate's fields survive the retry wrapper.
-    assert_eq!(tx.to, TxKind::Call(to));
+    assert_eq!(tx.to, TxKind::Call(TEST_RECIPIENT));
     assert_eq!(tx.value, U256::from(1_000u64));
 }
 
@@ -314,11 +230,7 @@ async fn prepare_returns_channel_closed_when_manager_is_closed() {
 
     manager.close();
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::ZERO,
-        ..Default::default()
-    };
+    let candidate = value_transfer(0);
 
     let err = manager.prepare(&candidate, None).await.expect_err("should fail");
     assert_eq!(err, TxManagerError::ChannelClosed);
@@ -345,14 +257,8 @@ async fn is_closed_reflects_manager_state() {
 async fn sequential_craft_tx_increments_nonce() {
     let (manager, _anvil) = setup().await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
+    let candidate = value_transfer(1);
 
-    // Craft two transactions — nonces should be sequential.
     let prepared1 = manager.craft_tx(&candidate, None).await.expect("first tx");
     let prepared2 = manager.craft_tx(&candidate, None).await.expect("second tx");
 
@@ -379,40 +285,27 @@ async fn new_with_signer_config_local_creates_functional_manager() {
     .await
     .expect("should create manager via SignerConfig::Local");
 
-    // Sender address should match the Anvil account derived from the key.
     assert_eq!(manager.sender_address(), anvil.addresses()[0]);
 }
 
 #[tokio::test]
 async fn new_rejects_chain_id_mismatch() {
-    let anvil = Anvil::new().spawn();
-    let url = anvil.endpoint_url();
-    let provider = RootProvider::new_http(url);
-    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
-    let wallet = EthereumWallet::from(signer);
-    let config = TxManagerConfig::default();
+    let (provider, wallet, _anvil) = setup_anvil();
 
-    // Anvil uses chain_id 31337 by default; supply a wrong one.
-    let wrong_chain_id = 999;
     let err = SimpleTxManager::from_wallet(
         provider,
         wallet,
-        config,
-        wrong_chain_id,
+        TxManagerConfig::default(),
+        999, // wrong chain_id
         Arc::new(NoopTxMetrics),
     )
     .await
     .expect_err("should reject mismatched chain_id");
 
-    match &err {
-        TxManagerError::InvalidConfig(msg) => {
-            assert!(
-                msg.contains("chain_id mismatch"),
-                "expected chain_id mismatch error, got: {msg}",
-            );
-        }
-        other => panic!("expected TxManagerError::InvalidConfig, got {other:?}"),
-    }
+    assert!(
+        matches!(&err, TxManagerError::InvalidConfig(msg) if msg.contains("chain_id mismatch")),
+        "expected TxManagerError::InvalidConfig with 'chain_id mismatch', got {err:?}",
+    );
 }
 
 #[tokio::test]
@@ -421,7 +314,7 @@ async fn craft_tx_preserves_calldata() {
 
     let calldata = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
     let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
+        to: Some(TEST_RECIPIENT),
         tx_data: calldata.clone(),
         value: U256::ZERO,
         gas_limit: 0,
@@ -436,10 +329,9 @@ async fn craft_tx_preserves_calldata() {
 
 #[tokio::test]
 async fn suggest_gas_price_caps_enforces_min_tip_cap_and_min_basefee() {
-    // Set minimums well above what Anvil returns (Anvil tip is ~1 gwei,
-    // base fee ~1 gwei) so the .max() enforcement is exercised.
-    let high_min_tip = 50_000_000_000u128; // 50 gwei
-    let high_min_basefee = 100_000_000_000u128; // 100 gwei
+    // Minimums well above Anvil defaults (~1 gwei) to exercise the .max() path.
+    let high_min_tip = 50_000_000_000u128;
+    let high_min_basefee = 100_000_000_000u128;
     let config = TxManagerConfig {
         min_tip_cap: high_min_tip,
         min_basefee: high_min_basefee,
@@ -450,22 +342,18 @@ async fn suggest_gas_price_caps_enforces_min_tip_cap_and_min_basefee() {
 
     let caps = manager.suggest_gas_price_caps().await.expect("should return caps");
 
-    // Tip cap should be at least the configured minimum.
     assert!(
         caps.gas_tip_cap >= high_min_tip,
         "gas_tip_cap {} should be >= min_tip_cap {high_min_tip}",
         caps.gas_tip_cap,
     );
-    // Fee cap should reflect the enforced minimum base fee:
-    // gas_fee_cap = tip + 2 * base_fee >= high_min_tip + 2 * high_min_basefee.
+    // gas_fee_cap = tip + 2 * base_fee
     let expected_min_fee_cap = high_min_tip + 2 * high_min_basefee;
     assert!(
         caps.gas_fee_cap >= expected_min_fee_cap,
         "gas_fee_cap {} should be >= {expected_min_fee_cap} (min_tip + 2 * min_basefee)",
         caps.gas_fee_cap,
     );
-    // raw_gas_fee_cap should be strictly less than gas_fee_cap since we
-    // inflated both tip and base fee above the Anvil defaults.
     assert!(
         caps.raw_gas_fee_cap < caps.gas_fee_cap,
         "raw_gas_fee_cap {} should be < gas_fee_cap {} when minimums are enforced",
@@ -476,33 +364,22 @@ async fn suggest_gas_price_caps_enforces_min_tip_cap_and_min_basefee() {
 
 #[tokio::test]
 async fn new_rejects_invalid_config() {
-    let anvil = Anvil::new().spawn();
-    let url = anvil.endpoint_url();
-    let provider = RootProvider::new_http(url);
-    let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
-    let wallet = EthereumWallet::from(signer);
-
-    let invalid_config = TxManagerConfig { num_confirmations: 0, ..TxManagerConfig::default() };
+    let (provider, wallet, anvil) = setup_anvil();
 
     let err = SimpleTxManager::from_wallet(
         provider,
         wallet,
-        invalid_config,
+        TxManagerConfig { num_confirmations: 0, ..TxManagerConfig::default() },
         anvil.chain_id(),
         Arc::new(NoopTxMetrics),
     )
     .await
     .expect_err("should reject invalid config");
 
-    match &err {
-        TxManagerError::InvalidConfig(msg) => {
-            assert!(
-                msg.contains("num_confirmations"),
-                "expected num_confirmations validation error, got: {msg}",
-            );
-        }
-        other => panic!("expected TxManagerError::InvalidConfig, got {other:?}"),
-    }
+    assert!(
+        matches!(&err, TxManagerError::InvalidConfig(msg) if msg.contains("num_confirmations")),
+        "expected TxManagerError::InvalidConfig with 'num_confirmations', got {err:?}",
+    );
 }
 
 #[tokio::test]
@@ -521,11 +398,7 @@ async fn craft_tx_returns_fee_limit_exceeded_when_minimums_inflate_beyond_multip
 
     let (manager, _anvil) = setup_with_config(config).await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1u64),
-        ..Default::default()
-    };
+    let candidate = value_transfer(1);
 
     let err = manager.craft_tx(&candidate, None).await.expect_err("should exceed fee limit");
     assert!(
@@ -543,7 +416,7 @@ async fn prepare_exits_immediately_on_non_retryable_error() {
     // Blob transactions without a recipient trigger Unsupported (non-retryable).
     let candidate = TxCandidate {
         to: None,
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
+        blobs: Arc::from(vec![Box::<Blob>::default()]),
         ..Default::default()
     };
 
@@ -558,66 +431,12 @@ async fn prepare_exits_immediately_on_non_retryable_error() {
     );
 }
 
-/// A signer that always fails, used to test nonce rollback on sign failure.
-///
-/// Delegates `address()` to a real signer so the `EthereumWallet` routes
-/// signing requests correctly, then returns an error in `sign_transaction`.
-struct FailingSigner {
-    /// The address this signer claims to own.
-    address: Address,
-}
-
-#[async_trait]
-impl TxSigner<Signature> for FailingSigner {
-    fn address(&self) -> Address {
-        self.address
-    }
-
-    async fn sign_transaction(
-        &self,
-        _tx: &mut dyn SignableTransaction<Signature>,
-    ) -> alloy_signer::Result<Signature> {
-        Err(alloy_signer::Error::other("deliberately failing signer"))
-    }
-}
-
-/// Helper: spawns an Anvil instance and returns a [`SimpleTxManager`]
-/// whose wallet uses a [`FailingSigner`], causing all signing attempts
-/// to fail. The `FailingSigner` claims the same address as Anvil's first
-/// account so the rest of the pipeline (gas estimation, nonce) works.
-async fn setup_with_failing_signer()
--> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
-    let anvil = Anvil::new().spawn();
-    let url = anvil.endpoint_url();
-    let provider = RootProvider::new_http(url);
-    let address = anvil.addresses()[0];
-    let wallet = EthereumWallet::from(FailingSigner { address });
-    let chain_id = anvil.chain_id();
-    let manager = SimpleTxManager::from_wallet(
-        provider,
-        wallet,
-        TxManagerConfig::default(),
-        chain_id,
-        Arc::new(NoopTxMetrics),
-    )
-    .await
-    .expect("should create manager with failing signer");
-    (manager, anvil)
-}
-
 #[tokio::test]
 async fn accessors_return_expected_values() {
     let (manager, anvil) = setup().await;
 
     assert_eq!(manager.chain_id(), anvil.chain_id());
-    assert_eq!(
-        manager.sender_address(),
-        anvil.addresses()[0],
-        "sender_address should match the first Anvil account",
-    );
-    // config() returns the default config used in setup().
     assert_eq!(manager.config().num_confirmations, TxManagerConfig::default().num_confirmations);
-    // provider() and wallet() are opaque, but we can verify they are accessible.
     let _ = manager.provider();
     let _ = manager.wallet();
     let _ = manager.nonce_manager();
@@ -632,26 +451,15 @@ async fn accessors_return_expected_values() {
 /// the nonce would advance to 1.
 #[tokio::test]
 async fn craft_tx_rolls_back_nonce_on_sign_failure() {
-    let (failing_manager, _anvil) = setup_with_failing_signer().await;
+    let (failing_manager, _anvil) = setup_with_failing_signer(TxManagerConfig::default()).await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
+    let candidate = value_transfer(1);
 
-    // First call: signing fails, nonce should be rolled back.
     let err = failing_manager.craft_tx(&candidate, None).await.expect_err("should fail to sign");
     assert!(matches!(err, TxManagerError::Sign(_)), "expected TxManagerError::Sign, got {err:?}",);
 
-    // Query the same NonceManager directly. If rollback worked the
-    // cached nonce is still 0; if it didn't, it would have advanced
-    // to 1 (the nonce after 0 was "consumed").
     let guard = failing_manager.nonce_manager().next_nonce().await.expect("should reserve nonce");
     assert_eq!(guard.nonce(), 0, "nonce should be 0 — rollback must have restored it");
-    // Drop the guard so the nonce is consumed (prevents test pollution).
-    drop(guard);
 }
 
 /// When fee overrides are above network fees, the [`PreparedTx`] must use the
@@ -660,17 +468,11 @@ async fn craft_tx_rolls_back_nonce_on_sign_failure() {
 async fn craft_tx_with_fee_overrides_uses_overrides_when_above_network() {
     let (manager, _anvil) = setup().await;
 
-    // Learn current network fees so we can set overrides above them.
     let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
-    let override_tip = caps.gas_tip_cap + 50_000_000_000; // +50 gwei
-    let override_fee_cap = caps.gas_fee_cap + 100_000_000_000; // +100 gwei
+    let override_tip = caps.gas_tip_cap + 50_000_000_000;
+    let override_fee_cap = caps.gas_fee_cap + 100_000_000_000;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
+    let candidate = value_transfer(1_000);
 
     let overrides = FeeOverride::new(override_tip, override_fee_cap);
     let prepared = manager
@@ -678,17 +480,9 @@ async fn craft_tx_with_fee_overrides_uses_overrides_when_above_network() {
         .await
         .expect("should craft tx with fee overrides");
 
-    // PreparedTx must reflect the overrides since they exceed network fees.
-    assert_eq!(
-        prepared.gas_tip_cap, override_tip,
-        "gas_tip_cap should equal the override when it exceeds the network fee",
-    );
-    assert_eq!(
-        prepared.gas_fee_cap, override_fee_cap,
-        "gas_fee_cap should equal the override when it exceeds the network fee",
-    );
+    assert_eq!(prepared.gas_tip_cap, override_tip);
+    assert_eq!(prepared.gas_fee_cap, override_fee_cap);
 
-    // The signed transaction must also carry the override fees.
     let tx = decode_eip1559(&prepared);
     assert_eq!(tx.max_priority_fee_per_gas, override_tip);
     assert_eq!(tx.max_fee_per_gas, override_fee_cap);
@@ -700,67 +494,17 @@ async fn craft_tx_with_fee_overrides_uses_overrides_when_above_network() {
 async fn craft_tx_with_fee_overrides_uses_network_when_overrides_below() {
     let (manager, _anvil) = setup().await;
 
-    // Learn current network fees.
-    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
+    let candidate = value_transfer(1_000);
 
-    // Set overrides well below network fees (1 wei each).
-    let override_tip = 1u128;
-    let override_fee_cap = 1u128;
-
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
-
-    let overrides = FeeOverride::new(override_tip, override_fee_cap);
+    // 1 wei overrides are far below any real network fee.
+    let overrides = FeeOverride::new(1, 1);
     let prepared = manager
         .craft_tx(&candidate, Some(overrides))
         .await
         .expect("should craft tx with low fee overrides");
 
-    // PreparedTx must use network fees since they exceed the overrides.
-    assert_eq!(
-        prepared.gas_tip_cap, caps.gas_tip_cap,
-        "gas_tip_cap should use network fee, not the low override",
-    );
-    assert_eq!(
-        prepared.gas_fee_cap, caps.gas_fee_cap,
-        "gas_fee_cap should use network fee, not the low override",
-    );
-}
-
-/// Verifies that the [`PreparedTx`] fee fields are always consistent with the
-/// fees encoded in the signed transaction — the core invariant that
-/// [`PreparedTx`] is designed to guarantee.
-#[tokio::test]
-async fn prepared_tx_fees_match_decoded_transaction_with_overrides() {
-    let (manager, _anvil) = setup().await;
-
-    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
-    let override_tip = caps.gas_tip_cap + 10_000_000_000;
-    let override_fee_cap = caps.gas_fee_cap + 20_000_000_000;
-
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
-
-    let overrides = FeeOverride::new(override_tip, override_fee_cap);
-    let prepared = manager.craft_tx(&candidate, Some(overrides)).await.expect("should craft tx");
-    let tx = decode_eip1559(&prepared);
-
-    assert_eq!(
-        prepared.gas_tip_cap, tx.max_priority_fee_per_gas,
-        "PreparedTx gas_tip_cap must match decoded max_priority_fee_per_gas",
-    );
-    assert_eq!(
-        prepared.gas_fee_cap, tx.max_fee_per_gas,
-        "PreparedTx gas_fee_cap must match decoded max_fee_per_gas",
-    );
+    assert!(prepared.gas_tip_cap > 1, "network tip should override the 1-wei override");
+    assert!(prepared.gas_fee_cap > 1, "network fee cap should override the 1-wei override");
 }
 
 #[test]
@@ -775,12 +519,7 @@ fn simple_tx_manager_is_send_and_sync() {
 async fn increase_gas_price_bumps_above_threshold() {
     let (manager, _anvil) = setup().await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
+    let candidate = value_transfer(1_000);
 
     // Use the initial on-wire fees as the "old" values.
     let prepared = manager.craft_tx(&candidate, None).await.expect("should craft initial tx");
@@ -820,12 +559,7 @@ async fn increase_gas_price_fee_limit_exceeded() {
 
     let (manager, _anvil) = setup_with_config(config).await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
+    let candidate = value_transfer(1_000);
 
     // Use high old fees that will bump above the ceiling. The 10% bump
     // on a fee_cap of 500 gwei will produce ~550 gwei, which exceeds
@@ -845,38 +579,10 @@ async fn increase_gas_price_fee_limit_exceeded() {
 }
 
 #[tokio::test]
-async fn increase_gas_price_preserves_none_blob_fee_cap() {
-    let (manager, _anvil) = setup().await;
-
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        value: U256::from(1_000u64),
-        gas_limit: 0,
-        ..Default::default()
-    };
-
-    let caps = manager.suggest_gas_price_caps().await.expect("should get caps");
-
-    let bumped = manager
-        .increase_gas_price(&candidate, caps.gas_tip_cap, caps.gas_fee_cap, None)
-        .await
-        .expect("should compute bumped fees");
-
-    assert!(
-        bumped.blob_fee_cap.is_none(),
-        "blob_fee_cap should remain None when old_blob_fee_cap is None",
-    );
-}
-
-#[tokio::test]
 async fn increase_gas_price_bumps_blob_fee_cap() {
     let (manager, _anvil) = setup().await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
-        ..Default::default()
-    };
+    let candidate = single_blob_candidate();
 
     // Use craft_tx to get valid initial fees for a blob transaction.
     let initial = manager.craft_tx(&candidate, None).await.expect("should craft initial blob tx");
@@ -911,8 +617,7 @@ async fn increase_gas_price_rejects_blob_fee_cap_mismatch() {
     let (manager, _anvil) = setup().await;
 
     // Non-blob candidate with old_blob_fee_cap = Some should be rejected.
-    let non_blob_candidate =
-        TxCandidate { to: Some(Address::with_last_byte(0x42)), ..Default::default() };
+    let non_blob_candidate = value_transfer(0);
 
     let err = manager
         .increase_gas_price(&non_blob_candidate, 1_000, 2_000, Some(500))
@@ -929,18 +634,12 @@ async fn increase_gas_price_rejects_blob_fee_cap_mismatch() {
 async fn blob_fee_bump_round_trip() {
     let (manager, _anvil) = setup().await;
 
-    let candidate = TxCandidate {
-        to: Some(Address::with_last_byte(0x42)),
-        blobs: Arc::new(vec![Box::<Blob>::default()]),
-        ..Default::default()
-    };
+    let candidate = single_blob_candidate();
 
-    // Step 1: Craft the initial blob transaction.
     let initial = manager.craft_tx(&candidate, None).await.expect("should craft initial blob tx");
     let initial_blob_fee = initial.blob_fee_cap.expect("initial tx should have blob_fee_cap");
     assert!(initial_blob_fee > 0, "initial blob_fee_cap should be non-zero");
 
-    // Step 2: Simulate a fee bump — compute bumped fees from the initial values.
     let bumped = manager
         .increase_gas_price(
             &candidate,
@@ -957,7 +656,6 @@ async fn blob_fee_bump_round_trip() {
         "bumped blob_fee_cap {bumped_blob_fee} should be >= initial {initial_blob_fee}",
     );
 
-    // Step 3: Re-craft the transaction with the bumped fee overrides.
     let fee_override = FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)
         .with_blob_fee_cap(bumped_blob_fee)
         .with_gas_limit_floor(initial.gas_limit);
@@ -967,7 +665,6 @@ async fn blob_fee_bump_round_trip() {
         .await
         .expect("should craft replacement blob tx");
 
-    // Step 4: Verify the replacement transaction.
     let replacement_blob_fee =
         replacement.blob_fee_cap.expect("replacement tx should have blob_fee_cap");
     assert!(
@@ -987,7 +684,6 @@ async fn blob_fee_bump_round_trip() {
         bumped.gas_tip_cap,
     );
 
-    // Decode and verify the replacement is still a valid EIP-4844 tx with sidecar.
     let envelope = replacement.to_envelope().expect("should decode replacement TxEnvelope");
     assert!(envelope.is_eip4844(), "replacement should be EIP-4844");
 

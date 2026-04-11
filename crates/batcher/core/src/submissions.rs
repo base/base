@@ -113,7 +113,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                         tx_data: Bytes::new(),
                         value: U256::ZERO,
                         gas_limit: 0,
-                        blobs: Arc::new(vec![blob]),
+                        blobs: Arc::from(vec![blob]),
                     },
                     Err(e) => {
                         warn!(error = %e, "failed to encode frames to blob, requeueing");

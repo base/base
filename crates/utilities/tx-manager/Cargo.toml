@@ -24,15 +24,15 @@ alloy-eips = { workspace = true, features = ["std", "kzg"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base
+base-metrics.workspace = true
 base-alloy-signer.workspace = true
 
 # misc
 url.workspace = true
 backon.workspace = true
 thiserror.workspace = true
-tracing = { workspace = true, features = ["std"] }
-base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
+tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 
 [dev-dependencies]

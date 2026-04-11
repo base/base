@@ -170,8 +170,6 @@ pub struct SimpleTxManager<P> {
     closed: Arc<AtomicBool>,
     /// Metrics collector for transaction lifecycle events.
     metrics: Arc<dyn TxMetrics>,
-    /// Builder for EIP-4844 blob transaction sidecars.
-    blob_builder: BlobTxBuilder,
 }
 
 impl<P> SimpleTxManager<P>
@@ -244,7 +242,6 @@ where
 
         let address = <EthereumWallet as NetworkWallet<Ethereum>>::default_signer_address(&wallet);
         let nonce_manager = NonceManager::new(provider.clone(), address, config.network_timeout);
-        let blob_builder = BlobTxBuilder::new();
         Ok(Self {
             provider,
             wallet,
@@ -253,7 +250,6 @@ where
             chain_id,
             closed: Arc::new(AtomicBool::new(false)),
             metrics,
-            blob_builder,
         })
     }
 
@@ -330,6 +326,25 @@ where
             self.config.fee_limit_multiplier,
             self.config.fee_limit_threshold,
         )
+    }
+
+    /// Checks both gas and blob fee ceilings relative to the raw provider
+    /// estimates in `caps`.
+    ///
+    /// Calls [`check_fee_limit`](Self::check_fee_limit) for the gas fee cap,
+    /// and when `blob_fee_cap` is `Some`, also checks the blob fee cap
+    /// against [`raw_blob_baseline`](Self::raw_blob_baseline).
+    fn check_fee_limits(
+        &self,
+        fee_cap: u128,
+        blob_fee_cap: Option<u128>,
+        caps: &GasPriceCaps,
+    ) -> TxManagerResult<()> {
+        self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
+        if let Some(blob_cap) = blob_fee_cap {
+            self.check_fee_limit(blob_cap, self.raw_blob_baseline(caps)?)?;
+        }
+        Ok(())
     }
 
     /// Returns the raw (pre-minimum) blob fee cap from `caps`.
@@ -568,9 +583,11 @@ where
         old_fee_cap: u128,
         old_blob_fee_cap: Option<u128>,
     ) -> TxManagerResult<BumpedFees> {
+        let is_blob = candidate.is_blob();
+
         // Validate consistency: old_blob_fee_cap must be Some for blob txs
         // and None for non-blob txs.
-        if old_blob_fee_cap.is_some() == candidate.blobs.is_empty() {
+        if old_blob_fee_cap.is_some() != is_blob {
             return Err(TxManagerError::Unsupported(
                 "old_blob_fee_cap must be Some for blob transactions and None for non-blob transactions"
                     .into(),
@@ -578,13 +595,12 @@ where
         }
 
         // Step 1: Fetch fresh network fees.
-        let caps = self.suggest_gas_price_caps_for(!candidate.blobs.is_empty()).await?;
+        let caps = self.suggest_gas_price_caps_for(is_blob).await?;
 
         // Step 2: Derive effective base fee from the caps.
         let new_base_fee = FeeCalculator::base_fee_from_caps(caps.gas_fee_cap, caps.gas_tip_cap);
 
         // Step 3: Compute bumped tip and fee cap.
-        let is_blob = !candidate.blobs.is_empty();
         let (bumped_tip, bumped_fee_cap) = FeeCalculator::update_fees(
             old_tip,
             old_fee_cap,
@@ -593,25 +609,14 @@ where
             is_blob,
         );
 
-        // Step 4: Enforce fee ceiling.
-        self.check_fee_limit(bumped_fee_cap, caps.raw_gas_fee_cap)?;
+        // Step 4: Bump blob fee cap separately with 100% minimum.
+        let blob_fee_cap = old_blob_fee_cap.map(|old_blob| {
+            let threshold = FeeCalculator::calc_threshold_value(old_blob, true);
+            caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob))
+        });
 
-        // Step 5: Bump blob fee cap separately with 100% minimum.
-        let blob_fee_cap = match old_blob_fee_cap {
-            Some(old_blob) => {
-                let threshold = FeeCalculator::calc_threshold_value(old_blob, true);
-                let bumped_blob =
-                    caps.blob_fee_cap.map_or(threshold, |network_blob| threshold.max(network_blob));
-
-                // Enforce fee ceiling on blob fee cap using the raw
-                // (pre-minimum) blob fee cap as the baseline, mirroring
-                // the gas fee cap ceiling in Step 4.
-                self.check_fee_limit(bumped_blob, self.raw_blob_baseline(&caps)?)?;
-
-                Some(bumped_blob)
-            }
-            None => None,
-        };
+        // Step 5: Enforce fee ceilings on gas and blob fee caps.
+        self.check_fee_limits(bumped_fee_cap, blob_fee_cap, &caps)?;
 
         info!(
             %old_tip,
@@ -679,7 +684,7 @@ where
         nonce_override: Option<u64>,
         cached_sidecar: Option<Arc<BlobTransactionSidecarEip7594>>,
     ) -> TxManagerResult<PreparedTx> {
-        let is_blob = !candidate.blobs.is_empty();
+        let is_blob = candidate.is_blob();
 
         // Blob transactions must have a recipient address (no contract creation).
         if is_blob && candidate.to.is_none() {
@@ -715,16 +720,7 @@ where
                 (caps.gas_tip_cap.max(fo.gas_tip_cap), caps.gas_fee_cap.max(fo.gas_fee_cap))
             });
 
-        // Step 3: Check fee limits.
-        //
-        // The `suggested` parameter is the raw gas_fee_cap computed from
-        // the provider's values before enforcing our configured minimums
-        // (`min_tip_cap`, `min_basefee`). This detects when enforced
-        // minimums or fee overrides inflate the fee cap beyond
-        // `fee_limit_multiplier × raw_provider_fee_cap`.
-        self.check_fee_limit(fee_cap, caps.raw_gas_fee_cap)?;
-
-        // Step 3b: Compute blob fee cap with config minimum and override floor.
+        // Step 3: Compute blob fee cap with config minimum and override floor.
         let blob_fee_cap = if is_blob {
             let network = caps.blob_fee_cap.ok_or_else(|| {
                 TxManagerError::Unsupported(
@@ -737,10 +733,14 @@ where
             None
         };
 
-        // Step 3c: Enforce blob fee ceiling (mirrors Step 3 for gas fee cap).
-        if let Some(blob_cap) = blob_fee_cap {
-            self.check_fee_limit(blob_cap, self.raw_blob_baseline(&caps)?)?;
-        }
+        // Step 3b: Check fee limits.
+        //
+        // The `suggested` parameter is the raw gas_fee_cap computed from
+        // the provider's values before enforcing our configured minimums
+        // (`min_tip_cap`, `min_basefee`). This detects when enforced
+        // minimums or fee overrides inflate the fee cap beyond
+        // `fee_limit_multiplier × raw_provider_fee_cap`.
+        self.check_fee_limits(fee_cap, blob_fee_cap, &caps)?;
 
         // Step 4: Build TransactionRequest.
         let from = self.sender_address();
@@ -765,7 +765,7 @@ where
         let built_sidecar = if is_blob {
             let sidecar = match cached_sidecar {
                 Some(cached) => cached,
-                None => Arc::new(self.blob_builder.build_sidecar(Arc::clone(&candidate.blobs))?),
+                None => Arc::new(BlobTxBuilder::build_sidecar(&candidate.blobs)?),
             };
             tx_request.sidecar = Some((*sidecar).clone().into());
             tx_request.populate_blob_hashes();
@@ -992,7 +992,7 @@ where
             // For other errors, reset only if nothing was ever published.
             // Once a transaction is pending, the next send_tx will re-sync
             // via the chain's pending nonce anyway.
-            Err(_) => send_state.successful_publish_count() == 0,
+            Err(_) => !send_state.has_published(),
         }
     }
 
@@ -1018,7 +1018,7 @@ where
             // nonce is re-fetched, but advance_nonce() pops
             // returned_nonces first, reissuing the same invalid value.
             Ok(_) | Err(TxManagerError::NonceTooHigh | TxManagerError::NonceTooLow) => false,
-            Err(_) => send_state.successful_publish_count() == 0,
+            Err(_) => !send_state.has_published(),
         }
     }
 
@@ -1085,19 +1085,11 @@ where
                 return Ok(receipt);
             }
 
-            // Respond immediately to the should_bump_fees flag set by
-            // process_send_error on retryable errors (e.g. Underpriced,
-            // ReplacementUnderpriced), rather than waiting for the next
-            // resubmission timer tick.
-            //
-            // Clear the flag before attempting the bump so that a failed
-            // attempt (e.g. RPC timeout) does not immediately re-trigger
-            // on the next loop iteration — instead, the loop falls through
-            // to tokio::select! which waits for the resubmission timer or
-            // a receipt, providing natural backoff. If a new retryable
-            // error occurs later, process_send_error will re-set the flag.
-            if send_state.should_bump_fees() {
-                send_state.clear_bump_fees();
+            // Respond immediately to the bump-fees flag set by
+            // process_send_error on retryable errors, rather than waiting
+            // for the next resubmission timer tick. take_bump_fees clears
+            // the flag atomically so a failed bump does not re-trigger.
+            if send_state.take_bump_fees() {
                 if let Some(abort) =
                     self.try_fee_bump(candidate, send_state, &receipt_tx, &mut bump).await
                 {
@@ -1238,14 +1230,7 @@ where
         let bumped =
             self.increase_gas_price(candidate, old.tip, old.fee_cap, old.blob_fee_cap).await?;
 
-        // Build fee overrides including blob fee cap and gas limit floor.
-        // The gas limit floor ensures the limit never decreases across bumps,
-        // avoiding a full candidate clone.
-        let mut fee_override = FeeOverride::new(bumped.gas_tip_cap, bumped.gas_fee_cap)
-            .with_gas_limit_floor(old.gas_limit);
-        if let Some(blob_cap) = bumped.blob_fee_cap {
-            fee_override = fee_override.with_blob_fee_cap(blob_cap);
-        }
+        let fee_override = bumped.to_fee_override(old.gas_limit);
 
         // Rebuild transaction with bumped fees as overrides and the fresh
         // caps to avoid a redundant provider round-trip.
@@ -1267,10 +1252,10 @@ where
 
         // Record the bump and log only after the transaction has been
         // successfully published to avoid inflating the count on failure.
-        send_state.record_fee_bump();
+        let bump_count = send_state.record_fee_bump();
         self.metrics.record_gas_bump();
         info!(
-            bump_count = %send_state.bump_count(),
+            bump_count = %bump_count,
             old_tip = %old.tip,
             new_tip = %prepared.gas_tip_cap,
             old_fee_cap = %old.fee_cap,
@@ -1361,7 +1346,7 @@ where
 
                 // AlreadyKnown on resubmission is a success — the tx is in
                 // the mempool from a prior publish. Return the previous hash.
-                if classified.is_already_known() && send_state.successful_publish_count() > 0 {
+                if classified.is_already_known() && send_state.has_published() {
                     let hash = last_tx_hash.ok_or_else(|| {
                         TxManagerError::InvalidConfig(
                             "AlreadyKnown but no prior tx hash available — caller must track the hash from publish_tx".into(),
@@ -1973,7 +1958,7 @@ mod tests {
         };
 
         let prepared = manager
-            .prepare_with_initial_caps(&candidate, None, Some(caps.clone()), None, None)
+            .prepare_with_initial_caps(&candidate, None, Some(caps), None, None)
             .await
             .expect("should prepare tx using supplied caps");
         let tx = decode_eip1559(&prepared);

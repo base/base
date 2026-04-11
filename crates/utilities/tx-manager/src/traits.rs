@@ -38,12 +38,9 @@ impl Future for SendHandle {
     type Output = SendResponse;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // `oneshot::Receiver` is `Unpin`, so direct polling is safe.
-        match Pin::new(&mut self.get_mut().rx).poll(cx) {
-            Poll::Ready(Ok(result)) => Poll::Ready(result),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(TxManagerError::ChannelClosed)),
-            Poll::Pending => Poll::Pending,
-        }
+        Pin::new(&mut self.get_mut().rx)
+            .poll(cx)
+            .map(|res| res.unwrap_or(Err(TxManagerError::ChannelClosed)))
     }
 }
 
@@ -73,8 +70,8 @@ pub trait TxManager: Send + Sync + Debug {
     /// The default implementation is a no-op that immediately returns `Ok(())`,
     /// suitable for test managers and environments where txpool management is
     /// not needed.
-    fn cancel_tx(&self) -> impl Future<Output = Result<(), TxManagerError>> + Send {
-        async { Ok(()) }
+    fn cancel_tx(&self) -> impl Future<Output = TxManagerResult<()>> + Send {
+        std::future::ready(Ok(()))
     }
 }
 
@@ -83,13 +80,13 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::{TxManagerError, test_utils::stub_receipt};
+    use crate::{TxManagerError, test_utils::StubReceipt};
 
     #[tokio::test]
     async fn send_handle_yields_ok_on_success() {
         let (tx, rx) = oneshot::channel();
         let handle = SendHandle::new(rx);
-        let receipt = stub_receipt();
+        let receipt = StubReceipt::success();
         tx.send(Ok(receipt.clone())).unwrap();
         let result = handle.await;
         assert_eq!(result.unwrap(), receipt);

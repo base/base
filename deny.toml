@@ -93,6 +93,7 @@ skip = [
     # System/platform crates
     "socket2",
     "bitflags",
+    "redox_syscall",
     "redox_users",
 
     # Network crates

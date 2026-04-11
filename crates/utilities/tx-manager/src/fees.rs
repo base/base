@@ -33,7 +33,7 @@ impl FeeCalculator {
     /// This is the inverse of [`calc_gas_fee_cap`](Self::calc_gas_fee_cap):
     /// given `fee_cap = tip + 2 × base_fee`, returns `(fee_cap - tip) / 2`.
     #[must_use]
-    pub fn base_fee_from_caps(gas_fee_cap: u128, gas_tip_cap: u128) -> u128 {
+    pub const fn base_fee_from_caps(gas_fee_cap: u128, gas_tip_cap: u128) -> u128 {
         debug_assert!(gas_fee_cap >= gas_tip_cap);
         gas_fee_cap.saturating_sub(gas_tip_cap) / 2
     }
@@ -86,17 +86,11 @@ impl FeeCalculator {
     /// Selects final `(tip, fee_cap)` values that satisfy geth's replacement
     /// rules while preferring fresher network estimates.
     ///
-    /// Four cases are evaluated:
-    ///
-    /// 1. **Both above threshold** — use the new tip and recalculated fee cap.
-    /// 2. **Tip above, fee cap below** — use the new tip but keep the
-    ///    threshold fee cap (clamped to at least `new_tip`).
-    /// 3. **Fee cap above, tip below** — use the threshold tip and
-    ///    recalculate the fee cap from the threshold tip.
-    /// 4. **Both below** — use both threshold values (fee cap clamped to at least threshold tip).
-    ///
-    /// The returned fee cap always reflects the tip that was selected so that
-    /// the EIP-1559 relationship `fee_cap >= tip` is maintained.
+    /// The tip is the greater of the new network tip and the replacement
+    /// threshold. If the fresh network fee cap clears the threshold it is
+    /// recalculated from the chosen tip; otherwise the threshold fee cap is
+    /// used, clamped to at least the chosen tip so that the EIP-1559
+    /// relationship `fee_cap >= tip` is maintained.
     ///
     /// # Note
     ///
@@ -117,34 +111,21 @@ impl FeeCalculator {
 
         let new_fee_cap = Self::calc_gas_fee_cap(new_base_fee, new_tip);
 
-        let tip_above = new_tip >= threshold_tip;
-        let cap_above = new_fee_cap >= threshold_fee_cap;
+        // Pick the tip that satisfies the replacement threshold.
+        let tip = if new_tip >= threshold_tip { new_tip } else { threshold_tip };
 
-        match (tip_above, cap_above) {
-            // Case 1: both above threshold → use new values
-            (true, true) => (new_tip, new_fee_cap),
-            // Case 2: tip above, fee cap below → new tip + threshold fee cap
-            // Clamp fee_cap to at least new_tip to maintain fee_cap >= tip invariant.
-            (true, false) => {
-                let fee_cap = if threshold_fee_cap > new_tip { threshold_fee_cap } else { new_tip };
-                (new_tip, fee_cap)
-            }
-            // Case 3: fee cap above, tip below → threshold tip + recalculated fee cap
-            (false, true) => {
-                let recalculated = Self::calc_gas_fee_cap(new_base_fee, threshold_tip);
-                (threshold_tip, recalculated)
-            }
-            // Case 4: both below → both threshold values
-            // Clamp fee_cap to at least threshold_tip to maintain fee_cap >= tip invariant.
-            (false, false) => {
-                let fee_cap = if threshold_fee_cap > threshold_tip {
-                    threshold_fee_cap
-                } else {
-                    threshold_tip
-                };
-                (threshold_tip, fee_cap)
-            }
-        }
+        // If the fresh network fee cap already clears the threshold,
+        // recalculate from the chosen tip to keep tip/base-fee consistent.
+        // Otherwise fall back to the threshold fee cap, clamped to >= tip.
+        let fee_cap = if new_fee_cap >= threshold_fee_cap {
+            Self::calc_gas_fee_cap(new_base_fee, tip)
+        } else if threshold_fee_cap > tip {
+            threshold_fee_cap
+        } else {
+            tip
+        };
+
+        (tip, fee_cap)
     }
 
     /// Enforces a configurable fee ceiling.
@@ -243,12 +224,26 @@ pub struct BumpedFees {
     pub caps: GasPriceCaps,
 }
 
+impl BumpedFees {
+    /// Converts the bumped fees into a [`FeeOverride`] suitable for
+    /// [`SimpleTxManager::prepare`](crate::SimpleTxManager::prepare).
+    ///
+    /// `gas_limit_floor` prevents the gas limit from decreasing across
+    /// replacement attempts.
+    #[must_use]
+    pub fn to_fee_override(&self, gas_limit_floor: u64) -> FeeOverride {
+        let fo = FeeOverride::new(self.gas_tip_cap, self.gas_fee_cap)
+            .with_gas_limit_floor(gas_limit_floor);
+        self.blob_fee_cap.map_or(fo, |blob_cap| fo.with_blob_fee_cap(blob_cap))
+    }
+}
+
 /// Intermediate fee estimates computed during gas price suggestion.
 ///
 /// Used between fee calculation and transaction construction to carry
 /// the tip cap, base fee cap, and optional blob fee cap.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct GasPriceCaps {
     /// Maximum priority fee per gas (tip).
     pub gas_tip_cap: u128,

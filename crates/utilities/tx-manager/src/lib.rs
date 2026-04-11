@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod error;
-pub use error::{RpcErrorClassifier, TxManagerError, TxManagerResult};
+pub use error::{RevertDisplay, RpcErrorClassifier, TxManagerError, TxManagerResult};
 
 mod candidate;
 pub use candidate::TxCandidate;
@@ -47,3 +47,5 @@ pub use blob::{BlobTxBuilder, MAX_BLOBS_PER_TX};
 
 #[cfg(test)]
 pub mod test_utils;
+#[cfg(test)]
+pub use test_utils::StubReceipt;

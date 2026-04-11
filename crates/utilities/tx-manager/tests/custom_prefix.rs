@@ -13,7 +13,6 @@ struct TestCli {
 #[test]
 fn env_vars_use_custom_prefix() {
     let cmd = TestCli::command();
-    let args: Vec<_> = cmd.get_arguments().collect();
 
     let cases = [
         ("tx-manager.num-confirmations", "CUSTOM_PREFIX_NUM_CONFIRMATIONS"),
@@ -35,8 +34,8 @@ fn env_vars_use_custom_prefix() {
     ];
 
     for (long_name, expected_env) in cases {
-        let arg = args
-            .iter()
+        let arg = cmd
+            .get_arguments()
             .find(|a| a.get_long() == Some(long_name))
             .unwrap_or_else(|| panic!("{long_name} arg should exist"));
         assert_eq!(
