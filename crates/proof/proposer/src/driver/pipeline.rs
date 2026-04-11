@@ -691,7 +691,7 @@ where
         //
         // Reuse the cached map when possible, scanning only new entries.
         // A full rescan is needed only on cold start or L1 reorg.
-        let game_map = self.updated_game_map(cache.as_ref(), count).await?;
+        let game_map = self.updated_game_map(cache.take(), count).await?;
 
         // ── Pre-fetch canonical output roots ───────────────────────────
         //
@@ -978,17 +978,18 @@ where
     ///   as-is — no factory RPCs needed.
     async fn updated_game_map(
         &self,
-        cache: Option<&CachedRecovery>,
+        cache: Option<CachedRecovery>,
         count: u64,
     ) -> Result<CachedGameMap, ProposerError> {
         match cache {
             Some(cached) if count >= cached.game_map.scanned_up_to => {
-                let new_entries = count - cached.game_map.scanned_up_to;
+                let scanned_up_to = cached.game_map.scanned_up_to;
+                let new_entries = count - scanned_up_to;
                 if new_entries == 0 {
                     // Anchor root changed but game_count is the same —
                     // reuse the map, just re-walk.
                     debug!("Anchor root changed, re-walking with existing game map");
-                    return Ok(cached.game_map.clone());
+                    return Ok(cached.game_map);
                 }
 
                 // If the delta exceeds the lookback window (e.g. proposer
@@ -1005,13 +1006,13 @@ where
 
                 // Incremental scan: only fetch the new factory entries.
                 info!(
-                    cached_count = cached.game_map.scanned_up_to,
+                    cached_count = scanned_up_to,
                     current_count = count,
                     new_entries,
                     "Incrementally scanning new factory entries"
                 );
-                let mut map = cached.game_map.map.clone();
-                self.scan_factory_range(cached.game_map.scanned_up_to, count, &mut map).await?;
+                let mut map = cached.game_map.map;
+                self.scan_factory_range(scanned_up_to, count, &mut map).await?;
                 Ok(CachedGameMap { scanned_up_to: count, map })
             }
             Some(cached) => {
