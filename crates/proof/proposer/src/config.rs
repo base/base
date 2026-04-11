@@ -31,12 +31,6 @@ pub enum ConfigError {
         /// The actual value.
         value: String,
     },
-    /// Invalid metrics configuration.
-    #[error("invalid metrics config: {0}")]
-    Metrics(String),
-    /// Invalid RPC configuration.
-    #[error("invalid RPC config: {0}")]
-    Rpc(String),
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
     Signing(String),
@@ -133,9 +127,11 @@ impl ProposerConfig {
         }
 
         if cli.metrics.enabled && cli.metrics.port == 0 {
-            return Err(ConfigError::Metrics(
-                "metrics port must be non-zero when metrics are enabled".to_string(),
-            ));
+            return Err(ConfigError::OutOfRange {
+                field: "metrics-port",
+                constraint: "non-zero when metrics are enabled",
+                value: "0".to_string(),
+            });
         }
 
         if cli.health.port == 0 {
@@ -147,9 +143,11 @@ impl ProposerConfig {
         }
 
         if cli.admin.enabled && cli.admin.port == 0 {
-            return Err(ConfigError::Rpc(
-                "admin RPC port must be non-zero when admin is enabled".to_string(),
-            ));
+            return Err(ConfigError::OutOfRange {
+                field: "admin-port",
+                constraint: "non-zero when admin is enabled",
+                value: "0".to_string(),
+            });
         }
 
         let retry = RetryConfig::from(&cli.proposer);
@@ -299,7 +297,10 @@ mod tests {
         cli.metrics.enabled = true;
         cli.metrics.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Metrics(_))));
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "metrics-port", .. })
+        ));
     }
 
     #[test]
@@ -329,7 +330,10 @@ mod tests {
         cli.admin.enabled = true;
         cli.admin.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Rpc(_))));
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "admin-port", .. })
+        ));
     }
 
     #[test]
@@ -421,12 +425,6 @@ mod tests {
             value: "0".to_string(),
         };
         assert_eq!(error.to_string(), "poll-interval must be greater than 0, got 0");
-
-        let error = ConfigError::Metrics("port must be non-zero".to_string());
-        assert_eq!(error.to_string(), "invalid metrics config: port must be non-zero");
-
-        let error = ConfigError::Rpc("RPC port must be non-zero".to_string());
-        assert_eq!(error.to_string(), "invalid RPC config: RPC port must be non-zero");
 
         let error = ConfigError::Signing("missing key".to_string());
         assert_eq!(error.to_string(), "invalid signing config: missing key");
