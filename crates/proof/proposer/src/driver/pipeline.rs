@@ -1295,9 +1295,8 @@ where
                     self.config.driver.block_interval
                 )))
             })?;
-        let intermediate_blocks = self
-            .intermediate_block_numbers(starting_block_number)
-            .map_err(SubmitAction::Failed)?;
+        let intermediate_blocks =
+            self.intermediate_block_numbers(starting_block_number).map_err(SubmitAction::Failed)?;
         let intermediate_roots = self
             .extract_intermediate_roots(starting_block_number, proposals, &intermediate_blocks)
             .map_err(SubmitAction::Failed)?;
@@ -1434,13 +1433,11 @@ where
         (1..=count)
             .map(|i| {
                 starting_block_number
-                    .checked_add(
-                        i.checked_mul(interval).ok_or_else(|| {
-                            ProposerError::Internal(
-                                "overflow computing intermediate block number".into(),
-                            )
-                        })?,
-                    )
+                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
+                        ProposerError::Internal(
+                            "overflow computing intermediate block number".into(),
+                        )
+                    })?)
                     .ok_or_else(|| {
                         ProposerError::Internal(
                             "overflow computing intermediate block number".into(),
