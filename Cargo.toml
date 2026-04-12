@@ -236,13 +236,13 @@ base-execution-payload-builder = { path = "crates/execution/payload" }
 base-revm = { path = "crates/execution/revm", default-features = false }
 
 # Infra
-based = { path = "crates/infra/based" }
-basectl-cli = { path = "crates/infra/basectl" }
+base-based = { path = "crates/infra/based" }
+base-basectl-cli = { path = "crates/infra/basectl" }
 base-load-tests = { path = "crates/infra/load-tests" }
-audit-archiver-lib = { path = "crates/infra/audit" }
-ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
-websocket-proxy = { path = "crates/infra/websocket-proxy" }
-mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
+base-audit-archiver-lib = { path = "crates/infra/audit" }
+base-ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
+base-websocket-proxy = { path = "crates/infra/websocket-proxy" }
+base-mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Proof
 base-zk-db = { path = "crates/proof/zk/db" }

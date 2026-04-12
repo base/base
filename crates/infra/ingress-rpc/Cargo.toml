@@ -1,5 +1,5 @@
 [package]
-name = "ingress-rpc-lib"
+name = "base-ingress-rpc-lib"
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -18,7 +18,7 @@ base-bundles.workspace = true
 alloy-signer-local.workspace = true
 base-execution-evm.workspace = true
 base-common-network.workspace = true
-audit-archiver-lib.workspace = true
+base-audit-archiver-lib.workspace = true
 reth-rpc-eth-types.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 metrics = { workspace = true, optional = true }
