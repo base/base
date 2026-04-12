@@ -258,7 +258,10 @@ impl ProposerService {
             None
         };
 
-        driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
+        driver_handle
+            .start_proposer()
+            .await
+            .map_err(|e| eyre::eyre!("failed to start proposer: {e}"))?;
 
         ready.store(true, Ordering::SeqCst);
         Metrics::record_startup();
