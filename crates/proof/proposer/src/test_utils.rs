@@ -1,5 +1,7 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients, contract clients, and proposer.
 
+use std::time::Duration;
+
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use async_trait::async_trait;
@@ -8,7 +10,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, ContractError,
     DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
-use base_proof_primitives::Proposal;
+use base_proof_primitives::{ProofResult, Proposal, ProverClient};
 use base_proof_rpc::{
     BaseBlock, L1BlockId, L1BlockRef, L1Provider, L2BlockRef, L2Provider, OutputAtBlock,
     RollupProvider, RpcError, RpcResult, SyncStatus,
@@ -316,6 +318,44 @@ pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus 
 
 pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot { root: B256::ZERO, l2_block_number: block_number }
+}
+
+/// Creates a test [`Proposal`] for the given block number.
+pub(crate) fn test_proposal(block_number: u64) -> Proposal {
+    Proposal {
+        output_root: B256::repeat_byte(block_number as u8),
+        signature: Bytes::from(vec![0xab; 65]),
+        l1_origin_hash: B256::repeat_byte(0x02),
+        l1_origin_number: 100 + block_number,
+        l2_block_number: block_number,
+        prev_output_root: B256::repeat_byte(0x03),
+        config_hash: B256::repeat_byte(0x04),
+    }
+}
+
+/// Mock prover with a configurable delay before returning results.
+#[derive(Debug)]
+pub(crate) struct MockProver {
+    pub delay: Duration,
+    pub block_interval: u64,
+}
+
+#[async_trait]
+impl ProverClient for MockProver {
+    async fn prove(
+        &self,
+        request: base_proof_primitives::ProofRequest,
+    ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
+        tokio::time::sleep(self.delay).await;
+
+        let block_number = request.claimed_l2_block_number;
+        let aggregate_proposal = test_proposal(block_number);
+
+        let start = block_number.saturating_sub(self.block_interval);
+        let proposals: Vec<Proposal> = ((start + 1)..=block_number).map(test_proposal).collect();
+
+        Ok(ProofResult::Tee { aggregate_proposal, proposals })
+    }
 }
 
 /// Mock output proposer that does nothing (returns `Ok(())`).

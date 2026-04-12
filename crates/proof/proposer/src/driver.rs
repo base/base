@@ -1,19 +1,95 @@
-//! Lifecycle management for the proving pipeline.
+//! Proposer driver types and lifecycle management.
+//!
+//! Contains configuration types ([`DriverConfig`], [`RecoveredState`]) shared
+//! by the [`crate::ProvingPipeline`], and the [`PipelineHandle`] that wraps a
+//! pipeline with start/stop/is-running semantics exposed through the
+//! [`ProposerDriverControl`] trait for the admin JSON-RPC server.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
+use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info, warn};
 
-use super::pipeline::ProvingPipeline;
+use crate::pipeline::ProvingPipeline;
+
+// ---------------------------------------------------------------------------
+// Core types
+// ---------------------------------------------------------------------------
+
+/// Driver configuration.
+#[derive(Debug, Clone)]
+pub struct DriverConfig {
+    /// Polling interval for new blocks.
+    pub poll_interval: Duration,
+    /// Number of L2 blocks between proposals (read from `AggregateVerifier` at startup).
+    pub block_interval: u64,
+    /// Number of L2 blocks between intermediate output root checkpoints.
+    pub intermediate_block_interval: u64,
+    /// ETH bond required to create a dispute game.
+    pub init_bond: U256,
+    /// Game type ID for `AggregateVerifier` dispute games.
+    pub game_type: u32,
+    /// If true, use `safe_l2` (derived from L1 but L1 not yet finalized).
+    /// If false (default), use `finalized_l2` (derived from finalized L1).
+    pub allow_non_finalized: bool,
+    /// Address of the proposer that submits proof transactions on-chain.
+    /// Included in the proof journal so the enclave signs over the correct `msg.sender`.
+    pub proposer_address: Address,
+    /// Keccak256 hash of the expected enclave PCR0 measurement.
+    /// Passed to the prover in each proof request so multi-enclave provers
+    /// can select the correct enclave.
+    pub tee_image_hash: B256,
+    /// Address of the `AnchorStateRegistry` contract on L1.
+    /// Used as the "no parent" sentinel when creating the first game from anchor state.
+    pub anchor_state_registry_address: Address,
+}
+
+impl Default for DriverConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_secs(12),
+            block_interval: 512,
+            intermediate_block_interval: 512,
+            init_bond: U256::ZERO,
+            game_type: 0,
+            allow_non_finalized: false,
+            proposer_address: Address::ZERO,
+            tee_image_hash: B256::ZERO,
+            anchor_state_registry_address: Address::ZERO,
+        }
+    }
+}
+
+/// On-chain state recovered by the pipeline.
+///
+/// This is either a game found in the `DisputeGameFactory` or the
+/// anchor root from the `AnchorStateRegistry` when no games exist.
+#[derive(Debug, Clone, Copy)]
+pub struct RecoveredState {
+    /// Proxy address of the parent game, or the `AnchorStateRegistry` address
+    /// when creating the first game from anchor state (no parent game exists).
+    pub parent_address: Address,
+    /// Output root claimed by the game or anchor state.
+    pub output_root: B256,
+    /// L2 block number of the claim.
+    pub l2_block_number: u64,
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle management
+// ---------------------------------------------------------------------------
 
 /// Trait for controlling the proposer at runtime.
 ///
@@ -29,6 +105,13 @@ pub trait ProposerDriverControl: Send + Sync {
     fn is_running(&self) -> bool;
 }
 
+/// Active session state: the cancellation token and spawned task for a running
+/// pipeline.
+struct Session {
+    cancel: CancellationToken,
+    task: Option<JoinHandle<Result<()>>>,
+}
+
 /// Manages the lifecycle of a [`ProvingPipeline`], allowing it to be started
 /// and stopped at runtime (e.g. via the admin RPC).
 pub struct PipelineHandle<L1, L2, R, ASR, F>
@@ -39,11 +122,9 @@ where
     ASR: AnchorStateRegistryClient + 'static,
     F: DisputeGameFactoryClient + 'static,
 {
-    #[allow(clippy::type_complexity)]
-    pipeline: Arc<TokioMutex<ProvingPipeline<L1, L2, R, ASR, F>>>,
-    session_cancel: TokioMutex<CancellationToken>,
+    pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
+    session: TokioMutex<Session>,
     global_cancel: CancellationToken,
-    task: TokioMutex<Option<JoinHandle<Result<()>>>>,
     running: Arc<AtomicBool>,
 }
 
@@ -75,12 +156,11 @@ where
         pipeline: ProvingPipeline<L1, L2, R, ASR, F>,
         global_cancel: CancellationToken,
     ) -> Self {
-        let session_cancel = global_cancel.child_token();
+        let session = Session { cancel: global_cancel.child_token(), task: None };
         Self {
-            pipeline: Arc::new(TokioMutex::new(pipeline)),
-            session_cancel: TokioMutex::new(session_cancel),
+            pipeline,
+            session: TokioMutex::new(session),
             global_cancel,
-            task: TokioMutex::new(None),
             running: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -96,50 +176,66 @@ where
     F: DisputeGameFactoryClient + 'static,
 {
     async fn start_proposer(&self) -> Result<(), String> {
-        if self.running.load(Ordering::SeqCst) {
+        let mut session = self.session.lock().await;
+
+        if self.running.load(Ordering::Acquire) {
             return Err("proposer is already running".into());
         }
 
-        let cancel = self.global_cancel.child_token();
-        {
-            let mut pipeline = self.pipeline.lock().await;
-            pipeline.set_cancel(cancel.clone());
+        // Drain any stale task from a self-terminated pipeline run so panics
+        // are surfaced and the JoinHandle resources are properly reclaimed.
+        if let Some(task) = session.task.take() {
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!(error = %e, "previous pipeline run exited with error"),
+                Err(e) => error!(error = %e, "previous pipeline run panicked"),
+            }
         }
-        *self.session_cancel.lock().await = cancel;
 
-        let pipeline = Arc::clone(&self.pipeline);
+        self.running.store(true, Ordering::Release);
+
+        let cancel = self.global_cancel.child_token();
+        let mut pipeline = self.pipeline.clone();
+        pipeline.set_cancel(cancel.clone());
+
         let running = Arc::clone(&self.running);
-        running.store(true, Ordering::SeqCst);
-
         let handle = tokio::spawn(async move {
-            let guard = pipeline.lock().await;
-            let result = guard.run().await;
-            running.store(false, Ordering::SeqCst);
+            let result = pipeline.run().await;
+            running.store(false, Ordering::Release);
             result
         });
 
-        *self.task.lock().await = Some(handle);
-        info!("Proving pipeline started");
+        session.cancel = cancel;
+        session.task = Some(handle);
+
+        info!("proving pipeline started");
         Ok(())
     }
 
     async fn stop_proposer(&self) -> Result<(), String> {
-        if !self.running.load(Ordering::SeqCst) {
+        let mut session = self.session.lock().await;
+
+        if !self.running.load(Ordering::Acquire) {
             return Err("proposer is not running".into());
         }
 
-        self.session_cancel.lock().await.cancel();
+        session.cancel.cancel();
 
-        if let Some(task) = self.task.lock().await.take() {
-            let _ = task.await;
+        if let Some(task) = session.task.take() {
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!(error = %e, "proving pipeline exited with error"),
+                Err(e) => error!(error = %e, "proving pipeline task panicked"),
+            }
         }
 
-        info!("Proving pipeline stopped");
+        self.running.store(false, Ordering::Release);
+        info!("proving pipeline stopped");
         Ok(())
     }
 
     fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+        self.running.load(Ordering::Acquire)
     }
 }
 
@@ -147,46 +243,18 @@ where
 mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
-    use alloy_primitives::{B256, Bytes};
-    use async_trait::async_trait;
-    use base_proof_primitives::{ProofResult, Proposal, ProverClient};
+    use alloy_primitives::B256;
+    use base_proof_primitives::ProverClient;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::{
-        driver::{core::DriverConfig, pipeline::PipelineConfig},
+        pipeline::PipelineConfig,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+            MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_sync_status,
         },
     };
-
-    #[derive(Debug)]
-    struct InstantMockProver;
-
-    #[async_trait]
-    impl ProverClient for InstantMockProver {
-        async fn prove(
-            &self,
-            request: base_proof_primitives::ProofRequest,
-        ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
-            let n = request.claimed_l2_block_number;
-            let proposal = Proposal {
-                output_root: B256::repeat_byte(n as u8),
-                signature: Bytes::from(vec![0xab; 65]),
-                l1_origin_hash: B256::repeat_byte(0x02),
-                l1_origin_number: 100 + n,
-                l2_block_number: n,
-                prev_output_root: B256::repeat_byte(0x03),
-                config_hash: B256::repeat_byte(0x04),
-            };
-            let start = n.saturating_sub(512);
-            let proposals: Vec<Proposal> = ((start + 1)..=n)
-                .map(|b| Proposal { output_root: B256::repeat_byte(b as u8), ..proposal.clone() })
-                .collect();
-            Ok(ProofResult::Tee { aggregate_proposal: proposal, proposals })
-        }
-    }
 
     fn test_pipeline_handle(
         global_cancel: CancellationToken,
@@ -199,7 +267,8 @@ mod tests {
     > {
         let l1 = Arc::new(MockL1 { latest_block_number: 1000 });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(InstantMockProver);
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: Duration::ZERO, block_interval: 512 });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
             output_roots: HashMap::new(),
