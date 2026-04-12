@@ -139,9 +139,6 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         Ok(self.game_count_override.unwrap_or(self.games.len() as u64))
     }
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
-        if self.games.is_empty() {
-            return Ok(GameAtIndex { game_type: u32::MAX, timestamp: 0, proxy: Address::ZERO });
-        }
         self.games
             .get(index as usize)
             .copied()
@@ -309,9 +306,8 @@ impl ProverClient for MockProver {
 
         let start = block_number.saturating_sub(self.block_interval);
         let proposals: Vec<Proposal> = ((start + 1)..=block_number).map(test_proposal).collect();
-        let aggregate_proposal = proposals.last().cloned().unwrap_or_else(|| test_proposal(block_number));
 
-        Ok(ProofResult::Tee { aggregate_proposal, proposals })
+        Ok(ProofResult::Tee { aggregate_proposal: test_proposal(block_number), proposals })
     }
 }
 
