@@ -1,11 +1,10 @@
-# justfile for proposer
-
-l1_rpc := "https://ethereum-sepolia-rpc.publicnode.com"
-l2_rpc := "https://sepolia.base.org"
-enclave_rpc := "http://localhost:1234"
-verifier_addr := "0xaddD538424b2549a13deE55dE55174516Ed037BC"
-poll_interval := "6s"
-common_args := "--l1-eth-rpc " + l1_rpc + " --l2-eth-rpc " + l2_rpc + " --rollup-rpc " + l2_rpc + " --enclave-rpc " + enclave_rpc + " --poll-interval " + poll_interval + " --min-proposal-interval 1 --l2-reth --skip-tls-verify -vvvv"
+l1_rpc := env_var_or_default("L1_RPC", "https://ethereum-sepolia-rpc.publicnode.com")
+l2_rpc := env_var_or_default("L2_RPC", "https://sepolia.base.org")
+enclave_rpc := env_var_or_default("ENCLAVE_RPC", "http://localhost:1234")
+verifier_addr := env_var_or_default("VERIFIER_ADDR", "0xaddD538424b2549a13deE55dE55174516Ed037BC")
+poll_interval := env_var_or_default("POLL_INTERVAL", "6s")
+min_proposal_interval := env_var_or_default("MIN_PROPOSAL_INTERVAL", "1")
+common_args := "--l1-eth-rpc " + l1_rpc + " --l2-eth-rpc " + l2_rpc + " --rollup-rpc " + l2_rpc + " --enclave-rpc " + enclave_rpc + " --poll-interval " + poll_interval + " --min-proposal-interval " + min_proposal_interval + " --l2-reth --skip-tls-verify -vvvv"
 
 default:
     @just --list
@@ -32,6 +31,3 @@ run-local *ARGS:
 
 help:
     cargo run --bin base-proposer -- --help
-
-docker-build:
-    docker build -t proposer:local -f docker/Dockerfile .
