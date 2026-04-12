@@ -784,7 +784,11 @@ where
             let mut blocks =
                 Vec::with_capacity(prefetch_blocks.len() * intermediate_count as usize);
             for &game_block in &prefetch_blocks {
-                let parent = game_block - block_interval;
+                let parent = game_block.checked_sub(block_interval).ok_or_else(|| {
+                    ProposerError::Internal(format!(
+                        "game_block {game_block} underflows when subtracting block_interval {block_interval}"
+                    ))
+                })?;
                 blocks.extend(self.intermediate_block_numbers(parent)?);
             }
             blocks
@@ -951,8 +955,20 @@ where
 
             let mut intermediate_mismatch = false;
             for (i, onchain_root) in onchain_intermediate.iter().enumerate() {
-                let intermediate_block = (expected_block - block_interval)
-                    + (i as u64 + 1) * intermediate_block_interval;
+                let intermediate_block = expected_block
+                    .checked_sub(block_interval)
+                    .and_then(|base| {
+                        (i as u64 + 1)
+                            .checked_mul(intermediate_block_interval)
+                            .and_then(|offset| base.checked_add(offset))
+                    })
+                    .ok_or_else(|| {
+                        ProposerError::Internal(format!(
+                            "intermediate block arithmetic overflow: expected_block={expected_block}, \
+                             block_interval={block_interval}, i={i}, \
+                             intermediate_block_interval={intermediate_block_interval}"
+                        ))
+                    })?;
 
                 // The last intermediate root equals root_claim, already
                 // verified above — skip the redundant check.

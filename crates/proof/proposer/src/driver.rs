@@ -181,6 +181,17 @@ where
         if self.running.load(Ordering::Acquire) {
             return Err("proposer is already running".into());
         }
+
+        // Drain any stale task from a self-terminated pipeline run so panics
+        // are surfaced and the JoinHandle resources are properly reclaimed.
+        if let Some(task) = session.task.take() {
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!(error = %e, "previous pipeline run exited with error"),
+                Err(e) => error!(error = %e, "previous pipeline run panicked"),
+            }
+        }
+
         self.running.store(true, Ordering::Release);
 
         let cancel = self.global_cancel.child_token();

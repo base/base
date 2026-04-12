@@ -283,7 +283,7 @@ impl ProposerService {
             None
         };
 
-        // ── 10. Start the driver loop ────────────────────────────────────────
+        // ── 9. Start the driver loop ─────────────────────────────────────────
         driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
         ready.store(true, Ordering::SeqCst);
@@ -295,11 +295,11 @@ impl ProposerService {
             "Service is ready"
         );
 
-        // ── 11. Wait for shutdown signal ─────────────────────────────────────
+        // ── 10. Wait for shutdown signal ────────────────────────────────────
         cancel.cancelled().await;
         info!("Shutdown signal received, stopping service...");
 
-        // ── 12. Graceful shutdown (reverse initialisation order) ─────────────
+        // ── 11. Graceful shutdown (reverse initialisation order) ────────────
         ready.store(false, Ordering::SeqCst);
 
         if driver_handle.is_running()
