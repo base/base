@@ -8,15 +8,17 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 /// A configurable App on top of the cli parser.
-pub mod app;
+mod app;
 /// Base chain specification parser.
-pub mod chainspec;
+mod chainspec;
 /// Base CLI commands.
-pub mod commands;
+mod commands;
 
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
 pub use app::CliApp;
+pub use chainspec::{OpChainSpecParser, chain_value_parser};
+pub use commands::Commands;
 use base_execution_chainspec::OpChainSpec;
 use base_node_core::args::RollupArgs;
 use chainspec::OpChainSpecParser;
