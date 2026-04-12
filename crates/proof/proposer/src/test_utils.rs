@@ -124,10 +124,6 @@ pub struct MockDisputeGameFactory {
 }
 
 impl MockDisputeGameFactory {
-    pub fn with_count(game_count: u64) -> Self {
-        Self { games: Vec::new(), game_count_override: Some(game_count) }
-    }
-
     pub fn with_games(games: Vec<GameAtIndex>) -> Self {
         Self { games, game_count_override: None }
     }

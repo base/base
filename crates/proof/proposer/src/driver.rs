@@ -272,7 +272,7 @@ mod tests {
         });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
-        let factory = Arc::new(MockDisputeGameFactory::with_count(0));
+        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {

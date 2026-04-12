@@ -1691,7 +1691,7 @@ mod tests {
         });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
-        let factory = Arc::new(MockDisputeGameFactory::with_count(0));
+        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
         ProvingPipeline::new(
             pipeline_config,
@@ -1840,11 +1840,7 @@ mod tests {
         #[case] games: Vec<GameAtIndex>,
         #[case] scenario: &str,
     ) {
-        let factory = if games.is_empty() {
-            MockDisputeGameFactory::with_count(0)
-        } else {
-            MockDisputeGameFactory::with_games(games)
-        };
+        let factory = MockDisputeGameFactory::with_games(games);
         let pipeline =
             recovery_pipeline_with_roots(factory, MockAggregateVerifier::default(), HashMap::new());
 
@@ -2688,7 +2684,7 @@ mod tests {
 
     fn submit_pipeline(output_roots: HashMap<u64, B256>) -> TestPipeline {
         recovery_pipeline_full(
-            MockDisputeGameFactory::with_count(0),
+            MockDisputeGameFactory::with_games(vec![]),
             MockAggregateVerifier::default(),
             output_roots,
             TEST_ANCHOR_BLOCK,
