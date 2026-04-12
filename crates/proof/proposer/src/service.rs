@@ -99,7 +99,7 @@ impl ProposerService {
         let prover_client = HttpClientBuilder::default()
             .request_timeout(crate::constants::PROVER_TIMEOUT)
             .build(config.prover_rpc.as_str())
-            .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?;
+            .wrap_err("failed to create prover RPC client")?;
         info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
 
         let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
@@ -189,7 +189,7 @@ impl ProposerService {
                 let l1_chain_id = l1_tx_provider
                     .get_chain_id()
                     .await
-                    .map_err(|e| eyre::eyre!("failed to fetch L1 chain ID: {e}"))?;
+                    .wrap_err("failed to fetch L1 chain ID")?;
                 let tx_manager = SimpleTxManager::new(
                     l1_tx_provider,
                     signing,
@@ -198,7 +198,7 @@ impl ProposerService {
                     Arc::new(BaseTxMetrics::new("proposer")),
                 )
                 .await
-                .map_err(|e| eyre::eyre!("failed to construct tx manager: {e}"))?;
+                .wrap_err("failed to construct tx manager")?;
                 info!(addr = %sender_addr, "Transaction manager initialized");
 
                 let submitter = ProposalSubmitter::new(
