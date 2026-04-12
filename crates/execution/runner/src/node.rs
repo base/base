@@ -99,26 +99,40 @@ impl BaseNode {
     /// ```no_run
     /// use base_execution_chainspec::BASE_MAINNET;
     /// use base_node_runner::BaseNode;
+    /// use reth_provider::providers::ReadOnlyConfig;
     ///
-    /// let factory =
-    ///     BaseNode::provider_factory_builder().open_read_only(BASE_MAINNET.clone(), "datadir").unwrap();
+    /// let runtime = reth_tasks::Runtime::test();
+    /// let factory = BaseNode::provider_factory_builder()
+    ///     .open_read_only(
+    ///         BASE_MAINNET.clone(),
+    ///         ReadOnlyConfig::from_datadir("datadir").no_watch(),
+    ///         runtime,
+    ///     )
+    ///     .unwrap();
     /// ```
     ///
     /// # Open a Providerfactory manually with all required components
     ///
     /// ```no_run
-    /// use reth_db::open_db_read_only;
     /// use base_execution_chainspec::BaseChainSpecBuilder;
     /// use base_node_runner::BaseNode;
-    /// use reth_provider::providers::{RocksDBProvider, StaticFileProvider};
-    /// use std::sync::Arc;
+    /// use reth_db::mdbx::DatabaseArguments;
+    /// use reth_provider::providers::ReadOnlyConfig;
     ///
+    /// let runtime = reth_tasks::Runtime::test();
     /// let factory = BaseNode::provider_factory_builder()
-    ///     .db(Arc::new(open_db_read_only("db", Default::default()).unwrap()))
-    ///     .chainspec(BaseChainSpecBuilder::base_mainnet().build().into())
-    ///     .static_file(StaticFileProvider::read_only("db/static_files", false).unwrap())
-    ///     .rocksdb_provider(RocksDBProvider::new("db/rocksdb").unwrap())
-    ///     .build_provider_factory();
+    ///     .open_read_only(
+    ///         BaseChainSpecBuilder::base_mainnet().build().into(),
+    ///         ReadOnlyConfig {
+    ///             db_dir: "db".into(),
+    ///             db_args: DatabaseArguments::default(),
+    ///             static_files_dir: "db/static_files".into(),
+    ///             rocksdb_dir: "db/rocksdb".into(),
+    ///             watch_static_files: false,
+    ///         },
+    ///         runtime,
+    ///     )
+    ///     .unwrap();
     /// ```
     pub fn provider_factory_builder() -> ProviderFactoryBuilder<Self> {
         ProviderFactoryBuilder::default()

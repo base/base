@@ -22,8 +22,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::{
-    BondManager, ChallengeSubmitter, ChallengerConfig, Driver, DriverComponents, DriverConfig,
-    GameScanner, OutputValidator, ScannerConfig,
+    BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverComponents,
+    DriverConfig, GameScanner, OutputValidator, ScannerConfig,
 };
 
 /// Top-level challenger service.
