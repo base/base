@@ -1049,6 +1049,7 @@ where
     ///   (`cached.scanned_up_to..count`) and merge into the existing map.
     /// - **Anchor root changed (count unchanged):** Reuse the existing map
     ///   as-is — no factory RPCs needed.
+    ///
     /// Returns `Ok(updated_map)` on success. On failure returns the error
     /// together with `Some(original_map)` when the input map can be
     /// preserved (incremental scan failure), or `None` when it cannot
