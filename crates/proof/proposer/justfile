@@ -3,6 +3,9 @@
 l1_rpc := "https://ethereum-sepolia-rpc.publicnode.com"
 l2_rpc := "https://sepolia.base.org"
 enclave_rpc := "http://localhost:1234"
+verifier_addr := "0xaddD538424b2549a13deE55dE55174516Ed037BC"
+poll_interval := "6s"
+common_args := "--l1-eth-rpc " + l1_rpc + " --l2-eth-rpc " + l2_rpc + " --rollup-rpc " + l2_rpc + " --enclave-rpc " + enclave_rpc + " --poll-interval " + poll_interval + " --min-proposal-interval 1 --l2-reth --skip-tls-verify -vvvv"
 
 default:
     @just --list
@@ -11,39 +14,20 @@ run *ARGS:
     cargo run --bin base-proposer -- {{ARGS}}
 
 # Run with Base Sepolia development configuration
-# Uses values from chart/configurations/development/values.yaml
-# Override ENCLAVE_RPC for local testing: just run-dev --enclave-rpc http://localhost:1234
 run-dev *ARGS:
     cargo run --bin base-proposer -- \
-        --l1-eth-rpc {{l1_rpc}} \
-        --l2-eth-rpc {{l2_rpc}} \
-        --rollup-rpc {{l2_rpc}} \
-        --enclave-rpc {{enclave_rpc}} \
-        --onchain-verifier-addr 0xaddD538424b2549a13deE55dE55174516Ed037BC \
-        --poll-interval 6s \
-        --min-proposal-interval 1 \
-        --l2-reth \
-        --skip-tls-verify \
-        --metrics-enabled \
-        --metrics-addr 0.0.0.0 \
-        --metrics-port 7300 \
-        -vvvv \
+        {{common_args}} \
+        --onchain-verifier-addr {{verifier_addr}} \
+        --metrics.enabled \
+        --metrics.addr 0.0.0.0 \
+        --metrics.port 7300 \
         {{ARGS}}
 
-# Run with local enclave server (for testing Generate() locally)
-# Start the enclave server first: cd op-enclave/rust && make run-server
+# Run with local enclave server
 run-local *ARGS:
     cargo run --bin base-proposer -- \
-        --l1-eth-rpc {{l1_rpc}} \
-        --l2-eth-rpc {{l2_rpc}} \
-        --rollup-rpc {{l2_rpc}} \
-        --enclave-rpc {{enclave_rpc}} \
+        {{common_args}} \
         --onchain-verifier-addr 0x0000000000000000000000000000000000000000 \
-        --poll-interval 5s \
-        --min-proposal-interval 1 \
-        --l2-reth \
-        --skip-tls-verify \
-        -vvvv \
         {{ARGS}}
 
 help:
