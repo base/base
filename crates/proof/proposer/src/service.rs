@@ -290,8 +290,11 @@ impl ProposerService {
             Err(e) => warn!(error = %e, "Health server task panicked"),
         }
 
-        if let Err(e) = signal_handle.await {
-            warn!(error = %e, "Signal handler task panicked");
+        signal_handle.abort();
+        match signal_handle.await {
+            Ok(()) => {}
+            Err(e) if e.is_cancelled() => {}
+            Err(e) => warn!(error = %e, "Signal handler task panicked"),
         }
 
         info!("Service stopped");
