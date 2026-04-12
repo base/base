@@ -17,6 +17,7 @@ baseup                                # Install the latest release binaries
 baseup -i v0.6.0                      # Install a specific release tag
 baseup --bin base-reth-node           # Install only the node binary
 baseup --bin basectl                  # Install only basectl
+baseup --bin base-consensus           # Install only base-consensus
 baseup --bin all                      # Install all published binaries
 baseup -v                             # Print the baseup installer version
 baseup --update                       # Update baseup itself
@@ -25,10 +26,13 @@ baseup --help                         # Show help
 
 ## Installed Binaries
 
-By default, `baseup` installs every binary this repo publishes in GitHub releases today:
+By default, `baseup` installs every binary attached to the selected GitHub release for your current target.
+
+Current published binaries include:
 
 - `base-reth-node`
 - `basectl`
+- `base-consensus`
 
 ## Supported Targets
 

@@ -15,6 +15,10 @@ on:
 
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
+  RELEASE_BINS: |
+    base-reth-node
+    basectl
+    base-consensus
 
 permissions:
   contents: write
@@ -78,13 +82,20 @@ jobs:
         uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
 
       - name: Build binaries
-        run: cargo build --locked --profile maxperf --bin base-reth-node --bin basectl
+        run: |
+          cargo_args=()
+          while IFS= read -r bin; do
+            [[ -n "$bin" ]] || continue
+            cargo_args+=(--bin "$bin")
+          done <<< "${RELEASE_BINS}"
+          cargo build --locked --profile maxperf "${cargo_args[@]}"
 
       - name: Package binaries
         run: |
           TAG="${{ inputs.tag }}"
           TARGET="${{ matrix.target.triple }}"
-          for bin in base-reth-node basectl; do
+          while IFS= read -r bin; do
+            [[ -n "$bin" ]] || continue
             ARCHIVE="${bin}-${TAG}-${TARGET}.tar.gz"
             tar -czf "$ARCHIVE" -C target/maxperf "$bin"
             if command -v sha256sum &>/dev/null; then
@@ -92,7 +103,7 @@ jobs:
             else
               shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
             fi
-          done
+          done <<< "${RELEASE_BINS}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
