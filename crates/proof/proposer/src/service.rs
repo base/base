@@ -97,8 +97,8 @@ impl ProposerService {
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        let chain_config = rollup_client.rollup_config().await?;
-        info!(chain_id = %chain_config.l2_chain_id.id(), "Chain configuration loaded");
+        let chain_id = rollup_client.rollup_config().await?.l2_chain_id.id();
+        info!(chain_id = %chain_id, "Chain configuration loaded");
 
         let prover_client = HttpClientBuilder::default()
             .request_timeout(crate::constants::PROVER_TIMEOUT)
