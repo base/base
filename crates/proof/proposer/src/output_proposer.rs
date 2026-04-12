@@ -36,9 +36,7 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     }
 
     let msg = err.to_string();
-    if msg.contains(&alloy_primitives::hex::encode(selector))
-        || msg.contains(GAME_ALREADY_EXISTS)
-    {
+    if msg.contains(&alloy_primitives::hex::encode(selector)) || msg.contains(GAME_ALREADY_EXISTS) {
         return ProposerError::GameAlreadyExists;
     }
     ProposerError::TxManager(err)
@@ -318,20 +316,14 @@ mod tests {
     async fn propose_output_reverted() {
         let tx_hash = B256::repeat_byte(0xBB);
         let submitter = test_submitter(Ok(receipt_with_status(false, tx_hash)));
-        let err = submitter
-            .propose_output(&test_proposal(), Address::ZERO, &[])
-            .await
-            .unwrap_err();
+        let err = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await.unwrap_err();
         assert!(matches!(err, ProposerError::TxReverted(_)));
     }
 
     #[tokio::test]
     async fn propose_output_tx_manager_error() {
         let submitter = test_submitter(Err(TxManagerError::NonceTooLow));
-        let err = submitter
-            .propose_output(&test_proposal(), Address::ZERO, &[])
-            .await
-            .unwrap_err();
+        let err = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await.unwrap_err();
         assert!(
             matches!(err, ProposerError::TxManager(TxManagerError::NonceTooLow)),
             "expected TxManager(NonceTooLow), got {err:?}",
