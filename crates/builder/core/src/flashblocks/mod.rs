@@ -1,7 +1,7 @@
 //! Flashblocks builder types.
 
 mod best_txs;
-pub use best_txs::BestFlashblocksTxs;
+pub use best_txs::{BestFlashblocksTxs, RejectionCache};
 
 mod generator;
 pub use generator::{

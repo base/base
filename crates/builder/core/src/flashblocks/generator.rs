@@ -205,28 +205,28 @@ where
     Builder: PayloadBuilder,
 {
     /// The configuration for how the payload will be created.
-    pub(crate) config: PayloadConfig<Builder::Attributes, HeaderForPayload<Builder::BuiltPayload>>,
+    pub config: PayloadConfig<Builder::Attributes, HeaderForPayload<Builder::BuiltPayload>>,
     /// How to spawn building tasks
-    pub(crate) executor: Tasks,
+    pub executor: Tasks,
     /// The type responsible for building payloads.
     ///
     /// See [`PayloadBuilder`]
-    pub(crate) builder: Builder,
+    pub builder: Builder,
     /// The cell that holds the built payload (intermediate flashblocks, may not have state root).
-    pub(crate) cell: BlockCell<Builder::BuiltPayload>,
+    pub cell: BlockCell<Builder::BuiltPayload>,
     /// The cell that holds the finalized payload with state root computed.
-    pub(crate) finalized_cell: BlockCell<Builder::BuiltPayload>,
+    pub finalized_cell: BlockCell<Builder::BuiltPayload>,
     /// Cancellation token for the running job
-    pub(crate) cancel: CancellationToken,
+    pub cancel: CancellationToken,
     /// Mutex to synchronize cancellation with payload publishing.
-    pub(crate) publish_guard: Arc<Mutex<()>>,
-    pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
-    pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
+    pub publish_guard: Arc<Mutex<()>>,
+    pub deadline: Pin<Box<Sleep>>, // Add deadline
+    pub build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
     /// Caches all disk reads for the state the new payloads build on
     ///
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
-    pub(crate) cached_reads: Option<CachedReads>,
+    pub cached_reads: Option<CachedReads>,
 }
 
 impl<Tasks, Builder> std::fmt::Debug for BlockPayloadJob<Tasks, Builder>
@@ -525,10 +525,8 @@ fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
 mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
-    use base_alloy_consensus::OpPrimitives;
-    use base_execution_payload_builder::{
-        OpPayloadPrimitives, payload::OpPayloadBuilderAttributes,
-    };
+    use base_alloy_consensus::BasePrimitives;
+    use base_execution_payload_builder::{PayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_primitives::SealedBlock;
@@ -633,13 +631,13 @@ mod tests {
 
     #[derive(Clone, Debug, Default)]
     struct MockPayload {
-        block: SealedBlock<<OpPrimitives as NodePrimitives>::Block>,
+        block: SealedBlock<<BasePrimitives as NodePrimitives>::Block>,
         fees: U256,
         requests: Option<Requests>,
     }
 
     impl BuiltPayload for MockPayload {
-        type Primitives = OpPrimitives;
+        type Primitives = BasePrimitives;
 
         fn block(&self) -> &SealedBlock<<Self::Primitives as NodePrimitives>::Block> {
             &self.block
@@ -670,7 +668,7 @@ mod tests {
     #[async_trait::async_trait]
     impl<N> PayloadBuilder for MockBuilder<N>
     where
-        N: OpPayloadPrimitives,
+        N: PayloadPrimitives,
     {
         type Attributes = OpPayloadBuilderAttributes<N::SignedTx>;
         type BuiltPayload = MockPayload;
@@ -722,7 +720,7 @@ mod tests {
 
         let client = MockEthProvider::default();
         let executor = TokioTaskExecutor::default();
-        let builder = MockBuilder::<OpPrimitives>::new();
+        let builder = MockBuilder::<BasePrimitives>::new();
 
         let (start, count) = (1, 10);
         let blocks = random_block_range(
