@@ -17,7 +17,6 @@ use base_proof_contracts::{
 use base_proof_primitives::ProverClient;
 use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
-    RollupProvider,
 };
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
 use eyre::{Result, WrapErr};
@@ -96,9 +95,6 @@ impl ProposerService {
             .with_skip_tls_verify(config.skip_tls_verify);
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
-
-        let chain_id = rollup_client.rollup_config().await?.l2_chain_id.id();
-        info!(chain_id = %chain_id, "Chain configuration loaded");
 
         let prover_client = HttpClientBuilder::default()
             .request_timeout(crate::constants::PROVER_TIMEOUT)
