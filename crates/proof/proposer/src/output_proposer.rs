@@ -6,12 +6,12 @@
 
 use std::sync::LazyLock;
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
-use base_proof_primitives::{ProofEncoder, Proposal};
+use base_proof_primitives::Proposal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tracing::info;
 
@@ -97,22 +97,6 @@ pub struct ProposalSubmitter<T> {
     init_bond: U256,
 }
 
-impl<T> ProposalSubmitter<T> {
-    /// Builds the proof data for `AggregateVerifier.initialize()`.
-    ///
-    /// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)` = 130 bytes.
-    ///
-    /// Matches Go's `buildProofData()` in `driver.go`.
-    pub fn build_proof_data(proposal: &Proposal) -> Result<Bytes, ProposerError> {
-        ProofEncoder::encode_proof_bytes(
-            &proposal.signature,
-            proposal.l1_origin_hash,
-            proposal.l1_origin_number,
-        )
-        .map_err(|e| ProposerError::Internal(e.to_string()))
-    }
-}
-
 impl<T: TxManager> ProposalSubmitter<T> {
     /// Creates a new [`ProposalSubmitter`] backed by the given transaction manager.
     pub const fn new(
@@ -134,7 +118,8 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
-        let proof_data = Self::build_proof_data(proposal)?;
+        let proof_data =
+            proposal.build_proof_data().map_err(|e| ProposerError::Internal(e.to_string()))?;
         let extra_data = encode_extra_data(l2_block_number, parent_address, intermediate_roots);
         let calldata =
             encode_create_calldata(self.game_type, proposal.output_root, extra_data, proof_data);
@@ -181,7 +166,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, Bloom};
+    use alloy_primitives::{Address, Bloom, Bytes};
     use alloy_rpc_types_eth::TransactionReceipt;
     use base_proof_primitives::PROOF_TYPE_TEE;
     use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
@@ -296,13 +281,13 @@ mod tests {
 
     #[test]
     fn test_build_proof_data_length() {
-        let proof = ProposalSubmitter::<MockTxManager>::build_proof_data(&test_proposal()).unwrap();
+        let proof = test_proposal().build_proof_data().unwrap();
         assert_eq!(proof.len(), EXPECTED_PROOF_DATA_LEN);
     }
 
     #[test]
     fn test_build_proof_data_type_byte() {
-        let proof = ProposalSubmitter::<MockTxManager>::build_proof_data(&test_proposal()).unwrap();
+        let proof = test_proposal().build_proof_data().unwrap();
         assert_eq!(proof[0], PROOF_TYPE_TEE);
     }
 
@@ -314,7 +299,7 @@ mod tests {
     #[case::v_5_rejected(5, None)]
     fn test_build_proof_data_v_value(#[case] v_input: u8, #[case] expected: Option<u8>) {
         let proposal = proposal_with_v(v_input);
-        let result = ProposalSubmitter::<MockTxManager>::build_proof_data(&proposal);
+        let result = proposal.build_proof_data();
 
         match expected {
             Some(v) => {

@@ -709,7 +709,18 @@ where
         //
         // Reuse the cached map when possible, scanning only new entries.
         // A full rescan is needed only on cold start or L1 reorg.
-        let game_map = self.updated_game_map(cache.take().map(|c| c.game_map), count).await?;
+        let cached_map = cache.take().map(|c| c.game_map);
+        let game_map = match self.updated_game_map(cached_map, count).await {
+            Ok(map) => map,
+            Err((e, restored_map)) => {
+                // Put the game map back so the next tick can retry an
+                // incremental scan instead of a full factory rescan.
+                if let Some(map) = restored_map {
+                    *cache = Some(CachedRecovery { game_map: map, walk: None });
+                }
+                return Err(e);
+            }
+        };
 
         // ── Pre-fetch and forward walk ─────────────────────────────────
         //
@@ -1038,11 +1049,15 @@ where
     ///   (`cached.scanned_up_to..count`) and merge into the existing map.
     /// - **Anchor root changed (count unchanged):** Reuse the existing map
     ///   as-is — no factory RPCs needed.
+    /// Returns `Ok(updated_map)` on success. On failure returns the error
+    /// together with `Some(original_map)` when the input map can be
+    /// preserved (incremental scan failure), or `None` when it cannot
+    /// (cold start, full rescan).
     async fn updated_game_map(
         &self,
         cached_map: Option<CachedGameMap>,
         count: u64,
-    ) -> Result<CachedGameMap, ProposerError> {
+    ) -> Result<CachedGameMap, (ProposerError, Option<CachedGameMap>)> {
         match cached_map {
             Some(game_map) if count >= game_map.scanned_up_to => {
                 let scanned_up_to = game_map.scanned_up_to;
@@ -1063,7 +1078,7 @@ where
                         max = MAX_FACTORY_SCAN_LOOKBACK,
                         "Incremental delta exceeds lookback, falling back to full scan"
                     );
-                    return self.full_scan(count).await;
+                    return self.full_scan(count).await.map_err(|e| (e, None));
                 }
 
                 // Incremental scan: only fetch the new factory entries.
@@ -1074,7 +1089,12 @@ where
                     "Incrementally scanning new factory entries"
                 );
                 let mut map = game_map.map;
-                self.scan_factory_range(scanned_up_to, count, &mut map).await?;
+                if let Err(e) = self.scan_factory_range(scanned_up_to, count, &mut map).await {
+                    // Restore the original game map so the next tick can
+                    // retry the incremental scan from the same checkpoint
+                    // instead of an expensive full factory rescan.
+                    return Err((e, Some(CachedGameMap { scanned_up_to, map })));
+                }
                 Ok(CachedGameMap { scanned_up_to: count, map })
             }
             Some(game_map) => {
@@ -1085,12 +1105,12 @@ where
                     current_count = count,
                     "Game count decreased (possible L1 reorg), performing full rescan"
                 );
-                self.full_scan(count).await
+                self.full_scan(count).await.map_err(|e| (e, None))
             }
             None => {
                 // Cold start — no cache exists.
                 info!(game_count = count, "Cold start, performing full factory scan");
-                self.full_scan(count).await
+                self.full_scan(count).await.map_err(|e| (e, None))
             }
         }
     }
