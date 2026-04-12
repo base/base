@@ -292,7 +292,7 @@ mod tests {
             rollup,
             anchor_registry,
             factory,
-            Arc::new(MockAggregateVerifier::empty()),
+            Arc::new(MockAggregateVerifier::default()),
             Arc::new(MockOutputProposer),
             global_cancel.child_token(),
         );

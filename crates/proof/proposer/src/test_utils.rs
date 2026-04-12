@@ -1,6 +1,9 @@
 //! Shared test utilities: reusable mock stubs for L1/L2 clients, contract clients, and proposer.
 
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
@@ -85,7 +88,7 @@ impl L2Provider for MockL2 {
 
 pub(crate) struct MockRollupClient {
     pub sync_status: SyncStatus,
-    pub output_roots: std::collections::HashMap<u64, B256>,
+    pub output_roots: HashMap<u64, B256>,
 }
 
 #[async_trait]
@@ -180,29 +183,17 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 /// game proxy. When not present, `intermediate_output_roots()` derives a
 /// default single-element vec from the game's `root_claim` (matching the
 /// contract behavior when `block_interval == intermediate_block_interval`).
+#[derive(Default)]
 pub(crate) struct MockAggregateVerifier {
-    pub game_info_map: std::collections::HashMap<Address, GameInfo>,
-    pub failing_addresses: std::collections::HashSet<Address>,
-    pub intermediate_roots_map: std::collections::HashMap<Address, Vec<B256>>,
+    pub game_info_map: HashMap<Address, GameInfo>,
+    pub failing_addresses: HashSet<Address>,
+    pub intermediate_roots_map: HashMap<Address, Vec<B256>>,
 }
 
 impl MockAggregateVerifier {
-    /// Creates a verifier that returns default values for all addresses.
-    pub(crate) fn empty() -> Self {
-        Self {
-            game_info_map: std::collections::HashMap::new(),
-            failing_addresses: std::collections::HashSet::new(),
-            intermediate_roots_map: std::collections::HashMap::new(),
-        }
-    }
-
     /// Creates a verifier backed by an explicit address-to-info map.
-    pub(crate) fn with_game_info(map: std::collections::HashMap<Address, GameInfo>) -> Self {
-        Self {
-            game_info_map: map,
-            failing_addresses: std::collections::HashSet::new(),
-            intermediate_roots_map: std::collections::HashMap::new(),
-        }
+    pub(crate) fn with_game_info(map: HashMap<Address, GameInfo>) -> Self {
+        Self { game_info_map: map, ..Default::default() }
     }
 }
 
@@ -349,10 +340,10 @@ impl ProverClient for MockProver {
         tokio::time::sleep(self.delay).await;
 
         let block_number = request.claimed_l2_block_number;
-        let aggregate_proposal = test_proposal(block_number);
 
         let start = block_number.saturating_sub(self.block_interval);
         let proposals: Vec<Proposal> = ((start + 1)..=block_number).map(test_proposal).collect();
+        let aggregate_proposal = proposals.last().cloned().unwrap_or_else(|| test_proposal(block_number));
 
         Ok(ProofResult::Tee { aggregate_proposal, proposals })
     }

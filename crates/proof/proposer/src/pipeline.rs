@@ -1701,7 +1701,7 @@ mod tests {
             rollup,
             anchor_registry,
             factory,
-            Arc::new(MockAggregateVerifier::empty()),
+            Arc::new(MockAggregateVerifier::default()),
             Arc::new(MockOutputProposer),
             cancel,
         )
@@ -1846,7 +1846,7 @@ mod tests {
             MockDisputeGameFactory::with_games(games)
         };
         let pipeline =
-            recovery_pipeline_with_roots(factory, MockAggregateVerifier::empty(), HashMap::new());
+            recovery_pipeline_with_roots(factory, MockAggregateVerifier::default(), HashMap::new());
 
         let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -2048,7 +2048,7 @@ mod tests {
         factory.game_count_override = Some(3); // one more than actual entries
 
         let pipeline =
-            recovery_pipeline_with_roots(factory, MockAggregateVerifier::empty(), HashMap::new());
+            recovery_pipeline_with_roots(factory, MockAggregateVerifier::default(), HashMap::new());
 
         let mut cache: Option<CachedRecovery> = None;
         let result = pipeline.recover_latest_state(&mut cache).await;
@@ -2689,7 +2689,7 @@ mod tests {
     fn submit_pipeline(output_roots: HashMap<u64, B256>) -> TestPipeline {
         recovery_pipeline_full(
             MockDisputeGameFactory::with_count(0),
-            MockAggregateVerifier::empty(),
+            MockAggregateVerifier::default(),
             output_roots,
             TEST_ANCHOR_BLOCK,
             SUBMIT_BLOCK_INTERVAL,
