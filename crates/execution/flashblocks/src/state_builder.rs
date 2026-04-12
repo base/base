@@ -12,7 +12,7 @@ use alloy_evm::{
 use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope};
 use base_common_evm::ensure_create2_deployer;
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
@@ -76,7 +76,7 @@ where
     E: Evm<DB = DB, HaltReason = OpHaltReason>,
     DB: Database + DatabaseCommit,
     E::Tx: FromRecoveredTx<BaseTxEnvelope>,
-    ChainSpec: BaseUpgrades + Clone,
+    ChainSpec: Upgrades + Clone,
 {
     /// Creates a new pending state builder.
     pub fn new(

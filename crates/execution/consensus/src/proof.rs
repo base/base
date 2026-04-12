@@ -6,13 +6,13 @@ use alloy_consensus::ReceiptWithBloom;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use alloy_trie::root::ordered_trie_root_with_encoder;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 
 /// Calculates the receipt root for a header.
 pub fn calculate_receipt_root_optimism<R: DepositReceiptExt>(
     receipts: &[ReceiptWithBloom<&R>],
-    chain_spec: impl BaseUpgrades,
+    chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> B256 {
     // There is a minor bug in op-geth and op-erigon where in the Regolith hardfork,
@@ -45,7 +45,7 @@ pub fn calculate_receipt_root_optimism<R: DepositReceiptExt>(
 /// NOTE: Prefer calculate receipt root optimism if you have log blooms memoized.
 pub fn calculate_receipt_root_no_memo_optimism<R: DepositReceiptExt>(
     receipts: &[R],
-    chain_spec: impl BaseUpgrades,
+    chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> B256 {
     // There is a minor bug in op-geth and op-erigon where in the Regolith hardfork,

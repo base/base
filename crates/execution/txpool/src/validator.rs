@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_execution_evm::RethL1BlockInfo;
 use base_revm::L1BlockInfo;
 use parking_lot::RwLock;
@@ -85,8 +85,7 @@ impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm> {
 
 impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm>
 where
-    Client:
-        ChainSpecProvider<ChainSpec: BaseUpgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
+    Client: ChainSpecProvider<ChainSpec: Upgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
     Tx: EthPoolTransaction + OpPooledTx,
     Evm: ConfigureEvm,
 {
@@ -239,8 +238,7 @@ where
 
 impl<Client, Tx, Evm> TransactionValidator for OpTransactionValidator<Client, Tx, Evm>
 where
-    Client:
-        ChainSpecProvider<ChainSpec: BaseUpgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
+    Client: ChainSpecProvider<ChainSpec: Upgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
     Tx: EthPoolTransaction + OpPooledTx,
     Evm: ConfigureEvm,
 {

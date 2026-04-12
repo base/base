@@ -9,7 +9,7 @@ use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
@@ -25,7 +25,7 @@ use crate::proof::calculate_receipt_root_optimism;
 ///   - transaction root
 ///   - withdrawals root: the body's withdrawals root must only match the header's before isthmus
 pub fn validate_body_against_header_op<B, H>(
-    chain_spec: impl BaseUpgrades,
+    chain_spec: impl Upgrades,
     body: &B,
     header: &H,
 ) -> Result<(), ConsensusError>
@@ -90,7 +90,7 @@ where
 /// instead of computing them from the receipts.
 pub fn validate_block_post_execution<R: DepositReceiptExt>(
     header: impl BlockHeader,
-    chain_spec: impl BaseUpgrades,
+    chain_spec: impl Upgrades,
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
 ) -> Result<(), ConsensusError> {
@@ -160,7 +160,7 @@ fn verify_receipts_optimism<R: DepositReceiptExt>(
     expected_receipts_root: B256,
     expected_logs_bloom: Bloom,
     receipts: &[R],
-    chain_spec: impl BaseUpgrades,
+    chain_spec: impl Upgrades,
     timestamp: u64,
 ) -> Result<(), ConsensusError> {
     // Calculate receipts root.

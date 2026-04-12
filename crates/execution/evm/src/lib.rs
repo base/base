@@ -15,7 +15,7 @@ use core::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder, BaseTxEnv,
@@ -58,10 +58,7 @@ mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
 /// Builds an [`EvmEnv`] for a given block header using [`base_common_evm`]'s spec resolution.
-fn op_evm_env(
-    header: &Header,
-    chain_spec: &(impl BaseUpgrades + EthChainSpec),
-) -> EvmEnv<OpSpecId> {
+fn op_evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -> EvmEnv<OpSpecId> {
     let spec = revm_spec_by_timestamp_after_bedrock(chain_spec, header.timestamp);
     let cfg_env =
         CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
@@ -92,7 +89,7 @@ fn op_next_evm_env(
     parent: &Header,
     attributes: &OpNextBlockEnvAttributes,
     base_fee_per_gas: u64,
-    chain_spec: &(impl BaseUpgrades + EthChainSpec),
+    chain_spec: &(impl Upgrades + EthChainSpec),
 ) -> EvmEnv<OpSpecId> {
     let spec = revm_spec_by_timestamp_after_bedrock(chain_spec, attributes.timestamp);
     let cfg_env =
@@ -147,14 +144,14 @@ impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
     }
 }
 
-impl<ChainSpec: BaseUpgrades> BaseEvmConfig<ChainSpec> {
+impl<ChainSpec: Upgrades> BaseEvmConfig<ChainSpec> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec for Base chains.
     pub fn optimism(chain_spec: Arc<ChainSpec>) -> Self {
         Self::new(chain_spec, OpRethReceiptBuilder::default())
     }
 }
 
-impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
+impl<ChainSpec: Upgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, R> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec.
     pub fn new(chain_spec: Arc<ChainSpec>, receipt_builder: R) -> Self {
         Self {
@@ -171,7 +168,7 @@ impl<ChainSpec: BaseUpgrades, N: NodePrimitives, R> BaseEvmConfig<ChainSpec, N, 
 
 impl<ChainSpec, N, R, EvmFactory> BaseEvmConfig<ChainSpec, N, R, EvmFactory>
 where
-    ChainSpec: BaseUpgrades,
+    ChainSpec: Upgrades,
     N: NodePrimitives,
 {
     /// Returns the chain spec associated with this configuration.
@@ -182,7 +179,7 @@ where
 
 impl<ChainSpec, N, R, EvmF> ConfigureEvm for BaseEvmConfig<ChainSpec, N, R, EvmF>
 where
-    ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades,
+    ChainSpec: EthChainSpec<Header = Header> + Upgrades,
     N: NodePrimitives<
             Receipt = R::Receipt,
             SignedTx = R::Transaction,
@@ -259,7 +256,7 @@ where
 #[cfg(feature = "std")]
 impl<ChainSpec, N, R> ConfigureEngineEvm<ExecutionData> for BaseEvmConfig<ChainSpec, N, R>
 where
-    ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades,
+    ChainSpec: EthChainSpec<Header = Header> + Upgrades,
     N: NodePrimitives<
             Receipt = R::Receipt,
             SignedTx = R::Transaction,

@@ -4,7 +4,7 @@
 //! transactions seamlessly, without requiring error handling at the call site.
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BaseTxType, DepositReceipt};
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
@@ -47,7 +47,7 @@ impl<C> UnifiedReceiptBuilder<C> {
     }
 }
 
-impl<C: BaseUpgrades> UnifiedReceiptBuilder<C> {
+impl<C: Upgrades> UnifiedReceiptBuilder<C> {
     /// Builds a receipt for any transaction type, handling deposit receipts internally.
     ///
     /// This method builds either a regular receipt or a deposit receipt based on

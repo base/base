@@ -2,7 +2,7 @@
 
 use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_revm::{L1BlockInfo, OpSpecId};
 use reth_execution_errors::BlockExecutionError;
 use reth_primitives_traits::BlockBody;
@@ -299,9 +299,9 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
     })
 }
 
-/// Returns the [`OpSpecId`] at the given timestamp using the [`BaseUpgrades`] trait from
+/// Returns the [`OpSpecId`] at the given timestamp using the [`Upgrades`] trait from
 /// `base-execution-upgrades`.
-fn op_spec_id(chain_spec: &impl BaseUpgrades, timestamp: u64) -> OpSpecId {
+fn op_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> OpSpecId {
     if chain_spec.is_base_v1_active_at_timestamp(timestamp) {
         OpSpecId::BASE_V1
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
@@ -337,7 +337,7 @@ pub trait RethL1BlockInfo {
     /// - `is_deposit`: Whether or not the transaction is a deposit.
     fn l1_tx_data_fee(
         &mut self,
-        chain_spec: impl BaseUpgrades,
+        chain_spec: impl Upgrades,
         timestamp: u64,
         input: &[u8],
         is_deposit: bool,
@@ -351,7 +351,7 @@ pub trait RethL1BlockInfo {
     /// - `input`: The calldata of the transaction.
     fn l1_data_gas(
         &self,
-        chain_spec: impl BaseUpgrades,
+        chain_spec: impl Upgrades,
         timestamp: u64,
         input: &[u8],
     ) -> Result<U256, BlockExecutionError>;
@@ -360,7 +360,7 @@ pub trait RethL1BlockInfo {
 impl RethL1BlockInfo for L1BlockInfo {
     fn l1_tx_data_fee(
         &mut self,
-        chain_spec: impl BaseUpgrades,
+        chain_spec: impl Upgrades,
         timestamp: u64,
         input: &[u8],
         is_deposit: bool,
@@ -375,7 +375,7 @@ impl RethL1BlockInfo for L1BlockInfo {
 
     fn l1_data_gas(
         &self,
-        chain_spec: impl BaseUpgrades,
+        chain_spec: impl Upgrades,
         timestamp: u64,
         input: &[u8],
     ) -> Result<U256, BlockExecutionError> {
@@ -389,7 +389,7 @@ mod tests {
     use alloy_consensus::{Block, BlockBody, Header};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Bytes, hex_literal::hex, keccak256};
-    use base_common_chains::BaseUpgrades;
+    use base_common_chains::Upgrades;
     use base_common_consensus::BaseTransactionSigned;
     use base_execution_chainspec::BASE_MAINNET;
 

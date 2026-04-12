@@ -4,7 +4,7 @@ use crate::BaseUpgrade;
 
 /// Extends [`EthereumHardforks`] with Base upgrade helper methods.
 #[auto_impl::auto_impl(&, Arc)]
-pub trait BaseUpgrades: EthereumHardforks {
+pub trait Upgrades: EthereumHardforks {
     /// Retrieves [`ForkCondition`] by a [`BaseUpgrade`]. If `fork` is not present, returns
     /// [`ForkCondition::Never`].
     fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition;

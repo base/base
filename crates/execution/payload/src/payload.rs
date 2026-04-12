@@ -12,7 +12,7 @@ use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
     ExecutionPayloadV1, ExecutionPayloadV3, PayloadId,
 };
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::{
     BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
@@ -442,7 +442,7 @@ impl<H, T, ChainSpec> BuildNextEnv<OpPayloadBuilderAttributes<T>, H, ChainSpec>
 where
     H: BlockHeader,
     T: SignedTransaction,
-    ChainSpec: EthChainSpec + BaseUpgrades,
+    ChainSpec: EthChainSpec + Upgrades,
 {
     fn build_next_env(
         attributes: &OpPayloadBuilderAttributes<T>,

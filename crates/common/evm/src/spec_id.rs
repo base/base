@@ -1,9 +1,9 @@
 use alloy_consensus::BlockHeader;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_revm::OpSpecId;
 
 /// Map the latest active hardfork at the given header to a revm [`OpSpecId`].
-pub fn spec(chain_spec: impl BaseUpgrades, header: impl BlockHeader) -> OpSpecId {
+pub fn spec(chain_spec: impl Upgrades, header: impl BlockHeader) -> OpSpecId {
     spec_by_timestamp_after_bedrock(chain_spec, header.timestamp())
 }
 
@@ -13,7 +13,7 @@ pub fn spec(chain_spec: impl BaseUpgrades, header: impl BlockHeader) -> OpSpecId
 ///
 /// This is only intended to be used after the Bedrock, when hardforks are activated by
 /// timestamp.
-pub fn spec_by_timestamp_after_bedrock(chain_spec: impl BaseUpgrades, timestamp: u64) -> OpSpecId {
+pub fn spec_by_timestamp_after_bedrock(chain_spec: impl Upgrades, timestamp: u64) -> OpSpecId {
     if chain_spec.is_base_v1_active_at_timestamp(timestamp) {
         OpSpecId::BASE_V1
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {

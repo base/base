@@ -378,7 +378,7 @@ impl Discv5Driver {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use base_common_chains::BaseChainConfig;
+    use base_common_chains::ChainConfig;
     use discv5::{
         ConfigBuilder,
         enr::{CombinedKey, CombinedPublicKey},
@@ -398,13 +398,13 @@ mod tests {
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
         let discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            BaseChainConfig::sepolia().chain_id,
+            ChainConfig::sepolia().chain_id,
             ConfigBuilder::new(socket.into()).build(),
         )
         .build()
         .expect("Failed to build discovery service");
         let (handle, _) = discovery.start();
-        assert_eq!(handle.chain_id, BaseChainConfig::sepolia().chain_id);
+        assert_eq!(handle.chain_id, ChainConfig::sepolia().chain_id);
     }
 
     #[tokio::test]
@@ -420,7 +420,7 @@ mod tests {
         };
         let mut discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            BaseChainConfig::sepolia().chain_id,
+            ChainConfig::sepolia().chain_id,
             ConfigBuilder::new(socket.into()).build(),
         )
         .with_bootnodes(BootNodes::testnet())
@@ -435,7 +435,7 @@ mod tests {
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
-            BaseChainConfig::sepolia().chain_id,
+            ChainConfig::sepolia().chain_id,
             &discovery.disc,
         )
         .await;
@@ -450,9 +450,7 @@ mod tests {
             .iter()
             .filter_map(|node| match node {
                 BootNode::Enr(enr) => {
-                    if EnrValidation::validate(enr, BaseChainConfig::sepolia().chain_id)
-                        .is_invalid()
-                    {
+                    if EnrValidation::validate(enr, ChainConfig::sepolia().chain_id).is_invalid() {
                         return None;
                     }
                     Some(enr.public_key())
@@ -493,9 +491,7 @@ mod tests {
             .iter()
             .filter_map(|node| match node {
                 BootNode::Enr(enr) => {
-                    if EnrValidation::validate(enr, BaseChainConfig::mainnet().chain_id)
-                        .is_invalid()
-                    {
+                    if EnrValidation::validate(enr, ChainConfig::mainnet().chain_id).is_invalid() {
                         return None;
                     }
                     Some(enr.public_key())
@@ -520,7 +516,7 @@ mod tests {
 
         let mut discovery = Discv5Driver::builder(
             LocalNode::new(secret_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, 0),
-            BaseChainConfig::mainnet().chain_id,
+            ChainConfig::mainnet().chain_id,
             ConfigBuilder::new(socket.into()).build(),
         )
         .with_bootnodes(BootNodes::mainnet())
@@ -535,7 +531,7 @@ mod tests {
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,
             discovery.bootnodes,
-            BaseChainConfig::mainnet().chain_id,
+            ChainConfig::mainnet().chain_id,
             &discovery.disc,
         )
         .await;

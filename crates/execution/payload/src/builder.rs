@@ -6,7 +6,7 @@ use alloy_evm::Evm as AlloyEvm;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::BaseTransaction;
 use base_execution_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
 use base_protocol::Predeploys;
@@ -156,7 +156,7 @@ impl<Pool, Client, Evm, Txs, Attrs> OpPayloadBuilder<Pool, Client, Evm, Txs, Att
 impl<Pool, Client, Evm, N, T, Attrs> OpPayloadBuilder<Pool, Client, Evm, T, Attrs>
 where
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: BaseUpgrades>,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades>,
     N: PayloadPrimitives,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -240,7 +240,7 @@ impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
     for OpPayloadBuilder<Pool, Client, Evm, Txs, Attrs>
 where
     N: PayloadPrimitives,
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: BaseUpgrades> + Clone,
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + Clone,
     Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
@@ -329,7 +329,7 @@ impl<Txs> Builder<'_, Txs> {
                 Primitives = N,
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
             >,
-        ChainSpec: EthChainSpec + BaseUpgrades,
+        ChainSpec: EthChainSpec + Upgrades,
         N: PayloadPrimitives,
         Txs:
             PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + OpPooledTx>,
@@ -414,7 +414,7 @@ impl<Txs> Builder<'_, Txs> {
                 Primitives = N,
                 NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, ChainSpec>,
             >,
-        ChainSpec: EthChainSpec + BaseUpgrades,
+        ChainSpec: EthChainSpec + Upgrades,
         N: PayloadPrimitives,
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
         Attrs: Attributes<Transaction = N::SignedTx>,
@@ -563,7 +563,7 @@ where
             Primitives: PayloadPrimitives,
             NextBlockEnvCtx: BuildNextEnv<Attrs, HeaderTy<Evm::Primitives>, ChainSpec>,
         >,
-    ChainSpec: EthChainSpec + BaseUpgrades,
+    ChainSpec: EthChainSpec + Upgrades,
     Attrs: Attributes<Transaction = TxTy<Evm::Primitives>>,
 {
     /// Returns the parent block the payload will be build on.

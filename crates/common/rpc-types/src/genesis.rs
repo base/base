@@ -6,14 +6,14 @@ use serde::de::Error;
 /// Container type for all Base chain-specific fields in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BaseChainInfo {
+pub struct ChainInfo {
     /// Genesis information
-    pub genesis_info: Option<BaseGenesisInfo>,
+    pub genesis_info: Option<GenesisInfo>,
     /// Base fee information
-    pub base_fee_info: Option<BaseFeeInfo>,
+    pub base_fee_info: Option<FeeInfo>,
 }
 
-impl BaseChainInfo {
+impl ChainInfo {
     /// Extracts the Base chain-specific fields from a genesis file. These fields are expected to be
     /// contained in the `genesis.config` under `extra_fields` property.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
@@ -21,12 +21,12 @@ impl BaseChainInfo {
     }
 }
 
-impl TryFrom<&OtherFields> for BaseChainInfo {
+impl TryFrom<&OtherFields> for ChainInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
-        let genesis_info = BaseGenesisInfo::try_from(others).ok();
-        let base_fee_info = BaseFeeInfo::try_from(others).ok();
+        let genesis_info = GenesisInfo::try_from(others).ok();
+        let base_fee_info = FeeInfo::try_from(others).ok();
 
         Ok(Self { genesis_info, base_fee_info })
     }
@@ -35,7 +35,7 @@ impl TryFrom<&OtherFields> for BaseChainInfo {
 /// Base-specific hardfork configuration in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BaseHardforkInfo {
+pub struct HardforkInfo {
     /// Base V1 hardfork timestamp.
     pub v1: Option<u64>,
 }
@@ -43,7 +43,7 @@ pub struct BaseHardforkInfo {
 /// The Base chain-specific genesis block specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BaseGenesisInfo {
+pub struct GenesisInfo {
     /// bedrock block number
     pub bedrock_block: Option<u64>,
     /// regolith hardfork timestamp
@@ -64,17 +64,17 @@ pub struct BaseGenesisInfo {
     pub jovian_time: Option<u64>,
     /// Base-specific hardfork activation times.
     #[serde(default)]
-    pub base: BaseHardforkInfo,
+    pub base: HardforkInfo,
 }
 
-impl BaseGenesisInfo {
+impl GenesisInfo {
     /// Extract the Base chain-specific genesis info from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
     }
 }
 
-impl TryFrom<&OtherFields> for BaseGenesisInfo {
+impl TryFrom<&OtherFields> for GenesisInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
@@ -85,7 +85,7 @@ impl TryFrom<&OtherFields> for BaseGenesisInfo {
 /// The Base chain-specific base fee specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BaseFeeInfo {
+pub struct FeeInfo {
     /// EIP-1559 elasticity
     pub eip1559_elasticity: Option<u64>,
     /// EIP-1559 denominator
@@ -94,7 +94,7 @@ pub struct BaseFeeInfo {
     pub eip1559_denominator_canyon: Option<u64>,
 }
 
-impl BaseFeeInfo {
+impl FeeInfo {
     /// Extracts the Base chain base fee info by looking for the `optimism` key. It is intended to be
     /// parsed from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
@@ -102,7 +102,7 @@ impl BaseFeeInfo {
     }
 }
 
-impl TryFrom<&OtherFields> for BaseFeeInfo {
+impl TryFrom<&OtherFields> for FeeInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
@@ -133,11 +133,11 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(genesis_info).unwrap();
-        let genesis_info = BaseGenesisInfo::extract_from(&others).unwrap();
+        let genesis_info = GenesisInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             genesis_info,
-            BaseGenesisInfo {
+            GenesisInfo {
                 bedrock_block: Some(10),
                 regolith_time: Some(12),
                 canyon_time: Some(0),
@@ -147,7 +147,7 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
-                base: BaseHardforkInfo { v1: Some(14) },
+                base: HardforkInfo { v1: Some(14) },
             }
         );
     }
@@ -165,11 +165,11 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(base_fee_info).unwrap();
-        let base_fee_info = BaseFeeInfo::extract_from(&others).unwrap();
+        let base_fee_info = FeeInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             base_fee_info,
-            BaseFeeInfo {
+            FeeInfo {
                 eip1559_elasticity: Some(0),
                 eip1559_denominator: Some(8),
                 eip1559_denominator_canyon: Some(8),
@@ -196,12 +196,12 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(chain_info).unwrap();
-        let chain_info = BaseChainInfo::extract_from(&others).unwrap();
+        let chain_info = ChainInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            BaseChainInfo {
-                genesis_info: Some(BaseGenesisInfo {
+            ChainInfo {
+                genesis_info: Some(GenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
@@ -211,9 +211,9 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: BaseHardforkInfo { v1: Some(14) },
+                    base: HardforkInfo { v1: Some(14) },
                 }),
-                base_fee_info: Some(BaseFeeInfo {
+                base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
                     eip1559_denominator: Some(8),
                     eip1559_denominator_canyon: Some(8),
@@ -221,12 +221,12 @@ mod tests {
             }
         );
 
-        let chain_info = BaseChainInfo::try_from(&others).unwrap();
+        let chain_info = ChainInfo::try_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            BaseChainInfo {
-                genesis_info: Some(BaseGenesisInfo {
+            ChainInfo {
+                genesis_info: Some(GenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
@@ -236,9 +236,9 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: BaseHardforkInfo { v1: Some(14) },
+                    base: HardforkInfo { v1: Some(14) },
                 }),
-                base_fee_info: Some(BaseFeeInfo {
+                base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
                     eip1559_denominator: Some(8),
                     eip1559_denominator_canyon: Some(8),
@@ -264,12 +264,12 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(chain_info).unwrap();
-        let chain_info = BaseChainInfo::extract_from(&others).unwrap();
+        let chain_info = ChainInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            BaseChainInfo {
-                genesis_info: Some(BaseGenesisInfo {
+            ChainInfo {
+                genesis_info: Some(GenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
@@ -279,7 +279,7 @@ mod tests {
                     holocene_time: Some(0),
                     isthmus_time: Some(0),
                     jovian_time: Some(0),
-                    base: BaseHardforkInfo::default(),
+                    base: HardforkInfo::default(),
                 }),
                 base_fee_info: None,
             }

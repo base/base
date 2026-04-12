@@ -7,7 +7,7 @@ use alloy_eips::{
     eip7840::BlobParams,
     eip7910::{EthConfig, EthForkConfig, SystemContract},
 };
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
@@ -30,10 +30,7 @@ const fn zero_blob_params() -> BlobParams {
     }
 }
 
-fn sanitize_system_contracts_for_fork(
-    chain_spec: &impl BaseUpgrades,
-    fork_config: &mut EthForkConfig,
-) {
+fn sanitize_system_contracts_for_fork(chain_spec: &impl Upgrades, fork_config: &mut EthForkConfig) {
     let activation_time = fork_config.activation_time;
 
     fork_config.system_contracts.retain(|contract, _| match contract {
@@ -83,7 +80,7 @@ pub struct BaseEthConfigHandler<Provider: ChainSpecProvider, Evm> {
 
 impl<Provider, Evm> BaseEthConfigHandler<Provider, Evm>
 where
-    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + BaseUpgrades>
+    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + Upgrades>
         + BlockReaderIdExt<Header: HeaderMut>
         + Clone
         + 'static,
@@ -111,7 +108,7 @@ where
 
 impl<Provider, Evm> BaseEthConfigApiServer for BaseEthConfigHandler<Provider, Evm>
 where
-    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + BaseUpgrades>
+    Provider: ChainSpecProvider<ChainSpec: Hardforks + EthereumHardforks + Upgrades>
         + BlockReaderIdExt<Header: HeaderMut>
         + Clone
         + 'static,

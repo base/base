@@ -3,7 +3,7 @@ use std::{marker::PhantomData, sync::Arc};
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::BaseBlock;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
@@ -90,7 +90,7 @@ impl<P, Tx, ChainSpec> OpEngineValidator<P, Tx, ChainSpec> {
 impl<P, Tx, ChainSpec> Clone for OpEngineValidator<P, Tx, ChainSpec>
 where
     P: Clone,
-    ChainSpec: BaseUpgrades,
+    ChainSpec: Upgrades,
 {
     fn clone(&self) -> Self {
         Self {
@@ -104,7 +104,7 @@ where
 
 impl<P, Tx, ChainSpec> OpEngineValidator<P, Tx, ChainSpec>
 where
-    ChainSpec: BaseUpgrades,
+    ChainSpec: Upgrades,
 {
     /// Returns the chain spec used by the validator.
     #[inline]
@@ -117,7 +117,7 @@ impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for OpEngineValidator<P, T
 where
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
-    ChainSpec: BaseUpgrades + Send + Sync + 'static,
+    ChainSpec: Upgrades + Send + Sync + 'static,
     Types: PayloadTypes<ExecutionData = ExecutionData>,
 {
     type Block = alloy_consensus::Block<Tx>;
@@ -169,7 +169,7 @@ where
         >,
     P: StateProviderFactory + Unpin + 'static,
     Tx: SignedTransaction + Unpin + 'static,
-    ChainSpec: BaseUpgrades + Send + Sync + 'static,
+    ChainSpec: Upgrades + Send + Sync + 'static,
 {
     fn validate_version_specific_fields(
         &self,
@@ -262,7 +262,7 @@ where
 /// Canyon activates the Shanghai EIPs, see the Canyon specs for more details:
 /// <https://github.com/ethereum-optimism/optimism/blob/ab926c5fd1e55b5c864341c44842d6d1ca679d99/specs/superchain-upgrades.md#canyon>
 pub fn validate_withdrawals_presence(
-    chain_spec: impl BaseUpgrades,
+    chain_spec: impl Upgrades,
     version: EngineApiMessageVersion,
     message_validation_kind: MessageValidationKind,
     timestamp: u64,
@@ -303,7 +303,7 @@ pub fn validate_withdrawals_presence(
 mod tests {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_common_chains::BaseChainConfig;
+    use base_common_chains::ChainConfig;
     use base_execution_chainspec::BASE_SEPOLIA;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
@@ -449,7 +449,7 @@ mod tests {
         let attributes = get_attributes(
             Some(b64!("0000000000000000")),
             Some(1),
-            BaseChainConfig::sepolia().jovian_timestamp,
+            ChainConfig::sepolia().jovian_timestamp,
         );
 
         let result = <engine::OpEngineValidator<_, _, _> as EngineApiValidator<
@@ -467,7 +467,7 @@ mod tests {
             BASE_SEPOLIA.clone(),
             NoopProvider::default(),
         );
-        let attributes = get_attributes(None, Some(1), BaseChainConfig::sepolia().jovian_timestamp);
+        let attributes = get_attributes(None, Some(1), ChainConfig::sepolia().jovian_timestamp);
 
         let result = <engine::OpEngineValidator<_, _, _> as EngineApiValidator<
             OpEngineTypes,
@@ -504,7 +504,7 @@ mod tests {
         let attributes = get_attributes(
             Some(b64!("0000000000000000")),
             None,
-            BaseChainConfig::sepolia().jovian_timestamp,
+            ChainConfig::sepolia().jovian_timestamp,
         );
 
         let result = <engine::OpEngineValidator<_, _, _> as EngineApiValidator<

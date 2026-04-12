@@ -1,12 +1,12 @@
 use alloc::vec;
 
 use alloy_primitives::U256;
-use base_common_chains::{BaseChainUpgrades, BaseUpgrade};
+use base_common_chains::{BaseUpgrade, ChainUpgrades};
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
 use spin::Lazy;
 
-/// Extension trait to convert alloy's [`BaseChainUpgrades`] into reth's [`ChainHardforks`].
-pub trait BaseChainUpgradesExt {
+/// Extension trait to convert alloy's [`ChainUpgrades`] into reth's [`ChainHardforks`].
+pub trait ChainUpgradesExt {
     /// Expands Base upgrades into a full [`ChainHardforks`] including implied Ethereum entries.
     ///
     /// Pre-Bedrock Ethereum hardforks are set to block 0. Paired Ethereum hardforks
@@ -15,7 +15,7 @@ pub trait BaseChainUpgradesExt {
     fn to_chain_hardforks(&self) -> ChainHardforks;
 }
 
-impl BaseChainUpgradesExt for BaseChainUpgrades {
+impl ChainUpgradesExt for ChainUpgrades {
     fn to_chain_hardforks(&self) -> ChainHardforks {
         let mut forks: vec::Vec<(Box<dyn Hardfork>, ForkCondition)> = vec![
             (EthereumHardfork::Frontier.boxed(), ForkCondition::Block(0)),
@@ -79,23 +79,23 @@ impl BaseChainUpgradesExt for BaseChainUpgrades {
 
 /// Dev chain upgrades.
 pub static DEV_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| BaseChainUpgrades::devnet().to_chain_hardforks());
+    Lazy::new(|| ChainUpgrades::devnet().to_chain_hardforks());
 
 /// Base Sepolia chain upgrades.
 pub static BASE_SEPOLIA_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| BaseChainUpgrades::sepolia().to_chain_hardforks());
+    Lazy::new(|| ChainUpgrades::sepolia().to_chain_hardforks());
 
 /// Base mainnet chain upgrades.
 pub static BASE_MAINNET_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| BaseChainUpgrades::mainnet().to_chain_hardforks());
+    Lazy::new(|| ChainUpgrades::mainnet().to_chain_hardforks());
 
 /// Base devnet-0-sepolia-dev-0 chain upgrades.
 pub static BASE_DEVNET_0_SEPOLIA_DEV_0_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| BaseChainUpgrades::base_devnet_0_sepolia_dev_0().to_chain_hardforks());
+    Lazy::new(|| ChainUpgrades::base_devnet_0_sepolia_dev_0().to_chain_hardforks());
 
 /// Base Zeronet chain upgrades.
 pub static BASE_ZERONET_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| BaseChainUpgrades::zeronet().to_chain_hardforks());
+    Lazy::new(|| ChainUpgrades::zeronet().to_chain_hardforks());
 
 #[cfg(test)]
 mod tests {
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn base_v1_expands_to_osaka() {
         let hardforks =
-            BaseChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(|(fork, cond)| {
+            ChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(|(fork, cond)| {
                 if fork == BaseUpgrade::V1 {
                     (fork, ForkCondition::Timestamp(1_000_000))
                 } else {

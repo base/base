@@ -13,7 +13,7 @@ use alloy_evm::{
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
 use alloy_primitives::Address;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceipt;
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_revm::{DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo};
@@ -76,7 +76,7 @@ impl<E, R, Spec> BaseBlockExecutor<E, R, Spec>
 where
     E: Evm,
     R: BaseReceiptBuilder,
-    Spec: BaseUpgrades + Clone,
+    Spec: Upgrades + Clone,
 {
     /// Creates a new [`BaseBlockExecutor`].
     pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec, receipt_builder: R) -> Self {
@@ -102,7 +102,7 @@ where
             Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
         >,
     R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: BaseUpgrades,
+    Spec: Upgrades,
 {
     fn jovian_da_footprint_estimation(
         &mut self,
@@ -137,7 +137,7 @@ where
             Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
         >,
     R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: BaseUpgrades,
+    Spec: Upgrades,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
@@ -358,7 +358,7 @@ mod tests {
     use alloy_evm::{EvmEnv, EvmFactory, ToTxEnv, block::BlockExecutorFactory};
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
-    use base_common_chains::{BaseChainUpgrades, BaseUpgrade};
+    use base_common_chains::{BaseUpgrade, ChainUpgrades};
     use base_common_consensus::BaseTxEnvelope;
     use base_revm::{
         BASE_FEE_SCALAR_OFFSET, Builder, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
@@ -381,7 +381,7 @@ mod tests {
     fn test_with_encoded() {
         let executor_factory = BaseBlockExecutorFactory::new(
             AlloyReceiptBuilder::default(),
-            BaseChainUpgrades::mainnet(),
+            ChainUpgrades::mainnet(),
             BaseEvmFactory::default(),
         );
         let mut db =
@@ -448,13 +448,13 @@ mod tests {
     fn build_executor<'a>(
         db: &'a mut revm::database::State<InMemoryDB>,
         receipt_builder: &'a AlloyReceiptBuilder,
-        op_chain_hardforks: &'a BaseChainUpgrades,
+        op_chain_hardforks: &'a ChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
         BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector>,
         &'a AlloyReceiptBuilder,
-        &'a BaseChainUpgrades,
+        &'a ChainUpgrades,
     > {
         let ctx = Context::op()
             .with_db(db)
@@ -487,7 +487,7 @@ mod tests {
         const JOVIAN_TIMESTAMP: u64 = 1746806402;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let op_chain_hardforks = BaseChainUpgrades::new(
+        let op_chain_hardforks = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
@@ -532,7 +532,7 @@ mod tests {
         const GAS_LIMIT: u64 = 100;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let op_chain_hardforks = BaseChainUpgrades::new(
+        let op_chain_hardforks = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),
@@ -589,7 +589,7 @@ mod tests {
         const GAS_LIMIT: u64 = 200_000;
 
         let mut db = prepare_jovian_db(DA_FOOTPRINT_GAS_SCALAR);
-        let op_chain_hardforks = BaseChainUpgrades::new(
+        let op_chain_hardforks = ChainUpgrades::new(
             BaseUpgrade::mainnet()
                 .into_iter()
                 .chain(vec![(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP))]),

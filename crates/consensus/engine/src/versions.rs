@@ -110,7 +110,7 @@ impl EngineGetPayloadVersion {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig};
+    use base_consensus_genesis::{HardForkConfig, HardforkConfig};
 
     use super::*;
 
@@ -119,7 +119,7 @@ mod tests {
             hardforks: HardForkConfig {
                 ecotone_time: Some(20),
                 jovian_time: Some(30),
-                base: BaseHardforkConfig { v1: Some(40) },
+                base: HardforkConfig { v1: Some(40) },
                 ..Default::default()
             },
             ..Default::default()

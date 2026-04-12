@@ -10,7 +10,7 @@ use alloy_evm::Database;
 use alloy_primitives::{B256, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, BaseTxType, DepositReceipt};
 use base_common_evm::BaseReceiptBuilder;
 use base_execution_chainspec::BaseChainSpec;

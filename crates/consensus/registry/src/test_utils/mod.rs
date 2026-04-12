@@ -1,13 +1,13 @@
-//! Test-only module providing rollup configs derived from [`BaseChainConfig`].
+//! Test-only module providing rollup configs derived from [`ChainConfig`].
 
-use base_common_chains::BaseChainConfig;
+use base_common_chains::ChainConfig;
 use base_consensus_genesis::RollupConfig;
 use spin::Lazy;
 
-/// The [`RollupConfig`] for Base Mainnet, derived from [`BaseChainConfig::mainnet`].
+/// The [`RollupConfig`] for Base Mainnet, derived from [`ChainConfig::mainnet`].
 pub static BASE_MAINNET_ROLLUP_CONFIG: Lazy<RollupConfig> =
-    Lazy::new(|| RollupConfig::from(BaseChainConfig::mainnet()));
+    Lazy::new(|| RollupConfig::from(ChainConfig::mainnet()));
 
-/// The [`RollupConfig`] for Base Sepolia, derived from [`BaseChainConfig::sepolia`].
+/// The [`RollupConfig`] for Base Sepolia, derived from [`ChainConfig::sepolia`].
 pub static BASE_SEPOLIA_ROLLUP_CONFIG: Lazy<RollupConfig> =
-    Lazy::new(|| RollupConfig::from(BaseChainConfig::sepolia()));
+    Lazy::new(|| RollupConfig::from(ChainConfig::sepolia()));

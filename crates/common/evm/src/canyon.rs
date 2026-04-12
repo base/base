@@ -1,6 +1,6 @@
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// The address of the create2 deployer
@@ -19,7 +19,7 @@ const CREATE_2_DEPLOYER_BYTECODE: [u8; 1584] = hex!(
 /// deployer contract. This is done by directly setting the code of the create2 deployer account
 /// prior to executing any transactions on the timestamp activation of the fork.
 pub fn ensure_create2_deployer<DB>(
-    chain_spec: impl BaseUpgrades,
+    chain_spec: impl Upgrades,
     timestamp: u64,
     db: &mut DB,
 ) -> Result<(), DB::Error>
