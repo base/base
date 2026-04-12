@@ -3,20 +3,20 @@
 ## Summary
 
 :::warning
-Only `base-consensus` and `base-reth-node` will  support the Base V1 hardfork. If you are running
+Only `base-consensus` and `base-reth-node` will support the Base V1 hardfork. If you are running
 `op-node`, `op-geth` or any other clients you will need to update prior to the activation date.
 :::
 
 - Add Osaka Support
 - Simplify Flashblocks Websocket Format
-- Enable TEE & ZK Proofs
+- Enable a new multi-proof system for faster withdrawals and a path to stronger decentralization
 - Only Base Node Reth / Base Consensus will be supported
 
 ## Activation Timestamps
 
-| Network | Activation timestamp |
-| --- | --- |
-| `mainnet` | TBD |
+| Network   | Activation timestamp                   |
+| --------- | -------------------------------------- |
+| `mainnet` | TBD                                    |
 | `sepolia` | `1776708000` (2026-04-20 18:00:00 UTC) |
 
 ## Execution Layer
@@ -32,5 +32,10 @@ Only `base-consensus` and `base-reth-node` will  support the Base V1 hardfork. I
 
 ## Proofs
 
-- TEE
-- ZK
+- [Proof System](/upgrades/v1/proofs)
+- [New/Changed Onchain Components](/upgrades/v1/proofs#newchanged-onchain-components)
+- [Proposer](/upgrades/v1/proofs#proposer)
+- [Challenger](/upgrades/v1/proofs#challenger)
+- [TEE Provers](/upgrades/v1/proofs#tee-provers)
+- [ZK Provers](/upgrades/v1/proofs#zk-provers)
+- [Prover Registrar](/upgrades/v1/proofs#prover-registrar)
