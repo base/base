@@ -29,7 +29,7 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
         if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
             return ProposerError::GameAlreadyExists;
         }
-        if data.as_ref().is_some_and(|d| d.len() >= 4 && d[..4] == selector) {
+        if data.as_ref().is_some_and(|d| d.starts_with(&selector)) {
             return ProposerError::GameAlreadyExists;
         }
         return ProposerError::TxManager(err);
