@@ -20,7 +20,7 @@ use base_proof_rpc::{
     RollupProvider,
 };
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -41,6 +41,7 @@ pub struct ProposerService;
 impl ProposerService {
     /// Runs the full proposer service lifecycle.
     pub async fn run(config: ProposerConfig) -> Result<()> {
+        // ── 1. Install TLS provider ──────────────────────────────────────────
         // Install the default rustls CryptoProvider before any TLS connections are created.
         // Required by rustls 0.23+ when custom TLS configs are used (e.g. skip_tls_verify).
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -62,12 +63,9 @@ impl ProposerService {
             "Resolved configuration"
         );
 
-        // ── 1. Global cancellation token and signal handler ──────────────────
+        // ── 2. Global cancellation token and signal handler ──────────────────
         let cancel = CancellationToken::new();
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
-
-        // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
-        config.metrics.init().wrap_err("failed to install Prometheus recorder")?;
 
         // ── 3. Create RPC clients ────────────────────────────────────────────
         let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())

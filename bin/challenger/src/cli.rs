@@ -1,6 +1,7 @@
 //! CLI definition for the challenger binary.
 
 use clap::Parser;
+use eyre::WrapErr as _;
 
 /// Base Challenger.
 #[derive(Parser)]
@@ -16,9 +17,13 @@ impl Cli {
     pub(crate) fn run(self) -> eyre::Result<()> {
         let config = base_challenger::ChallengerConfig::from_cli(self.args)?;
         config.log.init_tracing_subscriber()?;
-        config.metrics.init_with(|| {
-            base_cli_utils::register_version_metrics!();
-        })?;
+        config
+            .metrics
+            .init_with(|| {
+                base_cli_utils::register_version_metrics!();
+                base_challenger::ChallengerMetrics::up().set(1.0);
+            })
+            .wrap_err("failed to install Prometheus recorder")?;
         base_cli_utils::RuntimeManager::new()
             .run_until_ctrl_c(base_challenger::ChallengerService::run(config))
     }
