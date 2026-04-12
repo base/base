@@ -64,11 +64,9 @@ impl ProposerService {
             "Resolved configuration"
         );
 
-        // ── 1. Global cancellation token and signal handler ──────────────────
         let cancel = CancellationToken::new();
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
 
-        // ── 2. Metrics recorder and HTTP server (if enabled) ─────────────────
         config
             .metrics
             .init_with(|| {
@@ -76,7 +74,6 @@ impl ProposerService {
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
-        // ── 3. Create RPC clients ────────────────────────────────────────────
         let l1_config = L1ClientConfig::new(config.l1_eth_rpc.clone())
             .with_timeout(config.rpc_timeout)
             .with_retry_config(config.retry.clone())
@@ -100,12 +97,8 @@ impl ProposerService {
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        info!("Fetching chain configuration from rollup RPC...");
         let chain_config = rollup_client.rollup_config().await?;
-        info!(
-            chain_id = %chain_config.l2_chain_id.id(),
-            "Chain configuration loaded"
-        );
+        info!(chain_id = %chain_config.l2_chain_id.id(), "Chain configuration loaded");
 
         let prover_client = HttpClientBuilder::default()
             .request_timeout(crate::constants::PROVER_TIMEOUT)
@@ -113,7 +106,6 @@ impl ProposerService {
             .map_err(|e| eyre::eyre!("failed to create prover RPC client: {e}"))?;
         info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");
 
-        // ── 4. Create contract clients and read onchain config ──────────────
         let anchor_registry = Arc::new(AnchorStateRegistryContractClient::new(
             config.anchor_state_registry_addr,
             config.l1_eth_rpc.clone(),
@@ -126,7 +118,6 @@ impl ProposerService {
         )?;
         info!(address = %config.dispute_game_factory_addr, "DisputeGameFactory client initialized");
 
-        // Read BLOCK_INTERVAL from the AggregateVerifier implementation.
         let verifier_client = AggregateVerifierContractClient::new(config.l1_eth_rpc.clone())?;
         let impl_address = factory_client.game_impls(config.game_type).await?;
         if impl_address == Address::ZERO {
@@ -163,11 +154,9 @@ impl ProposerService {
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
-        // ── 5a. Create prover ──────────────────────────────────────────────
         let prover_client: Arc<dyn ProverClient> = Arc::new(prover_client);
         info!("Prover initialized");
 
-        // ── 5b. Create output proposer (or dry-run stub) ────────────────────
         let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
             if config.dry_run {
                 info!("Dry-run mode enabled — proofs will be sourced but NOT submitted on-chain");
@@ -227,7 +216,6 @@ impl ProposerService {
             };
         info!("Output proposer initialized");
 
-        // ── 6. Create proving pipeline ─────────────────────────────────────────
         let pipeline_config = PipelineConfig {
             max_parallel_proofs: config.max_parallel_proofs,
             max_retries: 3,
@@ -259,7 +247,6 @@ impl ProposerService {
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));
 
-        // ── 7. Start health HTTP server ─────────────────────────────────────
         let ready = Arc::new(AtomicBool::new(false));
         let health_handle: JoinHandle<Result<()>> = {
             let ready = Arc::clone(&ready);
@@ -268,7 +255,6 @@ impl ProposerService {
             tokio::spawn(async move { HealthServer::serve(addr, ready, health_cancel).await })
         };
 
-        // ── 8. Start admin RPC server (separate listener, localhost-only) ───
         let admin_server = if let Some(admin_addr) = config.admin_addr {
             info!("Admin RPC enabled");
             let driver = Arc::clone(&driver_handle);
@@ -277,7 +263,6 @@ impl ProposerService {
             None
         };
 
-        // ── 9. Start the driver loop ─────────────────────────────────────────
         driver_handle.start_proposer().await.map_err(|e| eyre::eyre!(e))?;
 
         ready.store(true, Ordering::SeqCst);
@@ -289,11 +274,9 @@ impl ProposerService {
             "Service is ready"
         );
 
-        // ── 10. Wait for shutdown signal ────────────────────────────────────
         cancel.cancelled().await;
         info!("Shutdown signal received, stopping service...");
 
-        // ── 11. Graceful shutdown (reverse initialisation order) ────────────
         ready.store(false, Ordering::SeqCst);
 
         if driver_handle.is_running()
