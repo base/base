@@ -308,7 +308,9 @@ impl ProposerService {
             warn!(error = %e, "Error stopping proposer driver");
         }
 
-        drop(admin_server);
+        if let Some(admin_server) = admin_server {
+            admin_server.shutdown().await;
+        }
 
         match health_handle.await {
             Ok(Ok(())) => {}

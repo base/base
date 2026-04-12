@@ -103,9 +103,11 @@ impl AdminServer {
         self.addr
     }
 
-    /// Future that resolves when the server stops.
-    pub async fn stopped(&self) {
-        self.handle.clone().stopped().await;
+    /// Initiate graceful shutdown and wait for all in-flight connections to
+    /// close.
+    pub async fn shutdown(self) {
+        let _ = self.handle.stop();
+        self.handle.stopped().await;
     }
 }
 
