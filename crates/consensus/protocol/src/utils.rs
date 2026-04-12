@@ -10,7 +10,7 @@ use base_consensus_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     BaseBlockConversionError, L1BlockInfoBedrockOnlyFields as _, L1BlockInfoEcotoneBaseFields as _,
-    L1BlockInfoTx, MAX_SPAN_BATCH_ELEMENTS, SpanBatchError, SpanDecodingError,
+    L1BlockInfoTx, SpanBatchElement, SpanBatchError, SpanDecodingError,
 };
 
 /// Converts the [`BaseBlock`] to a partial [`SystemConfig`].
@@ -117,7 +117,7 @@ pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, TxType), SpanBatchError> 
     let tx_payload = if rlp_header.list {
         // Grab the raw RLP for the transaction data from `r`. It was unaffected since we copied it.
         let payload_length_with_header = rlp_header.payload_length + rlp_header.length();
-        if payload_length_with_header > MAX_SPAN_BATCH_ELEMENTS as usize {
+        if payload_length_with_header > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS as usize {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }
         if payload_length_with_header > r.len() {
@@ -149,7 +149,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        MAX_SPAN_BATCH_ELEMENTS,
+        SpanBatchElement,
         test_utils::{RAW_BEDROCK_INFO_TX, RAW_ECOTONE_INFO_TX, RAW_ISTHMUS_INFO_TX},
     };
 
@@ -169,7 +169,7 @@ mod tests {
         // succeed and then our TooBigSpanBatchSize check fires.
         // payload_length = MAX_SPAN_BATCH_ELEMENTS = 10_000_000 (0x98_96_80, 3-byte encoding).
         // Total buffer: 4-byte header + 10_000_000 payload bytes = 10_000_004 bytes.
-        let payload_len = MAX_SPAN_BATCH_ELEMENTS as usize;
+        let payload_len = SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS as usize;
         let mut buf = vec![0u8; 4 + payload_len];
         buf[0] = 0xfa; // 0xf7 + 3: long list, 3-byte length field follows
         buf[1] = (payload_len >> 16) as u8;

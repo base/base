@@ -9,8 +9,8 @@ use alloy_primitives::{Address, Bytes, Signature, U256, bytes};
 use alloy_rlp::{Buf, Decodable, Encodable};
 
 use crate::{
-    MAX_SPAN_BATCH_ELEMENTS, SpanBatchBits, SpanBatchError, SpanBatchTransactionData,
-    SpanDecodingError, read_tx_data,
+    SpanBatchBits, SpanBatchElement, SpanBatchError, SpanBatchTransactionData, SpanDecodingError,
+    read_tx_data,
 };
 
 /// This struct contains the decoded information for transactions in a span batch.
@@ -131,7 +131,7 @@ impl SpanBatchTransactions {
 
     /// Decode the contract creation bits from a reader.
     pub fn decode_contract_creation_bits(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
-        if self.total_block_tx_count > MAX_SPAN_BATCH_ELEMENTS {
+        if self.total_block_tx_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }
 
@@ -141,7 +141,7 @@ impl SpanBatchTransactions {
 
     /// Decode the protected bits from a reader.
     pub fn decode_protected_bits(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
-        if self.legacy_tx_count > MAX_SPAN_BATCH_ELEMENTS {
+        if self.legacy_tx_count > SpanBatchElement::MAX_SPAN_BATCH_ELEMENTS {
             return Err(SpanBatchError::TooBigSpanBatchSize);
         }
 

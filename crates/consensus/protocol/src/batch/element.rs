@@ -6,10 +6,6 @@ use alloy_primitives::Bytes;
 
 use crate::SingleBatch;
 
-/// `MAX_SPAN_BATCH_ELEMENTS` is the maximum number of blocks, transactions in total,
-/// or transaction per block allowed in a span batch.
-pub const MAX_SPAN_BATCH_ELEMENTS: u64 = 10_000_000;
-
 /// A single batch element is similar to the [`SingleBatch`] type
 /// but does not contain the parent hash and epoch hash since spans
 /// do not contain this data for every block in the span.
@@ -21,6 +17,12 @@ pub struct SpanBatchElement {
     pub timestamp: u64,
     /// The transactions in the L2 block
     pub transactions: Vec<Bytes>,
+}
+
+impl SpanBatchElement {
+    /// `MAX_SPAN_BATCH_ELEMENTS` is the maximum number of blocks, transactions in total,
+    /// or transaction per block allowed in a span batch.
+    pub const MAX_SPAN_BATCH_ELEMENTS: u64 = 10_000_000;
 }
 
 impl From<SingleBatch> for SpanBatchElement {
