@@ -12,11 +12,9 @@ pub use miner::{
 };
 
 mod l2;
-#[allow(deprecated)]
 pub use l2::{
     ActionL2Source, BlockHashInner, L2Sequencer, L2SequencerError, SharedBlockHashRegistry,
-    StatefulL2Executor, TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY, TestAccount, compute_state_root,
-    decode_raw_transactions,
+    TEST_ACCOUNT_ADDRESS, TEST_ACCOUNT_KEY, TestAccount,
 };
 
 mod harness;

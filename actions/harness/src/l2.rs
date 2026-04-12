@@ -3,19 +3,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_consensus::{Header, SignableTransaction};
-use alloy_eips::{
-    BlockNumHash,
-    eip2718::{Decodable2718, Encodable2718},
-    eip7685::EMPTY_REQUESTS_HASH,
-};
-use alloy_hardforks::ForkCondition;
+use alloy_consensus::SignableTransaction;
+use alloy_eips::{BlockNumHash, eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
-use base_alloy_chains::BaseUpgrade;
 use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_alloy_rpc_types_engine::{
     OpExecutionPayload, OpExecutionPayloadSidecar, OpNetworkPayloadEnvelope, PayloadHash,
@@ -23,17 +16,7 @@ use base_alloy_rpc_types_engine::{
 use base_consensus_derive::{AttributesBuilder, StatefulAttributesBuilder};
 use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{L1OriginSelector, OriginSelector, SequencerEngineClient};
-use base_execution_chainspec::BaseChainSpecBuilder;
-use base_execution_evm::BaseEvmConfig;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
-use base_revm::OpTransaction;
-use reth_evm::{ConfigureEvm, Evm as _, FromRecoveredTx};
-use revm::{
-    DatabaseCommit,
-    context::{TxEnv, result::ResultAndState},
-    database::InMemoryDB,
-    state::AccountInfo,
-};
 
 use crate::{
     ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider, L2BlockProvider,
@@ -54,9 +37,6 @@ pub const TEST_ACCOUNT_KEY: B256 = B256::new([0x01u8; 32]);
 // Address derived from the secp256k1 public key of [0x01; 32].
 pub const TEST_ACCOUNT_ADDRESS: Address =
     alloy_primitives::address!("1a642f0E3c3aF545E7AcBD38b07251B3990914F1");
-
-/// Initial balance for the test account (1 ETH).
-const TEST_ACCOUNT_BALANCE: U256 = U256::from_limbs([1_000_000_000_000_000_000u64, 0, 0, 0]);
 
 /// A test account with nonce tracking and signing capability.
 ///
@@ -589,178 +569,3 @@ impl L2Sequencer {
     }
 }
 
-/// Determine the sender address for a transaction.
-///
-/// Deposit transactions carry an explicit `from` field. Signed user
-/// transactions are always from the given `default_sender` in this test harness.
-const fn tx_sender(tx: &OpTxEnvelope, default_sender: Address) -> Address {
-    match tx {
-        OpTxEnvelope::Deposit(sealed) => sealed.inner().from,
-        _ => default_sender,
-    }
-}
-
-/// Compute a Merkle Patricia Trie state root from the in-memory database.
-///
-/// Iterates over all accounts in the DB cache and builds a proper MPT root,
-/// giving each account the correct storage root and code hash.
-pub fn compute_state_root(db: &InMemoryDB) -> B256 {
-    let accounts = db
-        .cache
-        .accounts
-        .iter()
-        .filter(|(_, db_account)| {
-            !matches!(db_account.account_state, revm::database::AccountState::NotExisting)
-        })
-        .map(|(address, db_account)| {
-            let storage_root = if db_account.storage.is_empty() {
-                EMPTY_ROOT_HASH
-            } else {
-                alloy_trie::root::storage_root_unhashed(
-                    db_account.storage.iter().map(|(slot, value)| (B256::from(*slot), *value)),
-                )
-            };
-
-            let code_hash = db_account.info.code_hash;
-
-            (
-                *address,
-                TrieAccount {
-                    nonce: db_account.info.nonce,
-                    balance: db_account.info.balance,
-                    storage_root,
-                    code_hash,
-                },
-            )
-        });
-
-    state_root_unhashed(accounts)
-}
-
-/// Decode raw EIP-2718-encoded transaction bytes into [`OpTxEnvelope`]s.
-pub fn decode_raw_transactions(raw_txs: &[Bytes]) -> Result<Vec<OpTxEnvelope>, L2SequencerError> {
-    raw_txs
-        .iter()
-        .map(|raw| {
-            OpTxEnvelope::decode_2718(&mut raw.as_ref())
-                .map_err(|e| L2SequencerError::Evm(format!("tx decode: {e}")))
-        })
-        .collect()
-}
-
-/// In-process EVM re-executor for validating derived L2 blocks.
-///
-/// Mirrors the sequencer's execution environment -- same seeded test
-/// account, same EVM configuration, same state-root computation. Call
-/// [`execute_attrs`] in L2-block order so the internal EVM state advances
-/// identically to the engine's. The returned state root can be compared
-/// against the value stored in [`SharedBlockHashRegistry`] to confirm that
-/// the derivation pipeline re-produces the exact same execution result.
-///
-/// [`execute_attrs`]: StatefulL2Executor::execute_attrs
-#[deprecated(note = "Use ActionEngineClient for block building; will be removed in a future task")]
-#[derive(Debug)]
-pub struct StatefulL2Executor {
-    db: InMemoryDB,
-    rollup_config: RollupConfig,
-}
-
-#[allow(deprecated)]
-impl StatefulL2Executor {
-    /// Create a new executor with the standard test account seeded.
-    ///
-    /// The initial EVM state matches the [`L2Sequencer`]'s genesis: the
-    /// [`TEST_ACCOUNT_ADDRESS`] is funded with [`TEST_ACCOUNT_BALANCE`].
-    pub fn new(rollup_config: RollupConfig) -> Self {
-        let mut db = InMemoryDB::default();
-        db.insert_account_info(
-            TEST_ACCOUNT_ADDRESS,
-            AccountInfo { balance: TEST_ACCOUNT_BALANCE, ..Default::default() },
-        );
-        Self { db, rollup_config }
-    }
-
-    /// Returns a reference to the internal EVM database.
-    ///
-    /// Callers can inspect account state and storage written by executed
-    /// transactions.
-    pub const fn db(&self) -> &InMemoryDB {
-        &self.db
-    }
-
-    /// Execute the transactions from `attrs` and return the resulting state root.
-    ///
-    /// Decodes each raw EIP-2718-encoded transaction from
-    /// `attrs.attributes.transactions`, executes them in order against the
-    /// internal EVM database, and returns the Merkle Patricia Trie state root.
-    /// The internal state persists between calls so repeated invocations
-    /// mirror the sequencer's block-by-block execution.
-    pub fn execute_attrs(
-        &mut self,
-        attrs: &AttributesWithParent,
-        block_number: u64,
-        parent_hash: B256,
-    ) -> Result<B256, L2SequencerError> {
-        let timestamp = attrs.attributes.payload_attributes.timestamp;
-        let txs = decode_raw_transactions(attrs.attributes.transactions.as_deref().unwrap_or(&[]))?;
-        let (state_root, _gas_used) =
-            self.execute_transactions(&txs, block_number, timestamp, parent_hash)?;
-        Ok(state_root)
-    }
-
-    /// Execute transactions against the internal EVM database and return
-    /// `(state_root, cumulative_gas_used)`.
-    ///
-    /// This is the single authoritative execution path shared by both
-    /// the legacy sequencer path and [`execute_attrs`] (which only needs the
-    /// state root for validation).
-    ///
-    /// [`execute_attrs`]: StatefulL2Executor::execute_attrs
-    pub fn execute_transactions(
-        &mut self,
-        transactions: &[OpTxEnvelope],
-        block_number: u64,
-        timestamp: u64,
-        parent_hash: B256,
-    ) -> Result<(B256, u64), L2SequencerError> {
-        let mut spec_builder =
-            BaseChainSpecBuilder::base_mainnet().chain(self.rollup_config.l2_chain_id);
-
-        if let Some(ts) = self.rollup_config.hardforks.base.v1 {
-            spec_builder = spec_builder.with_fork(BaseUpgrade::V1, ForkCondition::Timestamp(ts));
-        }
-
-        let chain_spec = Arc::new(spec_builder.build());
-        let evm_config = BaseEvmConfig::optimism(chain_spec);
-
-        let header = Header {
-            number: block_number,
-            timestamp,
-            parent_hash,
-            gas_limit: 30_000_000,
-            base_fee_per_gas: Some(1_000_000_000),
-            ..Default::default()
-        };
-
-        let mut cumulative_gas_used = 0u64;
-        for tx in transactions {
-            let sender = tx_sender(tx, TEST_ACCOUNT_ADDRESS);
-            let op_tx: OpTransaction<TxEnv> = OpTransaction::from_recovered_tx(tx, sender);
-
-            let evm_env =
-                evm_config.evm_env(&header).map_err(|e| L2SequencerError::Evm(e.to_string()))?;
-            let mut evm = evm_config.evm_with_env(&mut self.db, evm_env);
-            match evm.transact(op_tx) {
-                Ok(ResultAndState { state, result }) => {
-                    cumulative_gas_used = cumulative_gas_used.saturating_add(result.gas_used());
-                    self.db.commit(state);
-                }
-                Err(e) => {
-                    return Err(L2SequencerError::Evm(format!("{e:?}")));
-                }
-            }
-        }
-
-        Ok((compute_state_root(&self.db), cumulative_gas_used))
-    }
-}
