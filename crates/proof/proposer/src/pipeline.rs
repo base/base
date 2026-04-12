@@ -814,6 +814,8 @@ where
             .iter()
             .filter_map(|b| game_map.map.get(b))
             .flat_map(|games| games.iter().map(|g| g.proxy))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
             .collect();
 
         let (canonical_roots, intermediate_roots_map) = tokio::try_join!(
