@@ -20,8 +20,8 @@ base-alloy-consensus = { workspace = true, features = ["alloy-compat", "std"] }
 
 # Alloy
 alloy-network.workspace = true
-alloy-primitives.workspace = true
 alloy-provider.workspace = true
+alloy-primitives.workspace = true
 alloy-consensus = { workspace = true, features = ["std"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 

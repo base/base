@@ -13,10 +13,9 @@ workspace = true
 [dependencies]
 bytes.workspace = true
 futures.workspace = true
-base-bundles.workspace = true
 async-trait.workspace = true
+base-bundles.workspace = true
 metrics = { workspace = true, optional = true }
-base-metrics = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["full"] }
 anyhow = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
@@ -24,6 +23,7 @@ serde_json = { workspace = true, features = ["std"] }
 uuid = { workspace = true, features = ["v5", "serde"] }
 serde = { workspace = true, features = ["std", "derive"] }
 alloy-consensus = { workspace = true, features = ["std"] }
+base-metrics = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }

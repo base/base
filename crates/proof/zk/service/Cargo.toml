@@ -17,17 +17,17 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "ti
 
 tonic.workspace = true
 
+reqwest = { workspace = true, features = ["json"] }
+tower-http = { workspace = true, features = ["trace"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
 tower = { workspace = true, features = ["limit", "timeout"] }
-tower-http = { workspace = true, features = ["trace"] }
-reqwest = { workspace = true, features = ["json"] }
 
 governor.workspace = true
 nonzero_ext.workspace = true
 
-uuid = { workspace = true, features = ["v4", "serde"] }
-serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 
 anyhow.workspace = true
 

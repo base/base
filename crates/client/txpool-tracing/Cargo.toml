@@ -20,8 +20,8 @@ base-node-runner.workspace = true
 reth-tracing.workspace = true
 reth-provider.workspace = true
 reth-node-api.workspace = true
-reth-primitives-traits.workspace = true
 reth-transaction-pool.workspace = true
+reth-primitives-traits.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
@@ -34,16 +34,16 @@ tokio-stream.workspace = true
 # misc
 lru.workspace = true
 chrono.workspace = true
-metrics = { workspace = true, optional = true }
 base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 derive_more = { workspace = true, features = ["display"] }
 
 [dev-dependencies]
 # workspace
+base-test-utils.workspace = true
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-flashblocks-node = { workspace = true, features = ["test-utils"] }
-base-test-utils.workspace = true
 
 # reth
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }

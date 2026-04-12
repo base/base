@@ -29,8 +29,8 @@ alloy-evm = { workspace = true, optional = true }
 rstest.workspace = true
 sha2 = { workspace = true, default-features = false }
 serde = { workspace = true, features = ["derive", "rc"] }
-alloy-primitives = { workspace = true, default-features = false }
 alloy-sol-types = { workspace = true, default-features = false }
+alloy-primitives = { workspace = true, default-features = false }
 serde_json = { workspace = true, default-features = false, features = ["alloc", "preserve_order"] }
 
 [features]

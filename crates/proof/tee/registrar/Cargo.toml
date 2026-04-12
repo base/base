@@ -35,8 +35,8 @@ reqwest.workspace = true
 base-proof-contracts.workspace = true
 
 # Proving
-base-proof-tee-nitro-attestation-prover.workspace = true
 base-proof-tee-nitro-verifier.workspace = true
+base-proof-tee-nitro-attestation-prover.workspace = true
 
 # Transaction management
 base-tx-manager.workspace = true

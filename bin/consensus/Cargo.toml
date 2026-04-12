@@ -21,8 +21,8 @@ base-cli-utils.workspace = true
 base-client-cli.workspace = true
 
 # alloy
-alloy-provider.workspace = true
 alloy-chains.workspace = true
+alloy-provider.workspace = true
 alloy-primitives.workspace = true
 base-alloy-network.workspace = true
 
@@ -44,9 +44,9 @@ metrics.workspace = true
 
 # misc
 url.workspace = true
+eyre.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-eyre.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true

@@ -15,13 +15,13 @@ normal = ["getrandom"]
 
 [dependencies]
 # Workspace
-base-proof-mpt.workspace = true
 base-protocol.workspace = true
+base-proof-mpt.workspace = true
 base-consensus-genesis.workspace = true
 
 # Alloy
-alloy-eips.workspace = true
 alloy-rlp.workspace = true
+alloy-eips.workspace = true
 alloy-trie.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-primitives = { workspace = true, features = ["rlp"] }
@@ -49,14 +49,14 @@ getrandom = { version = "0.2", features = ["custom"] }
 # `test-utils` feature dependencies
 rand = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
-alloy-transport = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+alloy-transport = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, optional = true }
-alloy-rpc-types-engine = { workspace = true, optional = true }
 alloy-transport-http = { workspace = true, optional = true }
+alloy-rpc-types-engine = { workspace = true, optional = true }
 base-consensus-registry = { workspace = true, optional = true }
-serde = { workspace = true, features = ["derive"], optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
 alloy-provider = { workspace = true, features = ["reqwest"], optional = true }
 

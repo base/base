@@ -16,8 +16,8 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["time", "sync"] }
 
 # serialization
-uuid = { workspace = true, features = ["v4", "serde"] }
 serde_json.workspace = true
+uuid = { workspace = true, features = ["v4", "serde"] }
 
 # error handling
 anyhow.workspace = true

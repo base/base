@@ -29,8 +29,8 @@ reth-trie-common = { workspace = true, features = ["serde"] }
 reth-ethereum-primitives = { workspace = true, optional = true }
 
 # `metrics` feature
-metrics = { workspace = true, optional = true }
 base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
 
 # ethereum
 alloy-eips.workspace = true

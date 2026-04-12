@@ -38,8 +38,8 @@ url.workspace = true
 notify.workspace = true
 rustls.workspace = true
 serde = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
+serde_json = { workspace = true, features = ["std"] }
 
 [features]
 default = []

@@ -21,20 +21,20 @@ base-tx-manager.workspace = true
 base-batcher-core.workspace = true
 base-batcher-admin.workspace = true
 base-alloy-network.workspace = true
+alloy-signer-local.workspace = true
 base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
-derive_more = { workspace = true, features = ["debug"] }
 tracing = { workspace = true, features = ["std"] }
+derive_more = { workspace = true, features = ["debug"] }
 base-protocol = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
-base-consensus-genesis = { workspace = true, features = ["std"] }
-alloy-signer-local.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-alloy-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
+base-consensus-genesis = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 base-alloy-rpc-jsonrpsee = { workspace = true, features = ["client"] }
 

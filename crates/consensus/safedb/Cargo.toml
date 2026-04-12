@@ -16,8 +16,8 @@ workspace = true
 base-protocol = { workspace = true, features = ["std"] }
 
 # Alloy
-alloy-eips = { workspace = true, features = ["serde", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["serde", "std"] }
 
 # Storage
 redb.workspace = true

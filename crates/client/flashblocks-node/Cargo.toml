@@ -20,8 +20,8 @@ base-engine-tree.workspace = true
 
 # reth
 reth-chain-state.workspace = true
-reth-chainspec = { workspace = true, optional = true }
 reth-provider = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true, optional = true }
 reth-transaction-pool = { workspace = true, features = ["test-utils"], optional = true }
@@ -50,20 +50,20 @@ derive_more = { workspace = true, features = ["deref"], optional = true }
 
 [dev-dependencies]
 # workspace
+base-test-utils.workspace = true
 base-flashblocks-node = { path = ".", features = ["test-utils"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-test-utils.workspace = true
 
 # alloy (test)
 alloy-signer.workspace = true
 
 # reth
-reth-evm.workspace = true
 reth-db.workspace = true
+reth-evm.workspace = true
 reth-revm.workspace = true
 reth-tracing.workspace = true
-reth-primitives.workspace = true
 reth-db-common.workspace = true
+reth-primitives.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-testing-utils.workspace = true
 base-node-core = { workspace = true, features = ["test-utils"] }
@@ -78,8 +78,8 @@ alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-client.workspace = true
 alloy-genesis = { workspace = true, features = ["std"] }
-alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
+alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base-alloy

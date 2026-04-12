@@ -18,8 +18,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # alloy
-alloy-primitives.workspace = true
 alloy-hardforks.workspace = true
+alloy-primitives.workspace = true
 
 # misc
 auto_impl.workspace = true

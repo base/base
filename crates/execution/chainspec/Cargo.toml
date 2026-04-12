@@ -20,16 +20,16 @@ reth-primitives-traits.workspace = true
 
 # op-reth
 base-protocol.workspace = true
-base-execution-upgrades.workspace = true
 base-alloy-chains.workspace = true
+base-execution-upgrades.workspace = true
 
 # ethereum
 alloy-eips.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-hardforks.workspace = true
+alloy-primitives.workspace = true
 
 # op
 base-common-rpc-types.workspace = true

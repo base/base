@@ -13,80 +13,80 @@ workspace = true
 
 [dependencies]
 # reth
-reth-basic-payload-builder.workspace = true
-reth-evm = { workspace = true, features = ["std"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
-reth-primitives-traits.workspace = true
-reth-payload-primitives.workspace = true
-reth-execution-types.workspace = true
-reth-transaction-pool.workspace = true
 reth-node-api.workspace = true
 reth-db-common.workspace = true
+reth-execution-types.workspace = true
+reth-transaction-pool.workspace = true
+reth-primitives-traits.workspace = true
+reth-payload-primitives.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-evm = { workspace = true, features = ["std"] }
 reth-db = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
 
 # revm
-base-revm = { workspace = true, features = ["std"] }
 revm.workspace = true
+base-revm = { workspace = true, features = ["std"] }
 
 # alloy
-alloy-genesis = { workspace = true, features = ["std"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
-alloy-trie = { workspace = true, features = ["ethereum"] }
-alloy-consensus = { workspace = true, features = ["std"] }
-alloy-transport-http.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-signer-local.workspace = true
-alloy-primitives.workspace = true
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
 alloy-hardforks.workspace = true
 alloy-transport.workspace = true
-alloy-provider.workspace = true
-alloy-network.workspace = true
-alloy-signer.workspace = true
-alloy-eips.workspace = true
-alloy-rlp.workspace = true
+alloy-primitives.workspace = true
+alloy-signer-local.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-transport-http.workspace = true
+alloy-genesis = { workspace = true, features = ["std"] }
+alloy-trie = { workspace = true, features = ["ethereum"] }
+alloy-consensus = { workspace = true, features = ["std"] }
+alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # base-alloy
-base-alloy-consensus = { workspace = true, features = ["std", "evm"] }
-base-alloy-rpc-types-engine.workspace = true
-base-common-rpc-types.workspace = true
-base-alloy-provider.workspace = true
-base-alloy-network.workspace = true
 base-alloy-chains.workspace = true
+base-alloy-network.workspace = true
+base-alloy-provider.workspace = true
+base-common-rpc-types.workspace = true
+base-alloy-rpc-types-engine.workspace = true
+base-alloy-consensus = { workspace = true, features = ["std", "evm"] }
 
 # base
-base-execution-payload-builder.workspace = true
-base-consensus-derive = { workspace = true, features = ["test-utils"] }
-base-consensus-genesis = { workspace = true, features = ["std"] }
-base-protocol = { workspace = true, features = ["std"] }
-base-execution-chainspec.workspace = true
-base-consensus-registry.workspace = true
+base-blobs.workspace = true
+base-runtime.workspace = true
+base-node-core.workspace = true
+base-test-utils.workspace = true
+base-tx-manager.workspace = true
+base-batcher-core.workspace = true
+base-execution-evm.workspace = true
+base-consensus-node.workspace = true
+base-batcher-source.workspace = true
+base-batcher-encoder.workspace = true
 base-consensus-safedb.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
-base-batcher-encoder.workspace = true
-base-consensus-node.workspace = true
-base-batcher-source.workspace = true
-base-execution-evm.workspace = true
-base-batcher-core.workspace = true
-base-test-utils.workspace = true
-base-tx-manager.workspace = true
-base-node-core.workspace = true
-base-runtime.workspace = true
 base-execution-txpool.workspace = true
-base-blobs.workspace = true
+base-consensus-registry.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-payload-builder.workspace = true
+base-protocol = { workspace = true, features = ["std"] }
+base-consensus-genesis = { workspace = true, features = ["std"] }
+base-consensus-derive = { workspace = true, features = ["test-utils"] }
 
 # tokio
-tokio = { workspace = true, features = ["rt"] }
 tokio-util.workspace = true
+tokio = { workspace = true, features = ["rt"] }
 
 # async
 async-trait.workspace = true
 
 # misc
-thiserror.workspace = true
-tempfile.workspace = true
-serde_json.workspace = true
 tracing.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
