@@ -171,6 +171,7 @@ skip = [
     "alloy-hardforks",
     "cargo-platform",
     "cargo_metadata",
+    "cpufeatures",
     "foreign-types",
     "foreign-types-shared",
     "num-bigint",
@@ -178,7 +179,7 @@ skip = [
     "ringbuffer",
     "tracing-subscriber",
     "wasm-streams",
-    "zip",
+    "winnow",
 ]
 
 [sources]
