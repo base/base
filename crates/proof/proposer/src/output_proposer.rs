@@ -15,6 +15,8 @@ use tracing::info;
 
 use crate::error::ProposerError;
 
+const GAME_ALREADY_EXISTS: &str = "GameAlreadyExists";
+
 /// Classifies a [`TxManagerError`] into a [`ProposerError`].
 ///
 /// Checks the structured revert reason and raw data for the
@@ -24,7 +26,7 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     let selector = game_already_exists_selector();
 
     if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
-        if reason.as_deref().is_some_and(|r| r.contains("GameAlreadyExists")) {
+        if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
             return ProposerError::GameAlreadyExists;
         }
         if data.as_ref().is_some_and(|d| d.len() >= 4 && d[..4] == selector) {
@@ -35,7 +37,7 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
 
     let msg = err.to_string();
     if msg.contains(&alloy_primitives::hex::encode(selector))
-        || msg.contains("GameAlreadyExists")
+        || msg.contains(GAME_ALREADY_EXISTS)
     {
         return ProposerError::GameAlreadyExists;
     }
@@ -347,13 +349,13 @@ mod tests {
         "selector hex in Rpc message"
     )]
     #[case::rpc_with_name(
-        TxManagerError::Rpc("GameAlreadyExists()".to_string()),
+        TxManagerError::Rpc(format!("{GAME_ALREADY_EXISTS}()")),
         true,
         "error name in Rpc message"
     )]
     #[case::reverted_with_reason(
         TxManagerError::ExecutionReverted {
-            reason: Some("GameAlreadyExists()".to_string()),
+            reason: Some(format!("{GAME_ALREADY_EXISTS}()")),
             data: None,
         },
         true,
