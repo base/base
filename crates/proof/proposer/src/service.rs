@@ -28,6 +28,7 @@ use tracing::{info, warn};
 use crate::{
     Metrics,
     config::ProposerConfig,
+    constants::MAX_PROOF_RETRIES,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::ProposalSubmitter,
     pipeline::{PipelineConfig, ProvingPipeline},
@@ -213,7 +214,7 @@ impl ProposerService {
 
         let pipeline_config = PipelineConfig {
             max_parallel_proofs: config.max_parallel_proofs,
-            max_retries: 3,
+            max_retries: MAX_PROOF_RETRIES,
             tee_prover_registry_address: config.tee_prover_registry_address,
             driver: DriverConfig {
                 poll_interval: config.poll_interval,
