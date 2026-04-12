@@ -21,7 +21,7 @@ use base_proof_rpc::{
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
-pub(crate) struct MockL1 {
+pub struct MockL1 {
     pub latest_block_number: u64,
 }
 
@@ -53,7 +53,7 @@ impl L1Provider for MockL1 {
     }
 }
 
-pub(crate) struct MockL2 {
+pub struct MockL2 {
     pub block_not_found: bool,
     /// If set, `header_by_number` returns a header with this hash.
     /// Used for reorg detection tests.
@@ -84,7 +84,7 @@ impl L2Provider for MockL2 {
     }
 }
 
-pub(crate) struct MockRollupClient {
+pub struct MockRollupClient {
     pub sync_status: SyncStatus,
     pub output_roots: HashMap<u64, B256>,
 }
@@ -107,7 +107,7 @@ impl RollupProvider for MockRollupClient {
     }
 }
 
-pub(crate) struct MockAnchorStateRegistry {
+pub struct MockAnchorStateRegistry {
     pub anchor_root: AnchorRoot,
 }
 
@@ -118,17 +118,17 @@ impl AnchorStateRegistryClient for MockAnchorStateRegistry {
     }
 }
 
-pub(crate) struct MockDisputeGameFactory {
+pub struct MockDisputeGameFactory {
     pub games: Vec<GameAtIndex>,
     pub game_count_override: Option<u64>,
 }
 
 impl MockDisputeGameFactory {
-    pub(crate) fn with_count(game_count: u64) -> Self {
+    pub fn with_count(game_count: u64) -> Self {
         Self { games: Vec::new(), game_count_override: Some(game_count) }
     }
 
-    pub(crate) fn with_games(games: Vec<GameAtIndex>) -> Self {
+    pub fn with_games(games: Vec<GameAtIndex>) -> Self {
         Self { games, game_count_override: None }
     }
 }
@@ -156,14 +156,14 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 }
 
 #[derive(Default)]
-pub(crate) struct MockAggregateVerifier {
+pub struct MockAggregateVerifier {
     pub game_info_map: HashMap<Address, GameInfo>,
     pub failing_addresses: HashSet<Address>,
     pub intermediate_roots_map: HashMap<Address, Vec<B256>>,
 }
 
 impl MockAggregateVerifier {
-    pub(crate) fn with_game_info(map: HashMap<Address, GameInfo>) -> Self {
+    pub fn with_game_info(map: HashMap<Address, GameInfo>) -> Self {
         Self { game_info_map: map, ..Default::default() }
     }
 }
@@ -244,11 +244,11 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 }
 
-pub(crate) fn test_l1_block_ref(number: u64) -> L1BlockRef {
+pub fn test_l1_block_ref(number: u64) -> L1BlockRef {
     L1BlockRef { hash: B256::ZERO, number, parent_hash: B256::ZERO, timestamp: 1_000_000 + number }
 }
 
-pub(crate) fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
+pub fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
     L2BlockRef {
         hash,
         number,
@@ -259,7 +259,7 @@ pub(crate) fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
     }
 }
 
-pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus {
+pub fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus {
     let l1 = test_l1_block_ref(100);
     let l2 = test_l2_block_ref(safe_number, safe_hash);
     SyncStatus {
@@ -275,11 +275,11 @@ pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus 
     }
 }
 
-pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
+pub fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot { root: B256::ZERO, l2_block_number: block_number }
 }
 
-pub(crate) fn test_proposal(block_number: u64) -> Proposal {
+pub fn test_proposal(block_number: u64) -> Proposal {
     Proposal {
         output_root: B256::repeat_byte(block_number as u8),
         signature: Bytes::from_static(&[0xab; 65]),
@@ -292,7 +292,7 @@ pub(crate) fn test_proposal(block_number: u64) -> Proposal {
 }
 
 #[derive(Debug)]
-pub(crate) struct MockProver {
+pub struct MockProver {
     pub delay: Duration,
     pub block_interval: u64,
 }
@@ -315,7 +315,7 @@ impl ProverClient for MockProver {
     }
 }
 
-pub(crate) struct MockOutputProposer;
+pub struct MockOutputProposer;
 
 #[async_trait]
 impl OutputProposer for MockOutputProposer {
