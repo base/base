@@ -18,6 +18,7 @@ pub enum BrotliDecompressionError {
 }
 
 /// Brotli decompression utilities.
+#[derive(Debug)]
 pub struct Brotli;
 
 impl Brotli {
