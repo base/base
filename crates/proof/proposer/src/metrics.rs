@@ -22,6 +22,7 @@ base_metrics::define_metrics! {
 
     #[describe("Latest safe (or finalized) L2 block number")]
     safe_head: gauge,
+
     #[describe("Total number of L2 output proposals submitted")]
     l2_output_proposals_total: counter,
 
@@ -46,6 +47,7 @@ base_metrics::define_metrics! {
 
     #[describe("Total output root mismatches detected at submit time")]
     root_mismatch_total: counter,
+
     #[describe("Time to generate a single proof (seconds)")]
     proof_duration_seconds: histogram,
 
@@ -60,26 +62,8 @@ base_metrics::define_metrics! {
 }
 
 impl Metrics {
-    /// RPC error.
-    pub const ERROR_TYPE_RPC: &str = "rpc";
-    /// Prover error.
-    pub const ERROR_TYPE_PROVER: &str = "prover";
-    /// Contract interaction error.
-    pub const ERROR_TYPE_CONTRACT: &str = "contract";
-    /// Transaction reverted on-chain.
-    pub const ERROR_TYPE_TX_REVERTED: &str = "tx_reverted";
-    /// Configuration error.
-    pub const ERROR_TYPE_CONFIG: &str = "config";
-    /// Internal error.
-    pub const ERROR_TYPE_INTERNAL: &str = "internal";
-    /// Transaction manager error.
-    pub const ERROR_TYPE_TX_MANAGER: &str = "tx_manager";
-    /// Game already exists.
-    pub const ERROR_TYPE_GAME_ALREADY_EXISTS: &str = "game_already_exists";
-}
-
-impl Metrics {
-    pub(crate) fn record_startup() {
+    /// Records that the proposer service has started by setting the `up` gauge to 1.
+    pub fn record_startup() {
         Self::up().set(1.0);
     }
 }

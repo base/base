@@ -22,15 +22,15 @@ use alloy_rpc_types_eth::{
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use alloy_transport_http::Http;
 use async_trait::async_trait;
-use base_alloy_consensus::OpPrimitives;
+use base_alloy_consensus::BasePrimitives;
 use base_alloy_network::Base;
-use base_alloy_provider::OpEngineApi;
+use base_alloy_provider::BaseEngineApi;
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayload, OpExecutionPayloadEnvelope, OpExecutionPayloadEnvelopeV3,
-    OpExecutionPayloadEnvelopeV4, OpExecutionPayloadEnvelopeV5, OpExecutionPayloadV4,
-    OpPayloadAttributes,
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadEnvelopeV3,
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
+    BasePayloadAttributes,
 };
-use base_common_rpc_types::Transaction as OpTransaction;
+use base_common_rpc_types::Transaction as BaseTransaction;
 use base_consensus_engine::{EngineClient, EngineClientError, HyperAuthClient};
 use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{EngineClientError as NodeEngineClientError, SequencerEngineClient};
@@ -77,7 +77,7 @@ pub type TestPool = NoopTransactionPool<BasePooledTransaction>;
 #[derive(Debug, Clone)]
 pub struct PendingPayload {
     /// The built payload from the production `OpPayloadBuilder`.
-    pub built: OpBuiltPayload<OpPrimitives>,
+    pub built: OpBuiltPayload<BasePrimitives>,
 }
 
 /// Mutable state owned by [`ActionEngineClient`], protected by a `Mutex` so
@@ -278,13 +278,13 @@ impl ActionEngineClient {
             .is_some_and(|c: reth_primitives_traits::Bytecode| !c.is_empty())
     }
 
-    /// Build a block from the given `OpPayloadAttributes` and commit it to the database,
+    /// Build a block from the given `BasePayloadAttributes` and commit it to the database,
     /// returning the `OpBuiltPayload`.
     fn build_and_commit(
         inner: &mut ActionEngineClientInner,
         parent_hash: B256,
-        attrs: OpPayloadAttributes,
-    ) -> TransportResult<OpBuiltPayload<OpPrimitives>> {
+        attrs: BasePayloadAttributes,
+    ) -> TransportResult<OpBuiltPayload<BasePrimitives>> {
         // Look up the parent header from executed headers or fall back to the real genesis.
         // When building the first block the caller may pass B256::ZERO (the default rollup-config
         // genesis hash), but the Reth DB stores the genesis block under its actual computed hash.
@@ -335,7 +335,7 @@ impl ActionEngineClient {
                 "payload builder failed: {e}"
             )))
         })?;
-        let built: OpBuiltPayload<OpPrimitives> = outcome.into_payload().ok_or_else(|| {
+        let built: OpBuiltPayload<BasePrimitives> = outcome.into_payload().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "payload builder returned no payload",
             ))
@@ -423,8 +423,8 @@ impl ActionEngineClient {
             }
         }
 
-        // Convert ExecutionPayloadV1 into OpPayloadAttributes for the builder.
-        let attrs = OpPayloadAttributes {
+        // Convert ExecutionPayloadV1 into BasePayloadAttributes for the builder.
+        let attrs = BasePayloadAttributes {
             payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
                 timestamp: payload.timestamp,
                 prev_randao: payload.prev_randao,
@@ -464,7 +464,7 @@ impl ActionEngineClient {
         Ok(block_hash)
     }
 
-    /// Execute and commit a block directly from full [`OpPayloadAttributes`], returning
+    /// Execute and commit a block directly from full [`BasePayloadAttributes`], returning
     /// the resulting block hash.
     ///
     /// Unlike [`execute_v1_inner`], this method accepts the complete attributes including
@@ -479,7 +479,7 @@ impl ActionEngineClient {
         &self,
         parent_hash: B256,
         block_number: u64,
-        attrs: OpPayloadAttributes,
+        attrs: BasePayloadAttributes,
     ) -> TransportResult<B256> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
 
@@ -514,7 +514,7 @@ impl ActionEngineClient {
         inner: &mut ActionEngineClientInner,
         registry: &SharedBlockHashRegistry,
         parent_hash: B256,
-        attrs: &OpPayloadAttributes,
+        attrs: &BasePayloadAttributes,
     ) -> TransportResult<PayloadId> {
         let built = Self::build_and_commit(inner, parent_hash, attrs.clone())?;
 
@@ -557,7 +557,7 @@ impl ActionEngineClient {
         }
     }
 
-    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> Block<OpTransaction> {
+    fn header_to_l2_rpc_block(header: &Header, block_hash: B256) -> Block<BaseTransaction> {
         let sealed = Sealed::new_unchecked(header.clone(), block_hash);
         let rpc_header = alloy_rpc_types_eth::Header::from_sealed(sealed);
         Block {
@@ -677,7 +677,7 @@ impl EngineClient for ActionEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<OpTransaction>>, EngineClientError> {
+    ) -> Result<Option<Block<BaseTransaction>>, EngineClientError> {
         let guard = self.inner.lock().expect("action engine inner lock poisoned");
         let block = match numtag {
             BlockNumberOrTag::Number(n) => guard
@@ -739,7 +739,7 @@ impl EngineClient for ActionEngineClient {
 }
 
 #[async_trait]
-impl OpEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
+impl BaseEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
     async fn new_payload_v2(
         &self,
         payload: ExecutionPayloadInputV2,
@@ -766,7 +766,7 @@ impl OpEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
 
     async fn new_payload_v4(
         &self,
-        payload: OpExecutionPayloadV4,
+        payload: BaseExecutionPayloadV4,
         _parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
@@ -781,7 +781,7 @@ impl OpEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OpPayloadAttributes>,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         let head = fork_choice_state.head_block_hash;
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
@@ -817,7 +817,7 @@ impl OpEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OpPayloadAttributes>,
+        payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         self.fork_choice_updated_v2(fork_choice_state, payload_attributes).await
     }
@@ -834,28 +834,28 @@ impl OpEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV3> {
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV3> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
         let p = Self::take_pending(&mut guard, payload_id)?;
-        Ok(OpExecutionPayloadEnvelopeV3::from(p.built))
+        Ok(BaseExecutionPayloadEnvelopeV3::from(p.built))
     }
 
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV4> {
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV4> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
         let p = Self::take_pending(&mut guard, payload_id)?;
-        Ok(OpExecutionPayloadEnvelopeV4::from(p.built))
+        Ok(BaseExecutionPayloadEnvelopeV4::from(p.built))
     }
 
     async fn get_payload_v5(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OpExecutionPayloadEnvelopeV5> {
+    ) -> TransportResult<BaseExecutionPayloadEnvelopeV5> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
         let p = Self::take_pending(&mut guard, payload_id)?;
-        Ok(OpExecutionPayloadEnvelopeV5::from(p.built))
+        Ok(BaseExecutionPayloadEnvelopeV5::from(p.built))
     }
 
     async fn get_payload_bodies_by_hash_v1(
@@ -922,7 +922,7 @@ impl SequencerEngineClient for ActionEngineClient {
         &self,
         payload_id: PayloadId,
         _attributes: AttributesWithParent,
-    ) -> Result<OpExecutionPayloadEnvelope, NodeEngineClientError> {
+    ) -> Result<BaseExecutionPayloadEnvelope, NodeEngineClientError> {
         let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
         let pending = Self::take_pending(&mut guard, payload_id)
             .map_err(|e| NodeEngineClientError::ResponseError(e.to_string()))?;
@@ -930,13 +930,13 @@ impl SequencerEngineClient for ActionEngineClient {
         let block_hash = block.hash();
         let parent_beacon_block_root = block.header().parent_beacon_block_root();
         let (payload, _sidecar) =
-            OpExecutionPayload::from_block_unchecked(block_hash, &block.clone_block());
-        Ok(OpExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload: payload })
+            BaseExecutionPayload::from_block_unchecked(block_hash, &block.clone_block());
+        Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload: payload })
     }
 
     async fn insert_unsafe_payload(
         &self,
-        payload: OpExecutionPayloadEnvelope,
+        payload: BaseExecutionPayloadEnvelope,
     ) -> Result<(), NodeEngineClientError> {
         // Extract the V1 payload for execution.
         let v1 = payload.execution_payload.as_v1();

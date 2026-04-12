@@ -278,11 +278,11 @@ mod tests {
     use alloy_consensus::{Header, Receipt, ReceiptWithBloom, Sealed};
     use alloy_primitives::{Address, B256, Bloom, Bytes, Signature};
     use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_consensus::OpTxEnvelope;
+    use base_alloy_consensus::BaseTxEnvelope;
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
-    use base_common_rpc_types::{L1BlockInfo, OpTransactionReceipt, Transaction};
+    use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, Transaction};
     use base_flashblocks::PendingBlocksBuilder;
     use revm::context_interface::result::ExecutionResult;
 
@@ -312,7 +312,7 @@ mod tests {
         };
         let signed =
             alloy_consensus::Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO);
-        let envelope = OpTxEnvelope::Legacy(signed);
+        let envelope = BaseTxEnvelope::Legacy(signed);
         let raw = alloy_eips::Encodable2718::encoded_2718(&envelope);
         let raw_bytes = Bytes::from(raw);
         let hash = keccak256(&raw_bytes);
@@ -336,7 +336,7 @@ mod tests {
             let tx = Transaction {
                 inner: alloy_rpc_types_eth::Transaction {
                     inner: alloy_consensus::transaction::Recovered::new_unchecked(
-                        OpTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
+                        BaseTxEnvelope::Legacy(alloy_consensus::Signed::new_unchecked(
                             alloy_consensus::TxLegacy::default(),
                             Signature::test_signature(),
                             entry.tx_hash,
@@ -352,10 +352,10 @@ mod tests {
                 deposit_receipt_version: None,
             };
 
-            let receipt = OpTransactionReceipt {
+            let receipt = BaseTransactionReceipt {
                 inner: alloy_rpc_types_eth::TransactionReceipt {
                     inner: ReceiptWithBloom {
-                        receipt: base_alloy_consensus::OpReceipt::Legacy(Receipt {
+                        receipt: base_alloy_consensus::BaseReceipt::Legacy(Receipt {
                             status: alloy_consensus::Eip658Value::Eip658(true),
                             cumulative_gas_used: 21000,
                             logs: vec![],

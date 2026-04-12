@@ -604,7 +604,7 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{B256, Bloom, Bytes, address};
     use alloy_rpc_client::RpcClient;
-    use base_alloy_consensus::{OpTransactionSigned, OpTxEnvelope};
+    use base_alloy_consensus::{BaseTransactionSigned, BaseTxEnvelope};
     use base_alloy_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
     };
@@ -702,8 +702,8 @@ mod tests {
             .into_eip1559();
 
         let signed_tx =
-            OpTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
-        let envelope: OpTxEnvelope = signed_tx;
+            BaseTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
+        let envelope: BaseTxEnvelope = signed_tx;
 
         let tx_bytes = Bytes::from(envelope.encoded_2718());
 
@@ -751,10 +751,10 @@ mod tests {
             .max_priority_fee_per_gas(1_000_000_000)
             .into_eip1559();
 
-        let tx1_signed = OpTransactionSigned::Eip1559(
+        let tx1_signed = BaseTransactionSigned::Eip1559(
             tx1_inner.as_eip1559().expect("eip1559 transaction").clone(),
         );
-        let tx1_envelope: OpTxEnvelope = tx1_signed;
+        let tx1_envelope: BaseTxEnvelope = tx1_signed;
         let tx1_bytes = Bytes::from(tx1_envelope.encoded_2718());
 
         let address2 = Account::Bob.address();
@@ -771,10 +771,10 @@ mod tests {
             .max_priority_fee_per_gas(2_000_000_000)
             .into_eip1559();
 
-        let tx2_signed = OpTransactionSigned::Eip1559(
+        let tx2_signed = BaseTransactionSigned::Eip1559(
             tx2_inner.as_eip1559().expect("eip1559 transaction").clone(),
         );
-        let tx2_envelope: OpTxEnvelope = tx2_signed;
+        let tx2_envelope: BaseTxEnvelope = tx2_signed;
         let tx2_bytes = Bytes::from(tx2_envelope.encoded_2718());
 
         let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
@@ -910,10 +910,10 @@ mod tests {
             .max_priority_fee_per_gas(3_000_000_000)
             .into_eip1559();
 
-        let signed_tx1 = OpTransactionSigned::Eip1559(
+        let signed_tx1 = BaseTransactionSigned::Eip1559(
             tx1_inner.as_eip1559().expect("eip1559 transaction").clone(),
         );
-        let envelope1: OpTxEnvelope = signed_tx1;
+        let envelope1: BaseTxEnvelope = signed_tx1;
         let tx1_bytes = Bytes::from(envelope1.encoded_2718());
 
         let tx2_inner = TransactionBuilder::default()
@@ -927,10 +927,10 @@ mod tests {
             .max_priority_fee_per_gas(7_000_000_000)
             .into_eip1559();
 
-        let signed_tx2 = OpTransactionSigned::Eip1559(
+        let signed_tx2 = BaseTransactionSigned::Eip1559(
             tx2_inner.as_eip1559().expect("eip1559 transaction").clone(),
         );
-        let envelope2: OpTxEnvelope = signed_tx2;
+        let envelope2: BaseTxEnvelope = signed_tx2;
         let tx2_bytes = Bytes::from(envelope2.encoded_2718());
 
         let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
@@ -1150,8 +1150,8 @@ mod tests {
             .into_eip1559();
 
         let signed_tx =
-            OpTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
-        let envelope: OpTxEnvelope = signed_tx;
+            BaseTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
+        let envelope: BaseTxEnvelope = signed_tx;
         let tx_bytes = Bytes::from(envelope.encoded_2718());
 
         let bundle = create_bundle(vec![tx_bytes], 0, None);

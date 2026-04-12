@@ -9,7 +9,7 @@ use alloy_rpc_types_engine::{
 use async_trait::async_trait;
 use base_alloy_consensus::BaseBlock;
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayload, OpExecutionPayloadEnvelope, OpExecutionPayloadSidecar,
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
 };
 use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
@@ -27,7 +27,7 @@ pub struct InsertTask<EngineClient_: EngineClient> {
     /// The rollup config.
     rollup_config: Arc<RollupConfig>,
     /// The network payload envelope.
-    envelope: OpExecutionPayloadEnvelope,
+    envelope: BaseExecutionPayloadEnvelope,
     /// If the payload is safe this is true.
     /// A payload is safe if it is derived from a safe block.
     is_payload_safe: bool,
@@ -38,7 +38,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     pub const fn new(
         client: Arc<EngineClient_>,
         rollup_config: Arc<RollupConfig>,
-        envelope: OpExecutionPayloadEnvelope,
+        envelope: BaseExecutionPayloadEnvelope,
         is_attributes_derived: bool,
     ) -> Self {
         Self { client, rollup_config, envelope, is_payload_safe: is_attributes_derived }
@@ -64,7 +64,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         let parent_beacon_block_root = self.envelope.parent_beacon_block_root.unwrap_or_default();
         let insert_time_start = Instant::now();
         let (response, block): (_, BaseBlock) = match self.envelope.execution_payload.clone() {
-            OpExecutionPayload::V1(payload) => (
+            BaseExecutionPayload::V1(payload) => (
                 self.client.new_payload_v1(payload).await,
                 self.envelope
                     .execution_payload
@@ -72,7 +72,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
                     .try_into_block()
                     .map_err(InsertTaskError::FromBlockError)?,
             ),
-            OpExecutionPayload::V2(payload) => {
+            BaseExecutionPayload::V2(payload) => {
                 let payload_input = ExecutionPayloadInputV2 {
                     execution_payload: payload.payload_inner,
                     withdrawals: Some(payload.withdrawals),
@@ -86,22 +86,22 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
                         .map_err(InsertTaskError::FromBlockError)?,
                 )
             }
-            OpExecutionPayload::V3(payload) => (
+            BaseExecutionPayload::V3(payload) => (
                 self.client.new_payload_v3(payload, parent_beacon_block_root).await,
                 self.envelope
                     .execution_payload
                     .clone()
-                    .try_into_block_with_sidecar(&OpExecutionPayloadSidecar::v3(
+                    .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
                         CancunPayloadFields::new(parent_beacon_block_root, vec![]),
                     ))
                     .map_err(InsertTaskError::FromBlockError)?,
             ),
-            OpExecutionPayload::V4(payload) => (
+            BaseExecutionPayload::V4(payload) => (
                 self.client.new_payload_v4(payload, parent_beacon_block_root).await,
                 self.envelope
                     .execution_payload
                     .clone()
-                    .try_into_block_with_sidecar(&OpExecutionPayloadSidecar::v4(
+                    .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
                         CancunPayloadFields::new(parent_beacon_block_root, vec![]),
                         PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
                     ))

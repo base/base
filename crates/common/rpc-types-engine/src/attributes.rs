@@ -10,14 +10,14 @@ use alloy_eips::{
 use alloy_primitives::{B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
 use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
-use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData, OpTxEnvelope};
+use base_alloy_consensus::{BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use sha2::Digest;
 
 /// Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct OpPayloadAttributes {
+pub struct BasePayloadAttributes {
     /// The payload attributes
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub payload_attributes: PayloadAttributes,
@@ -50,12 +50,12 @@ pub struct OpPayloadAttributes {
     pub min_base_fee: Option<u64>,
 }
 
-impl OpPayloadAttributes {
-    /// Generates the payload id for the configured payload from the [`OpPayloadAttributes`].
+impl BasePayloadAttributes {
+    /// Generates the payload id for the configured payload from the [`BasePayloadAttributes`].
     ///
     /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
     ///
-    /// Note: This must be updated whenever the [`OpPayloadAttributes`] changes for a hardfork.
+    /// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for a hardfork.
     /// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
     pub fn payload_id(&self, parent: &B256, payload_version: u8) -> PayloadId {
         let mut hasher = sha2::Sha256::new();
@@ -142,13 +142,13 @@ impl OpPayloadAttributes {
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
-    /// Returns an iterator over the decoded [`OpTxEnvelope`] in this attributes.
+    /// Returns an iterator over the decoded [`BaseTxEnvelope`] in this attributes.
     ///
     /// This iterator will be empty if there are no transactions in the attributes.
-    pub fn decoded_transactions(&self) -> impl Iterator<Item = Eip2718Result<OpTxEnvelope>> + '_ {
+    pub fn decoded_transactions(&self) -> impl Iterator<Item = Eip2718Result<BaseTxEnvelope>> + '_ {
         self.transactions.iter().flatten().map(|tx_bytes| {
             let mut buf = tx_bytes.as_ref();
-            let tx = OpTxEnvelope::decode_2718(&mut buf).map_err(alloy_rlp::Error::from)?;
+            let tx = BaseTxEnvelope::decode_2718(&mut buf).map_err(alloy_rlp::Error::from)?;
             if !buf.is_empty() {
                 return Err(alloy_rlp::Error::UnexpectedLength.into());
             }
@@ -161,7 +161,7 @@ impl OpPayloadAttributes {
     /// This iterator will be empty if there are no transactions in the attributes.
     pub fn decoded_transactions_with_encoded(
         &self,
-    ) -> impl Iterator<Item = Eip2718Result<WithEncoded<OpTxEnvelope>>> + '_ {
+    ) -> impl Iterator<Item = Eip2718Result<WithEncoded<BaseTxEnvelope>>> + '_ {
         self.transactions
             .iter()
             .flatten()
@@ -170,7 +170,7 @@ impl OpPayloadAttributes {
             .map(|(tx_bytes, result)| result.map(|op_tx| WithEncoded::new(tx_bytes, op_tx)))
     }
 
-    /// Returns an iterator over the recovered [`OpTxEnvelope`] in this attributes.
+    /// Returns an iterator over the recovered [`BaseTxEnvelope`] in this attributes.
     ///
     /// This iterator will be empty if there are no transactions in the attributes.
     #[cfg(feature = "k256")]
@@ -178,7 +178,7 @@ impl OpPayloadAttributes {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            alloy_consensus::transaction::Recovered<OpTxEnvelope>,
+            alloy_consensus::transaction::Recovered<BaseTxEnvelope>,
             alloy_consensus::crypto::RecoveryError,
         >,
     > + '_ {
@@ -190,7 +190,7 @@ impl OpPayloadAttributes {
         })
     }
 
-    /// Returns an iterator over the recovered [`OpTxEnvelope`] in this attributes with their
+    /// Returns an iterator over the recovered [`BaseTxEnvelope`] in this attributes with their
     /// original encoded bytes.
     ///
     /// This iterator will be empty if there are no transactions in the attributes.
@@ -199,7 +199,7 @@ impl OpPayloadAttributes {
         &self,
     ) -> impl Iterator<
         Item = Result<
-            WithEncoded<alloy_consensus::transaction::Recovered<OpTxEnvelope>>,
+            WithEncoded<alloy_consensus::transaction::Recovered<BaseTxEnvelope>>,
             alloy_consensus::crypto::RecoveryError,
         >,
     > + '_ {
@@ -230,7 +230,7 @@ mod test {
         // payload_id_builder="0x6ef26ca02318dcf9" payload_id_l2="0x03d2dae446d2a86a"
         let expected =
             PayloadId::new(FixedBytes::<8>::from_str("0x03d2dae446d2a86a").unwrap().into());
-        let attrs = OpPayloadAttributes {
+        let attrs = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 1728933301,
                 prev_randao: b256!("0x9158595abbdab2c90635087619aa7042bbebe47642dfab3c9bfb934f6b082765"),
@@ -263,7 +263,7 @@ mod test {
 
         let expected =
             PayloadId::new(FixedBytes::<8>::from_str("0x046c65ffc4d659ec").unwrap().into());
-        let attrs = OpPayloadAttributes {
+        let attrs = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 1728933301,
                 prev_randao: b256!("0x9158595abbdab2c90635087619aa7042bbebe47642dfab3c9bfb934f6b082765"),
@@ -291,7 +291,7 @@ mod test {
 
     #[test]
     fn test_serde_roundtrip_attributes_pre_holocene() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 0x1337,
                 prev_randao: B256::ZERO,
@@ -307,14 +307,14 @@ mod test {
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
-        let de: OpPayloadAttributes = serde_json::from_str(&ser).unwrap();
+        let de: BasePayloadAttributes = serde_json::from_str(&ser).unwrap();
 
         assert_eq!(attributes, de);
     }
 
     #[test]
     fn test_serde_roundtrip_attributes_post_holocene() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 0x1337,
                 prev_randao: B256::ZERO,
@@ -330,14 +330,14 @@ mod test {
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
-        let de: OpPayloadAttributes = serde_json::from_str(&ser).unwrap();
+        let de: BasePayloadAttributes = serde_json::from_str(&ser).unwrap();
 
         assert_eq!(attributes, de);
     }
 
     #[test]
     fn test_get_extra_data_post_holocene() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
             ..Default::default()
         };
@@ -348,14 +348,14 @@ mod test {
     #[test]
     fn test_get_extra_data_post_holocene_default() {
         let attributes =
-            OpPayloadAttributes { eip_1559_params: Some(B64::ZERO), ..Default::default() };
+            BasePayloadAttributes { eip_1559_params: Some(B64::ZERO), ..Default::default() };
         let extra_data = attributes.get_holocene_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&[0, 0, 0, 0, 80, 0, 0, 0, 60]));
     }
 
     #[test]
     fn test_serde_roundtrip_attributes_pre_jovian() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 0x1337,
                 prev_randao: B256::ZERO,
@@ -371,14 +371,14 @@ mod test {
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
-        let de: OpPayloadAttributes = serde_json::from_str(&ser).unwrap();
+        let de: BasePayloadAttributes = serde_json::from_str(&ser).unwrap();
 
         assert_eq!(attributes, de);
     }
 
     #[test]
     fn test_serde_roundtrip_attributes_post_jovian() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 0x1337,
                 prev_randao: B256::ZERO,
@@ -394,14 +394,14 @@ mod test {
         };
 
         let ser = serde_json::to_string(&attributes).unwrap();
-        let de: OpPayloadAttributes = serde_json::from_str(&ser).unwrap();
+        let de: BasePayloadAttributes = serde_json::from_str(&ser).unwrap();
 
         assert_eq!(attributes, de);
     }
 
     #[test]
     fn test_get_extra_data_post_jovian() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
             min_base_fee: Some(257),
             ..Default::default()
@@ -416,7 +416,7 @@ mod test {
 
     #[test]
     fn test_get_extra_data_post_jovian_default() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             eip_1559_params: Some(B64::ZERO),
             min_base_fee: Some(0),
             ..Default::default()
@@ -431,7 +431,7 @@ mod test {
 
     #[test]
     fn test_get_jovian_extra_data_fails_without_min_base_fee() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
             min_base_fee: None,
             ..Default::default()
@@ -443,7 +443,7 @@ mod test {
 
     #[test]
     fn test_min_base_fee_must_be_none_before_jovian() {
-        let attributes = OpPayloadAttributes {
+        let attributes = BasePayloadAttributes {
             eip_1559_params: Some(B64::from_str("0x0000000800000008").unwrap()),
             min_base_fee: Some(100),
             ..Default::default()
@@ -459,9 +459,9 @@ mod test {
     fn test_serde_attributes() {
         let json = r#"{"timestamp":"0x68e8f68b","prevRandao":"0x0c00c066d51a9cd87d962de52da13e9dfd7f08d507601f916e116aacfe370de7","suggestedFeeRecipient":"0x4200000000000000000000000000000000000011","withdrawals":[],"parentBeaconBlockRoot":"0x6d9579b008332936037f0167d74af108db1fbe22d1bd6552f2d4453419afa4e2","transactions":["0x7ef8f8a058642a460a8c2fb85bae8237221cfa2f138777697c73052afe5adbd911ec9f5194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e2000000558000c5fc500000000000000010000000068e8f688000000000000000d000000000000000000000000000000000000000000000000000000000a9dd4be0000000000000000000000000000000000000000000000000000000000000001844ea1c8f674542957f8fd73f34545ed30d24ebfa80775b869ea8848a6f38259000000000000000000000000aff0ca253b97e54440965855cec0a8a2e2399896"],"eip1559Params":"0x000000fa00000006"}"#;
 
-        let attributes: OpPayloadAttributes = serde_json::from_str(json).unwrap();
+        let attributes: BasePayloadAttributes = serde_json::from_str(json).unwrap();
         let val = serde_json::to_value(&attributes).unwrap();
-        let round_trip: OpPayloadAttributes = serde_json::from_value(val).unwrap();
+        let round_trip: BasePayloadAttributes = serde_json::from_value(val).unwrap();
         assert_eq!(attributes, round_trip);
     }
 }

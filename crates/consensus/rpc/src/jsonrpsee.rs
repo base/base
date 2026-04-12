@@ -4,7 +4,7 @@ use core::net::IpAddr;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 use base_consensus_safedb::SafeHeadResponse;
@@ -167,8 +167,10 @@ pub trait DevEngineApi {
 pub trait AdminApi {
     /// Posts the unsafe payload.
     #[method(name = "postUnsafePayload")]
-    async fn admin_post_unsafe_payload(&self, payload: OpExecutionPayloadEnvelope)
-    -> RpcResult<()>;
+    async fn admin_post_unsafe_payload(
+        &self,
+        payload: BaseExecutionPayloadEnvelope,
+    ) -> RpcResult<()>;
 
     /// Checks if the sequencer is active.
     #[method(name = "sequencerActive")]
@@ -231,7 +233,7 @@ pub trait ConductorApi {
     #[method(name = "commitUnsafePayload")]
     async fn conductor_commit_unsafe_payload(
         &self,
-        payload: OpExecutionPayloadEnvelope,
+        payload: BaseExecutionPayloadEnvelope,
     ) -> RpcResult<()>;
 
     /// Overrides the leader of the conductor.

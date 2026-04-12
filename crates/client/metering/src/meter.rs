@@ -451,7 +451,7 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::SolCall;
-    use base_alloy_consensus::OpTransactionSigned;
+    use base_alloy_consensus::BaseTransactionSigned;
     use base_bundles::{Bundle, ParsedBundle};
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::{Account, SimpleStorage};
@@ -462,7 +462,7 @@ mod tests {
 
     use super::*;
 
-    fn create_parsed_bundle(txs: Vec<OpTransactionSigned>) -> eyre::Result<ParsedBundle> {
+    fn create_parsed_bundle(txs: Vec<BaseTransactionSigned>) -> eyre::Result<ParsedBundle> {
         let txs: Vec<Bytes> = txs.iter().map(|tx| Bytes::from(tx.encoded_2718())).collect();
 
         let bundle = Bundle {
@@ -534,7 +534,7 @@ mod tests {
             .max_priority_fee_per_gas(1)
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
         let tx_hash = tx.tx_hash();
@@ -604,7 +604,7 @@ mod tests {
             .input(SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode())
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -710,7 +710,7 @@ mod tests {
             .max_priority_fee_per_gas(1)
             .into_eip1559();
 
-        let tx_1 = OpTransactionSigned::Eip1559(
+        let tx_1 = BaseTransactionSigned::Eip1559(
             signed_tx_1.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -726,7 +726,7 @@ mod tests {
             .max_priority_fee_per_gas(2)
             .into_eip1559();
 
-        let tx_2 = OpTransactionSigned::Eip1559(
+        let tx_2 = BaseTransactionSigned::Eip1559(
             signed_tx_2.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -809,7 +809,7 @@ mod tests {
             .max_priority_fee_per_gas(1)
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -866,7 +866,7 @@ mod tests {
             .max_priority_fee_per_gas(0)
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
@@ -948,7 +948,7 @@ mod tests {
             .max_priority_fee_per_gas(0)
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
         let parsed_bundle = create_parsed_bundle(vec![tx])?;
@@ -1051,7 +1051,7 @@ mod tests {
             .max_priority_fee_per_gas(0)
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -1104,7 +1104,7 @@ mod tests {
             .max_priority_fee_per_gas(0)
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -1162,7 +1162,7 @@ mod tests {
             .max_priority_fee_per_gas(1)
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -1252,7 +1252,7 @@ mod tests {
             .max_priority_fee_per_gas(0)
             .into_eip1559();
 
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
         let parsed_bundle = create_parsed_bundle(vec![tx])?;

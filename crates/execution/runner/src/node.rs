@@ -1,6 +1,6 @@
 //! Base Node types config.
 
-use base_alloy_consensus::OpPrimitives;
+use base_alloy_consensus::BasePrimitives;
 use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
@@ -156,7 +156,7 @@ where
 }
 
 impl NodeTypes for BaseNode {
-    type Primitives = OpPrimitives;
+    type Primitives = BasePrimitives;
     type ChainSpec = BaseChainSpec;
     type Storage = OpStorage;
     type Payload = OpEngineTypes;

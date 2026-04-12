@@ -5,117 +5,109 @@
 //! - `admin_stopProposer`    — stop the driver loop
 //! - `admin_proposerRunning` — query whether the driver is running
 
-use std::{fmt, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 
-use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
-use serde::{Deserialize, Serialize};
+use eyre::Context;
+use jsonrpsee::{
+    core::{RpcResult, async_trait},
+    proc_macros::rpc,
+    server::{Server, ServerHandle},
+    types::ErrorObjectOwned,
+};
+use tracing::info;
 
 use crate::driver::ProposerDriverControl;
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
+#[rpc(server, namespace = "admin")]
+pub trait ProposerAdminApi {
+    /// Start the proving pipeline.
+    #[method(name = "startProposer")]
+    async fn start_proposer(&self) -> RpcResult<()>;
 
-/// State shared across admin JSON-RPC handlers.
-#[derive(Clone)]
-pub struct AdminState {
-    /// Handle to the proposer driver for start/stop/query.
-    pub driver: Arc<dyn ProposerDriverControl>,
+    /// Stop the proving pipeline.
+    #[method(name = "stopProposer")]
+    async fn stop_proposer(&self) -> RpcResult<()>;
+
+    /// Returns whether the proving pipeline is currently running.
+    #[method(name = "proposerRunning")]
+    async fn proposer_running(&self) -> RpcResult<bool>;
 }
 
-impl fmt::Debug for AdminState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AdminState").field("driver", &"<dyn ProposerDriverControl>").finish()
+/// Concrete implementation of [`ProposerAdminApiServer`] backed by a
+/// [`ProposerDriverControl`] handle.
+pub struct ProposerAdminApiServerImpl {
+    driver: Arc<dyn ProposerDriverControl>,
+}
+
+impl std::fmt::Debug for ProposerAdminApiServerImpl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProposerAdminApiServerImpl")
+            .field("driver", &"<dyn ProposerDriverControl>")
+            .finish()
     }
 }
 
-// ---------------------------------------------------------------------------
-// JSON-RPC types (minimal, hand-rolled for three methods)
-// ---------------------------------------------------------------------------
-
-/// Incoming JSON-RPC 2.0 request.
-#[derive(Deserialize)]
-struct JsonRpcRequest {
-    /// Must be "2.0".
-    #[serde(rename = "jsonrpc")]
-    _jsonrpc: String,
-    /// Method name.
-    method: String,
-    /// Unused — admin methods take no parameters.
-    #[serde(rename = "params")]
-    _params: Option<serde_json::Value>,
-    /// Caller-chosen request id.
-    id: serde_json::Value,
-}
-
-/// Outgoing JSON-RPC 2.0 response.
-#[derive(Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
-    id: serde_json::Value,
-}
-
-/// JSON-RPC error object.
-#[derive(Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
-}
-
-impl JsonRpcResponse {
-    const fn success(id: serde_json::Value, result: serde_json::Value) -> Self {
-        Self { jsonrpc: "2.0", result: Some(result), error: None, id }
-    }
-
-    const fn error(id: serde_json::Value, code: i32, message: String) -> Self {
-        Self { jsonrpc: "2.0", result: None, error: Some(JsonRpcError { code, message }), id }
+impl ProposerAdminApiServerImpl {
+    fn driver_error(msg: String) -> ErrorObjectOwned {
+        ErrorObjectOwned::owned(-32000, msg, None::<()>)
     }
 }
 
-// ---------------------------------------------------------------------------
-// Handler
-// ---------------------------------------------------------------------------
+#[async_trait]
+impl ProposerAdminApiServer for ProposerAdminApiServerImpl {
+    async fn start_proposer(&self) -> RpcResult<()> {
+        self.driver.start_proposer().await.map_err(Self::driver_error)
+    }
 
-/// `POST /` — dispatches JSON-RPC admin methods.
-async fn admin_rpc(
-    State(state): State<AdminState>,
-    Json(request): Json<JsonRpcRequest>,
-) -> impl IntoResponse {
-    let response = match request.method.as_str() {
-        "admin_startProposer" => match state.driver.start_proposer().await {
-            Ok(()) => JsonRpcResponse::success(request.id, serde_json::Value::Null),
-            Err(e) => JsonRpcResponse::error(request.id, -32000, e),
-        },
-        "admin_stopProposer" => match state.driver.stop_proposer().await {
-            Ok(()) => JsonRpcResponse::success(request.id, serde_json::Value::Null),
-            Err(e) => JsonRpcResponse::error(request.id, -32000, e),
-        },
-        "admin_proposerRunning" => {
-            let running = state.driver.is_running();
-            JsonRpcResponse::success(request.id, serde_json::json!(running))
-        }
-        other => JsonRpcResponse::error(request.id, -32601, format!("method not found: {other}")),
-    };
+    async fn stop_proposer(&self) -> RpcResult<()> {
+        self.driver.stop_proposer().await.map_err(Self::driver_error)
+    }
 
-    Json(response)
+    async fn proposer_running(&self) -> RpcResult<bool> {
+        Ok(self.driver.is_running())
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+/// A running admin JSON-RPC HTTP server.
+///
+/// Holds the jsonrpsee [`ServerHandle`] for the server's lifetime.
+/// Dropping this value stops the server from accepting new connections.
+pub struct AdminServer {
+    handle: ServerHandle,
+    addr: SocketAddr,
+}
 
-impl AdminState {
-    /// Returns an [`axum::Router`] with the admin JSON-RPC endpoint at `POST /`.
-    ///
-    /// The returned router has its own state applied and is served on a
-    /// dedicated listener, separate from the health server.
-    pub fn router(driver: Arc<dyn ProposerDriverControl>) -> Router {
-        let state = Self { driver };
-        Router::new().route("/", post(admin_rpc)).with_state(state)
+impl std::fmt::Debug for AdminServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminServer").field("addr", &self.addr).finish()
+    }
+}
+
+impl AdminServer {
+    /// Bind and start the admin server on the given socket address.
+    pub async fn spawn(
+        addr: SocketAddr,
+        driver: Arc<dyn ProposerDriverControl>,
+    ) -> eyre::Result<Self> {
+        let server =
+            Server::builder().build(addr).await.wrap_err("failed to bind admin RPC server")?;
+        let addr = server.local_addr().wrap_err("failed to get admin server local address")?;
+        let module = ProposerAdminApiServerImpl { driver }.into_rpc();
+        let handle = server.start(module);
+        info!(addr = %addr, "admin RPC server listening");
+        Ok(Self { handle, addr })
+    }
+
+    /// Returns the local address the server is bound to.
+    pub const fn local_addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Initiate graceful shutdown and wait for all in-flight connections to
+    /// close.
+    pub async fn shutdown(self) {
+        let _ = self.handle.stop();
+        self.handle.stopped().await;
     }
 }
 
@@ -124,12 +116,10 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use async_trait::async_trait;
-    use tokio::net::TcpListener;
-    use tokio_util::sync::CancellationToken;
 
     use super::*;
+    use crate::driver::ProposerDriverControl;
 
-    /// Mock driver control that tracks start/stop calls.
     struct MockDriverControl {
         running: AtomicBool,
     }
@@ -163,35 +153,15 @@ mod tests {
         }
     }
 
-    /// Starts the admin server on an ephemeral port and returns its address.
-    async fn start_test_server(
-        driver: Arc<dyn ProposerDriverControl>,
-    ) -> (std::net::SocketAddr, CancellationToken) {
-        let cancel = CancellationToken::new();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let app = AdminState::router(driver);
-
-        let cancel_clone = cancel.clone();
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async move { cancel_clone.cancelled().await })
-                .await
-                .unwrap();
-        });
-
-        (addr, cancel)
-    }
-
     #[tokio::test]
     async fn test_admin_start_stop() {
         let driver: Arc<dyn ProposerDriverControl> = Arc::new(MockDriverControl::new());
-        let (addr, cancel) = start_test_server(Arc::clone(&driver)).await;
-
+        let server =
+            AdminServer::spawn("127.0.0.1:0".parse().unwrap(), Arc::clone(&driver)).await.unwrap();
+        let addr = server.local_addr();
         let client = reqwest::Client::new();
 
-        // Start the proposer
+        // Start the proposer.
         let resp = client
             .post(format!("http://{addr}/"))
             .json(&serde_json::json!({
@@ -207,7 +177,7 @@ mod tests {
         assert!(body["error"].is_null());
         assert!(driver.is_running());
 
-        // Check running status
+        // Check running status.
         let resp = client
             .post(format!("http://{addr}/"))
             .json(&serde_json::json!({
@@ -221,7 +191,7 @@ mod tests {
         let body: serde_json::Value = resp.json().await.unwrap();
         assert_eq!(body["result"], true);
 
-        // Stop the proposer
+        // Stop the proposer.
         let resp = client
             .post(format!("http://{addr}/"))
             .json(&serde_json::json!({
@@ -235,14 +205,13 @@ mod tests {
         let body: serde_json::Value = resp.json().await.unwrap();
         assert!(body["error"].is_null());
         assert!(!driver.is_running());
-
-        cancel.cancel();
     }
 
     #[tokio::test]
     async fn test_admin_unknown_method() {
         let driver: Arc<dyn ProposerDriverControl> = Arc::new(MockDriverControl::new());
-        let (addr, cancel) = start_test_server(driver).await;
+        let server = AdminServer::spawn("127.0.0.1:0".parse().unwrap(), driver).await.unwrap();
+        let addr = server.local_addr();
 
         let client = reqwest::Client::new();
         let resp = client
@@ -257,8 +226,6 @@ mod tests {
             .unwrap();
         let body: serde_json::Value = resp.json().await.unwrap();
         assert_eq!(body["error"]["code"], -32601);
-        assert!(body["error"]["message"].as_str().unwrap().contains("method not found"));
-
-        cancel.cancel();
+        assert!(body["error"]["message"].as_str().unwrap().contains("not found"));
     }
 }

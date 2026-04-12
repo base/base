@@ -8,7 +8,7 @@ use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, UnknownTxEnvelope, Unknown
 use alloy_rpc_types_eth::{ConversionError, Transaction as AlloyRpcTransaction};
 use alloy_serde::WithOtherFields;
 
-use crate::{DEPOSIT_TX_TYPE_ID, OpTxEnvelope, TxDeposit};
+use crate::{BaseTxEnvelope, DEPOSIT_TX_TYPE_ID, TxDeposit};
 
 impl TryFrom<UnknownTxEnvelope> for TxDeposit {
     type Error = ConversionError;
@@ -32,7 +32,7 @@ impl TryFrom<UnknownTypedTransaction> for TxDeposit {
     }
 }
 
-impl TryFrom<AnyTxEnvelope> for OpTxEnvelope {
+impl TryFrom<AnyTxEnvelope> for BaseTxEnvelope {
     type Error = AnyTxEnvelope;
 
     fn try_from(value: AnyTxEnvelope) -> Result<Self, Self::Error> {
@@ -40,7 +40,7 @@ impl TryFrom<AnyTxEnvelope> for OpTxEnvelope {
     }
 }
 
-impl TryFrom<AnyRpcTransaction> for OpTxEnvelope {
+impl TryFrom<AnyRpcTransaction> for BaseTxEnvelope {
     type Error = ConversionError;
 
     fn try_from(tx: AnyRpcTransaction) -> Result<Self, Self::Error> {
@@ -97,7 +97,7 @@ mod tests {
 
         let any: AnyTxEnvelope = serde_json::from_str(deposit).unwrap();
 
-        let envelope = OpTxEnvelope::try_from(any).unwrap();
+        let envelope = BaseTxEnvelope::try_from(any).unwrap();
         assert!(envelope.is_deposit());
     }
 
@@ -124,7 +124,7 @@ mod tests {
   "value": "0x0"
 }"#;
         let tx: AnyRpcTransaction = serde_json::from_str(json).unwrap();
-        let tx = OpTxEnvelope::try_from(tx).unwrap();
+        let tx = BaseTxEnvelope::try_from(tx).unwrap();
         assert!(tx.is_deposit());
     }
 }

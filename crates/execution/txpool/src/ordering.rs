@@ -105,7 +105,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
-    use base_alloy_consensus::OpTransactionSigned;
+    use base_alloy_consensus::BaseTransactionSigned;
     use base_test_utils::Account;
     use reth_primitives_traits::Recovered;
     use reth_transaction_pool::{TransactionOrdering, test_utils::TransactionBuilder};
@@ -127,7 +127,7 @@ mod tests {
             .max_fee_per_gas(10)
             .max_priority_fee_per_gas(1)
             .into_eip1559();
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -150,7 +150,7 @@ mod tests {
             .max_fee_per_gas(10)
             .max_priority_fee_per_gas(1)
             .into_eip1559();
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -177,7 +177,7 @@ mod tests {
             .max_fee_per_gas(10)
             .max_priority_fee_per_gas(max_priority_fee_per_gas)
             .into_eip1559();
-        let tx = OpTransactionSigned::Eip1559(
+        let tx = BaseTransactionSigned::Eip1559(
             signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
         );
 
@@ -234,7 +234,7 @@ mod tests {
                 .max_fee_per_gas(10)
                 .max_priority_fee_per_gas(0)
                 .into_eip1559();
-            let tx = OpTransactionSigned::Eip1559(
+            let tx = BaseTransactionSigned::Eip1559(
                 signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
             );
             let recovered = Recovered::new_unchecked(tx, alice.address());

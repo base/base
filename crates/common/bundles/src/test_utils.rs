@@ -4,8 +4,8 @@ use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, b256, bytes};
 use alloy_provider::network::{TxSignerSync, eip2718::Encodable2718};
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_consensus::OpTxEnvelope;
-use base_common_rpc_types::OpTransactionRequest;
+use base_alloy_consensus::BaseTxEnvelope;
+use base_common_rpc_types::BaseTransactionRequest;
 
 use crate::{AcceptedBundle, Bundle, MeterBundleResponse};
 
@@ -34,8 +34,8 @@ pub fn create_transaction(
     nonce: u64,
     to: Address,
     value: U256,
-) -> OpTxEnvelope {
-    let mut txn = OpTransactionRequest::default()
+) -> BaseTxEnvelope {
+    let mut txn = BaseTransactionRequest::default()
         .value(value)
         .gas_limit(21_000)
         .max_fee_per_gas(200)
@@ -47,12 +47,12 @@ pub fn create_transaction(
         .unwrap();
 
     let sig = from.sign_transaction_sync(&mut txn).unwrap();
-    OpTxEnvelope::Eip1559(txn.eip1559().cloned().unwrap().into_signed(sig))
+    BaseTxEnvelope::Eip1559(txn.eip1559().cloned().unwrap().into_signed(sig))
 }
 
 /// Creates a test bundle with the given transactions and parameters.
 pub fn create_test_bundle(
-    txns: Vec<OpTxEnvelope>,
+    txns: Vec<BaseTxEnvelope>,
     block_number: Option<u64>,
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,

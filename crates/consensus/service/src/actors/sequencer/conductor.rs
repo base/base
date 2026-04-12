@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_rpc::ConductorApiClient;
 use jsonrpsee::{
     core::ClientError,
@@ -25,7 +25,7 @@ pub trait Conductor: Debug + Send + Sync {
     /// Commit an unsafe payload to the conductor.
     async fn commit_unsafe_payload(
         &self,
-        payload: &OpExecutionPayloadEnvelope,
+        payload: &BaseExecutionPayloadEnvelope,
     ) -> Result<(), ConductorError>;
 
     /// Override the leader of the conductor.
@@ -51,7 +51,7 @@ impl Conductor for ConductorClient {
 
     async fn commit_unsafe_payload(
         &self,
-        payload: &OpExecutionPayloadEnvelope,
+        payload: &BaseExecutionPayloadEnvelope,
     ) -> Result<(), ConductorError> {
         Ok(self.inner.conductor_commit_unsafe_payload(payload.clone()).await?)
     }

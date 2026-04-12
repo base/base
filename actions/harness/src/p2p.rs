@@ -6,7 +6,7 @@
 use alloy_primitives::{Address, B256, Signature, U256};
 use async_trait::async_trait;
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope, PayloadHash,
+    BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
 };
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_node::GossipTransport;
@@ -15,17 +15,17 @@ use tokio::sync::mpsc;
 /// Handle for injecting blocks into a [`TestGossipTransport`].
 ///
 /// Held by test code or the sequencer. Call [`send`] to deliver an
-/// [`OpNetworkPayloadEnvelope`] to the matching [`TestGossipTransport`].
+/// [`NetworkPayloadEnvelope`] to the matching [`TestGossipTransport`].
 ///
 /// [`send`]: SupervisedP2P::send
 #[derive(Debug, Clone)]
 pub struct SupervisedP2P {
-    tx: mpsc::UnboundedSender<OpNetworkPayloadEnvelope>,
+    tx: mpsc::UnboundedSender<NetworkPayloadEnvelope>,
 }
 
 impl SupervisedP2P {
-    /// Send an [`OpNetworkPayloadEnvelope`] into the transport channel.
-    pub fn send(&self, payload: OpNetworkPayloadEnvelope) {
+    /// Send an [`NetworkPayloadEnvelope`] into the transport channel.
+    pub fn send(&self, payload: NetworkPayloadEnvelope) {
         let _ = self.tx.send(payload);
     }
 }
@@ -45,8 +45,8 @@ impl SupervisedP2P {
 /// [`next_unsafe_block`]: GossipTransport::next_unsafe_block
 #[derive(Debug)]
 pub struct TestGossipTransport {
-    tx: mpsc::UnboundedSender<OpNetworkPayloadEnvelope>,
-    rx: mpsc::UnboundedReceiver<OpNetworkPayloadEnvelope>,
+    tx: mpsc::UnboundedSender<NetworkPayloadEnvelope>,
+    rx: mpsc::UnboundedReceiver<NetworkPayloadEnvelope>,
 }
 
 impl TestGossipTransport {
@@ -69,7 +69,7 @@ impl TestGossipTransport {
     /// to drain the channel in a non-blocking loop inside [`TestRollupNode::step`].
     ///
     /// [`TestRollupNode::step`]: crate::TestRollupNode::step
-    pub fn try_next_unsafe_block(&mut self) -> Option<OpNetworkPayloadEnvelope> {
+    pub fn try_next_unsafe_block(&mut self) -> Option<NetworkPayloadEnvelope> {
         self.rx.try_recv().ok()
     }
 }
@@ -82,9 +82,9 @@ pub enum TestGossipTransportError {}
 impl GossipTransport for TestGossipTransport {
     type Error = TestGossipTransportError;
 
-    async fn publish(&mut self, payload: OpExecutionPayloadEnvelope) -> Result<(), Self::Error> {
+    async fn publish(&mut self, payload: BaseExecutionPayloadEnvelope) -> Result<(), Self::Error> {
         let parent_beacon_block_root = payload.parent_beacon_block_root;
-        let network = OpNetworkPayloadEnvelope {
+        let network = NetworkPayloadEnvelope {
             payload: payload.execution_payload,
             signature: Signature::new(U256::ZERO, U256::ZERO, false),
             payload_hash: PayloadHash(B256::ZERO),
@@ -94,7 +94,7 @@ impl GossipTransport for TestGossipTransport {
         Ok(())
     }
 
-    async fn next_unsafe_block(&mut self) -> Option<OpNetworkPayloadEnvelope> {
+    async fn next_unsafe_block(&mut self) -> Option<NetworkPayloadEnvelope> {
         self.rx.recv().await
     }
 

@@ -5,7 +5,7 @@ use alloy_provider::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use ark_ff::{BigInteger, PrimeField};
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
@@ -374,12 +374,13 @@ async fn handle_hint_inner(
             }
 
             let parent_block_hash = B256::from_slice(&hint.data.as_ref()[..32]);
-            let payload_attributes: OpPayloadAttributes = serde_json::from_slice(&hint.data[32..])?;
+            let payload_attributes: BasePayloadAttributes =
+                serde_json::from_slice(&hint.data[32..])?;
 
             let execute_payload_response = match providers
                 .l2
                 .client()
-                .request::<(B256, OpPayloadAttributes), ExecutionWitness>(
+                .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
                     "debug_executePayload",
                     (parent_block_hash, payload_attributes),
                 )

@@ -8,7 +8,7 @@ use std::{
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, bytes, hex::FromHex};
 use alloy_rpc_types_engine::PayloadId;
-use base_alloy_consensus::{BaseBlock, OpTransactionSigned};
+use base_alloy_consensus::{BaseBlock, BaseTransactionSigned};
 use base_alloy_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
@@ -173,7 +173,7 @@ async fn wait_for_pending_state(
 
 fn build_flashblocks(
     canonical_block: &RecoveredBlock<BaseBlock>,
-    transactions: &[OpTransactionSigned],
+    transactions: &[BaseTransactionSigned],
 ) -> Vec<Flashblock> {
     let mut flashblocks = Vec::new();
     let block_number = canonical_block.number + 1;
@@ -230,7 +230,7 @@ fn base_flashblock(
 fn transaction_flashblock(
     block_number: BlockNumber,
     index: u64,
-    transactions: &[OpTransactionSigned],
+    transactions: &[BaseTransactionSigned],
     gas_used: &mut u64,
 ) -> Flashblock {
     let mut tx_bytes = Vec::with_capacity(transactions.len());
@@ -259,7 +259,7 @@ fn transaction_flashblock(
     }
 }
 
-fn sample_transactions(provider: &LocalNodeProvider, count: usize) -> Vec<OpTransactionSigned> {
+fn sample_transactions(provider: &LocalNodeProvider, count: usize) -> Vec<BaseTransactionSigned> {
     let signer = B256::from_hex(Account::Alice.private_key()).expect("valid private key hex");
     let chain_id = provider.chain_spec().chain_id();
 
@@ -279,7 +279,7 @@ fn sample_transactions(provider: &LocalNodeProvider, count: usize) -> Vec<OpTran
                 .expect("should convert to eip1559")
                 .clone();
 
-            OpTransactionSigned::Eip1559(txn)
+            BaseTransactionSigned::Eip1559(txn)
         })
         .collect()
 }

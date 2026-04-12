@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::OpPayloadAttributes;
+use base_alloy_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo, SingleBatch};
 
@@ -20,7 +20,7 @@ use crate::{
 };
 
 /// [`AttributesQueue`] accepts batches from the [`BatchQueue`] stage
-/// and transforms them into [`OpPayloadAttributes`].
+/// and transforms them into [`BasePayloadAttributes`].
 ///
 /// The outputted payload attributes cannot be buffered because each batch->attributes
 /// transformation pulls in data about the current L2 safe head.
@@ -101,13 +101,13 @@ where
         Ok(populated_attributes)
     }
 
-    /// Creates the next attributes, transforming a [`SingleBatch`] into [`OpPayloadAttributes`].
+    /// Creates the next attributes, transforming a [`SingleBatch`] into [`BasePayloadAttributes`].
     /// This sets `no_tx_pool` and appends the batched txs to the attributes tx list.
     pub async fn create_next_attributes(
         &mut self,
         batch: SingleBatch,
         parent: L2BlockInfo,
-    ) -> PipelineResult<OpPayloadAttributes> {
+    ) -> PipelineResult<BasePayloadAttributes> {
         // Sanity check parent hash
         if batch.parent_hash != parent.block_info.hash {
             return Err(ResetError::BadParentHash(batch.parent_hash, parent.block_info.hash).into());
@@ -225,8 +225,8 @@ mod tests {
         test_utils::{TestAttributesBuilder, TestAttributesProvider, new_test_attributes_provider},
     };
 
-    fn default_optimism_payload_attributes() -> OpPayloadAttributes {
-        OpPayloadAttributes {
+    fn default_optimism_payload_attributes() -> BasePayloadAttributes {
+        BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 0,
                 suggested_fee_recipient: Address::default(),
@@ -246,7 +246,7 @@ mod tests {
         cfg: Option<RollupConfig>,
         origin: Option<BlockInfo>,
         batches: Vec<PipelineResult<SingleBatch>>,
-        attributes: Vec<Result<OpPayloadAttributes, PipelineErrorKind>>,
+        attributes: Vec<Result<BasePayloadAttributes, PipelineErrorKind>>,
     ) -> AttributesQueue<TestAttributesProvider, TestAttributesBuilder> {
         let cfg = cfg.unwrap_or_default();
         let mock_batch_queue = new_test_attributes_provider(origin, batches);

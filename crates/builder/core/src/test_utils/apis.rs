@@ -3,8 +3,8 @@ use core::{future::Future, marker::PhantomData};
 use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
-use base_alloy_rpc_types_engine::OpExecutionPayloadV4;
-use base_execution_rpc::OpEngineApiClient;
+use base_alloy_rpc_types_engine::BaseExecutionPayloadV4;
+use base_execution_rpc::BaseEngineApiClient;
 use base_node_core::OpEngineTypes;
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
@@ -163,20 +163,20 @@ impl<P: Protocol> EngineApi<P> {
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
         debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
-        Ok(OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
+        Ok(BaseEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
             .await?)
     }
 
     /// Submits a new execution payload for validation.
     pub async fn new_payload(
         &self,
-        payload: OpExecutionPayloadV4,
+        payload: BaseExecutionPayloadV4,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
         debug!(timestamp = %chrono::Utc::now(), "Submitting new payload");
-        Ok(OpEngineApiClient::<OpEngineTypes>::new_payload_v4(
+        Ok(BaseEngineApiClient::<OpEngineTypes>::new_payload_v4(
             &self.client().await,
             payload,
             versioned_hashes,
@@ -194,7 +194,7 @@ impl<P: Protocol> EngineApi<P> {
         payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         debug!(timestamp = %chrono::Utc::now(), "Updating forkchoice");
-        Ok(OpEngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
+        Ok(BaseEngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {
                 head_block_hash: new_head,

@@ -1,25 +1,25 @@
 use alloy_consensus::{Eip658Value, Receipt};
 use alloy_evm::eth::receipt_builder::ReceiptBuilderCtx;
-use base_alloy_consensus::{OpReceipt, OpTransactionSigned, OpTxType};
-use base_alloy_evm::OpReceiptBuilder;
+use base_alloy_consensus::{BaseReceipt, BaseTransactionSigned, BaseTxType};
+use base_alloy_evm::BaseReceiptBuilder;
 use reth_evm::Evm;
 
-/// A builder that operates on op-reth primitive types, specifically [`OpTransactionSigned`] and
-/// [`OpReceipt`].
+/// A builder that operates on op-reth primitive types, specifically [`BaseTransactionSigned`] and
+/// [`BaseReceipt`].
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct OpRethReceiptBuilder;
 
-impl OpReceiptBuilder for OpRethReceiptBuilder {
-    type Transaction = OpTransactionSigned;
-    type Receipt = OpReceipt;
+impl BaseReceiptBuilder for OpRethReceiptBuilder {
+    type Transaction = BaseTransactionSigned;
+    type Receipt = BaseReceipt;
 
     fn build_receipt<'a, E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
-    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxType, E>> {
+        ctx: ReceiptBuilderCtx<'a, BaseTxType, E>,
+    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, BaseTxType, E>> {
         match ctx.tx_type {
-            OpTxType::Deposit => Err(ctx),
+            BaseTxType::Deposit => Err(ctx),
             ty => {
                 let receipt = Receipt {
                     // Success flag was added in `EIP-658: Embedding transaction status code in
@@ -30,20 +30,17 @@ impl OpReceiptBuilder for OpRethReceiptBuilder {
                 };
 
                 Ok(match ty {
-                    OpTxType::Legacy => OpReceipt::Legacy(receipt),
-                    OpTxType::Eip1559 => OpReceipt::Eip1559(receipt),
-                    OpTxType::Eip2930 => OpReceipt::Eip2930(receipt),
-                    OpTxType::Eip7702 => OpReceipt::Eip7702(receipt),
-                    OpTxType::Deposit => unreachable!(),
+                    BaseTxType::Legacy => BaseReceipt::Legacy(receipt),
+                    BaseTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
+                    BaseTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
+                    BaseTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
+                    BaseTxType::Deposit => unreachable!(),
                 })
             }
         }
     }
 
-    fn build_deposit_receipt(
-        &self,
-        inner: base_alloy_consensus::OpDepositReceipt,
-    ) -> Self::Receipt {
-        OpReceipt::Deposit(inner)
+    fn build_deposit_receipt(&self, inner: base_alloy_consensus::DepositReceipt) -> Self::Receipt {
+        BaseReceipt::Deposit(inner)
     }
 }

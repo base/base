@@ -78,7 +78,7 @@ impl JwtValidator {
         use alloy_transport_http::Http;
         use backon::{ExponentialBuilder, Retryable};
         use base_alloy_network::Base;
-        use base_alloy_provider::OpEngineApi;
+        use base_alloy_provider::BaseEngineApi;
         use base_consensus_engine::{BaseEngineClient, HyperAuthClient};
         use tracing::{debug, error};
 
@@ -93,7 +93,7 @@ impl JwtValidator {
         );
 
         let exchange = || async {
-            match <RootProvider<Base> as OpEngineApi<
+            match <RootProvider<Base> as BaseEngineApi<
                 Base,
                 Http<HyperAuthClient>,
             >>::exchange_capabilities(&engine, vec![])

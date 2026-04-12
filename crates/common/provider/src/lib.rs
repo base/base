@@ -8,4 +8,4 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod ext;
-pub use ext::OpEngineApi;
+pub use ext::BaseEngineApi;

@@ -4,7 +4,7 @@ use alloy_eips::{Decodable2718, eip1559::BaseFeeParams};
 use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rpc_types_eth::{Block, BlockTransactions, Withdrawals};
-use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData, OpTxEnvelope};
+use base_alloy_consensus::{BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use base_common_rpc_types::Transaction;
 use base_consensus_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
@@ -146,7 +146,7 @@ impl AttributesMatch {
                 "Checking attributes transaction against block transaction",
             );
             // Let's try to deserialize the attributes transaction
-            let Ok(attr_tx) = OpTxEnvelope::decode_2718(&mut &attr_tx_bytes[..]) else {
+            let Ok(attr_tx) = BaseTxEnvelope::decode_2718(&mut &attr_tx_bytes[..]) else {
                 error!(
                     "Impossible to deserialize transaction from attributes. If we have stored these attributes it means the transactions where well formatted. This is a bug"
                 );
@@ -400,7 +400,7 @@ mod tests {
     use alloy_rpc_types_eth::BlockTransactions;
     use arbitrary::{Arbitrary, Unstructured};
     use base_alloy_consensus::HoloceneExtraData;
-    use base_alloy_rpc_types_engine::OpPayloadAttributes;
+    use base_alloy_rpc_types_engine::BasePayloadAttributes;
     use base_consensus_registry::Registry;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
@@ -409,7 +409,7 @@ mod tests {
 
     fn default_attributes() -> AttributesWithParent {
         AttributesWithParent {
-            attributes: OpPayloadAttributes::default(),
+            attributes: BasePayloadAttributes::default(),
             parent: L2BlockInfo::default(),
             derived_from: Some(BlockInfo::default()),
             is_last_in_span: true,
@@ -590,7 +590,7 @@ mod tests {
     fn test_attributes_mismatch_check_transactions_len() {
         let cfg = default_rollup_config();
         let (mut attributes, block) = test_transactions_match_helper();
-        attributes.attributes = OpPayloadAttributes {
+        attributes.attributes = BasePayloadAttributes {
             transactions: attributes.attributes.transactions.map(|mut txs| {
                 txs.pop();
                 txs
@@ -639,7 +639,8 @@ mod tests {
     fn test_attributes_mismatch_empty_tx_attributes() {
         let cfg = default_rollup_config();
         let (mut attributes, block) = test_transactions_match_helper();
-        attributes.attributes = OpPayloadAttributes { transactions: None, ..attributes.attributes };
+        attributes.attributes =
+            BasePayloadAttributes { transactions: None, ..attributes.attributes };
 
         let block_txs_len = block.transactions.len();
 
@@ -690,7 +691,7 @@ mod tests {
         let (mut attributes, mut block) = test_transactions_match_helper();
 
         attributes.attributes =
-            OpPayloadAttributes { transactions: Some(vec![]), ..attributes.attributes };
+            BasePayloadAttributes { transactions: Some(vec![]), ..attributes.attributes };
 
         block.transactions = BlockTransactions::Full(vec![]);
 
@@ -699,7 +700,8 @@ mod tests {
 
         // Edge case: if the block transactions and the payload attributes are empty, we can also
         // use the hash format (this is the default value of `BlockTransactions`).
-        attributes.attributes = OpPayloadAttributes { transactions: None, ..attributes.attributes };
+        attributes.attributes =
+            BasePayloadAttributes { transactions: None, ..attributes.attributes };
         block.transactions = BlockTransactions::Hashes(vec![]);
 
         let check = AttributesMatch::check(cfg, &attributes, &block);
@@ -714,7 +716,7 @@ mod tests {
         let (mut attributes, mut block) = test_transactions_match_helper();
 
         attributes.attributes =
-            OpPayloadAttributes { transactions: Some(vec![]), ..attributes.attributes };
+            BasePayloadAttributes { transactions: Some(vec![]), ..attributes.attributes };
 
         block.transactions = BlockTransactions::Hashes(vec![]);
 
@@ -729,7 +731,7 @@ mod tests {
         let (mut attributes, mut block) = test_transactions_match_helper();
 
         attributes.attributes =
-            OpPayloadAttributes { transactions: Some(vec![]), ..attributes.attributes };
+            BasePayloadAttributes { transactions: Some(vec![]), ..attributes.attributes };
 
         block.transactions = BlockTransactions::Uncle;
 

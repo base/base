@@ -14,12 +14,10 @@ use crate::cli::{Cli, ProposerArgs};
 #[derive(Debug, Error)]
 pub enum ConfigError {
     /// Invalid URL format.
-    #[error("invalid {field} URL: {reason}")]
+    #[error("invalid {field} URL: missing host")]
     InvalidUrl {
         /// The field name that contains the invalid URL.
         field: &'static str,
-        /// The reason the URL is invalid.
-        reason: String,
     },
     /// A field value is out of the allowed range.
     #[error("{field} must be {constraint}, got {value}")]
@@ -29,20 +27,14 @@ pub enum ConfigError {
         /// The constraint description.
         constraint: &'static str,
         /// The actual value.
-        value: String,
+        value: &'static str,
     },
-    /// Invalid metrics configuration.
-    #[error("invalid metrics config: {0}")]
-    Metrics(String),
-    /// Invalid RPC configuration.
-    #[error("invalid RPC config: {0}")]
-    Rpc(String),
     /// Invalid signing configuration.
     #[error("invalid signing config: {0}")]
-    Signing(String),
+    Signing(base_tx_manager::ConfigError),
     /// Invalid transaction manager configuration.
     #[error("invalid tx manager config: {0}")]
-    TxManager(String),
+    TxManager(base_tx_manager::ConfigError),
 }
 
 /// Validated proposer configuration.
@@ -74,7 +66,7 @@ pub struct ProposerConfig {
     pub rollup_rpc: Url,
     /// Skip TLS certificate verification.
     pub skip_tls_verify: bool,
-    /// Logging configuration (from base-cli-utils).
+    /// Logging configuration.
     pub log: LogConfig,
     /// Metrics server configuration.
     pub metrics: MetricsConfig,
@@ -101,108 +93,109 @@ pub struct ProposerConfig {
 impl ProposerConfig {
     /// Create a validated configuration from CLI arguments.
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
-        // Validate URLs have scheme and host
-        validate_url(&cli.proposer.prover_rpc, "prover-rpc")?;
-        validate_url(&cli.proposer.l1_eth_rpc, "l1-eth-rpc")?;
-        validate_url(&cli.proposer.l2_eth_rpc, "l2-eth-rpc")?;
+        let Cli { proposer, logging, metrics, health, admin } = cli;
 
-        validate_url(&cli.proposer.rollup_rpc, "rollup-rpc")?;
+        validate_url(&proposer.prover_rpc, "prover-rpc")?;
+        validate_url(&proposer.l1_eth_rpc, "l1-eth-rpc")?;
+        validate_url(&proposer.l2_eth_rpc, "l2-eth-rpc")?;
+        validate_url(&proposer.rollup_rpc, "rollup-rpc")?;
 
-        if cli.proposer.max_parallel_proofs == 0 {
+        if proposer.max_parallel_proofs == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "max-parallel-proofs",
                 constraint: "at least 1",
-                value: "0".to_string(),
+                value: "0",
             });
         }
 
-        // The anchor state registry address is used as the "no parent"
-        // sentinel for the first game from anchor state. A zero address
-        // would be indistinguishable from an unconfigured value.
-        if cli.proposer.anchor_state_registry_addr == Address::ZERO {
+        // A zero address would be indistinguishable from an unconfigured value,
+        // and is used as the "no parent" sentinel for the first game from anchor state.
+        if proposer.anchor_state_registry_addr == Address::ZERO {
             return Err(ConfigError::OutOfRange {
                 field: "anchor-state-registry-addr",
                 constraint: "non-zero address",
-                value: format!("{}", Address::ZERO),
+                value: "0x0000000000000000000000000000000000000000",
             });
         }
 
-        // Validate poll_interval > 0
-        if cli.proposer.poll_interval.is_zero() {
+        if proposer.poll_interval.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "poll-interval",
                 constraint: "greater than 0",
-                value: "0".to_string(),
+                value: "0",
             });
         }
 
-        // Validate metrics port when enabled
-        if cli.metrics.enabled && cli.metrics.port == 0 {
-            return Err(ConfigError::Metrics(
-                "metrics port must be non-zero when metrics are enabled".to_string(),
-            ));
+        if metrics.enabled && metrics.port == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "metrics-port",
+                constraint: "non-zero when metrics are enabled",
+                value: "0",
+            });
         }
 
-        // Validate health port (health server is always started)
-        if cli.health.port == 0 {
-            return Err(ConfigError::Rpc("health server port must be non-zero".to_string()));
+        if health.port == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "health-port",
+                constraint: "non-zero",
+                value: "0",
+            });
         }
 
-        // Validate admin port when admin is enabled
-        if cli.admin.enabled && cli.admin.port == 0 {
-            return Err(ConfigError::Rpc(
-                "admin RPC port must be non-zero when admin is enabled".to_string(),
-            ));
+        if admin.enabled && admin.port == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "admin-port",
+                constraint: "non-zero when admin is enabled",
+                value: "0",
+            });
         }
 
-        // Extract retry config before moving signer out of proposer
-        let retry = RetryConfig::from(&cli.proposer);
+        let retry = RetryConfig::from(&proposer);
 
-        let (signing, tx_manager) = if cli.proposer.dry_run {
+        let (signing, tx_manager) = if proposer.dry_run {
             (None, None)
         } else {
-            let s = base_tx_manager::SignerConfig::try_from(cli.proposer.signer)
-                .map_err(|e| ConfigError::Signing(e.to_string()))?;
-            let t = base_tx_manager::TxManagerConfig::try_from(cli.proposer.tx_manager)
-                .map_err(|e| ConfigError::TxManager(e.to_string()))?;
+            let s = base_tx_manager::SignerConfig::try_from(proposer.signer)
+                .map_err(ConfigError::Signing)?;
+            let t = base_tx_manager::TxManagerConfig::try_from(proposer.tx_manager)
+                .map_err(ConfigError::TxManager)?;
             (Some(s), Some(t))
         };
 
         Ok(Self {
-            dry_run: cli.proposer.dry_run,
-            allow_non_finalized: cli.proposer.allow_non_finalized,
-            prover_rpc: cli.proposer.prover_rpc,
-            l1_eth_rpc: cli.proposer.l1_eth_rpc,
-            l2_eth_rpc: cli.proposer.l2_eth_rpc,
-            anchor_state_registry_addr: cli.proposer.anchor_state_registry_addr,
-            dispute_game_factory_addr: cli.proposer.dispute_game_factory_addr,
-            game_type: cli.proposer.game_type,
-            tee_image_hash: cli.proposer.tee_image_hash,
-            poll_interval: cli.proposer.poll_interval,
-            rpc_timeout: cli.proposer.rpc_timeout,
+            dry_run: proposer.dry_run,
+            allow_non_finalized: proposer.allow_non_finalized,
+            prover_rpc: proposer.prover_rpc,
+            l1_eth_rpc: proposer.l1_eth_rpc,
+            l2_eth_rpc: proposer.l2_eth_rpc,
+            anchor_state_registry_addr: proposer.anchor_state_registry_addr,
+            dispute_game_factory_addr: proposer.dispute_game_factory_addr,
+            game_type: proposer.game_type,
+            tee_image_hash: proposer.tee_image_hash,
+            poll_interval: proposer.poll_interval,
+            rpc_timeout: proposer.rpc_timeout,
+            rollup_rpc: proposer.rollup_rpc,
+            skip_tls_verify: proposer.skip_tls_verify,
+            log: LogConfig::from(logging),
+            metrics: metrics.into(),
+            health_addr: health.socket_addr(),
+            admin_addr: admin.enabled.then(|| admin.socket_addr()),
             retry,
             signing,
             tx_manager,
-            rollup_rpc: cli.proposer.rollup_rpc,
-            skip_tls_verify: cli.proposer.skip_tls_verify,
-            max_parallel_proofs: cli.proposer.max_parallel_proofs,
-            tee_prover_registry_address: cli.proposer.tee_prover_registry_address,
-            log: LogConfig::from(cli.logging),
-            metrics: cli.metrics.into(),
-            health_addr: cli.health.socket_addr(),
-            admin_addr: cli.admin.enabled.then(|| cli.admin.socket_addr()),
+            max_parallel_proofs: proposer.max_parallel_proofs,
+            tee_prover_registry_address: proposer.tee_prover_registry_address,
         })
     }
 }
 
-/// Validate that a URL has a scheme and host.
+/// Validate that a URL has a host component.
+///
+/// Scheme is guaranteed present by `url::Url::parse`, but host can be absent
+/// (e.g. `file:///path`).
 fn validate_url(url: &Url, field: &'static str) -> Result<(), ConfigError> {
-    if url.scheme().is_empty() {
-        return Err(ConfigError::InvalidUrl { field, reason: "missing scheme".to_string() });
-    }
-
     if url.host().is_none() {
-        return Err(ConfigError::InvalidUrl { field, reason: "missing host".to_string() });
+        return Err(ConfigError::InvalidUrl { field });
     }
 
     Ok(())
@@ -288,6 +281,7 @@ mod tests {
         assert_eq!(config.game_type, 1);
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.rpc_timeout, Duration::from_secs(30));
+        assert_eq!(config.max_parallel_proofs, 1);
     }
 
     #[test]
@@ -304,7 +298,7 @@ mod tests {
         cli.metrics.enabled = true;
         cli.metrics.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Metrics(_))));
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "metrics-port", .. })));
     }
 
     #[test]
@@ -322,7 +316,7 @@ mod tests {
         let mut cli = minimal_cli();
         cli.health.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Rpc(_))));
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "health-port", .. })));
     }
 
     #[test]
@@ -331,7 +325,7 @@ mod tests {
         cli.admin.enabled = true;
         cli.admin.port = 0;
         let result = ProposerConfig::from_cli(cli);
-        assert!(matches!(result, Err(ConfigError::Rpc(_))));
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "admin-port", .. })));
     }
 
     #[test]
@@ -364,74 +358,11 @@ mod tests {
     }
 
     #[test]
-    fn test_log_config_from_args() {
-        use tracing::level_filters::LevelFilter;
-
-        // Test verbosity level 4 (DEBUG)
-        let args = LogArgs {
-            level: 4,
-            stdout_quiet: false,
-            stdout_format: LogFormat::Json,
-            ..Default::default()
-        };
-        let config = LogConfig::from(args);
-        assert_eq!(config.global_level, LevelFilter::DEBUG);
-        assert!(config.stdout_logs.is_some());
-        assert!(config.file_logs.is_none());
-
-        // Test stdout_quiet suppresses stdout logging
-        let args = LogArgs {
-            level: 3,
-            stdout_quiet: true,
-            stdout_format: LogFormat::Full,
-            ..Default::default()
-        };
-        let config = LogConfig::from(args);
-        assert!(config.stdout_logs.is_none());
-    }
-
-    #[test]
-    fn test_metrics_config_from_args() {
-        let args = MetricsArgs {
-            enabled: true,
-            addr: "127.0.0.1".parse().unwrap(),
-            port: 9090,
-            ..Default::default()
-        };
-        let config = MetricsConfig::from(args);
-        assert!(config.enabled);
-        assert_eq!(config.port, 9090);
-    }
-
-    #[test]
     fn test_url_without_host() {
         // Create URL that parses but has no host (file:// URLs for instance)
         let url = Url::parse("file:///some/path").unwrap();
         let result = validate_url(&url, "test-field");
         assert!(matches!(result, Err(ConfigError::InvalidUrl { field: "test-field", .. })));
-    }
-
-    #[test]
-    fn test_config_error_display() {
-        let error =
-            ConfigError::InvalidUrl { field: "prover-rpc", reason: "missing host".to_string() };
-        assert_eq!(error.to_string(), "invalid prover-rpc URL: missing host");
-
-        let error = ConfigError::OutOfRange {
-            field: "poll-interval",
-            constraint: "greater than 0",
-            value: "0".to_string(),
-        };
-        assert_eq!(error.to_string(), "poll-interval must be greater than 0, got 0");
-
-        let error = ConfigError::Metrics("port must be non-zero".to_string());
-        assert_eq!(error.to_string(), "invalid metrics config: port must be non-zero");
-
-        let error = ConfigError::Rpc("RPC port must be non-zero".to_string());
-        assert_eq!(error.to_string(), "invalid RPC config: RPC port must be non-zero");
-
-        let error = ConfigError::Signing("missing key".to_string());
-        assert_eq!(error.to_string(), "invalid signing config: missing key");
     }
 
     #[test]
@@ -492,13 +423,6 @@ mod tests {
             result,
             Err(ConfigError::OutOfRange { field: "max-parallel-proofs", .. })
         ));
-    }
-
-    #[test]
-    fn test_max_parallel_proofs_default() {
-        let cli = minimal_cli();
-        let config = ProposerConfig::from_cli(cli).unwrap();
-        assert_eq!(config.max_parallel_proofs, 1);
     }
 
     #[test]

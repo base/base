@@ -1,7 +1,7 @@
 //! Trait bounds for Base builder components.
 
 use alloy_consensus::Header;
-use base_alloy_consensus::{OpPrimitives, OpTransactionSigned};
+use base_alloy_consensus::{BasePrimitives, BaseTransactionSigned};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BundleTransaction, OpPooledTx, TimestampedTransaction};
 use base_node_core::OpEngineTypes;
@@ -13,7 +13,11 @@ use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 /// Composite trait bound for a full node type compatible with the Base builder.
 pub trait NodeBounds:
     FullNodeTypes<
-    Types: NodeTypes<Payload = OpEngineTypes, ChainSpec = BaseChainSpec, Primitives = OpPrimitives>,
+    Types: NodeTypes<
+        Payload = OpEngineTypes,
+        ChainSpec = BaseChainSpec,
+        Primitives = BasePrimitives,
+    >,
 >
 {
 }
@@ -23,7 +27,7 @@ impl<T> NodeBounds for T where
         Types: NodeTypes<
             Payload = OpEngineTypes,
             ChainSpec = BaseChainSpec,
-            Primitives = OpPrimitives,
+            Primitives = BasePrimitives,
         >,
     >
 {
@@ -32,7 +36,7 @@ impl<T> NodeBounds for T where
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:
     TransactionPool<
-        Transaction: OpPooledTx<Consensus = OpTransactionSigned>
+        Transaction: OpPooledTx<Consensus = BaseTransactionSigned>
                          + BundleTransaction
                          + TimestampedTransaction,
     > + TransactionPoolExt
@@ -46,7 +50,7 @@ where
 impl<T> PoolBounds for T
 where
     T: TransactionPool<
-            Transaction: OpPooledTx<Consensus = OpTransactionSigned>
+            Transaction: OpPooledTx<Consensus = BaseTransactionSigned>
                              + BundleTransaction
                              + TimestampedTransaction,
         > + TransactionPoolExt
@@ -76,7 +80,7 @@ impl<T> ClientBounds for T where
 /// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
     PayloadTransactions<
-    Transaction: OpPooledTx<Consensus = OpTransactionSigned>
+    Transaction: OpPooledTx<Consensus = BaseTransactionSigned>
                      + BundleTransaction
                      + TimestampedTransaction,
 >
@@ -85,7 +89,7 @@ pub trait PayloadTxsBounds:
 
 impl<T> PayloadTxsBounds for T where
     T: PayloadTransactions<
-        Transaction: OpPooledTx<Consensus = OpTransactionSigned>
+        Transaction: OpPooledTx<Consensus = BaseTransactionSigned>
                          + BundleTransaction
                          + TimestampedTransaction,
     >

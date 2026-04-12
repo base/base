@@ -3,7 +3,7 @@ use alloy_network::Network;
 use alloy_provider::fillers::{
     ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
 };
-use base_alloy_consensus::{OpReceipt, OpTxType};
+use base_alloy_consensus::{BaseReceipt, BaseTxType};
 
 /// Types for a Base chain network.
 #[derive(Clone, Copy, Debug)]
@@ -12,21 +12,21 @@ pub struct Base {
 }
 
 impl Network for Base {
-    type TxType = OpTxType;
+    type TxType = BaseTxType;
 
-    type TxEnvelope = base_alloy_consensus::OpTxEnvelope;
+    type TxEnvelope = base_alloy_consensus::BaseTxEnvelope;
 
-    type UnsignedTx = base_alloy_consensus::OpTypedTransaction;
+    type UnsignedTx = base_alloy_consensus::BaseTypedTransaction;
 
-    type ReceiptEnvelope = ReceiptWithBloom<OpReceipt>;
+    type ReceiptEnvelope = ReceiptWithBloom<BaseReceipt>;
 
     type Header = alloy_consensus::Header;
 
-    type TransactionRequest = base_common_rpc_types::OpTransactionRequest;
+    type TransactionRequest = base_common_rpc_types::BaseTransactionRequest;
 
     type TransactionResponse = base_common_rpc_types::Transaction;
 
-    type ReceiptResponse = base_common_rpc_types::OpTransactionReceipt;
+    type ReceiptResponse = base_common_rpc_types::BaseTransactionReceipt;
 
     type HeaderResponse = alloy_rpc_types_eth::Header;
 

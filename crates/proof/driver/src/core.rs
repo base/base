@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_consensus::BlockBody;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope, OpTxType};
+use base_alloy_consensus::{BaseBlock, BaseTxEnvelope, BaseTxType};
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use base_consensus_genesis::RollupConfig;
 use base_proof_executor::BlockBuildingOutcome;
@@ -119,7 +119,7 @@ where
                         // Strip out all transactions that are not deposits.
                         attributes.transactions = attributes.transactions.map(|txs| {
                             txs.into_iter()
-                                .filter(|tx| !tx.is_empty() && tx[0] == OpTxType::Deposit as u8)
+                                .filter(|tx| !tx.is_empty() && tx[0] == BaseTxType::Deposit as u8)
                                 .collect::<Vec<_>>()
                         });
 
@@ -151,8 +151,10 @@ where
                         .as_ref()
                         .unwrap_or(&Vec::new())
                         .iter()
-                        .map(|tx| OpTxEnvelope::decode(&mut tx.as_ref()).map_err(DriverError::Rlp))
-                        .collect::<DriverResult<Vec<OpTxEnvelope>, E::Error>>()?,
+                        .map(|tx| {
+                            BaseTxEnvelope::decode(&mut tx.as_ref()).map_err(DriverError::Rlp)
+                        })
+                        .collect::<DriverResult<Vec<BaseTxEnvelope>, E::Error>>()?,
                     ommers: Vec::new(),
                     withdrawals: None,
                 },

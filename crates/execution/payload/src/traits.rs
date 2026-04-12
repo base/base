@@ -1,5 +1,5 @@
 use alloy_consensus::BlockBody;
-use base_alloy_consensus::{DepositReceipt, OpTransaction};
+use base_alloy_consensus::{BaseTransaction, DepositReceiptExt};
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_primitives_traits::{FullBlockHeader, NodePrimitives, SignedTransaction, WithEncoded};
 
@@ -8,24 +8,24 @@ use crate::OpPayloadBuilderAttributes;
 /// Helper trait to encapsulate common bounds on [`NodePrimitives`] for OP payload builder.
 pub trait PayloadPrimitives:
     NodePrimitives<
-        Receipt: DepositReceipt,
+        Receipt: DepositReceiptExt,
         SignedTx = Self::_TX,
         BlockBody = BlockBody<Self::_TX, Self::_Header>,
         BlockHeader = Self::_Header,
     >
 {
     /// Helper AT to bound [`NodePrimitives::Block`] type without causing bound cycle.
-    type _TX: SignedTransaction + OpTransaction;
+    type _TX: SignedTransaction + BaseTransaction;
     /// Helper AT to bound [`NodePrimitives::Block`] type without causing bound cycle.
     type _Header: FullBlockHeader;
 }
 
 impl<Tx, T, Header> PayloadPrimitives for T
 where
-    Tx: SignedTransaction + OpTransaction,
+    Tx: SignedTransaction + BaseTransaction,
     T: NodePrimitives<
             SignedTx = Tx,
-            Receipt: DepositReceipt,
+            Receipt: DepositReceiptExt,
             BlockBody = BlockBody<Tx, Header>,
             BlockHeader = Header,
         >,

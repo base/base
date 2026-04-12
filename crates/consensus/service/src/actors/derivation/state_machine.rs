@@ -221,7 +221,7 @@ impl DerivationStateMachine {
 mod tests {
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{BlockHash, b256};
-    use base_alloy_rpc_types_engine::OpPayloadAttributes;
+    use base_alloy_rpc_types_engine::BasePayloadAttributes;
     use base_protocol::{AttributesWithParent, BlockInfo};
     use rstest::rstest;
 
@@ -247,7 +247,7 @@ mod tests {
     /// Creates a dummy `AttributesWithParent` for testing
     fn dummy_op_attributes() -> AttributesWithParent {
         AttributesWithParent {
-            attributes: OpPayloadAttributes::default(),
+            attributes: BasePayloadAttributes::default(),
             parent: dummy_l2_block_info(),
             derived_from: None,
             is_last_in_span: false,

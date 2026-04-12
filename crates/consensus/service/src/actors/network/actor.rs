@@ -1,6 +1,6 @@
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
+use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::NetworkAdminQuery;
 use base_consensus_sources::BlockSignerError;
@@ -51,7 +51,7 @@ pub struct NetworkActor<E: NetworkEngineClient, T: GossipTransport> {
     /// A channel to receive admin rpc requests.
     pub(super) admin_rpc: mpsc::Receiver<NetworkAdminQuery>,
     /// A channel to receive unsafe blocks and send them through the gossip layer.
-    pub(super) publish_rx: mpsc::Receiver<OpExecutionPayloadEnvelope>,
+    pub(super) publish_rx: mpsc::Receiver<BaseExecutionPayloadEnvelope>,
     /// A channel to use to interact with the engine actor.
     pub(super) engine_client: E,
 }
@@ -68,7 +68,7 @@ pub struct NetworkInboundData {
     /// A channel to send unsafe blocks to the network actor.
     /// This channel should only be used by the sequencer actor/admin RPC api to forward their
     /// newly produced unsafe blocks to the network actor.
-    pub gossip_payload_tx: mpsc::Sender<OpExecutionPayloadEnvelope>,
+    pub gossip_payload_tx: mpsc::Sender<BaseExecutionPayloadEnvelope>,
 }
 
 impl<E: NetworkEngineClient> NetworkActor<E, NetworkHandler> {
@@ -221,7 +221,7 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use arbitrary::Arbitrary;
-    use base_alloy_rpc_types_engine::OpExecutionPayload;
+    use base_alloy_rpc_types_engine::BaseExecutionPayload;
     use rand::Rng;
 
     use super::*;
@@ -235,8 +235,8 @@ mod tests {
         let expected_address = pubkey.address();
         const CHAIN_ID: u64 = 1337;
 
-        let block = OpExecutionPayloadEnvelope {
-            execution_payload: OpExecutionPayload::V1(
+        let block = BaseExecutionPayloadEnvelope {
+            execution_payload: BaseExecutionPayload::V1(
                 ExecutionPayloadV1::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap(),
             ),
             parent_beacon_block_root: None,
@@ -244,7 +244,7 @@ mod tests {
 
         let payload_hash = block.payload_hash();
         let signature = pubkey.sign_hash_sync(&payload_hash.signature_message(CHAIN_ID)).unwrap();
-        let payload = base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope {
+        let payload = base_alloy_rpc_types_engine::NetworkPayloadEnvelope {
             payload: block.execution_payload,
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
@@ -253,7 +253,7 @@ mod tests {
         let encoded_payload = payload.encode_v1().unwrap();
 
         let decoded_payload =
-            base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope::decode_v1(&encoded_payload)
+            base_alloy_rpc_types_engine::NetworkPayloadEnvelope::decode_v1(&encoded_payload)
                 .unwrap();
 
         let msg = decoded_payload.payload_hash.signature_message(CHAIN_ID);
@@ -271,8 +271,8 @@ mod tests {
         let expected_address = pubkey.address();
         const CHAIN_ID: u64 = 1337;
 
-        let block = OpExecutionPayloadEnvelope {
-            execution_payload: OpExecutionPayload::V3(
+        let block = BaseExecutionPayloadEnvelope {
+            execution_payload: BaseExecutionPayload::V3(
                 ExecutionPayloadV3::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap(),
             ),
             parent_beacon_block_root: Some(B256::random()),
@@ -280,7 +280,7 @@ mod tests {
 
         let payload_hash = block.payload_hash();
         let signature = pubkey.sign_hash_sync(&payload_hash.signature_message(CHAIN_ID)).unwrap();
-        let payload = base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope {
+        let payload = base_alloy_rpc_types_engine::NetworkPayloadEnvelope {
             payload: block.execution_payload,
             parent_beacon_block_root: block.parent_beacon_block_root,
             signature,
@@ -289,7 +289,7 @@ mod tests {
         let encoded_payload = payload.encode_v3().unwrap();
 
         let decoded_payload =
-            base_alloy_rpc_types_engine::OpNetworkPayloadEnvelope::decode_v3(&encoded_payload)
+            base_alloy_rpc_types_engine::NetworkPayloadEnvelope::decode_v3(&encoded_payload)
                 .unwrap();
 
         let msg = decoded_payload.payload_hash.signature_message(CHAIN_ID);

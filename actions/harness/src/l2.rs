@@ -9,9 +9,9 @@ use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, BaseTxEnvelope};
 use base_alloy_rpc_types_engine::{
-    OpExecutionPayload, OpExecutionPayloadSidecar, OpNetworkPayloadEnvelope, PayloadHash,
+    BaseExecutionPayload, BaseExecutionPayloadSidecar, NetworkPayloadEnvelope, PayloadHash,
 };
 use base_consensus_derive::{AttributesBuilder, StatefulAttributesBuilder};
 use base_consensus_genesis::RollupConfig;
@@ -68,13 +68,13 @@ impl TestAccount {
     pub fn sign_tx(
         &mut self,
         tx: alloy_consensus::TxEip1559,
-    ) -> Result<OpTxEnvelope, alloy_signer::Error> {
+    ) -> Result<BaseTxEnvelope, alloy_signer::Error> {
         let sig = self.signer.sign_hash_sync(&tx.signature_hash())?;
-        Ok(OpTxEnvelope::Eip1559(tx.into_signed(sig)))
+        Ok(BaseTxEnvelope::Eip1559(tx.into_signed(sig)))
     }
 
     /// Creates and signs a minimal EIP-1559 transfer, auto-incrementing the nonce.
-    pub fn create_eip1559_tx(&mut self, chain_id: u64) -> OpTxEnvelope {
+    pub fn create_eip1559_tx(&mut self, chain_id: u64) -> BaseTxEnvelope {
         self.create_tx(chain_id, TxKind::Call(Address::ZERO), Bytes::new(), U256::from(1), 21_000)
     }
 
@@ -89,7 +89,7 @@ impl TestAccount {
         input: Bytes,
         value: U256,
         gas_limit: u64,
-    ) -> OpTxEnvelope {
+    ) -> BaseTxEnvelope {
         let tx = alloy_consensus::TxEip1559 {
             chain_id,
             nonce: self.nonce,
@@ -106,7 +106,7 @@ impl TestAccount {
             .sign_hash_sync(&tx.signature_hash())
             .expect("test account signing must not fail");
         self.nonce += 1;
-        OpTxEnvelope::Eip1559(tx.into_signed(sig))
+        BaseTxEnvelope::Eip1559(tx.into_signed(sig))
     }
 
     /// Return the current nonce.
@@ -384,7 +384,7 @@ impl L2Sequencer {
         self.supervised_p2p = Some(p2p);
     }
 
-    /// Broadcast `block` as an [`OpNetworkPayloadEnvelope`] to the wired
+    /// Broadcast `block` as an [`NetworkPayloadEnvelope`] to the wired
     /// [`SupervisedP2P`] handle.
     ///
     /// A no-op when no handle has been set via [`set_supervised_p2p`]. The
@@ -395,8 +395,8 @@ impl L2Sequencer {
     pub fn broadcast_unsafe_block(&self, block: &BaseBlock) {
         let Some(p2p) = &self.supervised_p2p else { return };
         let block_hash = block.header.hash_slow();
-        let (execution_payload, _) = OpExecutionPayload::from_block_unchecked(block_hash, block);
-        let network = OpNetworkPayloadEnvelope {
+        let (execution_payload, _) = BaseExecutionPayload::from_block_unchecked(block_hash, block);
+        let network = NetworkPayloadEnvelope {
             payload: execution_payload,
             signature: Signature::new(U256::ZERO, U256::ZERO, false),
             payload_hash: PayloadHash(B256::ZERO),
@@ -439,7 +439,7 @@ impl L2Sequencer {
     /// [`try_build_next_block_with_transactions`]: L2Sequencer::try_build_next_block_with_transactions
     pub async fn build_next_block_with_transactions(
         &mut self,
-        transactions: Vec<OpTxEnvelope>,
+        transactions: Vec<BaseTxEnvelope>,
     ) -> BaseBlock {
         self.try_build_next_block_with_transactions(transactions)
             .await
@@ -454,7 +454,7 @@ impl L2Sequencer {
     /// [`build_next_block_with_transactions`]: L2Sequencer::build_next_block_with_transactions
     pub async fn try_build_next_block_with_transactions(
         &mut self,
-        user_txs: Vec<OpTxEnvelope>,
+        user_txs: Vec<BaseTxEnvelope>,
     ) -> Result<BaseBlock, L2SequencerError> {
         // 1. Origin selection: use pinned origin if set, otherwise production L1OriginSelector.
         let l1_origin = if let Some(pin) = self.l1_origin_pin {
@@ -508,7 +508,7 @@ impl L2Sequencer {
             .await
             .map_err(|e| L2SequencerError::Engine(format!("insert: {e}")))?;
 
-        // 6. Convert OpExecutionPayload to BaseBlock.
+        // 6. Convert BaseExecutionPayload to BaseBlock.
         // Use try_into_block_with_sidecar so PBBR and requests_hash are restored on the
         // returned header. try_into_block() omits these fields, making hash_slow() return a
         // different value than the sealed block hash. BatchEncoder::add_block tracks self.tip
@@ -522,15 +522,15 @@ impl L2Sequencer {
         let block_hash = envelope.execution_payload.as_v1().block_hash;
         let pbbr = envelope.parent_beacon_block_root;
         let sidecar = match &envelope.execution_payload {
-            OpExecutionPayload::V4(_) => OpExecutionPayloadSidecar::v4(
+            BaseExecutionPayload::V4(_) => BaseExecutionPayloadSidecar::v4(
                 CancunPayloadFields {
                     parent_beacon_block_root: pbbr.unwrap_or_default(),
                     versioned_hashes: vec![],
                 },
                 PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
             ),
-            _ => pbbr.map_or_else(OpExecutionPayloadSidecar::default, |pbbr| {
-                OpExecutionPayloadSidecar::v3(CancunPayloadFields {
+            _ => pbbr.map_or_else(BaseExecutionPayloadSidecar::default, |pbbr| {
+                BaseExecutionPayloadSidecar::v3(CancunPayloadFields {
                     parent_beacon_block_root: pbbr,
                     versioned_hashes: vec![],
                 })
@@ -568,4 +568,3 @@ impl L2Sequencer {
         Ok(block)
     }
 }
-

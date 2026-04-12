@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use base_alloy_consensus::OpPrimitives;
+use base_alloy_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{OpProofsStorage, OpProofsStore, db::MdbxProofsStorage};
 use clap::Parser;
@@ -64,7 +64,7 @@ impl<C: ChainSpecParser> UnwindCommand<C> {
 
 impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
     /// Execute [`UnwindCommand`].
-    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = OpPrimitives>>(
+    pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
         self,
     ) -> eyre::Result<()> {
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");

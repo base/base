@@ -74,7 +74,7 @@ mod tests {
     //! Unit tests for [`L2Finalizer`] queue management.
 
     use alloy_eips::BlockNumHash;
-    use base_alloy_rpc_types_engine::OpPayloadAttributes;
+    use base_alloy_rpc_types_engine::BasePayloadAttributes;
     use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::L2Finalizer;
@@ -88,7 +88,12 @@ mod tests {
             seq_num: 0,
         };
         let derived_from = BlockInfo { number: l1_origin_number, ..Default::default() };
-        AttributesWithParent::new(OpPayloadAttributes::default(), parent, Some(derived_from), false)
+        AttributesWithParent::new(
+            BasePayloadAttributes::default(),
+            parent,
+            Some(derived_from),
+            false,
+        )
     }
 
     /// Build a [`BlockInfo`] representing a finalized L1 block at `number`.

@@ -7,18 +7,18 @@ mod tx_type;
 pub use tx_type::DEPOSIT_TX_TYPE_ID;
 
 mod envelope;
-pub use envelope::{OpTransaction, OpTxEnvelope, OpTxType};
+pub use envelope::{BaseTransaction, BaseTxEnvelope, BaseTxType};
 
 mod typed;
-pub use typed::OpTypedTransaction;
+pub use typed::BaseTypedTransaction;
 
 mod pooled;
 #[cfg(feature = "serde")]
 pub use deposit::serde_deposit_tx_rpc;
-pub use pooled::OpPooledTransaction;
+pub use pooled::BasePooledTransaction;
 
 mod meta;
-pub use meta::{OpDepositInfo, OpTransactionInfo};
+pub use meta::{BaseTransactionInfo, DepositInfo};
 
 /// Bincode-compatible serde implementations for transaction types.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]

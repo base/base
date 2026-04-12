@@ -4,7 +4,7 @@ use alloy_rpc_types_engine::PayloadError;
 
 /// Extends [`PayloadError`].
 #[derive(Debug, thiserror::Error)]
-pub enum OpPayloadError {
+pub enum BasePayloadError {
     /// Non-empty list of L1 withdrawals (Shanghai).
     #[error("non-empty L1 withdrawals")]
     NonEmptyL1Withdrawals,

@@ -29,15 +29,15 @@
 //! persistently failing.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
 
 use alloy_primitives::{Address, B256, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameInfo,
-    ITEEProverRegistry,
+    AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, DisputeGameFactoryClient,
+    GameInfo, ITEEProverRegistry,
 };
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
@@ -47,12 +47,12 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
-use super::core::{DriverConfig, RecoveredState};
 use crate::{
     Metrics,
     constants::{MAX_FACTORY_SCAN_LOOKBACK, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
+    driver::{DriverConfig, RecoveredState},
     error::ProposerError,
-    output_proposer::{OutputProposer, is_game_already_exists},
+    output_proposer::OutputProposer,
 };
 
 /// Configuration for the parallel proving pipeline.
@@ -106,13 +106,26 @@ struct CachedGameMap {
 /// the anchor root changes or a new game is added. A full factory rescan
 /// only happens on the first startup or after an L1 reorg that reduces
 /// `game_count`.
+///
+/// The walk result is stored separately from the game map so that a
+/// failed walk/prefetch can preserve the game map for incremental reuse
+/// on the next tick without forcing a full factory rescan.
 #[derive(Debug, Clone)]
 struct CachedRecovery {
     /// Cached factory game map (incrementally updated).
     game_map: CachedGameMap,
-    /// The anchor root hash used for the most recent walk.
+    /// Walk result from the most recent successful forward walk, paired
+    /// with the anchor root used to produce it. `None` when the last
+    /// walk or prefetch failed — the game map is still valid for reuse.
+    walk: Option<CachedWalk>,
+}
+
+/// Successful walk result cached alongside the anchor root that produced it.
+#[derive(Debug, Clone, Copy)]
+struct CachedWalk {
+    /// The anchor root hash used for this walk.
     anchor_root: B256,
-    /// The walk result derived from `game_map` + `anchor_root`.
+    /// The recovered on-chain state from the walk.
     state: RecoveredState,
 }
 
@@ -277,7 +290,7 @@ where
 
     /// Replaces the cancellation token.
     ///
-    /// Used by [`super::PipelineHandle`] to create fresh sessions when the
+    /// Used by [`crate::PipelineHandle`] to create fresh sessions when the
     /// pipeline is restarted via the admin RPC.
     pub fn set_cancel(&mut self, cancel: CancellationToken) {
         self.cancel = cancel;
@@ -395,7 +408,6 @@ where
                         "Dispatching proof task"
                     );
                     state.inflight.insert(target);
-                    state.record_gauges();
                     state.prove_tasks.spawn(async move {
                         let mut proof_timer =
                             base_metrics::timed!(Metrics::proof_duration_seconds());
@@ -424,6 +436,7 @@ where
                 None => break,
             };
         }
+        state.record_gauges();
         Ok(())
     }
 
@@ -433,8 +446,8 @@ where
         }
 
         let recovered = match &state.cached_recovery {
-            Some(c) => c.state,
-            None => return,
+            Some(CachedRecovery { walk: Some(w), .. }) => w.state,
+            _ => return,
         };
 
         let next_to_submit =
@@ -611,7 +624,10 @@ where
         &self,
         cache: &mut Option<CachedRecovery>,
     ) -> Option<(RecoveredState, u64)> {
-        let state = match self.recover_latest_state(cache).await {
+        let (state_result, safe_head_result) =
+            tokio::join!(self.recover_latest_state(cache), self.latest_safe_block_number(),);
+
+        let state = match state_result {
             Ok(s) => s,
             Err(e) => {
                 warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
@@ -619,7 +635,7 @@ where
             }
         };
 
-        let safe_head = match self.latest_safe_block_number().await {
+        let safe_head = match safe_head_result {
             Ok(n) => n,
             Err(e) => {
                 warn!(error = %e, "Failed to fetch safe head, retrying next tick");
@@ -671,25 +687,77 @@ where
             .map_err(|e| ProposerError::Contract(format!("recovery game_count failed: {e}")))?;
 
         // Read the anchor root early so it can be included in the cache key.
-        let anchor = self.anchor_registry.get_anchor_root().await?;
+        let anchor = self
+            .anchor_registry
+            .get_anchor_root()
+            .await
+            .map_err(|e| ProposerError::Contract(format!("get_anchor_root failed: {e}")))?;
         let anchor_state_registry_address = self.config.driver.anchor_state_registry_address;
 
-        // Fast path: both game_count and anchor_root unchanged → return
-        // cached walk result with zero factory RPCs.
+        // Fast path: both game_count and anchor_root unchanged AND a valid
+        // walk result exists → return the cached state with zero RPCs.
         if let Some(cached) = cache.as_ref()
-            && cached.anchor_root == anchor.root
+            && let Some(walk) = &cached.walk
+            && walk.anchor_root == anchor.root
             && cached.game_map.scanned_up_to == count
         {
             debug!(game_count = count, "No changes since last recovery, returning cached state");
-            return Ok(cached.state);
+            return Ok(walk.state);
         }
 
         // ── Game map update ─────────────────────────────────────────────
         //
         // Reuse the cached map when possible, scanning only new entries.
         // A full rescan is needed only on cold start or L1 reorg.
-        let game_map = self.updated_game_map(cache.as_ref(), count).await?;
+        let cached_map = cache.take().map(|c| c.game_map);
+        let game_map = match self.updated_game_map(cached_map, count).await {
+            Ok(map) => map,
+            Err((e, restored_map)) => {
+                // Put the game map back so the next tick can retry an
+                // incremental scan instead of a full factory rescan.
+                if let Some(map) = restored_map {
+                    *cache = Some(CachedRecovery { game_map: map, walk: None });
+                }
+                return Err(e);
+            }
+        };
 
+        // ── Pre-fetch and forward walk ─────────────────────────────────
+        //
+        // Run the walk as a separate method so `game_map` ownership stays
+        // here. On success, cache both the map and the walk result. On
+        // failure, preserve the game map so the next tick can reuse it
+        // (incremental scan) rather than paying a full factory rescan.
+        match self.forward_walk(&game_map, &anchor, anchor_state_registry_address).await {
+            Ok(state) => {
+                let walk = CachedWalk { anchor_root: anchor.root, state };
+                *cache = Some(CachedRecovery { game_map, walk: Some(walk) });
+                Ok(state)
+            }
+            Err(e) => {
+                // Preserve the game map for the next tick. The walk result
+                // is set to `None` so the fast-path check cannot return
+                // stale state — the next tick will fall through to
+                // `updated_game_map` (which reuses the scanned entries)
+                // and retry the walk.
+                warn!(error = %e, "Forward walk failed, preserving game map cache");
+                *cache = Some(CachedRecovery { game_map, walk: None });
+                Err(e)
+            }
+        }
+    }
+
+    /// Pre-fetches canonical and intermediate roots, then performs a forward
+    /// walk from the anchor to find the latest verified game.
+    ///
+    /// Takes the game map by reference so the caller retains ownership and
+    /// can preserve it in the cache even when this method fails.
+    async fn forward_walk(
+        &self,
+        game_map: &CachedGameMap,
+        anchor: &AnchorRoot,
+        anchor_state_registry_address: Address,
+    ) -> Result<RecoveredState, ProposerError> {
         // ── Pre-fetch canonical output roots ───────────────────────────
         //
         // Compute the set of block numbers the forward walk *could* visit
@@ -706,7 +774,7 @@ where
         let intermediate_count = block_interval / intermediate_block_interval;
 
         let prefetch_blocks: Vec<u64> = {
-            let mut blocks = Vec::new();
+            let mut blocks = Vec::with_capacity(game_map.map.len());
             let mut block = anchor.l2_block_number;
             while let Some(next) = block.checked_add(block_interval) {
                 if game_map.map.contains_key(&next) {
@@ -721,84 +789,71 @@ where
         };
 
         // Expand to include intermediate block numbers for each game block.
-        // For a game at block B with parent at B - block_interval, the
-        // intermediate blocks are at parent + i * intermediate_block_interval
-        // for i in 1..=intermediate_count. The last one (i = count) equals B
-        // itself, so the set is a superset of `prefetch_blocks`.
+        // The last intermediate block equals the game block itself, so the
+        // result is a superset of `prefetch_blocks`.
         let all_canonical_blocks: Vec<u64> = {
-            let mut blocks = HashSet::new();
+            let mut blocks =
+                Vec::with_capacity(prefetch_blocks.len() * intermediate_count as usize);
             for &game_block in &prefetch_blocks {
-                let parent = game_block - block_interval;
-                for i in 1..=intermediate_count {
-                    blocks.insert(parent + i * intermediate_block_interval);
-                }
+                let parent = game_block.checked_sub(block_interval).ok_or_else(|| {
+                    ProposerError::Internal(format!(
+                        "game_block {game_block} underflows when subtracting block_interval {block_interval}"
+                    ))
+                })?;
+                blocks.extend(self.intermediate_block_numbers(parent)?);
             }
-            blocks.into_iter().collect()
+            blocks
         };
 
-        let canonical_roots: HashMap<u64, B256> = if all_canonical_blocks.is_empty() {
-            HashMap::new()
-        } else {
-            debug!(
-                blocks = all_canonical_blocks.len(),
-                game_blocks = prefetch_blocks.len(),
-                intermediate_count,
-                "Pre-fetching canonical output roots concurrently"
-            );
-            stream::iter(all_canonical_blocks)
-                .map(|block_number| {
-                    let rollup = &self.rollup_client;
-                    async move {
-                        rollup
-                            .output_at_block(block_number)
-                            .await
-                            .map(|out| (block_number, out.output_root))
-                            .map_err(ProposerError::Rpc)
-                    }
-                })
-                .buffered(RECOVERY_SCAN_CONCURRENCY)
-                .try_collect()
-                .await?
-        };
-
-        // ── Pre-fetch intermediate output roots from game contracts ─────
+        // ── Pre-fetch canonical and intermediate roots concurrently ─────
         //
-        // For every game proxy that the walk could visit, fetch its on-chain
-        // intermediate output roots concurrently. These will be compared
-        // against the canonical roots during the walk to verify the game's
-        // intermediate state commitments.
+        // These two fetches are independent (canonical roots come from the
+        // rollup node, intermediate roots from L1 game contracts), so run
+        // them in parallel to halve recovery latency.
         let walk_proxies: Vec<Address> = prefetch_blocks
             .iter()
             .filter_map(|b| game_map.map.get(b))
             .flat_map(|games| games.iter().map(|g| g.proxy))
             .collect();
 
-        let intermediate_roots_map: HashMap<Address, Vec<B256>> = if walk_proxies.is_empty() {
-            HashMap::new()
-        } else {
-            debug!(
-                proxies = walk_proxies.len(),
-                "Pre-fetching intermediate output roots from game contracts"
-            );
-            stream::iter(walk_proxies)
-                .map(|proxy| {
-                    let verifier = &self.verifier_client;
-                    async move {
-                        verifier
-                            .intermediate_output_roots(proxy)
-                            .await
-                            .map(|roots| (proxy, roots))
-                            .map_err(|e| {
-                                ProposerError::Contract(format!(
-                                    "intermediate_output_roots failed for proxy {proxy}: {e}"
-                                ))
-                            })
-                    }
-                })
-                .buffered(RECOVERY_SCAN_CONCURRENCY)
-                .try_collect()
-                .await?
-        };
+        let (canonical_roots, intermediate_roots_map) = tokio::try_join!(
+            async {
+                debug!(
+                    blocks = all_canonical_blocks.len(),
+                    game_blocks = prefetch_blocks.len(),
+                    intermediate_count,
+                    "Pre-fetching canonical output roots concurrently"
+                );
+                self.fetch_canonical_roots(all_canonical_blocks).await
+            },
+            async {
+                if walk_proxies.is_empty() {
+                    return Ok(HashMap::new());
+                }
+                debug!(
+                    proxies = walk_proxies.len(),
+                    "Pre-fetching intermediate output roots from game contracts"
+                );
+                stream::iter(walk_proxies)
+                    .map(|proxy| {
+                        let verifier = &self.verifier_client;
+                        async move {
+                            verifier
+                                .intermediate_output_roots(proxy)
+                                .await
+                                .map(|roots| (proxy, roots))
+                                .map_err(|e| {
+                                    ProposerError::Contract(format!(
+                                        "intermediate_output_roots failed for proxy {proxy}: {e}"
+                                    ))
+                                })
+                        }
+                    })
+                    .buffered(RECOVERY_SCAN_CONCURRENCY)
+                    .try_collect()
+                    .await
+            },
+        )?;
 
         // ── Forward walk ────────────────────────────────────────────────
         //
@@ -813,38 +868,23 @@ where
         let mut steps: u64 = 0;
 
         while let Some(expected_block) = parent_block.checked_add(block_interval) {
-            // Look up the pre-fetched canonical root. A missing entry means
-            // the block had no game in the map (the pre-fetch stopped there).
-            let canonical_root = match canonical_roots.get(&expected_block) {
-                Some(root) => *root,
-                None => {
-                    info!(
-                        gap_block = expected_block,
-                        parent_block,
-                        parent_address = %parent_address,
-                        games_verified = steps,
-                        "Found first missing game, will propose from here"
-                    );
-                    break;
-                }
-            };
-
-            // Look up all games at this block number, then find one whose
-            // parent_address matches the expected parent.
-            let candidates = match game_map.map.get(&expected_block) {
-                Some(c) => c,
-                None => {
-                    // No game exists for this block number — this is the gap.
-                    info!(
-                        gap_block = expected_block,
-                        parent_block,
-                        parent_address = %parent_address,
-                        games_verified = steps,
-                        "Found first missing game, will propose from here"
-                    );
-                    break;
-                }
-            };
+            // Look up the pre-fetched canonical root and game candidates.
+            // Either missing means there is no game at this block — the gap
+            // where the next proposal should start.
+            let (canonical_root, candidates) =
+                match (canonical_roots.get(&expected_block), game_map.map.get(&expected_block)) {
+                    (Some(root), Some(c)) => (*root, c),
+                    _ => {
+                        info!(
+                            gap_block = expected_block,
+                            parent_block,
+                            parent_address = %parent_address,
+                            games_verified = steps,
+                            "Found first missing game, will propose from here"
+                        );
+                        break;
+                    }
+                };
 
             // Filter to candidates that reference our expected parent.
             let mut matching =
@@ -926,8 +966,20 @@ where
 
             let mut intermediate_mismatch = false;
             for (i, onchain_root) in onchain_intermediate.iter().enumerate() {
-                let intermediate_block = (expected_block - block_interval)
-                    + (i as u64 + 1) * intermediate_block_interval;
+                let intermediate_block = expected_block
+                    .checked_sub(block_interval)
+                    .and_then(|base| {
+                        (i as u64 + 1)
+                            .checked_mul(intermediate_block_interval)
+                            .and_then(|offset| base.checked_add(offset))
+                    })
+                    .ok_or_else(|| {
+                        ProposerError::Internal(format!(
+                            "intermediate block arithmetic overflow: expected_block={expected_block}, \
+                             block_interval={block_interval}, i={i}, \
+                             intermediate_block_interval={intermediate_block_interval}"
+                        ))
+                    })?;
 
                 // The last intermediate root equals root_claim, already
                 // verified above — skip the redundant check.
@@ -982,15 +1034,11 @@ where
             );
         }
 
-        let state = RecoveredState {
+        Ok(RecoveredState {
             parent_address,
             output_root: parent_output_root,
             l2_block_number: parent_block,
-        };
-
-        *cache = Some(CachedRecovery { game_map, anchor_root: anchor.root, state });
-
-        Ok(state)
+        })
     }
 
     /// Returns an up-to-date game map, reusing the cached map when possible.
@@ -1001,19 +1049,25 @@ where
     ///   (`cached.scanned_up_to..count`) and merge into the existing map.
     /// - **Anchor root changed (count unchanged):** Reuse the existing map
     ///   as-is — no factory RPCs needed.
+    ///
+    /// Returns `Ok(updated_map)` on success. On failure returns the error
+    /// together with `Some(original_map)` when the input map can be
+    /// preserved (incremental scan failure), or `None` when it cannot
+    /// (cold start, full rescan).
     async fn updated_game_map(
         &self,
-        cache: Option<&CachedRecovery>,
+        cached_map: Option<CachedGameMap>,
         count: u64,
-    ) -> Result<CachedGameMap, ProposerError> {
-        match cache {
-            Some(cached) if count >= cached.game_map.scanned_up_to => {
-                let new_entries = count - cached.game_map.scanned_up_to;
+    ) -> Result<CachedGameMap, (ProposerError, Option<CachedGameMap>)> {
+        match cached_map {
+            Some(game_map) if count >= game_map.scanned_up_to => {
+                let scanned_up_to = game_map.scanned_up_to;
+                let new_entries = count - scanned_up_to;
                 if new_entries == 0 {
                     // Anchor root changed but game_count is the same —
                     // reuse the map, just re-walk.
                     debug!("Anchor root changed, re-walking with existing game map");
-                    return Ok(cached.game_map.clone());
+                    return Ok(game_map);
                 }
 
                 // If the delta exceeds the lookback window (e.g. proposer
@@ -1025,34 +1079,39 @@ where
                         max = MAX_FACTORY_SCAN_LOOKBACK,
                         "Incremental delta exceeds lookback, falling back to full scan"
                     );
-                    return self.full_scan(count).await;
+                    return self.full_scan(count).await.map_err(|e| (e, None));
                 }
 
                 // Incremental scan: only fetch the new factory entries.
                 info!(
-                    cached_count = cached.game_map.scanned_up_to,
+                    cached_count = scanned_up_to,
                     current_count = count,
                     new_entries,
                     "Incrementally scanning new factory entries"
                 );
-                let mut map = cached.game_map.map.clone();
-                self.scan_factory_range(cached.game_map.scanned_up_to, count, &mut map).await?;
+                let mut map = game_map.map;
+                if let Err(e) = self.scan_factory_range(scanned_up_to, count, &mut map).await {
+                    // Restore the original game map so the next tick can
+                    // retry the incremental scan from the same checkpoint
+                    // instead of an expensive full factory rescan.
+                    return Err((e, Some(CachedGameMap { scanned_up_to, map })));
+                }
                 Ok(CachedGameMap { scanned_up_to: count, map })
             }
-            Some(cached) => {
+            Some(game_map) => {
                 // game_count decreased — L1 reorg. Full rescan needed
                 // because we can't know which entries were removed.
                 warn!(
-                    cached_count = cached.game_map.scanned_up_to,
+                    cached_count = game_map.scanned_up_to,
                     current_count = count,
                     "Game count decreased (possible L1 reorg), performing full rescan"
                 );
-                self.full_scan(count).await
+                self.full_scan(count).await.map_err(|e| (e, None))
             }
             None => {
                 // Cold start — no cache exists.
                 info!(game_count = count, "Cold start, performing full factory scan");
-                self.full_scan(count).await
+                self.full_scan(count).await.map_err(|e| (e, None))
             }
         }
     }
@@ -1168,22 +1227,48 @@ where
         }
     }
 
+    /// Concurrently fetches canonical output roots for the given block numbers.
+    async fn fetch_canonical_roots(
+        &self,
+        blocks: Vec<u64>,
+    ) -> Result<HashMap<u64, B256>, ProposerError> {
+        if blocks.is_empty() {
+            return Ok(HashMap::new());
+        }
+        stream::iter(blocks)
+            .map(|block_number| {
+                let rollup = &self.rollup_client;
+                async move {
+                    rollup
+                        .output_at_block(block_number)
+                        .await
+                        .map(|out| (block_number, out.output_root))
+                        .map_err(ProposerError::Rpc)
+                }
+            })
+            .buffered(RECOVERY_SCAN_CONCURRENCY)
+            .try_collect()
+            .await
+    }
+
     async fn build_proof_request_for(
         &self,
         starting_block_number: u64,
         agreed_output_root: B256,
         target_block: u64,
     ) -> Result<ProofRequest, ProposerError> {
-        let agreed_l2_head = self
-            .l2_client
-            .header_by_number(Some(starting_block_number))
-            .await
-            .map_err(ProposerError::Rpc)?;
-
-        let claimed_output =
-            self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)?;
-
-        let l1_head = self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc)?;
+        let (agreed_l2_head, claimed_output, l1_head) = tokio::try_join!(
+            async {
+                self.l2_client
+                    .header_by_number(Some(starting_block_number))
+                    .await
+                    .map_err(ProposerError::Rpc)
+            },
+            async {
+                self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)
+            },
+            async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
+        )?;
 
         let request = ProofRequest {
             l1_head: l1_head.hash,
@@ -1297,38 +1382,32 @@ where
                     self.config.driver.block_interval
                 )))
             })?;
+        let intermediate_blocks =
+            self.intermediate_block_numbers(starting_block_number).map_err(SubmitAction::Failed)?;
         let intermediate_roots = self
-            .extract_intermediate_roots(starting_block_number, proposals)
+            .extract_intermediate_roots(starting_block_number, proposals, &intermediate_blocks)
             .map_err(SubmitAction::Failed)?;
 
-        // JIT validation: check that each intermediate output root matches
-        // the canonical chain.  This catches TEE prover bugs or reorgs that
-        // occurred between proving and submission.
-        let interval = self.config.driver.intermediate_block_interval;
-        for (i, root) in intermediate_roots.iter().enumerate() {
-            let block = starting_block_number
-                .checked_add((i as u64 + 1).checked_mul(interval).ok_or_else(|| {
-                    SubmitAction::Failed(ProposerError::Internal(
-                        "overflow computing intermediate root block number".into(),
-                    ))
-                })?)
-                .ok_or_else(|| {
-                    SubmitAction::Failed(ProposerError::Internal(
-                        "overflow computing intermediate root block number".into(),
-                    ))
-                })?;
+        // Fetch canonical roots for non-target intermediate blocks only;
+        // the target block was already fetched for the JIT check above.
+        let non_target_blocks: Vec<u64> =
+            intermediate_blocks.iter().copied().filter(|&b| b != target_block).collect();
 
-            let canonical = self
-                .rollup_client
-                .output_at_block(block)
-                .await
-                .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))?;
+        let mut canonical_map: HashMap<u64, B256> =
+            self.fetch_canonical_roots(non_target_blocks).await.map_err(SubmitAction::Failed)?;
+        canonical_map.insert(target_block, canonical_output.output_root);
 
-            if *root != canonical.output_root {
+        for (root, block) in intermediate_roots.iter().zip(intermediate_blocks.iter()) {
+            let canonical = canonical_map.get(block).ok_or_else(|| {
+                SubmitAction::Failed(ProposerError::Internal(format!(
+                    "missing canonical root for intermediate block {block}"
+                )))
+            })?;
+            if *root != *canonical {
                 warn!(
-                    intermediate_block = block,
+                    intermediate_block = *block,
                     proposal_root = ?root,
-                    canonical_root = ?canonical.output_root,
+                    canonical_root = ?canonical,
                     target_block,
                     "Intermediate output root does not match canonical chain at submit time"
                 );
@@ -1403,7 +1482,7 @@ where
                 Ok(())
             }
             Ok(Err(e)) => {
-                if is_game_already_exists(&e) {
+                if e.is_game_already_exists() {
                     drop(propose_timer);
                     info!(
                         target_block,
@@ -1425,14 +1504,12 @@ where
         }
     }
 
-    /// Extracts intermediate output roots from per-block proposals.
-    ///
-    /// Samples at every `intermediate_block_interval` within the range.
-    fn extract_intermediate_roots(
+    /// Returns intermediate block numbers between `starting_block_number` and
+    /// the next proposal target, stepping by `intermediate_block_interval`.
+    fn intermediate_block_numbers(
         &self,
         starting_block_number: u64,
-        proposals: &[base_proof_primitives::Proposal],
-    ) -> Result<Vec<B256>, ProposerError> {
+    ) -> Result<Vec<u64>, ProposerError> {
         let interval = self.config.driver.intermediate_block_interval;
         if interval == 0 {
             return Err(ProposerError::Config(
@@ -1440,16 +1517,34 @@ where
             ));
         }
         let count = self.config.driver.block_interval / interval;
-        let mut roots = Vec::with_capacity(count as usize);
-        for i in 1..=count {
-            let target_block = starting_block_number
-                .checked_add(i.checked_mul(interval).ok_or_else(|| {
-                    ProposerError::Internal("overflow computing intermediate root target".into())
-                })?)
-                .ok_or_else(|| {
-                    ProposerError::Internal("overflow computing intermediate root target".into())
-                })?;
+        (1..=count)
+            .map(|i| {
+                starting_block_number
+                    .checked_add(i.checked_mul(interval).ok_or_else(|| {
+                        ProposerError::Internal(
+                            "overflow computing intermediate block number".into(),
+                        )
+                    })?)
+                    .ok_or_else(|| {
+                        ProposerError::Internal(
+                            "overflow computing intermediate block number".into(),
+                        )
+                    })
+            })
+            .collect()
+    }
 
+    /// Extracts intermediate output roots from per-block proposals.
+    ///
+    /// Samples at every `intermediate_block_interval` within the range.
+    fn extract_intermediate_roots(
+        &self,
+        starting_block_number: u64,
+        proposals: &[base_proof_primitives::Proposal],
+        blocks: &[u64],
+    ) -> Result<Vec<B256>, ProposerError> {
+        let mut roots = Vec::with_capacity(blocks.len());
+        for &target_block in blocks {
             let idx = target_block.checked_sub(starting_block_number + 1).ok_or_else(|| {
                 ProposerError::Internal(format!(
                     "underflow computing proposal index for block {target_block}"
@@ -1501,8 +1596,7 @@ enum SubmitOutcome {
 mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
-    use alloy_primitives::{Address, B256, Bytes};
-    use async_trait::async_trait;
+    use alloy_primitives::{Address, B256};
     use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
     use rstest::rstest;
@@ -1511,7 +1605,8 @@ mod tests {
     use super::*;
     use crate::test_utils::{
         MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-        MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+        MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_proposal,
+        test_sync_status,
     };
 
     // ---- Named constants for test data ----
@@ -1530,44 +1625,6 @@ mod tests {
 
     /// Default mock prover delay for recovery tests (minimal).
     const MOCK_PROVER_DELAY: Duration = Duration::from_millis(1);
-
-    fn test_proposal(block_number: u64) -> Proposal {
-        Proposal {
-            output_root: B256::repeat_byte(block_number as u8),
-            signature: Bytes::from(vec![0xab; 65]),
-            l1_origin_hash: B256::repeat_byte(0x02),
-            l1_origin_number: 100 + block_number,
-            l2_block_number: block_number,
-            prev_output_root: B256::repeat_byte(0x03),
-            config_hash: B256::repeat_byte(0x04),
-        }
-    }
-
-    /// A mock prover that returns immediately with a configurable delay.
-    #[derive(Debug)]
-    struct MockProver {
-        delay: Duration,
-    }
-
-    #[async_trait]
-    impl ProverClient for MockProver {
-        async fn prove(
-            &self,
-            request: base_proof_primitives::ProofRequest,
-        ) -> Result<ProofResult, Box<dyn std::error::Error + Send + Sync>> {
-            tokio::time::sleep(self.delay).await;
-
-            let block_number = request.claimed_l2_block_number;
-            let aggregate_proposal = test_proposal(block_number);
-
-            // Generate per-block proposals.
-            let start = block_number.saturating_sub(TEST_BLOCK_INTERVAL);
-            let proposals: Vec<Proposal> =
-                ((start + 1)..=block_number).map(test_proposal).collect();
-
-            Ok(ProofResult::Tee { aggregate_proposal, proposals })
-        }
-    }
 
     // ---- Helper builders for game data ----
 
@@ -1629,8 +1686,10 @@ mod tests {
     ) -> TestPipeline {
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> =
-            Arc::new(MockProver { delay: Duration::from_millis(10) });
+        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
+            delay: Duration::from_millis(10),
+            block_interval: pipeline_config.driver.block_interval,
+        });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_block_number, B256::ZERO),
             output_roots: HashMap::new(),
@@ -1681,7 +1740,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver { delay: MOCK_PROVER_DELAY });
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval });
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
@@ -2047,12 +2107,14 @@ mod tests {
 
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(99), // stale — will be recomputed
-                output_root: B256::repeat_byte(0xDD),
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(99), // stale — will be recomputed
+                    output_root: B256::repeat_byte(0xDD),
+                    l2_block_number: TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         let pipeline = recovery_pipeline_with_roots(
@@ -2080,12 +2142,14 @@ mod tests {
 
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 5, map: HashMap::new() },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(99),
-                output_root: B256::repeat_byte(0xDD),
-                l2_block_number: 5 * TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(99),
+                    output_root: B256::repeat_byte(0xDD),
+                    l2_block_number: 5 * TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         let pipeline = recovery_pipeline_with_roots(
@@ -2127,12 +2191,14 @@ mod tests {
 
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(0),
-                output_root: first_info.root_claim,
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(0),
+                    output_root: first_info.root_claim,
+                    l2_block_number: TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         let pipeline = recovery_pipeline_with_roots(
@@ -2167,12 +2233,14 @@ mod tests {
 
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(0),
-                output_root: first_info.root_claim,
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(0),
+                    output_root: first_info.root_claim,
+                    l2_block_number: TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         let pipeline = recovery_pipeline_with_roots(
@@ -2275,12 +2343,14 @@ mod tests {
         let mut state = PipelineState::new();
         state.cached_recovery = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 10, map: HashMap::new() },
-            anchor_root: B256::ZERO,
-            state: RecoveredState {
-                parent_address: proxy_addr(5),
-                output_root: B256::repeat_byte(0x11),
-                l2_block_number: TEST_BLOCK_INTERVAL,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::ZERO,
+                state: RecoveredState {
+                    parent_address: proxy_addr(5),
+                    output_root: B256::repeat_byte(0x11),
+                    l2_block_number: TEST_BLOCK_INTERVAL,
+                },
+            }),
         });
 
         state.reset();
@@ -2412,12 +2482,14 @@ mod tests {
         )]);
         let mut cache = Some(CachedRecovery {
             game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            anchor_root: B256::repeat_byte(0xAA), // different from test_anchor_root
-            state: RecoveredState {
-                parent_address: proxy_addr(99), // stale — will be recomputed
-                output_root: B256::repeat_byte(0xDD),
-                l2_block_number: 9999,
-            },
+            walk: Some(CachedWalk {
+                anchor_root: B256::repeat_byte(0xAA), // different from test_anchor_root
+                state: RecoveredState {
+                    parent_address: proxy_addr(99), // stale — will be recomputed
+                    output_root: B256::repeat_byte(0xDD),
+                    l2_block_number: 9999,
+                },
+            }),
         });
 
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -2427,7 +2499,7 @@ mod tests {
         assert_eq!(state.parent_address, proxy_addr(0));
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
         // Cache should be repopulated with the new anchor root.
-        assert_eq!(cache.as_ref().unwrap().anchor_root, B256::ZERO);
+        assert_eq!(cache.as_ref().unwrap().walk.as_ref().unwrap().anchor_root, B256::ZERO);
     }
 
     // ---- Recovery: intermediate output root verification ----
@@ -2620,37 +2692,13 @@ mod tests {
     const SUBMIT_INTERMEDIATE_INTERVAL: u64 = 2;
 
     fn submit_pipeline(output_roots: HashMap<u64, B256>) -> TestPipeline {
-        let cancel = CancellationToken::new();
-        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
-        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
-        let prover: Arc<dyn ProverClient> = Arc::new(MockProver { delay: MOCK_PROVER_DELAY });
-        let rollup = Arc::new(MockRollupClient {
-            sync_status: test_sync_status(0, B256::ZERO),
+        recovery_pipeline_full(
+            MockDisputeGameFactory::with_count(0),
+            MockAggregateVerifier::empty(),
             output_roots,
-        });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
-
-        ProvingPipeline::new(
-            PipelineConfig {
-                max_parallel_proofs: 1,
-                max_retries: 1,
-                tee_prover_registry_address: None,
-                driver: DriverConfig {
-                    block_interval: SUBMIT_BLOCK_INTERVAL,
-                    intermediate_block_interval: SUBMIT_INTERMEDIATE_INTERVAL,
-                    ..Default::default()
-                },
-            },
-            prover,
-            l1,
-            l2,
-            rollup,
-            anchor_registry,
-            Arc::new(MockDisputeGameFactory::with_count(0)),
-            Arc::new(MockAggregateVerifier::empty()),
-            Arc::new(MockOutputProposer),
-            cancel,
+            TEST_ANCHOR_BLOCK,
+            SUBMIT_BLOCK_INTERVAL,
+            SUBMIT_INTERMEDIATE_INTERVAL,
         )
     }
 

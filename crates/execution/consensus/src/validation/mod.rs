@@ -10,7 +10,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::DepositReceipt;
+use base_alloy_consensus::DepositReceiptExt;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
@@ -88,7 +88,7 @@ where
 ///
 /// If `receipt_root_bloom` is provided, the pre-computed receipt root and logs bloom are used
 /// instead of computing them from the receipts.
-pub fn validate_block_post_execution<R: DepositReceipt>(
+pub fn validate_block_post_execution<R: DepositReceiptExt>(
     header: impl BlockHeader,
     chain_spec: impl BaseUpgrades,
     result: &BlockExecutionResult<R>,
@@ -156,7 +156,7 @@ pub fn validate_block_post_execution<R: DepositReceipt>(
 }
 
 /// Verify the calculated receipts root against the expected receipts root.
-fn verify_receipts_optimism<R: DepositReceipt>(
+fn verify_receipts_optimism<R: DepositReceiptExt>(
     expected_receipts_root: B256,
     expected_logs_bloom: Bloom,
     receipts: &[R],
@@ -212,7 +212,7 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Bytes, b256, hex};
     use base_alloy_chains::BaseUpgrade;
-    use base_alloy_consensus::{OpReceipt, OpTxEnvelope};
+    use base_alloy_consensus::{BaseReceipt, BaseTxEnvelope};
     use base_execution_chainspec::{BASE_SEPOLIA, BaseChainSpec};
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 
@@ -515,7 +515,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let mut body = alloy_consensus::BlockBody::<OpTxEnvelope> {
+        let mut body = alloy_consensus::BlockBody::<BaseTxEnvelope> {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(Default::default()),
@@ -538,7 +538,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = BlockExecutionResult::<OpReceipt> {
+        let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: BLOB_GAS_USED,
             receipts: vec![],
             requests: Requests::default(),
@@ -559,7 +559,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = BlockExecutionResult::<OpReceipt> {
+        let result = BlockExecutionResult::<BaseReceipt> {
             blob_gas_used: BLOB_GAS_USED,
             receipts: vec![],
             requests: Requests::default(),

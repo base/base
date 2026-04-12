@@ -6,81 +6,81 @@ use alloy_consensus::{
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, ChainId, Signature, TxHash, bytes::BufMut};
 
-pub use crate::transaction::envelope::OpTypedTransaction;
-use crate::{OpTxEnvelope, OpTxType, TxDeposit};
+pub use crate::transaction::envelope::BaseTypedTransaction;
+use crate::{BaseTxEnvelope, BaseTxType, TxDeposit};
 
-impl From<TxLegacy> for OpTypedTransaction {
+impl From<TxLegacy> for BaseTypedTransaction {
     fn from(tx: TxLegacy) -> Self {
         Self::Legacy(tx)
     }
 }
 
-impl From<TxEip2930> for OpTypedTransaction {
+impl From<TxEip2930> for BaseTypedTransaction {
     fn from(tx: TxEip2930) -> Self {
         Self::Eip2930(tx)
     }
 }
 
-impl From<TxEip1559> for OpTypedTransaction {
+impl From<TxEip1559> for BaseTypedTransaction {
     fn from(tx: TxEip1559) -> Self {
         Self::Eip1559(tx)
     }
 }
 
-impl From<TxEip7702> for OpTypedTransaction {
+impl From<TxEip7702> for BaseTypedTransaction {
     fn from(tx: TxEip7702) -> Self {
         Self::Eip7702(tx)
     }
 }
 
-impl From<TxDeposit> for OpTypedTransaction {
+impl From<TxDeposit> for BaseTypedTransaction {
     fn from(tx: TxDeposit) -> Self {
         Self::Deposit(tx)
     }
 }
 
-impl From<OpTxEnvelope> for OpTypedTransaction {
-    fn from(envelope: OpTxEnvelope) -> Self {
+impl From<BaseTxEnvelope> for BaseTypedTransaction {
+    fn from(envelope: BaseTxEnvelope) -> Self {
         match envelope {
-            OpTxEnvelope::Legacy(tx) => Self::Legacy(tx.strip_signature()),
-            OpTxEnvelope::Eip2930(tx) => Self::Eip2930(tx.strip_signature()),
-            OpTxEnvelope::Eip1559(tx) => Self::Eip1559(tx.strip_signature()),
-            OpTxEnvelope::Eip7702(tx) => Self::Eip7702(tx.strip_signature()),
-            OpTxEnvelope::Deposit(tx) => Self::Deposit(tx.into_inner()),
+            BaseTxEnvelope::Legacy(tx) => Self::Legacy(tx.strip_signature()),
+            BaseTxEnvelope::Eip2930(tx) => Self::Eip2930(tx.strip_signature()),
+            BaseTxEnvelope::Eip1559(tx) => Self::Eip1559(tx.strip_signature()),
+            BaseTxEnvelope::Eip7702(tx) => Self::Eip7702(tx.strip_signature()),
+            BaseTxEnvelope::Deposit(tx) => Self::Deposit(tx.into_inner()),
         }
     }
 }
 
-impl<Eip4844> TryFrom<OpTypedTransaction> for EthereumTypedTransaction<Eip4844> {
-    type Error = ValueError<OpTypedTransaction>;
+impl<Eip4844> TryFrom<BaseTypedTransaction> for EthereumTypedTransaction<Eip4844> {
+    type Error = ValueError<BaseTypedTransaction>;
 
-    fn try_from(value: OpTypedTransaction) -> Result<Self, Self::Error> {
+    fn try_from(value: BaseTypedTransaction) -> Result<Self, Self::Error> {
         value.try_into_eth_variant()
     }
 }
 
 #[cfg(feature = "alloy-compat")]
-impl From<OpTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
-    fn from(tx: OpTypedTransaction) -> Self {
+impl From<BaseTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
+    fn from(tx: BaseTypedTransaction) -> Self {
         match tx {
-            OpTypedTransaction::Legacy(tx) => tx.into(),
-            OpTypedTransaction::Eip2930(tx) => tx.into(),
-            OpTypedTransaction::Eip1559(tx) => tx.into(),
-            OpTypedTransaction::Eip7702(tx) => tx.into(),
-            OpTypedTransaction::Deposit(tx) => tx.into(),
+            BaseTypedTransaction::Legacy(tx) => tx.into(),
+            BaseTypedTransaction::Eip2930(tx) => tx.into(),
+            BaseTypedTransaction::Eip1559(tx) => tx.into(),
+            BaseTypedTransaction::Eip7702(tx) => tx.into(),
+            BaseTypedTransaction::Deposit(tx) => tx.into(),
         }
     }
 }
 
-impl OpTypedTransaction {
-    /// Return the [`OpTxType`] of the inner txn.
-    pub const fn tx_type(&self) -> OpTxType {
+impl BaseTypedTransaction {
+    /// Return the [`BaseTxType`] of the inner txn.
+    pub const fn tx_type(&self) -> BaseTxType {
         match self {
-            Self::Legacy(_) => OpTxType::Legacy,
-            Self::Eip2930(_) => OpTxType::Eip2930,
-            Self::Eip1559(_) => OpTxType::Eip1559,
-            Self::Eip7702(_) => OpTxType::Eip7702,
-            Self::Deposit(_) => OpTxType::Deposit,
+            Self::Legacy(_) => BaseTxType::Legacy,
+            Self::Eip2930(_) => BaseTxType::Eip2930,
+            Self::Eip1559(_) => BaseTxType::Eip1559,
+            Self::Eip7702(_) => BaseTxType::Eip7702,
+            Self::Deposit(_) => BaseTxType::Deposit,
         }
     }
 
@@ -147,10 +147,10 @@ impl OpTypedTransaction {
         }
     }
 
-    /// Convenience function to convert this typed transaction into an [`OpTxEnvelope`].
+    /// Convenience function to convert this typed transaction into an [`BaseTxEnvelope`].
     ///
-    /// Note: If this is a [`OpTypedTransaction::Deposit`] variant, the signature will be ignored.
-    pub fn into_envelope(self, signature: Signature) -> OpTxEnvelope {
+    /// Note: If this is a [`BaseTypedTransaction::Deposit`] variant, the signature will be ignored.
+    pub fn into_envelope(self, signature: Signature) -> BaseTxEnvelope {
         self.into_signed(signature).into()
     }
 
@@ -182,7 +182,7 @@ impl OpTypedTransaction {
     }
 }
 
-impl RlpEcdsaEncodableTx for OpTypedTransaction {
+impl RlpEcdsaEncodableTx for BaseTypedTransaction {
     fn rlp_encoded_fields_length(&self) -> usize {
         match self {
             Self::Legacy(tx) => tx.rlp_encoded_fields_length(),
@@ -264,7 +264,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
     }
 }
 
-impl SignableTransaction<Signature> for OpTypedTransaction {
+impl SignableTransaction<Signature> for BaseTypedTransaction {
     fn set_chain_id(&mut self, chain_id: ChainId) {
         match self {
             Self::Legacy(tx) => tx.set_chain_id(chain_id),
@@ -304,7 +304,7 @@ impl SignableTransaction<Signature> for OpTypedTransaction {
     }
 }
 
-impl InMemorySize for OpTypedTransaction {
+impl InMemorySize for BaseTypedTransaction {
     fn size(&self) -> usize {
         match self {
             Self::Legacy(tx) => tx.size(),

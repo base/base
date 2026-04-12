@@ -8,16 +8,16 @@ use base_alloy_chains::{BaseChainUpgrades, BaseUpgrades};
 use revm::{Inspector, database::State};
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutor, OpAlloyReceiptBuilder, OpEvmFactory,
-    OpReceiptBuilder, OpTxEnv,
+    AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmFactory,
+    BaseReceiptBuilder, BaseTxEnv,
 };
 
 /// Ethereum block executor factory.
 #[derive(Debug, Clone, Default, Copy)]
 pub struct BaseBlockExecutorFactory<
-    R = OpAlloyReceiptBuilder,
+    R = AlloyReceiptBuilder,
     Spec = BaseChainUpgrades,
-    EvmFactory = OpEvmFactory,
+    EvmFactory = BaseEvmFactory,
 > {
     /// Receipt builder.
     receipt_builder: R,
@@ -29,7 +29,7 @@ pub struct BaseBlockExecutorFactory<
 
 impl<R, Spec, EvmFactory> BaseBlockExecutorFactory<R, Spec, EvmFactory> {
     /// Creates a new [`BaseBlockExecutorFactory`] with the given spec, [`EvmFactory`], and
-    /// [`OpReceiptBuilder`].
+    /// [`BaseReceiptBuilder`].
     pub const fn new(receipt_builder: R, spec: Spec, evm_factory: EvmFactory) -> Self {
         Self { receipt_builder, spec, evm_factory }
     }
@@ -52,10 +52,10 @@ impl<R, Spec, EvmFactory> BaseBlockExecutorFactory<R, Spec, EvmFactory> {
 
 impl<R, Spec, EvmF> BlockExecutorFactory for BaseBlockExecutorFactory<R, Spec, EvmF>
 where
-    R: OpReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
+    R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
     Spec: BaseUpgrades,
     EvmF: EvmFactory<
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + OpTxEnv,
+        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
     >,
     Self: 'static,
 {

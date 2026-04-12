@@ -248,7 +248,7 @@ mod tests {
         let block = BaseBlock {
             header: alloy_consensus::Header { number: 1, ..Default::default() },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_alloy_consensus::OpTxEnvelope::Legacy(
+                transactions: vec![base_alloy_consensus::BaseTxEnvelope::Legacy(
                     alloy_consensus::Signed::new_unchecked(
                         alloy_consensus::TxLegacy {
                             chain_id: Some(1),
@@ -283,7 +283,7 @@ mod tests {
         let block = BaseBlock {
             header: alloy_consensus::Header { number: 1, ..Default::default() },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_alloy_consensus::OpTxEnvelope::Deposit(
+                transactions: vec![base_alloy_consensus::BaseTxEnvelope::Deposit(
                     alloy_primitives::Sealed::new(base_alloy_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
                         ..Default::default()
@@ -328,7 +328,7 @@ mod tests {
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_alloy_consensus::OpTxEnvelope::Deposit(
+                transactions: vec![base_alloy_consensus::BaseTxEnvelope::Deposit(
                     alloy_primitives::Sealed::new(base_alloy_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_ECOTONE_INFO_TX),
                         ..Default::default()
@@ -377,7 +377,7 @@ mod tests {
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
-                transactions: vec![base_alloy_consensus::OpTxEnvelope::Deposit(
+                transactions: vec![base_alloy_consensus::BaseTxEnvelope::Deposit(
                     alloy_primitives::Sealed::new(base_alloy_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_ISTHMUS_INFO_TX),
                         ..Default::default()

@@ -1,6 +1,6 @@
 //! Block type for Base chains.
 
-use crate::OpTxEnvelope;
+use crate::BaseTxEnvelope;
 
 /// A block type for Base chains.
-pub type BaseBlock = alloy_consensus::Block<OpTxEnvelope>;
+pub type BaseBlock = alloy_consensus::Block<BaseTxEnvelope>;

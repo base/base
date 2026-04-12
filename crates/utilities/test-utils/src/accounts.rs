@@ -5,7 +5,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, FixedBytes, TxHash, address, hex};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_common_rpc_types::OpTransactionRequest;
+use base_common_rpc_types::BaseTransactionRequest;
 use eyre::{Result, eyre};
 
 use crate::DEVNET_CHAIN_ID;
@@ -76,7 +76,7 @@ impl Account {
         bytecode: Bytes,
         nonce: u64,
     ) -> Result<(Bytes, Address, TxHash)> {
-        let tx_request = OpTransactionRequest::default()
+        let tx_request = BaseTransactionRequest::default()
             .from(self.address())
             .transaction_type(EIP1559_TX_TYPE)
             .gas_limit(3_000_000)
@@ -96,7 +96,7 @@ impl Account {
     }
 
     /// Sign a `TransactionRequest` and return the signed bytes.
-    pub fn sign_txn_request(&self, tx_request: OpTransactionRequest) -> Result<(Bytes, TxHash)> {
+    pub fn sign_txn_request(&self, tx_request: BaseTransactionRequest) -> Result<(Bytes, TxHash)> {
         let tx_request = tx_request
             .from(self.address())
             .transaction_type(EIP1559_TX_TYPE)

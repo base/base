@@ -6,12 +6,12 @@
 
 use std::sync::LazyLock;
 
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
 };
-use base_proof_primitives::{ProofEncoder, Proposal};
+use base_proof_primitives::Proposal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tracing::info;
 
@@ -49,25 +49,6 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
         return ProposerError::GameAlreadyExists;
     }
     ProposerError::TxManager(err)
-}
-
-/// Builds the proof data for `AggregateVerifier.initialize()`.
-///
-/// Format: `proofType(1) + l1OriginHash(32) + l1OriginNumber(32) + signature(65)` = 130 bytes.
-///
-/// Matches Go's `buildProofData()` in `driver.go`.
-pub fn build_proof_data(proposal: &Proposal) -> Result<Bytes, ProposerError> {
-    ProofEncoder::encode_proof_bytes(
-        &proposal.signature,
-        proposal.l1_origin_hash,
-        proposal.l1_origin_number,
-    )
-    .map_err(|e| ProposerError::Internal(e.to_string()))
-}
-
-/// Returns true if the error indicates the game already exists.
-pub const fn is_game_already_exists(e: &ProposerError) -> bool {
-    matches!(e, ProposerError::GameAlreadyExists)
 }
 
 /// Trait for submitting output proposals to L1 via dispute game creation.
@@ -137,7 +118,8 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
-        let proof_data = build_proof_data(proposal)?;
+        let proof_data =
+            proposal.build_proof_data().map_err(|e| ProposerError::Internal(e.to_string()))?;
         let extra_data = encode_extra_data(l2_block_number, parent_address, intermediate_roots);
         let calldata =
             encode_create_calldata(self.game_type, proposal.output_root, extra_data, proof_data);
@@ -184,7 +166,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
-    use alloy_primitives::{Address, Bloom};
+    use alloy_primitives::{Address, Bloom, Bytes};
     use alloy_rpc_types_eth::TransactionReceipt;
     use base_proof_primitives::PROOF_TYPE_TEE;
     use base_tx_manager::{SendHandle, SendResponse, TxManagerError};
@@ -299,13 +281,13 @@ mod tests {
 
     #[test]
     fn test_build_proof_data_length() {
-        let proof = build_proof_data(&test_proposal()).unwrap();
+        let proof = test_proposal().build_proof_data().unwrap();
         assert_eq!(proof.len(), EXPECTED_PROOF_DATA_LEN);
     }
 
     #[test]
     fn test_build_proof_data_type_byte() {
-        let proof = build_proof_data(&test_proposal()).unwrap();
+        let proof = test_proposal().build_proof_data().unwrap();
         assert_eq!(proof[0], PROOF_TYPE_TEE);
     }
 
@@ -317,7 +299,7 @@ mod tests {
     #[case::v_5_rejected(5, None)]
     fn test_build_proof_data_v_value(#[case] v_input: u8, #[case] expected: Option<u8>) {
         let proposal = proposal_with_v(v_input);
-        let result = build_proof_data(&proposal);
+        let result = proposal.build_proof_data();
 
         match expected {
             Some(v) => {
@@ -438,6 +420,6 @@ mod tests {
     #[case::game_already_exists(ProposerError::GameAlreadyExists, true)]
     #[case::other_error(ProposerError::Contract("other".into()), false)]
     fn test_is_game_already_exists(#[case] err: ProposerError, #[case] expected: bool) {
-        assert_eq!(is_game_already_exists(&err), expected);
+        assert_eq!(err.is_game_already_exists(), expected);
     }
 }

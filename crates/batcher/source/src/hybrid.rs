@@ -198,7 +198,7 @@ mod tests {
 
     use alloy_consensus::BlockBody;
     use alloy_primitives::Sealed;
-    use base_alloy_consensus::{OpTxEnvelope, TxDeposit};
+    use base_alloy_consensus::{BaseTxEnvelope, TxDeposit};
     use base_protocol::L1BlockInfoBedrock;
     use base_runtime::{Config, Runner};
     use futures::{StreamExt, stream::BoxStream};
@@ -390,8 +390,10 @@ mod tests {
         ))
         .encode_calldata();
 
-        let deposit =
-            OpTxEnvelope::Deposit(Sealed::new(TxDeposit { input: calldata, ..Default::default() }));
+        let deposit = BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+            input: calldata,
+            ..Default::default()
+        }));
 
         let block1 = BaseBlock {
             header: alloy_consensus::Header {

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
-use base_alloy_consensus::OpTransactionSigned;
+use base_alloy_consensus::BaseTransactionSigned;
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,
@@ -58,14 +58,15 @@ where
         let sender = tx.sender;
 
         // Decode the EIP-2718 transaction bytes
-        let consensus_tx = OpTransactionSigned::decode_2718(&mut tx.raw.as_ref()).map_err(|e| {
-            BuilderApiMetrics::decode_errors().increment(1);
-            ErrorObjectOwned::owned(
-                ErrorCode::InvalidParams.code(),
-                format!("failed to decode transaction: {e}"),
-                None::<()>,
-            )
-        })?;
+        let consensus_tx =
+            BaseTransactionSigned::decode_2718(&mut tx.raw.as_ref()).map_err(|e| {
+                BuilderApiMetrics::decode_errors().increment(1);
+                ErrorObjectOwned::owned(
+                    ErrorCode::InvalidParams.code(),
+                    format!("failed to decode transaction: {e}"),
+                    None::<()>,
+                )
+            })?;
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
@@ -104,7 +105,7 @@ mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
-    use base_alloy_consensus::{OpTransactionSigned, OpTypedTransaction, TxDeposit};
+    use base_alloy_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
@@ -127,7 +128,7 @@ mod tests {
             is_system_transaction: false,
             input: Default::default(),
         };
-        let signed_tx: OpTransactionSigned = deposit_tx.into();
+        let signed_tx: BaseTransactionSigned = deposit_tx.into();
         let encoded = signed_tx.encoded_2718();
         (sender, Bytes::from(encoded))
     }
@@ -147,7 +148,7 @@ mod tests {
             input: Default::default(),
         };
         let sig = Signature::new(U256::from(1), U256::from(2), false);
-        let signed = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip1559(tx), sig);
+        let signed = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip1559(tx), sig);
         let encoded = signed.encoded_2718();
         (sender, Bytes::from(encoded))
     }

@@ -12,7 +12,7 @@ use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
+use base_alloy_consensus::{BaseBlock, BaseTxEnvelope};
 use base_alloy_flashblocks::Flashblock;
 use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use rayon::prelude::*;
@@ -409,13 +409,13 @@ where
 
             // Parallel sender recovery - batch all ECDSA operations upfront
             let recovery_start = Instant::now();
-            let txs_with_senders: Vec<(OpTxEnvelope, Address)> = assembled
+            let txs_with_senders: Vec<(BaseTxEnvelope, Address)> = assembled
                 .block
                 .body
                 .transactions
                 .par_iter()
                 .cloned()
-                .map(|tx| -> Result<(OpTxEnvelope, Address)> {
+                .map(|tx| -> Result<(BaseTxEnvelope, Address)> {
                     let tx_hash = tx.tx_hash();
                     let sender = match prev_pending_blocks
                         .as_ref()

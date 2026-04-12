@@ -12,7 +12,7 @@ use alloy_network::TxSignerSync;
 use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
-use base_alloy_consensus::{OpTransactionSigned, OpTypedTransaction};
+use base_alloy_consensus::{BaseTransactionSigned, BaseTypedTransaction};
 use base_execution_chainspec::BaseChainSpec;
 pub use contracts::*;
 pub use driver::*;
@@ -29,12 +29,12 @@ use crate::BuilderConfig;
 /// Signs an OP transaction and returns the recovered signed transaction.
 pub fn sign_op_tx(
     signer: &PrivateKeySigner,
-    mut tx: OpTypedTransaction,
-) -> eyre::Result<Recovered<OpTransactionSigned>> {
+    mut tx: BaseTypedTransaction,
+) -> eyre::Result<Recovered<BaseTransactionSigned>> {
     let signature = signer
         .sign_transaction_sync(&mut tx)
         .map_err(|e| eyre::eyre!("failed to sign transaction: {e}"))?;
-    let signed = OpTransactionSigned::new_unhashed(tx, signature);
+    let signed = BaseTransactionSigned::new_unhashed(tx, signature);
     Ok(Recovered::new_unchecked(signed, signer.address()))
 }
 

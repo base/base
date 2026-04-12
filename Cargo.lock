@@ -4880,7 +4880,6 @@ dependencies = [
  "alloy-transport",
  "alloy-transport-http",
  "async-trait",
- "axum",
  "base-alloy-consensus",
  "base-alloy-network",
  "base-balance-monitor",

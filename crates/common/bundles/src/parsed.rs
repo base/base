@@ -3,7 +3,7 @@
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_primitives::TxHash;
 use alloy_provider::network::eip2718::Decodable2718;
-use base_alloy_consensus::OpTxEnvelope;
+use base_alloy_consensus::BaseTxEnvelope;
 use uuid::Uuid;
 
 use crate::Bundle;
@@ -14,7 +14,7 @@ use crate::Bundle;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedBundle {
     /// Decoded and recovered transactions.
-    pub txs: Vec<Recovered<OpTxEnvelope>>,
+    pub txs: Vec<Recovered<BaseTxEnvelope>>,
     /// The target block number for inclusion.
     pub block_number: u64,
     /// Minimum flashblock number for inclusion.
@@ -37,11 +37,11 @@ impl TryFrom<Bundle> for ParsedBundle {
     type Error = String;
 
     fn try_from(bundle: Bundle) -> Result<Self, Self::Error> {
-        let txs: Vec<Recovered<OpTxEnvelope>> = bundle
+        let txs: Vec<Recovered<BaseTxEnvelope>> = bundle
             .txs
             .into_iter()
             .map(|tx| {
-                OpTxEnvelope::decode_2718_exact(tx.iter().as_slice())
+                BaseTxEnvelope::decode_2718_exact(tx.iter().as_slice())
                     .map_err(|e| format!("Failed to decode transaction: {e:?}"))
                     .and_then(|tx| {
                         tx.try_into_recovered().map_err(|e| {
@@ -49,7 +49,7 @@ impl TryFrom<Bundle> for ParsedBundle {
                         })
                     })
             })
-            .collect::<Result<Vec<Recovered<OpTxEnvelope>>, String>>()?;
+            .collect::<Result<Vec<Recovered<BaseTxEnvelope>>, String>>()?;
 
         let uuid = bundle
             .replacement_uuid

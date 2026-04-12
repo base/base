@@ -7,10 +7,10 @@ use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
-use base_alloy_consensus::{OpTxEnvelope, OpTypedTransaction, TxDeposit};
+use base_alloy_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
 use serde::{Deserialize, Serialize};
 
-/// Builder for [`OpTypedTransaction`].
+/// Builder for [`BaseTypedTransaction`].
 #[derive(
     Clone,
     Debug,
@@ -25,9 +25,9 @@ use serde::{Deserialize, Serialize};
     Deserialize,
 )]
 #[serde(transparent)]
-pub struct OpTransactionRequest(TransactionRequest);
+pub struct BaseTransactionRequest(TransactionRequest);
 
-impl OpTransactionRequest {
+impl BaseTransactionRequest {
     /// Sets the `from` field in the call to the provided address
     #[inline]
     pub const fn from(mut self, from: Address) -> Self {
@@ -104,21 +104,21 @@ impl OpTransactionRequest {
         self
     }
 
-    /// Builds [`OpTypedTransaction`] from this builder. See [`TransactionRequest::build_typed_tx`]
+    /// Builds [`BaseTypedTransaction`] from this builder. See [`TransactionRequest::build_typed_tx`]
     /// for more info.
     ///
     /// Note that EIP-4844 transactions are not supported on Base chains and will be converted into
     /// EIP-1559 transactions.
     #[allow(clippy::result_large_err)]
-    pub fn build_typed_tx(self) -> Result<OpTypedTransaction, Self> {
+    pub fn build_typed_tx(self) -> Result<BaseTypedTransaction, Self> {
         let tx = self.0.build_typed_tx().map_err(Self)?;
         match tx {
-            TypedTransaction::Legacy(tx) => Ok(OpTypedTransaction::Legacy(tx)),
-            TypedTransaction::Eip1559(tx) => Ok(OpTypedTransaction::Eip1559(tx)),
-            TypedTransaction::Eip2930(tx) => Ok(OpTypedTransaction::Eip2930(tx)),
+            TypedTransaction::Legacy(tx) => Ok(BaseTypedTransaction::Legacy(tx)),
+            TypedTransaction::Eip1559(tx) => Ok(BaseTypedTransaction::Eip1559(tx)),
+            TypedTransaction::Eip2930(tx) => Ok(BaseTypedTransaction::Eip2930(tx)),
             TypedTransaction::Eip4844(tx) => {
                 let tx: TxEip4844 = tx.into();
-                Ok(OpTypedTransaction::Eip1559(TxEip1559 {
+                Ok(BaseTypedTransaction::Eip1559(TxEip1559 {
                     chain_id: tx.chain_id,
                     nonce: tx.nonce,
                     gas_limit: tx.gas_limit,
@@ -130,18 +130,18 @@ impl OpTransactionRequest {
                     input: tx.input,
                 }))
             }
-            TypedTransaction::Eip7702(tx) => Ok(OpTypedTransaction::Eip7702(tx)),
+            TypedTransaction::Eip7702(tx) => Ok(BaseTypedTransaction::Eip7702(tx)),
         }
     }
 }
 
-impl From<OpTransactionRequest> for TransactionRequest {
-    fn from(value: OpTransactionRequest) -> Self {
+impl From<BaseTransactionRequest> for TransactionRequest {
+    fn from(value: BaseTransactionRequest) -> Self {
         value.0
     }
 }
 
-impl From<TxDeposit> for OpTransactionRequest {
+impl From<TxDeposit> for BaseTransactionRequest {
     fn from(tx: TxDeposit) -> Self {
         let TxDeposit {
             source_hash: _,
@@ -165,13 +165,13 @@ impl From<TxDeposit> for OpTransactionRequest {
     }
 }
 
-impl From<Sealed<TxDeposit>> for OpTransactionRequest {
+impl From<Sealed<TxDeposit>> for BaseTransactionRequest {
     fn from(value: Sealed<TxDeposit>) -> Self {
         value.into_inner().into()
     }
 }
 
-impl<T> From<Signed<T, Signature>> for OpTransactionRequest
+impl<T> From<Signed<T, Signature>> for BaseTransactionRequest
 where
     T: SignableTransaction<Signature> + Into<TransactionRequest>,
 {
@@ -188,31 +188,31 @@ where
     }
 }
 
-impl From<OpTypedTransaction> for OpTransactionRequest {
-    fn from(tx: OpTypedTransaction) -> Self {
+impl From<BaseTypedTransaction> for BaseTransactionRequest {
+    fn from(tx: BaseTypedTransaction) -> Self {
         match tx {
-            OpTypedTransaction::Legacy(tx) => Self(tx.into()),
-            OpTypedTransaction::Eip2930(tx) => Self(tx.into()),
-            OpTypedTransaction::Eip1559(tx) => Self(tx.into()),
-            OpTypedTransaction::Eip7702(tx) => Self(tx.into()),
-            OpTypedTransaction::Deposit(tx) => tx.into(),
+            BaseTypedTransaction::Legacy(tx) => Self(tx.into()),
+            BaseTypedTransaction::Eip2930(tx) => Self(tx.into()),
+            BaseTypedTransaction::Eip1559(tx) => Self(tx.into()),
+            BaseTypedTransaction::Eip7702(tx) => Self(tx.into()),
+            BaseTypedTransaction::Deposit(tx) => tx.into(),
         }
     }
 }
 
-impl From<OpTxEnvelope> for OpTransactionRequest {
-    fn from(value: OpTxEnvelope) -> Self {
+impl From<BaseTxEnvelope> for BaseTransactionRequest {
+    fn from(value: BaseTxEnvelope) -> Self {
         match value {
-            OpTxEnvelope::Legacy(tx) => tx.into(),
-            OpTxEnvelope::Eip2930(tx) => tx.into(),
-            OpTxEnvelope::Eip1559(tx) => tx.into(),
-            OpTxEnvelope::Eip7702(tx) => tx.into(),
-            OpTxEnvelope::Deposit(tx) => tx.into(),
+            BaseTxEnvelope::Legacy(tx) => tx.into(),
+            BaseTxEnvelope::Eip2930(tx) => tx.into(),
+            BaseTxEnvelope::Eip1559(tx) => tx.into(),
+            BaseTxEnvelope::Eip7702(tx) => tx.into(),
+            BaseTxEnvelope::Deposit(tx) => tx.into(),
         }
     }
 }
 
-impl TransactionBuilder7702 for OpTransactionRequest {
+impl TransactionBuilder7702 for BaseTransactionRequest {
     fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
         self.as_ref().authorization_list()
     }

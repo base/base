@@ -89,8 +89,8 @@
 use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
-use base_alloy_rpc_types_engine::OpExecutionData;
-use base_execution_rpc::{OpEngineApi, engine::OP_ENGINE_CAPABILITIES};
+use base_alloy_rpc_types_engine::ExecutionData;
+use base_execution_rpc::{BaseEngineApi, engine::OP_ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{
     AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, NodeTypes,
@@ -102,7 +102,7 @@ use reth_rpc_engine_api::{EngineApi, EngineCapabilities};
 
 use crate::OP_NAME_CLIENT;
 
-/// Builder for basic [`OpEngineApi`] implementation.
+/// Builder for basic [`BaseEngineApi`] implementation.
 #[derive(Debug, Default, Clone)]
 pub struct OpEngineApiBuilder<EV> {
     engine_validator_builder: EV,
@@ -113,13 +113,13 @@ where
     N: FullNodeComponents<
         Types: NodeTypes<
             ChainSpec: EthereumHardforks,
-            Payload: EngineTypes<ExecutionData = OpExecutionData>,
+            Payload: EngineTypes<ExecutionData = ExecutionData>,
         >,
     >,
     EV: PayloadValidatorBuilder<N>,
     EV::Validator: EngineApiValidator<<N::Types as NodeTypes>::Payload>,
 {
-    type EngineApi = OpEngineApi<
+    type EngineApi = BaseEngineApi<
         N::Provider,
         <N::Types as NodeTypes>::Payload,
         N::Pool,
@@ -151,6 +151,6 @@ where
             ctx.node.network().clone(),
         );
 
-        Ok(OpEngineApi::new(inner))
+        Ok(BaseEngineApi::new(inner))
     }
 }

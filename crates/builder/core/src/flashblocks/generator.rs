@@ -525,7 +525,7 @@ fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
 mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
-    use base_alloy_consensus::OpPrimitives;
+    use base_alloy_consensus::BasePrimitives;
     use base_execution_payload_builder::{PayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
@@ -631,13 +631,13 @@ mod tests {
 
     #[derive(Clone, Debug, Default)]
     struct MockPayload {
-        block: SealedBlock<<OpPrimitives as NodePrimitives>::Block>,
+        block: SealedBlock<<BasePrimitives as NodePrimitives>::Block>,
         fees: U256,
         requests: Option<Requests>,
     }
 
     impl BuiltPayload for MockPayload {
-        type Primitives = OpPrimitives;
+        type Primitives = BasePrimitives;
 
         fn block(&self) -> &SealedBlock<<Self::Primitives as NodePrimitives>::Block> {
             &self.block
@@ -720,7 +720,7 @@ mod tests {
 
         let client = MockEthProvider::default();
         let executor = TokioTaskExecutor::default();
-        let builder = MockBuilder::<OpPrimitives>::new();
+        let builder = MockBuilder::<BasePrimitives>::new();
 
         let (start, count) = (1, 10);
         let blocks = random_block_range(

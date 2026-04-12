@@ -12,20 +12,20 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
 };
 
-use crate::{OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4};
+use crate::{BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4};
 
-/// A thin wrapper around [`OpExecutionPayload`] that includes the parent beacon block root.
+/// A thin wrapper around [`BaseExecutionPayload`] that includes the parent beacon block root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct OpExecutionPayloadEnvelope {
+pub struct BaseExecutionPayloadEnvelope {
     /// The parent beacon block root, if any.
     pub parent_beacon_block_root: Option<B256>,
     /// The execution payload.
-    pub execution_payload: OpExecutionPayload,
+    pub execution_payload: BaseExecutionPayload,
 }
 
-impl OpExecutionPayloadEnvelope {
+impl BaseExecutionPayloadEnvelope {
     /// Returns the payload hash over the ssz encoded payload envelope data.
     ///
     /// <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-signatures>
@@ -38,7 +38,7 @@ impl OpExecutionPayloadEnvelope {
 }
 
 #[cfg(feature = "std")]
-impl ssz::Encode for OpExecutionPayloadEnvelope {
+impl ssz::Encode for BaseExecutionPayloadEnvelope {
     fn is_ssz_fixed_len() -> bool {
         false
     }
@@ -46,8 +46,10 @@ impl ssz::Encode for OpExecutionPayloadEnvelope {
     fn ssz_append(&self, buf: &mut Vec<u8>) {
         // Write parent beacon block root only if the payload is not a v1 or v2 payload.
         // <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-encoding>
-        if !matches!(self.execution_payload, OpExecutionPayload::V1(_) | OpExecutionPayload::V2(_))
-        {
+        if !matches!(
+            self.execution_payload,
+            BaseExecutionPayload::V1(_) | BaseExecutionPayload::V2(_)
+        ) {
             buf.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
         }
 
@@ -64,7 +66,7 @@ impl ssz::Encode for OpExecutionPayloadEnvelope {
 }
 
 #[cfg(feature = "std")]
-impl ssz::Decode for OpExecutionPayloadEnvelope {
+impl ssz::Decode for BaseExecutionPayloadEnvelope {
     fn is_ssz_fixed_len() -> bool {
         false
     }
@@ -89,14 +91,14 @@ impl ssz::Decode for OpExecutionPayloadEnvelope {
 
         // Decode payload
         let execution_payload =
-            OpExecutionPayload::from_ssz_bytes(&bytes[B256::ssz_fixed_len()..])?;
+            BaseExecutionPayload::from_ssz_bytes(&bytes[B256::ssz_fixed_len()..])?;
 
         Ok(Self { parent_beacon_block_root, execution_payload })
     }
 }
 
-impl From<OpNetworkPayloadEnvelope> for OpExecutionPayloadEnvelope {
-    fn from(envelope: OpNetworkPayloadEnvelope) -> Self {
+impl From<NetworkPayloadEnvelope> for BaseExecutionPayloadEnvelope {
+    fn from(envelope: NetworkPayloadEnvelope) -> Self {
         Self {
             execution_payload: envelope.payload,
             parent_beacon_block_root: envelope.parent_beacon_block_root,
@@ -104,27 +106,27 @@ impl From<OpNetworkPayloadEnvelope> for OpExecutionPayloadEnvelope {
     }
 }
 
-/// Struct aggregating [`OpExecutionPayload`] and [`OpExecutionPayloadSidecar`] and encapsulating
+/// Struct aggregating [`BaseExecutionPayload`] and [`BaseExecutionPayloadSidecar`] and encapsulating
 /// complete payload supplied for execution.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct OpExecutionData {
+pub struct ExecutionData {
     /// Execution payload.
-    pub payload: OpExecutionPayload,
+    pub payload: BaseExecutionPayload,
     /// Additional fork-specific fields.
-    pub sidecar: OpExecutionPayloadSidecar,
+    pub sidecar: BaseExecutionPayloadSidecar,
 }
 
-impl OpExecutionData {
-    /// Creates new instance of [`OpExecutionData`].
-    pub const fn new(payload: OpExecutionPayload, sidecar: OpExecutionPayloadSidecar) -> Self {
+impl ExecutionData {
+    /// Creates new instance of [`ExecutionData`].
+    pub const fn new(payload: BaseExecutionPayload, sidecar: BaseExecutionPayloadSidecar) -> Self {
         Self { payload, sidecar }
     }
 
-    /// Conversion from [`alloy_consensus::Block`]. Also returns the [`OpExecutionPayloadSidecar`]
+    /// Conversion from [`alloy_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
     /// extracted from the block.
     ///
-    /// See also [`from_block_unchecked`](OpExecutionPayload::from_block_slow).
+    /// See also [`from_block_unchecked`](BaseExecutionPayload::from_block_slow).
     ///
     /// Note: This re-calculates the block hash.
     pub fn from_block_slow<T, H>(block: &Block<T, H>) -> Self
@@ -132,21 +134,21 @@ impl OpExecutionData {
         T: Encodable2718 + Transaction,
         H: BlockHeader + Sealable,
     {
-        let (payload, sidecar) = OpExecutionPayload::from_block_slow(block);
+        let (payload, sidecar) = BaseExecutionPayload::from_block_slow(block);
 
         Self::new(payload, sidecar)
     }
 
-    /// Conversion from [`alloy_consensus::Block`]. Also returns the [`OpExecutionPayloadSidecar`]
+    /// Conversion from [`alloy_consensus::Block`]. Also returns the [`BaseExecutionPayloadSidecar`]
     /// extracted from the block.
     ///
-    /// See also [`OpExecutionPayload::from_block_unchecked`].
+    /// See also [`BaseExecutionPayload::from_block_unchecked`].
     pub fn from_block_unchecked<T, H>(block_hash: B256, block: &Block<T, H>) -> Self
     where
         T: Encodable2718 + Transaction,
         H: BlockHeader,
     {
-        let (payload, sidecar) = OpExecutionPayload::from_block_unchecked(block_hash, block);
+        let (payload, sidecar) = BaseExecutionPayload::from_block_unchecked(block_hash, block);
 
         Self::new(payload, sidecar)
     }
@@ -155,7 +157,7 @@ impl OpExecutionData {
     ///
     /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv2>
     pub fn v2(payload: ExecutionPayloadInputV2) -> Self {
-        Self::new(OpExecutionPayload::v2(payload), OpExecutionPayloadSidecar::default())
+        Self::new(BaseExecutionPayload::v2(payload), BaseExecutionPayloadSidecar::default())
     }
 
     /// Creates a new instance from args to engine API method `newPayloadV3`.
@@ -167,8 +169,8 @@ impl OpExecutionData {
         parent_beacon_block_root: B256,
     ) -> Self {
         Self::new(
-            OpExecutionPayload::v3(payload),
-            OpExecutionPayloadSidecar::v3(CancunPayloadFields::new(
+            BaseExecutionPayload::v3(payload),
+            BaseExecutionPayloadSidecar::v3(CancunPayloadFields::new(
                 parent_beacon_block_root,
                 versioned_hashes,
             )),
@@ -179,14 +181,14 @@ impl OpExecutionData {
     ///
     /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>
     pub fn v4(
-        payload: OpExecutionPayloadV4,
+        payload: BaseExecutionPayloadV4,
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> Self {
         Self::new(
-            OpExecutionPayload::v4(payload),
-            OpExecutionPayloadSidecar::v4(
+            BaseExecutionPayload::v4(payload),
+            BaseExecutionPayloadSidecar::v4(
                 CancunPayloadFields::new(parent_beacon_block_root, versioned_hashes),
                 PraguePayloadFields::new(execution_requests),
             ),
@@ -201,12 +203,14 @@ impl OpExecutionData {
     /// Return the withdrawals for the payload or attributes.
     pub const fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
         match &self.payload {
-            OpExecutionPayload::V1(_) => None,
-            OpExecutionPayload::V2(execution_payload_v2) => Some(&execution_payload_v2.withdrawals),
-            OpExecutionPayload::V3(execution_payload_v3) => {
+            BaseExecutionPayload::V1(_) => None,
+            BaseExecutionPayload::V2(execution_payload_v2) => {
+                Some(&execution_payload_v2.withdrawals)
+            }
+            BaseExecutionPayload::V3(execution_payload_v3) => {
                 Some(execution_payload_v3.withdrawals())
             }
-            OpExecutionPayload::V4(op_execution_payload_v4) => {
+            BaseExecutionPayload::V4(op_execution_payload_v4) => {
                 Some(op_execution_payload_v4.payload_inner.withdrawals())
             }
         }
@@ -233,9 +237,9 @@ impl OpExecutionData {
 /// This struct is used to represent payloads that are sent over the
 /// CL p2p network in a snappy-compressed format.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OpNetworkPayloadEnvelope {
+pub struct NetworkPayloadEnvelope {
     /// The execution payload.
-    pub payload: OpExecutionPayload,
+    pub payload: BaseExecutionPayload,
     /// A signature for the payload.
     pub signature: Signature,
     /// The hash of the payload.
@@ -244,7 +248,7 @@ pub struct OpNetworkPayloadEnvelope {
     pub parent_beacon_block_root: Option<B256>,
 }
 
-impl OpNetworkPayloadEnvelope {
+impl NetworkPayloadEnvelope {
     /// Decode a payload envelope from a snappy-compressed byte array.
     /// The payload version decoded is `ExecutionPayloadV1` from SSZ bytes.
     #[cfg(feature = "std")]
@@ -263,7 +267,7 @@ impl OpNetworkPayloadEnvelope {
         let signature = Signature::try_from(sig_data)?;
         let hash = PayloadHash::from(block_data);
 
-        let payload = OpExecutionPayload::V1(
+        let payload = BaseExecutionPayload::V1(
             alloy_rpc_types_engine::ExecutionPayloadV1::from_ssz_bytes(block_data)?,
         );
 
@@ -275,7 +279,7 @@ impl OpNetworkPayloadEnvelope {
     pub fn encode_v1(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
         use ssz::Encode;
         let execution_payload_v1 = match &self.payload {
-            OpExecutionPayload::V1(execution_payload_v1) => execution_payload_v1,
+            BaseExecutionPayload::V1(execution_payload_v1) => execution_payload_v1,
             _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
         };
 
@@ -307,7 +311,7 @@ impl OpNetworkPayloadEnvelope {
         let signature = Signature::try_from(sig_data)?;
         let hash = PayloadHash::from(block_data);
 
-        let payload = OpExecutionPayload::V2(
+        let payload = BaseExecutionPayload::V2(
             alloy_rpc_types_engine::ExecutionPayloadV2::from_ssz_bytes(block_data)?,
         );
 
@@ -319,7 +323,7 @@ impl OpNetworkPayloadEnvelope {
     pub fn encode_v2(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
         use ssz::Encode;
         let execution_payload_v2 = match &self.payload {
-            OpExecutionPayload::V2(execution_payload_v2) => execution_payload_v2,
+            BaseExecutionPayload::V2(execution_payload_v2) => execution_payload_v2,
             _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
         };
 
@@ -355,7 +359,7 @@ impl OpNetworkPayloadEnvelope {
             [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
         );
 
-        let payload = OpExecutionPayload::V3(
+        let payload = BaseExecutionPayload::V3(
             alloy_rpc_types_engine::ExecutionPayloadV3::from_ssz_bytes(block_data)?,
         );
 
@@ -372,7 +376,7 @@ impl OpNetworkPayloadEnvelope {
     pub fn encode_v3(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
         use ssz::Encode;
         let execution_payload_v3 = match &self.payload {
-            OpExecutionPayload::V3(execution_payload_v3) => execution_payload_v3,
+            BaseExecutionPayload::V3(execution_payload_v3) => execution_payload_v3,
             _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
         };
 
@@ -411,7 +415,7 @@ impl OpNetworkPayloadEnvelope {
             [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
         );
 
-        let payload = OpExecutionPayload::V4(OpExecutionPayloadV4::from_ssz_bytes(block_data)?);
+        let payload = BaseExecutionPayload::V4(BaseExecutionPayloadV4::from_ssz_bytes(block_data)?);
 
         Ok(Self {
             payload,
@@ -426,7 +430,7 @@ impl OpNetworkPayloadEnvelope {
     pub fn encode_v4(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
         use ssz::Encode;
         let execution_payload_v4 = match &self.payload {
-            OpExecutionPayload::V4(execution_payload_v4) => execution_payload_v4,
+            BaseExecutionPayload::V4(execution_payload_v4) => execution_payload_v4,
             _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
         };
 
@@ -535,7 +539,7 @@ mod tests {
             "00000000000000000000000000000000000000000000000000000000000001230000000000000000000000000000000000000000000000000000000000000123000000000000000000000000000000000000045600000000000000000000000000000000000000000000000000000000000007890000000000000000000000000000000000000000000000000000000000000abc0d0e0f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000111de000000000000004d01000000000000bc010000000000002b02000000000000300200000903000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000088832020000380200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001236666040000009999"
         );
 
-        let payload = OpExecutionPayloadEnvelope::from_ssz_bytes(&data).unwrap();
+        let payload = BaseExecutionPayloadEnvelope::from_ssz_bytes(&data).unwrap();
         let serialized = payload.as_ssz_bytes();
         assert_eq!(data, &serialized[..]);
     }
@@ -548,7 +552,7 @@ mod tests {
             "parentBeaconBlockRoot": "0x9999999999999999999999999999999999999999999999999999999999999999"
         }"#;
 
-        let envelope: OpExecutionPayloadEnvelope = serde_json::from_str(envelope_str).unwrap();
+        let envelope: BaseExecutionPayloadEnvelope = serde_json::from_str(envelope_str).unwrap();
         let expected = b256!("9999999999999999999999999999999999999999999999999999999999999999");
         assert_eq!(envelope.parent_beacon_block_root.unwrap(), expected);
         let _ = serde_json::to_string(&envelope).unwrap();
@@ -577,7 +581,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_roundtrip_encode_envelope_v1() {
         let data = hex::decode("0xbd04f043128457c6ccf35128497167442bcc0f8cce78cda8b366e6a12e526d938d1e4c1046acffffbfc542a7e212bb7d80d3a4b2f84f7b196d935398a24eb84c519789b401000000fe0300fe0300fe0300fe0300fe0300fe0300a203000c4a8fd56621ad04fc0101067601008ce60be0005b220117c32c0f3b394b346c2aa42cfa8157cd41f891aa0bec485a62fc010000").unwrap();
-        let payload_envelop = OpNetworkPayloadEnvelope::decode_v1(&data).unwrap();
+        let payload_envelop = NetworkPayloadEnvelope::decode_v1(&data).unwrap();
         assert_eq!(1725271882, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v1().unwrap();
         assert_eq!(data, encoded);
@@ -587,7 +591,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_roundtrip_encode_envelope_v2() {
         let data = hex::decode("0xc104f0433805080eb36c0b130a7cc1dc74c3f721af4e249aa6f61bb89d1557143e971bb738a3f3b98df7c457e74048e9d2d7e5cd82bb45e3760467e2270e9db86d1271a700000000fe0300fe0300fe0300fe0300fe0300fe0300a203000c6b89d46525ad000205067201009cda69cb5b9b73fc4eb2458b37d37f04ff507fe6c9cd2ab704a05ea9dae3cd61760002000000020000").unwrap();
-        let payload_envelop = OpNetworkPayloadEnvelope::decode_v2(&data).unwrap();
+        let payload_envelop = NetworkPayloadEnvelope::decode_v2(&data).unwrap();
         assert_eq!(1708427627, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v2().unwrap();
         assert_eq!(data, encoded);
@@ -597,7 +601,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_encode_v3_missing_parent_beacon_block_root() {
         let data = hex::decode("0xf104f0434442b9eb38b259f5b23826e6b623e829d2fb878dac70187a1aecf42a3f9bedfd29793d1fcb5822324be0d3e12340a95855553a65d64b83e5579dffb31470df5d010000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000cc588d465219504100201067601007cfece77b89685f60e3663b6e0faf2de0734674eb91339700c4858c773a8ff921e014401043e0100").unwrap();
-        let mut envelope = OpNetworkPayloadEnvelope::decode_v3(&data).unwrap();
+        let mut envelope = NetworkPayloadEnvelope::decode_v3(&data).unwrap();
         envelope.parent_beacon_block_root = None;
         assert_eq!(envelope.encode_v3(), Err(PayloadEnvelopeEncodeError::MissingData));
     }
@@ -606,7 +610,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_encode_v4_missing_parent_beacon_block_root() {
         let data = hex::decode("0x9105f043cee25401b6853202950d1d8a082f31a80c4fef5782c049a731f5d104b1b9b9aa7618605b420438ae98b44c8aaaebd482854473c2ae57c079286bb634bece5210000000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000c5766d26721950430020106f6010001440104b60100049876").unwrap();
-        let mut envelope = OpNetworkPayloadEnvelope::decode_v4(&data).unwrap();
+        let mut envelope = NetworkPayloadEnvelope::decode_v4(&data).unwrap();
         envelope.parent_beacon_block_root = None;
         assert_eq!(envelope.encode_v4(), Err(PayloadEnvelopeEncodeError::MissingData));
     }
@@ -615,7 +619,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_roundtrip_encode_envelope_v3() {
         let data = hex::decode("0xf104f0434442b9eb38b259f5b23826e6b623e829d2fb878dac70187a1aecf42a3f9bedfd29793d1fcb5822324be0d3e12340a95855553a65d64b83e5579dffb31470df5d010000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000cc588d465219504100201067601007cfece77b89685f60e3663b6e0faf2de0734674eb91339700c4858c773a8ff921e014401043e0100").unwrap();
-        let payload_envelop = OpNetworkPayloadEnvelope::decode_v3(&data).unwrap();
+        let payload_envelop = NetworkPayloadEnvelope::decode_v3(&data).unwrap();
         assert_eq!(1708427461, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v3().unwrap();
         assert_eq!(data, encoded);
@@ -625,7 +629,7 @@ mod tests {
     #[cfg(feature = "std")]
     fn test_roundtrip_encode_envelope_v4() {
         let data = hex::decode("0x9105f043cee25401b6853202950d1d8a082f31a80c4fef5782c049a731f5d104b1b9b9aa7618605b420438ae98b44c8aaaebd482854473c2ae57c079286bb634bece5210000000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000c5766d26721950430020106f6010001440104b60100049876").unwrap();
-        let payload_envelop = OpNetworkPayloadEnvelope::decode_v4(&data).unwrap();
+        let payload_envelop = NetworkPayloadEnvelope::decode_v4(&data).unwrap();
         assert_eq!(1741842007, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v4().unwrap();
         assert_eq!(data, encoded);
