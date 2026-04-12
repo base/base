@@ -187,10 +187,8 @@ impl ProposerService {
                     ProviderBuilder::new().connect_http(config.l1_eth_rpc.clone())
                 };
 
-                let l1_chain_id = l1_tx_provider
-                    .get_chain_id()
-                    .await
-                    .wrap_err("failed to fetch L1 chain ID")?;
+                let l1_chain_id =
+                    l1_tx_provider.get_chain_id().await.wrap_err("failed to fetch L1 chain ID")?;
                 let tx_manager = SimpleTxManager::new(
                     l1_tx_provider,
                     signing,
