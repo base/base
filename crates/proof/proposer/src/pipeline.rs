@@ -869,7 +869,7 @@ where
         let mut parent_block = anchor.l2_block_number;
         let mut steps: u64 = 0;
 
-        while let Some(expected_block) = parent_block.checked_add(block_interval) {
+        'walk: while let Some(expected_block) = parent_block.checked_add(block_interval) {
             // Look up the pre-fetched canonical root and game candidates.
             // Either missing means there is no game at this block — the gap
             // where the next proposal should start.
@@ -966,7 +966,6 @@ where
                 break;
             }
 
-            let mut intermediate_mismatch = false;
             for (i, onchain_root) in onchain_intermediate.iter().enumerate() {
                 let intermediate_block = expected_block
                     .checked_sub(block_interval)
@@ -1005,13 +1004,8 @@ where
                         canonical_root = ?canonical,
                         "Intermediate root mismatch during forward walk, treating as gap"
                     );
-                    intermediate_mismatch = true;
-                    break;
+                    break 'walk;
                 }
-            }
-
-            if intermediate_mismatch {
-                break;
             }
 
             debug!(
