@@ -1,7 +1,7 @@
 //! CLI definition for the challenger binary.
 
 use clap::Parser;
-use eyre::WrapErr as _;
+use eyre::WrapErr;
 
 /// Base Challenger.
 #[derive(Parser)]
