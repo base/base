@@ -4,8 +4,6 @@
 //! Delegates all transaction lifecycle management (nonce, fees, signing, resubmission)
 //! to the shared [`TxManager`].
 
-use std::sync::LazyLock;
-
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{
@@ -16,10 +14,6 @@ use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
 use tracing::info;
 
 use crate::error::ProposerError;
-
-/// Hex-encoded `GameAlreadyExists` selector, computed once.
-static GAME_ALREADY_EXISTS_HEX: LazyLock<String> =
-    LazyLock::new(|| alloy_primitives::hex::encode(game_already_exists_selector()));
 
 /// Classifies a [`TxManagerError`] into a [`ProposerError`].
 ///
@@ -38,14 +32,13 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
         if data.as_ref().is_some_and(|d| d.len() >= 4 && d[..4] == game_already_exists_selector()) {
             return ProposerError::GameAlreadyExists;
         }
-        // Structured fields exhausted — no need to format the Display
-        // string since it won't contain additional GameAlreadyExists info.
         return ProposerError::TxManager(err);
     }
     // Fallback: check Display output for non-ExecutionReverted variants
     // (e.g. Rpc) that may carry "GameAlreadyExists" in their message.
     let msg = err.to_string();
-    if msg.contains(GAME_ALREADY_EXISTS_HEX.as_str()) || msg.contains("GameAlreadyExists") {
+    let selector_hex = alloy_primitives::hex::encode(game_already_exists_selector());
+    if msg.contains(&selector_hex) || msg.contains("GameAlreadyExists") {
         return ProposerError::GameAlreadyExists;
     }
     ProposerError::TxManager(err)
@@ -124,15 +117,6 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         let calldata =
             encode_create_calldata(self.game_type, proposal.output_root, extra_data, proof_data);
 
-        info!(
-            l2_block_number,
-            factory = %self.factory_address,
-            game_type = self.game_type,
-            calldata = %calldata,
-            parent_address = %parent_address,
-            "Creating dispute game"
-        );
-
         let candidate = TxCandidate {
             tx_data: calldata,
             to: Some(self.factory_address),
@@ -141,8 +125,12 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         };
 
         info!(
+            l2_block_number,
+            factory = %self.factory_address,
+            game_type = self.game_type,
+            parent_address = %parent_address,
             tx = ?candidate,
-            "Sending tx candidate",
+            "Creating dispute game"
         );
 
         let receipt = self.tx_manager.send(candidate).await.map_err(classify_tx_manager_error)?;
@@ -359,7 +347,7 @@ mod tests {
 
     #[rstest]
     #[case::rpc_with_selector_hex(
-        TxManagerError::Rpc(format!("execution reverted: 0x{}", *GAME_ALREADY_EXISTS_HEX)),
+        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::game_already_exists_selector()))),
         true,
         "selector hex in Rpc message"
     )]
