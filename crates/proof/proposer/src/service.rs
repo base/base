@@ -155,7 +155,6 @@ impl ProposerService {
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
         let prover_client: Arc<dyn ProverClient> = Arc::new(prover_client);
-        info!("Prover initialized");
 
         let (output_proposer, proposer_address): (Arc<dyn crate::OutputProposer>, Option<Address>) =
             if config.dry_run {
