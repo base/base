@@ -21,7 +21,6 @@ use base_proof_rpc::{
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
-/// Mock L1 client with configurable `block_number()` return.
 pub(crate) struct MockL1 {
     pub latest_block_number: u64,
 }
@@ -54,7 +53,6 @@ impl L1Provider for MockL1 {
     }
 }
 
-/// Mock L2 client with configurable `block_by_number()` behavior.
 pub(crate) struct MockL2 {
     pub block_not_found: bool,
     /// If set, `header_by_number` returns a header with this hash.
@@ -109,7 +107,6 @@ impl RollupProvider for MockRollupClient {
     }
 }
 
-/// Mock anchor state registry with configurable anchor root.
 pub(crate) struct MockAnchorStateRegistry {
     pub anchor_root: AnchorRoot,
 }
@@ -121,29 +118,16 @@ impl AnchorStateRegistryClient for MockAnchorStateRegistry {
     }
 }
 
-/// Mock dispute game factory with configurable per-index game data.
-///
-/// When `games` is empty, the factory reports `game_count_override` (defaulting
-/// to 0).  When `games` is populated, `game_count` returns the length of the
-/// vector and `game_at_index` returns the corresponding entry.
-///
-/// `game_count_override` can be set to a value different from `games.len()` to
-/// simulate scenarios where new games appear between successive calls (e.g.
-/// caching tests).
 pub(crate) struct MockDisputeGameFactory {
     pub games: Vec<GameAtIndex>,
     pub game_count_override: Option<u64>,
 }
 
 impl MockDisputeGameFactory {
-    /// Creates a factory with no games and the given game count.
-    ///
-    /// All `game_at_index` calls return a dummy game with `game_type = u32::MAX`.
     pub(crate) fn with_count(game_count: u64) -> Self {
         Self { games: Vec::new(), game_count_override: Some(game_count) }
     }
 
-    /// Creates a factory backed by an explicit list of games.
     pub(crate) fn with_games(games: Vec<GameAtIndex>) -> Self {
         Self { games, game_count_override: None }
     }
@@ -171,18 +155,6 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     }
 }
 
-/// Mock aggregate verifier with configurable per-address game info.
-///
-/// When `game_info_map` is empty, all queries return a default `GameInfo`.
-/// When populated, `game_info` looks up the address in the map.
-///
-/// Addresses in `failing_addresses` will return a `ContractError::Validation`
-/// to simulate transient RPC failures.
-///
-/// `intermediate_roots_map` provides explicit intermediate output roots per
-/// game proxy. When not present, `intermediate_output_roots()` derives a
-/// default single-element vec from the game's `root_claim` (matching the
-/// contract behavior when `block_interval == intermediate_block_interval`).
 #[derive(Default)]
 pub(crate) struct MockAggregateVerifier {
     pub game_info_map: HashMap<Address, GameInfo>,
@@ -191,7 +163,6 @@ pub(crate) struct MockAggregateVerifier {
 }
 
 impl MockAggregateVerifier {
-    /// Creates a verifier backed by an explicit address-to-info map.
     pub(crate) fn with_game_info(map: HashMap<Address, GameInfo>) -> Self {
         Self { game_info_map: map, ..Default::default() }
     }
@@ -233,12 +204,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         Ok(512)
     }
     async fn intermediate_output_roots(&self, addr: Address) -> Result<Vec<B256>, ContractError> {
-        // Explicit intermediate roots take priority.
         if let Some(roots) = self.intermediate_roots_map.get(&addr) {
             return Ok(roots.clone());
         }
-        // Default: derive from game info (single root = root_claim), matching
-        // the contract behavior when block_interval == intermediate_block_interval.
         if let Some(info) = self.game_info_map.get(&addr) {
             return Ok(vec![info.root_claim]);
         }
@@ -311,11 +279,10 @@ pub(crate) fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot { root: B256::ZERO, l2_block_number: block_number }
 }
 
-/// Creates a test [`Proposal`] for the given block number.
 pub(crate) fn test_proposal(block_number: u64) -> Proposal {
     Proposal {
         output_root: B256::repeat_byte(block_number as u8),
-        signature: Bytes::from(vec![0xab; 65]),
+        signature: Bytes::from_static(&[0xab; 65]),
         l1_origin_hash: B256::repeat_byte(0x02),
         l1_origin_number: 100 + block_number,
         l2_block_number: block_number,
@@ -324,7 +291,6 @@ pub(crate) fn test_proposal(block_number: u64) -> Proposal {
     }
 }
 
-/// Mock prover with a configurable delay before returning results.
 #[derive(Debug)]
 pub(crate) struct MockProver {
     pub delay: Duration,
@@ -349,7 +315,6 @@ impl ProverClient for MockProver {
     }
 }
 
-/// Mock output proposer that does nothing (returns `Ok(())`).
 pub(crate) struct MockOutputProposer;
 
 #[async_trait]
