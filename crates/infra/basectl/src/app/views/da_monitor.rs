@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View, views::TransactionPane},
-    commands::common::{
+    commands::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, L1_BLOCK_WINDOW, L1BlockFilter,
         L1BlocksTableParams, RATE_WINDOW_2M, RATE_WINDOW_5M, RATE_WINDOW_30S, format_duration,
         format_rate, render_da_backlog_bar, render_l1_blocks_table, target_usage_color,
@@ -404,7 +404,7 @@ fn render_blocks_panel(
 ) {
     use ratatui::widgets::{Cell, Row, Table};
 
-    use crate::commands::common::{
+    use crate::commands::{
         COLOR_ROW_SELECTED, block_color, format_bytes as fmt_bytes, format_duration as fmt_dur,
     };
 

@@ -5,7 +5,7 @@ use ratatui::{
 };
 
 use super::Keybinding;
-use crate::commands::common::COLOR_BASE_BLUE;
+use crate::commands::COLOR_BASE_BLUE;
 
 const HELP_SIDEBAR_WIDTH: u16 = 30;
 

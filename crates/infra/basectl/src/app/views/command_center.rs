@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View, views::TransactionPane},
-    commands::common::{
+    commands::{
         COLOR_BASE_BLUE, COLOR_BURN, COLOR_GROWTH, COLOR_ROW_HIGHLIGHTED, COLOR_ROW_SELECTED,
         L1_BLOCK_WINDOW, L1BlockFilter, L1BlocksTableParams, RATE_WINDOW_2M, backlog_size_color,
         block_color, block_color_bright, build_gas_bar, format_bytes, format_duration, format_gwei,

@@ -22,7 +22,7 @@ use url::Url;
 
 use crate::{
     app::{Action, LoadTestTask, Resources, View},
-    commands::common::COLOR_BASE_BLUE,
+    commands::COLOR_BASE_BLUE,
     tui::{Keybinding, Toast},
 };
 

@@ -11,7 +11,7 @@ use tokio::{
 };
 
 use crate::{
-    commands::common::{DaTracker, FlashblockEntry, LoadingState},
+    commands::{DaTracker, FlashblockEntry, LoadingState},
     config::{ChainConfig, ConductorNodeConfig},
     rpc::{
         BacklogFetchResult, BlockDaInfo, ConductorNodeStatus, L1BlockInfo, L1ConnectionMode,

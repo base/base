@@ -22,4 +22,7 @@ pub use view::View;
 
 /// TUI view implementations.
 mod views;
-pub use views::*;
+pub use views::{
+    CommandCenterView, ConductorView, ConfigView, DaMonitorView, FlashblocksView, HomeView,
+    LoadTestView, ProofsView, TransactionPane, UpgradesView, create_view,
+};

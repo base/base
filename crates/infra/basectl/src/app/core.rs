@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 
 use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
 use crate::{
-    commands::common::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
+    commands::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
     config::ChainConfig,
     tui::{AppFrame, Toast, restore_terminal, setup_terminal},
 };
