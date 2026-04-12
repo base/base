@@ -17,7 +17,7 @@ base-bundles.workspace = true
 base-node-runner.workspace = true
 base-access-lists.workspace = true
 base-builder-publish.workspace = true
-base-alloy-flashblocks.workspace = true
+base-common-flashblocks.workspace = true
 
 # reth
 reth-db.workspace = true
@@ -86,14 +86,14 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 
-# base-alloy
-base-alloy-flz.workspace = true
-base-alloy-chains.workspace = true
-base-alloy-network.workspace = true
+# base-common
+base-common-flz.workspace = true
+base-common-chains.workspace = true
+base-common-network.workspace = true
 base-common-rpc-types.workspace = true
-base-alloy-rpc-types-engine.workspace = true
-base-alloy-evm = { workspace = true, features = ["std"] }
-base-alloy-consensus = { workspace = true, features = ["reth"] }
+base-common-rpc-types-engine.workspace = true
+base-common-evm = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 
 # tokio
 tokio.workspace = true

@@ -18,13 +18,13 @@ thiserror.workspace = true
 base-revm.workspace = true
 base-proof.workspace = true
 base-protocol.workspace = true
-base-alloy-evm.workspace = true
+base-common-evm.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
-base-alloy-consensus.workspace = true
+base-common-consensus.workspace = true
 base-consensus-derive.workspace = true
 base-consensus-genesis.workspace = true
 
@@ -37,8 +37,8 @@ std = [
 	"alloy-consensus/std",
 	"alloy-evm/std",
 	"alloy-primitives/std",
-	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
+	"base-common-consensus/std",
+	"base-common-evm/std",
 	"base-consensus-genesis/std",
 	"base-proof-driver/std",
 	"base-proof-executor/std",

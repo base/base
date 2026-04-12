@@ -22,7 +22,7 @@ alloy-eips.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
-base-alloy-chains.workspace = true
+base-common-chains.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
 
 # misc

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
-use base_alloy_consensus::TxDeposit;
+use base_common_consensus::TxDeposit;
 use base_protocol::{Deployers, Predeploys, SystemAddresses};
 
 use crate::{Hardfork, UpgradeCalldata};

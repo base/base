@@ -7,7 +7,7 @@ use alloy_rpc_types_engine::{
     BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1,
     ExecutionPayloadV2, ExecutionPayloadV3, PayloadId,
 };
-use base_alloy_rpc_types_engine::{
+use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
 };
 use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig, RollupConfig};

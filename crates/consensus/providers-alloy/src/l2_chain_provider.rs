@@ -13,8 +13,8 @@ use alloy_transport_http::{
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
-use base_alloy_network::Base;
+use base_common_consensus::BaseBlock;
+use base_common_network::Base;
 use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};

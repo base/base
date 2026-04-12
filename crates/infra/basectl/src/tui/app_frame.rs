@@ -5,13 +5,13 @@ use ratatui::{
 };
 
 use super::Keybinding;
-use crate::commands::common::COLOR_BASE_BLUE;
+use crate::commands::COLOR_BASE_BLUE;
 
 const HELP_SIDEBAR_WIDTH: u16 = 30;
 
 /// Layout regions produced by splitting the terminal area.
 #[derive(Debug)]
-pub(crate) struct AppLayout {
+pub struct AppLayout {
     /// Main content area for the active view.
     pub content: Rect,
     /// Optional help sidebar area.
@@ -20,11 +20,11 @@ pub(crate) struct AppLayout {
 
 /// Handles the top-level application frame layout and help sidebar rendering.
 #[derive(Debug)]
-pub(crate) struct AppFrame;
+pub struct AppFrame;
 
 impl AppFrame {
     /// Splits the terminal area into content and optional help sidebar.
-    pub(crate) fn split_layout(area: Rect, show_help: bool) -> AppLayout {
+    pub fn split_layout(area: Rect, show_help: bool) -> AppLayout {
         if show_help && area.width > HELP_SIDEBAR_WIDTH + 20 {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
@@ -38,7 +38,7 @@ impl AppFrame {
     }
 
     /// Renders the network badge (always) and the help sidebar (when visible).
-    pub(crate) fn render(
+    pub fn render(
         f: &mut Frame<'_>,
         layout: &AppLayout,
         config_name: &str,

@@ -1,7 +1,7 @@
 //! Polling source trait for fetching the current unsafe head block.
 
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 
 use crate::SourceError;
 

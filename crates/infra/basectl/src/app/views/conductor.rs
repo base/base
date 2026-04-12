@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     app::{Action, Resources, View},
-    commands::common::COLOR_BASE_BLUE,
+    commands::COLOR_BASE_BLUE,
     rpc::{
         ConductorNodeStatus, PausedPeers, ValidatorNodeStatus, pause_sequencer_node,
         restart_conductor_node, transfer_conductor_leader, unpause_sequencer_node,
@@ -39,7 +39,7 @@ type PauseRx = Option<(String, mpsc::Receiver<Result<(String, PausedPeers), Stri
 /// the available key bindings. When no conductor configuration is present
 /// (e.g. mainnet), a placeholder message is shown instead.
 #[derive(Debug, Default)]
-pub(crate) struct ConductorView {
+pub struct ConductorView {
     selected: usize,
     op_pending: bool,
     /// In-flight result channel for transfer / restart operations.
@@ -56,7 +56,7 @@ pub(crate) struct ConductorView {
 
 impl ConductorView {
     /// Creates a new conductor view.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 

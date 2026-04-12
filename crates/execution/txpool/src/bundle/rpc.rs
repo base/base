@@ -1,6 +1,6 @@
 use alloy_eips::Decodable2718;
 use alloy_primitives::{Bytes, TxHash};
-use base_alloy_consensus::BaseTransactionSigned;
+use base_common_consensus::BaseTransactionSigned;
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,

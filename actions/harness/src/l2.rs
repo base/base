@@ -9,8 +9,8 @@ use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_consensus::{BaseBlock, BaseTxEnvelope};
-use base_alloy_rpc_types_engine::{
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, NetworkPayloadEnvelope, PayloadHash,
 };
 use base_consensus_derive::{AttributesBuilder, StatefulAttributesBuilder};

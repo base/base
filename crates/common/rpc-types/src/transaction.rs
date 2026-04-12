@@ -4,7 +4,7 @@ use alloy_consensus::{Transaction as TransactionTrait, Typed2718, transaction::R
 use alloy_eips::{Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, ChainId, TxKind, U256};
 use alloy_serde::OtherFields;
-use base_alloy_consensus::{BaseTransaction, BaseTransactionInfo, BaseTxEnvelope};
+use base_common_consensus::{BaseTransaction, BaseTransactionInfo, BaseTxEnvelope};
 use serde::{Deserialize, Serialize};
 
 mod request;
@@ -206,11 +206,11 @@ mod tx_serde {
     //!
     //! This is needed because we might need to deserialize the `from` field into both
     //! [`alloy_consensus::transaction::Recovered::signer`] which resides in
-    //! [`alloy_rpc_types_eth::Transaction::inner`] and [`base_alloy_consensus::TxDeposit::from`].
+    //! [`alloy_rpc_types_eth::Transaction::inner`] and [`base_common_consensus::TxDeposit::from`].
     //!
     //! Additionally, we need similar logic for the `gasPrice` field
     use alloy_consensus::{Transaction as TransactionTrait, transaction::Recovered};
-    use base_alloy_consensus::BaseTransaction;
+    use base_common_consensus::BaseTransaction;
     use serde::{Deserialize, Serialize, de::Error};
 
     use super::{Address, BlockHash, Transaction};

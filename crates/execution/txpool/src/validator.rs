@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
-use base_alloy_chains::BaseUpgrades;
+use base_common_chains::BaseUpgrades;
 use base_execution_evm::RethL1BlockInfo;
 use base_revm::L1BlockInfo;
 use parking_lot::RwLock;

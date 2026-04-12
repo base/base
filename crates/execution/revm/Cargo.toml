@@ -18,7 +18,7 @@ revm = { workspace = true, default-features = false }
 # misc
 auto_impl.workspace = true
 base-consensus-genesis.workspace = true
-base-alloy-flz = { workspace = true, default-features = false }
+base-common-flz = { workspace = true, default-features = false }
 serde = { workspace = true, features = ["derive", "rc"], optional = true }
 
 # compat (optional)
@@ -39,7 +39,7 @@ std = [
 	"alloy-evm?/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
-	"base-alloy-flz/std",
+	"base-common-flz/std",
 	"base-consensus-genesis/std",
 	"revm/std",
 	"serde?/std",

@@ -1,4 +1,4 @@
-# `base-alloy-flashblocks`
+# `base-common-flashblocks`
 
 Flashblocks primitive types for Base's pre-confirmation infrastructure.
 
@@ -16,11 +16,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-flashblocks = { workspace = true }
+base-common-flashblocks = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_flashblocks::{FlashblocksPayloadV1, FlashblocksDiff};
+use base_common_flashblocks::{FlashblocksPayloadV1, FlashblocksDiff};
 
 let payload: FlashblocksPayloadV1 = serde_json::from_str(&msg)?;
 let diff = payload.diff;

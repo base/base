@@ -22,7 +22,7 @@ alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # Base Alloy
-base-alloy-consensus.workspace = true
+base-common-consensus.workspace = true
 
 [dev-dependencies]
 revm.workspace = true
@@ -35,8 +35,8 @@ default = []
 std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
-	"base-alloy-consensus/std",
+	"base-common-consensus/std",
 	"base-protocol/std",
 ]
-k256 = [ "alloy-primitives/k256", "base-alloy-consensus/k256" ]
-kzg = [ "alloy-eips/kzg", "base-alloy-consensus/kzg", "std" ]
+k256 = [ "alloy-primitives/k256", "base-common-consensus/k256" ]
+kzg = [ "alloy-eips/kzg", "base-common-consensus/kzg", "std" ]

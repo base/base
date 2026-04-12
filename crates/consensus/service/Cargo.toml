@@ -41,12 +41,12 @@ alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] 
 alloy-provider = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
 
-# base-alloy
-base-alloy-chains.workspace = true
-base-alloy-network.workspace = true
-base-alloy-provider.workspace = true
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
+# base-common
+base-common-chains.workspace = true
+base-common-network.workspace = true
+base-common-provider.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 
 # general
 url.workspace = true
@@ -86,7 +86,7 @@ alloy-primitives = { workspace = true, features = ["k256"] }
 base-consensus-derive = {workspace = true, features = ["test-utils"]}
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }
-base-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
+base-common-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 alloy-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
 
 [features]

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{Filter, Log, pubsub::Params};
-use base_alloy_network::Base;
+use base_common_network::Base;
 use futures::stream;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,

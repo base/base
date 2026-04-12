@@ -15,7 +15,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-base-alloy-consensus = { workspace = true, features = ["serde"] }
+base-common-consensus = { workspace = true, features = ["serde"] }
 
 # Alloy
 alloy-serde.workspace = true
@@ -64,7 +64,7 @@ std = [
 	"alloy-primitives/std",
 	"alloy-rpc-types-eth/std",
 	"alloy-serde/std",
-	"base-alloy-consensus/std",
+	"base-common-consensus/std",
 	"base-revm?/std",
 	"derive_more/std",
 	"revm?/std",
@@ -77,19 +77,19 @@ arbitrary = [
 	"alloy-primitives/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
 	"alloy-serde/arbitrary",
-	"base-alloy-consensus/arbitrary",
+	"base-common-consensus/arbitrary",
 	"dep:arbitrary",
 	"revm?/arbitrary",
 	"std",
 ]
-k256 = [ "alloy-rpc-types-eth/k256", "base-alloy-consensus/k256" ]
+k256 = [ "alloy-rpc-types-eth/k256", "base-common-consensus/k256" ]
 serde = [
 	"alloy-consensus/serde",
 	"alloy-eips/serde",
 	"alloy-network-primitives/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth/serde",
-	"base-alloy-consensus/serde",
+	"base-common-consensus/serde",
 	"base-revm?/serde",
 	"revm?/serde",
 ]

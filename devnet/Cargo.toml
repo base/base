@@ -55,7 +55,7 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base-alloy
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 
 # tokio
 tokio-util.workspace = true

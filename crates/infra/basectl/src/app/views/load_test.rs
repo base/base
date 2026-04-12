@@ -22,7 +22,7 @@ use url::Url;
 
 use crate::{
     app::{Action, LoadTestTask, Resources, View},
-    commands::common::COLOR_BASE_BLUE,
+    commands::COLOR_BASE_BLUE,
     tui::{Keybinding, Toast},
 };
 
@@ -337,7 +337,7 @@ struct EditModal {
 /// Live [`DisplaySnapshot`] updates stream in via a watch channel pushed by
 /// the runner every 500 ms. `s` stops the current run cleanly.
 #[derive(Debug)]
-pub(crate) struct LoadTestView {
+pub struct LoadTestView {
     /// Discovered (name, config) pairs. Populated lazily on first tick.
     configs: Vec<(String, TestConfig)>,
     /// Index of the currently selected config.
@@ -359,9 +359,15 @@ pub(crate) struct LoadTestView {
     funder_key_override: Option<String>,
 }
 
+impl Default for LoadTestView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoadTestView {
     /// Creates a new load test view. Config discovery is deferred to the first tick.
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             configs: Vec::new(),
             overrides: Vec::new(),

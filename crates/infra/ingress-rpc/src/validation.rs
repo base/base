@@ -7,8 +7,8 @@ use alloy_consensus::private::alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
-use base_alloy_network::Base;
 use base_bundles::Bundle;
+use base_common_network::Base;
 use base_execution_evm::extract_l1_info_from_tx;
 use base_revm::L1BlockInfo;
 use jsonrpsee::core::RpcResult;
@@ -159,7 +159,7 @@ mod tests {
     use alloy_network::TxSignerSync;
     use alloy_primitives::{Bytes, bytes};
     use alloy_signer_local::PrivateKeySigner;
-    use base_alloy_consensus::BaseTxEnvelope;
+    use base_common_consensus::BaseTxEnvelope;
 
     use super::*;
 

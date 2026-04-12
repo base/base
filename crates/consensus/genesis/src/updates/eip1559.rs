@@ -4,8 +4,7 @@ use alloy_primitives::LogData;
 use alloy_sol_types::{SolType, sol};
 
 use crate::{
-    EIP1559UpdateError, SystemConfig, SystemConfigLog,
-    updates::common::{ValidationError, validate_update_data},
+    EIP1559UpdateError, SystemConfig, SystemConfigLog, UpdateDataValidator, ValidationError,
 };
 
 /// The EIP-1559 update type.
@@ -32,7 +31,7 @@ impl TryFrom<&SystemConfigLog> for Eip1559Update {
     fn try_from(log: &SystemConfigLog) -> Result<Self, Self::Error> {
         let LogData { data, .. } = &log.log.data;
 
-        let validated = validate_update_data(data).map_err(|e| match e {
+        let validated = UpdateDataValidator::validate(data).map_err(|e| match e {
             ValidationError::InvalidDataLen(_expected, actual) => {
                 EIP1559UpdateError::InvalidDataLen(actual)
             }

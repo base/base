@@ -10,9 +10,9 @@ use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     PraguePayloadFields,
 };
-use base_alloy_consensus::BaseBlock;
-use base_alloy_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
-use base_alloy_rpc_types_engine::{
+use base_common_consensus::BaseBlock;
+use base_common_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
+use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4,
 };
 use base_revm::L1BlockInfo;
@@ -135,7 +135,7 @@ impl BlockAssembler {
 mod tests {
     use alloy_primitives::{Address, Bloom, U256};
     use alloy_rpc_types_engine::PayloadId;
-    use base_alloy_flashblocks::{
+    use base_common_flashblocks::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Metadata,
     };
 

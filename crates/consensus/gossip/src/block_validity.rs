@@ -4,8 +4,8 @@ use alloy_consensus::Block;
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::{ExecutionPayloadV3, PayloadError};
-use base_alloy_consensus::BaseTxEnvelope;
-use base_alloy_rpc_types_engine::{
+use base_common_consensus::BaseTxEnvelope;
+use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadV4, BasePayloadError, NetworkPayloadEnvelope,
 };
 use base_consensus_genesis::RollupConfig;
@@ -318,8 +318,8 @@ pub(crate) mod tests {
     use alloy_rlp::BufMut;
     use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
     use arbitrary::{Arbitrary, Unstructured};
-    use base_alloy_consensus::BaseTxEnvelope;
-    use base_alloy_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
+    use base_common_consensus::BaseTxEnvelope;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
     use base_consensus_genesis::RollupConfig;
 
     use super::*;

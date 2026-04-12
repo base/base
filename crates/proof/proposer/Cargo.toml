@@ -26,9 +26,9 @@ alloy-rpc-types-eth.workspace = true
 alloy-transport-http.workspace = true
 
 # Base Alloy
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 base-common-rpc-types.workspace = true
-base-alloy-consensus = { workspace = true, features = ["std", "serde"] }
+base-common-consensus = { workspace = true, features = ["std", "serde"] }
 
 # Tx Manager
 base-tx-manager.workspace = true

@@ -27,9 +27,9 @@ alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
 # base
 base-tx-manager.workspace = true
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 base-common-rpc-types.workspace = true
-base-alloy-flashblocks.workspace = true
+base-common-flashblocks.workspace = true
 
 # display
 indicatif.workspace = true

@@ -13,12 +13,12 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONC
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BaseReceipt, BaseTransactionSigned};
-use base_alloy_flashblocks::{
+use base_builder_publish::WebSocketPublisher;
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
+use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
-use base_builder_publish::WebSocketPublisher;
 use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpBuiltPayload, OpPayloadBuilderAttributes};
@@ -155,7 +155,7 @@ where
     fn get_op_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
-            OpPayloadBuilderAttributes<base_alloy_consensus::BaseTxEnvelope>,
+            OpPayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
         >,
         cancel: CancellationToken,
         extra: FlashblocksExtraCtx,
@@ -1184,8 +1184,8 @@ mod tests {
 
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
-    use base_alloy_consensus::BaseReceipt;
-    use base_alloy_flashblocks::Metadata;
+    use base_common_consensus::BaseReceipt;
+    use base_common_flashblocks::Metadata;
     use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::ChainSpec;
     use reth_primitives_traits::SealedHeader;

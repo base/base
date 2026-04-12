@@ -1,6 +1,6 @@
 //! Test-only module providing rollup configs derived from [`BaseChainConfig`].
 
-use base_alloy_chains::BaseChainConfig;
+use base_common_chains::BaseChainConfig;
 use base_consensus_genesis::RollupConfig;
 use spin::Lazy;
 

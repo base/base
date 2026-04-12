@@ -4,7 +4,7 @@ use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::args::RollupArgs;
 use eyre::Result;

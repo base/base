@@ -7,7 +7,7 @@ use alloy_provider::{
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
 use alloy_rpc_types::BlockNumberOrTag;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionReceipt;
 use parking_lot::RwLock;
 use tracing::instrument;

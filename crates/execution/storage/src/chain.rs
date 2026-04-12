@@ -1,5 +1,5 @@
 use alloy_consensus::Header;
-use base_alloy_consensus::BaseTransactionSigned;
+use base_common_consensus::BaseTransactionSigned;
 use reth_storage_api::EmptyBodyStorage;
 
 /// Base storage implementation.

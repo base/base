@@ -56,10 +56,10 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = [
 ] }
 
 # base-alloy
-base-alloy-rpc-jsonrpsee.workspace = true
-base-alloy-network = { workspace = true, optional = true }
-base-alloy-consensus = { workspace = true, features = ["reth"] }
-base-alloy-rpc-types-engine = { workspace = true, optional = true }
+base-common-rpc-jsonrpsee.workspace = true
+base-common-network = { workspace = true, optional = true }
+base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-rpc-types-engine = { workspace = true, optional = true }
 
 # tokio
 tokio.workspace = true
@@ -87,8 +87,8 @@ test-utils = [
 	"dep:alloy-rpc-client",
 	"dep:alloy-rpc-types",
 	"dep:alloy-rpc-types-engine",
-	"dep:base-alloy-network",
-	"dep:base-alloy-rpc-types-engine",
+	"dep:base-common-network",
+	"dep:base-common-rpc-types-engine",
 	"dep:base-test-utils",
 	"dep:chrono",
 	"dep:jsonrpsee",

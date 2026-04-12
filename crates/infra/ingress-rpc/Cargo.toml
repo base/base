@@ -17,7 +17,7 @@ async-trait.workspace = true
 base-bundles.workspace = true
 alloy-signer-local.workspace = true
 base-execution-evm.workspace = true
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 audit-archiver-lib.workspace = true
 reth-rpc-eth-types.workspace = true
 uuid = { workspace = true, features = ["v5"] }
@@ -36,7 +36,7 @@ clap = { workspace = true, features = ["std", "derive", "env"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
-base-alloy-consensus = { workspace = true, features = ["std", "k256", "serde"] }
+base-common-consensus = { workspace = true, features = ["std", "k256", "serde"] }
 rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
 
 [dev-dependencies]

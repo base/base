@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{TxHash, keccak256};
-use base_alloy_flashblocks::Flashblock;
+use base_common_flashblocks::Flashblock;
 use futures::StreamExt;
 use tokio_tungstenite::{
     connect_async,

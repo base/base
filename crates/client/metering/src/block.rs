@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
 use alloy_primitives::B256;
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
@@ -137,7 +137,7 @@ where
 mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_primitives::{Address, Signature};
-    use base_alloy_consensus::{BaseBlockBody, BaseTransactionSigned};
+    use base_common_consensus::{BaseBlockBody, BaseTransactionSigned};
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::Account;
     use reth_primitives_traits::Block as _;

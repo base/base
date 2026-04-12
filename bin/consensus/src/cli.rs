@@ -181,7 +181,7 @@ impl Follow {
             mode: NodeMode::Validator,
         };
         let local_l2_provider =
-            RootProvider::<base_alloy_network::Base>::new_http(self.l2_rpc_url.clone());
+            RootProvider::<base_common_network::Base>::new_http(self.l2_rpc_url.clone());
 
         if self.proofs {
             local_l2_provider

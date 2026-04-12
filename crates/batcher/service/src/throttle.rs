@@ -1,8 +1,8 @@
 //! Production [`ThrottleClient`] that calls `miner_setMaxDASize` via jsonrpsee.
 
 use alloy_primitives::U64;
-use base_alloy_rpc_jsonrpsee::MinerApiExtClient;
 use base_batcher_core::ThrottleClient;
+use base_common_rpc_jsonrpsee::MinerApiExtClient;
 use futures::future::BoxFuture;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 

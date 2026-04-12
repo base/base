@@ -2,7 +2,7 @@ use alloy_consensus::TxType;
 use alloy_network::{BuildResult, TransactionBuilder, TransactionBuilderError};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_rpc_types_eth::AccessList;
-use base_alloy_consensus::{BaseTxType, BaseTypedTransaction};
+use base_common_consensus::{BaseTxType, BaseTypedTransaction};
 use base_common_rpc_types::BaseTransactionRequest;
 
 use crate::Base;

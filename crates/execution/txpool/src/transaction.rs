@@ -12,7 +12,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
-use base_alloy_consensus::BaseTransactionSigned;
+use base_common_consensus::BaseTransactionSigned;
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
@@ -53,7 +53,7 @@ pub fn unix_time_millis() -> u128 {
 #[derive(Debug, Clone, derive_more::Deref)]
 pub struct BasePooledTransaction<
     Cons = BaseTransactionSigned,
-    Pooled = base_alloy_consensus::BasePooledTransaction,
+    Pooled = base_common_consensus::BasePooledTransaction,
 > {
     #[deref]
     inner: EthPooledTransaction<Cons>,
@@ -130,7 +130,7 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
     pub fn estimated_compressed_size(&self) -> u64 {
         *self
             .estimated_tx_compressed_size
-            .get_or_init(|| base_alloy_flz::tx_estimated_size_fjord_bytes(self.encoded_2718()))
+            .get_or_init(|| base_common_flz::tx_estimated_size_fjord_bytes(self.encoded_2718()))
     }
 
     /// Returns lazily computed EIP-2718 encoded bytes of the transaction.
@@ -425,7 +425,7 @@ mod tests {
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
-    use base_alloy_consensus::{BasePrimitives, BaseTransactionSigned, TxDeposit};
+    use base_common_consensus::{BasePrimitives, BaseTransactionSigned, TxDeposit};
     use base_execution_chainspec::BASE_MAINNET;
     use base_execution_evm::BaseEvmConfig;
     use reth_provider::test_utils::MockEthProvider;

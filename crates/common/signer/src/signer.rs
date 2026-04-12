@@ -8,7 +8,7 @@ use alloy_network::{TransactionBuilder, TxSigner};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
 use alloy_rpc_types_eth::TransactionRequest;
 use async_trait::async_trait;
-use base_alloy_rpc_jsonrpsee::EthSignerApiClient;
+use base_common_rpc_jsonrpsee::EthSignerApiClient;
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tracing::debug;
 use url::Url;

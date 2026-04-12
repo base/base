@@ -4,7 +4,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::SystemConfig;
 use base_protocol::{BlockInfo, L2BlockInfo, SingleBatch};
 

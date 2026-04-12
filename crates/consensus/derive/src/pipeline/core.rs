@@ -252,7 +252,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_alloy_rpc_types_engine::BasePayloadAttributes;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_consensus_genesis::{RollupConfig, SystemConfig};
     use base_protocol::{AttributesWithParent, L2BlockInfo};
 

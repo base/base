@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_alloy_consensus::TxDeposit;
+use base_common_consensus::TxDeposit;
 use clap::{Parser, Subcommand};
 use proptest::test_runner::TestRunner;
 use reth_chainspec::ChainSpec;

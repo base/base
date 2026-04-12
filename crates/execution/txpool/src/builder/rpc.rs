@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
-use base_alloy_consensus::BaseTransactionSigned;
+use base_common_consensus::BaseTransactionSigned;
 use jsonrpsee::{
     core::RpcResult,
     proc_macros::rpc,
@@ -105,7 +105,7 @@ mod tests {
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
-    use base_alloy_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
+    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;

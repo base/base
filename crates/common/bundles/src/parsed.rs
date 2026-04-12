@@ -3,7 +3,7 @@
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_primitives::TxHash;
 use alloy_provider::network::eip2718::Decodable2718;
-use base_alloy_consensus::BaseTxEnvelope;
+use base_common_consensus::BaseTxEnvelope;
 use uuid::Uuid;
 
 use crate::Bundle;

@@ -1,4 +1,4 @@
-# `base-alloy-chains`
+# `base-common-chains`
 
 Single source of truth for Base chain configuration and network upgrade bindings.
 
@@ -16,11 +16,11 @@ Base upgrade sequence (Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthm
 
 ```toml
 [dependencies]
-base-alloy-chains = { workspace = true }
+base-common-chains = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_chains::{BaseChainConfig, BASE_MAINNET};
+use base_common_chains::{BaseChainConfig, BASE_MAINNET};
 
 assert_eq!(BASE_MAINNET.chain_id, 8453);
 assert_eq!(BASE_MAINNET.canyon_timestamp, 1_704_992_401);

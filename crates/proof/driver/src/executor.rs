@@ -10,7 +10,7 @@ use core::error::Error;
 use alloy_consensus::{Header, Sealed};
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_executor::BlockBuildingOutcome;
 
 /// Executor trait for block execution in the driver pipeline.

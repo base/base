@@ -1,7 +1,7 @@
 //! Base Payload attributes that reference the parent L2 block.
 
-use base_alloy_consensus::BaseTxType;
-use base_alloy_rpc_types_engine::BasePayloadAttributes;
+use base_common_consensus::BaseTxType;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 
 use crate::{BlockInfo, L2BlockInfo};
 

@@ -24,7 +24,7 @@ base-client-cli.workspace = true
 alloy-chains.workspace = true
 alloy-provider.workspace = true
 alloy-primitives.workspace = true
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 
 # consensus
 base-consensus-genesis.workspace = true

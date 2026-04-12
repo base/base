@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, hex};
-use base_alloy_rpc_types_engine::NetworkPayloadEnvelope;
+use base_common_rpc_types_engine::NetworkPayloadEnvelope;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_peers::{EnrValidation, PeerMonitoring, PeerUtils};
 use derive_more::Debug;

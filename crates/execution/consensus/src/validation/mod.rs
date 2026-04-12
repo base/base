@@ -9,8 +9,8 @@ use alloy_consensus::{BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::DepositReceiptExt;
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::DepositReceiptExt;
 use reth_consensus::ConsensusError;
 use reth_execution_types::BlockExecutionResult;
 use reth_primitives_traits::{BlockBody, GotExpected, receipt::gas_spent_by_transactions};
@@ -211,8 +211,8 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Bytes, b256, hex};
-    use base_alloy_chains::BaseUpgrade;
-    use base_alloy_consensus::{BaseReceipt, BaseTxEnvelope};
+    use base_common_chains::BaseUpgrade;
+    use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
     use base_execution_chainspec::{BASE_SEPOLIA, BaseChainSpec};
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 

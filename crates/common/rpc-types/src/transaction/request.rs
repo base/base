@@ -7,7 +7,7 @@ use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
-use base_alloy_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
+use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
 use serde::{Deserialize, Serialize};
 
 /// Builder for [`BaseTypedTransaction`].

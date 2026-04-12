@@ -25,7 +25,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 
 # base
 base-metrics.workspace = true
-base-alloy-signer.workspace = true
+base-common-signer.workspace = true
 
 # misc
 url.workspace = true

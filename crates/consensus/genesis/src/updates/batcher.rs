@@ -4,8 +4,7 @@ use alloy_primitives::{Address, LogData};
 use alloy_sol_types::{SolType, sol};
 
 use crate::{
-    BatcherUpdateError, SystemConfig, SystemConfigLog,
-    updates::common::{ValidationError, validate_update_data},
+    BatcherUpdateError, SystemConfig, SystemConfigLog, UpdateDataValidator, ValidationError,
 };
 
 /// The batcher update type.
@@ -29,7 +28,7 @@ impl TryFrom<&SystemConfigLog> for BatcherUpdate {
     fn try_from(log: &SystemConfigLog) -> Result<Self, Self::Error> {
         let LogData { data, .. } = &log.log.data;
 
-        let validated = validate_update_data(data).map_err(|e| match e {
+        let validated = UpdateDataValidator::validate(data).map_err(|e| match e {
             ValidationError::InvalidDataLen(_expected, actual) => {
                 BatcherUpdateError::InvalidDataLen(actual)
             }

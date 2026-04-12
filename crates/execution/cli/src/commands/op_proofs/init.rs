@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use base_alloy_consensus::BasePrimitives;
+use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     InitializationJob, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_consensus_engine::ConsolidateInput;
 use base_protocol::L2BlockInfo;
 use futures::future::OptionFuture;
@@ -408,7 +408,7 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::ExecutionPayloadV1;
-    use base_alloy_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L2BlockInfo};
     use mockall::predicate::*;
     use tokio::sync::mpsc;

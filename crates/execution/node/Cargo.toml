@@ -58,12 +58,12 @@ revm = { workspace = true, features = [
 # ethereum
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
-base-alloy-chains.workspace = true
+base-common-chains.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
-base-alloy-rpc-jsonrpsee.workspace = true
-base-alloy-consensus = { workspace = true, features = ["reth"] }
-base-alloy-rpc-types-engine = { workspace = true, features = ["reth"] }
+base-common-rpc-jsonrpsee.workspace = true
+base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
 
 # async
 tokio.workspace = true
@@ -95,8 +95,8 @@ reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 alloy-eips.workspace = true
 alloy-network.workspace = true
-base-alloy-evm.workspace = true
-base-alloy-network.workspace = true
+base-common-evm.workspace = true
+base-common-network.workspace = true
 
 [features]
 default = [ "reth-codec" ]
@@ -119,7 +119,7 @@ js-tracer = [
 ]
 test-utils = [
 	"alloy-genesis",
-	"base-alloy-consensus/arbitrary",
+	"base-common-consensus/arbitrary",
 	"base-execution-exex/test-utils",
 	"base-node-core/test-utils",
 	"base-protocol/test-utils",

@@ -18,8 +18,8 @@ use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
-use base_alloy_consensus::{BaseBlock, BaseReceipt, BaseTransactionSigned, DepositReceipt};
-use base_alloy_flashblocks::{
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTransactionSigned, DepositReceipt};
+use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_execution_chainspec::BaseChainSpec;

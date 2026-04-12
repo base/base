@@ -281,7 +281,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use base_alloy_consensus::{DepositReceipt, serde_bincode_compat};
+    /// use base_common_consensus::{DepositReceipt, serde_bincode_compat};
     /// use serde::{Deserialize, Serialize, de::DeserializeOwned};
     /// use serde_with::serde_as;
     ///

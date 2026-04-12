@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::FixedBytes;
-use base_alloy_consensus::BaseTxType;
+use base_common_consensus::BaseTxType;
 use base_consensus_genesis::RollupConfig;
 use tracing::{info, warn};
 
@@ -757,7 +757,7 @@ mod tests {
     use alloy_consensus::{Header, constants::EIP1559_TX_TYPE_ID};
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, Bytes, b256};
-    use base_alloy_consensus::BaseBlock;
+    use base_common_consensus::BaseBlock;
     use base_consensus_genesis::{ChainGenesis, HardForkConfig};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
@@ -1161,7 +1161,7 @@ mod tests {
             op_blocks: vec![BaseBlock {
                 header: Header { number: 9, ..Default::default() },
                 body: alloy_consensus::BlockBody {
-                    transactions: vec![base_alloy_consensus::BaseTxEnvelope::Eip1559(
+                    transactions: vec![base_common_consensus::BaseTxEnvelope::Eip1559(
                         alloy_consensus::Signed::new_unchecked(
                             alloy_consensus::TxEip1559 {
                                 chain_id: 0,

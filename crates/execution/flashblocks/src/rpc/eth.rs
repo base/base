@@ -60,7 +60,7 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::{Filter, Log};
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use jsonrpsee::{
     core::{RpcResult, async_trait},

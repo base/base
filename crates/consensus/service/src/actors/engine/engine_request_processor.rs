@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
-use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
     BuildTask, ConsolidateInput, ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate,

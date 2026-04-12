@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use eyre::{Result, WrapErr};

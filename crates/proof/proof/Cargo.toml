@@ -30,13 +30,13 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
 # Base Alloy
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine.workspace = true
 
 # Execution
 alloy-evm.workspace = true
 base-revm.workspace = true
-base-alloy-evm.workspace = true
+base-common-evm.workspace = true
 
 # General
 lru.workspace = true
@@ -74,9 +74,9 @@ std = [
 	"alloy-trie/std",
 	"ark-bls12-381/std",
 	"ark-ff/std",
-	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
-	"base-alloy-rpc-types-engine/std",
+	"base-common-consensus/std",
+	"base-common-evm/std",
+	"base-common-rpc-types-engine/std",
 	"base-consensus-genesis/std",
 	"base-consensus-registry/std",
 	"base-proof-driver/std",

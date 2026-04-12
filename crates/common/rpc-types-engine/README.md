@@ -1,4 +1,4 @@
-# `base-alloy-rpc-types-engine`
+# `base-common-rpc-types-engine`
 
 Base chain RPC types for the `engine` namespace.
 
@@ -16,11 +16,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-rpc-types-engine = { workspace = true }
+base-common-rpc-types-engine = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_rpc_types_engine::{OpPayloadAttributes, OpExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::{OpPayloadAttributes, OpExecutionPayloadEnvelope};
 
 let attrs = OpPayloadAttributes { timestamp, transactions, .. };
 ```

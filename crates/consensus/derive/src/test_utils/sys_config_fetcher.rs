@@ -4,7 +4,7 @@ use alloc::{boxed::Box, string::ToString, sync::Arc};
 
 use alloy_primitives::map::HashMap;
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{BatchValidationProvider, L2BlockInfo};
 use thiserror::Error;

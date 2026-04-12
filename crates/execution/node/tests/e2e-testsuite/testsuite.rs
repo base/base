@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B64, B256};
-use base_alloy_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::{BASE_MAINNET, BaseChainSpecBuilder};
 use base_node_core::{BaseNode, OpEngineTypes};
 use eyre::Result;

@@ -20,7 +20,7 @@ reth-primitives-traits.workspace = true
 
 # op-reth
 base-protocol.workspace = true
-base-alloy-chains.workspace = true
+base-common-chains.workspace = true
 base-execution-upgrades.workspace = true
 
 # ethereum
@@ -39,7 +39,7 @@ serde = { workspace = true, optional = true }
 
 # misc
 derive_more.workspace = true
-base-alloy-consensus.workspace = true
+base-common-consensus.workspace = true
 
 [dev-dependencies]
 reth-chainspec = { workspace = true, features = ["test-utils"] }
@@ -52,7 +52,7 @@ std = [
 	"alloy-eips/std",
 	"alloy-genesis/std",
 	"alloy-primitives/std",
-	"base-alloy-consensus/std",
+	"base-common-consensus/std",
 	"base-common-rpc-types/std",
 	"base-execution-upgrades/std",
 	"base-protocol/std",
@@ -70,8 +70,8 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
-	"base-alloy-chains/serde",
-	"base-alloy-consensus/serde",
+	"base-common-chains/serde",
+	"base-common-consensus/serde",
 	"base-common-rpc-types/serde",
 	"base-execution-upgrades/serde",
 	"base-protocol/serde",
