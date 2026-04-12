@@ -191,7 +191,7 @@ impl RollupProvider for RollupClient {
         })
         .await?;
 
-        self.output_cache.insert(block_number, output.clone()).await;
+        self.output_cache.insert(block_number, output).await;
 
         Ok(output)
     }

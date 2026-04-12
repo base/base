@@ -20,7 +20,7 @@ pub type L2HttpProvider = RootProvider<Base>;
 pub type BaseBlock = alloy_rpc_types_eth::Block<base_common_rpc_types::Transaction>;
 
 /// L1 block reference.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct L1BlockRef {
     /// Block hash.
@@ -34,7 +34,7 @@ pub struct L1BlockRef {
 }
 
 /// L2 block reference.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct L2BlockRef {
     /// Block hash.
@@ -54,7 +54,7 @@ pub struct L2BlockRef {
 /// Minimal L1 block identifier containing only hash and number.
 /// Used for `L2BlockRef`.l1origin and genesis config where the full `L1BlockRef` fields
 /// (parentHash, timestamp) are not provided by the RPC response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct L1BlockId {
     /// Block hash.
@@ -65,7 +65,7 @@ pub struct L1BlockId {
 
 /// Minimal L2 block reference for genesis config.
 /// Unlike `L2BlockRef`, this only contains hash and number as returned by `optimism_rollupConfig`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenesisL2BlockRef {
     /// Block hash.
@@ -75,7 +75,7 @@ pub struct GenesisL2BlockRef {
 }
 
 /// Output root at a specific L2 block, from `optimism_outputAtBlock`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputAtBlock {
     /// The output root at this block.
@@ -85,7 +85,7 @@ pub struct OutputAtBlock {
 }
 
 /// Sync status from `optimism_syncStatus`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SyncStatus {
     /// Current L1 block reference.

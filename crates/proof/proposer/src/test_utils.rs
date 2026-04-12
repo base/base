@@ -95,7 +95,7 @@ impl RollupProvider for MockRollupClient {
         unimplemented!()
     }
     async fn sync_status(&self) -> RpcResult<SyncStatus> {
-        Ok(self.sync_status.clone())
+        Ok(self.sync_status)
     }
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
         let root = self
@@ -114,7 +114,7 @@ pub(crate) struct MockAnchorStateRegistry {
 #[async_trait]
 impl AnchorStateRegistryClient for MockAnchorStateRegistry {
     async fn get_anchor_root(&self) -> Result<AnchorRoot, ContractError> {
-        Ok(self.anchor_root.clone())
+        Ok(self.anchor_root)
     }
 }
 
@@ -263,13 +263,13 @@ pub(crate) fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus 
     let l1 = test_l1_block_ref(100);
     let l2 = test_l2_block_ref(safe_number, safe_hash);
     SyncStatus {
-        current_l1: l1.clone(),
+        current_l1: l1,
         current_l1_finalized: None,
-        head_l1: l1.clone(),
-        safe_l1: l1.clone(),
+        head_l1: l1,
+        safe_l1: l1,
         finalized_l1: l1,
-        unsafe_l2: l2.clone(),
-        safe_l2: l2.clone(),
+        unsafe_l2: l2,
+        safe_l2: l2,
         finalized_l2: l2,
         pending_safe_l2: None,
     }
