@@ -366,7 +366,6 @@ impl OutputProposer for MockOutputProposer {
     async fn propose_output(
         &self,
         _proposal: &Proposal,
-        _l2_block_number: u64,
         _parent_address: Address,
         _intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {

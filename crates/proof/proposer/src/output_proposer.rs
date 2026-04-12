@@ -20,25 +20,23 @@ use crate::error::ProposerError;
 /// Checks the structured revert reason and raw data for the
 /// `GameAlreadyExists` selector first, then falls back to searching the
 /// Display string for non-`ExecutionReverted` variants (e.g. `Rpc`).
-/// Returns [`ProposerError::GameAlreadyExists`] if found, otherwise
-/// wrapping it as [`ProposerError::TxManager`].
 fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
+    let selector = game_already_exists_selector();
+
     if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
-        // Check reason string for GameAlreadyExists.
         if reason.as_deref().is_some_and(|r| r.contains("GameAlreadyExists")) {
             return ProposerError::GameAlreadyExists;
         }
-        // Check raw data for the GameAlreadyExists selector.
-        if data.as_ref().is_some_and(|d| d.len() >= 4 && d[..4] == game_already_exists_selector()) {
+        if data.as_ref().is_some_and(|d| d.len() >= 4 && d[..4] == selector) {
             return ProposerError::GameAlreadyExists;
         }
         return ProposerError::TxManager(err);
     }
-    // Fallback: check Display output for non-ExecutionReverted variants
-    // (e.g. Rpc) that may carry "GameAlreadyExists" in their message.
+
     let msg = err.to_string();
-    let selector_hex = alloy_primitives::hex::encode(game_already_exists_selector());
-    if msg.contains(&selector_hex) || msg.contains("GameAlreadyExists") {
+    if msg.contains(&alloy_primitives::hex::encode(selector))
+        || msg.contains("GameAlreadyExists")
+    {
         return ProposerError::GameAlreadyExists;
     }
     ProposerError::TxManager(err)
@@ -51,7 +49,6 @@ pub trait OutputProposer: Send + Sync {
     async fn propose_output(
         &self,
         proposal: &Proposal,
-        l2_block_number: u64,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError>;
@@ -66,12 +63,11 @@ impl OutputProposer for DryRunProposer {
     async fn propose_output(
         &self,
         proposal: &Proposal,
-        l2_block_number: u64,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         info!(
-            l2_block_number,
+            l2_block_number = proposal.l2_block_number,
             parent_address = %parent_address,
             output_root = ?proposal.output_root,
             intermediate_roots_count = intermediate_roots.len(),
@@ -107,10 +103,10 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
     async fn propose_output(
         &self,
         proposal: &Proposal,
-        l2_block_number: u64,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        let l2_block_number = proposal.l2_block_number;
         let proof_data =
             proposal.build_proof_data().map_err(|e| ProposerError::Internal(e.to_string()))?;
         let extra_data = encode_extra_data(l2_block_number, parent_address, intermediate_roots);
@@ -129,7 +125,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
             factory = %self.factory_address,
             game_type = self.game_type,
             parent_address = %parent_address,
-            tx = ?candidate,
+            tx_data_len = candidate.tx_data.len(),
             "Creating dispute game"
         );
 
@@ -312,8 +308,7 @@ mod tests {
     async fn propose_output_success() {
         let tx_hash = B256::repeat_byte(0xAA);
         let submitter = test_submitter(Ok(receipt_with_status(true, tx_hash)));
-        let result =
-            submitter.propose_output(&test_proposal(), TEST_L2_BLOCK, Address::ZERO, &[]).await;
+        let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
         assert!(result.is_ok());
     }
 
@@ -322,7 +317,7 @@ mod tests {
         let tx_hash = B256::repeat_byte(0xBB);
         let submitter = test_submitter(Ok(receipt_with_status(false, tx_hash)));
         let err = submitter
-            .propose_output(&test_proposal(), TEST_L2_BLOCK, Address::ZERO, &[])
+            .propose_output(&test_proposal(), Address::ZERO, &[])
             .await
             .unwrap_err();
         assert!(matches!(err, ProposerError::TxReverted(_)));
@@ -332,7 +327,7 @@ mod tests {
     async fn propose_output_tx_manager_error() {
         let submitter = test_submitter(Err(TxManagerError::NonceTooLow));
         let err = submitter
-            .propose_output(&test_proposal(), TEST_L2_BLOCK, Address::ZERO, &[])
+            .propose_output(&test_proposal(), Address::ZERO, &[])
             .await
             .unwrap_err();
         assert!(

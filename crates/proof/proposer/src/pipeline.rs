@@ -1467,7 +1467,6 @@ where
             PROPOSAL_TIMEOUT,
             self.output_proposer.propose_output(
                 aggregate_proposal,
-                target_block,
                 parent_address,
                 &intermediate_roots,
             ),
