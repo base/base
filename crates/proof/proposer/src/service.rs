@@ -85,7 +85,6 @@ impl ProposerService {
         let l1_client = Arc::new(L1Client::new(l1_config)?);
         info!(endpoint = %config.l1_eth_rpc, "L1 client initialized");
 
-        // Create L2 client
         let l2_config = L2ClientConfig::new(config.l2_eth_rpc.clone())
             .with_timeout(config.rpc_timeout)
             .with_retry_config(config.retry.clone())
@@ -94,16 +93,13 @@ impl ProposerService {
         let l2_client = Arc::new(L2Client::new(l2_config)?);
         info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 
-        // Create Rollup client
-        let rollup_rpc = config.rollup_rpc.clone();
-        let rollup_config = RollupClientConfig::new(rollup_rpc.clone())
+        let rollup_config = RollupClientConfig::new(config.rollup_rpc.clone())
             .with_timeout(config.rpc_timeout)
             .with_retry_config(config.retry.clone())
             .with_skip_tls_verify(config.skip_tls_verify);
         let rollup_client = Arc::new(RollupClient::new(rollup_config)?);
-        info!(endpoint = %rollup_rpc, "Rollup client initialized");
+        info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
-        // Fetch chain configuration from op-node
         info!("Fetching chain configuration from rollup RPC...");
         let chain_config = rollup_client.rollup_config().await?;
         info!(
@@ -139,9 +135,11 @@ impl ProposerService {
                 config.game_type
             ));
         }
-        let block_interval = verifier_client.read_block_interval(impl_address).await?;
-        let intermediate_block_interval =
-            verifier_client.read_intermediate_block_interval(impl_address).await?;
+        let (block_interval, intermediate_block_interval, init_bond) = tokio::try_join!(
+            verifier_client.read_block_interval(impl_address),
+            verifier_client.read_intermediate_block_interval(impl_address),
+            factory_client.init_bonds(config.game_type),
+        )?;
         if block_interval < 2 {
             return Err(eyre::eyre!(
                 "BLOCK_INTERVAL ({block_interval}) must be at least 2; single-block proposals are not supported"
@@ -156,15 +154,12 @@ impl ProposerService {
             block_interval,
             intermediate_block_interval,
             intermediate_roots_count = block_interval / intermediate_block_interval,
+            init_bond = %init_bond,
             impl_address = %impl_address,
             game_type = config.game_type,
-            "Read BLOCK_INTERVAL and INTERMEDIATE_BLOCK_INTERVAL from AggregateVerifier"
+            "Read on-chain config from AggregateVerifier and DisputeGameFactory"
         );
 
-        let init_bond = factory_client.init_bonds(config.game_type).await?;
-        info!(init_bond = %init_bond, game_type = config.game_type, "Read initBond from DisputeGameFactory");
-
-        // Wrap in Arc for shared ownership.
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
 
@@ -241,7 +236,6 @@ impl ProposerService {
                 poll_interval: config.poll_interval,
                 block_interval,
                 intermediate_block_interval,
-                init_bond,
                 game_type: config.game_type,
                 allow_non_finalized: config.allow_non_finalized,
                 proposer_address: proposer_address.unwrap_or_default(),
@@ -252,7 +246,7 @@ impl ProposerService {
         let pipeline = ProvingPipeline::new(
             pipeline_config,
             prover_client,
-            Arc::clone(&l1_client),
+            l1_client,
             l2_client,
             rollup_client,
             anchor_registry,

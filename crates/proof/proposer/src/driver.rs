@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
@@ -37,8 +37,6 @@ pub struct DriverConfig {
     pub block_interval: u64,
     /// Number of L2 blocks between intermediate output root checkpoints.
     pub intermediate_block_interval: u64,
-    /// ETH bond required to create a dispute game.
-    pub init_bond: U256,
     /// Game type ID for `AggregateVerifier` dispute games.
     pub game_type: u32,
     /// If true, use `safe_l2` (derived from L1 but L1 not yet finalized).
@@ -62,7 +60,6 @@ impl Default for DriverConfig {
             poll_interval: Duration::from_secs(12),
             block_interval: 512,
             intermediate_block_interval: 512,
-            init_bond: U256::ZERO,
             game_type: 0,
             allow_non_finalized: false,
             proposer_address: Address::ZERO,
