@@ -2654,7 +2654,6 @@ dependencies = [
  "base-batcher-source",
  "base-common-consensus",
  "base-common-network",
- "base-common-rpc-jsonrpsee",
  "base-consensus-genesis",
  "base-consensus-rpc",
  "base-protocol",
@@ -3142,15 +3141,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-rpc-jsonrpsee"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rpc-types-eth",
- "jsonrpsee",
-]
-
-[[package]]
 name = "base-common-rpc-types"
 version = "0.0.0"
 dependencies = [
@@ -3211,7 +3201,6 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "async-trait",
- "base-common-rpc-jsonrpsee",
  "jsonrpsee",
  "thiserror 2.0.18",
  "tokio",
@@ -3882,7 +3871,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-flz",
  "base-common-network",
- "base-common-rpc-jsonrpsee",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
@@ -4296,7 +4284,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-evm",
  "base-common-network",
- "base-common-rpc-jsonrpsee",
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
  "base-execution-consensus",
@@ -4363,7 +4350,6 @@ dependencies = [
  "base-cli-utils",
  "base-common-consensus",
  "base-common-network",
- "base-common-rpc-jsonrpsee",
  "base-common-rpc-types-engine",
  "base-engine-tree",
  "base-execution-chainspec",

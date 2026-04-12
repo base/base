@@ -2,7 +2,6 @@
 
 use alloy_primitives::U64;
 use base_batcher_core::ThrottleClient;
-use base_common_rpc_jsonrpsee::MinerApiExtClient;
 use futures::future::BoxFuture;
 use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
