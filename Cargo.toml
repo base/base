@@ -10,22 +10,10 @@ exclude = [".github/"]
 [workspace]
 resolver = "2"
 members = [
-  "bin/audit-archiver",
-  "bin/basectl",
-  "bin/based",
-  "bin/batcher",
-  "bin/builder",
-  "bin/challenger",
-  "bin/consensus",
-  "bin/ingress-rpc",
-  "bin/mempool-rebroadcaster",
-  "bin/node",
-  "bin/proposer",
+  "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
   "bin/prover/zk",
-  "bin/prover-registrar",
-  "bin/websocket-proxy",
   "crates/client/*",
   "crates/consensus/*",
   "crates/proof/mpt",
@@ -55,18 +43,12 @@ members = [
   "crates/utilities/*",
   "crates/batcher/*",
   "crates/builder/*",
-  "crates/infra/audit",
-  "crates/infra/basectl",
-  "crates/infra/based",
-  "crates/infra/ingress-rpc",
-  "crates/infra/mempool-rebroadcaster",
-  "crates/infra/websocket-proxy",
-  "crates/infra/load-tests",
+  "crates/infra/*",
   "crates/common/*",
   "crates/execution/*",
   "etc/tools/*",
   "devnet",
-  "actions/harness",
+  "actions/*",
 ]
 default-members = [
   "bin/based",
@@ -201,6 +183,7 @@ base-flashblocks-node = { path = "crates/client/flashblocks-node" }
 
 # Consensus
 base-consensus-rpc = { path = "crates/consensus/rpc" }
+base-consensus-safedb = { path = "crates/consensus/safedb" }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
 base-consensus-disc = { path = "crates/consensus/disc", default-features = false }
 base-consensus-peers = { path = "crates/consensus/peers", default-features = false }
@@ -211,9 +194,8 @@ base-consensus-gossip = { path = "crates/consensus/gossip", default-features = f
 base-consensus-sources = { path = "crates/consensus/sources", default-features = false }
 base-consensus-genesis = { path = "crates/consensus/genesis", default-features = false }
 base-consensus-registry = { path = "crates/consensus/registry", default-features = false }
-base-consensus-safedb = { path = "crates/consensus/safedb" }
 base-consensus-upgrades = { path = "crates/consensus/upgrades", default-features = false }
-base-consensus-providers = { path = "crates/consensus/providers-alloy", default-features = false }
+base-consensus-providers = { path = "crates/consensus/providers", default-features = false }
 
 # Execution
 base-node-core = { path = "crates/execution/node" }
