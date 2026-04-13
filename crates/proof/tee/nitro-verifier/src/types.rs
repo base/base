@@ -91,7 +91,13 @@ sol! {
     }
 
     /// Possible attestation verification results.
+    ///
+    /// `Unknown` is intentionally placed at index 0 so that uninitialized enum
+    /// variables default to a failure state rather than `Success` (fail-closed).
+    /// This ordering **must** match `INitroEnclaveVerifier.sol`.
     enum VerificationResult {
+        /// Default / uninitialized — treated as a verification failure.
+        Unknown,
         /// Attestation successfully verified.
         Success,
         /// Root certificate is not in the trusted set.
