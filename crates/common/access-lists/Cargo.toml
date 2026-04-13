@@ -36,7 +36,7 @@ base-execution-evm.workspace = true
 base-execution-chainspec.workspace = true
 
 # revm
-base-revm.workspace = true
+base-common-evm.workspace = true
 
 # alloy
 alloy-contract.workspace = true

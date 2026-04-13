@@ -12,7 +12,7 @@ use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes};
 use alloy_signer::Signature;
 use base_common_consensus::{BaseTransaction, BaseTransactionInfo, BaseTxEnvelope};
-use base_revm::OpTransaction as OpRevm;
+use base_common_evm::OpTransaction as OpRevm;
 use reth_rpc_convert::{
     SignTxRequestError, SignableTxRequest, TryIntoSimTx, transaction::FromConsensusTx,
 };

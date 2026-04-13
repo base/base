@@ -16,7 +16,6 @@ use alloy_primitives::Address;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceipt;
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
-use base_revm::{DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo};
 use revm::{
     Database as _, DatabaseCommit,
     context::{Block, result::ResultAndState},
@@ -24,7 +23,8 @@ use revm::{
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv, canyon,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv,
+    DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo, canyon,
 };
 
 /// The result of executing an OP transaction.
@@ -360,11 +360,6 @@ mod tests {
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_common_chains::{BaseUpgrade, ChainUpgrades};
     use base_common_consensus::BaseTxEnvelope;
-    use base_revm::{
-        BASE_FEE_SCALAR_OFFSET, Builder, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
-        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
-        OPERATOR_FEE_SCALARS_SLOT, OpSpecId,
-    };
     use revm::{
         Context,
         context::BlockEnv,
@@ -375,7 +370,12 @@ mod tests {
     };
 
     use super::*;
-    use crate::{AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory};
+    use crate::{
+        AlloyReceiptBuilder, BASE_FEE_SCALAR_OFFSET, BaseBlockExecutorFactory, BaseEvm,
+        BaseEvmFactory, Builder, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
+        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
+        OPERATOR_FEE_SCALARS_SLOT, OpSpecId,
+    };
 
     #[test]
     fn test_with_encoded() {

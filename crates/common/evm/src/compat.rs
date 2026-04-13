@@ -1,27 +1,24 @@
 //! Compatibility trait implementations for integration with alloy-evm and reth-evm.
 
-#[cfg(feature = "alloy")]
-mod alloy_compat {
-    use alloy_evm::{InvalidTxError, tx::IntoTxEnv};
-    use revm::context_interface::{result::InvalidTransaction, transaction::Transaction};
+use alloy_evm::{InvalidTxError, tx::IntoTxEnv};
+use revm::context_interface::{result::InvalidTransaction, transaction::Transaction};
 
-    use crate::{OpTransaction, OpTransactionError};
+use crate::{OpTransaction, OpTransactionError};
 
-    impl<T> IntoTxEnv<Self> for OpTransaction<T>
-    where
-        T: Transaction,
-    {
-        fn into_tx_env(self) -> Self {
-            self
-        }
+impl<T> IntoTxEnv<Self> for OpTransaction<T>
+where
+    T: Transaction,
+{
+    fn into_tx_env(self) -> Self {
+        self
     }
+}
 
-    impl InvalidTxError for OpTransactionError {
-        fn as_invalid_tx_err(&self) -> Option<&InvalidTransaction> {
-            match self {
-                Self::Base(tx) => Some(tx),
-                _ => None,
-            }
+impl InvalidTxError for OpTransactionError {
+    fn as_invalid_tx_err(&self) -> Option<&InvalidTransaction> {
+        match self {
+            Self::Base(tx) => Some(tx),
+            _ => None,
         }
     }
 }

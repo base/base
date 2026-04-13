@@ -32,7 +32,6 @@ reth-rpc-eth-types.workspace = true
 
 # revm
 revm.workspace = true
-base-revm.workspace = true
 revm-database.workspace = true
 
 # alloy

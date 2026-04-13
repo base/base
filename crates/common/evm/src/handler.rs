@@ -1,5 +1,5 @@
 //! Handler related to Base chain
-use std::boxed::Box;
+use alloc::boxed::Box;
 
 use revm::{
     context::{
@@ -405,7 +405,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        Builder, DefaultOp, OpContext, OpTransaction,
+        Builder, DefaultOp, OpContext, OpSpecId, OpTransaction,
         constants::{
             BASE_FEE_SCALAR_OFFSET, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
             L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, OPERATOR_FEE_SCALARS_SLOT,

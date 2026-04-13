@@ -5,6 +5,43 @@
 
 extern crate alloc;
 
+mod spec;
+pub use spec::{OpSpecId, name};
+
+mod rollup_config_ext;
+pub use rollup_config_ext::RollupConfigExt;
+
+mod constants;
+pub use constants::*;
+
+mod result;
+pub use result::OpHaltReason;
+
+mod l1block;
+pub use l1block::L1BlockInfo;
+
+mod transaction;
+pub use transaction::{
+    BaseTransactionBuilder, BuildError, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
+    OpTransaction, OpTransactionError, OpTxTr,
+};
+
+mod handler;
+pub use handler::{IsTxError, OpHandler};
+
+mod precompiles;
+pub use precompiles::BasePrecompiles;
+
+mod op_evm;
+pub use op_evm::OpEvm;
+
+mod api;
+pub use api::{BaseError, Builder, DefaultOp, DefaultOpEvm, OpContext, OpContextTr};
+
+mod compat;
+
+mod consensus_compat;
+
 mod spec_id;
 pub use spec_id::{spec, spec_by_timestamp_after_bedrock};
 

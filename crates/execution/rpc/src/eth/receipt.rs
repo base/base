@@ -166,12 +166,12 @@ impl ReceiptFieldsBuilder {
         }
     }
 
-    /// Applies [`L1BlockInfo`](base_revm::L1BlockInfo).
+    /// Applies [`L1BlockInfo`](base_common_evm::L1BlockInfo).
     pub fn l1_block_info<T: Encodable2718 + BaseTransaction>(
         mut self,
         chain_spec: &impl Upgrades,
         tx: &T,
-        l1_block_info: &mut base_revm::L1BlockInfo,
+        l1_block_info: &mut base_common_evm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError> {
         let raw_tx = tx.encoded_2718();
         let timestamp = self.block_timestamp;
@@ -283,7 +283,7 @@ impl BaseReceiptBuilder {
     pub fn new<N>(
         chain_spec: &impl Upgrades,
         input: ConvertReceiptInput<'_, N>,
-        l1_block_info: &mut base_revm::L1BlockInfo,
+        l1_block_info: &mut base_common_evm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError>
     where
         N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
@@ -487,7 +487,7 @@ mod tests {
             BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::from(2)),
             ..Default::default()
@@ -511,7 +511,7 @@ mod tests {
             BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::ZERO),
             ..Default::default()
@@ -602,7 +602,7 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -637,7 +637,7 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -691,7 +691,7 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };

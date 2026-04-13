@@ -9,7 +9,7 @@ use ExecutionMeteringLimitExceeded::{
 };
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
-use base_revm::OpTransactionError;
+use base_common_evm::OpTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 

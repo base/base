@@ -3,7 +3,7 @@
 use alloy_consensus::Transaction;
 use alloy_primitives::{U16, U256, hex};
 use base_common_chains::Upgrades;
-use base_revm::{L1BlockInfo, OpSpecId};
+use base_common_evm::{L1BlockInfo, OpSpecId};
 use reth_execution_errors::BlockExecutionError;
 use reth_primitives_traits::BlockBody;
 

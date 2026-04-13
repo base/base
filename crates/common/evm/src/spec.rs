@@ -119,7 +119,7 @@ pub mod name {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use alloc::vec;
 
     use super::*;
 

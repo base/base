@@ -27,7 +27,8 @@ base-common-consensus.workspace = true
 [dev-dependencies]
 revm.workspace = true
 rstest.workspace = true
-base-revm.workspace = true
+base-common-evm.workspace = true
+base-consensus-genesis.workspace = true
 alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]

@@ -2,9 +2,6 @@ use core::ops::{Deref, DerefMut};
 
 use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
-use base_revm::{
-    BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
-};
 use revm::{
     ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
     context::{BlockEnv, TxEnv},
@@ -13,15 +10,19 @@ use revm::{
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
 };
 
+use crate::{
+    BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
+};
+
 /// OP EVM implementation.
 ///
 /// This is a wrapper type around the `revm` evm with optional [`Inspector`] (tracing)
 /// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
-/// [`BaseEvm`](base_revm::OpEvm) type.
+/// [`OpEvm`] type.
 #[allow(missing_debug_implementations)] // missing revm::OpContext Debug impl
 pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
     pub(crate) inner:
-        base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
+        crate::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
     pub(crate) inspect: bool,
 }
 
@@ -41,9 +42,9 @@ impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     /// Creates a new OP EVM instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
-    /// [`BaseEvm`](base_revm::OpEvm) should be invoked on [`Evm::transact`].
+    /// [`OpEvm`] should be invoked on [`Evm::transact`].
     pub const fn new(
-        evm: base_revm::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
+        evm: crate::OpEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P>,
         inspect: bool,
     ) -> Self {
         Self { inner: evm, inspect }
@@ -142,12 +143,14 @@ mod tests {
         precompiles::{Precompile, PrecompileInput},
     };
     use alloy_primitives::{Address, U256};
-    use base_revm::{bls12_381, bn254_pair};
     use revm::{context::CfgEnv, database::EmptyDB};
     use rstest::rstest;
 
     use super::*;
-    use crate::BaseEvmFactory;
+    use crate::{
+        BaseEvmFactory, OpSpecId,
+        precompiles::{bls12_381, bn254_pair},
+    };
 
     #[rstest]
     #[case::bn254_pair(*bn254_pair::JOVIAN.address(), bn254_pair::JOVIAN_MAX_INPUT_SIZE)]

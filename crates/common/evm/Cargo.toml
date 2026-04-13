@@ -22,8 +22,8 @@ alloy-primitives.workspace = true
 # base
 base-common-flz.workspace = true
 base-common-chains.workspace = true
-base-revm = { workspace = true, features = ["alloy"] }
 base-common-consensus = { workspace = true, features = ["evm"] }
+base-consensus-genesis.workspace = true
 
 # revm
 revm.workspace = true
@@ -31,13 +31,21 @@ revm.workspace = true
 # misc
 auto_impl.workspace = true
 thiserror.workspace = true
+serde = { workspace = true, optional = true }
+
+# reth
+reth-evm = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+sha2 = { workspace = true, default-features = false }
 alloy-hardforks.workspace = true
+alloy-sol-types = { workspace = true, default-features = false }
+alloy-primitives = { workspace = true, default-features = false }
+serde_json = { workspace = true, default-features = false, features = ["alloc", "preserve_order"] }
 
 [features]
-default = [ "std" ]
+default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
@@ -45,8 +53,27 @@ std = [
 	"alloy-primitives/std",
 	"base-common-consensus/std",
 	"base-common-flz/std",
-	"base-revm/std",
+	"base-consensus-genesis/std",
 	"revm/std",
+	"serde?/std",
 	"thiserror/std",
 ]
-reth = [ "base-common-consensus/reth", "base-revm/reth", "std" ]
+serde = [
+	"alloy-primitives/serde",
+	"base-consensus-genesis/serde",
+	"dep:serde",
+	"revm/serde",
+]
+reth = [ "dep:reth-evm", "std" ]
+bn = [ "revm/bn" ]
+blst = [ "revm/blst" ]
+c-kzg = [ "revm/c-kzg" ]
+portable = [ "revm/portable" ]
+secp256k1 = [ "revm/secp256k1" ]
+memory_limit = [ "revm/memory_limit" ]
+optional_no_base_fee = [ "revm/optional_no_base_fee" ]
+optional_eip3541 = [ "revm/optional_eip3541" ]
+optional_eip3607 = [ "revm/optional_eip3607" ]
+optional_fee_charge = [ "revm/optional_fee_charge" ]
+optional_balance_check = [ "revm/optional_balance_check" ]
+optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]

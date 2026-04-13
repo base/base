@@ -11,11 +11,11 @@ use alloy_rpc_types_engine::{
     PraguePayloadFields,
 };
 use base_common_consensus::BaseBlock;
+use base_common_evm::L1BlockInfo;
 use base_common_flashblocks::{ExecutionPayloadBaseV1, Flashblock};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4,
 };
-use base_revm::L1BlockInfo;
 
 use crate::{ExecutionError, ProtocolError, Result};
 

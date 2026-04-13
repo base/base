@@ -19,10 +19,10 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder, BaseTxEnv,
+    OpSpecId, OpTransaction,
     spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
 };
 use base_execution_chainspec::BaseChainSpec;
-use base_revm::{OpSpecId, OpTransaction};
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
@@ -343,8 +343,8 @@ mod tests {
         map::{AddressMap, B256Map, HashMap},
     };
     use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
+    use base_common_evm::OpSpecId;
     use base_execution_chainspec::{BASE_MAINNET, BaseChainSpec, BaseChainSpecBuilder};
-    use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;
     use reth_evm::execute::ProviderError;
     use reth_execution_types::{

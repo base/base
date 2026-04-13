@@ -5,8 +5,8 @@ use std::sync::{
 
 use alloy_consensus::{BlockHeader, Transaction};
 use base_common_chains::Upgrades;
+use base_common_evm::L1BlockInfo;
 use base_execution_evm::RethL1BlockInfo;
-use base_revm::L1BlockInfo;
 use parking_lot::RwLock;
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;

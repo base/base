@@ -19,7 +19,7 @@ use revm::{
 };
 
 use crate::{
-    L1BlockInfo, OpHaltReason, OpSpecId, OpTransactionError, evm::OpEvm, handler::OpHandler,
+    L1BlockInfo, OpEvm, OpHaltReason, OpSpecId, OpTransactionError, handler::OpHandler,
     transaction::OpTxTr,
 };
 
