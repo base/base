@@ -44,7 +44,7 @@ pub struct ChainConfig {
     pub isthmus_timestamp: u64,
     /// Jovian activation timestamp.
     pub jovian_timestamp: u64,
-    /// Base V1 activation timestamp (optional, not yet scheduled on prod).
+    /// Base V1 activation timestamp (optional).
     pub base_v1_timestamp: Option<u64>,
 
     // Genesis
@@ -165,7 +165,7 @@ const MAINNET: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 1_746_806_401,
     jovian_timestamp: 1_764_691_201,
-    base_v1_timestamp: None,
+    base_v1_timestamp: Some(1_777_914_000),
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
     genesis_l1_number: 17_481_768,
