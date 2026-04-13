@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use base_execution_payload_builder::config::OpDAConfig;
+use base_execution_payload_builder::config::BaseDAConfig;
 use base_node_core::args::RollupArgs;
 use eyre::Result;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
@@ -26,7 +26,7 @@ pub struct BaseNodeRunner<SB: PayloadServiceBuilder = DefaultPayloadServiceBuild
     /// Payload service builder.
     service_builder: SB,
     /// Shared DA configuration for the node and metering extension.
-    da_config: Option<OpDAConfig>,
+    da_config: Option<BaseDAConfig>,
     /// Binary-owned callbacks to run after the node has started.
     started_callbacks: Vec<StartedCallback>,
 }
@@ -57,7 +57,7 @@ impl<SB: PayloadServiceBuilder> fmt::Debug for BaseNodeRunner<SB> {
 
 impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
     /// Sets the shared DA configuration.
-    pub fn with_da_config(mut self, da_config: OpDAConfig) -> Self {
+    pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = Some(da_config);
         self
     }
@@ -107,7 +107,7 @@ impl<SB: PayloadServiceBuilder> BaseNodeRunner<SB> {
         rollup_args: RollupArgs,
         extensions: Vec<Box<dyn BaseNodeExtension>>,
         service_builder: SB,
-        da_config: Option<OpDAConfig>,
+        da_config: Option<BaseDAConfig>,
         started_callbacks: Vec<StartedCallback>,
         builder: BaseNodeBuilder,
     ) -> Result<NodeHandleFor<BaseNode>> {

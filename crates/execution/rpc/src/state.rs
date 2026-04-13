@@ -1,7 +1,9 @@
 //! State provider factory for OP Proofs `ExEx`.
 
 use alloy_eips::BlockId;
-use base_execution_trie::{OpProofsStorage, OpProofsStore, provider::OpProofsStateProviderRef};
+use base_execution_trie::{
+    BaseProofsStorage, BaseProofsStore, provider::BaseProofsStateProviderRef,
+};
 use jsonrpsee_types::error::ErrorObject;
 use reth_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
 use reth_rpc_api::eth::helpers::FullEthApi;
@@ -11,12 +13,12 @@ use reth_rpc_eth_types::EthApiError;
 #[derive(Debug)]
 pub struct BaseStateProviderFactory<Eth, P> {
     eth_api: Eth,
-    preimage_store: OpProofsStorage<P>,
+    preimage_store: BaseProofsStorage<P>,
 }
 
 impl<Eth, P> BaseStateProviderFactory<Eth, P> {
     /// Creates a new state provider factory.
-    pub const fn new(eth_api: Eth, preimage_store: OpProofsStorage<P>) -> Self {
+    pub const fn new(eth_api: Eth, preimage_store: BaseProofsStorage<P>) -> Self {
         Self { eth_api, preimage_store }
     }
 }
@@ -25,7 +27,7 @@ impl<'a, Eth, P> BaseStateProviderFactory<Eth, P>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
-    P: OpProofsStore + Clone + 'a,
+    P: BaseProofsStore + Clone + 'a,
 {
     /// Creates a state provider for the given block id.
     pub async fn state_provider(
@@ -60,8 +62,11 @@ where
             return Err(ProviderError::StateForNumberNotFound(block_number));
         }
 
-        let external_overlay_provider =
-            OpProofsStateProviderRef::new(historical_provider, &self.preimage_store, block_number);
+        let external_overlay_provider = BaseProofsStateProviderRef::new(
+            historical_provider,
+            &self.preimage_store,
+            block_number,
+        );
 
         Ok(Box::new(external_overlay_provider))
     }

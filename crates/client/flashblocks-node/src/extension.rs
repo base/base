@@ -8,7 +8,7 @@ use base_flashblocks::{
     EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, FlashblocksConfig,
     FlashblocksSubscriber,
 };
-use base_node_core::OpEngineValidatorBuilder;
+use base_node_core::BasePayloadValidatorBuilder;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_chain_state::CanonStateSubscriptions;
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
@@ -48,7 +48,7 @@ impl BaseNodeExtension for FlashblocksExtension {
             let state_for_engine = Arc::clone(&state_for_start);
             hooks.add_add_ons_hook(move |add_ons| {
                 add_ons.with_engine_validator(
-                    BaseEngineValidatorBuilder::new(OpEngineValidatorBuilder::default())
+                    BaseEngineValidatorBuilder::new(BasePayloadValidatorBuilder::default())
                         .with_flashblocks_state(state_for_engine),
                 )
             })

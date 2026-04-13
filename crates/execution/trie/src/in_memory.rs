@@ -1,4 +1,4 @@
-//! In-memory implementation of [`OpProofsStore`] for testing purposes
+//! In-memory implementation of [`BaseProofsStore`] for testing purposes
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -16,12 +16,12 @@ use reth_trie_common::{
 };
 
 use crate::{
-    BlockStateDiff, OpProofsStorageError, OpProofsStorageResult, OpProofsStore,
-    api::{InitialStateAnchor, InitialStateStatus, OpProofsInitialStateStore, WriteCounts},
+    BaseProofsStorageError, BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
+    api::{BaseProofsInitialStateStore, InitialStateAnchor, InitialStateStatus, WriteCounts},
     db::{HashedStorageKey, StorageTrieKey},
 };
 
-/// In-memory implementation of [`OpProofsStore`] for testing purposes
+/// In-memory implementation of [`BaseProofsStore`] for testing purposes
 #[derive(Debug, Clone)]
 pub struct InMemoryProofsStorage {
     /// Shared state across all instances
@@ -140,7 +140,7 @@ impl InMemoryProofsStorage {
         Self { inner: Arc::new(RwLock::new(InMemoryStorageInner::default())) }
     }
 
-    fn get_latest_account_trie_key(&self) -> OpProofsStorageResult<Option<StoredNibbles>> {
+    fn get_latest_account_trie_key(&self) -> BaseProofsStorageResult<Option<StoredNibbles>> {
         let inner = self.inner.read();
         Ok(inner
             .account_branches
@@ -152,7 +152,7 @@ impl InMemoryProofsStorage {
             .map(|((_, nibbles), _)| StoredNibbles::from(*nibbles)))
     }
 
-    fn get_latest_storage_trie_key(&self) -> OpProofsStorageResult<Option<StorageTrieKey>> {
+    fn get_latest_storage_trie_key(&self) -> BaseProofsStorageResult<Option<StorageTrieKey>> {
         let inner = self.inner.read();
         Ok(inner
             .storage_branches
@@ -166,7 +166,7 @@ impl InMemoryProofsStorage {
             }))
     }
 
-    fn get_latest_hashed_account_key(&self) -> OpProofsStorageResult<Option<B256>> {
+    fn get_latest_hashed_account_key(&self) -> BaseProofsStorageResult<Option<B256>> {
         let inner = self.inner.read();
         Ok(inner
             .hashed_accounts
@@ -178,7 +178,7 @@ impl InMemoryProofsStorage {
             .map(|((_, address), _)| *address))
     }
 
-    fn get_latest_hashed_storage_key(&self) -> OpProofsStorageResult<Option<HashedStorageKey>> {
+    fn get_latest_hashed_storage_key(&self) -> BaseProofsStorageResult<Option<HashedStorageKey>> {
         let inner = self.inner.read();
         Ok(inner
             .hashed_storages
@@ -231,7 +231,7 @@ impl InMemoryTrieCursor {
             return Ok(());
         }
 
-        let storage = self.inner.try_read().ok_or(OpProofsStorageError::TryLockError)?;
+        let storage = self.inner.try_read().ok_or(BaseProofsStorageError::TryLockError)?;
 
         // Common logic: collect latest values for each path
         let mut path_to_latest: std::collections::BTreeMap<
@@ -390,7 +390,7 @@ impl InMemoryStorageCursor {
             return Ok(());
         }
 
-        let storage = self.inner.try_read().ok_or(OpProofsStorageError::TryLockError)?;
+        let storage = self.inner.try_read().ok_or(BaseProofsStorageError::TryLockError)?;
 
         // Collect latest values for each slot
         let mut slot_to_latest: std::collections::BTreeMap<B256, (u64, U256)> =
@@ -532,18 +532,18 @@ impl HashedCursor for InMemoryAccountCursor {
     }
 }
 
-impl OpProofsStore for InMemoryProofsStorage {
+impl BaseProofsStore for InMemoryProofsStorage {
     type StorageTrieCursor<'tx> = InMemoryTrieCursor;
     type AccountTrieCursor<'tx> = InMemoryTrieCursor;
     type StorageCursor<'tx> = InMemoryStorageCursor;
     type AccountHashedCursor<'tx> = InMemoryAccountCursor;
 
-    fn get_earliest_block_number(&self) -> OpProofsStorageResult<Option<(u64, B256)>> {
+    fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         let inner = self.inner.read();
         Ok(inner.earliest_block)
     }
 
-    fn get_latest_block_number(&self) -> OpProofsStorageResult<Option<(u64, B256)>> {
+    fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         let inner = self.inner.read();
         // Find the latest block number from trie_updates
         let latest_block = inner.trie_updates.keys().max().copied();
@@ -554,14 +554,14 @@ impl OpProofsStore for InMemoryProofsStorage {
         &self,
         hashed_address: B256,
         max_block_number: u64,
-    ) -> OpProofsStorageResult<Self::StorageTrieCursor<'tx>> {
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
         Ok(InMemoryTrieCursor::new(Arc::clone(&self.inner), Some(hashed_address), max_block_number))
     }
 
     fn account_trie_cursor<'tx>(
         &self,
         max_block_number: u64,
-    ) -> OpProofsStorageResult<Self::AccountTrieCursor<'tx>> {
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         Ok(InMemoryTrieCursor::new(Arc::clone(&self.inner), None, max_block_number))
     }
 
@@ -569,15 +569,15 @@ impl OpProofsStore for InMemoryProofsStorage {
         &self,
         hashed_address: B256,
         max_block_number: u64,
-    ) -> OpProofsStorageResult<Self::StorageCursor<'tx>> {
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
         Ok(InMemoryStorageCursor::new(Arc::clone(&self.inner), hashed_address, max_block_number))
     }
 
     fn account_hashed_cursor<'tx>(
         &self,
         max_block_number: u64,
-    ) -> OpProofsStorageResult<Self::AccountHashedCursor<'tx>> {
-        let inner = self.inner.try_read().ok_or(OpProofsStorageError::TryLockError)?;
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
+        let inner = self.inner.try_read().ok_or(BaseProofsStorageError::TryLockError)?;
         Ok(InMemoryAccountCursor::new(&inner, max_block_number))
     }
 
@@ -585,13 +585,13 @@ impl OpProofsStore for InMemoryProofsStorage {
         &self,
         block_ref: BlockWithParent,
         block_state_diff: BlockStateDiff,
-    ) -> OpProofsStorageResult<WriteCounts> {
+    ) -> BaseProofsStorageResult<WriteCounts> {
         let mut inner = self.inner.write();
 
         Ok(inner.store_trie_updates(block_ref.block.number, block_state_diff))
     }
 
-    fn fetch_trie_updates(&self, block_number: u64) -> OpProofsStorageResult<BlockStateDiff> {
+    fn fetch_trie_updates(&self, block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
         let inner = self.inner.read();
 
         let trie_updates = inner.trie_updates.get(&block_number).cloned().unwrap_or_default();
@@ -603,7 +603,7 @@ impl OpProofsStore for InMemoryProofsStorage {
     fn prune_earliest_state(
         &self,
         new_earliest_block_ref: BlockWithParent,
-    ) -> OpProofsStorageResult<WriteCounts> {
+    ) -> BaseProofsStorageResult<WriteCounts> {
         let mut write_counts = WriteCounts::default();
         let mut inner = self.inner.write();
         let new_earliest = new_earliest_block_ref.block.number;
@@ -687,7 +687,7 @@ impl OpProofsStore for InMemoryProofsStorage {
         Ok(write_counts)
     }
 
-    fn unwind_history(&self, unwind_upto_block: BlockWithParent) -> OpProofsStorageResult<()> {
+    fn unwind_history(&self, unwind_upto_block: BlockWithParent) -> BaseProofsStorageResult<()> {
         let mut inner = self.inner.write();
         let unwind_upto_block_number = unwind_upto_block.block.number - 1;
 
@@ -706,7 +706,7 @@ impl OpProofsStore for InMemoryProofsStorage {
         &self,
         latest_common_block: BlockNumHash,
         blocks_to_add: Vec<(BlockWithParent, BlockStateDiff)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let mut inner = self.inner.write();
         let latest_common_block_number = latest_common_block.number;
 
@@ -729,15 +729,15 @@ impl OpProofsStore for InMemoryProofsStorage {
         &self,
         block_number: u64,
         hash: B256,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let mut inner = self.inner.write();
         inner.earliest_block = Some((block_number, hash));
         Ok(())
     }
 }
 
-impl OpProofsInitialStateStore for InMemoryProofsStorage {
-    fn initial_state_anchor(&self) -> OpProofsStorageResult<InitialStateAnchor> {
+impl BaseProofsInitialStateStore for InMemoryProofsStorage {
+    fn initial_state_anchor(&self) -> BaseProofsStorageResult<InitialStateAnchor> {
         let inner = self.inner.read();
 
         let Some((block_num, block_hash)) = inner.anchor_block else {
@@ -760,7 +760,7 @@ impl OpProofsInitialStateStore for InMemoryProofsStorage {
         })
     }
 
-    fn set_initial_state_anchor(&self, anchor: BlockNumHash) -> OpProofsStorageResult<()> {
+    fn set_initial_state_anchor(&self, anchor: BlockNumHash) -> BaseProofsStorageResult<()> {
         let mut inner = self.inner.write();
         inner.anchor_block = Some((anchor.number, anchor.hash));
         Ok(())
@@ -769,7 +769,7 @@ impl OpProofsInitialStateStore for InMemoryProofsStorage {
     fn store_account_branches(
         &self,
         updates: Vec<(Nibbles, Option<BranchNodeCompact>)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let mut inner = self.inner.write();
 
         for (path, branch) in updates {
@@ -783,7 +783,7 @@ impl OpProofsInitialStateStore for InMemoryProofsStorage {
         &self,
         hashed_address: B256,
         items: Vec<(Nibbles, Option<BranchNodeCompact>)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let mut inner = self.inner.write();
 
         for (path, branch) in items {
@@ -796,7 +796,7 @@ impl OpProofsInitialStateStore for InMemoryProofsStorage {
     fn store_hashed_accounts(
         &self,
         accounts: Vec<(B256, Option<Account>)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let mut inner = self.inner.write();
 
         for (address, account) in accounts {
@@ -810,7 +810,7 @@ impl OpProofsInitialStateStore for InMemoryProofsStorage {
         &self,
         hashed_address: B256,
         storages: Vec<(B256, U256)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let mut inner = self.inner.write();
 
         for (slot, value) in storages {
@@ -820,13 +820,13 @@ impl OpProofsInitialStateStore for InMemoryProofsStorage {
         Ok(())
     }
 
-    fn commit_initial_state(&self) -> OpProofsStorageResult<BlockNumHash> {
+    fn commit_initial_state(&self) -> BaseProofsStorageResult<BlockNumHash> {
         let mut inner = self.inner.write();
         if let Some((number, hash)) = inner.anchor_block {
             inner.earliest_block = Some((number, hash));
             Ok(BlockNumHash::new(number, hash))
         } else {
-            Err(OpProofsStorageError::NoBlocksFound)
+            Err(BaseProofsStorageError::NoBlocksFound)
         }
     }
 }
@@ -838,10 +838,10 @@ mod tests {
     use reth_primitives_traits::Account;
 
     use super::*;
-    use crate::OpProofsStorageError;
+    use crate::BaseProofsStorageError;
 
     #[test]
-    fn test_in_memory_storage_basic_operations() -> Result<(), OpProofsStorageError> {
+    fn test_in_memory_storage_basic_operations() -> Result<(), BaseProofsStorageError> {
         let storage = InMemoryProofsStorage::new();
 
         // Test setting earliest block
@@ -863,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn test_trie_updates_storage() -> Result<(), OpProofsStorageError> {
+    fn test_trie_updates_storage() -> Result<(), BaseProofsStorageError> {
         let storage = InMemoryProofsStorage::new();
 
         let sorted_trie_updates = TrieUpdatesSorted::default();

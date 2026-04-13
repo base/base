@@ -17,7 +17,7 @@
 //! };
 //! use base_execution_chainspec::BASE_SEPOLIA;
 //! use base_execution_evm::BaseEvmConfig;
-//! use base_node_core::{BaseNetworkPrimitives, OpExecutorBuilder, BaseNode};
+//! use base_node_core::{BaseNetworkPrimitives, BaseExecutorBuilder, BaseNode};
 //! use base_execution_rpc::OpEthApiBuilder;
 //! use base_execution_txpool::BasePooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;
@@ -52,7 +52,7 @@
 //!             ComponentsBuilder::default()
 //!                 .node_types::<RethFullAdapter<_, BaseNode>>()
 //!                 .noop_pool::<BasePooledTransaction>()
-//!                 .executor(OpExecutorBuilder::default())
+//!                 .executor(BaseExecutorBuilder::default())
 //!                 .noop_consensus()
 //!                 .noop_network::<BaseNetworkPrimitives>()
 //!                 .noop_payload(),

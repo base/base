@@ -15,7 +15,7 @@ use reth_trie::{
 use reth_trie_common::{BranchNodeCompact, Nibbles, StoredNibbles};
 
 use crate::{
-    OpProofsStorageResult,
+    BaseProofsStorageResult,
     db::{
         AccountTrieHistory, HashedAccountHistory, HashedStorageHistory, HashedStorageKey,
         MaybeDeleted, StorageTrieHistory, StorageTrieKey, VersionedValue,
@@ -45,7 +45,7 @@ where
     }
 
     /// Check if the cursor is currently positioned at a valid row.
-    fn is_positioned(&mut self) -> OpProofsStorageResult<bool> {
+    fn is_positioned(&mut self) -> BaseProofsStorageResult<bool> {
         Ok(self.cursor.current()?.is_some())
     }
 
@@ -60,7 +60,7 @@ where
     fn latest_version_for_key(
         &mut self,
         key: T::Key,
-    ) -> OpProofsStorageResult<Option<(T::Key, T::Value)>> {
+    ) -> BaseProofsStorageResult<Option<(T::Key, T::Value)>> {
         // First dup with subkey >= max_block_number
         let seek_res = self.cursor.seek_by_key_subkey(key.clone(), self.max_block_number)?;
 
@@ -86,7 +86,7 @@ where
     }
 
     /// Returns a non-deleted latest version for exactly `key`, if any.
-    fn seek_exact(&mut self, key: T::Key) -> OpProofsStorageResult<Option<(T::Key, V)>> {
+    fn seek_exact(&mut self, key: T::Key) -> BaseProofsStorageResult<Option<(T::Key, V)>> {
         if let Some((latest_key, latest_value)) = self.latest_version_for_key(key)?
             && let MaybeDeleted(Some(v)) = latest_value.value
         {
@@ -100,7 +100,7 @@ where
     fn next_live_from(
         &mut self,
         mut first_key: T::Key,
-    ) -> OpProofsStorageResult<Option<(T::Key, V)>> {
+    ) -> BaseProofsStorageResult<Option<(T::Key, V)>> {
         loop {
             // Compute latest version ≤ max for this key
             if let Some((k, v)) = self.seek_exact(first_key.clone())? {
@@ -120,7 +120,7 @@ where
     /// Logic:
     /// - Try exact key first (above). If alive, return it.
     /// - Otherwise hop to next distinct key and repeat until we find a live version or hit EOF.
-    fn seek(&mut self, start_key: T::Key) -> OpProofsStorageResult<Option<(T::Key, V)>> {
+    fn seek(&mut self, start_key: T::Key) -> BaseProofsStorageResult<Option<(T::Key, V)>> {
         // Position MDBX at first key >= start_key
         if let Some((first_key, _)) = self.cursor.seek(start_key)? {
             return self.next_live_from(first_key);
@@ -131,7 +131,7 @@ where
     /// Advance to the next distinct key from the current MDBX position
     /// and return its non-deleted latest version, if any.
     /// Next distinct key; if not positioned, start from `T::Key::default()`.
-    fn next(&mut self) -> OpProofsStorageResult<Option<(T::Key, V)>>
+    fn next(&mut self) -> BaseProofsStorageResult<Option<(T::Key, V)>>
     where
         T::Key: Default,
     {

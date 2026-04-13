@@ -9,7 +9,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod chain;
-pub use chain::OpStorage;
+pub use chain::BaseStorage;
 
 #[cfg(test)]
 mod tests {

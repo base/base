@@ -12,7 +12,7 @@ use alloy_rpc_types_engine::JwtSecret;
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, test_utils::get_available_port};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BasePooledTransaction, BuilderApiImpl, BuilderApiServer};
-use base_node_core::{args::RollupArgs, node::OpPoolBuilder};
+use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::BaseNode;
 use eyre::{Result, WrapErr, eyre};
 use nanoid::nanoid;
@@ -125,7 +125,7 @@ impl InProcessBuilder {
         let addons: base_node_runner::BaseAddOns<
             _,
             base_execution_rpc::OpEthApiBuilder,
-            base_node_core::OpEngineValidatorBuilder,
+            base_node_core::BasePayloadValidatorBuilder,
         > = base_node
             .add_ons_builder()
             .with_sequencer(rollup_args.sequencer.clone())
@@ -350,6 +350,6 @@ fn create_test_db(data_path: &std::path::Path) -> Result<(DatabaseEnv, PathBuf)>
     Ok((db, db_path))
 }
 
-fn pool_component(_rollup_args: &RollupArgs) -> OpPoolBuilder<BasePooledTransaction> {
-    OpPoolBuilder::<BasePooledTransaction>::default()
+fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
+    BasePoolBuilder::<BasePooledTransaction>::default()
 }

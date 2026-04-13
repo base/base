@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_trie::{OpProofsStorage, OpProofsStore, db::MdbxProofsStorage};
+use base_execution_trie::{BaseProofsStorage, BaseProofsStore, db::MdbxProofsStorage};
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
@@ -37,9 +37,9 @@ pub struct UnwindCommand<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> UnwindCommand<C> {
     /// Validates that the target block number is within a valid range for unwinding.
-    fn validate_unwind_range<Store: OpProofsStore>(
+    fn validate_unwind_range<Store: BaseProofsStore>(
         &self,
-        storage: &OpProofsStorage<Store>,
+        storage: &BaseProofsStorage<Store>,
     ) -> eyre::Result<bool> {
         let (Some((earliest, _)), Some((latest, _))) =
             (storage.get_earliest_block_number()?, storage.get_latest_block_number()?)
@@ -74,7 +74,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;
 
         // Create the proofs storage
-        let storage: OpProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
+        let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
             MdbxProofsStorage::new(&self.storage_path)
                 .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
         )

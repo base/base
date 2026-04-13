@@ -40,7 +40,7 @@ use reth_tasks::{
 
 use crate::{
     OpEthApiError, SequencerClient,
-    eth::{receipt::BaseReceiptConverter, transaction::OpTxInfoMapper},
+    eth::{receipt::BaseReceiptConverter, transaction::BaseTxInfoMapper},
 };
 
 /// Adapter for [`EthApiInner`], which holds all the data required to serve core `eth_` API.
@@ -293,7 +293,7 @@ pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
     <N as FullNodeComponents>::Evm,
     BaseReceiptConverter<<N as FullNodeTypes>::Provider>,
     (),
-    OpTxInfoMapper<<N as FullNodeTypes>::Provider>,
+    BaseTxInfoMapper<<N as FullNodeTypes>::Provider>,
 >;
 
 /// Builds [`OpEthApi`] for Base.
@@ -368,7 +368,7 @@ where
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let rpc_converter =
             RpcConverter::new(BaseReceiptConverter::new(ctx.components.provider().clone()))
-                .with_mapper(OpTxInfoMapper::new(ctx.components.provider().clone()));
+                .with_mapper(BaseTxInfoMapper::new(ctx.components.provider().clone()));
 
         let sequencer_client = if let Some(url) = sequencer_url {
             Some(

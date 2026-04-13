@@ -6,20 +6,20 @@ use std::sync::{Arc, atomic::AtomicU64};
 #[derive(Debug, Clone, Default)]
 pub struct BaseBuilderConfig {
     /// Data availability configuration for the OP builder.
-    pub da_config: OpDAConfig,
+    pub da_config: BaseDAConfig,
     /// Gas limit configuration for the OP builder.
     pub gas_limit_config: GasLimitConfig,
 }
 
 impl BaseBuilderConfig {
     /// Creates a new OP builder configuration with the given data availability configuration.
-    pub const fn new(da_config: OpDAConfig, gas_limit_config: GasLimitConfig) -> Self {
+    pub const fn new(da_config: BaseDAConfig, gas_limit_config: GasLimitConfig) -> Self {
         Self { da_config, gas_limit_config }
     }
 
     /// Returns the Data Availability configuration for the OP builder, if it has configured
     /// constraints.
-    pub fn constrained_da_config(&self) -> Option<&OpDAConfig> {
+    pub fn constrained_da_config(&self) -> Option<&BaseDAConfig> {
         if self.da_config.is_empty() { None } else { Some(&self.da_config) }
     }
 }
@@ -29,11 +29,11 @@ impl BaseBuilderConfig {
 /// This type is shareable and can be used to update the DA configuration for the OP payload
 /// builder.
 #[derive(Debug, Clone, Default)]
-pub struct OpDAConfig {
-    inner: Arc<OpDAConfigInner>,
+pub struct BaseDAConfig {
+    inner: Arc<BaseDAConfigInner>,
 }
 
-impl OpDAConfig {
+impl BaseDAConfig {
     /// Creates a new Data Availability configuration with the given maximum sizes.
     pub fn new(max_da_tx_size: u64, max_da_block_size: u64) -> Self {
         let this = Self::default();
@@ -78,7 +78,7 @@ impl OpDAConfig {
 }
 
 #[derive(Debug, Default)]
-struct OpDAConfigInner {
+struct BaseDAConfigInner {
     /// Don't include any transactions with data availability size larger than this in any built
     /// block
     ///
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_da() {
-        let da = OpDAConfig::default();
+        let da = BaseDAConfig::default();
         assert_eq!(da.max_da_tx_size(), None);
         assert_eq!(da.max_da_block_size(), None);
         da.set_max_da_size(100, 200);

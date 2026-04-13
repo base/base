@@ -55,7 +55,7 @@ where
     /// [`NodeCommand`](reth_cli_commands::node::NodeCommand).
     pub fn run(
         mut self,
-        launcher: impl Launcher<crate::chainspec::OpChainSpecParser, Ext>,
+        launcher: impl Launcher<crate::chainspec::BaseChainSpecParser, Ext>,
     ) -> Result<()> {
         let runner = match self.runner.take() {
             Some(runner) => runner,
@@ -116,7 +116,7 @@ where
             Commands::ReExecute(command) => {
                 runner.run_until_ctrl_c(command.execute::<BaseNode>(components))
             }
-            Commands::OpProofs(command) => {
+            Commands::BaseProofs(command) => {
                 runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>())
             }
         }

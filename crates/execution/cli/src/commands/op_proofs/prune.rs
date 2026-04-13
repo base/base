@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
-    OpProofStoragePruner, OpProofsStorage, OpProofsStore, db::MdbxProofsStorage,
+    BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, db::MdbxProofsStorage,
 };
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
@@ -57,7 +57,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;
 
-        let storage: OpProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
+        let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
             MdbxProofsStorage::new(&self.storage_path)
                 .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
         )
@@ -72,7 +72,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
             "Current proofs storage block range"
         );
 
-        let pruner = OpProofStoragePruner::new(
+        let pruner = BaseProofStoragePruner::new(
             storage,
             provider_factory,
             self.proofs_history_window,

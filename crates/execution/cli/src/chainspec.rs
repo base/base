@@ -6,9 +6,9 @@ use reth_cli::chainspec::{ChainSpecParser, parse_genesis};
 /// Base chain specification parser.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
-pub struct OpChainSpecParser;
+pub struct BaseChainSpecParser;
 
-impl ChainSpecParser for OpChainSpecParser {
+impl ChainSpecParser for BaseChainSpecParser {
     type ChainSpec = BaseChainSpec;
 
     const SUPPORTED_CHAINS: &'static [&'static str] = SUPPORTED_CHAINS;
@@ -36,9 +36,9 @@ mod tests {
 
     #[test]
     fn parse_known_chain_spec() {
-        for &chain in OpChainSpecParser::SUPPORTED_CHAINS {
+        for &chain in BaseChainSpecParser::SUPPORTED_CHAINS {
             assert!(
-                <OpChainSpecParser as ChainSpecParser>::parse(chain).is_ok(),
+                <BaseChainSpecParser as ChainSpecParser>::parse(chain).is_ok(),
                 "Failed to parse {chain}"
             );
         }

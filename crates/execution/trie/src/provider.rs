@@ -25,7 +25,7 @@ use reth_trie_common::{
 };
 
 use crate::{
-    OpProofsStorage, OpProofsStorageError, OpProofsStore,
+    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
     proof::{
         DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
         DatabaseTrieWitness,
@@ -34,36 +34,36 @@ use crate::{
 
 /// State provider for external proofs storage.
 #[derive(Constructor)]
-pub struct OpProofsStateProviderRef<'a, Storage: OpProofsStore> {
+pub struct BaseProofsStateProviderRef<'a, Storage: BaseProofsStore> {
     /// Historical state provider for non-state related tasks.
     latest: Box<dyn StateProvider + Send + 'a>,
 
     /// Storage provider for state lookups.
-    storage: &'a OpProofsStorage<Storage>,
+    storage: &'a BaseProofsStorage<Storage>,
 
     /// Max block number that can be used for state lookups.
     block_number: BlockNumber,
 }
 
-impl<'a, Storage> Debug for OpProofsStateProviderRef<'a, Storage>
+impl<'a, Storage> Debug for BaseProofsStateProviderRef<'a, Storage>
 where
-    Storage: OpProofsStore + 'a + Debug,
+    Storage: BaseProofsStore + 'a + Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpProofsStateProviderRef")
+        f.debug_struct("BaseProofsStateProviderRef")
             .field("storage", &self.storage)
             .field("block_number", &self.block_number)
             .finish()
     }
 }
 
-impl From<OpProofsStorageError> for ProviderError {
-    fn from(error: OpProofsStorageError) -> Self {
+impl From<BaseProofsStorageError> for ProviderError {
+    fn from(error: BaseProofsStorageError) -> Self {
         Self::other(error)
     }
 }
 
-impl<'a, Storage: OpProofsStore> BlockHashReader for OpProofsStateProviderRef<'a, Storage> {
+impl<'a, Storage: BaseProofsStore> BlockHashReader for BaseProofsStateProviderRef<'a, Storage> {
     fn block_hash(&self, number: BlockNumber) -> ProviderResult<Option<B256>> {
         self.latest.block_hash(number)
     }
@@ -77,8 +77,8 @@ impl<'a, Storage: OpProofsStore> BlockHashReader for OpProofsStateProviderRef<'a
     }
 }
 
-impl<'a, Storage: OpProofsStore + Clone> StateRootProvider
-    for OpProofsStateProviderRef<'a, Storage>
+impl<'a, Storage: BaseProofsStore + Clone> StateRootProvider
+    for BaseProofsStateProviderRef<'a, Storage>
 {
     fn state_root(&self, state: HashedPostState) -> ProviderResult<B256> {
         Ok(StateRoot::overlay_root(self.storage, self.block_number, state)?)
@@ -103,8 +103,8 @@ impl<'a, Storage: OpProofsStore + Clone> StateRootProvider
     }
 }
 
-impl<'a, Storage: OpProofsStore + Clone> StorageRootProvider
-    for OpProofsStateProviderRef<'a, Storage>
+impl<'a, Storage: BaseProofsStore + Clone> StorageRootProvider
+    for BaseProofsStateProviderRef<'a, Storage>
 {
     fn storage_root(&self, address: Address, storage: HashedStorage) -> ProviderResult<B256> {
         StorageRoot::overlay_root(self.storage, self.block_number, address, storage)
@@ -144,8 +144,8 @@ impl<'a, Storage: OpProofsStore + Clone> StorageRootProvider
     }
 }
 
-impl<'a, Storage: OpProofsStore + Clone> StateProofProvider
-    for OpProofsStateProviderRef<'a, Storage>
+impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
+    for BaseProofsStateProviderRef<'a, Storage>
 {
     fn proof(
         &self,
@@ -173,13 +173,15 @@ impl<'a, Storage: OpProofsStore + Clone> StateProofProvider
     }
 }
 
-impl<'a, Storage: OpProofsStore> HashedPostStateProvider for OpProofsStateProviderRef<'a, Storage> {
+impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
+    for BaseProofsStateProviderRef<'a, Storage>
+{
     fn hashed_post_state(&self, bundle_state: &BundleState) -> HashedPostState {
         HashedPostState::from_bundle_state::<KeccakKeyHasher>(bundle_state.state())
     }
 }
 
-impl<'a, Storage: OpProofsStore> AccountReader for OpProofsStateProviderRef<'a, Storage> {
+impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<'a, Storage> {
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
         Ok(self
@@ -192,9 +194,9 @@ impl<'a, Storage: OpProofsStore> AccountReader for OpProofsStateProviderRef<'a, 
     }
 }
 
-impl<'a, Storage> StateProvider for OpProofsStateProviderRef<'a, Storage>
+impl<'a, Storage> StateProvider for BaseProofsStateProviderRef<'a, Storage>
 where
-    Storage: OpProofsStore + Clone,
+    Storage: BaseProofsStore + Clone,
 {
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
@@ -216,7 +218,7 @@ where
     }
 }
 
-impl<'a, Storage: OpProofsStore> BytecodeReader for OpProofsStateProviderRef<'a, Storage> {
+impl<'a, Storage: BaseProofsStore> BytecodeReader for BaseProofsStateProviderRef<'a, Storage> {
     fn bytecode_by_hash(&self, code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
         self.latest.bytecode_by_hash(code_hash)
     }
@@ -232,15 +234,15 @@ mod tests {
     #[test]
     fn test_op_proofs_state_provider_ref_debug() {
         let latest: Box<dyn StateProvider + Send> = Box::new(NoopProvider::default());
-        let storage: crate::OpProofsStorage<InMemoryProofsStorage> =
+        let storage: crate::BaseProofsStorage<InMemoryProofsStorage> =
             InMemoryProofsStorage::new().into();
         let block_number = 42u64;
 
-        let provider = OpProofsStateProviderRef::new(latest, &storage, block_number);
+        let provider = BaseProofsStateProviderRef::new(latest, &storage, block_number);
 
         assert_eq!(
             format!("{:?}", provider),
-            "OpProofsStateProviderRef { storage: InMemoryProofsStorage { inner: RwLock { data: InMemoryStorageInner { account_branches: {}, storage_branches: {}, hashed_accounts: {}, hashed_storages: {}, trie_updates: {}, post_states: {}, earliest_block: None, anchor_block: None } } }, block_number: 42 }"
+            "BaseProofsStateProviderRef { storage: InMemoryProofsStorage { inner: RwLock { data: InMemoryStorageInner { account_branches: {}, storage_branches: {}, hashed_accounts: {}, hashed_storages: {}, trie_updates: {}, post_states: {}, earliest_block: None, anchor_block: None } } }, block_number: 42 }"
         );
     }
 }

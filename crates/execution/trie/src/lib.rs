@@ -12,7 +12,7 @@
 use reth_ethereum_primitives as _;
 
 pub mod api;
-pub use api::{BlockStateDiff, OpProofsInitialStateStore, OpProofsStore};
+pub use api::{BaseProofsInitialStateStore, BaseProofsStore, BlockStateDiff};
 
 pub mod initialize;
 pub use initialize::InitializationJob;
@@ -28,13 +28,13 @@ pub use db::{MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCu
 pub mod metrics;
 #[cfg(feature = "metrics")]
 pub use metrics::{
-    OpProofsHashedAccountCursor, OpProofsHashedStorageCursor, OpProofsStorage, OpProofsTrieCursor,
-    StorageMetrics,
+    BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsStorage,
+    BaseProofsTrieCursor, StorageMetrics,
 };
 
 #[cfg(not(feature = "metrics"))]
-/// Alias for [`OpProofsStore`] type without metrics (`metrics` feature is disabled).
-pub type OpProofsStorage<S> = S;
+/// Alias for [`BaseProofsStore`] type without metrics (`metrics` feature is disabled).
+pub type BaseProofsStorage<S> = S;
 
 pub mod proof;
 
@@ -44,16 +44,18 @@ pub mod live;
 
 pub mod cursor;
 #[cfg(not(feature = "metrics"))]
-pub use cursor::{OpProofsHashedAccountCursor, OpProofsHashedStorageCursor, OpProofsTrieCursor};
+pub use cursor::{
+    BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsTrieCursor,
+};
 
 pub mod cursor_factory;
-pub use cursor_factory::{OpProofsHashedAccountCursorFactory, OpProofsTrieCursorFactory};
+pub use cursor_factory::{BaseProofsHashedAccountCursorFactory, BaseProofsTrieCursorFactory};
 
 pub mod error;
-pub use error::{OpProofsStorageError, OpProofsStorageResult};
+pub use error::{BaseProofsStorageError, BaseProofsStorageResult};
 
 mod prune;
 pub use prune::{
-    BaseProofStoragePrunerTask, OpProofStoragePruner, OpProofStoragePrunerResult, PrunerError,
+    BaseProofStoragePruner, BaseProofStoragePrunerResult, BaseProofStoragePrunerTask, PrunerError,
     PrunerOutput,
 };

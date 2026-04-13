@@ -13,7 +13,7 @@ use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
     builder::{Builder, OpPayloadBuilderCtx},
 };
-use base_execution_trie::{OpProofsStorage, OpProofsStore};
+use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
 use base_execution_txpool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
@@ -79,7 +79,7 @@ impl<Eth, Storage, Provider, EvmConfig, Attrs> DebugApiExt<Eth, Storage, Provide
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
-    Storage: OpProofsStore + Clone + 'static,
+    Storage: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt + NodePrimitivesProvider<Primitives: PayloadPrimitives>,
     EvmConfig: ConfigureEvm<Primitives = Provider::Primitives> + 'static,
 {
@@ -87,7 +87,7 @@ where
     pub fn new(
         provider: Provider,
         eth_api: Eth,
-        preimage_store: OpProofsStorage<Storage>,
+        preimage_store: BaseProofsStorage<Storage>,
         task_spawner: Box<dyn TaskSpawner>,
         evm_config: EvmConfig,
     ) -> Self {
@@ -108,7 +108,7 @@ where
 pub struct DebugApiExtInner<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs> {
     provider: Provider,
     eth_api: Eth,
-    storage: OpProofsStorage<Storage>,
+    storage: BaseProofsStorage<Storage>,
     state_provider_factory: BaseStateProviderFactory<Eth, Storage>,
     evm_config: EvmConfig,
     task_spawner: Box<dyn TaskSpawner>,
@@ -120,13 +120,13 @@ impl<Eth, P, Provider, EvmConfig, Attrs> DebugApiExtInner<Eth, P, Provider, EvmC
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
-    P: OpProofsStore + Clone + 'static,
+    P: BaseProofsStore + Clone + 'static,
     Provider: NodePrimitivesProvider<Primitives: PayloadPrimitives>,
 {
     fn new(
         provider: Provider,
         eth_api: Eth,
-        storage: OpProofsStorage<P>,
+        storage: BaseProofsStorage<P>,
         task_spawner: Box<dyn TaskSpawner>,
         evm_config: EvmConfig,
     ) -> Self {
@@ -147,7 +147,7 @@ impl<Eth, P, Provider, EvmConfig, Attrs> DebugApiExt<Eth, P, Provider, EvmConfig
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
-    P: OpProofsStore + Clone + 'static,
+    P: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt
         + NodePrimitivesProvider<Primitives: PayloadPrimitives>
         + HeaderProvider<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>,
@@ -169,7 +169,7 @@ impl<Eth, P, Provider, EvmConfig, Attrs, N> DebugApiOverrideServer<Attrs::RpcPay
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
-    P: OpProofsStore + Clone + 'static,
+    P: BaseProofsStore + Clone + 'static,
     Attrs: Attributes<Transaction = TxTy<EvmConfig::Primitives>>,
     N: PayloadPrimitives,
     EvmConfig: ConfigureEvm<

@@ -25,8 +25,8 @@ use std::{hint::black_box, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256, keccak256};
 use base_execution_trie::{
-    MdbxProofsStorage, OpProofsInitialStateStore, OpProofsStorage,
-    provider::OpProofsStateProviderRef,
+    BaseProofsInitialStateStore, BaseProofsStorage, MdbxProofsStorage,
+    provider::BaseProofsStateProviderRef,
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -108,7 +108,7 @@ fn setup_flashblock_data(
 /// Creates an MDBX-backed proofs storage pre-populated with [`BASE_STATE_ACCOUNTS`]
 /// accounts and their storage slots. Returns the temp directory handle (must be
 /// kept alive) and the wrapped storage.
-fn create_populated_storage() -> (TempDir, OpProofsStorage<Arc<MdbxProofsStorage>>) {
+fn create_populated_storage() -> (TempDir, BaseProofsStorage<Arc<MdbxProofsStorage>>) {
     let dir = TempDir::new().expect("failed to create temp dir");
     let mdbx = Arc::new(MdbxProofsStorage::new(dir.path()).expect("failed to create MDBX storage"));
 
@@ -131,7 +131,7 @@ fn create_populated_storage() -> (TempDir, OpProofsStorage<Arc<MdbxProofsStorage
     mdbx.set_initial_state_anchor(BlockNumHash::new(0, B256::ZERO)).expect("failed to set anchor");
     mdbx.commit_initial_state().expect("failed to commit initial state");
 
-    let storage = OpProofsStorage::from(mdbx);
+    let storage = BaseProofsStorage::from(mdbx);
     (dir, storage)
 }
 
@@ -145,7 +145,7 @@ fn finalize_only_benches(c: &mut Criterion) {
         let (_deltas, full_state) = setup_flashblock_data(accounts_per_fb);
         let (_dir, storage) = create_populated_storage();
         let provider =
-            OpProofsStateProviderRef::new(Box::new(NoopProvider::default()), &storage, 0);
+            BaseProofsStateProviderRef::new(Box::new(NoopProvider::default()), &storage, 0);
 
         g.bench_function(BenchmarkId::new("accounts_per_fb", accounts_per_fb), |b| {
             b.iter(|| {
@@ -182,7 +182,7 @@ fn per_flashblock_benches(c: &mut Criterion) {
 
         let (_dir, storage) = create_populated_storage();
         let provider =
-            OpProofsStateProviderRef::new(Box::new(NoopProvider::default()), &storage, 0);
+            BaseProofsStateProviderRef::new(Box::new(NoopProvider::default()), &storage, 0);
 
         g.bench_function(BenchmarkId::new("accounts_per_fb", accounts_per_fb), |b| {
             b.iter(|| {

@@ -7,7 +7,7 @@ use alloy_primitives::Address;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_serde::JsonStorageKey;
 use async_trait::async_trait;
-use base_execution_trie::{OpProofsStorage, OpProofsStore};
+use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::ErrorObject;
@@ -40,10 +40,10 @@ impl<Eth, P> EthApiExt<Eth, P>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
-    P: OpProofsStore + Clone + 'static,
+    P: BaseProofsStore + Clone + 'static,
 {
     /// Creates a new instance of the `EthApiExt`.
-    pub const fn new(eth_api: Eth, preimage_store: OpProofsStorage<P>) -> Self {
+    pub const fn new(eth_api: Eth, preimage_store: BaseProofsStorage<P>) -> Self {
         Self { state_provider_factory: BaseStateProviderFactory::new(eth_api, preimage_store) }
     }
 }
@@ -53,7 +53,7 @@ impl<Eth, P> EthApiOverrideServer for EthApiExt<Eth, P>
 where
     Eth: FullEthApi + Send + Sync + 'static,
     ErrorObject<'static>: From<Eth::Error>,
-    P: OpProofsStore + Clone + 'static,
+    P: BaseProofsStore + Clone + 'static,
 {
     async fn get_proof(
         &self,

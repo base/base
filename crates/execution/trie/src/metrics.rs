@@ -19,26 +19,26 @@ use reth_trie::{
 use reth_trie_common::{BranchNodeCompact, Nibbles};
 
 use crate::{
-    BlockStateDiff, OpProofsStorageResult, OpProofsStore,
-    api::{InitialStateAnchor, OpProofsInitialStateStore, OperationDurations, WriteCounts},
+    BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
+    api::{BaseProofsInitialStateStore, InitialStateAnchor, OperationDurations, WriteCounts},
     cursor,
 };
 
-/// Alias for [`OpProofsStorageWithMetrics`].
-pub type OpProofsStorage<S> = OpProofsStorageWithMetrics<S>;
+/// Alias for [`BaseProofsStorageWithMetrics`].
+pub type BaseProofsStorage<S> = BaseProofsStorageWithMetrics<S>;
 
-/// Alias for [`TrieCursor`](cursor::OpProofsTrieCursor) with metrics layer.
-pub type OpProofsTrieCursor<C> = cursor::OpProofsTrieCursor<OpProofsTrieCursorWithMetrics<C>>;
+/// Alias for [`TrieCursor`](cursor::BaseProofsTrieCursor) with metrics layer.
+pub type BaseProofsTrieCursor<C> = cursor::BaseProofsTrieCursor<BaseProofsTrieCursorWithMetrics<C>>;
 
-/// Alias for [`OpProofsHashedAccountCursor`](cursor::OpProofsHashedAccountCursor) with metrics
+/// Alias for [`BaseProofsHashedAccountCursor`](cursor::BaseProofsHashedAccountCursor) with metrics
 /// layer.
-pub type OpProofsHashedAccountCursor<C> =
-    cursor::OpProofsHashedAccountCursor<OpProofsHashedCursorWithMetrics<C>>;
+pub type BaseProofsHashedAccountCursor<C> =
+    cursor::BaseProofsHashedAccountCursor<BaseProofsHashedCursorWithMetrics<C>>;
 
-/// Alias for [`OpProofsHashedStorageCursor`](cursor::OpProofsHashedStorageCursor) with metrics
+/// Alias for [`BaseProofsHashedStorageCursor`](cursor::BaseProofsHashedStorageCursor) with metrics
 /// layer.
-pub type OpProofsHashedStorageCursor<C> =
-    cursor::OpProofsHashedStorageCursor<OpProofsHashedCursorWithMetrics<C>>;
+pub type BaseProofsHashedStorageCursor<C> =
+    cursor::BaseProofsHashedStorageCursor<BaseProofsHashedCursorWithMetrics<C>>;
 
 /// Types of storage operations that can be tracked.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -177,12 +177,12 @@ impl StorageMetrics {
 
 /// Wrapper for [`TrieCursor`] that records metrics.
 #[derive(Debug, Constructor, Clone)]
-pub struct OpProofsTrieCursorWithMetrics<C> {
+pub struct BaseProofsTrieCursorWithMetrics<C> {
     cursor: C,
     metrics: Arc<StorageMetrics>,
 }
 
-impl<C: TrieCursor> TrieCursor for OpProofsTrieCursorWithMetrics<C> {
+impl<C: TrieCursor> TrieCursor for BaseProofsTrieCursorWithMetrics<C> {
     #[inline]
     fn seek_exact(
         &mut self,
@@ -217,7 +217,7 @@ impl<C: TrieCursor> TrieCursor for OpProofsTrieCursorWithMetrics<C> {
     }
 }
 
-impl<C: TrieStorageCursor> TrieStorageCursor for OpProofsTrieCursorWithMetrics<C> {
+impl<C: TrieStorageCursor> TrieStorageCursor for BaseProofsTrieCursorWithMetrics<C> {
     #[inline]
     fn set_hashed_address(&mut self, _hashed_address: B256) {
         self.cursor.set_hashed_address(_hashed_address)
@@ -226,12 +226,12 @@ impl<C: TrieStorageCursor> TrieStorageCursor for OpProofsTrieCursorWithMetrics<C
 
 /// Wrapper for [`HashedCursor`] type that records metrics.
 #[derive(Debug, Constructor, Clone)]
-pub struct OpProofsHashedCursorWithMetrics<C> {
+pub struct BaseProofsHashedCursorWithMetrics<C> {
     cursor: C,
     metrics: Arc<StorageMetrics>,
 }
 
-impl<C: HashedCursor> HashedCursor for OpProofsHashedCursorWithMetrics<C> {
+impl<C: HashedCursor> HashedCursor for BaseProofsHashedCursorWithMetrics<C> {
     type Value = C::Value;
 
     #[inline]
@@ -250,7 +250,7 @@ impl<C: HashedCursor> HashedCursor for OpProofsHashedCursorWithMetrics<C> {
     }
 }
 
-impl<C: HashedStorageCursor> HashedStorageCursor for OpProofsHashedCursorWithMetrics<C> {
+impl<C: HashedStorageCursor> HashedStorageCursor for BaseProofsHashedCursorWithMetrics<C> {
     #[inline]
     fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
         self.cursor.is_storage_empty()
@@ -262,14 +262,14 @@ impl<C: HashedStorageCursor> HashedStorageCursor for OpProofsHashedCursorWithMet
     }
 }
 
-/// Wrapper around [`OpProofsStore`] type that records metrics for all operations.
+/// Wrapper around [`BaseProofsStore`] type that records metrics for all operations.
 #[derive(Debug, Clone)]
-pub struct OpProofsStorageWithMetrics<S> {
+pub struct BaseProofsStorageWithMetrics<S> {
     storage: S,
     metrics: Arc<StorageMetrics>,
 }
 
-impl<S> OpProofsStorageWithMetrics<S> {
+impl<S> BaseProofsStorageWithMetrics<S> {
     /// Initializes new [`StorageMetrics`] and wraps given storage instance.
     pub fn new(storage: S) -> Self {
         Self { storage, metrics: Arc::new(StorageMetrics) }
@@ -286,34 +286,34 @@ impl<S> OpProofsStorageWithMetrics<S> {
     }
 }
 
-impl<S> OpProofsStore for OpProofsStorageWithMetrics<S>
+impl<S> BaseProofsStore for BaseProofsStorageWithMetrics<S>
 where
-    S: OpProofsStore,
+    S: BaseProofsStore,
 {
     type StorageTrieCursor<'tx>
-        = OpProofsTrieCursorWithMetrics<S::StorageTrieCursor<'tx>>
+        = BaseProofsTrieCursorWithMetrics<S::StorageTrieCursor<'tx>>
     where
         Self: 'tx;
     type AccountTrieCursor<'tx>
-        = OpProofsTrieCursorWithMetrics<S::AccountTrieCursor<'tx>>
+        = BaseProofsTrieCursorWithMetrics<S::AccountTrieCursor<'tx>>
     where
         Self: 'tx;
     type StorageCursor<'tx>
-        = OpProofsHashedCursorWithMetrics<S::StorageCursor<'tx>>
+        = BaseProofsHashedCursorWithMetrics<S::StorageCursor<'tx>>
     where
         Self: 'tx;
     type AccountHashedCursor<'tx>
-        = OpProofsHashedCursorWithMetrics<S::AccountHashedCursor<'tx>>
+        = BaseProofsHashedCursorWithMetrics<S::AccountHashedCursor<'tx>>
     where
         Self: 'tx;
 
     #[inline]
-    fn get_earliest_block_number(&self) -> OpProofsStorageResult<Option<(u64, B256)>> {
+    fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         self.storage.get_earliest_block_number()
     }
 
     #[inline]
-    fn get_latest_block_number(&self) -> OpProofsStorageResult<Option<(u64, B256)>> {
+    fn get_latest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         self.storage.get_latest_block_number()
     }
 
@@ -322,18 +322,18 @@ where
         &self,
         hashed_address: B256,
         max_block_number: u64,
-    ) -> OpProofsStorageResult<Self::StorageTrieCursor<'tx>> {
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
         let cursor = self.storage.storage_trie_cursor(hashed_address, max_block_number)?;
-        Ok(OpProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
     fn account_trie_cursor<'tx>(
         &self,
         max_block_number: u64,
-    ) -> OpProofsStorageResult<Self::AccountTrieCursor<'tx>> {
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
         let cursor = self.storage.account_trie_cursor(max_block_number)?;
-        Ok(OpProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
@@ -341,18 +341,18 @@ where
         &self,
         hashed_address: B256,
         max_block_number: u64,
-    ) -> OpProofsStorageResult<Self::StorageCursor<'tx>> {
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
         let cursor = self.storage.storage_hashed_cursor(hashed_address, max_block_number)?;
-        Ok(OpProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
     fn account_hashed_cursor<'tx>(
         &self,
         max_block_number: u64,
-    ) -> OpProofsStorageResult<Self::AccountHashedCursor<'tx>> {
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let cursor = self.storage.account_hashed_cursor(max_block_number)?;
-        Ok(OpProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+        Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
@@ -360,27 +360,27 @@ where
         &self,
         block_ref: BlockWithParent,
         block_state_diff: BlockStateDiff,
-    ) -> OpProofsStorageResult<WriteCounts> {
+    ) -> BaseProofsStorageResult<WriteCounts> {
         let result = self.storage.store_trie_updates(block_ref, block_state_diff)?;
         BlockMetrics::latest_number().set(block_ref.block.number as f64);
         Ok(result)
     }
 
     #[inline]
-    fn fetch_trie_updates(&self, block_number: u64) -> OpProofsStorageResult<BlockStateDiff> {
+    fn fetch_trie_updates(&self, block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
         self.storage.fetch_trie_updates(block_number)
     }
     #[inline]
     fn prune_earliest_state(
         &self,
         new_earliest_block_ref: BlockWithParent,
-    ) -> OpProofsStorageResult<WriteCounts> {
+    ) -> BaseProofsStorageResult<WriteCounts> {
         BlockMetrics::earliest_number().set(new_earliest_block_ref.block.number as f64);
         self.storage.prune_earliest_state(new_earliest_block_ref)
     }
 
     #[inline]
-    fn unwind_history(&self, to: BlockWithParent) -> OpProofsStorageResult<()> {
+    fn unwind_history(&self, to: BlockWithParent) -> BaseProofsStorageResult<()> {
         self.storage.unwind_history(to)
     }
 
@@ -389,7 +389,7 @@ where
         &self,
         latest_common_block: BlockNumHash,
         blocks_to_add: Vec<(BlockWithParent, BlockStateDiff)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         self.storage.replace_updates(latest_common_block, blocks_to_add)
     }
 
@@ -398,23 +398,23 @@ where
         &self,
         block_number: u64,
         hash: B256,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         BlockMetrics::earliest_number().set(block_number as f64);
         self.storage.set_earliest_block_number(block_number, hash)
     }
 }
 
-impl<S> OpProofsInitialStateStore for OpProofsStorageWithMetrics<S>
+impl<S> BaseProofsInitialStateStore for BaseProofsStorageWithMetrics<S>
 where
-    S: OpProofsInitialStateStore,
+    S: BaseProofsInitialStateStore,
 {
     #[inline]
-    fn initial_state_anchor(&self) -> OpProofsStorageResult<InitialStateAnchor> {
+    fn initial_state_anchor(&self) -> BaseProofsStorageResult<InitialStateAnchor> {
         self.storage.initial_state_anchor()
     }
 
     #[inline]
-    fn set_initial_state_anchor(&self, anchor: BlockNumHash) -> OpProofsStorageResult<()> {
+    fn set_initial_state_anchor(&self, anchor: BlockNumHash) -> BaseProofsStorageResult<()> {
         self.storage.set_initial_state_anchor(anchor)
     }
 
@@ -422,7 +422,7 @@ where
     fn store_account_branches(
         &self,
         account_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let count = account_nodes.len();
         let start = Instant::now();
         let result = self.storage.store_account_branches(account_nodes);
@@ -444,7 +444,7 @@ where
         &self,
         hashed_address: B256,
         storage_nodes: Vec<(Nibbles, Option<BranchNodeCompact>)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let count = storage_nodes.len();
         let start = Instant::now();
         let result = self.storage.store_storage_branches(hashed_address, storage_nodes);
@@ -465,7 +465,7 @@ where
     fn store_hashed_accounts(
         &self,
         accounts: Vec<(B256, Option<Account>)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let count = accounts.len();
         let start = Instant::now();
         let result = self.storage.store_hashed_accounts(accounts);
@@ -487,7 +487,7 @@ where
         &self,
         hashed_address: B256,
         storages: Vec<(B256, U256)>,
-    ) -> OpProofsStorageResult<()> {
+    ) -> BaseProofsStorageResult<()> {
         let count = storages.len();
         let start = Instant::now();
         let result = self.storage.store_hashed_storages(hashed_address, storages);
@@ -505,16 +505,16 @@ where
     }
 
     #[inline]
-    fn commit_initial_state(&self) -> OpProofsStorageResult<BlockNumHash> {
+    fn commit_initial_state(&self) -> BaseProofsStorageResult<BlockNumHash> {
         let block = self.storage.commit_initial_state()?;
         BlockMetrics::earliest_number().set(block.number as f64);
         Ok(block)
     }
 }
 
-impl<S> From<S> for OpProofsStorageWithMetrics<S>
+impl<S> From<S> for BaseProofsStorageWithMetrics<S>
 where
-    S: OpProofsStore + Clone + 'static,
+    S: BaseProofsStore + Clone + 'static,
 {
     fn from(storage: S) -> Self {
         Self::new(storage)

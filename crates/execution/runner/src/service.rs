@@ -1,8 +1,8 @@
 //! Trait for customizing the payload service used by the node.
 
 use base_node_core::{
-    OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder,
-    node::{OpPayloadBuilder, OpPoolBuilder},
+    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder,
+    node::{BasePoolBuilder, OpPayloadBuilder},
 };
 use reth_node_builder::{
     NodeComponentsBuilder,
@@ -11,7 +11,7 @@ use reth_node_builder::{
 
 use crate::{
     node::BaseNode,
-    types::{BaseNodeTypes, OpComponentsBuilder},
+    types::{BaseComponentsBuilder, BaseNodeTypes},
 };
 
 /// Trait for customizing the payload service used by the node.
@@ -25,7 +25,7 @@ pub trait PayloadServiceBuilder: Send + 'static {
     /// The component builder type this produces.
     type ComponentsBuilder: NodeComponentsBuilder<
             BaseNodeTypes,
-            Components = <OpComponentsBuilder as NodeComponentsBuilder<BaseNodeTypes>>::Components,
+            Components = <BaseComponentsBuilder as NodeComponentsBuilder<BaseNodeTypes>>::Components,
         >;
 
     /// Build components using the given [`BaseNode`] configuration.
@@ -39,11 +39,11 @@ pub struct DefaultPayloadServiceBuilder;
 impl PayloadServiceBuilder for DefaultPayloadServiceBuilder {
     type ComponentsBuilder = ComponentsBuilder<
         BaseNodeTypes,
-        OpPoolBuilder,
+        BasePoolBuilder,
         BasicPayloadServiceBuilder<OpPayloadBuilder>,
-        OpNetworkBuilder,
-        OpExecutorBuilder,
-        OpConsensusBuilder,
+        BaseNetworkBuilder,
+        BaseExecutorBuilder,
+        BaseConsensusBuilder,
     >;
 
     fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {

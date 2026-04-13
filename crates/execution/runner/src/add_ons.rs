@@ -2,17 +2,17 @@ use std::marker::PhantomData;
 
 use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
-    config::{GasLimitConfig, OpDAConfig},
+    config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
     MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::OpEthApiBuilder,
-    miner::OpMinerExtApi,
-    witness::OpDebugWitnessApi,
+    miner::BaseMinerExtApi,
+    witness::BaseDebugWitnessApi,
 };
 use base_execution_txpool::OpPooledTx;
-use base_node_core::{BaseNodeTypes, OpEngineApiBuilder, OpEngineValidatorBuilder};
+use base_node_core::{BaseNodeTypes, BasePayloadValidatorBuilder, OpEngineApiBuilder};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
@@ -47,7 +47,7 @@ pub struct BaseAddOns<
     /// and eth-api.
     pub rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
     /// Data availability configuration for the OP builder.
-    pub da_config: OpDAConfig,
+    pub da_config: BaseDAConfig,
     /// Gas limit configuration for the OP builder.
     pub gas_limit_config: GasLimitConfig,
 }
@@ -61,14 +61,14 @@ where
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
         rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
-        da_config: OpDAConfig,
+        da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
     ) -> Self {
         Self { rpc_add_ons, da_config, gas_limit_config }
     }
 }
 
-impl<N> Default for BaseAddOns<N, OpEthApiBuilder, OpEngineValidatorBuilder>
+impl<N> Default for BaseAddOns<N, OpEthApiBuilder, BasePayloadValidatorBuilder>
 where
     N: FullNodeComponents<Types: BaseNodeTypes>,
     OpEthApiBuilder: EthApiBuilder<N>,
@@ -82,15 +82,15 @@ impl<N, NetworkT, RpcMiddleware>
     BaseAddOns<
         N,
         OpEthApiBuilder<NetworkT>,
-        OpEngineValidatorBuilder,
-        OpEngineApiBuilder<OpEngineValidatorBuilder>,
+        BasePayloadValidatorBuilder,
+        OpEngineApiBuilder<BasePayloadValidatorBuilder>,
         RpcMiddleware,
     >
 where
     N: FullNodeComponents<Types: BaseNodeTypes>,
     OpEthApiBuilder<NetworkT>: EthApiBuilder<N>,
 {
-    /// Build a [`OpAddOns`] using [`BaseAddOnsBuilder`].
+    /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
     pub fn builder() -> BaseAddOnsBuilder<NetworkT> {
         BaseAddOnsBuilder::default()
     }
@@ -216,12 +216,12 @@ where
             ctx.node.evm_config().clone(),
         );
         // install additional OP specific rpc methods
-        let debug_ext = OpDebugWitnessApi::<_, _, _, Attrs>::new(
+        let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
             ctx.node.provider().clone(),
             Box::new(ctx.node.task_executor().clone()),
             builder,
         );
-        let miner_ext = OpMinerExtApi::new(da_config, gas_limit_config);
+        let miner_ext = BaseMinerExtApi::new(da_config, gas_limit_config);
 
         rpc_add_ons
             .launch_add_ons_with(ctx, move |container| {
@@ -314,7 +314,7 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,
     /// Data availability configuration for the OP builder.
-    da_config: Option<OpDAConfig>,
+    da_config: Option<BaseDAConfig>,
     /// Gas limit configuration for the OP builder.
     gas_limit_config: Option<GasLimitConfig>,
     /// Marker for network types.
@@ -356,7 +356,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     }
 
     /// Configure the data availability configuration for the OP builder.
-    pub fn with_da_config(mut self, da_config: OpDAConfig) -> Self {
+    pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = Some(da_config);
         self
     }
@@ -407,7 +407,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
 }
 
 impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
-    /// Builds an instance of [`OpAddOns`].
+    /// Builds an instance of [`BaseAddOns`].
     pub fn build<N, PVB, EB, EVB>(
         self,
     ) -> BaseAddOns<N, OpEthApiBuilder<NetworkT>, PVB, EB, EVB, RpcMiddleware>

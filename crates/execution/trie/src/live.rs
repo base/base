@@ -15,10 +15,10 @@ use reth_trie_common::{HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::{info, warn};
 
 use crate::{
-    BlockStateDiff, OpProofsStorage, OpProofsStorageError, OpProofsStore,
+    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore, BlockStateDiff,
     api::{OperationDurations, WriteCounts},
     metrics::BlockMetrics,
-    provider::OpProofsStateProviderRef,
+    provider::BaseProofsStateProviderRef,
 };
 
 /// Live trie collector for external proofs storage.
@@ -30,14 +30,14 @@ where
 {
     evm_config: Evm,
     provider: Provider,
-    storage: &'tx OpProofsStorage<PreimageStore>,
+    storage: &'tx BaseProofsStorage<PreimageStore>,
 }
 
 impl<'tx, Evm, Provider, Store> LiveTrieCollector<'tx, Evm, Provider, Store>
 where
     Evm: ConfigureEvm,
     Provider: StateReader + DatabaseProviderFactory + StateProviderFactory,
-    Store: 'tx + OpProofsStore + Clone + 'static,
+    Store: 'tx + BaseProofsStore + Clone + 'static,
 {
     fn record_storage_metrics(
         operation_durations: &OperationDurations,
@@ -53,7 +53,7 @@ where
     pub fn execute_and_store_block_updates(
         &self,
         block: &RecoveredBlock<BlockTy<Evm::Primitives>>,
-    ) -> Result<(), OpProofsStorageError> {
+    ) -> Result<(), BaseProofsStorageError> {
         let mut operation_durations = OperationDurations::default();
 
         let start = Instant::now();
@@ -61,16 +61,16 @@ where
         let (Some((earliest, _)), Some((latest, _))) =
             (self.storage.get_earliest_block_number()?, self.storage.get_latest_block_number()?)
         else {
-            return Err(OpProofsStorageError::NoBlocksFound);
+            return Err(BaseProofsStorageError::NoBlocksFound);
         };
 
         let parent_block_number = block.number() - 1;
         if parent_block_number < earliest {
-            return Err(OpProofsStorageError::UnknownParent);
+            return Err(BaseProofsStorageError::UnknownParent);
         }
 
         if parent_block_number > latest {
-            return Err(OpProofsStorageError::MissingParentBlock {
+            return Err(BaseProofsStorageError::MissingParentBlock {
                 block_number: block.number(),
                 parent_block_number,
                 latest_block_number: latest,
@@ -82,7 +82,7 @@ where
 
         // TODO: should we check block hash here?
 
-        let state_provider = OpProofsStateProviderRef::new(
+        let state_provider = BaseProofsStateProviderRef::new(
             self.provider.state_by_block_hash(block.parent_hash())?,
             self.storage,
             parent_block_number,
@@ -103,7 +103,7 @@ where
             start.elapsed() - operation_durations.execution_duration_seconds;
 
         if state_root != block.state_root() {
-            return Err(OpProofsStorageError::StateRootMismatch {
+            return Err(BaseProofsStorageError::StateRootMismatch {
                 block_number: block.number(),
                 current_state_hash: state_root,
                 expected_state_hash: block.state_root(),
@@ -141,7 +141,7 @@ where
         block: BlockWithParent,
         sorted_trie_updates: TrieUpdatesSorted,
         sorted_post_state: HashedPostStateSorted,
-    ) -> Result<(), OpProofsStorageError> {
+    ) -> Result<(), BaseProofsStorageError> {
         let start = Instant::now();
         let mut operation_durations = OperationDurations::default();
 
@@ -150,7 +150,7 @@ where
             .store_trie_updates(block, BlockStateDiff { sorted_trie_updates, sorted_post_state })
         {
             Ok(res) => res,
-            Err(OpProofsStorageError::OutOfOrder {
+            Err(BaseProofsStorageError::OutOfOrder {
                 block_number,
                 latest_block_hash,
                 parent_block_hash,
@@ -195,7 +195,7 @@ where
     pub fn unwind_and_store_block_updates(
         &self,
         block_updates: Vec<(BlockWithParent, Arc<TrieUpdatesSorted>, Arc<HashedPostStateSorted>)>,
-    ) -> Result<(), OpProofsStorageError> {
+    ) -> Result<(), BaseProofsStorageError> {
         if block_updates.is_empty() {
             return Ok(());
         }
@@ -236,7 +236,7 @@ where
 
     /// Remove account, storage and trie updates from historical storage for all blocks from
     /// the specified block (inclusive).
-    pub fn unwind_history(&self, to: BlockWithParent) -> Result<(), OpProofsStorageError> {
+    pub fn unwind_history(&self, to: BlockWithParent) -> Result<(), BaseProofsStorageError> {
         self.storage.unwind_history(to)
     }
 }

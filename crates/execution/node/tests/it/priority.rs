@@ -13,8 +13,8 @@ use base_node_core::{
     BaseNode,
     args::RollupArgs,
     node::{
-        BaseNodeTypes, OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder,
-        OpNodeComponentBuilder, OpPayloadBuilder, OpPoolBuilder,
+        BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
+        BaseNodeTypes, BasePoolBuilder, OpPayloadBuilder,
     },
     utils::optimism_payload_attributes,
 };
@@ -89,7 +89,7 @@ impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
 /// Builds the node with custom transaction priority service within default payload builder.
 fn build_components<Node>(
     chain_id: ChainId,
-) -> OpNodeComponentBuilder<Node, OpPayloadBuilder<CustomTxPriority>>
+) -> BaseNodeComponentBuilder<Node, OpPayloadBuilder<CustomTxPriority>>
 where
     Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
@@ -97,14 +97,14 @@ where
         RollupArgs::default();
     ComponentsBuilder::default()
         .node_types::<Node>()
-        .pool(OpPoolBuilder::default())
-        .executor(OpExecutorBuilder::default())
+        .pool(BasePoolBuilder::default())
+        .executor(BaseExecutorBuilder::default())
         .payload(BasicPayloadServiceBuilder::new(
             OpPayloadBuilder::new(compute_pending_block)
                 .with_transactions(CustomTxPriority { chain_id }),
         ))
-        .network(OpNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
-        .consensus(OpConsensusBuilder::default())
+        .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+        .consensus(BaseConsensusBuilder::default())
 }
 
 #[tokio::test]

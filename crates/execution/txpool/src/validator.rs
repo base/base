@@ -24,14 +24,14 @@ use crate::OpPooledTx;
 
 /// Tracks additional infos for the current block.
 #[derive(Debug, Default)]
-pub struct OpL1BlockInfo {
+pub struct BaseL1BlockInfo {
     /// The current L1 block info.
     l1_block_info: RwLock<L1BlockInfo>,
     /// Current block timestamp.
     timestamp: AtomicU64,
 }
 
-impl OpL1BlockInfo {
+impl BaseL1BlockInfo {
     /// Returns the most recent timestamp
     pub fn timestamp(&self) -> u64 {
         self.timestamp.load(Ordering::Relaxed)
@@ -44,7 +44,7 @@ pub struct OpTransactionValidator<Client, Tx, Evm> {
     /// The type that performs the actual validation.
     inner: Arc<EthTransactionValidator<Client, Tx, Evm>>,
     /// Additional block info required for validation.
-    block_info: Arc<OpL1BlockInfo>,
+    block_info: Arc<BaseL1BlockInfo>,
     /// If true, ensure that the transaction's sender has enough balance to cover the L1 gas fee
     /// derived from the tracked L1 block info that is extracted from the first transaction in the
     /// L2 block.
@@ -91,7 +91,7 @@ where
 {
     /// Create a new [`OpTransactionValidator`].
     pub fn new(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
-        let this = Self::with_block_info(inner, OpL1BlockInfo::default());
+        let this = Self::with_block_info(inner, BaseL1BlockInfo::default());
         if let Ok(Some(block)) =
             this.inner.client().block_by_number_or_tag(alloy_eips::BlockNumberOrTag::Latest)
         {
@@ -107,10 +107,10 @@ where
         this
     }
 
-    /// Create a new [`OpTransactionValidator`] with the given [`OpL1BlockInfo`].
+    /// Create a new [`OpTransactionValidator`] with the given [`BaseL1BlockInfo`].
     pub fn with_block_info(
         inner: EthTransactionValidator<Client, Tx, Evm>,
-        block_info: OpL1BlockInfo,
+        block_info: BaseL1BlockInfo,
     ) -> Self {
         Self {
             inner: Arc::new(inner),

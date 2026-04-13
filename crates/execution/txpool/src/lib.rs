@@ -8,7 +8,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod validator;
-pub use validator::{OpL1BlockInfo, OpTransactionValidator};
+pub use validator::{BaseL1BlockInfo, OpTransactionValidator};
 
 mod transaction;
 pub use transaction::{

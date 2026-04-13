@@ -14,39 +14,39 @@ use reth_node_builder::{
     rpc::{RethRpcAddOns, RpcContext},
 };
 
-use crate::types::{BaseNodeTypes, OpAddOns, OpComponentsBuilder};
+use crate::types::{BaseComponentsBuilder, BaseNodeTypes, ConcreteBaseAddOns};
 
 /// Alias for the default OP components type.
-type BaseComponents = <OpComponentsBuilder as NodeComponentsBuilder<BaseNodeTypes>>::Components;
+type BaseComponents = <BaseComponentsBuilder as NodeComponentsBuilder<BaseNodeTypes>>::Components;
 
 /// Convenience alias for the OP node adapter type used by the reth builder.
 ///
 /// Because `Components` depends only on pool, network, executor, and consensus builders (not the
 /// payload service builder), this type is identical regardless of which payload service is used.
-pub type OpNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
+pub type BaseNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
 
 /// Convenience alias for the OP Eth API type exposed by the reth RPC add-ons.
-type OpEthApi = <OpAddOns as RethRpcAddOns<OpNodeAdapter>>::EthApi;
+type OpEthApi = <ConcreteBaseAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
 
 /// Convenience alias for the full OP node handle produced after launch.
-type OpFullNode = FullNode<OpNodeAdapter, OpAddOns>;
+type BaseFullNode = FullNode<BaseNodeAdapter, ConcreteBaseAddOns>;
 
 /// Alias for the RPC context used by Base extensions.
-pub type BaseRpcContext<'a> = RpcContext<'a, OpNodeAdapter, OpEthApi>;
+pub type BaseRpcContext<'a> = RpcContext<'a, BaseNodeAdapter, OpEthApi>;
 
 /// Hook type for extending RPC modules.
 type RpcModuleHook = Box<dyn FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static>;
 
 /// Hook type for extending add-ons.
-type AddOnsHook = Box<dyn FnOnce(OpAddOns) -> OpAddOns>;
+type AddOnsHook = Box<dyn FnOnce(ConcreteBaseAddOns) -> ConcreteBaseAddOns>;
 
 /// Hook type for node-started callbacks.
-type NodeStartedHook = Box<dyn FnOnce(OpFullNode) -> Result<()> + Send + 'static>;
+type NodeStartedHook = Box<dyn FnOnce(BaseFullNode) -> Result<()> + Send + 'static>;
 
 /// Type-erased `ExEx` factory.
 type BoxExExFactory = Box<
     dyn FnOnce(
-            ExExContext<OpNodeAdapter>,
+            ExExContext<BaseNodeAdapter>,
         ) -> BoxFuture<'static, eyre::Result<BoxFuture<'static, eyre::Result<()>>>>
         + Send
         + 'static,
@@ -57,7 +57,7 @@ type BoxExExFactory = Box<
 /// This is generic over the `NodeComponentsBuilder` (`CB`) so that both the default payload and
 /// the flashblocks payload service can be used interchangeably.
 pub type RethNodeBuilder<CB> =
-    WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, CB, OpAddOns>>;
+    WithLaunchContext<NodeBuilderWithComponents<BaseNodeTypes, CB, ConcreteBaseAddOns>>;
 
 /// Pure hook accumulator for the Base node builder.
 ///
@@ -97,7 +97,8 @@ impl NodeHooks {
 
         // Install ExEx hooks
         for (id, factory) in exex_hooks {
-            builder = builder.install_exex(id, move |ctx: ExExContext<OpNodeAdapter>| factory(ctx));
+            builder =
+                builder.install_exex(id, move |ctx: ExExContext<BaseNodeAdapter>| factory(ctx));
         }
 
         for hook in add_ons_hooks {
@@ -116,7 +117,7 @@ impl NodeHooks {
 
         // Install node-started hooks
         if !node_started_hooks.is_empty() {
-            builder = builder.on_node_started(move |full_node: OpFullNode| {
+            builder = builder.on_node_started(move |full_node: BaseFullNode| {
                 for hook in node_started_hooks {
                     hook(full_node.clone())?;
                 }
@@ -139,7 +140,7 @@ impl NodeHooks {
     /// Adds an add-ons hook that will run when the add-ons are configured.
     pub fn add_add_ons_hook<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(OpAddOns) -> OpAddOns + Send + 'static,
+        F: FnOnce(ConcreteBaseAddOns) -> ConcreteBaseAddOns + Send + 'static,
     {
         self.add_ons_hooks.push(Box::new(hook));
         self
@@ -148,7 +149,7 @@ impl NodeHooks {
     /// Adds a node-started hook that will run after the node has started.
     pub fn add_node_started_hook<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(OpFullNode) -> Result<()> + Send + 'static,
+        F: FnOnce(BaseFullNode) -> Result<()> + Send + 'static,
     {
         self.node_started_hooks.push(Box::new(hook));
         self
@@ -157,7 +158,7 @@ impl NodeHooks {
     /// Installs an `ExEx` extension with the given name and closure.
     pub fn install_exex<F, R, E>(mut self, exex_id: impl Into<String>, exex: F) -> Self
     where
-        F: FnOnce(ExExContext<OpNodeAdapter>) -> R + Send + 'static,
+        F: FnOnce(ExExContext<BaseNodeAdapter>) -> R + Send + 'static,
         R: Future<Output = eyre::Result<E>> + Send,
         E: Future<Output = eyre::Result<()>> + Send + 'static,
     {

@@ -19,7 +19,7 @@ use std::{ffi::OsString, fmt, marker::PhantomData};
 pub use app::CliApp;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_core::args::RollupArgs;
-use chainspec::OpChainSpecParser;
+use chainspec::BaseChainSpecParser;
 use clap::Parser;
 use commands::Commands;
 use futures::Future;
@@ -111,7 +111,7 @@ where
     {
         let mut this = self.configure();
         this.set_runner(runner);
-        this.run(FnLauncher::new::<OpChainSpecParser, Ext>(async move |builder, chain_spec| {
+        this.run(FnLauncher::new::<BaseChainSpecParser, Ext>(async move |builder, chain_spec| {
             launcher(builder, chain_spec).await
         }))
     }
@@ -124,11 +124,11 @@ mod tests {
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
 
-    use crate::{Cli, chainspec::OpChainSpecParser, commands::Commands};
+    use crate::{Cli, chainspec::BaseChainSpecParser, commands::Commands};
 
     #[test]
     fn parse_dev() {
-        let cmd = NodeCommand::<OpChainSpecParser, NoArgs>::parse_from(["base-reth", "--dev"]);
+        let cmd = NodeCommand::<BaseChainSpecParser, NoArgs>::parse_from(["base-reth", "--dev"]);
         let chain = BASE_DEV.clone();
         assert_eq!(cmd.chain.chain, chain.chain);
         assert_eq!(cmd.chain.genesis_hash(), chain.genesis_hash());

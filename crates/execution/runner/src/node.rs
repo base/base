@@ -3,14 +3,14 @@
 use base_common_consensus::BasePrimitives;
 use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
+use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::OpEthApiBuilder;
-use base_execution_storage::OpStorage;
+use base_execution_storage::BaseStorage;
 use base_node_core::{
-    BaseNodeTypes, OpConsensusBuilder, OpEngineApiBuilder, OpEngineTypes, OpEngineValidatorBuilder,
-    OpExecutorBuilder, OpNetworkBuilder, OpNodeComponentBuilder,
+    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
+    BaseNodeTypes, BasePayloadValidatorBuilder, OpEngineApiBuilder, OpEngineTypes,
     args::RollupArgs,
-    node::{OpPayloadBuilder, OpPoolBuilder},
+    node::{BasePoolBuilder, OpPayloadBuilder},
 };
 use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
@@ -34,7 +34,7 @@ pub struct BaseNode {
     /// the `miner_` api).
     ///
     /// By default no throttling is applied.
-    pub da_config: OpDAConfig,
+    pub da_config: BaseDAConfig,
     /// Gas limit configuration for the OP builder.
     /// Used to control the gas limit of the blocks produced by the OP builder. (configured by the
     /// batcher via the `miner_` api)
@@ -44,11 +44,15 @@ pub struct BaseNode {
 impl BaseNode {
     /// Creates a new instance of the Base node type.
     pub fn new(args: RollupArgs) -> Self {
-        Self { args, da_config: OpDAConfig::default(), gas_limit_config: GasLimitConfig::default() }
+        Self {
+            args,
+            da_config: BaseDAConfig::default(),
+            gas_limit_config: GasLimitConfig::default(),
+        }
     }
 
     /// Configure the data availability configuration for the OP builder.
-    pub fn with_da_config(mut self, da_config: OpDAConfig) -> Self {
+    pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = da_config;
         self
     }
@@ -60,7 +64,7 @@ impl BaseNode {
     }
 
     /// Returns the components for the given [`RollupArgs`].
-    pub fn components<Node>(&self) -> OpNodeComponentBuilder<Node>
+    pub fn components<Node>(&self) -> BaseNodeComponentBuilder<Node>
     where
         Node: FullNodeTypes<Types: BaseNodeTypes>,
     {
@@ -68,15 +72,15 @@ impl BaseNode {
             self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .pool(OpPoolBuilder::default())
-            .executor(OpExecutorBuilder::default())
+            .pool(BasePoolBuilder::default())
+            .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 OpPayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(OpNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
-            .consensus(OpConsensusBuilder::default())
+            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+            .consensus(BaseConsensusBuilder::default())
     }
 
     /// Returns [`BaseAddOnsBuilder`] with configured arguments.
@@ -145,19 +149,19 @@ where
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
-        OpPoolBuilder,
+        BasePoolBuilder,
         BasicPayloadServiceBuilder<OpPayloadBuilder>,
-        OpNetworkBuilder,
-        OpExecutorBuilder,
-        OpConsensusBuilder,
+        BaseNetworkBuilder,
+        BaseExecutorBuilder,
+        BaseConsensusBuilder,
     >;
 
     type AddOns = BaseAddOns<
         NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
         OpEthApiBuilder,
-        OpEngineValidatorBuilder,
-        OpEngineApiBuilder<OpEngineValidatorBuilder>,
-        BaseEngineValidatorBuilder<OpEngineValidatorBuilder>,
+        BasePayloadValidatorBuilder,
+        OpEngineApiBuilder<BasePayloadValidatorBuilder>,
+        BaseEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
@@ -172,6 +176,6 @@ where
 impl NodeTypes for BaseNode {
     type Primitives = BasePrimitives;
     type ChainSpec = BaseChainSpec;
-    type Storage = OpStorage;
+    type Storage = BaseStorage;
     type Payload = OpEngineTypes;
 }

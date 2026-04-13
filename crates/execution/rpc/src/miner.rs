@@ -1,7 +1,7 @@
 //! Miner API extension for OP.
 
 use alloy_primitives::U64;
-use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
+use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use tracing::debug;
@@ -39,21 +39,21 @@ base_metrics::define_metrics! {
 /// Miner API extension for OP, exposes settings for the data availability configuration via the
 /// `miner_` API.
 #[derive(Debug, Clone)]
-pub struct OpMinerExtApi {
-    da_config: OpDAConfig,
+pub struct BaseMinerExtApi {
+    da_config: BaseDAConfig,
     gas_limit_config: GasLimitConfig,
 }
 
-impl OpMinerExtApi {
+impl BaseMinerExtApi {
     /// Instantiate the miner API extension with the given, sharable data availability
     /// configuration.
-    pub const fn new(da_config: OpDAConfig, gas_limit_config: GasLimitConfig) -> Self {
+    pub const fn new(da_config: BaseDAConfig, gas_limit_config: GasLimitConfig) -> Self {
         Self { da_config, gas_limit_config }
     }
 }
 
 #[async_trait]
-impl MinerApiExtServer for OpMinerExtApi {
+impl MinerApiExtServer for BaseMinerExtApi {
     /// Handler for `miner_setMaxDASize` RPC method.
     async fn set_max_da_size(&self, max_tx_size: U64, max_block_size: U64) -> RpcResult<bool> {
         debug!(target: "rpc", max_tx_size = %max_tx_size, max_block_size = %max_block_size, "Setting max DA size");

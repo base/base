@@ -3,7 +3,7 @@ use std::sync::Arc;
 use base_builder_publish::WebSocketPublisher;
 use base_execution_evm::BaseEvmConfig;
 use base_node_core::{
-    OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, node::OpPoolBuilder,
+    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, node::BasePoolBuilder,
 };
 use base_node_runner::{
     BaseNode, BaseNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder,
@@ -96,11 +96,11 @@ where
 impl BasePayloadServiceBuilder for FlashblocksServiceBuilder {
     type ComponentsBuilder = ComponentsBuilder<
         BaseNodeTypes,
-        OpPoolBuilder,
+        BasePoolBuilder,
         Self,
-        OpNetworkBuilder,
-        OpExecutorBuilder,
-        OpConsensusBuilder,
+        BaseNetworkBuilder,
+        BaseExecutorBuilder,
+        BaseConsensusBuilder,
     >;
 
     fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {

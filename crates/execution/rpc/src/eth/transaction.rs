@@ -195,30 +195,30 @@ where
 ///
 /// For deposits, receipt is fetched to extract `deposit_nonce` and `deposit_receipt_version`.
 /// Otherwise, it works like regular Ethereum implementation, i.e. uses [`TransactionInfo`].
-pub struct OpTxInfoMapper<Provider> {
+pub struct BaseTxInfoMapper<Provider> {
     provider: Provider,
 }
 
-impl<Provider: Clone> Clone for OpTxInfoMapper<Provider> {
+impl<Provider: Clone> Clone for BaseTxInfoMapper<Provider> {
     fn clone(&self) -> Self {
         Self { provider: self.provider.clone() }
     }
 }
 
-impl<Provider> Debug for OpTxInfoMapper<Provider> {
+impl<Provider> Debug for BaseTxInfoMapper<Provider> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpTxInfoMapper").finish()
+        f.debug_struct("BaseTxInfoMapper").finish()
     }
 }
 
-impl<Provider> OpTxInfoMapper<Provider> {
-    /// Creates [`OpTxInfoMapper`] that uses [`ReceiptProvider`] borrowed from given `eth_api`.
+impl<Provider> BaseTxInfoMapper<Provider> {
+    /// Creates [`BaseTxInfoMapper`] that uses [`ReceiptProvider`] borrowed from given `eth_api`.
     pub const fn new(provider: Provider) -> Self {
         Self { provider }
     }
 }
 
-impl<T, Provider> TxInfoMapper<T> for OpTxInfoMapper<Provider>
+impl<T, Provider> TxInfoMapper<T> for BaseTxInfoMapper<Provider>
 where
     T: BaseTransaction + SignedTransaction,
     Provider: ReceiptProvider<Receipt: DepositReceiptExt>,

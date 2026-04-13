@@ -16,7 +16,7 @@ use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_rpc::OpEthApiBuilder;
 use base_execution_txpool::BasePooledTransaction;
-use base_node_core::{OpEngineValidatorBuilder, args::RollupArgs, node::OpPoolBuilder};
+use base_node_core::{BasePayloadValidatorBuilder, args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;
@@ -135,7 +135,7 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let addons: base_node_runner::BaseAddOns<_, OpEthApiBuilder, OpEngineValidatorBuilder> =
+        let addons: base_node_runner::BaseAddOns<_, OpEthApiBuilder, BasePayloadValidatorBuilder> =
             base_node
                 .add_ons_builder()
                 .with_da_config(da_config.clone())
@@ -367,8 +367,8 @@ fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChain
         .with_network(network)
 }
 
-fn pool_component() -> OpPoolBuilder<BasePooledTransaction> {
-    OpPoolBuilder::<BasePooledTransaction>::default()
+fn pool_component() -> BasePoolBuilder<BasePooledTransaction> {
+    BasePoolBuilder::<BasePooledTransaction>::default()
 }
 
 /// A utility for listening to flashblocks WebSocket messages during tests.

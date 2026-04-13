@@ -10,7 +10,7 @@ use reth_cli_commands::{
     p2p, prune, re_execute, stage,
 };
 
-use crate::chainspec::OpChainSpecParser;
+use crate::chainspec::BaseChainSpecParser;
 
 pub mod init_state;
 pub mod op_proofs;
@@ -23,40 +23,40 @@ pub mod test_vectors;
 pub enum Commands<Ext: clap::Args + fmt::Debug = NoArgs> {
     /// Start the node
     #[command(name = "node")]
-    Node(Box<node::NodeCommand<OpChainSpecParser, Ext>>),
+    Node(Box<node::NodeCommand<BaseChainSpecParser, Ext>>),
     /// Initialize the database from a genesis file.
     #[command(name = "init")]
-    Init(init_cmd::InitCommand<OpChainSpecParser>),
+    Init(init_cmd::InitCommand<BaseChainSpecParser>),
     /// Initialize the database from a state dump file.
     #[command(name = "init-state")]
-    InitState(init_state::InitStateCommandOp<OpChainSpecParser>),
+    InitState(init_state::InitStateCommandOp<BaseChainSpecParser>),
     /// Dumps genesis block JSON configuration to stdout.
-    DumpGenesis(dump_genesis::DumpGenesisCommand<OpChainSpecParser>),
+    DumpGenesis(dump_genesis::DumpGenesisCommand<BaseChainSpecParser>),
     /// Database debugging utilities
     #[command(name = "db")]
-    Db(db::Command<OpChainSpecParser>),
+    Db(db::Command<BaseChainSpecParser>),
     /// Manipulate individual stages.
     #[command(name = "stage")]
-    Stage(Box<stage::Command<OpChainSpecParser>>),
+    Stage(Box<stage::Command<BaseChainSpecParser>>),
     /// P2P Debugging utilities
     #[command(name = "p2p")]
-    P2P(Box<p2p::Command<OpChainSpecParser>>),
+    P2P(Box<p2p::Command<BaseChainSpecParser>>),
     /// Write config to stdout
     #[command(name = "config")]
     Config(config_cmd::Command),
     /// Prune according to the configuration without any limits
     #[command(name = "prune")]
-    Prune(prune::PruneCommand<OpChainSpecParser>),
+    Prune(prune::PruneCommand<BaseChainSpecParser>),
     /// Generate Test Vectors
     #[cfg(feature = "dev")]
     #[command(name = "test-vectors")]
     TestVectors(test_vectors::Command),
     /// Re-execute blocks in parallel to verify historical sync correctness.
     #[command(name = "re-execute")]
-    ReExecute(re_execute::Command<OpChainSpecParser>),
+    ReExecute(re_execute::Command<BaseChainSpecParser>),
     /// Manage storage of historical proofs in expanded trie db in fault proof window.
     #[command(name = "proofs")]
-    OpProofs(op_proofs::Command<OpChainSpecParser>),
+    BaseProofs(op_proofs::Command<BaseChainSpecParser>),
 }
 
 impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
@@ -75,7 +75,7 @@ impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
             #[cfg(feature = "dev")]
             Self::TestVectors(_) => None,
             Self::ReExecute(cmd) => cmd.chain_spec(),
-            Self::OpProofs(cmd) => cmd.chain_spec(),
+            Self::BaseProofs(cmd) => cmd.chain_spec(),
         }
     }
 }

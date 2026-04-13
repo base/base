@@ -12,9 +12,9 @@ use crate::node::BaseNode;
 /// Alias for the OP node type adapter used by the runner.
 pub type BaseNodeTypes = FullNodeTypesAdapter<BaseNode, DatabaseEnv, BaseProvider>;
 /// Internal alias for the OP node components builder (default payload service).
-pub type OpComponentsBuilder = <BaseNode as Node<BaseNodeTypes>>::ComponentsBuilder;
-/// Internal alias for the OP node add-ons.
-pub type OpAddOns = <BaseNode as Node<BaseNodeTypes>>::AddOns;
+pub type BaseComponentsBuilder = <BaseNode as Node<BaseNodeTypes>>::ComponentsBuilder;
+/// Internal alias for the Base node add-ons (all generics resolved).
+pub(crate) type ConcreteBaseAddOns = <BaseNode as Node<BaseNodeTypes>>::AddOns;
 
 /// A [`BlockchainProvider`] instance.
 pub type BaseProvider = BlockchainProvider<NodeTypesWithDBAdapter<BaseNode, DatabaseEnv>>;

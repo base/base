@@ -6,7 +6,7 @@ use core::{
 };
 use std::sync::Arc;
 
-use base_execution_payload_builder::config::{GasLimitConfig, OpDAConfig};
+use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 
 use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
 
@@ -20,7 +20,7 @@ pub struct BuilderConfig {
 
     /// Data Availability configuration for the OP builder
     /// Defines constraints for the maximum size of data availability transactions.
-    pub da_config: OpDAConfig,
+    pub da_config: BaseDAConfig,
 
     /// Gas limit configuration for the payload builder
     pub gas_limit_config: GasLimitConfig,
@@ -126,7 +126,7 @@ impl Default for BuilderConfig {
         Self {
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
-            da_config: OpDAConfig::default(),
+            da_config: BaseDAConfig::default(),
             gas_limit_config: GasLimitConfig::default(),
             flashblocks_ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             flashblocks_interval: Duration::from_millis(250),

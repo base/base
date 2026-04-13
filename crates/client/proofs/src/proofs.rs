@@ -1,11 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
-use base_execution_exex::OpProofsExEx;
+use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
-use base_execution_trie::{MdbxProofsStorage, OpProofsStorage};
+use base_execution_trie::{BaseProofsStorage, MdbxProofsStorage};
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
@@ -57,7 +57,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 }
             };
             let mdbx = Arc::new(mdbx);
-            let storage: OpProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&mdbx).into();
+            let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&mdbx).into();
 
             let storage_exec = storage.clone();
 
@@ -73,7 +73,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
 
             hooks = hooks
                 .install_exex("proofs-history", async move |exex_context| {
-                    Ok(OpProofsExEx::builder(exex_context, storage_exec)
+                    Ok(BaseProofsExEx::builder(exex_context, storage_exec)
                         .with_proofs_history_prune_interval(proofs_history_prune_interval)
                         .with_proofs_history_window(proofs_history_window)
                         .with_verification_interval(proofs_history_verification_interval)
