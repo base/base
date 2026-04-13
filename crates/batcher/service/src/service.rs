@@ -297,7 +297,7 @@ impl BatcherService {
         info!(rollup_rpc = %self.config.rollup_rpc_url, "fetching rollup config");
         let rollup_config = Arc::new(
             rollup_client
-                .op_rollup_config()
+                .rollup_config()
                 .await
                 .map_err(|e| eyre::eyre!("optimism_rollupConfig RPC failed: {e}"))?,
         );
@@ -308,7 +308,7 @@ impl BatcherService {
 
         // Fetch sync status to determine the safe L2 head for startup backfill.
         let sync_status = rollup_client
-            .op_sync_status()
+            .sync_status()
             .await
             .map_err(|e| eyre::eyre!("optimism_syncStatus RPC failed: {e}"))?;
         let safe_l2_number = sync_status.safe_l2.block_info.number;

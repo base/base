@@ -1,5 +1,5 @@
 //! Base transaction abstraction containing the `[OpTxTr]` trait and corresponding `[OpTransaction]` type.
-use std::vec;
+use alloc::vec;
 
 use auto_impl::auto_impl;
 use revm::{

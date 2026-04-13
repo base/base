@@ -6,9 +6,9 @@ use alloy_consensus::Header;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_sol_types::SolCall;
 use base_access_lists::{FBALBuilderDb, FlashblockAccessList};
+use base_common_evm::OpTransaction;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
-use base_revm::OpTransaction;
 use base_test_utils::{
     AccessListContract, ContractFactory, DEVNET_CHAIN_ID, Logic, Logic2, Proxy, SimpleStorage,
     build_test_genesis,

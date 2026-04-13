@@ -32,7 +32,7 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 # reth
 revm = { workspace = true, optional = true }
 alloy-evm = { workspace = true, optional = true }
-base-revm = { workspace = true, optional = true }
+base-common-evm = { workspace = true, optional = true }
 reth-rpc-convert = { workspace = true, optional = true }
 
 # signing
@@ -65,7 +65,7 @@ std = [
 	"alloy-rpc-types-eth/std",
 	"alloy-serde/std",
 	"base-common-consensus/std",
-	"base-revm?/std",
+	"base-common-evm?/std",
 	"derive_more/std",
 	"revm?/std",
 	"serde/std",
@@ -90,14 +90,14 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-eth/serde",
 	"base-common-consensus/serde",
-	"base-revm?/serde",
+	"base-common-evm?/serde",
 	"revm?/serde",
 ]
 reth = [
 	"dep:alloy-evm",
 	"dep:alloy-network",
 	"dep:alloy-signer",
-	"dep:base-revm",
+	"dep:base-common-evm",
 	"dep:reth-rpc-convert",
 	"dep:revm",
 	"std",

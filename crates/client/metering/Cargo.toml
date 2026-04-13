@@ -22,15 +22,13 @@ reth-evm.workspace = true
 reth-revm.workspace = true
 reth-provider.workspace = true
 reth-trie-common.workspace = true
+base-common-evm.workspace = true
 base-execution-evm.workspace = true
 reth-primitives-traits.workspace = true
 base-execution-chainspec.workspace = true
 
 # revm
 revm-database.workspace = true
-
-# base-revm
-base-revm.workspace = true
 
 # alloy
 alloy-primitives.workspace = true

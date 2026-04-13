@@ -47,7 +47,7 @@ base-execution-evm = { workspace = true, features = ["std", "rpc"] }
 
 # revm with required Base features
 # Note: this must be kept to ensure all features are properly enabled/forwarded
-base-revm.workspace = true
+base-common-evm.workspace = true
 revm = { workspace = true, features = [
 	"secp256k1",
 	"blst",

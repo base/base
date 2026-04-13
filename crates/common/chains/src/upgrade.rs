@@ -1,6 +1,6 @@
 use alloy_hardforks::{ForkCondition, hardfork};
 
-use crate::BaseChainConfig;
+use crate::ChainConfig;
 
 hardfork!(
     /// The name of a Base network upgrade.
@@ -36,7 +36,7 @@ hardfork!(
 
 impl BaseUpgrade {
     /// Returns the list of upgrades with their activation conditions for the given chain config.
-    pub const fn forks_for(cfg: &BaseChainConfig) -> [(Self, ForkCondition); 10] {
+    pub const fn forks_for(cfg: &ChainConfig) -> [(Self, ForkCondition); 10] {
         let v1 = match cfg.base_v1_timestamp {
             Some(ts) => ForkCondition::Timestamp(ts),
             None => ForkCondition::Never,
@@ -57,27 +57,27 @@ impl BaseUpgrade {
 
     /// Base mainnet list of upgrades.
     pub const fn mainnet() -> [(Self, ForkCondition); 10] {
-        Self::forks_for(BaseChainConfig::mainnet())
+        Self::forks_for(ChainConfig::mainnet())
     }
 
     /// Base Sepolia list of upgrades.
     pub const fn sepolia() -> [(Self, ForkCondition); 10] {
-        Self::forks_for(BaseChainConfig::sepolia())
+        Self::forks_for(ChainConfig::sepolia())
     }
 
     /// Devnet list of upgrades.
     pub const fn devnet() -> [(Self, ForkCondition); 10] {
-        Self::forks_for(BaseChainConfig::devnet())
+        Self::forks_for(ChainConfig::devnet())
     }
 
     /// Base devnet-0-sepolia-dev-0 list of upgrades.
     pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
-        Self::forks_for(BaseChainConfig::alpha())
+        Self::forks_for(ChainConfig::alpha())
     }
 
     /// Base Zeronet list of upgrades.
     pub const fn zeronet() -> [(Self, ForkCondition); 10] {
-        Self::forks_for(BaseChainConfig::zeronet())
+        Self::forks_for(ChainConfig::zeronet())
     }
 
     /// Returns index of `self` in sorted canonical array.
@@ -129,7 +129,7 @@ mod tests {
     /// Reverse lookup to find the upgrade given a chain ID and block timestamp.
     /// Returns the active upgrade at the given timestamp for the specified Base chain.
     fn upgrade_from_chain_and_timestamp(chain: Chain, timestamp: u64) -> Option<BaseUpgrade> {
-        let cfg = BaseChainConfig::by_chain_id(chain.id())?;
+        let cfg = ChainConfig::by_chain_id(chain.id())?;
         Some(match timestamp {
             _ if timestamp < cfg.canyon_timestamp => BaseUpgrade::Regolith,
             _ if timestamp < cfg.ecotone_timestamp => BaseUpgrade::Canyon,
@@ -146,36 +146,12 @@ mod tests {
     #[test]
     fn test_reverse_lookup_base_chains() {
         let test_cases = [
-            (
-                Chain::base_mainnet(),
-                BaseChainConfig::mainnet().canyon_timestamp,
-                BaseUpgrade::Canyon,
-            ),
-            (
-                Chain::base_mainnet(),
-                BaseChainConfig::mainnet().ecotone_timestamp,
-                BaseUpgrade::Ecotone,
-            ),
-            (
-                Chain::base_mainnet(),
-                BaseChainConfig::mainnet().jovian_timestamp,
-                BaseUpgrade::Jovian,
-            ),
-            (
-                Chain::base_sepolia(),
-                BaseChainConfig::sepolia().canyon_timestamp,
-                BaseUpgrade::Canyon,
-            ),
-            (
-                Chain::base_sepolia(),
-                BaseChainConfig::sepolia().ecotone_timestamp,
-                BaseUpgrade::Ecotone,
-            ),
-            (
-                Chain::base_sepolia(),
-                BaseChainConfig::sepolia().jovian_timestamp,
-                BaseUpgrade::Jovian,
-            ),
+            (Chain::base_mainnet(), ChainConfig::mainnet().canyon_timestamp, BaseUpgrade::Canyon),
+            (Chain::base_mainnet(), ChainConfig::mainnet().ecotone_timestamp, BaseUpgrade::Ecotone),
+            (Chain::base_mainnet(), ChainConfig::mainnet().jovian_timestamp, BaseUpgrade::Jovian),
+            (Chain::base_sepolia(), ChainConfig::sepolia().canyon_timestamp, BaseUpgrade::Canyon),
+            (Chain::base_sepolia(), ChainConfig::sepolia().ecotone_timestamp, BaseUpgrade::Ecotone),
+            (Chain::base_sepolia(), ChainConfig::sepolia().jovian_timestamp, BaseUpgrade::Jovian),
         ];
 
         for (chain_id, timestamp, expected) in test_cases {

@@ -15,7 +15,6 @@ workspace = true
 reth-evm.workspace = true
 reth-revm.workspace = true
 reth-trie.workspace = true
-base-revm.workspace = true
 reth-tasks.workspace = true
 reth-errors.workspace = true
 reth-provider.workspace = true

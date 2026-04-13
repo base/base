@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 
 use alloy_consensus::Block;
 use alloy_rpc_types_engine::PayloadError;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_rpc_types_engine::{BasePayloadError, ExecutionData};
 use derive_more::{Constructor, Deref};
 use reth_payload_validator::{cancun, prague, shanghai};
@@ -20,7 +20,7 @@ pub struct OpExecutionPayloadValidator<ChainSpec> {
 
 impl<ChainSpec> OpExecutionPayloadValidator<ChainSpec>
 where
-    ChainSpec: BaseUpgrades,
+    ChainSpec: Upgrades,
 {
     /// Returns reference to chain spec.
     pub fn chain_spec(&self) -> &ChainSpec {
@@ -62,7 +62,7 @@ pub fn ensure_well_formed_payload<ChainSpec, T>(
     payload: ExecutionData,
 ) -> Result<SealedBlock<Block<T>>, BasePayloadError>
 where
-    ChainSpec: BaseUpgrades,
+    ChainSpec: Upgrades,
     T: SignedTransaction,
 {
     let ExecutionData { payload, sidecar } = payload;

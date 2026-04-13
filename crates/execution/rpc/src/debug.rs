@@ -8,7 +8,7 @@ use alloy_primitives::B256;
 use alloy_rlp::Encodable;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
     builder::{Builder, OpPayloadBuilderCtx},
@@ -178,7 +178,7 @@ where
         > + 'static,
     Provider: BlockReaderIdExt<Header = N::BlockHeader>
         + StateProviderFactory
-        + ChainSpecProvider<ChainSpec: BaseUpgrades>
+        + ChainSpecProvider<ChainSpec: Upgrades>
         + NodePrimitivesProvider<Primitives = N>
         + HeaderProvider<Header = N::BlockHeader>
         + Clone

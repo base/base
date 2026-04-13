@@ -9,7 +9,7 @@ use tracing::warn;
 /// Fetches the current safe L2 head block number from the rollup node.
 ///
 /// The canonical implementation delegates to
-/// [`RollupNodeApiClient::op_sync_status`](base_consensus_rpc::RollupNodeApiClient).
+/// [`RollupNodeApiClient::sync_status`](base_consensus_rpc::RollupNodeApiClient).
 pub trait SafeHeadProvider: Send + Sync + 'static {
     /// Return the current safe L2 head block number.
     fn safe_l2_number(
@@ -20,7 +20,7 @@ pub trait SafeHeadProvider: Send + Sync + 'static {
 impl SafeHeadProvider for jsonrpsee::http_client::HttpClient {
     async fn safe_l2_number(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         use base_consensus_rpc::RollupNodeApiClient;
-        let status = self.op_sync_status().await?;
+        let status = self.sync_status().await?;
         Ok(status.safe_l2.block_info.number)
     }
 }

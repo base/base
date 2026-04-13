@@ -2,9 +2,9 @@
 use std::{ops::Not as _, path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_genesis::ChainConfig;
+use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_provider::RootProvider;
-use base_common_chains::BaseChainConfig;
+use base_common_chains::ChainConfig;
 use base_common_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState};
@@ -39,7 +39,7 @@ pub const HEAD_STREAM_POLL_INTERVAL: u64 = 4;
 #[derive(Debug, Clone)]
 pub struct L1Config {
     /// The L1 chain configuration.
-    pub chain_config: Arc<ChainConfig>,
+    pub chain_config: Arc<GenesisChainConfig>,
     /// Whether to trust the L1 RPC.
     pub trust_rpc: bool,
     /// The L1 beacon client.
@@ -57,9 +57,9 @@ pub struct L1Config {
 impl L1Config {
     /// Returns the recommended finalized-block poll interval for the given L1 chain.
     pub const fn default_finalized_poll_interval(l1_chain_id: u64) -> Duration {
-        const ETH_MAINNET_L1: u64 = BaseChainConfig::mainnet().l1_chain_id;
-        const ETH_SEPOLIA_L1: u64 = BaseChainConfig::sepolia().l1_chain_id;
-        const DEVNET_L1: u64 = BaseChainConfig::devnet().l1_chain_id;
+        const ETH_MAINNET_L1: u64 = ChainConfig::mainnet().l1_chain_id;
+        const ETH_SEPOLIA_L1: u64 = ChainConfig::sepolia().l1_chain_id;
+        const DEVNET_L1: u64 = ChainConfig::devnet().l1_chain_id;
 
         match l1_chain_id {
             // Ethereum mainnet and Sepolia: poll once per L1 epoch (32 slots × 12 s).

@@ -1,7 +1,7 @@
 //! Genesis types.
 
 use alloy_eips::eip1898::BlockNumHash;
-use base_common_chains::BaseChainConfig;
+use base_common_chains::ChainConfig;
 
 use crate::SystemConfig;
 
@@ -20,8 +20,8 @@ pub struct ChainGenesis {
     pub system_config: Option<SystemConfig>,
 }
 
-impl From<&BaseChainConfig> for ChainGenesis {
-    fn from(cfg: &BaseChainConfig) -> Self {
+impl From<&ChainConfig> for ChainGenesis {
+    fn from(cfg: &ChainConfig) -> Self {
         Self {
             l1: BlockNumHash { hash: cfg.genesis_l1_hash, number: cfg.genesis_l1_number },
             l2: BlockNumHash { hash: cfg.genesis_l2_hash, number: cfg.genesis_l2_number },

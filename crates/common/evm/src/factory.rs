@@ -1,8 +1,4 @@
 use alloy_evm::{Database, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
-use base_revm::{
-    BasePrecompiles, Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction,
-    OpTransactionError,
-};
 use revm::{
     Context, Inspector,
     context::{BlockEnv, TxEnv},
@@ -10,7 +6,10 @@ use revm::{
     inspector::NoOpInspector,
 };
 
-use crate::BaseEvm;
+use crate::{
+    BaseEvm, BasePrecompiles, Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction,
+    OpTransactionError,
+};
 
 /// Factory producing [`BaseEvm`]s.
 #[derive(Debug, Default, Clone, Copy)]

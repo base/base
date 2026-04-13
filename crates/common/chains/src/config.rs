@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256, address, b256, uint};
 
 /// Complete configuration for a Base chain
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BaseChainConfig {
+pub struct ChainConfig {
     // Identity
     /// L2 chain ID.
     pub chain_id: u64,
@@ -102,7 +102,7 @@ pub struct BaseChainConfig {
     pub genesis_json: &'static str,
 }
 
-impl BaseChainConfig {
+impl ChainConfig {
     /// Base Mainnet chain configuration.
     pub const fn mainnet() -> &'static Self {
         &MAINNET
@@ -145,7 +145,7 @@ impl BaseChainConfig {
     }
 }
 
-const MAINNET: BaseChainConfig = BaseChainConfig {
+const MAINNET: ChainConfig = ChainConfig {
     chain_id: 8453,
     l1_chain_id: 1,
 
@@ -206,7 +206,7 @@ const MAINNET: BaseChainConfig = BaseChainConfig {
     genesis_json: include_str!("../res/genesis/base.json"),
 };
 
-const SEPOLIA: BaseChainConfig = BaseChainConfig {
+const SEPOLIA: ChainConfig = ChainConfig {
     chain_id: 84532,
     l1_chain_id: 11155111,
 
@@ -259,7 +259,7 @@ const SEPOLIA: BaseChainConfig = BaseChainConfig {
     genesis_json: include_str!("../res/genesis/sepolia_base.json"),
 };
 
-const ALPHA: BaseChainConfig = BaseChainConfig {
+const ALPHA: ChainConfig = ChainConfig {
     chain_id: 11763072,
     l1_chain_id: 11155111,
 
@@ -309,7 +309,7 @@ const ALPHA: BaseChainConfig = BaseChainConfig {
     genesis_json: include_str!("../res/genesis/devnet_0_sepolia_dev_0_base.json"),
 };
 
-const DEVNET: BaseChainConfig = BaseChainConfig {
+const DEVNET: ChainConfig = ChainConfig {
     chain_id: 1337,
     l1_chain_id: 900,
 
@@ -359,7 +359,7 @@ const DEVNET: BaseChainConfig = BaseChainConfig {
     genesis_json: include_str!("../res/genesis/dev.json"),
 };
 
-const ZERONET: BaseChainConfig = BaseChainConfig {
+const ZERONET: ChainConfig = ChainConfig {
     chain_id: 763360,
     l1_chain_id: 560048,
 

@@ -11,7 +11,7 @@
 extern crate alloc;
 
 mod genesis;
-pub use genesis::{BaseChainInfo, BaseFeeInfo, BaseGenesisInfo, BaseHardforkInfo};
+pub use genesis::{ChainInfo, FeeInfo, GenesisInfo, HardforkInfo};
 
 mod receipt;
 pub use receipt::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};

@@ -6,13 +6,13 @@
 extern crate alloc;
 
 mod config;
-pub use config::BaseChainConfig;
+pub use config::ChainConfig;
 
 mod upgrade;
 pub use upgrade::BaseUpgrade;
 
 mod upgrades;
-pub use upgrades::BaseUpgrades;
+pub use upgrades::Upgrades;
 
 mod chain;
-pub use chain::BaseChainUpgrades;
+pub use chain::ChainUpgrades;

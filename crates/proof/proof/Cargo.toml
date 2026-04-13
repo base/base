@@ -35,7 +35,6 @@ base-common-rpc-types-engine.workspace = true
 
 # Execution
 alloy-evm.workspace = true
-base-revm.workspace = true
 base-common-evm.workspace = true
 
 # General
@@ -84,7 +83,6 @@ std = [
 	"base-proof-mpt/std",
 	"base-proof-preimage/std",
 	"base-protocol/std",
-	"base-revm/std",
 	"c-kzg?/std",
 	"dep:c-kzg",
 	"dep:tokio",

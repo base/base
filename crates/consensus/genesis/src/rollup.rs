@@ -3,9 +3,9 @@
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_common_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
+use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
 
-use crate::{BaseFeeConfig, ChainGenesis, HardForkConfig};
+use crate::{ChainGenesis, FeeConfig, HardForkConfig};
 
 /// The Rollup configuration.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -61,17 +61,17 @@ pub struct RollupConfig {
     )]
     pub blobs_enabled_l1_timestamp: Option<u64>,
     /// `chain_op_config` is the chain-specific EIP1559 config for the rollup.
-    #[cfg_attr(feature = "serde", serde(default = "BaseFeeConfig::base_mainnet"))]
-    pub chain_op_config: BaseFeeConfig,
+    #[cfg_attr(feature = "serde", serde(default = "FeeConfig::base_mainnet"))]
+    pub chain_op_config: FeeConfig,
 }
 
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        use base_common_chains::BaseChainConfig;
+        use base_common_chains::ChainConfig;
         let chain_op_config = match u32::arbitrary(u)? % 2 {
-            0 => BaseFeeConfig::from(BaseChainConfig::mainnet()),
-            _ => BaseFeeConfig::from(BaseChainConfig::sepolia()),
+            0 => FeeConfig::from(ChainConfig::mainnet()),
+            _ => FeeConfig::from(ChainConfig::sepolia()),
         };
 
         Ok(Self {
@@ -112,7 +112,7 @@ impl Default for RollupConfig {
             l1_system_config_address: Address::ZERO,
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: BaseFeeConfig::from_chain_id(0),
+            chain_op_config: FeeConfig::from_chain_id(0),
         }
     }
 }
@@ -329,7 +329,7 @@ impl EthereumHardforks for RollupConfig {
     }
 }
 
-impl BaseUpgrades for RollupConfig {
+impl Upgrades for RollupConfig {
     fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
         match fork {
             BaseUpgrade::Bedrock => ForkCondition::Block(0),
@@ -428,8 +428,8 @@ impl RollupConfig {
     }
 }
 
-impl From<&BaseChainConfig> for RollupConfig {
-    fn from(cfg: &BaseChainConfig) -> Self {
+impl From<&ChainConfig> for RollupConfig {
+    fn from(cfg: &ChainConfig) -> Self {
         Self {
             genesis: ChainGenesis::from(cfg),
             block_time: cfg.block_time,
@@ -445,7 +445,7 @@ impl From<&BaseChainConfig> for RollupConfig {
             l1_system_config_address: cfg.system_config_address,
             protocol_versions_address: cfg.protocol_versions_address,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: BaseFeeConfig::from(cfg),
+            chain_op_config: FeeConfig::from(cfg),
         }
     }
 }
@@ -626,10 +626,10 @@ mod tests {
 
     #[test]
     fn test_base_v1_active() {
-        use crate::BaseHardforkConfig;
+        use crate::HardforkConfig;
         let mut config = RollupConfig::default();
         assert!(!config.is_base_v1_active(0));
-        config.hardforks.base = BaseHardforkConfig { v1: Some(10) };
+        config.hardforks.base = HardforkConfig { v1: Some(10) };
         // V1 does not cascade upward to existing forks
         assert!(!config.is_regolith_active(10));
         assert!(!config.is_canyon_active(10));
@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn test_is_first_fork_block() {
-        use crate::BaseHardforkConfig;
+        use crate::HardforkConfig;
         let cfg = RollupConfig {
             hardforks: HardForkConfig {
                 regolith_time: Some(10),
@@ -653,7 +653,7 @@ mod tests {
                 pectra_blob_schedule_time: Some(80),
                 isthmus_time: Some(90),
                 jovian_time: Some(100),
-                base: BaseHardforkConfig { v1: Some(110) },
+                base: HardforkConfig { v1: Some(110) },
             },
             block_time: 2,
             ..Default::default()
@@ -838,7 +838,7 @@ mod tests {
             l1_system_config_address: address!("94ee52a9d8edd72a85dea7fae3ba6d75e4bf1710"),
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: BaseFeeConfig::from_chain_id(0),
+            chain_op_config: FeeConfig::from_chain_id(0),
         };
 
         let deserialized: RollupConfig = serde_json::from_str(raw).unwrap();

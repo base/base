@@ -3,21 +3,21 @@
 use alloc::string::{String, ToString};
 use core::fmt::Display;
 
-use base_common_chains::BaseChainConfig;
+use base_common_chains::ChainConfig;
 
 /// Hardfork configuration for Base-specific upgrades.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
-pub struct BaseHardforkConfig {
+pub struct HardforkConfig {
     /// `v1` sets the activation time for the Base V1 network upgrade.
     /// Active if `v1` != None && L2 block timestamp >= `Some(v1)`, inactive otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub v1: Option<u64>,
 }
 
-impl BaseHardforkConfig {
+impl HardforkConfig {
     /// Returns true if no Base-specific hardforks are configured.
     pub const fn is_empty(&self) -> bool {
         self.v1.is_none()
@@ -91,9 +91,9 @@ pub struct HardForkConfig {
     /// `base` contains Base-specific hardfork activation times.
     #[cfg_attr(
         feature = "serde",
-        serde(default, skip_serializing_if = "BaseHardforkConfig::is_empty")
+        serde(default, skip_serializing_if = "HardforkConfig::is_empty")
     )]
-    pub base: BaseHardforkConfig,
+    pub base: HardforkConfig,
 }
 
 impl Display for HardForkConfig {
@@ -131,8 +131,8 @@ impl HardForkConfig {
     }
 }
 
-impl From<&BaseChainConfig> for HardForkConfig {
-    fn from(cfg: &BaseChainConfig) -> Self {
+impl From<&ChainConfig> for HardForkConfig {
+    fn from(cfg: &ChainConfig) -> Self {
         Self {
             regolith_time: Some(cfg.regolith_timestamp),
             canyon_time: Some(cfg.canyon_timestamp),
@@ -144,7 +144,7 @@ impl From<&BaseChainConfig> for HardForkConfig {
             pectra_blob_schedule_time: cfg.pectra_blob_schedule_timestamp,
             isthmus_time: Some(cfg.isthmus_timestamp),
             jovian_time: Some(cfg.jovian_timestamp),
-            base: BaseHardforkConfig { v1: cfg.base_v1_timestamp },
+            base: HardforkConfig { v1: cfg.base_v1_timestamp },
         }
     }
 }
@@ -178,7 +178,7 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
-            base: BaseHardforkConfig::default(),
+            base: HardforkConfig::default(),
         };
 
         let deserialized: HardForkConfig = serde_json::from_str(raw).unwrap();
@@ -225,7 +225,7 @@ mod tests {
             pectra_blob_schedule_time: None,
             isthmus_time: None,
             jovian_time: None,
-            base: BaseHardforkConfig::default(),
+            base: HardforkConfig::default(),
         };
 
         let deserialized: HardForkConfig = toml::from_str(raw).unwrap();
@@ -259,7 +259,7 @@ mod tests {
             pectra_blob_schedule_time: Some(8),
             isthmus_time: Some(9),
             jovian_time: Some(10),
-            base: BaseHardforkConfig { v1: Some(11) },
+            base: HardforkConfig { v1: Some(11) },
         };
 
         let mut iter = hardforks.iter();

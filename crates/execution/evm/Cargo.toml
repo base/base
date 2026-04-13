@@ -36,7 +36,6 @@ base-execution-consensus.workspace = true
 
 # revm
 revm.workspace = true
-base-revm = { workspace = true, features = ["reth"] }
 
 # misc
 thiserror.workspace = true
@@ -60,7 +59,6 @@ std = [
 	"base-common-rpc-types-engine/std",
 	"base-execution-chainspec/std",
 	"base-execution-consensus/std",
-	"base-revm/std",
 	"reth-chainspec/std",
 	"reth-evm/std",
 	"reth-execution-errors/std",
@@ -71,5 +69,5 @@ std = [
 	"revm/std",
 	"thiserror/std",
 ]
-portable = [ "base-revm/portable", "reth-revm/portable", "revm/portable" ]
+portable = [ "base-common-evm/portable", "reth-revm/portable", "revm/portable" ]
 rpc = [ "alloy-evm/rpc", "reth-rpc-eth-api" ]

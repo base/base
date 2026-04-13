@@ -4,7 +4,7 @@ use alloy_evm::{
     Database, EvmFactory, FromRecoveredTx, FromTxWithEncoded,
     block::{BlockExecutorFactory, BlockExecutorFor},
 };
-use base_common_chains::{BaseChainUpgrades, BaseUpgrades};
+use base_common_chains::{ChainUpgrades, Upgrades};
 use revm::{Inspector, database::State};
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 #[derive(Debug, Clone, Default, Copy)]
 pub struct BaseBlockExecutorFactory<
     R = AlloyReceiptBuilder,
-    Spec = BaseChainUpgrades,
+    Spec = ChainUpgrades,
     EvmFactory = BaseEvmFactory,
 > {
     /// Receipt builder.
@@ -53,7 +53,7 @@ impl<R, Spec, EvmFactory> BaseBlockExecutorFactory<R, Spec, EvmFactory> {
 impl<R, Spec, EvmF> BlockExecutorFactory for BaseBlockExecutorFactory<R, Spec, EvmF>
 where
     R: BaseReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: BaseUpgrades,
+    Spec: Upgrades,
     EvmF: EvmFactory<
         Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + BaseTxEnv,
     >,

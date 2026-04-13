@@ -4,7 +4,7 @@ use std::{marker::PhantomData, sync::Arc};
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B64, B256};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::BasePrimitives;
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
@@ -984,7 +984,7 @@ impl<Txs> OpPayloadBuilder<Txs> {
 impl<Node, Pool, Txs, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for OpPayloadBuilder<Txs>
 where
     Node: FullNodeTypes<
-            Provider: ChainSpecProvider<ChainSpec: BaseUpgrades>,
+            Provider: ChainSpecProvider<ChainSpec: Upgrades>,
             Types: NodeTypes<
                 Primitives: PayloadPrimitives,
                 Payload: PayloadTypes<
@@ -1150,10 +1150,7 @@ pub struct OpEngineValidatorBuilder;
 impl<Node> PayloadValidatorBuilder<Node> for OpEngineValidatorBuilder
 where
     Node: FullNodeComponents<
-        Types: NodeTypes<
-            ChainSpec: BaseUpgrades,
-            Payload: PayloadTypes<ExecutionData = ExecutionData>,
-        >,
+        Types: NodeTypes<ChainSpec: Upgrades, Payload: PayloadTypes<ExecutionData = ExecutionData>>,
     >,
 {
     type Validator = OpEngineValidator<

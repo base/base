@@ -3,8 +3,8 @@
 use alloc::{boxed::Box, string::String, vec, vec::Vec};
 
 use alloy_primitives::{Address, Bytes};
+use base_common_evm::{BasePrecompiles, OpSpecId};
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
-use base_revm::{BasePrecompiles, OpSpecId};
 use revm::{
     context::{Cfg, ContextTr, LocalContextTr},
     handler::{EthPrecompiles, PrecompileProvider},
@@ -297,8 +297,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use base_common_evm::OpSpecId;
     use base_proof_preimage::{BidirectionalChannel, HintWriter, NativeChannel, OracleReader};
-    use base_revm::OpSpecId;
     use revm::precompile::modexp;
 
     use super::*;

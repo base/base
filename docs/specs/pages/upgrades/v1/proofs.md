@@ -37,9 +37,9 @@ The V1 design supports three settlement paths for a proposal on Ethereum:
 The long window gives independent provers time to verify a claim and dispute it if needed. The
 short window is available only when both proof systems back the same proposal. A ZK prover can also
 dispute an invalid TEE-backed claim and claim the TEE prover's bond as a reward. In V1, that delay
-lives in `AggregateVerifier` itself. `OptimismPortal2` no longer adds a separate 3.5 day delay,
-because keeping that legacy delay would eliminate the fast-finality path even when both proofs are
-present.
+lives in `AggregateVerifier` itself. `OptimismPortal2` and `AnchorStateRegistry` no longer add a
+separate 3.5 day delay, because keeping either legacy delay would eliminate the fast-finality path
+even when both proofs are present.
 
 ## Security and Decentralization
 
@@ -64,6 +64,8 @@ present.
 - `OptimismPortal2`: no longer adds the separate 3.5 day proof-maturity delay for these proposals.
   That timing moves into `AggregateVerifier`, which keeps the 1 day path reachable instead of
   forcing every proposal to inherit at least 3.5 days of extra delay.
+- `AnchorStateRegistry`: Similar to `OptimismPortal2`, this no longer has a 3.5 day finalization
+  delay for proposals, allowing fast finality.
 
 ### Proof Flow
 

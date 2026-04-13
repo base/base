@@ -10,7 +10,7 @@
 extern crate alloc;
 
 mod params;
-pub use params::BaseFeeConfig;
+pub use params::FeeConfig;
 
 mod updates;
 pub use updates::{
@@ -28,7 +28,7 @@ pub use system::{
 };
 
 mod chain;
-pub use chain::{AddressList, BaseHardforkConfig, HardForkConfig, Roles};
+pub use chain::{AddressList, HardForkConfig, HardforkConfig, Roles};
 
 mod genesis;
 pub use genesis::ChainGenesis;

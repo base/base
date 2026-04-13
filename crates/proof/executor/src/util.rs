@@ -103,7 +103,7 @@ mod test {
     use alloy_primitives::{B64, b64, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_rpc_types_engine::BasePayloadAttributes;
-    use base_consensus_genesis::{BaseFeeConfig, RollupConfig};
+    use base_consensus_genesis::{FeeConfig, RollupConfig};
 
     use super::decode_holocene_eip_1559_params_block_header;
     use crate::util::{
@@ -172,7 +172,7 @@ mod test {
     #[test]
     fn test_encode_holocene_eip_1559_params_missing() {
         let cfg = RollupConfig {
-            chain_op_config: BaseFeeConfig {
+            chain_op_config: FeeConfig {
                 eip1559_denominator: 50,
                 eip1559_elasticity: 64,
                 eip1559_denominator_canyon: 250,
@@ -187,7 +187,7 @@ mod test {
     #[test]
     fn test_encode_holocene_eip_1559_params_default() {
         let cfg = RollupConfig {
-            chain_op_config: BaseFeeConfig {
+            chain_op_config: FeeConfig {
                 eip1559_denominator: 50,
                 eip1559_elasticity: 64,
                 eip1559_denominator_canyon: 250,
@@ -205,7 +205,7 @@ mod test {
     #[test]
     fn test_encode_holocene_eip_1559_params() {
         let cfg = RollupConfig {
-            chain_op_config: BaseFeeConfig {
+            chain_op_config: FeeConfig {
                 eip1559_denominator: 50,
                 eip1559_elasticity: 64,
                 eip1559_denominator_canyon: 250,

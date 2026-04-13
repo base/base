@@ -22,13 +22,13 @@ use base_common_consensus::{
 };
 use base_common_evm::{
     BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseTxResult,
+    OpHaltReason,
 };
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::OpRethReceiptBuilder;
 use base_flashblocks::FlashblocksState;
 use base_node_core::OpEngineTypes;
-use base_revm::OpHaltReason;
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, LazyOverlay};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{

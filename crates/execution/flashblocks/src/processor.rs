@@ -11,7 +11,7 @@ use alloy_network::TransactionResponse;
 use alloy_primitives::{Address, BlockNumber};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_flashblocks::Flashblock;
 use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
@@ -57,7 +57,7 @@ pub struct StateProcessor<Client> {
 impl<Client> StateProcessor<Client>
 where
     Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades>
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + Upgrades>
         + BlockReaderIdExt<Header = Header>
         + Clone
         + 'static,

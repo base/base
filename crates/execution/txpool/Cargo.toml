@@ -27,11 +27,9 @@ reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 
-# revm
-base-revm.workspace = true
-
 base-common-flz.workspace = true
 base-common-chains.workspace = true
+base-common-evm.workspace = true
 base-execution-evm.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 

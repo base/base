@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransaction};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};
@@ -46,10 +46,8 @@ impl<Provider> BaseReceiptConverter<Provider> {
 impl<Provider, N> ReceiptConverter<N> for BaseReceiptConverter<Provider>
 where
     N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
-    Provider: BlockReader<Block = N::Block>
-        + ChainSpecProvider<ChainSpec: BaseUpgrades>
-        + Debug
-        + 'static,
+    Provider:
+        BlockReader<Block = N::Block> + ChainSpecProvider<ChainSpec: Upgrades> + Debug + 'static,
 {
     type RpcReceipt = BaseTransactionReceipt;
     type Error = OpEthApiError;
@@ -168,12 +166,12 @@ impl ReceiptFieldsBuilder {
         }
     }
 
-    /// Applies [`L1BlockInfo`](base_revm::L1BlockInfo).
+    /// Applies [`L1BlockInfo`](base_common_evm::L1BlockInfo).
     pub fn l1_block_info<T: Encodable2718 + BaseTransaction>(
         mut self,
-        chain_spec: &impl BaseUpgrades,
+        chain_spec: &impl Upgrades,
         tx: &T,
-        l1_block_info: &mut base_revm::L1BlockInfo,
+        l1_block_info: &mut base_common_evm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError> {
         let raw_tx = tx.encoded_2718();
         let timestamp = self.block_timestamp;
@@ -283,9 +281,9 @@ pub struct BaseReceiptBuilder {
 impl BaseReceiptBuilder {
     /// Returns a new builder.
     pub fn new<N>(
-        chain_spec: &impl BaseUpgrades,
+        chain_spec: &impl Upgrades,
         input: ConvertReceiptInput<'_, N>,
-        l1_block_info: &mut base_revm::L1BlockInfo,
+        l1_block_info: &mut base_common_evm::L1BlockInfo,
     ) -> Result<Self, OpEthApiError>
     where
         N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
@@ -347,7 +345,7 @@ mod tests {
     use alloy_consensus::{Block, BlockBody, Eip658Value, TxEip7702, transaction::TransactionMeta};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
-    use base_common_chains::BaseChainConfig;
+    use base_common_chains::ChainConfig;
     use base_common_consensus::{BasePrimitives, BaseTransactionSigned, BaseTypedTransaction};
     use base_execution_chainspec::BASE_MAINNET;
     use reth_primitives_traits::Recovered;
@@ -415,10 +413,7 @@ mod tests {
             base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // test
-        assert!(BaseUpgrades::is_fjord_active_at_timestamp(
-            &*BASE_MAINNET,
-            BLOCK_124665056_TIMESTAMP
-        ));
+        assert!(Upgrades::is_fjord_active_at_timestamp(&*BASE_MAINNET, BLOCK_124665056_TIMESTAMP));
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
             .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
@@ -492,7 +487,7 @@ mod tests {
             BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::from(2)),
             ..Default::default()
@@ -516,7 +511,7 @@ mod tests {
             BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             operator_fee_scalar: Some(U256::ZERO),
             operator_fee_constant: Some(U256::ZERO),
             ..Default::default()
@@ -607,18 +602,17 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
 
         let op_hardforks = &*BASE_MAINNET;
 
-        let receipt =
-            ReceiptFieldsBuilder::new(BaseChainConfig::mainnet().jovian_timestamp, u64::MAX)
-                .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
-                .expect("should parse revm l1 info")
-                .build();
+        let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp, u64::MAX)
+            .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
+            .expect("should parse revm l1 info")
+            .build();
 
         assert_eq!(receipt.l1_block_info.da_footprint_gas_scalar, Some(DA_FOOTPRINT_GAS_SCALAR));
     }
@@ -643,7 +637,7 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -662,7 +656,7 @@ mod tests {
                 gas_used: 100,
                 next_log_index: 0,
                 meta: TransactionMeta {
-                    timestamp: BaseChainConfig::mainnet().jovian_timestamp,
+                    timestamp: ChainConfig::mainnet().jovian_timestamp,
                     ..Default::default()
                 },
             },
@@ -697,7 +691,7 @@ mod tests {
 
         let tx = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature);
 
-        let mut l1_block_info = base_revm::L1BlockInfo {
+        let mut l1_block_info = base_common_evm::L1BlockInfo {
             da_footprint_gas_scalar: Some(DA_FOOTPRINT_GAS_SCALAR),
             ..Default::default()
         };
@@ -716,7 +710,7 @@ mod tests {
                 gas_used: 100,
                 next_log_index: 0,
                 meta: TransactionMeta {
-                    timestamp: BaseChainConfig::mainnet().isthmus_timestamp,
+                    timestamp: ChainConfig::mainnet().isthmus_timestamp,
                     ..Default::default()
                 },
             },

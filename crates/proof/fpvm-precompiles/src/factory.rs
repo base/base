@@ -1,11 +1,11 @@
 //! Factory for creating EVM instances with FPVM-accelerated precompiles enabled.
 
 use alloy_evm::{Database, EvmEnv, EvmFactory};
-use base_common_evm::BaseEvm;
-use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
-use base_revm::{
-    Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
+use base_common_evm::{
+    BaseEvm, Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction,
+    OpTransactionError,
 };
+use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
 use revm::{
     Context, Inspector,
     context::{BlockEnv, TxEnv},

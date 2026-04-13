@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::BaseBlock;
 use base_common_flashblocks::Flashblock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
@@ -60,7 +60,7 @@ impl FlashblocksState {
     pub fn start<Client>(&self, client: Client)
     where
         Client: StateProviderFactory
-            + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + BaseUpgrades>
+            + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + Upgrades>
             + BlockReaderIdExt<Header = Header>
             + Clone
             + 'static,

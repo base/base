@@ -1,5 +1,5 @@
 //! Contains Base specific precompiles.
-use std::{boxed::Box, string::String};
+use alloc::{boxed::Box, string::String};
 
 use revm::{
     context::Cfg,
@@ -172,17 +172,17 @@ impl Default for BasePrecompiles {
 }
 
 /// Bn254 pair precompile.
-pub mod bn254_pair {
+pub(crate) mod bn254_pair {
     use super::{Precompile, PrecompileError, PrecompileId, PrecompileResult, bn254};
 
     /// Max input size for the bn254 pair precompile.
-    pub const GRANITE_MAX_INPUT_SIZE: usize = 112687;
+    pub(crate) const GRANITE_MAX_INPUT_SIZE: usize = 112687;
     /// Bn254 pair precompile.
-    pub const GRANITE: Precompile =
+    pub(crate) const GRANITE: Precompile =
         Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_granite);
 
     /// Run the bn254 pair precompile with Base input limit.
-    pub fn run_pair_granite(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    pub(crate) fn run_pair_granite(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > GRANITE_MAX_INPUT_SIZE {
             return Err(PrecompileError::Bn254PairLength);
         }
@@ -195,13 +195,13 @@ pub mod bn254_pair {
     }
 
     /// Max input size for the bn254 pair precompile.
-    pub const JOVIAN_MAX_INPUT_SIZE: usize = 81_984;
+    pub(crate) const JOVIAN_MAX_INPUT_SIZE: usize = 81_984;
     /// Bn254 pair precompile.
-    pub const JOVIAN: Precompile =
+    pub(crate) const JOVIAN: Precompile =
         Precompile::new(PrecompileId::Bn254Pairing, bn254::pair::ADDRESS, run_pair_jovian);
 
     /// Run the bn254 pair precompile with Base input limit.
-    pub fn run_pair_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    pub(crate) fn run_pair_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_MAX_INPUT_SIZE {
             return Err(PrecompileError::Bn254PairLength);
         }
@@ -215,51 +215,51 @@ pub mod bn254_pair {
 }
 
 /// `Bls12_381` precompile.
-pub mod bls12_381 {
+pub(crate) mod bls12_381 {
     use revm::precompile::bls12_381_const::{G1_MSM_ADDRESS, G2_MSM_ADDRESS, PAIRING_ADDRESS};
 
     use super::{Precompile, PrecompileError, PrecompileId, PrecompileResult, precompile};
 
     /// Max input size for the g1 msm precompile.
-    pub const ISTHMUS_G1_MSM_MAX_INPUT_SIZE: usize = 513760;
+    pub(crate) const ISTHMUS_G1_MSM_MAX_INPUT_SIZE: usize = 513760;
 
     /// The maximum input size for the BLS12-381 g1 msm operation after the Jovian Hardfork.
-    pub const JOVIAN_G1_MSM_MAX_INPUT_SIZE: usize = 288_960;
+    pub(crate) const JOVIAN_G1_MSM_MAX_INPUT_SIZE: usize = 288_960;
 
     /// Max input size for the g2 msm precompile.
-    pub const ISTHMUS_G2_MSM_MAX_INPUT_SIZE: usize = 488448;
+    pub(crate) const ISTHMUS_G2_MSM_MAX_INPUT_SIZE: usize = 488448;
 
     /// Max input size for the g2 msm precompile after the Jovian Hardfork.
-    pub const JOVIAN_G2_MSM_MAX_INPUT_SIZE: usize = 278_784;
+    pub(crate) const JOVIAN_G2_MSM_MAX_INPUT_SIZE: usize = 278_784;
 
     /// Max input size for the pairing precompile.
-    pub const ISTHMUS_PAIRING_MAX_INPUT_SIZE: usize = 235008;
+    pub(crate) const ISTHMUS_PAIRING_MAX_INPUT_SIZE: usize = 235008;
 
     /// Max input size for the pairing precompile after the Jovian Hardfork.
-    pub const JOVIAN_PAIRING_MAX_INPUT_SIZE: usize = 156_672;
+    pub(crate) const JOVIAN_PAIRING_MAX_INPUT_SIZE: usize = 156_672;
 
     /// G1 msm precompile.
-    pub const ISTHMUS_G1_MSM: Precompile =
+    pub(crate) const ISTHMUS_G1_MSM: Precompile =
         Precompile::new(PrecompileId::Bls12G1Msm, G1_MSM_ADDRESS, run_g1_msm_isthmus);
     /// G2 msm precompile.
-    pub const ISTHMUS_G2_MSM: Precompile =
+    pub(crate) const ISTHMUS_G2_MSM: Precompile =
         Precompile::new(PrecompileId::Bls12G2Msm, G2_MSM_ADDRESS, run_g2_msm_isthmus);
     /// Pairing precompile.
-    pub const ISTHMUS_PAIRING: Precompile =
+    pub(crate) const ISTHMUS_PAIRING: Precompile =
         Precompile::new(PrecompileId::Bls12Pairing, PAIRING_ADDRESS, run_pair_isthmus);
 
     /// G1 msm precompile after the Jovian Hardfork.
-    pub const JOVIAN_G1_MSM: Precompile =
+    pub(crate) const JOVIAN_G1_MSM: Precompile =
         Precompile::new(PrecompileId::Bls12G1Msm, G1_MSM_ADDRESS, run_g1_msm_jovian);
     /// G2 msm precompile after the Jovian Hardfork.
-    pub const JOVIAN_G2_MSM: Precompile =
+    pub(crate) const JOVIAN_G2_MSM: Precompile =
         Precompile::new(PrecompileId::Bls12G2Msm, G2_MSM_ADDRESS, run_g2_msm_jovian);
     /// Pairing precompile after the Jovian Hardfork.
-    pub const JOVIAN_PAIRING: Precompile =
+    pub(crate) const JOVIAN_PAIRING: Precompile =
         Precompile::new(PrecompileId::Bls12Pairing, PAIRING_ADDRESS, run_pair_jovian);
 
     /// Run the g1 msm precompile with Base input limit.
-    pub fn run_g1_msm_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    pub(crate) fn run_g1_msm_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_G1_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
                 "G1MSM input length too long for Base input size limitation after the Isthmus Hardfork".into(),
@@ -269,7 +269,7 @@ pub mod bls12_381 {
     }
 
     /// Run the g1 msm precompile with Base input limit.
-    pub fn run_g1_msm_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    pub(crate) fn run_g1_msm_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_G1_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
                 "G1MSM input length too long for Base input size limitation after the Jovian Hardfork".into(),
@@ -279,7 +279,7 @@ pub mod bls12_381 {
     }
 
     /// Run the g2 msm precompile with Base input limit.
-    pub fn run_g2_msm_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    pub(crate) fn run_g2_msm_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_G2_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
                 "G2MSM input length too long for Base input size limitation".into(),
@@ -289,7 +289,7 @@ pub mod bls12_381 {
     }
 
     /// Run the g2 msm precompile with Base input limit after the Jovian Hardfork.
-    pub fn run_g2_msm_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    pub(crate) fn run_g2_msm_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_G2_MSM_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
                 "G2MSM input length too long for Base input size limitation after the Jovian Hardfork".into(),
@@ -299,7 +299,7 @@ pub mod bls12_381 {
     }
 
     /// Run the pairing precompile with Base input limit.
-    pub fn run_pair_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    pub(crate) fn run_pair_isthmus(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > ISTHMUS_PAIRING_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
                 "Pairing input length too long for Base input size limitation".into(),
@@ -309,7 +309,7 @@ pub mod bls12_381 {
     }
 
     /// Run the pairing precompile with Base input limit after the Jovian Hardfork.
-    pub fn run_pair_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    pub(crate) fn run_pair_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
         if input.len() > JOVIAN_PAIRING_MAX_INPUT_SIZE {
             return Err(PrecompileError::Other(
                 "Pairing input length too long for Base input size limitation after the Jovian Hardfork".into(),

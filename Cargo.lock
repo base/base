@@ -533,7 +533,7 @@ dependencies = [
  "paste",
  "proptest",
  "proptest-derive",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rapidhash",
  "ruint",
  "rustc-hash",
@@ -2472,9 +2472,9 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-types",
+ "base-common-evm",
  "base-execution-chainspec",
  "base-execution-evm",
- "base-revm",
  "base-test-utils",
  "eyre",
  "reth-evm",
@@ -2625,7 +2625,7 @@ dependencies = [
  "base-protocol",
  "clap",
  "metrics",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rstest",
  "thiserror 2.0.18",
  "tracing",
@@ -2748,6 +2748,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "base-consensus-genesis",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -2759,7 +2760,6 @@ dependencies = [
  "base-metrics",
  "base-node-core",
  "base-node-runner",
- "base-revm",
  "base-test-utils",
  "chrono",
  "clap",
@@ -2787,7 +2787,7 @@ dependencies = [
  "nanoid",
  "opentelemetry",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
@@ -3045,11 +3045,10 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "arbitrary",
- "base-revm",
  "bincode 2.0.1",
  "bytes",
  "modular-bitfield",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reth-codecs",
  "reth-db-api",
  "reth-ethereum-primitives",
@@ -3072,13 +3071,18 @@ dependencies = [
  "alloy-evm",
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
+ "alloy-sol-types",
  "auto_impl",
  "base-common-chains",
  "base-common-consensus",
  "base-common-flz",
- "base-revm",
+ "base-consensus-genesis",
+ "reth-evm",
  "revm",
  "rstest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
 ]
 
@@ -3149,9 +3153,9 @@ dependencies = [
  "alloy-signer",
  "arbitrary",
  "base-common-consensus",
- "base-revm",
+ "base-common-evm",
  "derive_more",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reth-rpc-convert",
  "revm",
  "serde",
@@ -3219,7 +3223,7 @@ dependencies = [
  "derive_more",
  "miniz_oxide 0.9.1",
  "proptest",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rstest",
  "serde_json",
  "spin 0.10.0",
@@ -3296,7 +3300,7 @@ dependencies = [
  "discv5",
  "libp2p",
  "metrics",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
@@ -3333,7 +3337,7 @@ dependencies = [
  "http-body-util",
  "metrics",
  "metrics-exporter-prometheus",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rstest",
  "serde",
  "serde_json",
@@ -3357,7 +3361,7 @@ dependencies = [
  "arbitrary",
  "base-common-chains",
  "derive_more",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rstest",
  "serde",
  "serde_json",
@@ -3393,7 +3397,7 @@ dependencies = [
  "metrics",
  "multihash",
  "openssl",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde",
  "serde_json",
  "serde_repr",
@@ -3457,7 +3461,7 @@ dependencies = [
  "libp2p-stream",
  "metrics",
  "mockall",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rstest",
  "serde",
  "strum 0.28.0",
@@ -3566,6 +3570,7 @@ dependencies = [
  "ipnet",
  "jsonrpsee",
  "libp2p",
+ "rstest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3618,8 +3623,9 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "base-common-consensus",
+ "base-common-evm",
+ "base-consensus-genesis",
  "base-protocol",
- "base-revm",
  "revm",
  "rstest",
 ]
@@ -3640,7 +3646,6 @@ dependencies = [
  "base-execution-evm",
  "base-flashblocks",
  "base-node-core",
- "base-revm",
  "crossbeam-channel",
  "derive_more",
  "eyre",
@@ -3765,7 +3770,6 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-execution-chainspec",
  "base-execution-consensus",
- "base-revm",
  "reth-chainspec",
  "reth-evm",
  "reth-execution-errors",
@@ -3817,11 +3821,11 @@ dependencies = [
  "alloy-rpc-types-engine",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-rpc-types-engine",
  "base-execution-evm",
  "base-execution-txpool",
  "base-protocol",
- "base-revm",
  "derive_more",
  "either",
  "reth-basic-payload-builder",
@@ -3863,6 +3867,7 @@ dependencies = [
  "async-trait",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-flz",
  "base-common-network",
  "base-common-rpc-types",
@@ -3873,7 +3878,6 @@ dependencies = [
  "base-execution-trie",
  "base-execution-txpool",
  "base-metrics",
- "base-revm",
  "derive_more",
  "eyre",
  "futures",
@@ -3975,11 +3979,11 @@ dependencies = [
  "async-trait",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-flz",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-metrics",
- "base-revm",
  "base-test-utils",
  "c-kzg",
  "derive_more",
@@ -4039,7 +4043,6 @@ dependencies = [
  "base-execution-evm",
  "base-execution-rpc",
  "base-metrics",
- "base-revm",
  "derive_more",
  "futures",
  "jsonrpsee",
@@ -4101,7 +4104,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "futures",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "reth-chain-state",
  "reth-chainspec",
@@ -4184,7 +4187,7 @@ dependencies = [
  "humantime",
  "indicatif",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "revm",
  "serde",
  "serde_json",
@@ -4215,6 +4218,7 @@ dependencies = [
  "arc-swap",
  "base-bundles",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-flashblocks",
  "base-common-flz",
  "base-common-rpc-types",
@@ -4224,7 +4228,6 @@ dependencies = [
  "base-metrics",
  "base-node-core",
  "base-node-runner",
- "base-revm",
  "base-test-utils",
  "derive_more",
  "eyre",
@@ -4232,7 +4235,7 @@ dependencies = [
  "lru 0.16.3",
  "metrics",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reth-db",
  "reth-db-common",
  "reth-evm",
@@ -4290,7 +4293,6 @@ dependencies = [
  "base-execution-txpool",
  "base-node-core",
  "base-protocol",
- "base-revm",
  "clap",
  "eyre",
  "futures",
@@ -4404,10 +4406,9 @@ dependencies = [
  "base-proof-mpt",
  "base-proof-preimage",
  "base-protocol",
- "base-revm",
  "c-kzg",
  "lru 0.16.3",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "rstest",
  "serde",
@@ -4434,7 +4435,6 @@ dependencies = [
  "base-proof-executor",
  "base-proof-preimage",
  "base-protocol",
- "base-revm",
  "rstest",
  "spin 0.10.0",
  "thiserror 2.0.18",
@@ -4500,9 +4500,8 @@ dependencies = [
  "base-consensus-registry",
  "base-proof-mpt",
  "base-protocol",
- "base-revm",
  "getrandom 0.2.17",
- "rand 0.9.3",
+ "rand 0.9.4",
  "revm",
  "rocksdb",
  "serde",
@@ -4522,9 +4521,9 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-common-evm",
+ "base-consensus-genesis",
  "base-proof",
  "base-proof-preimage",
- "base-revm",
  "revm",
  "sha2 0.10.9",
  "tokio",
@@ -4583,7 +4582,7 @@ dependencies = [
  "base-common-rpc-types-engine",
  "criterion",
  "proptest",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reqwest 0.13.2",
  "serde",
  "thiserror 2.0.18",
@@ -4791,7 +4790,7 @@ dependencies = [
  "jsonrpsee",
  "k256",
  "metrics",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reqwest 0.13.2",
  "rstest",
  "sha2 0.10.9",
@@ -4922,7 +4921,7 @@ dependencies = [
  "derive_more",
  "miniz_oxide 0.9.1",
  "proptest",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rstest",
  "serde",
  "serde_json",
@@ -5008,24 +5007,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-revm"
-version = "0.0.0"
-dependencies = [
- "alloy-evm",
- "alloy-primitives",
- "alloy-sol-types",
- "auto_impl",
- "base-common-flz",
- "base-consensus-genesis",
- "reth-evm",
- "revm",
- "rstest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "base-ring-buffer"
 version = "0.0.0"
 
@@ -5034,7 +5015,7 @@ name = "base-runtime"
 version = "0.0.0"
 dependencies = [
  "futures",
- "rand 0.9.3",
+ "rand 0.9.4",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -5628,7 +5609,7 @@ dependencies = [
  "num_enum",
  "paste",
  "portable-atomic",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regress",
  "rustc-hash",
  "ryu-js",
@@ -5744,7 +5725,7 @@ dependencies = [
  "log",
  "num",
  "pin-project-lite",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rustls 0.23.38",
  "rustls-native-certs",
  "rustls-pki-types",
@@ -5843,7 +5824,7 @@ dependencies = [
  "futures-util",
  "hex",
  "moka",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reqwest 0.13.2",
  "risc0-aggregation",
  "risc0-binfmt",
@@ -6586,7 +6567,7 @@ checksum = "0940496e5c83c54f3b753d5317daec82e8edac71c33aaa1f666d76f518de2444"
 dependencies = [
  "hax-lib",
  "pastey 0.1.1",
- "rand 0.9.3",
+ "rand 0.9.4",
 ]
 
 [[package]]
@@ -6660,7 +6641,7 @@ checksum = "6ddc2d09feefeee8bd78101665bd8645637828fa9317f9f292496dbbd8c65ff3"
 dependencies = [
  "crc",
  "digest 0.10.7",
- "rand 0.9.3",
+ "rand 0.9.4",
  "regex",
  "rustversion",
 ]
@@ -6813,7 +6794,7 @@ dependencies = [
  "cpubits",
  "ctutils",
  "num-traits",
- "rand_core 0.10.0",
+ "rand_core 0.10.1",
  "serdect 0.4.2",
  "zeroize",
 ]
@@ -6846,7 +6827,7 @@ checksum = "21f41f23de7d24cdbda7f0c4d9c0351f99a4ceb258ef30e5c1927af8987ffe5a"
 dependencies = [
  "crypto-bigint 0.7.3",
  "libm",
- "rand_core 0.10.0",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -7261,7 +7242,7 @@ dependencies = [
  "k256",
  "libp2p",
  "nanoid",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reqwest 0.13.2",
  "reth-db",
  "reth-node-builder",
@@ -8025,7 +8006,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb330bbd4cb7a5b9f559427f06f98a4f853a137c8298f3bd3f8ca57663e21986"
 dependencies = [
  "portable-atomic",
- "rand 0.9.3",
+ "rand 0.9.4",
  "web-time",
 ]
 
@@ -8988,7 +8969,7 @@ dependencies = [
  "idna",
  "ipnet",
  "once_cell",
- "rand 0.9.3",
+ "rand 0.9.4",
  "ring",
  "serde",
  "socket2 0.5.10",
@@ -9012,7 +8993,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "resolv-conf",
  "serde",
  "smallvec",
@@ -9565,7 +9546,7 @@ dependencies = [
  "hyper 1.9.0",
  "hyper-util",
  "log",
- "rand 0.9.3",
+ "rand 0.9.4",
  "tokio",
  "url",
  "xmltree",
@@ -9720,10 +9701,10 @@ dependencies = [
  "backon",
  "base-bundles",
  "base-common-consensus",
+ "base-common-evm",
  "base-common-network",
  "base-execution-evm",
  "base-metrics",
- "base-revm",
  "clap",
  "jsonrpsee",
  "metrics",
@@ -10076,7 +10057,7 @@ dependencies = [
  "jsonrpsee-types",
  "parking_lot",
  "pin-project",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -10315,9 +10296,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libc"
-version = "0.2.184"
+version = "0.2.185"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48f5d2a454e16a5ea0f4ced81bd44e4cfc7bd3a507b61887c99fd3538b28e4af"
+checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
 
 [[package]]
 name = "libcrux-intrinsics"
@@ -10341,7 +10322,7 @@ dependencies = [
  "libcrux-secrets",
  "libcrux-sha3",
  "libcrux-traits",
- "rand 0.9.3",
+ "rand 0.9.4",
  "tls_codec",
 ]
 
@@ -10382,7 +10363,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9adfd58e79d860f6b9e40e35127bfae9e5bd3ade33201d1347459011a2add034"
 dependencies = [
  "libcrux-secrets",
- "rand 0.9.3",
+ "rand 0.9.4",
 ]
 
 [[package]]
@@ -11332,7 +11313,7 @@ dependencies = [
  "metrics",
  "ordered-float 5.3.0",
  "quanta",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_xoshiro",
  "sketches-ddsketch",
 ]
@@ -12367,7 +12348,7 @@ dependencies = [
  "futures-util",
  "opentelemetry",
  "percent-encoding",
- "rand 0.9.3",
+ "rand 0.9.4",
  "thiserror 2.0.18",
 ]
 
@@ -13211,7 +13192,7 @@ dependencies = [
  "bit-vec 0.8.0",
  "bitflags 2.11.0",
  "num-traits",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
@@ -13457,7 +13438,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.3",
+ "rand 0.9.4",
  "ring",
  "rustc-hash",
  "rustls 0.23.38",
@@ -13533,9 +13514,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec095654a25171c2124e9e3393a930bddbffdc939556c914957a4c3e0a87166"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
@@ -13583,9 +13564,9 @@ dependencies = [
 
 [[package]]
 name = "rand_core"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c8d0fd677905edcbeedbf2edb6494d676f0e98d54d5cf9bda0b061cb8fb8aba"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rand_xorshift"
@@ -13611,7 +13592,7 @@ version = "4.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e48930979c155e2f33aa36ab3119b5ee81332beb6482199a8ecd6029b80b59"
 dependencies = [
- "rand 0.9.3",
+ "rand 0.9.4",
  "rustversion",
 ]
 
@@ -14046,7 +14027,7 @@ dependencies = [
  "metrics",
  "parking_lot",
  "pin-project",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "reth-chainspec",
  "reth-errors",
@@ -14448,7 +14429,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "metrics",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reth-chainspec",
  "reth-ethereum-forks",
  "reth-metrics",
@@ -15282,7 +15263,7 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "rand 0.8.5",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "reth-chainspec",
  "reth-consensus",
@@ -15522,7 +15503,7 @@ dependencies = [
  "futures",
  "humantime",
  "ipnet",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reth-chainspec",
  "reth-cli-util",
  "reth-config",
@@ -16183,7 +16164,7 @@ dependencies = [
  "jsonrpsee-core",
  "jsonrpsee-types",
  "metrics",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reqwest 0.12.28",
  "reth-chain-state",
  "reth-chainspec",
@@ -16436,7 +16417,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "rand 0.8.5",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reth-ethereum-primitives",
  "reth-primitives-traits",
  "secp256k1 0.30.0",
@@ -16506,7 +16487,7 @@ dependencies = [
  "parking_lot",
  "paste",
  "pin-project",
- "rand 0.9.3",
+ "rand 0.9.4",
  "reth-chain-state",
  "reth-chainspec",
  "reth-eth-wire-types",
@@ -16945,7 +16926,7 @@ dependencies = [
  "elf",
  "lazy_static",
  "postcard",
- "rand 0.9.3",
+ "rand 0.9.4",
  "risc0-zkp",
  "risc0-zkvm-platform",
  "ruint",
@@ -17041,7 +17022,7 @@ dependencies = [
  "hex",
  "lazy-regex",
  "metal",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "risc0-circuit-recursion-sys",
  "risc0-core",
@@ -17085,7 +17066,7 @@ dependencies = [
  "num-traits",
  "paste",
  "postcard",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "ringbuffer 0.15.0",
  "risc0-binfmt",
@@ -17211,7 +17192,7 @@ dependencies = [
  "ndarray",
  "parking_lot",
  "paste",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_core 0.9.5",
  "rayon",
  "risc0-core",
@@ -17248,7 +17229,7 @@ dependencies = [
  "num-traits",
  "object 0.36.7",
  "prost 0.13.5",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rayon",
  "risc0-binfmt",
  "risc0-build",
@@ -17433,7 +17414,7 @@ dependencies = [
  "digest 0.11.2",
  "pkcs1 0.8.0-rc.4",
  "pkcs8 0.11.0-rc.11",
- "rand_core 0.10.0",
+ "rand_core 0.10.1",
  "sha2 0.11.0",
  "signature 3.0.0-rc.10",
  "zeroize",
@@ -17508,7 +17489,7 @@ dependencies = [
  "primitive-types",
  "proptest",
  "rand 0.8.5",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rlp",
  "ruint-macro",
  "serde_core",
@@ -18018,7 +17999,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c3c81b43dc2d8877c216a3fccf76677ee1ebccd429566d3e67447290d0c42b2"
 dependencies = [
  "bitcoin_hashes",
- "rand 0.9.3",
+ "rand 0.9.4",
  "secp256k1-sys 0.11.0",
 ]
 
@@ -18476,7 +18457,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f1880df446116126965eeec169136b2e0251dba37c6223bcc819569550edea3"
 dependencies = [
  "digest 0.11.2",
- "rand_core 0.10.0",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -20172,7 +20153,7 @@ dependencies = [
  "httparse",
  "log",
  "native-tls",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rustls 0.23.38",
  "rustls-pki-types",
  "sha1 0.10.6",
@@ -21737,7 +21718,7 @@ dependencies = [
  "nohash-hasher",
  "parking_lot",
  "pin-project",
- "rand 0.9.3",
+ "rand 0.9.4",
  "static_assertions",
  "web-time",
 ]

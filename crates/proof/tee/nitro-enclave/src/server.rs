@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 use alloy_primitives::{Address, B256, Bytes, keccak256, map::HashMap};
 use alloy_signer_local::PrivateKeySigner;
-use base_common_chains::BaseChainConfig;
+use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
 use base_consensus_genesis::RollupConfig;
 use base_proof::BootInfo;
@@ -23,13 +23,13 @@ const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
 /// PCR0 is a SHA-384 hash (48 bytes) per the AWS Nitro Enclaves specification.
 const PCR0_LENGTH: usize = 48;
 
-/// Per-chain config hashes derived from [`BaseChainConfig::all`] at first access.
+/// Per-chain config hashes derived from [`ChainConfig::all`] at first access.
 ///
 /// Each entry is `keccak256(PerChainConfig::marshal_binary())` with defaults applied.
 /// Chains that lack a `system_config` in their rollup config are skipped.
 static CONFIG_HASHES: LazyLock<HashMap<u64, B256>> = LazyLock::new(|| {
     let mut map = HashMap::default();
-    for cfg in BaseChainConfig::all() {
+    for cfg in ChainConfig::all() {
         let rollup = RollupConfig::from(cfg);
         if let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) {
             per_chain.force_defaults();
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn config_hashes_match_registry() {
-        for cfg in BaseChainConfig::all() {
+        for cfg in ChainConfig::all() {
             let chain_id = cfg.chain_id;
             let Some(rollup) = Registry::rollup_config(chain_id) else { continue };
             let Some(mut per_chain) = PerChainConfig::from_rollup_config(rollup) else {
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     #[ignore]
     fn print_real_config_hashes() {
-        for cfg in BaseChainConfig::all() {
+        for cfg in ChainConfig::all() {
             let chain_id = cfg.chain_id;
             let rollup = match Registry::rollup_config(chain_id) {
                 Some(r) => r,

@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base_common_chains::BaseChainConfig;
+use base_common_chains::ChainConfig;
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
 use jsonrpsee::{
@@ -70,7 +70,7 @@ struct ChainUpgrades {
     specs: Vec<UpgradeSpec>,
 }
 
-fn specs_from_config(cfg: &BaseChainConfig) -> Vec<UpgradeSpec> {
+fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
     vec![
         UpgradeSpec { name: "Delta", timestamp: Some(cfg.delta_timestamp) },
         UpgradeSpec { name: "Canyon", timestamp: Some(cfg.canyon_timestamp) },
@@ -104,24 +104,24 @@ fn all_chains() -> [ChainUpgrades; 4] {
         ChainUpgrades {
             display_name: "Devnet",
             rpc: user_config_rpc("alpha").or_else(|| user_config_rpc("devnet")),
-            specs: specs_from_config(BaseChainConfig::alpha()),
+            specs: specs_from_config(ChainConfig::alpha()),
         },
         ChainUpgrades {
             display_name: "Zeronet",
             rpc: user_config_rpc("zeronet"),
-            specs: specs_from_config(BaseChainConfig::zeronet()),
+            specs: specs_from_config(ChainConfig::zeronet()),
         },
         ChainUpgrades {
             display_name: "Sepolia",
             rpc: user_config_rpc("sepolia")
                 .or_else(|| Some("https://sepolia.base.org".to_string())),
-            specs: specs_from_config(BaseChainConfig::sepolia()),
+            specs: specs_from_config(ChainConfig::sepolia()),
         },
         ChainUpgrades {
             display_name: "Mainnet",
             rpc: user_config_rpc("mainnet")
                 .or_else(|| Some("https://mainnet.base.org".to_string())),
-            specs: specs_from_config(BaseChainConfig::mainnet()),
+            specs: specs_from_config(ChainConfig::mainnet()),
         },
     ]
 }

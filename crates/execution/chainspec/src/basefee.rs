@@ -4,7 +4,7 @@ use core::cmp::max;
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::calc_next_block_base_fee;
-use base_common_chains::BaseUpgrades;
+use base_common_chains::Upgrades;
 use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use reth_chainspec::{BaseFeeParams, EthChainSpec};
 
@@ -14,7 +14,7 @@ use reth_chainspec::{BaseFeeParams, EthChainSpec};
 ///
 /// See also [Base fee computation](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#base-fee-computation)
 pub fn decode_holocene_base_fee<H>(
-    chain_spec: impl EthChainSpec + BaseUpgrades,
+    chain_spec: impl EthChainSpec + Upgrades,
     parent: &H,
     timestamp: u64,
 ) -> Result<u64, EIP1559ParamError>
@@ -41,7 +41,7 @@ where
 /// See also [Base fee computation](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#base-fee-computation)
 /// and [Minimum base fee in block header](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#minimum-base-fee-in-block-header)
 pub fn compute_jovian_base_fee<H>(
-    chain_spec: impl EthChainSpec + BaseUpgrades,
+    chain_spec: impl EthChainSpec + Upgrades,
     parent: &H,
     timestamp: u64,
 ) -> Result<u64, EIP1559ParamError>

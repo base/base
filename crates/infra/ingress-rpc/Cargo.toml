@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 url.workspace = true
-base-revm.workspace = true
+base-common-evm.workspace = true
 async-trait.workspace = true
 base-bundles.workspace = true
 alloy-signer-local.workspace = true

@@ -232,7 +232,6 @@ base-execution-txpool = { path = "crates/execution/txpool" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
-base-revm = { path = "crates/execution/revm", default-features = false }
 
 # Infra
 based = { path = "crates/infra/based" }

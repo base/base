@@ -36,7 +36,7 @@ impl RollupConfigExt for RollupConfig {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::{BaseHardforkConfig, HardForkConfig, RollupConfig};
+    use base_consensus_genesis::{HardForkConfig, HardforkConfig, RollupConfig};
 
     use super::*;
 
@@ -60,10 +60,10 @@ mod tests {
         assert_eq!(config.spec_id(60), OpSpecId::ISTHMUS);
         config.hardforks.jovian_time = Some(65);
         assert_eq!(config.spec_id(65), OpSpecId::JOVIAN);
-        config.hardforks.base = BaseHardforkConfig { v1: Some(70) };
+        config.hardforks.base = HardforkConfig { v1: Some(70) };
         assert_eq!(config.spec_id(70), OpSpecId::BASE_V1);
         // V1 takes precedence over Jovian when both are active at the same timestamp
-        config.hardforks.base = BaseHardforkConfig { v1: Some(65) };
+        config.hardforks.base = HardforkConfig { v1: Some(65) };
         assert_eq!(config.spec_id(65), OpSpecId::BASE_V1);
     }
 }

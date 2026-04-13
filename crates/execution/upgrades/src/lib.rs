@@ -13,5 +13,5 @@ extern crate alloc;
 mod chain;
 pub use chain::{
     BASE_DEVNET_0_SEPOLIA_DEV_0_UPGRADES, BASE_MAINNET_UPGRADES, BASE_SEPOLIA_UPGRADES,
-    BASE_ZERONET_UPGRADES, BaseChainUpgradesExt, DEV_UPGRADES,
+    BASE_ZERONET_UPGRADES, ChainUpgradesExt, DEV_UPGRADES,
 };
