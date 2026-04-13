@@ -7,9 +7,10 @@ use std::{
 use alloy_consensus::{Eip658Value, Transaction};
 use alloy_eips::{Encodable2718, Typed2718};
 use alloy_evm::Database;
-use alloy_primitives::{BlockHash, Bytes, TxHash, U256};
+use alloy_primitives::{B256, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
+use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, L1BlockInfo, OpSpecId};
@@ -295,7 +296,7 @@ pub struct BasePayloadBuilderCtx {
     /// Builder configuration containing limits and metering settings.
     pub builder_config: BuilderConfig,
     /// Sender for forwarding rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::UnboundedSender<RejectedTxInfo>>,
+    pub rejected_tx_sender: Option<mpsc::UnboundedSender<RejectedTransaction>>,
 }
 
 impl BasePayloadBuilderCtx {
@@ -470,23 +471,23 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Flushes all accumulated rejected transactions to the audit-archiver channel.
-    /// Called once after block finalization to batch all rejections into a single send.
+    /// Called once after block finalization to send all rejections.
     pub fn flush_rejected_txs(&self, info: &mut ExecutionInfo) {
         if info.rejected_txs.is_empty() {
             return;
         }
 
         if let Some(sender) = &self.rejected_tx_sender {
-            let batch = std::mem::take(&mut info.rejected_txs);
-            let batch_len = batch.len();
-            if let Err(e) = sender.try_send(batch) {
-                BuilderMetrics::rejected_tx_channel_drops().increment(1);
-                warn!(
-                    target: "payload_builder",
-                    error = %e,
-                    count = batch_len,
-                    "Rejected tx batch channel full, dropping entries"
-                );
+            let rejected_txs = std::mem::take(&mut info.rejected_txs);
+            for tx in rejected_txs {
+                if sender.send(tx).is_err() {
+                    BuilderMetrics::rejected_tx_channel_drops().increment(1);
+                    warn!(
+                        target: "payload_builder",
+                        "Rejected tx channel closed, dropping remaining entries"
+                    );
+                    break;
+                }
             }
         }
     }

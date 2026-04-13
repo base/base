@@ -12,7 +12,7 @@ use jsonrpsee::{
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::RejectedTxInfo;
+use base_bundles::RejectedTransaction;
 
 /// Forwards rejected transactions to the audit-archiver via RPC.
 ///
@@ -21,14 +21,14 @@ use crate::RejectedTxInfo;
 #[derive(Debug)]
 pub struct RejectedTxForwarder {
     client: HttpClient,
-    rx: mpsc::UnboundedReceiver<RejectedTxInfo>,
+        rx: mpsc::UnboundedReceiver<RejectedTransaction>,
 }
 
 impl RejectedTxForwarder {
     /// Creates a new `RejectedTxForwarder`.
     pub fn new(
         audit_archiver_url: &str,
-        rx: mpsc::UnboundedReceiver<RejectedTxInfo>,
+    rx: mpsc::UnboundedReceiver<RejectedTransaction>,
     ) -> eyre::Result<Self> {
         let client = HttpClientBuilder::default()
             .request_timeout(Duration::from_secs(1))

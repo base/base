@@ -46,11 +46,7 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         let batch_size = batch.len();
         let block_number = batch.first().map(|tx| tx.block_number).unwrap_or(0);
 
-        info!(
-            batch_size,
-            block_number,
-            "Persisting rejected transaction batch"
-        );
+        info!(batch_size, block_number, "Persisting rejected transaction batch");
 
         for rejected_tx in batch {
             if let Err(e) = self.storage.store_rejected_transaction(&rejected_tx).await {
