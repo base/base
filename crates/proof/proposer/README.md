@@ -56,3 +56,7 @@ flowchart TD
 ```
 
 `recover_latest_state()` walks backwards through the `DisputeGameFactory` (up to `MAX_FACTORY_SCAN_LOOKBACK` entries, default 5000) to find the most recent game matching the configured `game_type`. Because state is always loaded from chain, the proposer naturally chains off games created by any proposer, handles `GameAlreadyExists` without special recovery logic, and cannot enter stale-state livelocks.
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
