@@ -21,7 +21,10 @@ use base_proof_rpc::{
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};
 
+/// Mock L1 provider for tests.
+#[derive(Debug)]
 pub struct MockL1 {
+    /// The block number returned by `block_number()`.
     pub latest_block_number: u64,
 }
 
@@ -53,7 +56,10 @@ impl L1Provider for MockL1 {
     }
 }
 
+/// Mock L2 provider for tests.
+#[derive(Debug)]
 pub struct MockL2 {
+    /// When true, `block_by_number` returns a `BlockNotFound` error.
     pub block_not_found: bool,
     /// If set, `header_by_number` returns a header with this hash.
     /// Used for reorg detection tests.
@@ -84,8 +90,12 @@ impl L2Provider for MockL2 {
     }
 }
 
+/// Mock rollup node client for tests.
+#[derive(Debug)]
 pub struct MockRollupClient {
+    /// The sync status returned by `sync_status()`.
     pub sync_status: SyncStatus,
+    /// Map of block number to output root returned by `output_at_block()`.
     pub output_roots: HashMap<u64, B256>,
 }
 
@@ -107,7 +117,10 @@ impl RollupProvider for MockRollupClient {
     }
 }
 
+/// Mock anchor state registry contract client for tests.
+#[derive(Debug)]
 pub struct MockAnchorStateRegistry {
+    /// The anchor root returned by `get_anchor_root()`.
     pub anchor_root: AnchorRoot,
 }
 
@@ -118,12 +131,17 @@ impl AnchorStateRegistryClient for MockAnchorStateRegistry {
     }
 }
 
+/// Mock dispute game factory contract client for tests.
+#[derive(Debug)]
 pub struct MockDisputeGameFactory {
+    /// The list of games returned by `game_at_index()`.
     pub games: Vec<GameAtIndex>,
+    /// If set, overrides the game count returned by `game_count()`.
     pub game_count_override: Option<u64>,
 }
 
 impl MockDisputeGameFactory {
+    /// Creates a new mock with the given games and no count override.
     pub fn with_games(games: Vec<GameAtIndex>) -> Self {
         Self { games, game_count_override: None }
     }
@@ -148,14 +166,19 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     }
 }
 
-#[derive(Default)]
+/// Mock aggregate verifier contract client for tests.
+#[derive(Debug, Default)]
 pub struct MockAggregateVerifier {
+    /// Map of game address to game info returned by `game_info()`.
     pub game_info_map: HashMap<Address, GameInfo>,
+    /// Addresses for which `game_info()` returns an error.
     pub failing_addresses: HashSet<Address>,
+    /// Map of game address to intermediate output roots.
     pub intermediate_roots_map: HashMap<Address, Vec<B256>>,
 }
 
 impl MockAggregateVerifier {
+    /// Creates a new mock with the given game info map.
     pub fn with_game_info(map: HashMap<Address, GameInfo>) -> Self {
         Self { game_info_map: map, ..Default::default() }
     }
@@ -237,10 +260,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 }
 
+/// Creates a test [`L1BlockRef`] with the given block number.
 pub fn test_l1_block_ref(number: u64) -> L1BlockRef {
     L1BlockRef { hash: B256::ZERO, number, parent_hash: B256::ZERO, timestamp: 1_000_000 + number }
 }
 
+/// Creates a test [`L2BlockRef`] with the given block number and hash.
 pub fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
     L2BlockRef {
         hash,
@@ -252,6 +277,7 @@ pub fn test_l2_block_ref(number: u64, hash: B256) -> L2BlockRef {
     }
 }
 
+/// Creates a test [`SyncStatus`] with the given safe block number and hash.
 pub fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus {
     let l1 = test_l1_block_ref(100);
     let l2 = test_l2_block_ref(safe_number, safe_hash);
@@ -268,10 +294,12 @@ pub fn test_sync_status(safe_number: u64, safe_hash: B256) -> SyncStatus {
     }
 }
 
+/// Creates a test [`AnchorRoot`] with the given L2 block number.
 pub fn test_anchor_root(block_number: u64) -> AnchorRoot {
     AnchorRoot { root: B256::ZERO, l2_block_number: block_number }
 }
 
+/// Creates a test [`Proposal`] with the given L2 block number.
 pub fn test_proposal(block_number: u64) -> Proposal {
     Proposal {
         output_root: B256::repeat_byte(block_number as u8),
@@ -284,9 +312,12 @@ pub fn test_proposal(block_number: u64) -> Proposal {
     }
 }
 
+/// Mock prover client for tests.
 #[derive(Debug)]
 pub struct MockProver {
+    /// Simulated proving delay.
     pub delay: Duration,
+    /// Block interval used to generate intermediate proposals.
     pub block_interval: u64,
 }
 
@@ -307,6 +338,8 @@ impl ProverClient for MockProver {
     }
 }
 
+/// Mock output proposer that always succeeds.
+#[derive(Debug)]
 pub struct MockOutputProposer;
 
 #[async_trait]
