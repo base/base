@@ -60,13 +60,7 @@ impl MeteringProvider for MeteringStore {
             return None;
         }
 
-        let Some(entry) = self.cache.get(tx_hash) else {
-            BuilderMetrics::metering_unknown_transaction().increment(1);
-            return None;
-        };
-
-        BuilderMetrics::metering_known_transaction().increment(1);
-        Some(entry)
+        self.cache.get(tx_hash)
     }
 
     fn is_enabled(&self) -> bool {

@@ -949,6 +949,14 @@ impl OpPayloadBuilderCtx {
             let fee_u64 = miner_fee.min(u64::MAX as u128) as u64;
             diag.min_priority_fee = Some(diag.min_priority_fee.map_or(fee_u64, |m| m.min(fee_u64)));
 
+            // Record metering hit/miss only for committed transactions so the
+            // metric reflects actual payload inclusion, not speculative lookups.
+            if resource_usage.is_some() {
+                BuilderMetrics::metering_known_transaction().increment(1);
+            } else {
+                BuilderMetrics::metering_unknown_transaction().increment(1);
+            }
+
             // append sender and transaction to the respective lists
             // and increment the next txn index for the access list
             info.executed_senders.push(tx.signer());
