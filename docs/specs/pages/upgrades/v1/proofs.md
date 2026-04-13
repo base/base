@@ -17,8 +17,8 @@ proposal resolves unless someone challenges it. That model has two limits for V1
 
 - Withdrawals take at least 7 days because every proposal inherits the full challenge window.
 - Every bad proposal must be actively challenged. That creates an economic attack surface: if
-  challengers cannot fund every dispute, an incorrect state can finalize. Centralized guardrails
-  reduce that risk today, but that is not a long-term model for Stage 2 decentralization.
+challengers cannot fund every dispute, an incorrect state can finalize. Centralized guardrails
+reduce that risk today, but that is not a long-term model for Stage 2 decentralization.
 
 V1 replaces that model with a multi-proof design built around TEE and ZK provers. TEE proofs
 support the common path, ZK proofs provide a permissionless backstop, and the architecture leaves
@@ -28,42 +28,46 @@ room to adopt stronger proving systems over time.
 
 The V1 design supports three settlement paths for a proposal on Ethereum:
 
+
 | Proofs present | Settlement path | Target window | What it means                            |
 | -------------- | --------------- | ------------- | ---------------------------------------- |
 | TEE only       | Long window     | 7 days        | Common path, still overridable by ZK     |
 | ZK only        | Long window     | 7 days        | Permissionless path without TEE reliance |
 | TEE + ZK       | Short window    | 1 day         | Faster finality when both systems agree  |
 
+
 The long window gives independent provers time to verify a claim and dispute it if needed. The
 short window is available only when both proof systems back the same proposal. A ZK prover can also
 dispute an invalid TEE-backed claim and claim the TEE prover's bond as a reward. In V1, that delay
-lives in `AggregateVerifier` itself. `OptimismPortal2` no longer adds a separate 3.5 day delay,
-because keeping that legacy delay would eliminate the fast-finality path even when both proofs are
-present.
+lives in `AggregateVerifier` itself. `OptimismPortal2` and `AnchorStateRegistry` no longer adds a 
+separate 3.5 day delay, because keeping either legacy delay would eliminate the fast-finality path 
+even when both proofs are present.
 
 ## Security and Decentralization
 
 - The TEE path is permissioned and optimized for the common case.
 - The ZK path is permissionless and can override an invalid TEE-backed claim.
 - The proof layer remains modular and can evolve toward stronger TEE implementations, different ZK
-  systems, or multi-ZK designs.
+systems, or multi-ZK designs.
 
 ## Overview
 
 ### New/Changed Onchain Components
 
 - `AggregateVerifier`: V1's dispute-game contract for checkpoint proposals. Each proposal is
-  initialized with one proof, a second proof can be added later for the same claimed root, and the
-  contract calls proof-specific verifier contracts and aggregates their results to determine how the
-  proposal resolves. This is also where the V1 finality delay now lives.
+initialized with one proof, a second proof can be added later for the same claimed root, and the
+contract calls proof-specific verifier contracts and aggregates their results to determine how the
+proposal resolves. This is also where the V1 finality delay now lives.
 - `TEEVerifier` and `ZKVerifier`: proof-specific verifier contracts called by `AggregateVerifier`.
-  Their addresses are immutable on the `AggregateVerifier` implementation, so each deployment has
-  an explicit verifier set.
+Their addresses are immutable on the `AggregateVerifier` implementation, so each deployment has
+an explicit verifier set.
 - `DelayedWETH`: still escrows the proposal bond for each game, but V1 reduces its withdrawal delay
-  to 1 day. That is sufficient here because the only bonds at stake are proposer bonds.
+to 1 day. That is sufficient here because the only bonds at stake are proposer bonds.
 - `OptimismPortal2`: no longer adds the separate 3.5 day proof-maturity delay for these proposals.
-  That timing moves into `AggregateVerifier`, which keeps the 1 day path reachable instead of
-  forcing every proposal to inherit at least 3.5 days of extra delay.
+That timing moves into `AggregateVerifier`, which keeps the 1 day path reachable instead of
+forcing every proposal to inherit at least 3.5 days of extra delay.
+- `AnchorStateRegistry`: Similara to `OptimismPortal2`, this no longer has a 3.5 day finalization 
+delay for proposals, allowing fast finality.
 
 ### Proof Flow
 
@@ -71,11 +75,11 @@ The proof flow for V1 is:
 
 1. The proposer identifies the next canonical checkpoint range and requests a TEE proof.
 2. The TEE prover re-executes that L2 block range inside an AWS Nitro Enclave and signs the
-   resulting output root.
+  resulting output root.
 3. The proposer verifies the result against canonical Base L2 state and submits a new
-   `AggregateVerifier` game to L1.
+  `AggregateVerifier` game to L1.
 4. A challenger can independently recompute the same checkpoint roots and, if it finds an invalid
-   claim, sources the ZK proof needed to dispute it.
+  claim, sources the ZK proof needed to dispute it.
 
 This architecture keeps the normal path simple, preserves a permissionless dispute path, and
 supports faster settlement when both proof systems are available.
@@ -88,7 +92,7 @@ supports faster settlement when both proof systems are available.
 - ZK provers provide the permissionless verification and override path.
 - The registrar maintains the onchain registry of accepted TEE signer identities.
 - `AggregateVerifier` and its verifier contracts verify claims before withdrawals on L1 can rely on
-  them.
+them.
 
 ## Proposer
 
