@@ -1,10 +1,8 @@
 //! `OutputProposer` trait and `ProposalSubmitter` implementation for L1 transaction submission.
 //!
-//! Submits output proposals by creating new dispute games via `DisputeGameFactory.create()`.
+//! Submits output proposals by creating new dispute games via `DisputeGameFactory.createWithInitData()`.
 //! Delegates all transaction lifecycle management (nonce, fees, signing, resubmission)
 //! to the shared [`TxManager`].
-
-use std::sync::LazyLock;
 
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
@@ -17,35 +15,28 @@ use tracing::info;
 
 use crate::error::ProposerError;
 
-/// Hex-encoded `GameAlreadyExists` selector, computed once.
-static GAME_ALREADY_EXISTS_HEX: LazyLock<String> =
-    LazyLock::new(|| alloy_primitives::hex::encode(game_already_exists_selector()));
+const GAME_ALREADY_EXISTS: &str = "GameAlreadyExists";
 
 /// Classifies a [`TxManagerError`] into a [`ProposerError`].
 ///
 /// Checks the structured revert reason and raw data for the
 /// `GameAlreadyExists` selector first, then falls back to searching the
 /// Display string for non-`ExecutionReverted` variants (e.g. `Rpc`).
-/// Returns [`ProposerError::GameAlreadyExists`] if found, otherwise
-/// wrapping it as [`ProposerError::TxManager`].
 fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
+    let selector = game_already_exists_selector();
+
     if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
-        // Check reason string for GameAlreadyExists.
-        if reason.as_deref().is_some_and(|r| r.contains("GameAlreadyExists")) {
+        if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
             return ProposerError::GameAlreadyExists;
         }
-        // Check raw data for the GameAlreadyExists selector.
-        if data.as_ref().is_some_and(|d| d.len() >= 4 && d[..4] == game_already_exists_selector()) {
+        if data.as_ref().is_some_and(|d| d.starts_with(&selector)) {
             return ProposerError::GameAlreadyExists;
         }
-        // Structured fields exhausted — no need to format the Display
-        // string since it won't contain additional GameAlreadyExists info.
         return ProposerError::TxManager(err);
     }
-    // Fallback: check Display output for non-ExecutionReverted variants
-    // (e.g. Rpc) that may carry "GameAlreadyExists" in their message.
+
     let msg = err.to_string();
-    if msg.contains(GAME_ALREADY_EXISTS_HEX.as_str()) || msg.contains("GameAlreadyExists") {
+    if msg.contains(&alloy_primitives::hex::encode(selector)) || msg.contains(GAME_ALREADY_EXISTS) {
         return ProposerError::GameAlreadyExists;
     }
     ProposerError::TxManager(err)
@@ -58,7 +49,6 @@ pub trait OutputProposer: Send + Sync {
     async fn propose_output(
         &self,
         proposal: &Proposal,
-        l2_block_number: u64,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError>;
@@ -73,12 +63,11 @@ impl OutputProposer for DryRunProposer {
     async fn propose_output(
         &self,
         proposal: &Proposal,
-        l2_block_number: u64,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
         info!(
-            l2_block_number,
+            l2_block_number = proposal.l2_block_number,
             parent_address = %parent_address,
             output_root = ?proposal.output_root,
             intermediate_roots_count = intermediate_roots.len(),
@@ -114,24 +103,15 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
     async fn propose_output(
         &self,
         proposal: &Proposal,
-        l2_block_number: u64,
         parent_address: Address,
         intermediate_roots: &[B256],
     ) -> Result<(), ProposerError> {
+        let l2_block_number = proposal.l2_block_number;
         let proof_data =
             proposal.build_proof_data().map_err(|e| ProposerError::Internal(e.to_string()))?;
         let extra_data = encode_extra_data(l2_block_number, parent_address, intermediate_roots);
         let calldata =
             encode_create_calldata(self.game_type, proposal.output_root, extra_data, proof_data);
-
-        info!(
-            l2_block_number,
-            factory = %self.factory_address,
-            game_type = self.game_type,
-            calldata = %calldata,
-            parent_address = %parent_address,
-            "Creating dispute game"
-        );
 
         let candidate = TxCandidate {
             tx_data: calldata,
@@ -141,8 +121,12 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
         };
 
         info!(
-            tx = ?candidate,
-            "Sending tx candidate",
+            l2_block_number,
+            factory = %self.factory_address,
+            game_type = self.game_type,
+            parent_address = %parent_address,
+            tx_data_len = candidate.tx_data.len(),
+            "Creating dispute game"
         );
 
         let receipt = self.tx_manager.send(candidate).await.map_err(classify_tx_manager_error)?;
@@ -324,8 +308,7 @@ mod tests {
     async fn propose_output_success() {
         let tx_hash = B256::repeat_byte(0xAA);
         let submitter = test_submitter(Ok(receipt_with_status(true, tx_hash)));
-        let result =
-            submitter.propose_output(&test_proposal(), TEST_L2_BLOCK, Address::ZERO, &[]).await;
+        let result = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await;
         assert!(result.is_ok());
     }
 
@@ -333,20 +316,14 @@ mod tests {
     async fn propose_output_reverted() {
         let tx_hash = B256::repeat_byte(0xBB);
         let submitter = test_submitter(Ok(receipt_with_status(false, tx_hash)));
-        let err = submitter
-            .propose_output(&test_proposal(), TEST_L2_BLOCK, Address::ZERO, &[])
-            .await
-            .unwrap_err();
+        let err = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await.unwrap_err();
         assert!(matches!(err, ProposerError::TxReverted(_)));
     }
 
     #[tokio::test]
     async fn propose_output_tx_manager_error() {
         let submitter = test_submitter(Err(TxManagerError::NonceTooLow));
-        let err = submitter
-            .propose_output(&test_proposal(), TEST_L2_BLOCK, Address::ZERO, &[])
-            .await
-            .unwrap_err();
+        let err = submitter.propose_output(&test_proposal(), Address::ZERO, &[]).await.unwrap_err();
         assert!(
             matches!(err, ProposerError::TxManager(TxManagerError::NonceTooLow)),
             "expected TxManager(NonceTooLow), got {err:?}",
@@ -359,18 +336,18 @@ mod tests {
 
     #[rstest]
     #[case::rpc_with_selector_hex(
-        TxManagerError::Rpc(format!("execution reverted: 0x{}", *GAME_ALREADY_EXISTS_HEX)),
+        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::game_already_exists_selector()))),
         true,
         "selector hex in Rpc message"
     )]
     #[case::rpc_with_name(
-        TxManagerError::Rpc("GameAlreadyExists()".to_string()),
+        TxManagerError::Rpc(format!("{GAME_ALREADY_EXISTS}()")),
         true,
         "error name in Rpc message"
     )]
     #[case::reverted_with_reason(
         TxManagerError::ExecutionReverted {
-            reason: Some("GameAlreadyExists()".to_string()),
+            reason: Some(format!("{GAME_ALREADY_EXISTS}()")),
             data: None,
         },
         true,

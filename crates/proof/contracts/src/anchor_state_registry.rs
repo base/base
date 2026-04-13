@@ -41,7 +41,7 @@ sol! {
 }
 
 /// Anchor root returned by `AnchorStateRegistry.getAnchorRoot()`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct AnchorRoot {
     /// The output root hash.
     pub root: B256,

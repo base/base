@@ -814,6 +814,8 @@ where
             .iter()
             .filter_map(|b| game_map.map.get(b))
             .flat_map(|games| games.iter().map(|g| g.proxy))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
             .collect();
 
         let (canonical_roots, intermediate_roots_map) = tokio::try_join!(
@@ -867,7 +869,7 @@ where
         let mut parent_block = anchor.l2_block_number;
         let mut steps: u64 = 0;
 
-        while let Some(expected_block) = parent_block.checked_add(block_interval) {
+        'walk: while let Some(expected_block) = parent_block.checked_add(block_interval) {
             // Look up the pre-fetched canonical root and game candidates.
             // Either missing means there is no game at this block — the gap
             // where the next proposal should start.
@@ -964,7 +966,6 @@ where
                 break;
             }
 
-            let mut intermediate_mismatch = false;
             for (i, onchain_root) in onchain_intermediate.iter().enumerate() {
                 let intermediate_block = expected_block
                     .checked_sub(block_interval)
@@ -1003,13 +1004,8 @@ where
                         canonical_root = ?canonical,
                         "Intermediate root mismatch during forward walk, treating as gap"
                     );
-                    intermediate_mismatch = true;
-                    break;
+                    break 'walk;
                 }
-            }
-
-            if intermediate_mismatch {
-                break;
             }
 
             debug!(
@@ -1467,7 +1463,6 @@ where
             PROPOSAL_TIMEOUT,
             self.output_proposer.propose_output(
                 aggregate_proposal,
-                target_block,
                 parent_address,
                 &intermediate_roots,
             ),
@@ -1696,7 +1691,7 @@ mod tests {
         });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
-        let factory = Arc::new(MockDisputeGameFactory::with_count(0));
+        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
         ProvingPipeline::new(
             pipeline_config,
@@ -1706,7 +1701,7 @@ mod tests {
             rollup,
             anchor_registry,
             factory,
-            Arc::new(MockAggregateVerifier::empty()),
+            Arc::new(MockAggregateVerifier::default()),
             Arc::new(MockOutputProposer),
             cancel,
         )
@@ -1845,13 +1840,9 @@ mod tests {
         #[case] games: Vec<GameAtIndex>,
         #[case] scenario: &str,
     ) {
-        let factory = if games.is_empty() {
-            MockDisputeGameFactory::with_count(0)
-        } else {
-            MockDisputeGameFactory::with_games(games)
-        };
+        let factory = MockDisputeGameFactory::with_games(games);
         let pipeline =
-            recovery_pipeline_with_roots(factory, MockAggregateVerifier::empty(), HashMap::new());
+            recovery_pipeline_with_roots(factory, MockAggregateVerifier::default(), HashMap::new());
 
         let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -2053,7 +2044,7 @@ mod tests {
         factory.game_count_override = Some(3); // one more than actual entries
 
         let pipeline =
-            recovery_pipeline_with_roots(factory, MockAggregateVerifier::empty(), HashMap::new());
+            recovery_pipeline_with_roots(factory, MockAggregateVerifier::default(), HashMap::new());
 
         let mut cache: Option<CachedRecovery> = None;
         let result = pipeline.recover_latest_state(&mut cache).await;
@@ -2693,8 +2684,8 @@ mod tests {
 
     fn submit_pipeline(output_roots: HashMap<u64, B256>) -> TestPipeline {
         recovery_pipeline_full(
-            MockDisputeGameFactory::with_count(0),
-            MockAggregateVerifier::empty(),
+            MockDisputeGameFactory::with_games(vec![]),
+            MockAggregateVerifier::default(),
             output_roots,
             TEST_ANCHOR_BLOCK,
             SUBMIT_BLOCK_INTERVAL,
