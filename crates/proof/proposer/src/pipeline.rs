@@ -810,6 +810,7 @@ where
         // These two fetches are independent (canonical roots come from the
         // rollup node, intermediate roots from L1 game contracts), so run
         // them in parallel to halve recovery latency.
+        // Deduplicate proxies to avoid redundant RPC calls.
         let walk_proxies: Vec<Address> = prefetch_blocks
             .iter()
             .filter_map(|b| game_map.map.get(b))

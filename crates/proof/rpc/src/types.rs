@@ -85,7 +85,7 @@ pub struct OutputAtBlock {
 }
 
 /// Sync status from `optimism_syncStatus`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SyncStatus {
     /// Current L1 block reference.

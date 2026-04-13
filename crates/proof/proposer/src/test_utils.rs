@@ -105,7 +105,7 @@ impl RollupProvider for MockRollupClient {
         unimplemented!()
     }
     async fn sync_status(&self) -> RpcResult<SyncStatus> {
-        Ok(self.sync_status)
+        Ok(self.sync_status.clone())
     }
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
         let root = self
