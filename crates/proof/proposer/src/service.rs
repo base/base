@@ -19,7 +19,7 @@ use base_proof_rpc::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
 };
 use base_tx_manager::{BaseTxMetrics, SimpleTxManager};
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
