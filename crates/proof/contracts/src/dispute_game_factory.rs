@@ -39,6 +39,15 @@ sol! {
 
         /// Returns the implementation address for the given game type.
         function gameImpls(uint32 gameType) external view returns (address);
+
+        /// Looks up a game by its unique `(gameType, rootClaim, extraData)` tuple.
+        ///
+        /// Returns `address(0)` when no matching game exists.
+        function games(
+            uint32 gameType,
+            bytes32 rootClaim,
+            bytes calldata extraData
+        ) external view returns (address proxy, uint64 timestamp);
     }
 }
 
@@ -67,6 +76,16 @@ pub trait DisputeGameFactoryClient: Send + Sync {
 
     /// Returns the implementation address for the given game type.
     async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError>;
+
+    /// Looks up a game by its unique `(gameType, rootClaim, extraData)` tuple.
+    ///
+    /// Returns `Address::ZERO` when no matching game exists.
+    async fn games(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+    ) -> Result<Address, ContractError>;
 }
 
 /// The 4-byte selector for `GameAlreadyExists(bytes32)`.
@@ -131,6 +150,20 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
             })?;
 
         Ok(result)
+    }
+
+    async fn games(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+    ) -> Result<Address, ContractError> {
+        let result =
+            self.contract.games(game_type, root_claim, extra_data).call().await.map_err(|e| {
+                ContractError::Call { context: "games lookup failed".into(), source: e }
+            })?;
+
+        Ok(result.proxy)
     }
 }
 

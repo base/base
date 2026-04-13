@@ -349,6 +349,15 @@ async fn test_step_scan_error_propagated() {
         async fn game_impls(&self, _game_type: u32) -> Result<Address, ContractError> {
             unreachable!()
         }
+
+        async fn games(
+            &self,
+            _game_type: u32,
+            _root_claim: alloy_primitives::B256,
+            _extra_data: alloy_primitives::Bytes,
+        ) -> Result<alloy_primitives::Address, ContractError> {
+            unreachable!()
+        }
     }
 
     let factory = Arc::new(FailingFactory);

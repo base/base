@@ -37,10 +37,10 @@ use alloy_primitives::{Address, B256, Signature, keccak256};
 use alloy_sol_types::SolCall;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, DisputeGameFactoryClient,
-    GameInfo, ITEEProverRegistry,
+    ITEEProverRegistry, encode_extra_data,
 };
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
-use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
+use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
 use eyre::Result;
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::task::JoinSet;
@@ -49,7 +49,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     Metrics,
-    constants::{MAX_FACTORY_SCAN_LOOKBACK, PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
+    constants::{PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::OutputProposer,
@@ -69,61 +69,16 @@ pub struct PipelineConfig {
     pub tee_prover_registry_address: Option<Address>,
 }
 
-/// A game discovered by [`ProvingPipeline::scan_factory_range`].
+/// Cached result from the last successful recovery.
 ///
-/// Pairs a [`GameInfo`] (from the verifier) with the proxy address
-/// (from the factory) so the forward walk has everything it needs.
+/// The cache is keyed by `(game_count, anchor_root)`. When both match,
+/// the cached `RecoveredState` is returned immediately (zero RPCs).
+/// When either changes, the forward walk is re-executed.
 #[derive(Debug, Clone, Copy)]
-struct ScannedGame {
-    /// Proxy address of the deployed game contract.
-    proxy: Address,
-    /// On-chain game details fetched via `game_info`.
-    info: GameInfo,
-}
-
-/// Cached game map from previous factory scans.
-///
-/// The factory is append-only, so when `game_count` increases we only scan
-/// the new entries (`scanned_up_to..new_count`) and merge them into the
-/// existing map. When `game_count` decreases (L1 reorg), the map is rebuilt
-/// from scratch.
-///
-/// The map is separate from the walk result so that anchor-root changes or
-/// post-submission re-walks can reuse the map without any factory / `game_info`
-/// RPC calls.
-#[derive(Debug, Clone)]
-struct CachedGameMap {
-    /// Factory `game_count` at the time of the last scan.
-    scanned_up_to: u64,
-    /// `l2_block_number → Vec<ScannedGame>` for games matching our `game_type`.
-    map: HashMap<u64, Vec<ScannedGame>>,
-}
-
-/// Snapshot of the last successful recovery, combining the cached game map
-/// with the walk result.
-///
-/// The walk result is recomputed (cheaply, from the cached map) whenever
-/// the anchor root changes or a new game is added. A full factory rescan
-/// only happens on the first startup or after an L1 reorg that reduces
-/// `game_count`.
-///
-/// The walk result is stored separately from the game map so that a
-/// failed walk/prefetch can preserve the game map for incremental reuse
-/// on the next tick without forcing a full factory rescan.
-#[derive(Debug, Clone)]
 struct CachedRecovery {
-    /// Cached factory game map (incrementally updated).
-    game_map: CachedGameMap,
-    /// Walk result from the most recent successful forward walk, paired
-    /// with the anchor root used to produce it. `None` when the last
-    /// walk or prefetch failed — the game map is still valid for reuse.
-    walk: Option<CachedWalk>,
-}
-
-/// Successful walk result cached alongside the anchor root that produced it.
-#[derive(Debug, Clone, Copy)]
-struct CachedWalk {
-    /// The anchor root hash used for this walk.
+    /// Factory `game_count` at the time of the last walk.
+    game_count: u64,
+    /// Anchor root hash used for this walk.
     anchor_root: B256,
     /// The recovered on-chain state from the walk.
     state: RecoveredState,
@@ -446,7 +401,7 @@ where
         }
 
         let recovered = match &state.cached_recovery {
-            Some(CachedRecovery { walk: Some(w), .. }) => w.state,
+            Some(cached) => cached.state,
             _ => return,
         };
 
@@ -646,29 +601,31 @@ where
         Some((state, safe_head))
     }
 
-    /// Recovers the latest on-chain state using a forward walk from the anchor
-    /// root.
+    /// Recovers the latest on-chain state using a deterministic forward walk
+    /// from the anchor root.
     ///
     /// # Strategy
     ///
     /// 1. Read `game_count` from the factory and anchor root from the registry
     ///    (2 RPC calls per tick — always needed for cache validation).
     /// 2. **Cache check — fast path.** If both `game_count` and `anchor_root`
-    ///    match the cache, return the cached walk result immediately.
-    /// 3. **Game map update.** The factory is append-only, so:
-    ///    - If `game_count` *increased*, scan only the new entries
-    ///      (`cached.scanned_up_to..count`) and merge into the existing map.
-    ///    - If `game_count` *decreased* (L1 reorg) or no cache exists, do a
-    ///      full scan of the most recent `MAX_FACTORY_SCAN_LOOKBACK` entries.
-    /// 4. **Forward walk.** Walk from the anchor block, stepping by
-    ///    `block_interval`. For each step, find a game whose
-    ///    `parent_address` matches the expected parent, whose
-    ///    `root_claim` matches the canonical output root, AND whose
-    ///    intermediate output roots all match canonical. Stop at the
-    ///    first missing, mismatched, or unchained game.
+    ///    match the cache, return the cached state immediately (zero RPCs).
+    /// 3. **Forward walk.** Walk from the anchor block, stepping by
+    ///    `block_interval`. At each step:
+    ///    - Compute expected block number deterministically.
+    ///    - Fetch the canonical output root and intermediate roots from the
+    ///      rollup node.
+    ///    - Build `extraData` from the block number, parent address, and
+    ///      intermediate roots.
+    ///    - Call `factory.games(gameType, rootClaim, extraData)` to look up
+    ///      the game by its unique UUID.
+    ///    - If `proxy == Address::ZERO`, no game exists — gap found, stop.
+    ///    - Otherwise, advance to the returned proxy as the new parent.
     ///
-    /// The last verified game becomes the parent for the next proposal. If no
-    /// games exist, the anchor root is used as the starting point.
+    /// This approach is deterministic: the correct game for each step is
+    /// uniquely identified by its `(gameType, rootClaim, extraData)` tuple.
+    /// There is no ambiguity or filtering — the game either exists or it
+    /// doesn't.
     ///
     /// # Bounding
     ///
@@ -692,334 +649,139 @@ where
             .get_anchor_root()
             .await
             .map_err(|e| ProposerError::Contract(format!("get_anchor_root failed: {e}")))?;
-        let anchor_state_registry_address = self.config.driver.anchor_state_registry_address;
 
-        // Fast path: both game_count and anchor_root unchanged AND a valid
-        // walk result exists → return the cached state with zero RPCs.
+        // Fast path: both game_count and anchor_root unchanged → return
+        // the cached state with zero additional RPCs.
         if let Some(cached) = cache.as_ref()
-            && let Some(walk) = &cached.walk
-            && walk.anchor_root == anchor.root
-            && cached.game_map.scanned_up_to == count
+            && cached.anchor_root == anchor.root
+            && cached.game_count == count
         {
             debug!(game_count = count, "No changes since last recovery, returning cached state");
-            return Ok(walk.state);
+            return Ok(cached.state);
         }
-
-        // ── Game map update ─────────────────────────────────────────────
-        //
-        // Reuse the cached map when possible, scanning only new entries.
-        // A full rescan is needed only on cold start or L1 reorg.
-        let cached_map = cache.take().map(|c| c.game_map);
-        let game_map = match self.updated_game_map(cached_map, count).await {
-            Ok(map) => map,
-            Err((e, restored_map)) => {
-                // Put the game map back so the next tick can retry an
-                // incremental scan instead of a full factory rescan.
-                if let Some(map) = restored_map {
-                    *cache = Some(CachedRecovery { game_map: map, walk: None });
-                }
-                return Err(e);
-            }
-        };
-
-        // ── Pre-fetch and forward walk ─────────────────────────────────
-        //
-        // Run the walk as a separate method so `game_map` ownership stays
-        // here. On success, cache both the map and the walk result. On
-        // failure, preserve the game map so the next tick can reuse it
-        // (incremental scan) rather than paying a full factory rescan.
-        match self.forward_walk(&game_map, &anchor, anchor_state_registry_address).await {
-            Ok(state) => {
-                let walk = CachedWalk { anchor_root: anchor.root, state };
-                *cache = Some(CachedRecovery { game_map, walk: Some(walk) });
-                Ok(state)
-            }
-            Err(e) => {
-                // Preserve the game map for the next tick. The walk result
-                // is set to `None` so the fast-path check cannot return
-                // stale state — the next tick will fall through to
-                // `updated_game_map` (which reuses the scanned entries)
-                // and retry the walk.
-                warn!(error = %e, "Forward walk failed, preserving game map cache");
-                *cache = Some(CachedRecovery { game_map, walk: None });
-                Err(e)
-            }
-        }
-    }
-
-    /// Pre-fetches canonical and intermediate roots, then performs a forward
-    /// walk from the anchor to find the latest verified game.
-    ///
-    /// Takes the game map by reference so the caller retains ownership and
-    /// can preserve it in the cache even when this method fails.
-    async fn forward_walk(
-        &self,
-        game_map: &CachedGameMap,
-        anchor: &AnchorRoot,
-        anchor_state_registry_address: Address,
-    ) -> Result<RecoveredState, ProposerError> {
-        // ── Pre-fetch canonical output roots ───────────────────────────
-        //
-        // Compute the set of block numbers the forward walk *could* visit
-        // (consecutive strides from the anchor that have games in the map),
-        // then fetch all their canonical output roots concurrently. The walk
-        // itself becomes purely in-memory lookups against this pre-fetched
-        // map, eliminating O(N) sequential RPCs.
-        //
-        // In addition to the game block numbers themselves, intermediate
-        // block numbers are included so that each game's intermediate output
-        // roots can be verified against the canonical chain.
-        let block_interval = self.config.driver.block_interval;
-        let intermediate_block_interval = self.config.driver.intermediate_block_interval;
-        let intermediate_count = block_interval / intermediate_block_interval;
-
-        let prefetch_blocks: Vec<u64> = {
-            let mut blocks = Vec::with_capacity(game_map.map.len());
-            let mut block = anchor.l2_block_number;
-            while let Some(next) = block.checked_add(block_interval) {
-                if game_map.map.contains_key(&next) {
-                    blocks.push(next);
-                    block = next;
-                } else {
-                    // The walk cannot continue past a missing block.
-                    break;
-                }
-            }
-            blocks
-        };
-
-        // Expand to include intermediate block numbers for each game block.
-        // The last intermediate block equals the game block itself, so the
-        // result is a superset of `prefetch_blocks`.
-        let all_canonical_blocks: Vec<u64> = {
-            let mut blocks =
-                Vec::with_capacity(prefetch_blocks.len() * intermediate_count as usize);
-            for &game_block in &prefetch_blocks {
-                let parent = game_block.checked_sub(block_interval).ok_or_else(|| {
-                    ProposerError::Internal(format!(
-                        "game_block {game_block} underflows when subtracting block_interval {block_interval}"
-                    ))
-                })?;
-                blocks.extend(self.intermediate_block_numbers(parent)?);
-            }
-            blocks
-        };
-
-        // ── Pre-fetch canonical and intermediate roots concurrently ─────
-        //
-        // These two fetches are independent (canonical roots come from the
-        // rollup node, intermediate roots from L1 game contracts), so run
-        // them in parallel to halve recovery latency.
-        // Deduplicate proxies to avoid redundant RPC calls.
-        let walk_proxies: Vec<Address> = prefetch_blocks
-            .iter()
-            .filter_map(|b| game_map.map.get(b))
-            .flat_map(|games| games.iter().map(|g| g.proxy))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-
-        let (canonical_roots, intermediate_roots_map) = tokio::try_join!(
-            async {
-                debug!(
-                    blocks = all_canonical_blocks.len(),
-                    game_blocks = prefetch_blocks.len(),
-                    intermediate_count,
-                    "Pre-fetching canonical output roots concurrently"
-                );
-                self.fetch_canonical_roots(all_canonical_blocks).await
-            },
-            async {
-                if walk_proxies.is_empty() {
-                    return Ok(HashMap::new());
-                }
-                debug!(
-                    proxies = walk_proxies.len(),
-                    "Pre-fetching intermediate output roots from game contracts"
-                );
-                stream::iter(walk_proxies)
-                    .map(|proxy| {
-                        let verifier = &self.verifier_client;
-                        async move {
-                            verifier
-                                .intermediate_output_roots(proxy)
-                                .await
-                                .map(|roots| (proxy, roots))
-                                .map_err(|e| {
-                                    ProposerError::Contract(format!(
-                                        "intermediate_output_roots failed for proxy {proxy}: {e}"
-                                    ))
-                                })
-                        }
-                    })
-                    .buffered(RECOVERY_SCAN_CONCURRENCY)
-                    .try_collect()
-                    .await
-            },
-        )?;
 
         // ── Forward walk ────────────────────────────────────────────────
-        //
-        // Walk from the anchor root, verifying parent-chain linkage,
-        // output root correctness, and intermediate output root
-        // correctness at each step. All output root lookups are served
-        // from the pre-fetched `canonical_roots` map, and intermediate
-        // roots from the pre-fetched `intermediate_roots_map`.
+        let state = self.forward_walk(&anchor).await?;
+
+        *cache = Some(CachedRecovery { game_count: count, anchor_root: anchor.root, state });
+        Ok(state)
+    }
+
+    /// Performs a deterministic forward walk from the anchor to find the latest
+    /// verified game using UUID-based `games()` lookups.
+    ///
+    /// At each step:
+    /// 1. Compute the expected block number: `parent_block + block_interval`.
+    /// 2. Fetch all intermediate roots (including the target block's output
+    ///    root) from the rollup node in a single batch.
+    /// 3. Build `extraData` from the block number, parent address, and
+    ///    intermediate roots.
+    /// 4. Call `factory.games(gameType, rootClaim, extraData)` — the factory
+    ///    returns the proxy address if a game with this exact UUID exists, or
+    ///    `Address::ZERO` if not.
+    /// 5. `Address::ZERO` → gap found, stop. Otherwise advance the parent.
+    ///
+    /// Because the game's UUID is computed from canonical data, there is no
+    /// ambiguity: the correct game either exists or it doesn't. Invalid games
+    /// (wrong root claim, wrong parent, wrong intermediate roots) simply have
+    /// different UUIDs and are never matched.
+    ///
+    /// The walk is sequential (each step needs the previous proxy address for
+    /// `extraData`), but each step requires only two RPCs: one
+    /// `fetch_canonical_roots` batch and one `games()` lookup.
+    async fn forward_walk(&self, anchor: &AnchorRoot) -> Result<RecoveredState, ProposerError> {
+        let block_interval = self.config.driver.block_interval;
+        let anchor_state_registry_address = self.config.driver.anchor_state_registry_address;
+        let game_type = self.config.driver.game_type;
+
         let mut parent_address = anchor_state_registry_address;
         let mut parent_output_root = anchor.root;
         let mut parent_block = anchor.l2_block_number;
         let mut steps: u64 = 0;
 
-        'walk: while let Some(expected_block) = parent_block.checked_add(block_interval) {
-            // Look up the pre-fetched canonical root and game candidates.
-            // Either missing means there is no game at this block — the gap
-            // where the next proposal should start.
-            let (canonical_root, candidates) =
-                match (canonical_roots.get(&expected_block), game_map.map.get(&expected_block)) {
-                    (Some(root), Some(c)) => (*root, c),
-                    _ => {
-                        info!(
-                            gap_block = expected_block,
-                            parent_block,
-                            parent_address = %parent_address,
-                            games_verified = steps,
-                            "Found first missing game, will propose from here"
+        while let Some(expected_block) = parent_block.checked_add(block_interval) {
+            // Fetch all intermediate roots (including the final root at
+            // `expected_block`) from the rollup node in one batch. The last
+            // element of `intermediate_blocks` is always `expected_block`,
+            // so this also provides the canonical output root — no separate
+            // `output_at_block` call needed.
+            let intermediate_blocks = self.intermediate_block_numbers(parent_block)?;
+            let intermediate_roots =
+                match self.fetch_canonical_roots(intermediate_blocks.clone()).await {
+                    Ok(roots) => roots,
+                    Err(ProposerError::Rpc(RpcError::BlockNotFound(_))) => {
+                        // The block doesn't exist yet (ahead of safe head).
+                        // This is the natural termination point of the walk.
+                        debug!(
+                            block = expected_block,
+                            "Block not available yet, treating as end of walk"
                         );
                         break;
                     }
+                    Err(e) => {
+                        // All other RPC errors (retryable or not) propagate so
+                        // recovery retries on the next tick rather than caching
+                        // a partial result.
+                        return Err(e);
+                    }
                 };
 
-            // Filter to candidates that reference our expected parent.
-            let mut matching =
-                candidates.iter().filter(|g| g.info.parent_address == parent_address);
-
-            let first = match matching.next() {
-                Some(g) => g,
-                None => {
-                    warn!(
-                        l2_block_number = expected_block,
-                        expected_parent = %parent_address,
-                        candidates = candidates.len(),
-                        "No game at block has correct parent_address, treating as gap"
-                    );
-                    break;
-                }
-            };
-
-            if matching.next().is_some() {
-                warn!(
-                    l2_block_number = expected_block,
-                    expected_parent = %parent_address,
-                    "Multiple games with same parent at block, using first"
-                );
-            }
-
-            let ScannedGame { proxy, info } = *first;
-
-            // Verify the root claim matches the canonical output root.
-            if canonical_root != info.root_claim {
-                warn!(
-                    l2_block_number = expected_block,
-                    game_proxy = %proxy,
-                    onchain_root = ?info.root_claim,
-                    canonical_root = ?canonical_root,
-                    "Output root mismatch during forward walk, treating as gap"
-                );
-                break;
-            }
-
-            // Verify intermediate output roots against canonical.
-            //
-            // Each game commits to intermediate output roots at every
-            // `intermediate_block_interval` blocks between its parent and
-            // itself. A mismatch indicates the game could be challenged,
-            // so we treat it as a gap to avoid chaining off an invalid parent.
-            let onchain_intermediate = intermediate_roots_map.get(&proxy).ok_or_else(|| {
+            // Extract the canonical root for the target block (always the
+            // last intermediate block).
+            let canonical_root = *intermediate_roots.get(&expected_block).ok_or_else(|| {
                 ProposerError::Internal(format!(
-                    "missing pre-fetched intermediate roots for proxy {proxy}"
+                    "missing canonical root for expected block {expected_block}"
                 ))
             })?;
 
-            if onchain_intermediate.len() as u64 != intermediate_count {
-                warn!(
-                    l2_block_number = expected_block,
-                    game_proxy = %proxy,
-                    expected = intermediate_count,
-                    actual = onchain_intermediate.len(),
-                    "Unexpected intermediate root count, treating as gap"
-                );
-                break;
-            }
-
-            // The last intermediate root must equal root_claim (enforced
-            // on-chain by the contract). Verify this consistency invariant
-            // to catch any divergence between intermediateOutputRoots() and
-            // rootClaim(). This also makes the intermediate_count == 1 path
-            // non-trivial (where all intermediate blocks are skipped below).
-            if onchain_intermediate.last() != Some(&info.root_claim) {
-                warn!(
-                    l2_block_number = expected_block,
-                    game_proxy = %proxy,
-                    last_intermediate = ?onchain_intermediate.last(),
-                    root_claim = ?info.root_claim,
-                    "Last intermediate root does not match root_claim, treating as gap"
-                );
-                break;
-            }
-
-            for (i, onchain_root) in onchain_intermediate.iter().enumerate() {
-                let intermediate_block = expected_block
-                    .checked_sub(block_interval)
-                    .and_then(|base| {
-                        (i as u64 + 1)
-                            .checked_mul(intermediate_block_interval)
-                            .and_then(|offset| base.checked_add(offset))
-                    })
-                    .ok_or_else(|| {
+            // Build the ordered intermediate root vector matching extraData layout.
+            let intermediate_root_vec: Vec<B256> = intermediate_blocks
+                .iter()
+                .map(|ib| {
+                    intermediate_roots.get(ib).copied().ok_or_else(|| {
                         ProposerError::Internal(format!(
-                            "intermediate block arithmetic overflow: expected_block={expected_block}, \
-                             block_interval={block_interval}, i={i}, \
-                             intermediate_block_interval={intermediate_block_interval}"
+                            "missing canonical root for intermediate block {ib}"
                         ))
-                    })?;
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
-                // The last intermediate root equals root_claim, already
-                // verified above — skip the redundant check.
-                if intermediate_block == expected_block {
-                    continue;
-                }
+            // Build extraData and look up the game by UUID.
+            let extra_data =
+                encode_extra_data(expected_block, parent_address, &intermediate_root_vec);
 
-                let canonical = canonical_roots.get(&intermediate_block).ok_or_else(|| {
-                    ProposerError::Internal(format!(
-                        "missing canonical root for intermediate block {intermediate_block}"
-                    ))
-                })?;
+            let lookup =
+                self.factory_client.games(game_type, canonical_root, extra_data).await.map_err(
+                    |e| {
+                        ProposerError::Contract(format!(
+                            "games lookup failed at block {expected_block}: {e}"
+                        ))
+                    },
+                )?;
 
-                if *onchain_root != *canonical {
-                    warn!(
-                        l2_block_number = expected_block,
-                        intermediate_block,
-                        intermediate_index = i,
-                        game_proxy = %proxy,
-                        onchain_root = ?onchain_root,
-                        canonical_root = ?canonical,
-                        "Intermediate root mismatch during forward walk, treating as gap"
-                    );
-                    break 'walk;
-                }
+            if lookup == Address::ZERO {
+                info!(
+                    gap_block = expected_block,
+                    parent_block,
+                    parent_address = %parent_address,
+                    games_verified = steps,
+                    "No game found at expected block, will propose from here"
+                );
+                break;
             }
 
-            debug!(
-                l2_block_number = expected_block,
-                game_proxy = %proxy,
-                step = steps,
-                "Game exists onchain, continuing forward"
-            );
-
-            parent_address = proxy;
-            parent_output_root = info.root_claim;
+            parent_address = lookup;
+            parent_output_root = canonical_root;
             parent_block = expected_block;
             steps += 1;
+
+            if steps.is_multiple_of(100) {
+                info!(
+                    games_verified = steps,
+                    latest_block = parent_block,
+                    "Recovery forward walk in progress"
+                );
+            }
         }
 
         if steps > 0 {
@@ -1036,182 +798,6 @@ where
             output_root: parent_output_root,
             l2_block_number: parent_block,
         })
-    }
-
-    /// Returns an up-to-date game map, reusing the cached map when possible.
-    ///
-    /// - **Cold start / reorg (count decreased):** Full scan of the most
-    ///   recent `MAX_FACTORY_SCAN_LOOKBACK` entries.
-    /// - **Incremental (count increased):** Scan only the new entries
-    ///   (`cached.scanned_up_to..count`) and merge into the existing map.
-    /// - **Anchor root changed (count unchanged):** Reuse the existing map
-    ///   as-is — no factory RPCs needed.
-    ///
-    /// Returns `Ok(updated_map)` on success. On failure returns the error
-    /// together with `Some(original_map)` when the input map can be
-    /// preserved (incremental scan failure), or `None` when it cannot
-    /// (cold start, full rescan).
-    async fn updated_game_map(
-        &self,
-        cached_map: Option<CachedGameMap>,
-        count: u64,
-    ) -> Result<CachedGameMap, (ProposerError, Option<CachedGameMap>)> {
-        match cached_map {
-            Some(game_map) if count >= game_map.scanned_up_to => {
-                let scanned_up_to = game_map.scanned_up_to;
-                let new_entries = count - scanned_up_to;
-                if new_entries == 0 {
-                    // Anchor root changed but game_count is the same —
-                    // reuse the map, just re-walk.
-                    debug!("Anchor root changed, re-walking with existing game map");
-                    return Ok(game_map);
-                }
-
-                // If the delta exceeds the lookback window (e.g. proposer
-                // was offline for an extended period), fall back to a full
-                // scan rather than issuing an unbounded number of RPCs.
-                if new_entries > MAX_FACTORY_SCAN_LOOKBACK {
-                    warn!(
-                        new_entries,
-                        max = MAX_FACTORY_SCAN_LOOKBACK,
-                        "Incremental delta exceeds lookback, falling back to full scan"
-                    );
-                    return self.full_scan(count).await.map_err(|e| (e, None));
-                }
-
-                // Incremental scan: only fetch the new factory entries.
-                info!(
-                    cached_count = scanned_up_to,
-                    current_count = count,
-                    new_entries,
-                    "Incrementally scanning new factory entries"
-                );
-                let mut map = game_map.map;
-                if let Err(e) = self.scan_factory_range(scanned_up_to, count, &mut map).await {
-                    // Restore the original game map so the next tick can
-                    // retry the incremental scan from the same checkpoint
-                    // instead of an expensive full factory rescan.
-                    return Err((e, Some(CachedGameMap { scanned_up_to, map })));
-                }
-                Ok(CachedGameMap { scanned_up_to: count, map })
-            }
-            Some(game_map) => {
-                // game_count decreased — L1 reorg. Full rescan needed
-                // because we can't know which entries were removed.
-                warn!(
-                    cached_count = game_map.scanned_up_to,
-                    current_count = count,
-                    "Game count decreased (possible L1 reorg), performing full rescan"
-                );
-                self.full_scan(count).await.map_err(|e| (e, None))
-            }
-            None => {
-                // Cold start — no cache exists.
-                info!(game_count = count, "Cold start, performing full factory scan");
-                self.full_scan(count).await.map_err(|e| (e, None))
-            }
-        }
-    }
-
-    /// Performs a full factory scan of the most recent
-    /// [`MAX_FACTORY_SCAN_LOOKBACK`] entries and returns a fresh
-    /// [`CachedGameMap`].
-    async fn full_scan(&self, count: u64) -> Result<CachedGameMap, ProposerError> {
-        let search_count = count.min(MAX_FACTORY_SCAN_LOOKBACK);
-        let start_index = count.saturating_sub(search_count);
-        let mut map = HashMap::new();
-        self.scan_factory_range(start_index, count, &mut map).await?;
-        Ok(CachedGameMap { scanned_up_to: count, map })
-    }
-
-    /// Scans factory entries in `start_index..end_index` and inserts matching
-    /// games into `game_map`.
-    ///
-    /// Only games whose `game_type` matches ours are fetched via `game_info`.
-    ///
-    /// Under normal operation, at most one game exists per block number
-    /// because each game requires a valid cryptographic proof at creation
-    /// time and the factory rejects duplicate `(gameType, rootClaim,
-    /// extraData)` tuples. Multiple games at the same block number can
-    /// only occur in exceptional circumstances (prover soundness bug, L2
-    /// reorg between competing submissions, or compromised TEE signer).
-    /// All are retained so the forward walk can select the correct one by
-    /// validating the parent chain.
-    ///
-    /// Uses concurrent RPC calls via [`futures::stream::StreamExt::buffered`]
-    /// with [`RECOVERY_SCAN_CONCURRENCY`] parallelism.
-    async fn scan_factory_range(
-        &self,
-        start_index: u64,
-        end_index: u64,
-        game_map: &mut HashMap<u64, Vec<ScannedGame>>,
-    ) -> Result<(), ProposerError> {
-        if start_index >= end_index {
-            return Ok(());
-        }
-
-        let game_type = self.config.driver.game_type;
-        let scan_count = end_index - start_index;
-
-        debug!(scan_count, start_index, end_index, "Scanning factory range");
-
-        // Fetch game_at_index concurrently, propagating RPC errors so a
-        // transient failure doesn't silently drop a game and create a false
-        // gap in the forward walk. Non-matching game types are filtered after
-        // error propagation.
-        let all_games: Vec<_> = stream::iter(start_index..end_index)
-            .map(|i| {
-                let factory = &self.factory_client;
-                async move {
-                    factory.game_at_index(i).await.map_err(|e| {
-                        ProposerError::Contract(format!("game_at_index failed for index {i}: {e}"))
-                    })
-                }
-            })
-            .buffered(RECOVERY_SCAN_CONCURRENCY)
-            .try_collect()
-            .await?;
-
-        let matching_games: Vec<_> = all_games
-            .into_iter()
-            .enumerate()
-            .filter_map(|(offset, game)| {
-                (game.game_type == game_type).then_some((start_index + offset as u64, game))
-            })
-            .collect();
-
-        let game_infos: Vec<ScannedGame> = stream::iter(matching_games)
-            .map(|(game_index, game)| {
-                let verifier = &self.verifier_client;
-                async move {
-                    match verifier.game_info(game.proxy).await {
-                        Ok(info) => Ok(ScannedGame { proxy: game.proxy, info }),
-                        Err(e) => {
-                            // Propagate game_info failures — a transient RPC
-                            // error must not be silently treated as a missing
-                            // game, which would cause the forward walk to see
-                            // a false gap and re-propose from an earlier point.
-                            Err(ProposerError::Contract(format!(
-                                "game_info failed for proxy {game_proxy} \
-                                 (factory index {game_index}): {e}",
-                                game_proxy = game.proxy,
-                            )))
-                        }
-                    }
-                }
-            })
-            .buffered(RECOVERY_SCAN_CONCURRENCY)
-            .try_collect()
-            .await?;
-
-        let new_games = game_infos.len();
-        for scanned in game_infos {
-            game_map.entry(scanned.info.l2_block_number).or_default().push(scanned);
-        }
-
-        debug!(new_games, "Factory range scan complete");
-
-        Ok(())
     }
 
     /// Returns the latest safe L2 block number.
@@ -1593,7 +1179,6 @@ mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256};
-    use base_proof_contracts::{GameAtIndex, GameInfo};
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
@@ -1624,47 +1209,73 @@ mod tests {
 
     // ---- Helper builders for game data ----
 
-    /// Builds a single `GameAtIndex` entry.
-    fn game_entry(game_type: u32, index: u64) -> GameAtIndex {
-        GameAtIndex { game_type, timestamp: index + 1, proxy: proxy_addr(index) }
+    /// Helper: unique proxy address derived from an index.
+    ///
+    /// Uses `index + 1` so that `proxy_addr(0)` is never `Address::ZERO`
+    /// (which the factory uses as the "no game found" sentinel).
+    fn proxy_addr(index: u64) -> Address {
+        let mut bytes = [0u8; 20];
+        bytes[12..20].copy_from_slice(&(index + 1).to_be_bytes());
+        Address::new(bytes)
     }
 
-    /// Builds a chain of `N` sequential games starting from the anchor.
+    /// Builds a chain of `N` sequential games starting from the anchor,
+    /// registering them in the factory's `uuid_games` map.
     ///
-    /// Returns `(factory_games, info_map, output_roots)` ready to pass to
-    /// [`recovery_pipeline_with_roots`].
-    fn game_chain(n: usize) -> (Vec<GameAtIndex>, HashMap<Address, GameInfo>, HashMap<u64, B256>) {
-        let mut games = Vec::with_capacity(n);
-        let mut info_map = HashMap::with_capacity(n);
-        let mut output_roots = HashMap::with_capacity(n);
+    /// Uses `block_interval == intermediate_block_interval == TEST_BLOCK_INTERVAL`
+    /// (one intermediate root per game, equal to the root claim).
+    ///
+    /// Returns `(factory, output_roots)` ready to use in pipeline builders.
+    fn game_chain(n: usize) -> (MockDisputeGameFactory, HashMap<u64, B256>) {
+        game_chain_full(n, TEST_ANCHOR_BLOCK, TEST_BLOCK_INTERVAL, TEST_BLOCK_INTERVAL)
+    }
+
+    /// Builds a chain of `N` sequential games with configurable intervals.
+    fn game_chain_full(
+        n: usize,
+        anchor_block: u64,
+        block_interval: u64,
+        intermediate_block_interval: u64,
+    ) -> (MockDisputeGameFactory, HashMap<u64, B256>) {
+        let mut uuid_games = std::collections::HashMap::new();
+        let mut output_roots = HashMap::new();
+        let intermediate_count = block_interval / intermediate_block_interval;
 
         let mut parent = Address::ZERO; // anchor_state_registry_address default
         for i in 0..n {
-            let block = TEST_BLOCK_INTERVAL * (i as u64 + 1);
-            let proxy = proxy_addr(i as u64);
-            let info = GameInfo {
-                root_claim: B256::repeat_byte((block / TEST_BLOCK_INTERVAL) as u8),
-                l2_block_number: block,
-                parent_address: parent,
-            };
+            let block = anchor_block + block_interval * (i as u64 + 1);
+            let root_claim = B256::repeat_byte((i as u8) + 1);
 
-            games.push(game_entry(TEST_GAME_TYPE, i as u64));
-            output_roots.insert(block, info.root_claim);
-            info_map.insert(proxy, info);
+            // Build intermediate roots (canonical values).
+            let parent_block = block - block_interval;
+            let mut intermediate_roots = Vec::with_capacity(intermediate_count as usize);
+            for j in 1..=intermediate_count {
+                let ib = parent_block + j * intermediate_block_interval;
+                let ir = if ib == block { root_claim } else { B256::repeat_byte(ib as u8) };
+                output_roots.insert(ib, ir);
+                intermediate_roots.push(ir);
+            }
+            output_roots.insert(block, root_claim);
+
+            let extra_data = encode_extra_data(block, parent, &intermediate_roots);
+            let proxy = proxy_addr(i as u64);
+
+            uuid_games.insert((TEST_GAME_TYPE, root_claim, extra_data), proxy);
 
             parent = proxy;
         }
-        (games, info_map, output_roots)
+
+        let factory = MockDisputeGameFactory {
+            games: Vec::new(),
+            game_count_override: Some(n as u64),
+            uuid_games,
+            games_should_fail: false,
+        };
+
+        (factory, output_roots)
     }
 
     // ---- Pipeline builders ----
-
-    /// Helper: unique proxy address derived from an index.
-    fn proxy_addr(index: u64) -> Address {
-        let mut bytes = [0u8; 20];
-        bytes[12..20].copy_from_slice(&index.to_be_bytes());
-        Address::new(bytes)
-    }
 
     /// Type alias to reduce repetition in builder return types.
     type TestPipeline = ProvingPipeline<
@@ -1689,6 +1300,7 @@ mod tests {
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(safe_block_number, B256::ZERO),
             output_roots: HashMap::new(),
+            max_safe_block: None,
         });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
@@ -1708,16 +1320,14 @@ mod tests {
         )
     }
 
-    /// Builds a recovery pipeline with factory games, verifier info, and
-    /// canonical output roots. Uses default anchor block and block interval.
-    fn recovery_pipeline_with_roots(
+    /// Builds a recovery pipeline with a pre-configured factory and canonical
+    /// output roots. Uses default anchor block and block interval.
+    fn recovery_pipeline(
         factory: MockDisputeGameFactory,
-        verifier: MockAggregateVerifier,
         output_roots: HashMap<u64, B256>,
     ) -> TestPipeline {
         recovery_pipeline_full(
             factory,
-            verifier,
             output_roots,
             TEST_ANCHOR_BLOCK,
             TEST_BLOCK_INTERVAL,
@@ -1727,7 +1337,6 @@ mod tests {
 
     fn recovery_pipeline_full(
         factory: MockDisputeGameFactory,
-        verifier: MockAggregateVerifier,
         output_roots: HashMap<u64, B256>,
         anchor_block: u64,
         block_interval: u64,
@@ -1741,6 +1350,7 @@ mod tests {
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
+            max_safe_block: None,
         });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(anchor_block) });
@@ -1763,7 +1373,7 @@ mod tests {
             rollup,
             anchor_registry,
             Arc::new(factory),
-            Arc::new(verifier),
+            Arc::new(MockAggregateVerifier::default()),
             Arc::new(MockOutputProposer),
             cancel,
         )
@@ -1825,25 +1435,12 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    // ---- Recovery: anchor / empty factory ----
+    // ---- Recovery: empty factory ----
 
-    #[rstest]
-    #[case::no_games(vec![], "empty factory")]
-    #[case::no_type_match(
-        vec![
-            GameAtIndex { game_type: 99, timestamp: 1, proxy: proxy_addr(0) },
-            GameAtIndex { game_type: 100, timestamp: 2, proxy: proxy_addr(1) },
-        ],
-        "games exist but none match our type"
-    )]
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_returns_anchor_when_no_usable_games(
-        #[case] games: Vec<GameAtIndex>,
-        #[case] scenario: &str,
-    ) {
-        let factory = MockDisputeGameFactory::with_games(games);
-        let pipeline =
-            recovery_pipeline_with_roots(factory, MockAggregateVerifier::default(), HashMap::new());
+    async fn test_recovery_returns_anchor_when_no_games() {
+        let factory = MockDisputeGameFactory::with_games(vec![]);
+        let pipeline = recovery_pipeline(factory, HashMap::new());
 
         let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -1851,13 +1448,10 @@ mod tests {
         assert_eq!(
             state.parent_address,
             Address::ZERO,
-            "{scenario}: should return anchor_state_registry_address"
+            "should return anchor_state_registry_address"
         );
-        assert_eq!(
-            state.l2_block_number, TEST_ANCHOR_BLOCK,
-            "{scenario}: should return anchor block"
-        );
-        assert!(cache.is_some(), "{scenario}: cache should still be populated");
+        assert_eq!(state.l2_block_number, TEST_ANCHOR_BLOCK, "should return anchor block");
+        assert!(cache.is_some(), "cache should still be populated");
     }
 
     // ---- Recovery: forward walk ----
@@ -1873,13 +1467,8 @@ mod tests {
         #[case] expected_block: u64,
         #[case] scenario: &str,
     ) {
-        let (games, info_map, output_roots) = game_chain(game_count);
-
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
+        let (factory, output_roots) = game_chain(game_count);
+        let pipeline = recovery_pipeline(factory, output_roots);
 
         let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -1891,39 +1480,18 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_recovery_forward_walk_stops_at_gap() {
+        // Game at block 512 exists, but no game at block 1024.
+        // Walk should stop after the first game.
         let root_1 = B256::repeat_byte(0x01);
-        let root_skip = B256::repeat_byte(0x03);
+        let extra_data_1 = encode_extra_data(TEST_BLOCK_INTERVAL, Address::ZERO, &[root_1]);
 
-        // Games at blocks 512 and 1536 (missing 1024) — gap stops the walk.
-        let games = vec![game_entry(TEST_GAME_TYPE, 0), game_entry(TEST_GAME_TYPE, 2)];
+        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        factory.game_count_override = Some(1);
+        factory.uuid_games.insert((TEST_GAME_TYPE, root_1, extra_data_1), proxy_addr(0));
 
-        let info_map = HashMap::from([
-            (
-                proxy_addr(0),
-                GameInfo {
-                    root_claim: root_1,
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                    parent_address: Address::ZERO,
-                },
-            ),
-            (
-                proxy_addr(2),
-                GameInfo {
-                    root_claim: root_skip,
-                    l2_block_number: TEST_BLOCK_INTERVAL * 3,
-                    parent_address: proxy_addr(0),
-                },
-            ),
-        ]);
+        let output_roots = HashMap::from([(TEST_BLOCK_INTERVAL, root_1)]);
 
-        let output_roots =
-            HashMap::from([(TEST_BLOCK_INTERVAL, root_1), (TEST_BLOCK_INTERVAL * 3, root_skip)]);
-
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
+        let pipeline = recovery_pipeline(factory, output_roots);
 
         let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -1933,140 +1501,88 @@ mod tests {
         assert_eq!(state.output_root, root_1);
     }
 
+    // ---- Recovery: error propagation ----
+
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_forward_walk_stops_at_root_mismatch() {
-        let valid_root = B256::repeat_byte(0xBB);
-        let bad_onchain_root = B256::repeat_byte(0xDE);
-        let canonical_root_at_1024 = B256::repeat_byte(0xAB);
+    async fn test_recovery_propagates_games_lookup_failure() {
+        // A chain of 2 games exists, but factory.games() always fails.
+        // The walk should propagate the error as ProposerError::Contract.
+        let (mut factory, output_roots) = game_chain(2);
+        factory.games_should_fail = true;
 
-        let games = vec![game_entry(TEST_GAME_TYPE, 0), game_entry(TEST_GAME_TYPE, 1)];
+        let pipeline = recovery_pipeline(factory, output_roots);
 
-        let info_map = HashMap::from([
-            (
-                proxy_addr(0),
-                GameInfo {
-                    root_claim: valid_root,
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                    parent_address: Address::ZERO,
-                },
-            ),
-            (
-                proxy_addr(1),
-                GameInfo {
-                    root_claim: bad_onchain_root,
-                    l2_block_number: TEST_BLOCK_INTERVAL * 2,
-                    parent_address: proxy_addr(0),
-                },
-            ),
-        ]);
+        let mut cache: Option<CachedRecovery> = None;
+        let result = pipeline.recover_latest_state(&mut cache).await;
 
-        let output_roots = HashMap::from([
-            (TEST_BLOCK_INTERVAL, valid_root),
-            (TEST_BLOCK_INTERVAL * 2, canonical_root_at_1024),
-        ]);
+        assert!(result.is_err(), "games() failure should propagate");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ProposerError::Contract(_)),
+            "expected ProposerError::Contract, got {err:?}"
+        );
+    }
 
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_forward_walk_stops_at_safe_head() {
+        // 3 games exist on-chain, but the rollup node only has blocks up to
+        // block 2 * TEST_BLOCK_INTERVAL. The walk should verify games 0 and 1,
+        // then terminate gracefully when it can't fetch the output root for
+        // game 2's block (ahead of safe head).
+        let (factory, output_roots) = game_chain(3);
+
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval: TEST_BLOCK_INTERVAL });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(0, B256::ZERO),
             output_roots,
+            max_safe_block: Some(TEST_BLOCK_INTERVAL * 2),
+        });
+        let anchor_registry =
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 1,
+                max_retries: 1,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    game_type: TEST_GAME_TYPE,
+                    block_interval: TEST_BLOCK_INTERVAL,
+                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                    ..Default::default()
+                },
+            },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            Arc::new(factory),
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel,
         );
 
         let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
 
-        assert_eq!(state.parent_address, proxy_addr(0), "should stop before root mismatch");
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(state.output_root, valid_root);
-    }
-
-    // ---- Recovery: scan resilience (game_info failure propagation) ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_propagates_game_info_failures() {
-        // 3 games in the factory. The verifier fails for the game at block 512.
-        // This must propagate as an error (not silently skip), so the tick
-        // retries on the next interval rather than treating it as a false gap.
-        let root_2 = B256::repeat_byte(0x02);
-        let root_3 = B256::repeat_byte(0x03);
-
-        let games = vec![
-            game_entry(TEST_GAME_TYPE, 0),
-            game_entry(TEST_GAME_TYPE, 1),
-            game_entry(TEST_GAME_TYPE, 2),
-        ];
-
-        let info_map = HashMap::from([
-            (
-                proxy_addr(1),
-                GameInfo {
-                    root_claim: root_2,
-                    l2_block_number: TEST_BLOCK_INTERVAL * 2,
-                    parent_address: proxy_addr(0),
-                },
-            ),
-            (
-                proxy_addr(2),
-                GameInfo {
-                    root_claim: root_3,
-                    l2_block_number: TEST_BLOCK_INTERVAL * 3,
-                    parent_address: proxy_addr(1),
-                },
-            ),
-        ]);
-
-        let mut verifier = MockAggregateVerifier::with_game_info(info_map);
-        verifier.failing_addresses.insert(proxy_addr(0));
-
-        let output_roots =
-            HashMap::from([(TEST_BLOCK_INTERVAL * 2, root_2), (TEST_BLOCK_INTERVAL * 3, root_3)]);
-
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            verifier,
-            output_roots,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let result = pipeline.recover_latest_state(&mut cache).await;
-
-        assert!(result.is_err(), "game_info failure should propagate as error");
-        assert!(matches!(result, Err(ProposerError::Contract(_))), "should be a Contract error");
-        assert!(cache.is_none(), "cache should not be populated on error");
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_propagates_game_at_index_failures() {
-        // Factory reports game_count=3 but only has 2 entries. The third
-        // game_at_index call returns an error. This must propagate (not
-        // silently skip), so the tick retries rather than treating the
-        // missing index as a false gap.
-        let games = vec![game_entry(TEST_GAME_TYPE, 0), game_entry(TEST_GAME_TYPE, 1)];
-        let mut factory = MockDisputeGameFactory::with_games(games);
-        factory.game_count_override = Some(3); // one more than actual entries
-
-        let pipeline =
-            recovery_pipeline_with_roots(factory, MockAggregateVerifier::default(), HashMap::new());
-
-        let mut cache: Option<CachedRecovery> = None;
-        let result = pipeline.recover_latest_state(&mut cache).await;
-
-        assert!(result.is_err(), "game_at_index failure should propagate as error");
-        assert!(matches!(result, Err(ProposerError::Contract(_))), "should be a Contract error");
-        assert!(cache.is_none(), "cache should not be populated on error");
+        // Should stop after game 1 (block 1024), not reach game 2 (block 1536).
+        assert_eq!(state.parent_address, proxy_addr(1), "should stop at game 1");
+        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 2);
     }
 
     // ---- Recovery: caching ----
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_recovery_cache_hit_equal_game_count() {
-        let (games, info_map, output_roots) = game_chain(1);
+        let (factory, output_roots) = game_chain(1);
         let game_proxy = proxy_addr(0);
 
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
+        let pipeline = recovery_pipeline(factory, output_roots);
 
         // First call: cold start, populates the cache.
         let mut cache: Option<CachedRecovery> = None;
@@ -2074,9 +1590,9 @@ mod tests {
         assert!(cache.is_some(), "cache should be populated after first call");
         assert_eq!(state1.parent_address, game_proxy);
         assert_eq!(state1.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(cache.as_ref().unwrap().game_map.scanned_up_to, 1);
+        assert_eq!(cache.as_ref().unwrap().game_count, 1);
 
-        // Second call: same game_count → cached state returned without re-scan.
+        // Second call: same game_count → cached state returned without re-walk.
         let state2 = pipeline.recover_latest_state(&mut cache).await.unwrap();
         assert_eq!(state2.parent_address, state1.parent_address);
         assert_eq!(state2.l2_block_number, state1.l2_block_number);
@@ -2084,223 +1600,110 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_incremental_on_count_increase() {
-        // Seed the cache with 1 game already scanned. Factory now has 2
-        // games. The incremental scan should pick up only the new entry
-        // (index 1) and the walk should find both games.
-        let (games, info_map, output_roots) = game_chain(2);
-
-        // Build a cached map containing just the first game.
-        let first_info = info_map[&proxy_addr(0)];
-        let cached_map = HashMap::from([(
-            TEST_BLOCK_INTERVAL,
-            vec![ScannedGame { proxy: proxy_addr(0), info: first_info }],
-        )]);
+    async fn test_recovery_cache_invalidated_by_count_change() {
+        // Seed cache with game_count=1. Factory now has 2 games.
+        // The cache should be invalidated and a fresh walk performed.
+        let (factory, output_roots) = game_chain(2);
 
         let mut cache = Some(CachedRecovery {
-            game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            walk: Some(CachedWalk {
-                anchor_root: B256::ZERO,
-                state: RecoveredState {
-                    parent_address: proxy_addr(99), // stale — will be recomputed
-                    output_root: B256::repeat_byte(0xDD),
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                },
-            }),
+            game_count: 1,
+            anchor_root: B256::ZERO, // matches test_anchor_root
+            state: RecoveredState {
+                parent_address: proxy_addr(0),
+                output_root: B256::repeat_byte(0x01),
+                l2_block_number: TEST_BLOCK_INTERVAL,
+            },
         });
 
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
-
+        let pipeline = recovery_pipeline(factory, output_roots);
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
 
         assert_eq!(state.parent_address, proxy_addr(1), "should walk through both games");
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 2);
-        assert_eq!(
-            cache.as_ref().unwrap().game_map.scanned_up_to,
-            2,
-            "cache should reflect new count"
-        );
+        assert_eq!(cache.as_ref().unwrap().game_count, 2, "cache should reflect new count");
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_full_rescan_on_count_decrease() {
-        // Seed the cache with scanned_up_to=5. Factory now has only 1
-        // game (reorg). This triggers a full rescan since count decreased.
-        let (games, info_map, output_roots) = game_chain(1);
+    async fn test_recovery_cache_invalidated_by_count_decrease() {
+        // Seed cache with game_count=5. Factory now has only 1 game (reorg).
+        let (factory, output_roots) = game_chain(1);
 
         let mut cache = Some(CachedRecovery {
-            game_map: CachedGameMap { scanned_up_to: 5, map: HashMap::new() },
-            walk: Some(CachedWalk {
-                anchor_root: B256::ZERO,
-                state: RecoveredState {
-                    parent_address: proxy_addr(99),
-                    output_root: B256::repeat_byte(0xDD),
-                    l2_block_number: 5 * TEST_BLOCK_INTERVAL,
-                },
-            }),
+            game_count: 5,
+            anchor_root: B256::ZERO,
+            state: RecoveredState {
+                parent_address: proxy_addr(99),
+                output_root: B256::repeat_byte(0xDD),
+                l2_block_number: 5 * TEST_BLOCK_INTERVAL,
+            },
         });
 
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
-
+        let pipeline = recovery_pipeline(factory, output_roots);
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
 
         assert_eq!(state.parent_address, proxy_addr(0), "reorg: should find the 1 remaining game");
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(
-            cache.as_ref().unwrap().game_map.scanned_up_to,
-            1,
-            "reorg: cache should reflect new count"
-        );
+        assert_eq!(cache.as_ref().unwrap().game_count, 1, "reorg: cache should reflect new count");
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_incremental_filters_non_matching_types() {
-        // Cache has 1 game. Factory now has 3 entries total, but the 2 new
-        // entries have a different game_type. The incremental scan should
-        // filter them out and the walk result should remain at the first game.
-        let (games_1, info_map_1, output_roots) = game_chain(1);
-        let first_info = info_map_1[&proxy_addr(0)];
+    async fn test_recovery_cache_invalidated_by_anchor_root_change() {
+        let (factory, output_roots) = game_chain(1);
 
-        // Build factory with 3 entries: index 0 is our type, 1-2 are other types.
-        let factory_games = vec![
-            games_1[0],
-            GameAtIndex { game_type: 99, timestamp: 2, proxy: proxy_addr(1) },
-            GameAtIndex { game_type: 100, timestamp: 3, proxy: proxy_addr(2) },
-        ];
-
-        let cached_map = HashMap::from([(
-            TEST_BLOCK_INTERVAL,
-            vec![ScannedGame { proxy: proxy_addr(0), info: first_info }],
-        )]);
-
+        // Seed cache with same game_count but a DIFFERENT anchor root.
         let mut cache = Some(CachedRecovery {
-            game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            walk: Some(CachedWalk {
-                anchor_root: B256::ZERO,
-                state: RecoveredState {
-                    parent_address: proxy_addr(0),
-                    output_root: first_info.root_claim,
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                },
-            }),
+            game_count: 1,
+            anchor_root: B256::repeat_byte(0xAA), // different from test_anchor_root
+            state: RecoveredState {
+                parent_address: proxy_addr(99), // stale — will be recomputed
+                output_root: B256::repeat_byte(0xDD),
+                l2_block_number: 9999,
+            },
         });
 
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(factory_games),
-            MockAggregateVerifier::with_game_info(info_map_1),
-            output_roots,
-        );
-
+        let pipeline = recovery_pipeline(factory, output_roots);
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
 
-        // Walk should still stop at the first game since no new matching games.
+        // Anchor root changed → cache invalidated, fresh walk.
         assert_eq!(state.parent_address, proxy_addr(0));
         assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(
-            cache.as_ref().unwrap().game_map.scanned_up_to,
-            3,
-            "scanned_up_to should advance even when no matching games found"
-        );
+        assert_eq!(cache.as_ref().unwrap().anchor_root, B256::ZERO);
     }
 
+    // ---- Recovery: intermediate roots with multiple checkpoints ----
+
+    /// Block intervals for recovery tests with multiple intermediate roots.
+    const RECOVERY_BI: u64 = 4;
+    const RECOVERY_IBI: u64 = 2;
+
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_incremental_multiple_new_entries() {
-        // Cache has 1 game. Factory now has 4 games total (3 new entries).
-        // The incremental scan picks up entries 1-3 and the walk finds all 4.
-        let (games, info_map, output_roots) = game_chain(4);
-        let first_info = info_map[&proxy_addr(0)];
+    async fn test_recovery_forward_walk_with_intermediate_roots() {
+        // block_interval = 4, intermediate_block_interval = 2
+        // → intermediate_count = 2 (roots at parent+2 and parent+4)
+        //
+        // Two games: block 4 (parent = anchor) and block 8 (parent = game 0).
+        // Both have correct UUID including intermediate roots. Walk should
+        // traverse both games.
+        let (factory, output_roots) =
+            game_chain_full(2, TEST_ANCHOR_BLOCK, RECOVERY_BI, RECOVERY_IBI);
 
-        let cached_map = HashMap::from([(
-            TEST_BLOCK_INTERVAL,
-            vec![ScannedGame { proxy: proxy_addr(0), info: first_info }],
-        )]);
-
-        let mut cache = Some(CachedRecovery {
-            game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            walk: Some(CachedWalk {
-                anchor_root: B256::ZERO,
-                state: RecoveredState {
-                    parent_address: proxy_addr(0),
-                    output_root: first_info.root_claim,
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                },
-            }),
-        });
-
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
+        let pipeline = recovery_pipeline_full(
+            factory,
             output_roots,
+            TEST_ANCHOR_BLOCK,
+            RECOVERY_BI,
+            RECOVERY_IBI,
         );
 
+        let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
 
-        assert_eq!(state.parent_address, proxy_addr(3), "should walk through all 4 games");
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL * 4);
-        assert_eq!(
-            cache.as_ref().unwrap().game_map.scanned_up_to,
-            4,
-            "cache should reflect all 4 entries scanned"
-        );
+        // Both games verified, walk should reach game 1.
+        assert_eq!(state.parent_address, proxy_addr(1));
+        assert_eq!(state.l2_block_number, RECOVERY_BI * 2);
     }
 
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_grows_across_sequential_ticks() {
-        // Simulate 3 sequential ticks where 1 game is added each tick.
-        // Tick 1: cold start, 1 game. Tick 2: +1 game. Tick 3: +1 game.
-        // The cache's game_map should grow incrementally across ticks.
-        let (all_games, all_info, all_roots) = game_chain(3);
-
-        // ---- Tick 1: 1 game exists ----
-        let pipeline_t1 = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(all_games[..1].to_vec()),
-            MockAggregateVerifier::with_game_info(all_info.clone()),
-            all_roots.clone(),
-        );
-        let mut cache: Option<CachedRecovery> = None;
-        let state1 = pipeline_t1.recover_latest_state(&mut cache).await.unwrap();
-        assert_eq!(state1.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(cache.as_ref().unwrap().game_map.scanned_up_to, 1);
-
-        // ---- Tick 2: 2 games exist ----
-        let pipeline_t2 = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(all_games[..2].to_vec()),
-            MockAggregateVerifier::with_game_info(all_info.clone()),
-            all_roots.clone(),
-        );
-        let state2 = pipeline_t2.recover_latest_state(&mut cache).await.unwrap();
-        assert_eq!(state2.l2_block_number, TEST_BLOCK_INTERVAL * 2);
-        assert_eq!(cache.as_ref().unwrap().game_map.scanned_up_to, 2);
-        assert_eq!(
-            cache.as_ref().unwrap().game_map.map.len(),
-            2,
-            "map should contain entries for 2 distinct block numbers"
-        );
-
-        // ---- Tick 3: 3 games exist ----
-        let pipeline_t3 = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(all_games),
-            MockAggregateVerifier::with_game_info(all_info),
-            all_roots,
-        );
-        let state3 = pipeline_t3.recover_latest_state(&mut cache).await.unwrap();
-        assert_eq!(state3.l2_block_number, TEST_BLOCK_INTERVAL * 3);
-        assert_eq!(state3.parent_address, proxy_addr(2));
-        assert_eq!(cache.as_ref().unwrap().game_map.scanned_up_to, 3);
-        assert_eq!(
-            cache.as_ref().unwrap().game_map.map.len(),
-            3,
-            "map should contain entries for 3 distinct block numbers"
-        );
-    }
+    // ---- State management tests ----
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_prune_stale_does_not_abort_inflight_submit() {
@@ -2334,347 +1737,17 @@ mod tests {
     async fn test_pipeline_state_reset_clears_cache() {
         let mut state = PipelineState::new();
         state.cached_recovery = Some(CachedRecovery {
-            game_map: CachedGameMap { scanned_up_to: 10, map: HashMap::new() },
-            walk: Some(CachedWalk {
-                anchor_root: B256::ZERO,
-                state: RecoveredState {
-                    parent_address: proxy_addr(5),
-                    output_root: B256::repeat_byte(0x11),
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                },
-            }),
+            game_count: 10,
+            anchor_root: B256::ZERO,
+            state: RecoveredState {
+                parent_address: proxy_addr(5),
+                output_root: B256::repeat_byte(0x11),
+                l2_block_number: TEST_BLOCK_INTERVAL,
+            },
         });
 
         state.reset();
         assert!(state.cached_recovery.is_none(), "reset() should clear cached_recovery");
-    }
-
-    // ---- Recovery: parent chain validation (C1) ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_rejects_game_with_wrong_parent() {
-        // Two games exist at blocks 512 and 1024, but the second game's
-        // parent_address does NOT point to the first game's proxy. The
-        // forward walk should stop after the first game.
-        let root_1 = B256::repeat_byte(0x01);
-        let root_2 = B256::repeat_byte(0x02);
-
-        let games = vec![game_entry(TEST_GAME_TYPE, 0), game_entry(TEST_GAME_TYPE, 1)];
-
-        let info_map = HashMap::from([
-            (
-                proxy_addr(0),
-                GameInfo {
-                    root_claim: root_1,
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                    parent_address: Address::ZERO, // correct: points to anchor
-                },
-            ),
-            (
-                proxy_addr(1),
-                GameInfo {
-                    root_claim: root_2,
-                    l2_block_number: TEST_BLOCK_INTERVAL * 2,
-                    // WRONG parent: points to some unrelated address
-                    parent_address: Address::repeat_byte(0xFF),
-                },
-            ),
-        ]);
-
-        let output_roots =
-            HashMap::from([(TEST_BLOCK_INTERVAL, root_1), (TEST_BLOCK_INTERVAL * 2, root_2)]);
-
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Should stop at first game because the second has wrong parent.
-        assert_eq!(state.parent_address, proxy_addr(0));
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-        assert_eq!(state.output_root, root_1);
-    }
-
-    // ---- Recovery: duplicate block number handling (C2) ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_selects_correct_game_among_duplicates() {
-        // Two games exist at the same block number (512), but only one has
-        // the correct parent_address. The walk should select the right one.
-        let root_1 = B256::repeat_byte(0x01);
-
-        let wrong_proxy = Address::repeat_byte(0xAA);
-        let correct_proxy = proxy_addr(1);
-
-        let games = vec![
-            game_entry(TEST_GAME_TYPE, 0), // proxy_addr(0) — wrong parent
-            game_entry(TEST_GAME_TYPE, 1), // proxy_addr(1) — correct parent
-        ];
-
-        let info_map = HashMap::from([
-            (
-                proxy_addr(0),
-                GameInfo {
-                    root_claim: root_1,
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                    parent_address: wrong_proxy, // wrong parent
-                },
-            ),
-            (
-                correct_proxy,
-                GameInfo {
-                    root_claim: root_1,
-                    l2_block_number: TEST_BLOCK_INTERVAL,
-                    parent_address: Address::ZERO, // correct: points to anchor
-                },
-            ),
-        ]);
-
-        let output_roots = HashMap::from([(TEST_BLOCK_INTERVAL, root_1)]);
-
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Should pick the game with the correct parent_address.
-        assert_eq!(state.parent_address, correct_proxy);
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-    }
-
-    // ---- Recovery: anchor root cache invalidation (H3) ----
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_cache_invalidated_by_anchor_root_change() {
-        let (games, info_map, output_roots) = game_chain(1);
-
-        // Extract the first game info BEFORE moving info_map into the mock.
-        let first_info = info_map[&proxy_addr(0)];
-
-        let pipeline = recovery_pipeline_with_roots(
-            MockDisputeGameFactory::with_games(games),
-            MockAggregateVerifier::with_game_info(info_map),
-            output_roots,
-        );
-
-        // Seed cache with same game_count and a populated game map, but a
-        // DIFFERENT anchor root. The map is reused (no factory RPCs) but the
-        // walk is re-executed from the new anchor.
-        let cached_map = HashMap::from([(
-            TEST_BLOCK_INTERVAL,
-            vec![ScannedGame { proxy: proxy_addr(0), info: first_info }],
-        )]);
-        let mut cache = Some(CachedRecovery {
-            game_map: CachedGameMap { scanned_up_to: 1, map: cached_map },
-            walk: Some(CachedWalk {
-                anchor_root: B256::repeat_byte(0xAA), // different from test_anchor_root
-                state: RecoveredState {
-                    parent_address: proxy_addr(99), // stale — will be recomputed
-                    output_root: B256::repeat_byte(0xDD),
-                    l2_block_number: 9999,
-                },
-            }),
-        });
-
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Even though game_count matches, the anchor root changed, so the
-        // cache should be invalidated and a fresh scan should be performed.
-        assert_eq!(state.parent_address, proxy_addr(0));
-        assert_eq!(state.l2_block_number, TEST_BLOCK_INTERVAL);
-        // Cache should be repopulated with the new anchor root.
-        assert_eq!(cache.as_ref().unwrap().walk.as_ref().unwrap().anchor_root, B256::ZERO);
-    }
-
-    // ---- Recovery: intermediate output root verification ----
-
-    /// Block intervals for recovery tests with multiple intermediate roots.
-    const RECOVERY_BI: u64 = 4;
-    const RECOVERY_IBI: u64 = 2;
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_forward_walk_verifies_intermediate_roots() {
-        // block_interval = 4, intermediate_block_interval = 2
-        // → intermediate_count = 2 (roots at parent+2 and parent+4)
-        //
-        // Two games: block 4 (parent = anchor) and block 8 (parent = game 0).
-        // Both have correct root_claim AND correct intermediate roots.
-        // Walk should traverse both games.
-        let root_1 = B256::repeat_byte(0x01);
-        let root_2 = B256::repeat_byte(0x02);
-        let intermediate_at_2 = B256::repeat_byte(0xA1);
-        let intermediate_at_6 = B256::repeat_byte(0xA2);
-
-        let games = vec![game_entry(TEST_GAME_TYPE, 0), game_entry(TEST_GAME_TYPE, 1)];
-
-        let info_map = HashMap::from([
-            (
-                proxy_addr(0),
-                GameInfo {
-                    root_claim: root_1,
-                    l2_block_number: RECOVERY_BI,
-                    parent_address: Address::ZERO,
-                },
-            ),
-            (
-                proxy_addr(1),
-                GameInfo {
-                    root_claim: root_2,
-                    l2_block_number: RECOVERY_BI * 2,
-                    parent_address: proxy_addr(0),
-                },
-            ),
-        ]);
-
-        // Canonical output roots for all intermediate + game blocks.
-        let output_roots = HashMap::from([
-            (2, intermediate_at_2),
-            (RECOVERY_BI, root_1),
-            (6, intermediate_at_6),
-            (RECOVERY_BI * 2, root_2),
-        ]);
-
-        let mut verifier = MockAggregateVerifier::with_game_info(info_map);
-        // Game 0: intermediate roots at blocks 2 and 4 (= root_claim)
-        verifier.intermediate_roots_map.insert(proxy_addr(0), vec![intermediate_at_2, root_1]);
-        // Game 1: intermediate roots at blocks 6 and 8 (= root_claim)
-        verifier.intermediate_roots_map.insert(proxy_addr(1), vec![intermediate_at_6, root_2]);
-
-        let pipeline = recovery_pipeline_full(
-            MockDisputeGameFactory::with_games(games),
-            verifier,
-            output_roots,
-            TEST_ANCHOR_BLOCK,
-            RECOVERY_BI,
-            RECOVERY_IBI,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Both games verified, walk should reach game 1.
-        assert_eq!(state.parent_address, proxy_addr(1));
-        assert_eq!(state.l2_block_number, RECOVERY_BI * 2);
-        assert_eq!(state.output_root, root_2);
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_forward_walk_stops_at_intermediate_root_mismatch() {
-        // block_interval = 4, intermediate_block_interval = 2
-        // → intermediate_count = 2 (roots at parent+2 and parent+4)
-        //
-        // Game 0 at block 4: correct root_claim AND correct intermediate roots.
-        // Game 1 at block 8: correct root_claim BUT wrong intermediate root at
-        // block 6. Walk should stop at game 0.
-        let root_1 = B256::repeat_byte(0x01);
-        let root_2 = B256::repeat_byte(0x02);
-        let intermediate_at_2 = B256::repeat_byte(0xA1);
-        let canonical_at_6 = B256::repeat_byte(0xA2);
-        let wrong_intermediate = B256::repeat_byte(0xFF);
-
-        let games = vec![game_entry(TEST_GAME_TYPE, 0), game_entry(TEST_GAME_TYPE, 1)];
-
-        let info_map = HashMap::from([
-            (
-                proxy_addr(0),
-                GameInfo {
-                    root_claim: root_1,
-                    l2_block_number: RECOVERY_BI,
-                    parent_address: Address::ZERO,
-                },
-            ),
-            (
-                proxy_addr(1),
-                GameInfo {
-                    root_claim: root_2,
-                    l2_block_number: RECOVERY_BI * 2,
-                    parent_address: proxy_addr(0),
-                },
-            ),
-        ]);
-
-        // Canonical output roots.
-        let output_roots = HashMap::from([
-            (2, intermediate_at_2),
-            (RECOVERY_BI, root_1),
-            (6, canonical_at_6),
-            (RECOVERY_BI * 2, root_2),
-        ]);
-
-        let mut verifier = MockAggregateVerifier::with_game_info(info_map);
-        // Game 0: correct intermediate roots.
-        verifier.intermediate_roots_map.insert(proxy_addr(0), vec![intermediate_at_2, root_1]);
-        // Game 1: WRONG intermediate root at index 0 (block 6).
-        verifier.intermediate_roots_map.insert(proxy_addr(1), vec![wrong_intermediate, root_2]);
-
-        let pipeline = recovery_pipeline_full(
-            MockDisputeGameFactory::with_games(games),
-            verifier,
-            output_roots,
-            TEST_ANCHOR_BLOCK,
-            RECOVERY_BI,
-            RECOVERY_IBI,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Walk should stop at game 0 because game 1 has wrong intermediate root.
-        assert_eq!(state.parent_address, proxy_addr(0));
-        assert_eq!(state.l2_block_number, RECOVERY_BI);
-        assert_eq!(state.output_root, root_1);
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_recovery_forward_walk_stops_at_wrong_intermediate_root_count() {
-        // block_interval = 4, intermediate_block_interval = 2
-        // → intermediate_count = 2
-        //
-        // Game at block 4 returns only 1 intermediate root instead of the
-        // expected 2. Walk should treat this as a gap.
-        let root_1 = B256::repeat_byte(0x01);
-        let intermediate_at_2 = B256::repeat_byte(0xA1);
-
-        let games = vec![game_entry(TEST_GAME_TYPE, 0)];
-
-        let info_map = HashMap::from([(
-            proxy_addr(0),
-            GameInfo {
-                root_claim: root_1,
-                l2_block_number: RECOVERY_BI,
-                parent_address: Address::ZERO,
-            },
-        )]);
-
-        let output_roots = HashMap::from([(2, intermediate_at_2), (RECOVERY_BI, root_1)]);
-
-        let mut verifier = MockAggregateVerifier::with_game_info(info_map);
-        // Only 1 intermediate root instead of expected 2.
-        verifier.intermediate_roots_map.insert(proxy_addr(0), vec![root_1]);
-
-        let pipeline = recovery_pipeline_full(
-            MockDisputeGameFactory::with_games(games),
-            verifier,
-            output_roots,
-            TEST_ANCHOR_BLOCK,
-            RECOVERY_BI,
-            RECOVERY_IBI,
-        );
-
-        let mut cache: Option<CachedRecovery> = None;
-        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
-
-        // Walk should not advance past anchor since game has wrong count.
-        assert_eq!(state.parent_address, Address::ZERO);
-        assert_eq!(state.l2_block_number, TEST_ANCHOR_BLOCK);
     }
 
     // ---- Intermediate output root validation (submission) tests ----
@@ -2686,7 +1759,6 @@ mod tests {
     fn submit_pipeline(output_roots: HashMap<u64, B256>) -> TestPipeline {
         recovery_pipeline_full(
             MockDisputeGameFactory::with_games(vec![]),
-            MockAggregateVerifier::default(),
             output_roots,
             TEST_ANCHOR_BLOCK,
             SUBMIT_BLOCK_INTERVAL,

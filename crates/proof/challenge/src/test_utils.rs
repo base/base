@@ -126,6 +126,15 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     async fn game_impls(&self, _game_type: u32) -> Result<Address, ContractError> {
         Ok(Address::repeat_byte(0x11))
     }
+
+    async fn games(
+        &self,
+        _game_type: u32,
+        _root_claim: B256,
+        _extra_data: Bytes,
+    ) -> Result<Address, ContractError> {
+        Ok(Address::ZERO)
+    }
 }
 
 /// Mock aggregate verifier with configurable per-address game state.
@@ -328,6 +337,15 @@ impl DisputeGameFactoryClient for ErrorOnIndexFactory {
 
     async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError> {
         self.inner.game_impls(game_type).await
+    }
+
+    async fn games(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+    ) -> Result<Address, ContractError> {
+        self.inner.games(game_type, root_claim, extra_data).await
     }
 }
 

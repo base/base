@@ -91,12 +91,18 @@ impl L2Provider for MockL2 {
 }
 
 /// Mock rollup node client for tests.
+///
+/// When `max_safe_block` is set, `output_at_block` returns an error for any
+/// block number exceeding the limit, simulating a rollup node that hasn't
+/// reached that safe head yet.
 #[derive(Debug)]
 pub struct MockRollupClient {
     /// The sync status returned by `sync_status()`.
     pub sync_status: SyncStatus,
     /// Map of block number to output root returned by `output_at_block()`.
     pub output_roots: HashMap<u64, B256>,
+    /// When set, blocks beyond this number return an error.
+    pub max_safe_block: Option<u64>,
 }
 
 #[async_trait]
@@ -108,6 +114,13 @@ impl RollupProvider for MockRollupClient {
         Ok(self.sync_status.clone())
     }
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        if let Some(max) = self.max_safe_block {
+            if block_number > max {
+                return Err(RpcError::BlockNotFound(format!(
+                    "mock: block {block_number} beyond safe head {max}"
+                )));
+            }
+        }
         let root = self
             .output_roots
             .get(&block_number)
@@ -132,18 +145,34 @@ impl AnchorStateRegistryClient for MockAnchorStateRegistry {
 }
 
 /// Mock dispute game factory contract client for tests.
+///
+/// `uuid_games` stores games keyed by `(game_type, root_claim, extra_data)` for
+/// the `games()` UUID-based lookup. When a key is not found, the lookup returns
+/// `Address::ZERO` (no game exists).
+///
+/// When `games_should_fail` is `true`, all `games()` calls return a
+/// `ContractError::Validation` to simulate RPC failures.
 #[derive(Debug)]
 pub struct MockDisputeGameFactory {
     /// The list of games returned by `game_at_index()`.
     pub games: Vec<GameAtIndex>,
     /// If set, overrides the game count returned by `game_count()`.
     pub game_count_override: Option<u64>,
+    /// UUID-keyed game proxy lookups for `games()`.
+    pub uuid_games: HashMap<(u32, B256, Bytes), Address>,
+    /// When true, all `games()` calls return an error.
+    pub games_should_fail: bool,
 }
 
 impl MockDisputeGameFactory {
     /// Creates a new mock with the given games and no count override.
     pub fn with_games(games: Vec<GameAtIndex>) -> Self {
-        Self { games, game_count_override: None }
+        Self {
+            games,
+            game_count_override: None,
+            uuid_games: HashMap::new(),
+            games_should_fail: false,
+        }
     }
 }
 
@@ -163,6 +192,18 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     }
     async fn game_impls(&self, _: u32) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
+    }
+    async fn games(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+    ) -> Result<Address, ContractError> {
+        if self.games_should_fail {
+            return Err(ContractError::Validation("mock: simulated games() RPC failure".into()));
+        }
+        let key = (game_type, root_claim, extra_data);
+        Ok(self.uuid_games.get(&key).copied().unwrap_or(Address::ZERO))
     }
 }
 

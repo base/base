@@ -16,8 +16,7 @@ pub use config::{ConfigError, ProposerConfig};
 
 mod constants;
 pub use constants::{
-    MAX_FACTORY_SCAN_LOOKBACK, MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, PROVER_TIMEOUT,
-    RECOVERY_SCAN_CONCURRENCY,
+    MAX_PROOF_RETRIES, PROPOSAL_TIMEOUT, PROVER_TIMEOUT, RECOVERY_SCAN_CONCURRENCY,
 };
 
 mod output_proposer;

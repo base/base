@@ -269,6 +269,7 @@ mod tests {
         let rollup = Arc::new(MockRollupClient {
             sync_status: test_sync_status(200, B256::ZERO),
             output_roots: HashMap::new(),
+            max_safe_block: None,
         });
         let anchor_registry =
             Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
