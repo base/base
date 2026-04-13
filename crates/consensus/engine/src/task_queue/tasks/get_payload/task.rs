@@ -1,5 +1,5 @@
 //! A task for fetching a sealed payload from the engine without inserting it.
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::{ExecutionPayload, PayloadId};
 use async_trait::async_trait;
@@ -138,6 +138,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for GetPayloadTask<EngineClient_
     type Error = SealTaskError;
 
     async fn execute(&self, state: &mut EngineState) -> Result<(), SealTaskError> {
+        let start = Instant::now();
+
         debug!(
             target: "engine",
             "Starting new get-payload job"
@@ -161,8 +163,19 @@ impl<EngineClient_: EngineClient> EngineTaskExt for GetPayloadTask<EngineClient_
             self.get_payload(&self.cfg, &self.engine, self.payload_id, &self.attributes).await
         };
 
-        self.send_channel_result_or_get_error(res).await?;
+        let result = self.send_channel_result_or_get_error(res).await;
 
-        Ok(())
+        let task_duration = start.elapsed();
+        Metrics::engine_get_payload_task_duration_seconds().record(task_duration.as_secs_f64());
+
+        info!(
+            target: "engine",
+            payload_id = %self.payload_id,
+            ?task_duration,
+            success = result.is_ok(),
+            "Completed get-payload task"
+        );
+
+        result
     }
 }
