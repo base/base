@@ -7,11 +7,11 @@ TEE-based output proposer for Base.
 
 ## Overview
 
-- **Output Proposer**: L1 transaction submission via `OutputProposer` (local and remote signing modes). Shared contract bindings (dispute game factory, anchor state registry, aggregate verifier) are provided by [`base-proof-contracts`](../contracts/).
-- **RPC**: Async clients for L1, L2, and rollup node communication with caching.
-- **Enclave**: TEE enclave client for stateless block validation and proof aggregation.
-- **Prover**: Core prover for generating TEE-signed proposals.
-- **Driver**: Coordination loop for proposal generation and submission.
+- **Service**: Top-level orchestrator that initializes RPC clients, contract clients, the proving pipeline, transaction management, balance monitoring, health checks, and the admin server.
+- **Pipeline**: Core proving pipeline that recovers on-chain state, generates proofs via an external prover server, and coordinates proposal submission.
+- **Output Proposer**: L1 transaction submission via `OutputProposer` (local and dry-run modes). Shared contract bindings (dispute game factory, anchor state registry, aggregate verifier) are provided by [`base-proof-contracts`](../contracts/).
+- **Driver**: Coordination loop that owns the pipeline tick and manages start/stop lifecycle.
+- **Admin**: JSON-RPC server for runtime control (`start_proposer`, `stop_proposer`, `is_running`).
 - **Metrics**: Prometheus metric definitions and recording.
 - **CLI**: Command-line argument parsing and configuration validation.
 
@@ -46,7 +46,7 @@ Each dispute game references a parent game via `parentIndex` in the factory. The
 
 ```mermaid
 flowchart TD
-    A[step] --> B["recover_latest_game() from factory"]
+    A[tick] --> B["recover_latest_state() from factory"]
     B --> C{Found game?}
     C -->|Yes| D[Use as parent]
     C -->|No| E["Use AnchorStateRegistry"]
@@ -59,7 +59,7 @@ flowchart TD
     H -->|Other error| J[Log, next tick retries]
 ```
 
-`recover_latest_game()` walks backwards through the `DisputeGameFactory` (up to `--max-game-recovery-lookback` entries, default 5000) to find the most recent game matching the configured `game_type`. Because state is always loaded from chain, the proposer naturally chains off games created by any proposer, handles `GameAlreadyExists` without special recovery logic, and cannot enter stale-state livelocks.
+`recover_latest_state()` walks backwards through the `DisputeGameFactory` (up to `MAX_FACTORY_SCAN_LOOKBACK` entries, default 5000) to find the most recent game matching the configured `game_type`. Because state is always loaded from chain, the proposer naturally chains off games created by any proposer, handles `GameAlreadyExists` without special recovery logic, and cannot enter stale-state livelocks.
 
 #### Data Sources
 
@@ -71,15 +71,6 @@ flowchart TD
 | L1 data | L1 RPC | L1 origin headers, receipts, blockhash verification |
 | Anchor state | L1 contracts | `AnchorStateRegistry` for starting root when no parent game exists |
 | Game discovery | L1 contracts | `DisputeGameFactory` for finding existing games to chain off |
-
-## Usage
-
-Add the dependency to your `Cargo.toml`:
-
-```toml
-[dependencies]
-base-proposer = { workspace = true }
-```
 
 ## License
 
