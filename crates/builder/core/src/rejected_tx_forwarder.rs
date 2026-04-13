@@ -1,10 +1,11 @@
 //! Rejected transaction forwarder.
 //!
 //! Forwards rejected transactions from the builder to the audit-archiver
-//! service via the `base_persistRejectedTransaction` RPC method.
+//! service via the `base_persistRejectedTransactionBatch` RPC method.
 
 use core::time::Duration;
 
+use base_bundles::RejectedTransaction;
 use jsonrpsee::{
     core::client::ClientT,
     http_client::{HttpClient, HttpClientBuilder},
@@ -12,23 +13,21 @@ use jsonrpsee::{
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use base_bundles::RejectedTransaction;
-
 /// Forwards rejected transactions to the audit-archiver via RPC.
 ///
-/// Runs as a background task, reading from an unbounded channel and making
+/// Runs as a background task, reading from a bounded channel and making
 /// fire-and-forget RPC calls to the audit-archiver service.
 #[derive(Debug)]
 pub struct RejectedTxForwarder {
     client: HttpClient,
-        rx: mpsc::UnboundedReceiver<RejectedTransaction>,
+    rx: mpsc::Receiver<RejectedTransaction>,
 }
 
 impl RejectedTxForwarder {
     /// Creates a new `RejectedTxForwarder`.
     pub fn new(
         audit_archiver_url: &str,
-    rx: mpsc::UnboundedReceiver<RejectedTransaction>,
+        rx: mpsc::Receiver<RejectedTransaction>,
     ) -> eyre::Result<Self> {
         let client = HttpClientBuilder::default()
             .request_timeout(Duration::from_secs(1))
@@ -44,7 +43,7 @@ impl RejectedTxForwarder {
         while let Some(rejected_tx) = self.rx.recv().await {
             match self
                 .client
-                .request::<bool, _>("base_persistRejectedTransaction", vec![&rejected_tx])
+                .request::<bool, _>("base_persistRejectedTransactionBatch", vec![&rejected_tx])
                 .await
             {
                 Ok(_) => {

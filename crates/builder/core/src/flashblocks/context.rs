@@ -296,7 +296,7 @@ pub struct BasePayloadBuilderCtx {
     /// Builder configuration containing limits and metering settings.
     pub builder_config: BuilderConfig,
     /// Sender for forwarding rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::UnboundedSender<RejectedTransaction>>,
+    pub rejected_tx_sender: Option<mpsc::Sender<RejectedTransaction>>,
 }
 
 impl BasePayloadBuilderCtx {
@@ -480,13 +480,13 @@ impl BasePayloadBuilderCtx {
         if let Some(sender) = &self.rejected_tx_sender {
             let rejected_txs = std::mem::take(&mut info.rejected_txs);
             for tx in rejected_txs {
-                if sender.send(tx).is_err() {
+                if let Err(e) = sender.try_send(tx) {
                     BuilderMetrics::rejected_tx_channel_drops().increment(1);
                     warn!(
                         target: "payload_builder",
-                        "Rejected tx channel closed, dropping remaining entries"
+                        error = %e,
+                        "Rejected tx channel full or closed, dropping entry"
                     );
-                    break;
                 }
             }
         }
@@ -820,6 +820,7 @@ impl BasePayloadBuilderCtx {
                             limit_us,
                         ) = limit_err
                         {
+                            // Only record per-tx execution time limits for the audit trail for now
                             self.record_rejected_tx(
                                 info,
                                 tx_hash,

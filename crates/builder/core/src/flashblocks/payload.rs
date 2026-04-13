@@ -14,6 +14,7 @@ use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
 use base_builder_publish::WebSocketPublisher;
+use base_bundles::RejectedTransaction;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
@@ -46,8 +47,6 @@ use serde_with::skip_serializing_none;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
-
-use base_bundles::RejectedTransaction;
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, PayloadBuilder, ResourceLimits,
@@ -104,7 +103,7 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     /// System configuration for the builder
     pub config: BuilderConfig,
     /// Sender for forwarding rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::UnboundedSender<RejectedTransaction>>,
+    pub rejected_tx_sender: Option<mpsc::Sender<RejectedTransaction>>,
 }
 
 impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
@@ -116,7 +115,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         config: BuilderConfig,
         payload_tx: mpsc::Sender<BaseBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
-        rejected_tx_sender: Option<mpsc::UnboundedSender<RejectedTransaction>>,
+        rejected_tx_sender: Option<mpsc::Sender<RejectedTransaction>>,
     ) -> Self {
         Self { evm_config, pool, client, payload_tx, ws_pub, config, rejected_tx_sender }
     }

@@ -7,7 +7,7 @@ use crate::MeterBundleResponse;
 
 /// Reason why a transaction was rejected during block building.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum RejectionReason {
     /// Transaction's predicted execution time exceeded its per-tx limit.
     ExecutionTimeExceeded {

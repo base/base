@@ -45,7 +45,7 @@ impl FlashblocksServiceBuilder {
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
 
         let rejected_tx_sender = if let Some(ref url) = self.0.audit_archiver_url {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, rx) = tokio::sync::mpsc::channel(self.0.rejected_tx_channel_size);
             let forwarder = RejectedTxForwarder::new(url, rx)
                 .map_err(|e| eyre::eyre!("Failed to create rejected tx forwarder: {e}"))?;
             ctx.task_executor().spawn_task(Box::pin(forwarder.run()));
