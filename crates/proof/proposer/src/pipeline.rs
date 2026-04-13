@@ -694,6 +694,8 @@ where
         let anchor_state_registry_address = self.config.driver.anchor_state_registry_address;
         let game_type = self.config.driver.game_type;
 
+        let log_interval = (block_interval / 5).max(1);
+
         let mut parent_address = anchor_state_registry_address;
         let mut parent_output_root = anchor.root;
         let mut parent_block = anchor.l2_block_number;
@@ -775,7 +777,7 @@ where
             parent_block = expected_block;
             steps += 1;
 
-            if steps.is_multiple_of(100) {
+            if steps.is_multiple_of(log_interval) {
                 info!(
                     games_verified = steps,
                     latest_block = parent_block,
