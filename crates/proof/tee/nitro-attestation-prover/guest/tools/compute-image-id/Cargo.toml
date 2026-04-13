@@ -1,0 +1,11 @@
+[workspace]
+
+[package]
+name = "compute-image-id"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+risc0-binfmt = "=3.0.4"
+risc0-zkos-v1compat = "=2.2.2"

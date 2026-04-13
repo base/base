@@ -1,3 +1,6 @@
+# Guest binary name (hyphens become underscores in the compiled binary)
+guest := "base-proof-tee-nitro-verifier-guest"
+
 # Default recipe to display help information
 default:
     @just --list
@@ -5,9 +8,24 @@ default:
 # Build the guest ELF with the risc0 toolchain
 build:
     cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf --ignore-rust-version
-    @echo "ELF built at: target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest"
-    @ls -lh target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest
+    @echo "ELF built at: target/riscv32im-risc0-zkvm-elf/release/{{ guest }}"
+    @ls -lh target/riscv32im-risc0-zkvm-elf/release/{{ guest }}
+
+# Bundle the raw ELF into R0BF format and compute the image ID.
+# Outputs the bundled file and prints the image ID to use for
+# --image-id and the on-chain contract.
+bundle: build
+    @echo "Bundling ELF into R0BF format and computing image ID..."
+    RISC0_SKIP_BUILD_KERNELS=1 cargo run \
+        --manifest-path tools/compute-image-id/Cargo.toml -- \
+        target/riscv32im-risc0-zkvm-elf/release/{{ guest }} \
+        --output target/{{ guest }}.r0bf
 
 # Install the risc0 toolchain via rzup
 install-toolchain:
     rzup install
+
+# Clean build artifacts
+clean:
+    cargo clean
+    rm -rf tools/compute-image-id/target/
