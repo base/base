@@ -27,7 +27,6 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 base-common-chains.workspace = true
-base-consensus-genesis.workspace = true
 base-common-evm = { workspace = true, features = ["std", "reth"] }
 base-common-consensus = { workspace = true, features = ["evm", "reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }
@@ -58,7 +57,6 @@ std = [
 	"base-common-consensus/std",
 	"base-common-evm/std",
 	"base-common-rpc-types-engine/std",
-	"base-consensus-genesis/std",
 	"base-execution-chainspec/std",
 	"base-execution-consensus/std",
 	"reth-chainspec/std",
