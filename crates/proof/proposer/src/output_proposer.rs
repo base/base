@@ -1,6 +1,6 @@
 //! `OutputProposer` trait and `ProposalSubmitter` implementation for L1 transaction submission.
 //!
-//! Submits output proposals by creating new dispute games via `DisputeGameFactory.create()`.
+//! Submits output proposals by creating new dispute games via `DisputeGameFactory.createWithInitData()`.
 //! Delegates all transaction lifecycle management (nonce, fees, signing, resubmission)
 //! to the shared [`TxManager`].
 
