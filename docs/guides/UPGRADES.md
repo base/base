@@ -280,7 +280,7 @@ Skip this section if the upgrade only affects protocol-level behavior (batch dec
 
 ### 9. Add the `OpSpecId` variant
 
-**File:** [`crates/execution/revm/src/spec.rs`](https://github.com/base/base/blob/main/crates/execution/revm/src/spec.rs)
+**File:** [`crates/common/evm/src/spec.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/spec.rs)
 
 ```rust
 pub enum OpSpecId {
@@ -314,7 +314,7 @@ OpSpecId::BASE_V1 => name::BASE_V1,
 
 ### 10. Route precompiles
 
-**File:** [`crates/execution/revm/src/precompiles.rs`](https://github.com/base/base/blob/main/crates/execution/revm/src/precompiles.rs)
+**File:** [`crates/common/evm/src/precompiles.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/precompiles.rs)
 
 If the upgrade introduces new precompiles, add a new `pub fn base_v1()` method on `BasePrecompiles`. If it reuses the previous set, extend the existing arm in `new_with_spec`:
 
