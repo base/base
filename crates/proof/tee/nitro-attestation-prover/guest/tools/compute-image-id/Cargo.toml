@@ -12,3 +12,11 @@ publish = false
 # find the resolved risc0-binfmt and risc0-zkos-v1compat versions and update here.
 risc0-binfmt = "=3.0.4"
 risc0-zkos-v1compat = "=2.2.2"
+
+[lints.rust]
+missing-docs = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
