@@ -47,7 +47,7 @@ const DEFAULT_PRUNE_INTERVAL: Duration = Duration::from_secs(15);
 /// Default verification interval: disabled
 const DEFAULT_VERIFICATION_INTERVAL: u64 = 0; // disabled
 
-/// Builder for [`OpProofsExEx`].
+/// Builder for [`BaseProofsExEx`].
 #[derive(Debug)]
 pub struct BaseProofsExExBuilder<Node, Storage>
 where
@@ -93,9 +93,9 @@ where
         self
     }
 
-    /// Builds the [`OpProofsExEx`].
-    pub fn build(self) -> OpProofsExEx<Node, Storage> {
-        OpProofsExEx {
+    /// Builds the [`BaseProofsExEx`].
+    pub fn build(self) -> BaseProofsExEx<Node, Storage> {
+        BaseProofsExEx {
             ctx: self.ctx,
             storage: self.storage,
             proofs_history_window: self.proofs_history_window,
@@ -123,7 +123,7 @@ where
 /// use reth_node_api::NodeTypesWithDBAdapter;
 /// use reth_node_builder::{NodeBuilder, NodeConfig};
 /// use base_execution_chainspec::BASE_MAINNET;
-/// use base_execution_exex::OpProofsExEx;
+/// use base_execution_exex::BaseProofsExEx;
 /// use base_node_core::{OpNode, args::RollupArgs};
 /// use base_execution_trie::{InMemoryProofsStorage, OpProofsStorage, db::MdbxProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
@@ -160,7 +160,7 @@ where
 ///     .with_types_and_provider::<OpNode, BlockchainProvider<NodeTypesWithDBAdapter<OpNode, _>>>()
 ///     .with_components(op_node.components())
 ///     .install_exex("proofs-history", move |exex_context| async move {
-///         Ok(OpProofsExEx::builder(exex_context, storage_exec)
+///         Ok(BaseProofsExEx::builder(exex_context, storage_exec)
 ///             .with_proofs_history_window(proofs_history_window)
 ///             .with_proofs_history_prune_interval(proofs_history_prune_interval)
 ///             .with_verification_interval(verification_interval)
@@ -172,7 +172,7 @@ where
 ///     .check_launch();
 /// ```
 #[derive(Debug)]
-pub struct OpProofsExEx<Node, Storage>
+pub struct BaseProofsExEx<Node, Storage>
 where
     Node: FullNodeComponents,
 {
@@ -192,16 +192,16 @@ where
     verification_interval: u64,
 }
 
-impl<Node, Storage> OpProofsExEx<Node, Storage>
+impl<Node, Storage> BaseProofsExEx<Node, Storage>
 where
     Node: FullNodeComponents,
 {
-    /// Create a new `OpProofsExEx` instance.
+    /// Create a new `BaseProofsExEx` instance.
     pub fn new(ctx: ExExContext<Node>, storage: OpProofsStorage<Storage>) -> Self {
         BaseProofsExExBuilder::new(ctx, storage).build()
     }
 
-    /// Create a new builder for `OpProofsExEx`.
+    /// Create a new builder for `BaseProofsExEx`.
     pub const fn builder(
         ctx: ExExContext<Node>,
         storage: OpProofsStorage<Storage>,
@@ -210,7 +210,7 @@ where
     }
 }
 
-impl<Node, Storage, Primitives> OpProofsExEx<Node, Storage>
+impl<Node, Storage, Primitives> BaseProofsExEx<Node, Storage>
 where
     Node: FullNodeComponents<Types: NodeTypes<Primitives = Primitives>>,
     Primitives: NodePrimitives,
@@ -745,12 +745,12 @@ mod tests {
     fn build_test_exex<NodeT, Store>(
         ctx: ExExContext<NodeT>,
         storage: OpProofsStorage<Store>,
-    ) -> OpProofsExEx<NodeT, Store>
+    ) -> BaseProofsExEx<NodeT, Store>
     where
         NodeT: FullNodeComponents,
         Store: OpProofsStore + Clone + 'static,
     {
-        OpProofsExEx::builder(ctx, storage)
+        BaseProofsExEx::builder(ctx, storage)
             .with_proofs_history_window(20)
             .with_proofs_history_prune_interval(Duration::from_secs(3600))
             .with_verification_interval(1000)
