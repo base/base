@@ -9,6 +9,8 @@ mod cli;
 
 #[tokio::main]
 async fn main() {
+    base_cli_utils::init_common!();
+
     if let Err(err) = cli::Cli::parse().run().await {
         eprintln!("Error: {err:?}");
         std::process::exit(1);

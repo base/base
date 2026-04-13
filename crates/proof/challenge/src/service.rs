@@ -35,41 +35,31 @@ impl ChallengerService {
     ///
     /// # Lifecycle
     ///
-    /// 1. Initialise logging, TLS, and metrics
-    /// 2. Create L1 provider, tx-manager, and challenge submitter
-    /// 3. Create contract clients and read onchain config
-    /// 4. Create L2 and ZK clients
-    /// 5. Assemble scanner, validator, and driver
-    /// 6. Start health HTTP server
-    /// 7. Start driver loop
-    /// 8. Wait for shutdown signal
-    /// 9. Graceful shutdown
+    /// 1. Install TLS provider
+    /// 2. Create the cancellation token and signal handler
+    /// 3. Create L1 provider, tx-manager, and challenge submitter
+    /// 4. Create contract clients and read onchain config
+    /// 5. Create L2 and ZK clients
+    /// 6. Assemble scanner, validator, and driver
+    /// 7. Start health HTTP server
+    /// 8. Start driver loop
+    /// 9. Wait for shutdown signal
+    /// 10. Graceful shutdown
     ///
     /// # Errors
     ///
-    /// Returns an error if tracing initialisation fails, the Prometheus
-    /// recorder cannot be installed, RPC clients cannot connect, or
-    /// onchain configuration is invalid.
+    /// Returns an error if RPC clients cannot connect or onchain
+    /// configuration is invalid.
     pub async fn run(config: ChallengerConfig) -> Result<()> {
-        config.log.init_tracing_subscriber()?;
-
+        // ── 1. Install TLS provider ──────────────────────────────────────────
         // Install the default rustls CryptoProvider before any TLS connections are created.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         info!(version = env!("CARGO_PKG_VERSION"), "Challenger starting");
 
-        // ── 1. Cancellation token and signal handler ─────────────────────────
+        // ── 2. Cancellation token and signal handler ─────────────────────────
         let cancel = CancellationToken::new();
         let signal_handle = RuntimeManager::install_signal_handler(cancel.clone());
-
-        // ── 2. Metrics recorder (if enabled) ─────────────────────────────────
-        config
-            .metrics
-            .init_with(|| {
-                base_cli_utils::register_version_metrics!();
-                ChallengerMetrics::up().set(1.0);
-            })
-            .map_err(|e| eyre::eyre!("failed to install Prometheus recorder: {e}"))?;
 
         // ── 3. Construct tx-manager and challenge submitter ──────────────────
         let signer_config = config.signing;

@@ -8,7 +8,7 @@ CLI utilities for Base binaries.
 ## Overview
 
 - **`parse_cli!`**: Parses CLI arguments with package version/description from Cargo.toml.
-- **`register_version_metrics!`**: Registers `base_info{version="..."}` Prometheus metric.
+- **`register_version_metrics!`**: Registers `base_info{version="...",binary="..."}` Prometheus metric.
 - **`define_log_args!`**: Generates a `LogArgs` struct with env-var-prefixed logging flags.
 - **`define_metrics_args!`**: Generates a `MetricsArgs` struct with env-var-prefixed Prometheus flags.
 - **`RuntimeManager`**: Tokio runtime creation and OS signal handling (SIGINT + SIGTERM) with `CancellationToken`-based cooperative shutdown.
