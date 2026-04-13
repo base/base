@@ -9,6 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
+exclude = ["bin/prover"]
 members = [
   "bin/*",
   "bin/prover/nitro-host",
