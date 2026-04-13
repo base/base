@@ -41,7 +41,6 @@ jsonrpsee.workspace = true
 
 # base-alloy
 base-common-consensus.workspace = true
-base-consensus-genesis.workspace = true
 
 # DA calculation
 base-common-flz.workspace = true

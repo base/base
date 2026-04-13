@@ -4221,7 +4221,6 @@ dependencies = [
  "base-common-flashblocks",
  "base-common-flz",
  "base-common-rpc-types",
- "base-consensus-genesis",
  "base-execution-chainspec",
  "base-execution-evm",
  "base-flashblocks",
