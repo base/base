@@ -12,28 +12,30 @@
 
 use alloy_rlp::{Decodable, Encodable};
 
-/// The single batch type identifier.
-pub const SINGLE_BATCH_TYPE: u8 = 0x00;
-
-/// The span batch type identifier.
-pub const SPAN_BATCH_TYPE: u8 = 0x01;
-
 /// The Batch Type.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BatchType {
     /// Single Batch.
     #[default]
-    Single = SINGLE_BATCH_TYPE,
+    Single = Self::SINGLE,
     /// Span Batch.
-    Span = SPAN_BATCH_TYPE,
+    Span = Self::SPAN,
+}
+
+impl BatchType {
+    /// The single batch type identifier.
+    pub const SINGLE: u8 = 0x00;
+
+    /// The span batch type identifier.
+    pub const SPAN: u8 = 0x01;
 }
 
 impl From<u8> for BatchType {
     fn from(val: u8) -> Self {
         match val {
-            SINGLE_BATCH_TYPE => Self::Single,
-            SPAN_BATCH_TYPE => Self::Span,
+            Self::SINGLE => Self::Single,
+            Self::SPAN => Self::Span,
             _ => panic!("Invalid batch type: {val}"),
         }
     }
@@ -42,8 +44,8 @@ impl From<u8> for BatchType {
 impl Encodable for BatchType {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
         let val = match self {
-            Self::Single => SINGLE_BATCH_TYPE,
-            Self::Span => SPAN_BATCH_TYPE,
+            Self::Single => Self::SINGLE,
+            Self::Span => Self::SPAN,
         };
         val.encode(out);
     }

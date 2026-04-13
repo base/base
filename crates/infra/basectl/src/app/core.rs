@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Stdout, sync::atomic::Ordering, time::Duration};
+use std::{collections::HashMap, fmt, io::Stdout, sync::atomic::Ordering, time::Duration};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 
 use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
 use crate::{
-    commands::common::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
+    commands::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
     config::ChainConfig,
     tui::{AppFrame, Toast, restore_terminal, setup_terminal},
 };
@@ -38,7 +38,7 @@ impl NetworkPicker {
 // ---------------------------------------------------------------------------
 
 /// Main TUI application that manages views, routing, and the event loop.
-pub(crate) struct App {
+pub struct App {
     router: Router,
     resources: Resources,
     show_help: bool,
@@ -49,9 +49,22 @@ pub(crate) struct App {
     pending_network: Option<oneshot::Receiver<anyhow::Result<ChainConfig>>>,
 }
 
+impl fmt::Debug for App {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("App")
+            .field("router", &self.router)
+            .field("resources", &self.resources)
+            .field("show_help", &self.show_help)
+            .field("view_cache", &format_args!("({} views)", self.view_cache.len()))
+            .field("network_picker", &self.network_picker.as_ref().map(|_| ".."))
+            .field("pending_network", &self.pending_network.is_some())
+            .finish()
+    }
+}
+
 impl App {
     /// Creates a new application with the given resources and initial view.
-    pub(crate) fn new(resources: Resources, initial_view: ViewId) -> Self {
+    pub fn new(resources: Resources, initial_view: ViewId) -> Self {
         Self {
             router: Router::new(initial_view),
             resources,
@@ -63,7 +76,7 @@ impl App {
     }
 
     /// Runs the application event loop using the given view factory.
-    pub(crate) async fn run<F>(mut self, mut view_factory: F) -> Result<()>
+    pub async fn run<F>(mut self, mut view_factory: F) -> Result<()>
     where
         F: FnMut(ViewId) -> Box<dyn View>,
     {

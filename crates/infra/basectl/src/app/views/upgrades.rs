@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base_alloy_chains::BaseChainConfig;
+use base_common_chains::BaseChainConfig;
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent};
 use jsonrpsee::{
@@ -24,7 +24,7 @@ use url::Url;
 
 use crate::{
     app::{Action, Resources, View},
-    commands::common::COLOR_BASE_BLUE,
+    commands::COLOR_BASE_BLUE,
     tui::Keybinding,
 };
 
@@ -337,7 +337,7 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 /// Network upgrade activation countdown and history view.
 #[derive(Debug)]
-pub(crate) struct UpgradesView {
+pub struct UpgradesView {
     chains: [ChainUpgrades; 4],
     selected_chain: usize,
     tick_count: u64,
@@ -352,7 +352,7 @@ impl Default for UpgradesView {
 
 impl UpgradesView {
     /// Creates a new upgrades view.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             chains: all_chains(),
             selected_chain: 0,

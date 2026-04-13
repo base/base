@@ -40,11 +40,11 @@ alloy-evm.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
-base-alloy-chains.workspace = true
+base-common-chains.workspace = true
 alloy-rpc-types-debug.workspace = true
 alloy-rpc-types-engine.workspace = true
-base-alloy-consensus = { workspace = true, features = ["reth"] }
-base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "reth"] }
 
 # misc
 sha2.workspace = true

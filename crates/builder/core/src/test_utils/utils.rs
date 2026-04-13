@@ -5,7 +5,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use alloy_sol_types::SolCall;
-use base_alloy_consensus::{BaseTypedTransaction, TxDeposit};
+use base_common_consensus::{BaseTypedTransaction, TxDeposit};
 use base_common_rpc_types::Transaction;
 use base_execution_chainspec::BaseChainSpec;
 use reth_db::{

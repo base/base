@@ -20,7 +20,7 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 
 # Base Alloy
-base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 
 # Alloy
 alloy-eips = { workspace = true, features = ["serde", "std"] }

@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-use base_alloy_rpc_jsonrpsee::MinerApiExtServer;
 use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
     config::{GasLimitConfig, OpDAConfig},
 };
 use base_execution_rpc::{
+    MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::OpEthApiBuilder,
     miner::OpMinerExtApi,

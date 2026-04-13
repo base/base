@@ -10,7 +10,9 @@ use alloy_eips::{
 use alloy_primitives::{B64, B256, Bytes, keccak256};
 use alloy_rlp::{Encodable, Result};
 use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
-use base_alloy_consensus::{BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_consensus::{
+    BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
+};
 use sha2::Digest;
 
 /// Payload Attributes

@@ -4,8 +4,8 @@
 //! transactions seamlessly, without requiring error handling at the call site.
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BaseReceipt, BaseTxEnvelope, BaseTxType, DepositReceipt};
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BaseTxType, DepositReceipt};
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
 
@@ -129,7 +129,7 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, TxKind, address};
-    use base_alloy_consensus::TxDeposit;
+    use base_common_consensus::TxDeposit;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
     use base_revm::OpHaltReason;

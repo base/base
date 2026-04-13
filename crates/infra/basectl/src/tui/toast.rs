@@ -12,7 +12,7 @@ const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 /// Toast severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ToastLevel {
+pub enum ToastLevel {
     /// Informational message.
     Info,
     /// Warning message.
@@ -37,7 +37,7 @@ impl ToastLevel {
 
 /// A toast notification message.
 #[derive(Debug, Clone)]
-pub(crate) struct Toast {
+pub struct Toast {
     /// Severity level of this toast.
     pub level: ToastLevel,
     /// Display message text.
@@ -48,17 +48,17 @@ pub(crate) struct Toast {
 
 impl Toast {
     /// Creates a new toast with the given level and message.
-    pub(crate) fn new(level: ToastLevel, message: impl Into<String>) -> Self {
+    pub fn new(level: ToastLevel, message: impl Into<String>) -> Self {
         Self { level, message: message.into(), created_at: Instant::now() }
     }
 
     /// Creates an informational toast.
-    pub(crate) fn info(message: impl Into<String>) -> Self {
+    pub fn info(message: impl Into<String>) -> Self {
         Self::new(ToastLevel::Info, message)
     }
 
     /// Creates a warning toast.
-    pub(crate) fn warning(message: impl Into<String>) -> Self {
+    pub fn warning(message: impl Into<String>) -> Self {
         Self::new(ToastLevel::Warning, message)
     }
 
@@ -69,7 +69,7 @@ impl Toast {
 
 /// State for managing toast notifications
 #[derive(Debug)]
-pub(crate) struct ToastState {
+pub struct ToastState {
     toasts: Vec<Toast>,
     rx: Option<mpsc::Receiver<Toast>>,
 }
@@ -82,17 +82,17 @@ impl Default for ToastState {
 
 impl ToastState {
     /// Creates a new empty toast state.
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self { toasts: Vec::new(), rx: None }
     }
 
     /// Sets the channel for receiving toast notifications from background tasks.
-    pub(crate) fn set_channel(&mut self, rx: mpsc::Receiver<Toast>) {
+    pub fn set_channel(&mut self, rx: mpsc::Receiver<Toast>) {
         self.rx = Some(rx);
     }
 
     /// Poll for new toasts and remove expired ones
-    pub(crate) fn poll(&mut self) {
+    pub fn poll(&mut self) {
         // Receive new toasts
         if let Some(ref mut rx) = self.rx {
             while let Ok(toast) = rx.try_recv() {
@@ -105,17 +105,17 @@ impl ToastState {
     }
 
     /// Pushes a toast notification directly.
-    pub(crate) fn push(&mut self, toast: Toast) {
+    pub fn push(&mut self, toast: Toast) {
         self.toasts.push(toast);
     }
 
     /// Returns the most recent active toast, if any.
-    pub(crate) fn current(&self) -> Option<&Toast> {
+    pub fn current(&self) -> Option<&Toast> {
         self.toasts.last()
     }
 
     /// Render toasts in the bottom-right corner of the given area
-    pub(crate) fn render(&self, frame: &mut Frame<'_>, area: Rect) {
+    pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         let Some(toast) = self.current() else {
             return;
         };

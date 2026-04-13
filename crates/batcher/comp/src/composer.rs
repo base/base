@@ -1,7 +1,7 @@
 //! Contains the [`BatchComposer`] type.
 
 use alloy_eips::eip2718::Encodable2718;
-use base_alloy_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_protocol::{L1BlockInfoTx, SingleBatch};
 
 /// Errors returned by [`BatchComposer::block_to_single_batch`].
@@ -82,7 +82,7 @@ mod tests {
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{B256, Bytes, Sealed, Signature};
-    use base_alloy_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
     use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 

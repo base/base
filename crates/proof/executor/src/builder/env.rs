@@ -4,7 +4,7 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
-use base_alloy_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_proof_mpt::TrieHinter;
 use base_revm::{OpSpecId, RollupConfigExt};

@@ -1,7 +1,7 @@
 //! Integration tests verifying that [`base_consensus_registry`] rollup configs agree with
-//! [`base_alloy_chains`] chain hardfork schedules for every [`BaseUpgrade`] variant.
+//! [`base_common_chains`] chain hardfork schedules for every [`BaseUpgrade`] variant.
 
-use base_alloy_chains::{BaseChainUpgrades, BaseUpgrade, BaseUpgrades};
+use base_common_chains::{BaseChainUpgrades, BaseUpgrade, BaseUpgrades};
 use base_consensus_registry::test_utils::{BASE_MAINNET_ROLLUP_CONFIG, BASE_SEPOLIA_ROLLUP_CONFIG};
 
 #[test]

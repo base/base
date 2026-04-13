@@ -10,7 +10,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{MAX_BUNDLE_ADVANCE_BLOCKS, unix_time_millis};
 use base_tx_forwarding::TxForwardingConfig;

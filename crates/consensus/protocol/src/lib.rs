@@ -14,15 +14,14 @@ mod batch;
 pub use batch::{
     Batch, BatchDecodingError, BatchDropReason, BatchEncodingError, BatchReader, BatchTransaction,
     BatchType, BatchValidationProvider, BatchValidity, BatchWithInclusionBlock, DecompressionError,
-    MAX_SPAN_BATCH_ELEMENTS, RawSpanBatch, SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE, SingleBatch,
-    SpanBatch, SpanBatchBits, SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
-    SpanBatchEip7702TransactionData, SpanBatchElement, SpanBatchError,
-    SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix, SpanBatchTransactionData,
-    SpanBatchTransactions, SpanDecodingError,
+    RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits, SpanBatchEip1559TransactionData,
+    SpanBatchEip2930TransactionData, SpanBatchEip7702TransactionData, SpanBatchElement,
+    SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix,
+    SpanBatchTransactionData, SpanBatchTransactions, SpanDecodingError,
 };
 
 mod brotli;
-pub use brotli::{BrotliDecompressionError, decompress_brotli};
+pub use brotli::{Brotli, BrotliDecompressionError};
 
 mod attributes;
 pub use attributes::AttributesWithParent;

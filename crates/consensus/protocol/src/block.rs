@@ -7,8 +7,8 @@ use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HA
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
-use base_alloy_consensus::{BaseBlock, BaseTxEnvelope};
-use base_alloy_rpc_types_engine::{
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError,
 };
 use base_consensus_genesis::ChainGenesis;
@@ -246,7 +246,7 @@ mod tests {
 
     use alloy_consensus::{Header, TxEnvelope};
     use alloy_primitives::b256;
-    use base_alloy_consensus::BaseBlock;
+    use base_common_consensus::BaseBlock;
 
     use super::*;
     use crate::test_utils::RAW_BEDROCK_INFO_TX;
@@ -287,8 +287,8 @@ mod tests {
         };
         let tx_env = alloy_rpc_types_eth::Transaction {
             inner: alloy_consensus::transaction::Recovered::new_unchecked(
-                base_alloy_consensus::BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
-                    base_alloy_consensus::TxDeposit {
+                base_common_consensus::BaseTxEnvelope::Deposit(alloy_primitives::Sealed::new(
+                    base_common_consensus::TxDeposit {
                         input: alloy_primitives::Bytes::from(&RAW_BEDROCK_INFO_TX),
                         ..Default::default()
                     },

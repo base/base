@@ -26,8 +26,8 @@ alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["k256", "getrandom"] }
 
 # Base Alloy
-base-alloy-consensus = { workspace = true, features = ["k256"] }
-base-alloy-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
+base-common-consensus = { workspace = true, features = ["k256"] }
+base-common-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
 
 # Networking
 snap.workspace = true
@@ -59,7 +59,7 @@ rand = { workspace = true, features = ["thread_rng"] }
 alloy-chains = { workspace = true, features = ["std"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
-base-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
+base-common-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "k256", "std"] }
 
 [features]

@@ -1,7 +1,7 @@
 //! Genesis types.
 
 use alloy_eips::eip1898::BlockNumHash;
-use base_alloy_chains::BaseChainConfig;
+use base_common_chains::BaseChainConfig;
 
 use crate::SystemConfig;
 

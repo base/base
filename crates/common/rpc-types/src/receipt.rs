@@ -3,7 +3,7 @@
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_rpc_types_eth::Log;
 use alloy_serde::OtherFields;
-use base_alloy_consensus::{
+use base_common_consensus::{
     BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
 };
 use serde::{Deserialize, Serialize};

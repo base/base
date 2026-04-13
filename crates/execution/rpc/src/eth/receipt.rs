@@ -5,9 +5,9 @@ use std::fmt::Debug;
 use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BaseReceipt, BaseTransaction};
-use base_alloy_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::{BaseReceipt, BaseTransaction};
+use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields};
 use base_execution_evm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
@@ -347,8 +347,8 @@ mod tests {
     use alloy_consensus::{Block, BlockBody, Eip658Value, TxEip7702, transaction::TransactionMeta};
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
-    use base_alloy_chains::BaseChainConfig;
-    use base_alloy_consensus::{BasePrimitives, BaseTransactionSigned, BaseTypedTransaction};
+    use base_common_chains::BaseChainConfig;
+    use base_common_consensus::{BasePrimitives, BaseTransactionSigned, BaseTypedTransaction};
     use base_execution_chainspec::BASE_MAINNET;
     use reth_primitives_traits::Recovered;
 

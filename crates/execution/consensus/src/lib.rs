@@ -16,8 +16,8 @@ use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, Header, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
 use alloy_primitives::B64;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::DepositReceiptExt;
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::DepositReceiptExt;
 use base_execution_chainspec::BaseChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
 use reth_consensus_common::validation::{
@@ -228,7 +228,7 @@ mod tests {
     use alloy_consensus::{BlockBody, Eip658Value, Header, Receipt, TxEip7702, TxReceipt};
     use alloy_eips::{eip4895::Withdrawals, eip7685::Requests};
     use alloy_primitives::{Address, Bytes, Log, Signature, U256};
-    use base_alloy_consensus::{
+    use base_common_consensus::{
         BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
         HoloceneExtraData, JovianExtraData,
     };

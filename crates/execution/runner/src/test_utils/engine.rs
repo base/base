@@ -8,7 +8,7 @@ use std::{fmt, marker::PhantomData, time::Duration};
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus};
-use base_alloy_rpc_types_engine::BaseExecutionPayloadV4;
+use base_common_rpc_types_engine::BaseExecutionPayloadV4;
 use base_execution_rpc::BaseEngineApiClient;
 use base_node_core::OpEngineTypes;
 use eyre::Result;

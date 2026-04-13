@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 # reth
 reth-storage-api = { workspace = true, features = ["db-api"] }
-base-alloy-consensus = { workspace = true, features = ["reth"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 
 # ethereum
 alloy-consensus.workspace = true
@@ -27,7 +27,7 @@ reth-codecs = { workspace = true, features = ["test-utils"] }
 default = [ "std" ]
 std = [
 	"alloy-consensus/std",
-	"base-alloy-consensus/std",
+	"base-common-consensus/std",
 	"reth-prune-types/std",
 	"reth-stages-types/std",
 	"reth-storage-api/std",

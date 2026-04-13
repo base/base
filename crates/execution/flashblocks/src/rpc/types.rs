@@ -100,7 +100,7 @@ mod tests {
         Address, B256, Bytes, Log as PrimitiveLog, LogData, Signature, TxKind, U256,
     };
     use alloy_rpc_types_eth::Log;
-    use base_alloy_consensus::BaseTxEnvelope;
+    use base_common_consensus::BaseTxEnvelope;
     use base_common_rpc_types::Transaction;
 
     use super::*;

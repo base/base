@@ -10,9 +10,9 @@ use alloy_evm::Database;
 use alloy_primitives::{B256, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BaseReceipt, BaseTransactionSigned, BaseTxType, DepositReceipt};
-use base_alloy_evm::BaseReceiptBuilder;
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned, BaseTxType, DepositReceipt};
+use base_common_evm::BaseReceiptBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::BasePayloadBuilderError};
@@ -545,7 +545,7 @@ impl OpPayloadBuilderCtx {
             info.cumulative_gas_used += gas_used;
 
             if !sequencer_tx.is_deposit() {
-                info.cumulative_da_bytes_used += base_alloy_flz::tx_estimated_size_fjord_bytes(
+                info.cumulative_da_bytes_used += base_common_flz::tx_estimated_size_fjord_bytes(
                     sequencer_tx.encoded_2718().as_slice(),
                 );
                 info.cumulative_uncompressed_bytes += sequencer_tx.encode_2718_len() as u64;

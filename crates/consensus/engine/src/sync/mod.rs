@@ -123,7 +123,7 @@ mod tests {
     use alloy_primitives::{B256, b256};
     use alloy_provider::Network;
     use alloy_rpc_types_eth::Block;
-    use base_alloy_network::Base;
+    use base_common_network::Base;
     use base_consensus_genesis::ChainGenesis;
     use base_protocol::L2BlockInfo;
 

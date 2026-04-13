@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::BaseBlock;
-use base_alloy_flashblocks::Flashblock;
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::BaseBlock;
+use base_common_flashblocks::Flashblock;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderFactory};

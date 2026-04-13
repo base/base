@@ -3,10 +3,10 @@
 use std::sync::{Arc, Mutex};
 
 use alloy_primitives::B256;
-use base_alloy_consensus::BaseBlock;
 use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, ReorgError, StepError, StepResult, SubmissionId,
 };
+use base_common_consensus::BaseBlock;
 
 /// Shared recording state populated by the test pipeline implementations.
 #[derive(Debug, Default)]

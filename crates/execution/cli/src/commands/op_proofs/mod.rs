@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_alloy_consensus::BasePrimitives;
+use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
 use reth_cli::chainspec::ChainSpecParser;

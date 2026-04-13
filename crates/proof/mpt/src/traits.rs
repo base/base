@@ -4,7 +4,7 @@
 use core::fmt::Display;
 
 use alloy_primitives::{Address, B256, U256};
-use base_alloy_rpc_types_engine::BasePayloadAttributes;
+use base_common_rpc_types_engine::BasePayloadAttributes;
 
 use crate::TrieNode;
 

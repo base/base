@@ -14,7 +14,7 @@ workspace = true
 
 [dependencies]
 # consensus
-base-alloy-chains.workspace = true
+base-common-chains.workspace = true
 
 # Alloy
 alloy-rlp = { workspace = true, features = ["std"] }

@@ -40,7 +40,7 @@ pub enum HandlerEncodeError {
     /// This error indicates issues with serializing the Base network payload
     /// structure, which contains the consensus data being gossiped.
     #[error("Failed to encode payload: {0}")]
-    PayloadEncodeError(#[from] base_alloy_rpc_types_engine::PayloadEnvelopeEncodeError),
+    PayloadEncodeError(#[from] base_common_rpc_types_engine::PayloadEnvelopeEncodeError),
 
     /// Attempted to publish to an unknown or unsubscribed topic.
     ///

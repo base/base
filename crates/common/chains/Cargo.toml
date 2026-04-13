@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-chains"
+name = "base-common-chains"
 description = "Chain configuration and network upgrade bindings"
 version.workspace = true
 edition.workspace = true

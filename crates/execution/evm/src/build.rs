@@ -7,9 +7,9 @@ use alloy_consensus::{
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutorFactory;
 use alloy_primitives::logs_bloom;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::DepositReceiptExt;
-use base_alloy_evm::BaseBlockExecutionCtx;
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::DepositReceiptExt;
+use base_common_evm::BaseBlockExecutionCtx;
 use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;

@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-evm"
+name = "base-common-evm"
 description = "EVM implementation"
 version.workspace = true
 edition.workspace = true
@@ -20,10 +20,10 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 
 # base
-base-alloy-flz.workspace = true
-base-alloy-chains.workspace = true
+base-common-flz.workspace = true
+base-common-chains.workspace = true
 base-revm = { workspace = true, features = ["alloy"] }
-base-alloy-consensus = { workspace = true, features = ["evm"] }
+base-common-consensus = { workspace = true, features = ["evm"] }
 
 # revm
 revm.workspace = true
@@ -43,10 +43,10 @@ std = [
 	"alloy-eips/std",
 	"alloy-evm/std",
 	"alloy-primitives/std",
-	"base-alloy-consensus/std",
-	"base-alloy-flz/std",
+	"base-common-consensus/std",
+	"base-common-flz/std",
 	"base-revm/std",
 	"revm/std",
 	"thiserror/std",
 ]
-reth = [ "base-alloy-consensus/reth", "base-revm/reth", "std" ]
+reth = [ "base-common-consensus/reth", "base-revm/reth", "std" ]

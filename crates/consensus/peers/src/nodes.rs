@@ -1,6 +1,6 @@
 //! Bootnodes for consensus network discovery.
 
-use base_alloy_chains::BaseChainConfig;
+use base_common_chains::BaseChainConfig;
 use derive_more::Deref;
 
 use crate::{BootNode, BootNodeParseError};
@@ -55,7 +55,7 @@ impl BootNodes {
 
 #[cfg(test)]
 mod tests {
-    use base_alloy_chains::BaseChainConfig;
+    use base_common_chains::BaseChainConfig;
 
     use super::*;
 

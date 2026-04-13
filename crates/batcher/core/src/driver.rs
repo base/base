@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use base_alloy_consensus::BaseBlock;
 use base_batcher_encoder::{BatchPipeline, StepResult};
 use base_batcher_source::{
     L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
 };
+use base_common_consensus::BaseBlock;
 use base_runtime::Runtime;
 use base_tx_manager::TxManager;
 use tokio::sync::mpsc;

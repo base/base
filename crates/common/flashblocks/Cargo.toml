@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-flashblocks"
+name = "base-common-flashblocks"
 description = "Flashblocks primitive types"
 version.workspace = true
 edition.workspace = true

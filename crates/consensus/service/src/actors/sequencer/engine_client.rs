@@ -2,7 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_rpc_types_engine::PayloadId;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 use derive_more::Constructor;
 use tokio::sync::{mpsc, watch};

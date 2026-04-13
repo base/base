@@ -451,8 +451,8 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Bytes, keccak256, utils::Unit};
     use alloy_sol_types::SolCall;
-    use base_alloy_consensus::BaseTransactionSigned;
     use base_bundles::{Bundle, ParsedBundle};
+    use base_common_consensus::BaseTransactionSigned;
     use base_node_runner::test_utils::TestHarness;
     use base_test_utils::{Account, SimpleStorage};
     use eyre::Context;

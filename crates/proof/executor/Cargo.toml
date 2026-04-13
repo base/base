@@ -27,8 +27,8 @@ alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # Base Alloy
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
+base-common-consensus.workspace = true
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "k256"] }
 
 # revm
 revm.workspace = true
@@ -36,7 +36,7 @@ base-revm.workspace = true
 
 # alloy-evm
 alloy-evm.workspace = true
-base-alloy-evm.workspace = true
+base-common-evm.workspace = true
 
 # General
 tracing.workspace = true
@@ -69,9 +69,9 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine?/std",
 	"alloy-trie/std",
-	"base-alloy-consensus/std",
-	"base-alloy-evm/std",
-	"base-alloy-rpc-types-engine/std",
+	"base-common-consensus/std",
+	"base-common-evm/std",
+	"base-common-rpc-types-engine/std",
 	"base-consensus-genesis/std",
 	"base-consensus-registry?/std",
 	"base-proof-mpt/std",

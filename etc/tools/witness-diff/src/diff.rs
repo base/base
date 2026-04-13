@@ -10,7 +10,7 @@ use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Client, Http};
 use alloy_trie::{Nibbles, TrieAccount};
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_proof_mpt::TrieNode;
 use eyre::Result;
 use serde::{Deserialize, Deserializer};

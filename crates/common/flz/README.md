@@ -1,4 +1,4 @@
-# `base-alloy-flz`
+# `base-common-flz`
 
 `FastLZ` compression length estimation and Fjord transaction size utilities.
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-flz = { workspace = true }
+base-common-flz = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_flz::{data_gas_fjord, flz_compress_len};
+use base_common_flz::{data_gas_fjord, flz_compress_len};
 
 let compressed_len = flz_compress_len(&tx_data);
 let l1_data_gas = data_gas_fjord(&tx_data);

@@ -4,7 +4,7 @@ use alloy_evm::{
     Database, EvmFactory, FromRecoveredTx, FromTxWithEncoded,
     block::{BlockExecutorFactory, BlockExecutorFor},
 };
-use base_alloy_chains::{BaseChainUpgrades, BaseUpgrades};
+use base_common_chains::{BaseChainUpgrades, BaseUpgrades};
 use revm::{Inspector, database::State};
 
 use crate::{

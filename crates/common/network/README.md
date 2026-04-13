@@ -1,4 +1,4 @@
-# `base-alloy-network`
+# `base-common-network`
 
 Base chain network types and RPC behavior abstraction.
 
@@ -16,11 +16,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-network = { workspace = true }
+base-common-network = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_network::Base;
+use base_common_network::Base;
 use alloy_provider::ProviderBuilder;
 
 let provider = ProviderBuilder::new().network::<Base>().on_http(url);

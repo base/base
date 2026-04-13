@@ -25,8 +25,8 @@ alloy-rpc-types-engine.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
 
 # base-alloy
-base-alloy-consensus.workspace = true
-base-alloy-rpc-types-engine.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine.workspace = true
 
 # misc
 tracing.workspace = true
@@ -71,8 +71,8 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine/std",
 	"alloy-rpc-types-eth/std",
-	"base-alloy-consensus/std",
-	"base-alloy-rpc-types-engine/std",
+	"base-common-consensus/std",
+	"base-common-rpc-types-engine/std",
 	"base-consensus-genesis/std",
 	"brotli/std",
 	"derive_more/std",
@@ -89,8 +89,8 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
 	"alloy-rpc-types-eth/serde",
-	"base-alloy-consensus/serde",
-	"base-alloy-rpc-types-engine/serde",
+	"base-common-consensus/serde",
+	"base-common-rpc-types-engine/serde",
 	"base-consensus-genesis/serde",
 	"dep:serde",
 	"miniz_oxide/serde",
@@ -103,8 +103,8 @@ arbitrary = [
 	"alloy-primitives/rand",
 	"alloy-rpc-types-engine/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
-	"base-alloy-consensus/arbitrary",
-	"base-alloy-rpc-types-engine/arbitrary",
+	"base-common-consensus/arbitrary",
+	"base-common-rpc-types-engine/arbitrary",
 	"base-consensus-genesis/arbitrary",
 	"dep:arbitrary",
 	"std",

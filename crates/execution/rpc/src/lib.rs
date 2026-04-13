@@ -25,4 +25,7 @@ pub use engine::{BaseEngineApi, BaseEngineApiServer, OP_ENGINE_CAPABILITIES};
 pub use error::{OpEthApiError, OpInvalidTransactionError, SequencerClientError};
 pub use eth::{BaseReceiptBuilder, OpEthApi, OpEthApiBuilder};
 pub use metrics::{DebugApiExtMetrics, DebugApis, EthApiExtMetrics, SequencerMetrics};
+#[cfg(feature = "client")]
+pub use miner::MinerApiExtClient;
+pub use miner::MinerApiExtServer;
 pub use sequencer::{SequencerClient, SequencerClientInner};

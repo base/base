@@ -15,9 +15,9 @@ use core::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
-use base_alloy_evm::{
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
+use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder, BaseTxEnv,
     spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
 };
@@ -33,7 +33,7 @@ use revm::context::{BlockEnv, TxEnv};
 use {
     alloy_eips::Decodable2718,
     alloy_primitives::{Bytes, U256},
-    base_alloy_rpc_types_engine::ExecutionData,
+    base_common_rpc_types_engine::ExecutionData,
     reth_evm::{EvmEnvFor, ExecutionCtxFor},
     reth_primitives_traits::{TxTy, WithEncoded},
     reth_storage_errors::any::AnyError,
@@ -57,7 +57,7 @@ pub use build::BaseBlockAssembler;
 mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
-/// Builds an [`EvmEnv`] for a given block header using [`base_alloy_evm`]'s spec resolution.
+/// Builds an [`EvmEnv`] for a given block header using [`base_common_evm`]'s spec resolution.
 fn op_evm_env(
     header: &Header,
     chain_spec: &(impl BaseUpgrades + EthChainSpec),
@@ -345,7 +345,7 @@ mod tests {
         Address, B256, LogData, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_alloy_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
+    use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
     use base_execution_chainspec::{BASE_MAINNET, BaseChainSpec, BaseChainSpecBuilder};
     use base_revm::OpSpecId;
     use reth_chainspec::ChainSpec;

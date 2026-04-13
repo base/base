@@ -12,9 +12,11 @@ use alloy_rpc_types_engine::{
     BlobsBundleV1, BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2,
     ExecutionPayloadV1, ExecutionPayloadV3, PayloadId,
 };
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
-use base_alloy_rpc_types_engine::{
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::{
+    BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
+};
+use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
 };
@@ -480,8 +482,8 @@ mod tests {
 
     use alloy_primitives::{FixedBytes, address, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_alloy_consensus::BaseTransactionSigned;
-    use base_alloy_rpc_types_engine::BasePayloadAttributes;
+    use base_common_consensus::BaseTransactionSigned;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
     use reth_payload_primitives::EngineApiMessageVersion;
 
     use super::*;

@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_sol_types::SolCall;
-use base_alloy_flashblocks::{
+use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
 use base_flashblocks_node::test_harness::FlashblocksHarness;
@@ -46,7 +46,7 @@ impl TestSetup {
         self.harness.send_flashblock(flashblock).await
     }
 
-    fn provider(&self) -> alloy_provider::RootProvider<base_alloy_network::Base> {
+    fn provider(&self) -> alloy_provider::RootProvider<base_common_network::Base> {
         self.harness.provider()
     }
 }

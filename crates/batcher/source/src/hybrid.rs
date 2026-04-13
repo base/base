@@ -4,7 +4,7 @@ use std::{collections::HashMap, time::Duration};
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 use base_runtime::Clock;
 use futures::{StreamExt, stream::BoxStream};
@@ -198,7 +198,7 @@ mod tests {
 
     use alloy_consensus::BlockBody;
     use alloy_primitives::Sealed;
-    use base_alloy_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_protocol::L1BlockInfoBedrock;
     use base_runtime::{Config, Runner};
     use futures::{StreamExt, stream::BoxStream};

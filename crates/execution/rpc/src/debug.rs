@@ -8,7 +8,7 @@ use alloy_primitives::B256;
 use alloy_rlp::Encodable;
 use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
-use base_alloy_chains::BaseUpgrades;
+use base_common_chains::BaseUpgrades;
 use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
     builder::{Builder, OpPayloadBuilderCtx},
@@ -183,9 +183,9 @@ where
         + HeaderProvider<Header = N::BlockHeader>
         + Clone
         + 'static,
-    base_alloy_consensus::BasePooledTransaction:
+    base_common_consensus::BasePooledTransaction:
         TryFrom<<N as PayloadPrimitives>::_TX, Error: core::error::Error>,
-    <N as PayloadPrimitives>::_TX: From<base_alloy_consensus::BasePooledTransaction>,
+    <N as PayloadPrimitives>::_TX: From<base_common_consensus::BasePooledTransaction>,
 {
     async fn execute_payload(
         &self,
@@ -226,7 +226,7 @@ where
                         NoopPayloadTransactions::<
                             BasePooledTransaction<
                                 <N as PayloadPrimitives>::_TX,
-                                base_alloy_consensus::BasePooledTransaction,
+                                base_common_consensus::BasePooledTransaction,
                             >,
                         >::default()
                     });

@@ -2,7 +2,7 @@
 
 use alloy_consensus::transaction::Recovered;
 use alloy_primitives::TxHash;
-use base_alloy_consensus::BaseTxEnvelope;
+use base_common_consensus::BaseTxEnvelope;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

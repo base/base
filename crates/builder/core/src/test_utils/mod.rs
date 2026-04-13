@@ -12,7 +12,7 @@ use alloy_network::TxSignerSync;
 use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 pub use apis::*;
-use base_alloy_consensus::{BaseTransactionSigned, BaseTypedTransaction};
+use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
 use base_execution_chainspec::BaseChainSpec;
 pub use contracts::*;
 pub use driver::*;

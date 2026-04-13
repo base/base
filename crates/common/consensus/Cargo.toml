@@ -1,5 +1,5 @@
 [package]
-name = "base-alloy-consensus"
+name = "base-common-consensus"
 description = "Base alloy consensus types"
 
 version.workspace = true

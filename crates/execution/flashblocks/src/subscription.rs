@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use base_alloy_flashblocks::Flashblock;
+use base_common_flashblocks::Flashblock;
 use futures::{SinkExt as _, StreamExt};
 use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};

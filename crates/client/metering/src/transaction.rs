@@ -56,7 +56,7 @@ mod tests {
     };
     use alloy_network::TxSignerSync;
     use alloy_primitives::{Address, U256, bytes};
-    use base_alloy_consensus::BaseTxEnvelope;
+    use base_common_consensus::BaseTxEnvelope;
     use base_test_utils::Account as BaseAccount;
 
     use super::*;

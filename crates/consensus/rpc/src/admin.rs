@@ -4,7 +4,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_gossip::Metrics;
 use jsonrpsee::{
     core::RpcResult,

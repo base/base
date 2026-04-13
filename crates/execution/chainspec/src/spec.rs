@@ -6,7 +6,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
-use base_alloy_chains::{BaseUpgrade, BaseUpgrades};
+use base_common_chains::{BaseUpgrade, BaseUpgrades};
 use base_execution_upgrades::BASE_MAINNET_UPGRADES;
 use base_protocol::Predeploys;
 use derive_more::{Constructor, Deref, Into};
@@ -345,7 +345,7 @@ mod tests {
     use alloy_genesis::{ChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
     use alloy_primitives::{B256, U256, b256, hex};
-    use base_alloy_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
+    use base_common_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
     use base_common_rpc_types::BaseFeeInfo;
     use reth_chainspec::{
         BaseFeeParams, BaseFeeParamsKind, EthChainSpec, EthereumHardforks, test_fork_ids,

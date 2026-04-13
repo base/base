@@ -1,4 +1,4 @@
-# `base-alloy-evm`
+# `base-common-evm`
 
 EVM implementation.
 
@@ -16,11 +16,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-evm = { workspace = true }
+base-common-evm = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_evm::{OpEvmFactory, spec_by_timestamp_after_bedrock};
+use base_common_evm::{OpEvmFactory, spec_by_timestamp_after_bedrock};
 
 let spec = spec_by_timestamp_after_bedrock(timestamp);
 let factory = OpEvmFactory::default();

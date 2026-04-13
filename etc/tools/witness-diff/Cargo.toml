@@ -20,7 +20,7 @@ alloy-rpc-client.workspace = true
 alloy-transport-http.workspace = true
 
 # base
-base-alloy-network.workspace = true
+base-common-network.workspace = true
 base-proof-mpt = { workspace = true, features = ["std"] }
 
 # misc

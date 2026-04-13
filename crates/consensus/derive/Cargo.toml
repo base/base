@@ -26,8 +26,8 @@ alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-primitives = { workspace = true, features = ["rlp", "k256", "map"] }
 
 # Base Alloy
-base-alloy-rpc-types-engine.workspace = true
-base-alloy-consensus = { workspace = true, features = ["k256"] }
+base-common-rpc-types-engine.workspace = true
+base-common-consensus = { workspace = true, features = ["k256"] }
 
 # General
 tracing.workspace = true
@@ -60,8 +60,8 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
-	"base-alloy-consensus/serde",
-	"base-alloy-rpc-types-engine/serde",
+	"base-common-consensus/serde",
+	"base-common-rpc-types-engine/serde",
 	"base-consensus-genesis/serde",
 	"base-protocol/serde",
 	"dep:serde",

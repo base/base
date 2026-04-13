@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_consensus::{Eip658Value, TransactionEnvelope};
 use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
-use base_alloy_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, BaseTxType, DepositReceipt};
+use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, BaseTxType, DepositReceipt};
 
 /// Type that knows how to build a receipt based on execution result.
 #[auto_impl::auto_impl(&, Arc)]

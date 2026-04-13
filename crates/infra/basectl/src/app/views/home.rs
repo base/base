@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::{
     app::{Action, Resources, View, ViewId},
-    commands::common::COLOR_BASE_BLUE,
+    commands::COLOR_BASE_BLUE,
     tui::Keybinding,
 };
 
@@ -94,13 +94,13 @@ const KEYBINDINGS: &[Keybinding] = &[
 
 /// Main menu view with navigation to all other views.
 #[derive(Debug, Default)]
-pub(crate) struct HomeView {
+pub struct HomeView {
     selected_index: usize,
 }
 
 impl HomeView {
     /// Creates a new home view with the first menu item selected.
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self { selected_index: 0 }
     }
 }

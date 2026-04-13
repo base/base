@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use alloy_provider::{Network, RootProvider};
-use base_alloy_evm::BaseEvmFactory;
-use base_alloy_network::Base;
+use base_common_evm::BaseEvmFactory;
+use base_common_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};

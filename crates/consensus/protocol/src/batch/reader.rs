@@ -7,7 +7,7 @@ use alloy_rlp::Decodable;
 use base_consensus_genesis::RollupConfig;
 use miniz_oxide::inflate::{TINFLStatus, decompress_to_vec_zlib_with_limit};
 
-use crate::{Batch, BrotliDecompressionError, decompress_brotli};
+use crate::{Batch, Brotli, BrotliDecompressionError};
 
 /// Error type for decompression failures.
 #[derive(Debug, thiserror::Error)]
@@ -119,7 +119,7 @@ impl BatchReader {
         self.brotli_used = true;
         // Note: the first byte of the channel data is the Brotli channel version but not part of
         // the compressed data, so it's skipped here but not for zlib.
-        self.decompressed = decompress_brotli(&data[1..], self.max_rlp_bytes_per_channel)?;
+        self.decompressed = Brotli.decompress(&data[1..], self.max_rlp_bytes_per_channel)?;
         Ok(())
     }
 

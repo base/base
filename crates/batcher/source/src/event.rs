@@ -1,6 +1,6 @@
 //! Events emitted by an [`UnsafeBlockSource`][crate::UnsafeBlockSource].
 
-use base_alloy_consensus::BaseBlock;
+use base_common_consensus::BaseBlock;
 use base_protocol::L2BlockInfo;
 
 /// Events emitted by an [`UnsafeBlockSource`][crate::UnsafeBlockSource].

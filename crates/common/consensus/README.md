@@ -1,4 +1,4 @@
-# `base-alloy-consensus`
+# `base-common-consensus`
 
 Base chain consensus interface.
 
@@ -19,11 +19,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-alloy-consensus = { workspace = true }
+base-common-consensus = { workspace = true }
 ```
 
 ```rust,ignore
-use base_alloy_consensus::{OpTxEnvelope, OpReceiptEnvelope};
+use base_common_consensus::{OpTxEnvelope, OpReceiptEnvelope};
 ```
 
 ## Provenance

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
-use base_alloy_network::Base;
+use base_common_network::Base;
 use base_consensus_engine::{BaseEngineClient, EngineClientBuilder};
 use base_consensus_genesis::RollupConfig;
 use url::Url;

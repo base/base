@@ -4,7 +4,7 @@ use core::net::IpAddr;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_alloy_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_gossip::{PeerCount, PeerDump, PeerInfo, PeerStats};
 use base_consensus_safedb::SafeHeadResponse;

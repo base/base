@@ -4,8 +4,8 @@ use core::cmp::max;
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::calc_next_block_base_fee;
-use base_alloy_chains::BaseUpgrades;
-use base_alloy_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_chains::BaseUpgrades;
+use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use reth_chainspec::{BaseFeeParams, EthChainSpec};
 
 /// Extracts the Holocene 1599 parameters from the encoded extra data from the parent header.
@@ -78,8 +78,8 @@ where
 mod tests {
     use alloc::sync::Arc;
 
-    use base_alloy_chains::BaseUpgrade;
-    use base_alloy_consensus::JovianExtraData;
+    use base_common_chains::BaseUpgrade;
+    use base_common_consensus::JovianExtraData;
     use reth_chainspec::{ChainSpec, ForkCondition, Hardfork};
 
     use super::*;

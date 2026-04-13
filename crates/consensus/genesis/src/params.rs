@@ -1,7 +1,7 @@
 //! Module containing fee parameters.
 
 use alloy_eips::eip1559::BaseFeeParams;
-use base_alloy_chains::BaseChainConfig;
+use base_common_chains::BaseChainConfig;
 
 /// Base Fee Config.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

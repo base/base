@@ -11,8 +11,8 @@ use std::sync::{Arc, LazyLock};
 use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
-use base_alloy_flashblocks::FlashblocksPayloadV1;
-use base_alloy_network::Base;
+use base_common_flashblocks::FlashblocksPayloadV1;
+use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_rpc::OpEthApiBuilder;
 use base_execution_txpool::BasePooledTransaction;
@@ -312,7 +312,7 @@ pub fn chain_spec() -> Arc<BaseChainSpec> {
 /// Returns a chain spec identical to the default test chain spec but with
 /// `BaseUpgrade::V1` activated at genesis (timestamp 0).
 pub fn chain_spec_with_base_v1() -> Arc<BaseChainSpec> {
-    use base_alloy_chains::BaseUpgrade;
+    use base_common_chains::BaseUpgrade;
     use reth_chainspec::ForkCondition;
 
     let genesis = include_str!("./artifacts/genesis.json.tmpl");

@@ -30,10 +30,10 @@ reth-primitives-traits.workspace = true
 # revm
 base-revm.workspace = true
 
-base-alloy-flz.workspace = true
-base-alloy-chains.workspace = true
+base-common-flz.workspace = true
+base-common-chains.workspace = true
 base-execution-evm.workspace = true
-base-alloy-consensus = { workspace = true, features = ["reth"] }
+base-common-consensus = { workspace = true, features = ["reth"] }
 
 # metrics
 base-metrics.workspace = true
