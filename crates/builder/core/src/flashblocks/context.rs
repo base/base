@@ -951,7 +951,7 @@ impl OpPayloadBuilderCtx {
 
             // Record metering hit/miss only for committed transactions so the
             // metric reflects actual payload inclusion, not speculative lookups.
-            if resource_usage.is_some() {
+            if self.builder_config.metering_provider.is_enabled() && resource_usage.is_some() {
                 BuilderMetrics::metering_known_transaction().increment(1);
             } else {
                 BuilderMetrics::metering_unknown_transaction().increment(1);
