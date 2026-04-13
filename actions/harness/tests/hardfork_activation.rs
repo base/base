@@ -39,6 +39,7 @@ fn each_hardfork_activates_at_its_mainnet_timestamp() {
     let holocene_time = rc.hardforks.holocene_time.expect("holocene_time must be set on mainnet");
     let isthmus_time = rc.hardforks.isthmus_time.expect("isthmus_time must be set on mainnet");
     let jovian_time = rc.hardforks.jovian_time.expect("jovian_time must be set on mainnet");
+    let base_v1_time = rc.hardforks.base.v1.expect("base_v1_time must be set on mainnet");
 
     // Canyon
     assert!(!rc.is_canyon_active(canyon_time - 1), "Canyon must be inactive before its timestamp");
@@ -84,6 +85,13 @@ fn each_hardfork_activates_at_its_mainnet_timestamp() {
     // Jovian
     assert!(!rc.is_jovian_active(jovian_time - 1), "Jovian must be inactive before its timestamp");
     assert!(rc.is_jovian_active(jovian_time), "Jovian must be active at its timestamp");
+
+    // Base V1
+    assert!(
+        !rc.is_base_v1_active(base_v1_time - 1),
+        "Base V1 must be inactive before its timestamp"
+    );
+    assert!(rc.is_base_v1_active(base_v1_time), "Base V1 must be active at its timestamp");
 }
 
 /// Hardfork timestamps on Base mainnet are strictly increasing. This guarantees
@@ -102,6 +110,7 @@ fn mainnet_hardfork_timestamps_are_strictly_ordered() {
         ("holocene", h.holocene_time.expect("holocene_time")),
         ("isthmus", h.isthmus_time.expect("isthmus_time")),
         ("jovian", h.jovian_time.expect("jovian_time")),
+        ("base-v1", h.base.v1.expect("base_v1_time")),
     ];
 
     for pair in ordered.windows(2) {
@@ -216,10 +225,11 @@ fn granite_changes_channel_timeout_at_mainnet_timestamp() {
 fn base_v1_is_standalone_from_jovian() {
     let rc = TestRollupConfigBuilder::mainnet();
     let jovian_time = rc.hardforks.jovian_time.expect("jovian_time");
+    let base_v1_time = rc.hardforks.base.v1.expect("base_v1_time");
 
-    // On mainnet BaseV1 is not yet scheduled, so it's inactive at all times.
     assert!(!rc.is_base_v1_active(jovian_time), "BaseV1 must not be implied by Jovian");
-    assert!(!rc.is_base_v1_active(u64::MAX), "BaseV1 must remain inactive when unscheduled");
+    assert!(!rc.is_base_v1_active(base_v1_time - 1), "BaseV1 must remain inactive before V1");
+    assert!(rc.is_base_v1_active(base_v1_time), "BaseV1 must activate at its own timestamp");
 }
 
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ Only `base-consensus` and `base-reth-node` will support the Base V1 hardfork. If
 
 | Network   | Activation timestamp                   |
 | --------- | -------------------------------------- |
-| `mainnet` | TBD                                    |
+| `mainnet` | `1777914000` (2026-05-04 17:00:00 UTC) |
 | `sepolia` | `1776708000` (2026-04-20 18:00:00 UTC) |
 
 ## Execution Layer

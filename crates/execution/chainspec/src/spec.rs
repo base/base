@@ -344,7 +344,7 @@ mod tests {
     use alloy_consensus::proofs::storage_root_unhashed;
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
     use alloy_hardforks::Hardfork;
-    use alloy_primitives::{B256, U256, b256, hex};
+    use alloy_primitives::{B256, U256, b256};
     use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
     use base_common_rpc_types::FeeInfo;
     use reth_chainspec::{
@@ -448,6 +448,14 @@ mod tests {
                     },
                     BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Jovian).unwrap(),
                 ),
+                (
+                    Head {
+                        number: 0,
+                        timestamp: ChainConfig::mainnet().base_v1_timestamp.unwrap(),
+                        ..Default::default()
+                    },
+                    BASE_MAINNET.hardfork_fork_id(BaseUpgrade::V1).unwrap(),
+                ),
             ],
         );
     }
@@ -550,7 +558,7 @@ mod tests {
     #[test]
     fn latest_base_mainnet_fork_id() {
         assert_eq!(
-            ForkId { hash: ForkHash(hex!("1cfeafc9")), next: 0 },
+            BASE_MAINNET.hardfork_fork_id(BaseUpgrade::V1).unwrap(),
             BASE_MAINNET.latest_fork_id()
         )
     }
@@ -559,7 +567,7 @@ mod tests {
     fn latest_base_mainnet_fork_id_with_builder() {
         let base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         assert_eq!(
-            ForkId { hash: ForkHash(hex!("1cfeafc9")), next: 0 },
+            BASE_MAINNET.hardfork_fork_id(BaseUpgrade::V1).unwrap(),
             base_mainnet.latest_fork_id()
         )
     }
