@@ -9,6 +9,7 @@ use base_bundles::RejectedTransaction;
 use jsonrpsee::{
     core::client::ClientT,
     http_client::{HttpClient, HttpClientBuilder},
+    rpc_params,
 };
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -43,7 +44,10 @@ impl RejectedTxForwarder {
         while let Some(rejected_tx) = self.rx.recv().await {
             match self
                 .client
-                .request::<bool, _>("base_persistRejectedTransactionBatch", vec![&rejected_tx])
+                .request::<bool, _>(
+                    "base_persistRejectedTransactionBatch",
+                    rpc_params![vec![&rejected_tx]],
+                )
                 .await
             {
                 Ok(_) => {
