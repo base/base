@@ -1,6 +1,8 @@
 use alloy_rpc_types_engine::PayloadId;
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
-use base_consensus_engine::{BuildTaskError, ConsolidateInput, EngineQueries, SealTaskError};
+use base_consensus_engine::{
+    BuildTaskError, ConsolidateInput, DelegatedForkchoiceUpdate, EngineQueries, SealTaskError,
+};
 use base_protocol::OpAttributesWithParent;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -47,6 +49,8 @@ pub enum EngineActorRequest {
     /// Request to consolidate using a safe L2 signal from attributes or delegated safe-block
     /// derivation
     ProcessSafeL2SignalRequest(ConsolidateInput),
+    /// Request to apply delegated follow-node safe/finalized labels together.
+    ProcessDelegatedForkchoiceUpdateRequest(Box<DelegatedForkchoiceUpdate>),
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
     /// Request to insert the provided unsafe block.

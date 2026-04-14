@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use async_trait::async_trait;
-use base_consensus_engine::ConsolidateInput;
+use base_consensus_engine::{ConsolidateInput, DelegatedForkchoiceUpdate};
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 
@@ -13,6 +13,14 @@ use crate::{EngineActorRequest, EngineClientError, EngineClientResult, ResetRequ
 pub trait DerivationEngineClient: Debug + Send + Sync {
     /// Resets the engine's forkchoice.
     async fn reset_engine_forkchoice(&self) -> EngineClientResult<()>;
+
+    /// Sends follow-node delegated safe/finalized labels to the engine.
+    ///
+    /// Note: This does not wait for the engine to process the request.
+    async fn send_delegated_forkchoice_update(
+        &self,
+        update: DelegatedForkchoiceUpdate,
+    ) -> EngineClientResult<()>;
 
     /// Sends a request to finalize the L2 block at the provided block number.
     /// Note: This does not wait for the engine to process it.
@@ -54,6 +62,24 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
                 error!(target: "derivation_engine_client", "Failed to receive forkchoice reset result");
                 EngineClientError::ResponseError("response channel closed.".to_string())
             })?
+    }
+
+    async fn send_delegated_forkchoice_update(
+        &self,
+        update: DelegatedForkchoiceUpdate,
+    ) -> EngineClientResult<()> {
+        trace!(
+            target: "derivation",
+            safe_number = update.safe_l2.block_info.number,
+            finalized_number = ?update.finalized_l2_number,
+            "Sending delegated forkchoice update to engine"
+        );
+        self.engine_actor_request_tx
+            .send(EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(Box::new(update)))
+            .await
+            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
+
+        Ok(())
     }
 
     async fn send_finalized_l2_block(&self, block_number: u64) -> EngineClientResult<()> {

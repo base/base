@@ -87,6 +87,7 @@ base-consensus-engine = { workspace = true, features = ["test-utils"] }
 alloy-consensus = { workspace = true, features = ["arbitrary", "std"] }
 base-alloy-consensus = { workspace = true, features = ["arbitrary", "k256"] }
 alloy-rpc-types-engine = { workspace = true, features = ["arbitrary", "std"] }
+base-alloy-rpc-types.workspace = true
 
 [features]
 default = []

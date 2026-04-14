@@ -53,6 +53,8 @@ impl Metrics {
     pub const INSERT_TASK_LABEL: &str = "insert";
     /// Consolidate task label.
     pub const CONSOLIDATE_TASK_LABEL: &str = "consolidate";
+    /// Delegated forkchoice task label.
+    pub const DELEGATED_FORKCHOICE_TASK_LABEL: &str = "delegated-forkchoice";
     /// Forkchoice task label.
     pub const FORKCHOICE_TASK_LABEL: &str = "forkchoice-update";
     /// Build task label.
@@ -130,12 +132,24 @@ impl Metrics {
         // Engine task counts
         base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::INSERT_TASK_LABEL, 0);
         base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::CONSOLIDATE_TASK_LABEL, 0);
+        base_metrics::set!(
+            counter,
+            Self::ENGINE_TASK_SUCCESS,
+            Self::DELEGATED_FORKCHOICE_TASK_LABEL,
+            0
+        );
         base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::BUILD_TASK_LABEL, 0);
         base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::FINALIZE_TASK_LABEL, 0);
         base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::SEAL_TASK_LABEL, 0);
         base_metrics::set!(counter, Self::ENGINE_TASK_SUCCESS, Self::GET_PAYLOAD_TASK_LABEL, 0);
 
         base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::INSERT_TASK_LABEL, 0);
+        base_metrics::set!(
+            counter,
+            Self::ENGINE_TASK_FAILURE,
+            Self::DELEGATED_FORKCHOICE_TASK_LABEL,
+            0
+        );
         base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::CONSOLIDATE_TASK_LABEL, 0);
         base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::BUILD_TASK_LABEL, 0);
         base_metrics::set!(counter, Self::ENGINE_TASK_FAILURE, Self::FINALIZE_TASK_LABEL, 0);

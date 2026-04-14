@@ -9,10 +9,12 @@ use derive_more::Display;
 use thiserror::Error;
 use tokio::task::yield_now;
 
-use super::{BuildTask, ConsolidateTask, FinalizeTask, GetPayloadTask, InsertTask};
+use super::{
+    BuildTask, ConsolidateTask, DelegatedForkchoiceTask, FinalizeTask, GetPayloadTask, InsertTask,
+};
 use crate::{
-    BuildTaskError, ConsolidateTaskError, EngineClient, EngineState, FinalizeTaskError,
-    InsertTaskError,
+    BuildTaskError, ConsolidateTaskError, DelegatedForkchoiceTaskError, EngineClient, EngineState,
+    FinalizeTaskError, InsertTaskError, Metrics,
     task_queue::{SealTask, SealTaskError},
 };
 
@@ -72,6 +74,9 @@ pub enum EngineTaskErrors {
     /// An error that occurred while consolidating the engine state.
     #[error(transparent)]
     Consolidate(#[from] ConsolidateTaskError),
+    /// An error that occurred while applying delegated follow-node forkchoice labels.
+    #[error(transparent)]
+    DelegatedForkchoice(#[from] DelegatedForkchoiceTaskError),
     /// An error that occurred while finalizing an L2 block.
     #[error(transparent)]
     Finalize(#[from] FinalizeTaskError),
@@ -84,6 +89,7 @@ impl EngineTaskError for EngineTaskErrors {
             Self::Build(inner) => inner.severity(),
             Self::Seal(inner) => inner.severity(),
             Self::Consolidate(inner) => inner.severity(),
+            Self::DelegatedForkchoice(inner) => inner.severity(),
             Self::Finalize(inner) => inner.severity(),
         }
     }
@@ -106,6 +112,8 @@ pub enum EngineTask<EngineClient_: EngineClient> {
     /// Performs consolidation on the engine state, reverting to payload attribute processing
     /// via the [`BuildTask`] if consolidation fails.
     Consolidate(Box<ConsolidateTask<EngineClient_>>),
+    /// Applies delegated safe and finalized labels for follow mode.
+    DelegatedForkchoice(Box<DelegatedForkchoiceTask<EngineClient_>>),
     /// Finalizes an L2 block
     Finalize(Box<FinalizeTask<EngineClient_>>),
 }
@@ -118,6 +126,7 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
             Self::Seal(task) => task.execute(state).await?,
             Self::GetPayload(task) => task.execute(state).await?,
             Self::Consolidate(task) => task.execute(state).await?,
+            Self::DelegatedForkchoice(task) => task.execute(state).await?,
             Self::Finalize(task) => task.execute(state).await?,
             Self::Build(task) => {
                 task.execute(state).await?;
@@ -136,6 +145,7 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
             Self::Seal(_) => crate::Metrics::SEAL_TASK_LABEL,
             Self::GetPayload(_) => crate::Metrics::GET_PAYLOAD_TASK_LABEL,
             Self::Finalize(_) => crate::Metrics::FINALIZE_TASK_LABEL,
+            Self::DelegatedForkchoice(_) => Metrics::DELEGATED_FORKCHOICE_TASK_LABEL,
         }
     }
 }
@@ -149,6 +159,7 @@ impl<EngineClient_: EngineClient> PartialEq for EngineTask<EngineClient_> {
                 | (Self::Seal(_), Self::Seal(_))
                 | (Self::GetPayload(_), Self::GetPayload(_))
                 | (Self::Consolidate(_), Self::Consolidate(_))
+                | (Self::DelegatedForkchoice(_), Self::DelegatedForkchoice(_))
                 | (Self::Finalize(_), Self::Finalize(_))
         )
     }
@@ -179,6 +190,7 @@ impl<EngineClient_: EngineClient> Ord for EngineTask<EngineClient_> {
             // Same variant cases
             (Self::Insert(_), Self::Insert(_))
             | (Self::Consolidate(_), Self::Consolidate(_))
+            | (Self::DelegatedForkchoice(_), Self::DelegatedForkchoice(_))
             | (Self::Build(_), Self::Build(_))
             | (Self::Seal(_), Self::Seal(_))
             | (Self::GetPayload(_), Self::GetPayload(_))
@@ -202,9 +214,16 @@ impl<EngineClient_: EngineClient> Ord for EngineTask<EngineClient_> {
             (Self::Insert(_), _) => Ordering::Greater,
             (_, Self::Insert(_)) => Ordering::Less,
 
-            // Consolidate tasks are prioritized over Finalize tasks
-            (Self::Consolidate(_), _) => Ordering::Greater,
-            (_, Self::Consolidate(_)) => Ordering::Less,
+            // Consolidate-style tasks are prioritized over Finalize tasks.
+            (Self::Consolidate(_) | Self::DelegatedForkchoice(_), Self::Finalize(_)) => {
+                Ordering::Greater
+            }
+            (Self::Finalize(_), Self::Consolidate(_) | Self::DelegatedForkchoice(_)) => {
+                Ordering::Less
+            }
+
+            // Consolidate and delegated forkchoice share equal priority.
+            (Self::Consolidate(_) | Self::DelegatedForkchoice(_), _) => Ordering::Equal,
         }
     }
 }

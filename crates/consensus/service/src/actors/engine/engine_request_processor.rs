@@ -4,9 +4,9 @@ use alloy_eips::BlockNumberOrTag;
 use base_alloy_rpc_types_engine::OpExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    BuildTask, ConsolidateInput, ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate,
-    EngineTask, EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask,
-    SealTask,
+    BuildTask, ConsolidateInput, ConsolidateTask, DelegatedForkchoiceTask,
+    DelegatedForkchoiceUpdate, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
+    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask, SealTask,
 };
 use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
@@ -40,6 +40,8 @@ pub enum EngineProcessingRequest {
     GetPayload(Box<GetPayloadRequest>),
     /// Request to process a Safe signal, which can be derived attributes or delegated block info.
     ProcessSafeL2Signal(ConsolidateInput),
+    /// Request to apply delegated safe/finalized labels together for follow mode.
+    ProcessDelegatedForkchoiceUpdate(Box<DelegatedForkchoiceUpdate>),
     /// Request to process the finalized L2 block with the provided block number.
     ProcessFinalizedL2BlockNumber(Box<u64>),
     /// Request to process a received unsafe L2 block.
@@ -558,6 +560,16 @@ where
                             Arc::clone(&self.rollup),
                             safe_signal,
                         )));
+                        self.engine.enqueue(task);
+                    }
+                    EngineProcessingRequest::ProcessDelegatedForkchoiceUpdate(update) => {
+                        let task = EngineTask::DelegatedForkchoice(Box::new(
+                            DelegatedForkchoiceTask::new(
+                                Arc::clone(&self.client),
+                                Arc::clone(&self.rollup),
+                                *update,
+                            ),
+                        ));
                         self.engine.enqueue(task);
                     }
                     EngineProcessingRequest::ProcessFinalizedL2BlockNumber(
