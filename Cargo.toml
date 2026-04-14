@@ -304,6 +304,7 @@ revm-context-interface = { version = "14.0.0", default-features = false }
 
 # alloy
 alloy-signer = "1.6.3"
+alloy-pubsub = "1.6.3"
 alloy-network = "1.6.3"
 alloy-eip7928 = "0.3.0"
 alloy-provider = "1.6.3"
