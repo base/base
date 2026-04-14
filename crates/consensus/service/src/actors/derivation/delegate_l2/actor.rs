@@ -183,17 +183,22 @@ where
 
                     let target_block = match self.determine_target_block().await {
                         Ok(Some(target)) => target,
-                        Ok(None) => continue,
+                        Ok(None) => {
+                            warn!(target: "derivation", sent_head = self.sent_head, "Target is behind already sent head, skipping sync");
+                            continue;
+                        },
                         Err(e) => {
                             warn!(target: "derivation", error = %e, "Failed to determine target block");
                             continue;
                         }
                     };
+                    info!(target: "derivation", target_block, sent_head = self.sent_head, "Starting sync from L2 source");
 
                     let cancellation_token = self.cancellation_token.clone();
                     let l2_source = Arc::clone(&self.l2_source);
                     let engine_client = Arc::clone(&self.engine_client);
                     let engine_actor_request_tx = self.engine_actor_request_tx.clone();
+                    let local_l2_provider = self.local_l2_provider.clone();
                     let sent_head = self.sent_head;
 
                     sync_task = Some(tokio::spawn(async move {
@@ -201,6 +206,7 @@ where
                             engine_client,
                             engine_actor_request_tx,
                             cancellation_token,
+                            local_l2_provider,
                             sent_head,
                             target_block,
                             l2_source,
@@ -298,6 +304,7 @@ pub(super) struct SyncFromSourceTask<DerivationEngineClient_, L2Source> {
     engine_client: Arc<DerivationEngineClient_>,
     engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
     cancellation_token: CancellationToken,
+    local_l2_provider: RootProvider<Base>,
     sent_head: u64,
     target_block: u64,
     l2_source: Arc<L2Source>,
@@ -308,10 +315,11 @@ where
     DerivationEngineClient_: DerivationEngineClient,
     L2Source: L2SourceClient,
 {
-    pub(super) const fn new(
+    pub(super) fn new(
         engine_client: Arc<DerivationEngineClient_>,
         engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
         cancellation_token: CancellationToken,
+        local_l2_provider: RootProvider<Base>,
         sent_head: u64,
         target_block: u64,
         l2_source: Arc<L2Source>,
@@ -320,6 +328,7 @@ where
             engine_client,
             engine_actor_request_tx,
             cancellation_token,
+            local_l2_provider,
             sent_head,
             target_block,
             l2_source,
@@ -384,9 +393,26 @@ where
             return Ok(());
         };
 
+        let source_hash = safe_payload.execution_payload.block_hash();
+
+        // Detect hash mismatch between source and local EL for the delegated safe block.
+        if let Ok(Some(local_block)) =
+            self.local_l2_provider.get_block_by_number(clamped_safe.into()).await
+        {
+            if local_block.header.hash != source_hash {
+                warn!(
+                    target: "derivation",
+                    block_number = clamped_safe,
+                    local_hash = %local_block.header.hash,
+                    source_hash = %source_hash,
+                    "Delegated safe block hash mismatch between source and local EL"
+                );
+            }
+        }
+
         let safe_l2 = L2BlockInfo {
             block_info: base_protocol::BlockInfo {
-                hash: safe_payload.execution_payload.block_hash(),
+                hash: source_hash,
                 number: clamped_safe,
                 ..Default::default()
             },
@@ -503,10 +529,14 @@ mod tests {
         let cancel = CancellationToken::new();
         let (engine_tx, engine_rx) = mpsc::channel(16);
 
+        let local_l2_provider =
+            RootProvider::<Base>::new_http("http://localhost:1234".parse().unwrap());
+
         let task = SyncFromSourceTask::new(
             Arc::new(engine_client),
             engine_tx,
             cancel.clone(),
+            local_l2_provider,
             sent_head,
             target_block,
             Arc::new(l2_source),
