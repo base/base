@@ -243,7 +243,29 @@ impl BoundlessProver {
         };
 
         info!(request_id = %request_id, "fulfillment confirmed, fetching set inclusion receipt");
-        self.fetch_and_encode_receipt(client, request_id).await
+
+        const MAX_RECEIPT_FETCH_RETRIES: u32 = 60;
+        const RECEIPT_FETCH_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+        let mut receipt_retries = 0;
+        loop {
+            match self.fetch_and_encode_receipt(client, request_id).await {
+                Ok(proof) => return Ok(proof),
+                Err(e) if receipt_retries < MAX_RECEIPT_FETCH_RETRIES => {
+                    receipt_retries += 1;
+                    warn!(
+                        error = %e,
+                        request_id = %request_id,
+                        retry = receipt_retries,
+                        max_retries = MAX_RECEIPT_FETCH_RETRIES,
+                        delay = ?RECEIPT_FETCH_RETRY_DELAY,
+                        "transient receipt fetch failure, retrying"
+                    );
+                    tokio::time::sleep(RECEIPT_FETCH_RETRY_DELAY).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Builds the Boundless [`Client`] and [`RequestParams`] from the
