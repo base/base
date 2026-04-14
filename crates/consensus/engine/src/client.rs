@@ -175,9 +175,7 @@ impl EngineClientBuilder {
     /// Sets up JWT-authenticated connections to the Engine API endpoint along with an
     /// unauthenticated connection to the L1 chain. Supports both HTTP and WebSocket schemes
     /// for the L2 Engine API URL.
-    pub async fn build(
-        self,
-    ) -> TransportResult<OpEngineClient<RootProvider, RootProvider<Base>>> {
+    pub async fn build(self) -> TransportResult<OpEngineClient<RootProvider, RootProvider<Base>>> {
         let engine = OpEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
             self.l2,
             self.l2_jwt,
