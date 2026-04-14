@@ -144,6 +144,9 @@ where
                         EngineActorRequest::ProcessSafeL2SignalRequest(signal) => {
                             send_engine_processing_request(EngineProcessingRequest::ProcessSafeL2Signal(signal)).await?;
                         }
+                        EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(update) => {
+                            send_engine_processing_request(EngineProcessingRequest::ProcessDelegatedForkchoiceUpdate(update)).await?;
+                        }
                         EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(block_number) => {
                             send_engine_processing_request(EngineProcessingRequest::ProcessFinalizedL2BlockNumber(block_number)).await?;
                         }

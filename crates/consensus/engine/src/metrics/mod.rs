@@ -14,13 +14,29 @@ base_metrics::define_metrics! {
     #[describe("Engine tasks successfully executed")]
     #[label(
         name = "task",
-        default = ["insert", "consolidate", "build", "finalize", "seal", "get-payload"]
+        default = [
+            "insert",
+            "consolidate",
+            "delegated-forkchoice",
+            "build",
+            "finalize",
+            "seal",
+            "get-payload"
+        ]
     )]
     engine_task_count: counter,
     #[describe("Engine tasks failed")]
     #[label(
         name = "task",
-        default = ["insert", "consolidate", "build", "finalize", "seal", "get-payload"]
+        default = [
+            "insert",
+            "consolidate",
+            "delegated-forkchoice",
+            "build",
+            "finalize",
+            "seal",
+            "get-payload"
+        ]
     )]
     #[label(name = "severity", default = ["temporary", "critical", "reset", "flush"])]
     engine_task_failure: counter,
@@ -49,6 +65,8 @@ impl Metrics {
     pub const INSERT_TASK_LABEL: &str = "insert";
     /// Consolidate task label.
     pub const CONSOLIDATE_TASK_LABEL: &str = "consolidate";
+    /// Delegated forkchoice task label.
+    pub const DELEGATED_FORKCHOICE_TASK_LABEL: &str = "delegated-forkchoice";
     /// Forkchoice task label.
     pub const FORKCHOICE_TASK_LABEL: &str = "forkchoice-update";
     /// Build task label.
