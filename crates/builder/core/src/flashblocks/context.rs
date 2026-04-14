@@ -464,6 +464,7 @@ impl BasePayloadBuilderCtx {
             return;
         }
 
+        // Using `rejected_tx_channel_size` as an upper bound on the `rejected_txs` vec size
         if info.rejected_txs.len() >= self.builder_config.rejected_tx_channel_size {
             return;
         }

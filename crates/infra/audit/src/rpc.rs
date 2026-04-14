@@ -4,6 +4,7 @@
 //! of rejected transactions from the builder and persisting them to S3.
 
 use base_bundles::RejectedTransaction;
+use futures::stream::{self, StreamExt};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use tracing::{error, info};
 
@@ -49,18 +50,26 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
 
         info!(batch_size, block_number, "Persisting rejected transaction batch");
 
-        let mut persisted = 0u32;
-        for rejected_tx in batch {
-            if let Err(e) = self.storage.store_rejected_transaction(&rejected_tx).await {
-                error!(
-                    error = %e,
-                    tx_hash = %rejected_tx.tx_hash,
-                    "Failed to persist rejected transaction"
-                );
-            } else {
-                persisted += 1;
-            }
-        }
+        // Peform the S3 operations in parallel on the batch. Up to 10 concurrent operations at a time.
+        let persisted = stream::iter(batch)
+            .map(|tx| async {
+                let result = self.storage.store_rejected_transaction(&tx).await;
+                (tx, result)
+            })
+            .buffer_unordered(10)
+            .fold(0u32, |persisted, (tx, result)| async move {
+                if let Err(e) = result {
+                    error!(
+                        error = %e,
+                        tx_hash = %tx.tx_hash,
+                        "Failed to persist rejected transaction"
+                    );
+                    persisted
+                } else {
+                    persisted + 1
+                }
+            })
+            .await;
 
         Ok(persisted)
     }

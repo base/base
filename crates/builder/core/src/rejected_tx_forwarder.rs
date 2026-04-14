@@ -60,7 +60,7 @@ impl RejectedTxForwarder {
                 Ok(persisted) => {
                     warn!(
                         persisted,
-                        failed = batch_size - persisted as usize,
+                        failed = batch_size.saturating_sub(persisted as usize),
                         batch_size,
                         block_number = ?block_number,
                         "Partial failure persisting rejected transaction batch"
