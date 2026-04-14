@@ -184,6 +184,12 @@ impl RollupNodeBuilder {
 
         // Normalize ws:// -> http:// and wss:// -> https:// so the Hyper HTTP client
         // can connect regardless of whether the engine URL uses a WebSocket scheme.
+        //
+        // This provider is used exclusively for request/response eth_* calls by the
+        // derivation pipeline (block fetching, receipt fetching, system config). It does
+        // not use subscriptions, so HTTP is sufficient and avoids an async WS handshake
+        // here. `build()` is sync; the engine client (built async in `node.rs`) is the
+        // one that uses the WS transport end-to-end.
         let mut l2_http_url = self.engine_config.l2_url.clone();
         match l2_http_url.scheme() {
             "ws" => {
