@@ -45,7 +45,10 @@ pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 /// still initializing. This window allows the registrar to attempt
 /// registration during that warm-up period rather than waiting for the
 /// instance to become healthy. Set to 0 to disable.
-pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 3600;
+///
+/// 85 minutes gives a slight buffer ahead of the prove provision timeout
+/// of 90 minutes.
+pub const DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS: u64 = 5100;
 
 /// Runtime parameters for the [`RegistrationDriver`] that are not
 /// trait-based dependencies.
