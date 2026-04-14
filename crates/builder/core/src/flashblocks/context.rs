@@ -295,8 +295,8 @@ pub struct BasePayloadBuilderCtx {
     pub extra: FlashblocksExtraCtx,
     /// Builder configuration containing limits and metering settings.
     pub builder_config: BuilderConfig,
-    /// Sender for forwarding rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::Sender<RejectedTransaction>>,
+    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
+    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
 
 impl BasePayloadBuilderCtx {
@@ -460,6 +460,14 @@ impl BasePayloadBuilderCtx {
         reason: RejectionReason,
         metering: MeterBundleResponse,
     ) {
+        if self.rejected_tx_sender.is_none() {
+            return;
+        }
+
+        if info.rejected_txs.len() >= self.builder_config.rejected_tx_channel_size {
+            return;
+        }
+
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         info.rejected_txs.push(RejectedTransaction {
             tx_hash,
@@ -470,24 +478,24 @@ impl BasePayloadBuilderCtx {
         });
     }
 
-    /// Flushes all accumulated rejected transactions to the audit-archiver channel.
-    /// Called once after block finalization to send all rejections.
+    /// Flushes all accumulated rejected transactions to the audit-archiver channel
+    /// as a single per-block batch.
     pub fn flush_rejected_txs(&self, info: &mut ExecutionInfo) {
         if info.rejected_txs.is_empty() {
             return;
         }
 
         if let Some(sender) = &self.rejected_tx_sender {
-            let rejected_txs = std::mem::take(&mut info.rejected_txs);
-            for tx in rejected_txs {
-                if let Err(e) = sender.try_send(tx) {
-                    BuilderMetrics::rejected_tx_channel_drops().increment(1);
-                    warn!(
-                        target: "payload_builder",
-                        error = %e,
-                        "Rejected tx channel full or closed, dropping entry"
-                    );
-                }
+            let batch = std::mem::take(&mut info.rejected_txs);
+            let batch_size = batch.len();
+            if let Err(e) = sender.try_send(batch) {
+                BuilderMetrics::rejected_tx_channel_drops().increment(batch_size as u64);
+                warn!(
+                    target: "payload_builder",
+                    error = %e,
+                    batch_size,
+                    "Rejected tx channel full or closed, dropping batch"
+                );
             }
         }
     }

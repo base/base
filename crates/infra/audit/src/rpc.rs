@@ -13,11 +13,12 @@ use crate::storage::S3EventReaderWriter;
 #[rpc(server, namespace = "base")]
 pub trait AuditArchiverApi {
     /// Persists a batch of rejected transactions to S3 storage.
+    /// Returns the number of items successfully persisted.
     #[method(name = "persistRejectedTransactionBatch")]
     async fn persist_rejected_transaction_batch(
         &self,
         batch: Vec<RejectedTransaction>,
-    ) -> RpcResult<bool>;
+    ) -> RpcResult<u32>;
 }
 
 /// RPC handler for audit archiver requests.
@@ -38,9 +39,9 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
     async fn persist_rejected_transaction_batch(
         &self,
         batch: Vec<RejectedTransaction>,
-    ) -> RpcResult<bool> {
+    ) -> RpcResult<u32> {
         if batch.is_empty() {
-            return Ok(true);
+            return Ok(0);
         }
 
         let batch_size = batch.len();
@@ -48,6 +49,7 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
 
         info!(batch_size, block_number, "Persisting rejected transaction batch");
 
+        let mut persisted = 0u32;
         for rejected_tx in batch {
             if let Err(e) = self.storage.store_rejected_transaction(&rejected_tx).await {
                 error!(
@@ -55,9 +57,11 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
                     tx_hash = %rejected_tx.tx_hash,
                     "Failed to persist rejected transaction"
                 );
+            } else {
+                persisted += 1;
             }
         }
 
-        Ok(true)
+        Ok(persisted)
     }
 }

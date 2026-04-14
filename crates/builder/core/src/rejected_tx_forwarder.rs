@@ -16,19 +16,20 @@ use tracing::{info, warn};
 
 /// Forwards rejected transactions to the audit-archiver via RPC.
 ///
-/// Runs as a background task, reading from a bounded channel and making
+/// Runs as a background task, reading batches of rejected transactions
+/// (one batch per canonical block) from a bounded channel and making
 /// fire-and-forget RPC calls to the audit-archiver service.
 #[derive(Debug)]
 pub struct RejectedTxForwarder {
     client: HttpClient,
-    rx: mpsc::Receiver<RejectedTransaction>,
+    rx: mpsc::Receiver<Vec<RejectedTransaction>>,
 }
 
 impl RejectedTxForwarder {
     /// Creates a new `RejectedTxForwarder`.
     pub fn new(
         audit_archiver_url: &str,
-        rx: mpsc::Receiver<RejectedTransaction>,
+        rx: mpsc::Receiver<Vec<RejectedTransaction>>,
     ) -> eyre::Result<Self> {
         let client = HttpClientBuilder::default()
             .request_timeout(Duration::from_secs(1))
@@ -37,32 +38,40 @@ impl RejectedTxForwarder {
         Ok(Self { client, rx })
     }
 
-    /// Runs the forwarder loop, consuming rejected transaction info from the channel
-    /// and forwarding each to the audit-archiver via RPC.
+    /// Runs the forwarder loop, consuming per-block batches of rejected transactions
+    /// from the channel and forwarding each batch to the audit-archiver via RPC.
     pub async fn run(mut self) {
         info!("Rejected transaction forwarder started");
-        while let Some(rejected_tx) = self.rx.recv().await {
+        while let Some(batch) = self.rx.recv().await {
+            let batch_size = batch.len();
+            let block_number = batch.first().map(|tx| tx.block_number);
             match self
                 .client
-                .request::<bool, _>(
-                    "base_persistRejectedTransactionBatch",
-                    rpc_params![vec![&rejected_tx]],
-                )
+                .request::<u32, _>("base_persistRejectedTransactionBatch", rpc_params![&batch])
                 .await
             {
-                Ok(_) => {
+                Ok(persisted) if persisted as usize == batch_size => {
                     info!(
-                        tx_hash = %rejected_tx.tx_hash,
-                        block_number = rejected_tx.block_number,
-                        "Forwarded rejected transaction to audit-archiver"
+                        batch_size,
+                        block_number = ?block_number,
+                        "Forwarded rejected transaction batch to audit-archiver"
+                    );
+                }
+                Ok(persisted) => {
+                    warn!(
+                        persisted,
+                        failed = batch_size - persisted as usize,
+                        batch_size,
+                        block_number = ?block_number,
+                        "Partial failure persisting rejected transaction batch"
                     );
                 }
                 Err(e) => {
                     warn!(
                         error = %e,
-                        tx_hash = %rejected_tx.tx_hash,
-                        block_number = rejected_tx.block_number,
-                        "Failed to forward rejected transaction to audit-archiver"
+                        batch_size,
+                        block_number = ?block_number,
+                        "Failed to forward rejected transaction batch to audit-archiver"
                     );
                 }
             }

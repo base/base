@@ -102,8 +102,8 @@ pub(super) struct BasePayloadBuilder<Pool, Client> {
     pub ws_pub: Arc<WebSocketPublisher>,
     /// System configuration for the builder
     pub config: BuilderConfig,
-    /// Sender for forwarding rejected transactions to the audit-archiver.
-    pub rejected_tx_sender: Option<mpsc::Sender<RejectedTransaction>>,
+    /// Sender for forwarding per-block batches of rejected transactions to the audit-archiver.
+    pub rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
 }
 
 impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
@@ -115,7 +115,7 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
         config: BuilderConfig,
         payload_tx: mpsc::Sender<BaseBuiltPayload>,
         ws_pub: Arc<WebSocketPublisher>,
-        rejected_tx_sender: Option<mpsc::Sender<RejectedTransaction>>,
+        rejected_tx_sender: Option<mpsc::Sender<Vec<RejectedTransaction>>>,
     ) -> Self {
         Self { evm_config, pool, client, payload_tx, ws_pub, config, rejected_tx_sender }
     }
