@@ -163,19 +163,40 @@ impl BoundlessProver {
     ) -> Result<AttestationProof> {
         let image_id_bytes: [u8; 32] = Digest::from(self.image_id).into();
         let image_id_b256 = B256::from(image_id_bytes);
-        let (journal, receipt) = client
-            .fetch_set_inclusion_receipt(request_id, image_id_b256, None, None)
-            .await
-            .map_err(|e| {
-                warn!(
-                    error = %e,
-                    error_debug = ?e,
-                    request_id = %request_id,
-                    image_id = ?self.image_id,
-                    "failed to fetch set inclusion receipt"
-                );
-                ProverError::Boundless(format!("failed to fetch set inclusion receipt: {e}"))
-            })?;
+
+        // Retry only the RPC fetch — this is the transient-failure path.
+        // abi_encode_seal below is deterministic and must not be retried.
+        const MAX_RECEIPT_FETCH_RETRIES: u32 = 60;
+        const RECEIPT_FETCH_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+        let mut receipt_retries = 0;
+        let (journal, receipt) = loop {
+            match client
+                .fetch_set_inclusion_receipt(request_id, image_id_b256, None, None)
+                .await
+            {
+                Ok(result) => break result,
+                Err(e) if receipt_retries < MAX_RECEIPT_FETCH_RETRIES => {
+                    receipt_retries += 1;
+                    warn!(
+                        error = %e,
+                        error_debug = ?e,
+                        request_id = %request_id,
+                        image_id = ?self.image_id,
+                        retry = receipt_retries,
+                        max_retries = MAX_RECEIPT_FETCH_RETRIES,
+                        delay = ?RECEIPT_FETCH_RETRY_DELAY,
+                        "transient receipt fetch failure, retrying"
+                    );
+                    tokio::time::sleep(RECEIPT_FETCH_RETRY_DELAY).await;
+                }
+                Err(e) => {
+                    return Err(ProverError::Boundless(format!(
+                        "failed to fetch set inclusion receipt: {e}"
+                    )));
+                }
+            }
+        };
 
         let encoded_seal = receipt.abi_encode_seal().map_err(|e| {
             warn!(
@@ -244,28 +265,7 @@ impl BoundlessProver {
 
         info!(request_id = %request_id, "fulfillment confirmed, fetching set inclusion receipt");
 
-        const MAX_RECEIPT_FETCH_RETRIES: u32 = 60;
-        const RECEIPT_FETCH_RETRY_DELAY: Duration = Duration::from_secs(5);
-
-        let mut receipt_retries = 0;
-        loop {
-            match self.fetch_and_encode_receipt(client, request_id).await {
-                Ok(proof) => return Ok(proof),
-                Err(e) if receipt_retries < MAX_RECEIPT_FETCH_RETRIES => {
-                    receipt_retries += 1;
-                    warn!(
-                        error = %e,
-                        request_id = %request_id,
-                        retry = receipt_retries,
-                        max_retries = MAX_RECEIPT_FETCH_RETRIES,
-                        delay = ?RECEIPT_FETCH_RETRY_DELAY,
-                        "transient receipt fetch failure, retrying"
-                    );
-                    tokio::time::sleep(RECEIPT_FETCH_RETRY_DELAY).await;
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        self.fetch_and_encode_receipt(client, request_id).await
     }
 
     /// Builds the Boundless [`Client`] and [`RequestParams`] from the
