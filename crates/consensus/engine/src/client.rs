@@ -1,10 +1,6 @@
 //! An Engine API Client.
 
-use std::{
-    future::Future,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{future::Future, sync::Arc};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
@@ -12,12 +8,12 @@ use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey};
 use alloy_provider::{EthGetBlock, Provider, RootProvider, RpcWithBlock, ext::EngineApi};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_rpc_types_engine::{
-    Claims, ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2,
-    ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV3, ForkchoiceState,
-    ForkchoiceUpdated, JwtSecret, PayloadId, PayloadStatus,
+    ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
+    ExecutionPayloadV1, ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, JwtSecret,
+    PayloadId, PayloadStatus,
 };
 use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse};
-use alloy_transport::{Authorization, RpcError, TransportErrorKind, TransportResult};
+use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
 use alloy_transport_http::{
     AuthLayer, AuthService, Http, HyperClient,
     hyper_util::{
@@ -25,7 +21,6 @@ use alloy_transport_http::{
         rt::TokioExecutor,
     },
 };
-use alloy_transport_ws::WsConnect;
 use async_trait::async_trait;
 use base_common_network::Base;
 use base_common_provider::BaseEngineApi;
@@ -41,7 +36,7 @@ use thiserror::Error;
 use tower::ServiceBuilder;
 use url::Url;
 
-use crate::Metrics;
+use crate::{JwtWsConnect, Metrics};
 
 /// An error that occurred in the [`EngineClient`].
 #[derive(Error, Debug)]
@@ -121,9 +116,10 @@ where
 {
     /// Creates a new RPC client for the given address and JWT secret.
     ///
-    /// Supports both `http://`/`https://` and `ws://`/`wss://` schemes. For WebSocket URLs the
-    /// JWT is passed as a `Bearer` token in the upgrade request headers, matching the same
-    /// authentication model used by the HTTP [`AuthLayer`].
+    /// Supports both `http://`/`https://` and `ws://`/`wss://` schemes. For WebSocket URLs a
+    /// [`JwtWsConnect`] is used, which mints a fresh JWT on every connect and reconnect attempt.
+    /// This ensures the `iat` claim is always within the ±60-second window enforced by Reth and
+    /// Geth, unlike a static token that would become stale after 60 seconds.
     ///
     /// Returns an error if the WebSocket handshake fails (e.g. the engine is not yet reachable).
     /// HTTP/HTTPS URLs are constructed lazily and never fail here.
@@ -133,13 +129,7 @@ where
     ) -> TransportResult<RootProvider<N>> {
         match addr.scheme() {
             "ws" | "wss" => {
-                let claims = Claims {
-                    iat: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
-                    exp: None,
-                };
-                let token = jwt.encode(&claims).expect("jwt encoding is infallible");
-                let ws = WsConnect::new(addr.as_str()).with_auth(Authorization::bearer(token));
-                let client = ClientBuilder::default().ws(ws).await?;
+                let client = ClientBuilder::default().pubsub(JwtWsConnect::new(addr, jwt)).await?;
                 Ok(RootProvider::<N>::new(client))
             }
             _ => {
