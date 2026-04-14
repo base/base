@@ -270,7 +270,12 @@ impl RollupNode {
     /// received.
     pub async fn start(&self) -> Result<(), String> {
         let pipeline = self.create_pipeline().await;
-        let engine_client = Arc::new(self.engine_config().build_engine_client().await);
+        let engine_client = Arc::new(
+            self.engine_config()
+                .build_engine_client()
+                .await
+                .map_err(|e| e.to_string())?,
+        );
         self.start_inner(engine_client, pipeline).await
     }
 
@@ -288,7 +293,12 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
-        let engine_client = Arc::new(self.engine_config().build_engine_client().await);
+        let engine_client = Arc::new(
+            self.engine_config()
+                .build_engine_client()
+                .await
+                .map_err(|e| e.to_string())?,
+        );
         self.start_inner(engine_client, pipeline).await
     }
 

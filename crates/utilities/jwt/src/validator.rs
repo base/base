@@ -91,7 +91,8 @@ impl JwtValidator {
             http_url,
             self.secret,
         )
-        .await;
+        .await
+        .map_err(|e| JwtValidationError::CapabilityExchange(e.to_string()))?;
 
         let exchange = || async {
             match <RootProvider<Base> as BaseEngineApi<

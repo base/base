@@ -124,7 +124,13 @@ where
     /// Supports both `http://`/`https://` and `ws://`/`wss://` schemes. For WebSocket URLs the
     /// JWT is passed as a `Bearer` token in the upgrade request headers, matching the same
     /// authentication model used by the HTTP [`AuthLayer`].
-    pub async fn rpc_client<N: Network>(addr: Url, jwt: JwtSecret) -> RootProvider<N> {
+    ///
+    /// Returns an error if the WebSocket handshake fails (e.g. the engine is not yet reachable).
+    /// HTTP/HTTPS URLs are constructed lazily and never fail here.
+    pub async fn rpc_client<N: Network>(
+        addr: Url,
+        jwt: JwtSecret,
+    ) -> TransportResult<RootProvider<N>> {
         match addr.scheme() {
             "ws" | "wss" => {
                 let claims = Claims {
@@ -133,9 +139,8 @@ where
                 };
                 let token = jwt.encode(&claims).expect("jwt encoding is infallible");
                 let ws = WsConnect::new(addr.as_str()).with_auth(Authorization::bearer(token));
-                let client =
-                    ClientBuilder::default().ws(ws).await.expect("ws engine connection failed");
-                RootProvider::<N>::new(client)
+                let client = ClientBuilder::default().ws(ws).await?;
+                Ok(RootProvider::<N>::new(client))
             }
             _ => {
                 let hyper_client =
@@ -145,7 +150,7 @@ where
                 let layer_transport = HyperClient::with_service(service);
                 let http_hyper = Http::with_client(layer_transport, addr);
                 let rpc_client = RpcClient::new(http_hyper, false);
-                RootProvider::<N>::new(rpc_client)
+                Ok(RootProvider::<N>::new(rpc_client))
             }
         }
     }
@@ -170,16 +175,16 @@ impl EngineClientBuilder {
     /// Sets up JWT-authenticated connections to the Engine API endpoint along with an
     /// unauthenticated connection to the L1 chain. Supports both HTTP and WebSocket schemes
     /// for the L2 Engine API URL.
-    pub async fn build(self) -> BaseEngineClient<RootProvider, RootProvider<Base>> {
+    pub async fn build(self) -> TransportResult<BaseEngineClient<RootProvider, RootProvider<Base>>> {
         let engine = BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
             self.l2,
             self.l2_jwt,
         )
-        .await;
+        .await?;
 
         let l1_provider = RootProvider::new_http(self.l1_rpc);
 
-        BaseEngineClient { engine, l1_provider, cfg: self.cfg }
+        Ok(BaseEngineClient { engine, l1_provider, cfg: self.cfg })
     }
 }
 
@@ -446,7 +451,8 @@ mod tests {
         // No server is running; HTTP transport does not connect at build time.
         let _provider =
             BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(addr, jwt)
-                .await;
+                .await
+                .unwrap();
     }
 
     /// `rpc_client` with an `https://` URL must also build without connecting.
@@ -456,7 +462,8 @@ mod tests {
         let jwt = JwtSecret::random();
         let _provider =
             BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(addr, jwt)
-                .await;
+                .await
+                .unwrap();
     }
 
     /// `rpc_client` with a `ws://` URL must complete the WebSocket handshake at build time.
@@ -470,7 +477,8 @@ mod tests {
         let jwt = JwtSecret::random();
         let _provider =
             BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(addr, jwt)
-                .await;
+                .await
+                .unwrap();
     }
 
     /// `rpc_client` with a `wss://` URL uses the same WS branch as `ws://`; confirm the
@@ -490,7 +498,8 @@ mod tests {
         let jwt = JwtSecret::random();
         let _provider =
             BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(addr, jwt)
-                .await;
+                .await
+                .unwrap();
     }
 
     /// `EngineClientBuilder::build` with an `http://` L2 URL must succeed without a live server.
@@ -506,7 +515,7 @@ mod tests {
             l1_rpc: "http://127.0.0.1:8545".parse().unwrap(),
             cfg: Arc::new(RollupConfig::default()),
         };
-        let _client = builder.build().await;
+        let _client = builder.build().await.unwrap();
     }
 
     /// `EngineClientBuilder::build` with a `ws://` L2 URL must successfully perform the
@@ -526,6 +535,6 @@ mod tests {
             l1_rpc: "http://127.0.0.1:8545".parse().unwrap(),
             cfg: Arc::new(RollupConfig::default()),
         };
-        let _client = builder.build().await;
+        let _client = builder.build().await.unwrap();
     }
 }

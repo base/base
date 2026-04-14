@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
+use alloy_transport::TransportResult;
 use base_common_network::Base;
 use base_consensus_engine::{BaseEngineClient, EngineClientBuilder};
 use base_consensus_genesis::RollupConfig;
@@ -31,7 +32,9 @@ pub struct EngineConfig {
 
 impl EngineConfig {
     /// Builds and returns the [`BaseEngineClient`].
-    pub async fn build_engine_client(self) -> BaseEngineClient<RootProvider, RootProvider<Base>> {
+    pub async fn build_engine_client(
+        self,
+    ) -> TransportResult<BaseEngineClient<RootProvider, RootProvider<Base>>> {
         EngineClientBuilder {
             l2: self.l2_url.clone(),
             l2_jwt: self.l2_jwt_secret,
