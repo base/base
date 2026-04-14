@@ -704,6 +704,7 @@ impl OpPayloadBuilderCtx {
                 if tx_age_ms < wait_duration.as_millis() {
                     log_txn(Err(TxnExecutionError::MeteringDataPending));
                     BuilderMetrics::metering_data_pending_skip().increment(1);
+                    self.builder_config.metering_provider.skip(&tx_hash);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 }

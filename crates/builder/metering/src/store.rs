@@ -4,7 +4,10 @@
 //! to bound memory usage. Uses [`moka`] for the LRU cache that promotes
 //! entries on access, preventing premature eviction of frequently-read data.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
+};
 
 use alloy_primitives::TxHash;
 use base_builder_core::{BuilderMetrics, MeteringProvider};
@@ -15,6 +18,11 @@ use moka::{notification::RemovalCause, sync::Cache};
 pub struct MeteringStore {
     /// LRU cache mapping transaction hash to metering data.
     cache: Cache<TxHash, MeterBundleResponse>,
+    /// Records when `get()` first returned `None` for a tx hash — the moment
+    /// the builder needed metering data but didn't have it. Cleared when the
+    /// tx is skipped (MeteringDataPending) so only txs that were actually
+    /// included without data retain their entry for late-arrival detection.
+    needed_at: Cache<TxHash, Instant>,
     /// Whether resource metering is enabled.
     metering_enabled: AtomicBool,
 }
@@ -23,6 +31,7 @@ impl core::fmt::Debug for MeteringStore {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MeteringStore")
             .field("entries", &self.cache.entry_count())
+            .field("needed_at", &self.needed_at.entry_count())
             .field("metering_enabled", &self.metering_enabled.load(Ordering::Relaxed))
             .finish()
     }
@@ -40,7 +49,9 @@ impl MeteringStore {
             })
             .build();
 
-        Self { cache, metering_enabled: AtomicBool::new(enable_resource_metering) }
+        let needed_at = Cache::builder().max_capacity(max_capacity as u64).build();
+
+        Self { cache, needed_at, metering_enabled: AtomicBool::new(enable_resource_metering) }
     }
 
     /// Returns the number of stored entries.
@@ -60,7 +71,14 @@ impl MeteringProvider for MeteringStore {
             return None;
         }
 
-        self.cache.get(tx_hash)
+        let Some(entry) = self.cache.get(tx_hash) else {
+            // Atomically record the first miss — later flashblock iterations
+            // must not overwrite the original timestamp.
+            self.needed_at.entry_by_ref(tx_hash).or_insert(Instant::now());
+            return None;
+        };
+
+        Some(entry)
     }
 
     fn is_enabled(&self) -> bool {
@@ -68,8 +86,25 @@ impl MeteringProvider for MeteringStore {
     }
 
     fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
+        // If the builder needed metering data for this tx but didn't have it,
+        // the data arrived late. Record how late and what the values were.
+        if let Some(needed_at) = self.needed_at.remove(&tx_hash) {
+            let latency_ms = needed_at.elapsed().as_millis() as f64;
+            BuilderMetrics::metering_late_arrival_total().increment(1);
+            BuilderMetrics::metering_late_arrival_latency_ms().record(latency_ms);
+            BuilderMetrics::metering_late_arrival_execution_time_us()
+                .record(metering.total_execution_time_us as f64);
+            BuilderMetrics::metering_late_arrival_state_root_time_us()
+                .record(metering.state_root_time_us as f64);
+            return;
+        }
+
         self.cache.insert(tx_hash, metering);
         BuilderMetrics::metering_store_size().set(self.cache.entry_count() as f64);
+    }
+
+    fn skip(&self, tx_hash: &TxHash) {
+        self.needed_at.invalidate(tx_hash);
     }
 
     fn remove(&self, tx_hashes: &[TxHash]) {
@@ -81,6 +116,7 @@ impl MeteringProvider for MeteringStore {
 
     fn clear(&self) {
         self.cache.invalidate_all();
+        self.needed_at.invalidate_all();
         BuilderMetrics::metering_store_size().set(0.0);
     }
 
@@ -92,6 +128,15 @@ impl MeteringProvider for MeteringStore {
 impl Default for MeteringStore {
     fn default() -> Self {
         Self::new(false, 10_000)
+    }
+}
+
+#[cfg(test)]
+impl MeteringStore {
+    /// Runs pending async tasks in all caches (for deterministic tests).
+    fn run_pending_tasks(&self) {
+        self.cache.run_pending_tasks();
+        self.needed_at.run_pending_tasks();
     }
 }
 
@@ -170,6 +215,62 @@ mod tests {
         store.cache.run_pending_tasks();
 
         assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn test_late_insert_after_inclusion() {
+        let store = MeteringStore::new(true, 100);
+        let tx_hash = TxHash::random();
+
+        // get() miss → tx included without data → data arrives late
+        assert!(store.get(&tx_hash).is_none());
+        assert!(store.needed_at.contains_key(&tx_hash));
+
+        // Late-arriving data is consumed by insert(), does not enter cache
+        store.insert(tx_hash, create_test_metering(42000));
+        store.run_pending_tasks();
+        assert!(!store.needed_at.contains_key(&tx_hash));
+        assert!(store.get(&tx_hash).is_none(), "late arrival should not re-enter cache");
+    }
+
+    #[test]
+    fn test_skip_clears_needed_at() {
+        let store = MeteringStore::new(true, 100);
+        let tx_hash = TxHash::random();
+
+        // get() miss → tx skipped (MeteringDataPending)
+        assert!(store.get(&tx_hash).is_none());
+        assert!(store.needed_at.contains_key(&tx_hash));
+
+        store.skip(&tx_hash);
+        assert!(!store.needed_at.contains_key(&tx_hash));
+
+        // Data arrives after skip — normal insert, not a late arrival
+        store.insert(tx_hash, create_test_metering(21000));
+        assert!(store.get(&tx_hash).is_some());
+    }
+
+    #[test]
+    fn test_no_needed_at_when_data_present() {
+        let store = MeteringStore::new(true, 100);
+        let tx_hash = TxHash::random();
+
+        // Insert data first, then get() finds it — no needed_at entry
+        store.insert(tx_hash, create_test_metering(21000));
+        assert!(store.get(&tx_hash).is_some());
+        assert!(!store.needed_at.contains_key(&tx_hash));
+    }
+
+    #[test]
+    fn test_clear_resets_needed_at() {
+        let store = MeteringStore::new(true, 100);
+        let tx_hash = TxHash::random();
+
+        assert!(store.get(&tx_hash).is_none());
+        assert!(store.needed_at.contains_key(&tx_hash));
+
+        store.clear();
+        assert!(!store.needed_at.contains_key(&tx_hash));
     }
 
     #[test]
