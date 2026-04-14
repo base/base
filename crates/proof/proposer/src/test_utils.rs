@@ -114,12 +114,12 @@ impl RollupProvider for MockRollupClient {
         Ok(self.sync_status.clone())
     }
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
-        if let Some(max) = self.max_safe_block {
-            if block_number > max {
-                return Err(RpcError::BlockNotFound(format!(
-                    "mock: block {block_number} beyond safe head {max}"
-                )));
-            }
+        if let Some(max) = self.max_safe_block
+            && block_number > max
+        {
+            return Err(RpcError::BlockNotFound(format!(
+                "mock: block {block_number} beyond safe head {max}"
+            )));
         }
         let root = self
             .output_roots
