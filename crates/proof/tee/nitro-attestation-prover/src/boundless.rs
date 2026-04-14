@@ -171,10 +171,7 @@ impl BoundlessProver {
 
         let mut receipt_retries = 0;
         let (journal, receipt) = loop {
-            match client
-                .fetch_set_inclusion_receipt(request_id, image_id_b256, None, None)
-                .await
-            {
+            match client.fetch_set_inclusion_receipt(request_id, image_id_b256, None, None).await {
                 Ok(result) => break result,
                 Err(e) if receipt_retries < MAX_RECEIPT_FETCH_RETRIES => {
                     receipt_retries += 1;
