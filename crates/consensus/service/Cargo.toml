@@ -68,6 +68,7 @@ http-body-util.workspace = true
 tracing = { workspace = true, features = ["std"] }
 strum = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true, features = ["std"] }
+tower-http.workspace = true
 derive_more = { workspace = true, features = ["debug", "eq"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
