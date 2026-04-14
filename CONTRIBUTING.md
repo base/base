@@ -10,15 +10,15 @@ We use [vouch](https://github.com/mitchellh/vouch) to manage contributor trust. 
 
 **What this means for you:**
 
-- **Issues** are open to everyone — no restrictions.
-- **Pull requests** require you to be vouched. PRs from unvouched users are auto-closed.
+- **Issues** are open to everyone, except typo-only issues. Typo-only issues will be closed.
+- **Pull requests** require you to be vouched and assigned an issue. PRs from unvouched users are auto-closed.
 - **Org collaborators** with write access bypass this check automatically.
 
 **How to get vouched:**
 
 1. Open an issue describing the bug or feature you'd like to work on.
 2. A maintainer will review and comment `vouch` to add you to the trust list.
-3. Once vouched, you can open pull requests.
+3. Once vouched and assigned an issue, you can open pull requests.
 
 The trust list lives in [`.github/VOUCHED.td`](.github/VOUCHED.td).
 
@@ -37,7 +37,6 @@ To ensure we're all rowing in the same direction and to prevent wasted effort, p
 ### What We Accept from External Contributors
 
 - **Small, focused changes**: One-liner fixes, typo corrections in code, small bug fixes, and similar minimal changes are welcome.
-- **Issues labeled `help wanted`**: Want to contribute code? Look for unassigned issues with this label — these are ones we've specifically identified for external contributions. You can find them [here][help-wanted].
 - **Bug reports**: Well-documented bug reports with reproduction steps are always appreciated.
 
 ### Before Starting Work
@@ -84,8 +83,9 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 
 ### Opening the Pull Request
 
-1. Link to the related issue
-2. Describe what your changes do and why
+1. Open a pull request only if you have been assigned the related issue
+2. Link to the related issue
+3. Describe what your changes do and why
 
 ### After Submitting
 
@@ -96,6 +96,8 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 ## Submitting a Bug Report
 
 When filing a new bug report in the issue tracker, please include:
+
+- Do not open issues for typo-only changes. Those issues will be closed.
 
 - The Base version you are on (and that it is up to date)
 - Relevant logs and error messages
@@ -111,5 +113,3 @@ If you have questions:
 - Open a discussion in the repository
 - Comment on the relevant issue
 - Check existing [documentation](https://docs.base.org/base-chain/quickstart/why-base) and issues first
-
-[help-wanted]: https://github.com/base/base/issues?q=state%3Aopen%20label%3AM-help-wanted
