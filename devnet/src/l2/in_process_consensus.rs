@@ -7,6 +7,7 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 
 use alloy_primitives::B256;
@@ -157,6 +158,7 @@ impl InProcessConsensus {
             admin_persistence: None,
             ws_enabled: false,
             dev_enabled: false,
+            http_timeout: Duration::from_secs(60),
         };
 
         let mut builder = RollupNodeBuilder::new(

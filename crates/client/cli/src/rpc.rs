@@ -5,6 +5,7 @@
 use std::{
     net::{IpAddr, SocketAddr},
     path::PathBuf,
+    time::Duration,
 };
 
 use base_consensus_rpc::RpcBuilder;
@@ -38,6 +39,9 @@ pub struct RpcArgs {
     /// Enables development RPC endpoints for engine state introspection
     #[arg(long = "rpc.dev-enabled", default_value = "false", env = "BASE_NODE_RPC_DEV_ENABLED")]
     pub dev_enabled: bool,
+    /// HTTP request timeout in seconds for the RPC server.
+    #[arg(long = "rpc.timeout", default_value = "60", env = "BASE_NODE_RPC_TIMEOUT")]
+    pub http_timeout_secs: u64,
 }
 
 impl Default for RpcArgs {
@@ -60,6 +64,7 @@ impl From<RpcArgs> for Option<RpcBuilder> {
             admin_persistence: args.admin_persistence,
             ws_enabled: args.ws_enabled,
             dev_enabled: args.dev_enabled,
+            http_timeout: Duration::from_secs(args.http_timeout_secs),
         })
     }
 }
