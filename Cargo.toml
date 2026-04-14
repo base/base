@@ -317,6 +317,7 @@ alloy-rpc-client = "1.6.3"
 alloy-signer-local = "1.6.3"
 alloy-node-bindings = "1.6.3"
 alloy-transport-http = "1.6.3"
+alloy-transport-ws = "1.6.3"
 alloy-rpc-types-beacon = "1.6.3"
 alloy-rlp = { version = "0.3.13", default-features = false }
 alloy-trie = { version = "0.9.4", default-features = false }

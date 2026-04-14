@@ -31,7 +31,7 @@ pub struct EngineConfig {
 
 impl EngineConfig {
     /// Builds and returns the [`OpEngineClient`].
-    pub fn build_engine_client(self) -> OpEngineClient<RootProvider, RootProvider<Base>> {
+    pub async fn build_engine_client(self) -> OpEngineClient<RootProvider, RootProvider<Base>> {
         EngineClientBuilder {
             l2: self.l2_url.clone(),
             l2_jwt: self.l2_jwt_secret,
@@ -39,5 +39,6 @@ impl EngineConfig {
             cfg: Arc::clone(&self.config),
         }
         .build()
+        .await
     }
 }

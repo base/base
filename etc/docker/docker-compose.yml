@@ -258,7 +258,7 @@ services:
       - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
-      - http://base-builder:${L2_BUILDER_AUTH_PORT}
+      - ws://base-builder:${L2_BUILDER_AUTH_PORT}
       - --l2-engine-jwt-secret
       - /genesis/jwt.hex
       - --l2-config-file
@@ -434,7 +434,7 @@ services:
       - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
-      - http://base-client:${L2_CLIENT_AUTH_PORT}
+      - ws://base-client:${L2_CLIENT_AUTH_PORT}
       - --l2-engine-jwt-secret
       - /genesis/jwt.hex
       - --l2-config-file
