@@ -315,7 +315,7 @@ where
     DerivationEngineClient_: DerivationEngineClient,
     L2Source: L2SourceClient,
 {
-    pub(super) fn new(
+    pub(super) const fn new(
         engine_client: Arc<DerivationEngineClient_>,
         engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
         cancellation_token: CancellationToken,
@@ -398,16 +398,15 @@ where
         // Detect hash mismatch between source and local EL for the delegated safe block.
         if let Ok(Some(local_block)) =
             self.local_l2_provider.get_block_by_number(clamped_safe.into()).await
+            && local_block.header.hash != source_hash
         {
-            if local_block.header.hash != source_hash {
-                warn!(
-                    target: "derivation",
-                    block_number = clamped_safe,
-                    local_hash = %local_block.header.hash,
-                    source_hash = %source_hash,
-                    "Delegated safe block hash mismatch between source and local EL"
-                );
-            }
+            warn!(
+                target: "derivation",
+                block_number = clamped_safe,
+                local_hash = %local_block.header.hash,
+                source_hash = %source_hash,
+                "Delegated safe block hash mismatch between source and local EL"
+            );
         }
 
         let safe_l2 = L2BlockInfo {
