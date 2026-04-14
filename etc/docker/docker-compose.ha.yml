@@ -60,7 +60,7 @@ services:
       - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
-      - http://base-builder:${L2_BUILDER_AUTH_PORT}
+      - ws://base-builder:${L2_BUILDER_AUTH_PORT}
       - --l2-engine-jwt-secret
       - /genesis/jwt.hex
       - --l2-config-file
@@ -205,7 +205,7 @@ services:
       - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
-      - http://base-sequencer-1:${L2_SEQ1_AUTH_PORT}
+      - ws://base-sequencer-1:${L2_SEQ1_AUTH_PORT}
       - --l2-engine-jwt-secret
       - /genesis/jwt.hex
       - --l2-config-file
@@ -329,7 +329,7 @@ services:
       - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
       - --l2-engine-rpc
-      - http://base-sequencer-2:${L2_SEQ2_AUTH_PORT}
+      - ws://base-sequencer-2:${L2_SEQ2_AUTH_PORT}
       - --l2-engine-jwt-secret
       - /genesis/jwt.hex
       - --l2-config-file
