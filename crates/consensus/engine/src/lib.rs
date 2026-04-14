@@ -26,6 +26,9 @@ pub use client::{
     BaseEngineClient, EngineClient, EngineClientBuilder, EngineClientError, HyperAuthClient,
 };
 
+mod ws_connect;
+pub use ws_connect::JwtWsConnect;
+
 mod versions;
 pub use versions::{EngineForkchoiceVersion, EngineGetPayloadVersion, EngineNewPayloadVersion};
 
