@@ -133,14 +133,13 @@ where
                 };
                 let token = jwt.encode(&claims).expect("jwt encoding is infallible");
                 let ws = WsConnect::new(addr.as_str()).with_auth(Authorization::bearer(token));
-                let client = ClientBuilder::default()
-                    .ws(ws)
-                    .await
-                    .expect("ws engine connection failed");
+                let client =
+                    ClientBuilder::default().ws(ws).await.expect("ws engine connection failed");
                 RootProvider::<N>::new(client)
             }
             _ => {
-                let hyper_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+                let hyper_client =
+                    Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
                 let auth_layer = AuthLayer::new(jwt);
                 let service = ServiceBuilder::new().layer(auth_layer).service(hyper_client);
                 let layer_transport = HyperClient::with_service(service);
@@ -512,6 +511,7 @@ mod tests {
     #[tokio::test]
     async fn engine_client_builder_http_builds() {
         use std::sync::Arc;
+
         use base_consensus_genesis::RollupConfig;
 
         let builder = EngineClientBuilder {
@@ -528,6 +528,7 @@ mod tests {
     #[tokio::test]
     async fn engine_client_builder_ws_connects() {
         use std::sync::Arc;
+
         use base_consensus_genesis::RollupConfig;
 
         let (listener, port) = free_port_listener().await;

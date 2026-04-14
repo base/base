@@ -186,8 +186,12 @@ impl RollupNodeBuilder {
         // can connect regardless of whether the engine URL uses a WebSocket scheme.
         let mut l2_http_url = self.engine_config.l2_url.clone();
         match l2_http_url.scheme() {
-            "ws" => { let _ = l2_http_url.set_scheme("http"); }
-            "wss" => { let _ = l2_http_url.set_scheme("https"); }
+            "ws" => {
+                let _ = l2_http_url.set_scheme("http");
+            }
+            "wss" => {
+                let _ = l2_http_url.set_scheme("https");
+            }
             _ => {}
         }
 
