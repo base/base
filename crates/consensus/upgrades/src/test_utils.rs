@@ -2,7 +2,7 @@
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, keccak256};
-use base_common_consensus::{BaseTxType, TxDeposit};
+use base_common_consensus::{OpTxType, TxDeposit};
 use base_common_evm::{DefaultOp, DepositTransactionParts, OpSpecId};
 use revm::{
     Context, ExecuteCommitEvm, MainBuilder,
@@ -33,7 +33,7 @@ pub fn check_deployment_code(
             tx.enveloped_tx = Some(deployment_tx.encoded_2718().into());
 
             // Base meta
-            tx.base.tx_type = BaseTxType::Deposit as u8;
+            tx.base.tx_type = OpTxType::Deposit as u8;
             tx.base.caller = deployment_tx.from;
             tx.base.kind = deployment_tx.to;
             tx.base.value = deployment_tx.value;

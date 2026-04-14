@@ -30,8 +30,8 @@ mod transaction;
 #[cfg(feature = "serde")]
 pub use transaction::serde_deposit_tx_rpc;
 pub use transaction::{
-    BasePooledTransaction, BaseTransaction, BaseTransactionInfo, BaseTxEnvelope, BaseTxType,
-    BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositInfo, DepositTransaction, TxDeposit,
+    BasePooledTransaction, BaseTransaction, BaseTransactionInfo, BaseTxEnvelope,
+    BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositInfo, DepositTransaction, OpTxType, TxDeposit,
 };
 
 mod extra;

@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockHash, Bytes};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
-use base_common_consensus::BaseTxType;
+use base_common_consensus::OpTxType;
 use base_consensus_genesis::RollupConfig;
 use tracing::warn;
 
@@ -170,12 +170,12 @@ impl SingleBatch {
             if tx.is_empty() {
                 return BatchValidity::Drop(BatchDropReason::EmptyTransaction);
             }
-            if tx.as_ref().first() == Some(&(BaseTxType::Deposit as u8)) {
+            if tx.as_ref().first() == Some(&(OpTxType::Deposit as u8)) {
                 return BatchValidity::Drop(BatchDropReason::DepositTransaction);
             }
             // If isthmus is not active yet and the transaction is a 7702, drop the batch.
             if !cfg.is_isthmus_active(self.timestamp)
-                && tx.as_ref().first() == Some(&(BaseTxType::Eip7702 as u8))
+                && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
             {
                 return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
             }

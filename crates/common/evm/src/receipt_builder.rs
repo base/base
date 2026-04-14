@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_consensus::{Eip658Value, TransactionEnvelope};
 use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
-use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, BaseTxType, DepositReceipt};
+use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, OpTxType};
 
 /// Type that knows how to build a receipt based on execution result.
 #[auto_impl::auto_impl(&, Arc)]
@@ -42,10 +42,10 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
 
     fn build_receipt<'a, E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'a, BaseTxType, E>,
-    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, BaseTxType, E>> {
+        ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
+    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxType, E>> {
         match ctx.tx_type {
-            BaseTxType::Deposit => Err(ctx),
+            OpTxType::Deposit => Err(ctx),
             ty => {
                 let receipt = alloy_consensus::Receipt {
                     status: Eip658Value::Eip658(ctx.result.is_success()),
@@ -55,11 +55,11 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
                 .with_bloom();
 
                 Ok(match ty {
-                    BaseTxType::Legacy => BaseReceiptEnvelope::Legacy(receipt),
-                    BaseTxType::Eip2930 => BaseReceiptEnvelope::Eip2930(receipt),
-                    BaseTxType::Eip1559 => BaseReceiptEnvelope::Eip1559(receipt),
-                    BaseTxType::Eip7702 => BaseReceiptEnvelope::Eip7702(receipt),
-                    BaseTxType::Deposit => unreachable!(),
+                    OpTxType::Legacy => BaseReceiptEnvelope::Legacy(receipt),
+                    OpTxType::Eip2930 => BaseReceiptEnvelope::Eip2930(receipt),
+                    OpTxType::Eip1559 => BaseReceiptEnvelope::Eip1559(receipt),
+                    OpTxType::Eip7702 => BaseReceiptEnvelope::Eip7702(receipt),
+                    OpTxType::Deposit => unreachable!(),
                 })
             }
         }

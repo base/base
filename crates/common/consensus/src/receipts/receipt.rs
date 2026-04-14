@@ -12,7 +12,7 @@ use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 
 use super::{BaseTxReceipt, DepositReceipt};
-use crate::{BaseReceiptEnvelope, BaseTxType};
+use crate::{BaseReceiptEnvelope, OpTxType};
 
 /// Transaction receipt for Base chains.
 ///
@@ -40,14 +40,14 @@ pub enum BaseReceipt<T = Log> {
 }
 
 impl<T> BaseReceipt<T> {
-    /// Returns [`BaseTxType`] of the receipt.
-    pub const fn tx_type(&self) -> BaseTxType {
+    /// Returns [`OpTxType`] of the receipt.
+    pub const fn tx_type(&self) -> OpTxType {
         match self {
-            Self::Legacy(_) => BaseTxType::Legacy,
-            Self::Eip2930(_) => BaseTxType::Eip2930,
-            Self::Eip1559(_) => BaseTxType::Eip1559,
-            Self::Eip7702(_) => BaseTxType::Eip7702,
-            Self::Deposit(_) => BaseTxType::Deposit,
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip7702(_) => OpTxType::Eip7702,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
@@ -145,33 +145,33 @@ impl<T> BaseReceipt<T> {
     /// network header.
     pub fn rlp_decode_inner(
         buf: &mut &[u8],
-        tx_type: BaseTxType,
+        tx_type: OpTxType,
     ) -> alloy_rlp::Result<ReceiptWithBloom<Self>>
     where
         T: Decodable,
     {
         match tx_type {
-            BaseTxType::Legacy => {
+            OpTxType::Legacy => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
                 Ok(ReceiptWithBloom { receipt: Self::Legacy(receipt), logs_bloom })
             }
-            BaseTxType::Eip2930 => {
+            OpTxType::Eip2930 => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
                 Ok(ReceiptWithBloom { receipt: Self::Eip2930(receipt), logs_bloom })
             }
-            BaseTxType::Eip1559 => {
+            OpTxType::Eip1559 => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
                 Ok(ReceiptWithBloom { receipt: Self::Eip1559(receipt), logs_bloom })
             }
-            BaseTxType::Eip7702 => {
+            OpTxType::Eip7702 => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
                 Ok(ReceiptWithBloom { receipt: Self::Eip7702(receipt), logs_bloom })
             }
-            BaseTxType::Deposit => {
+            OpTxType::Deposit => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
                 Ok(ReceiptWithBloom { receipt: Self::Deposit(receipt), logs_bloom })
@@ -238,7 +238,7 @@ impl<T> BaseReceipt<T> {
     where
         T: Decodable,
     {
-        let tx_type = BaseTxType::decode(buf)?;
+        let tx_type = OpTxType::decode(buf)?;
         let status = Decodable::decode(buf)?;
         let cumulative_gas_used = Decodable::decode(buf)?;
         let logs = Decodable::decode(buf)?;
@@ -247,7 +247,7 @@ impl<T> BaseReceipt<T> {
         let mut deposit_receipt_version = None;
 
         // For deposit receipts, try to decode nonce and version if they exist
-        if tx_type == BaseTxType::Deposit && !buf.is_empty() {
+        if tx_type == OpTxType::Deposit && !buf.is_empty() {
             deposit_nonce = Some(Decodable::decode(buf)?);
             if !buf.is_empty() {
                 deposit_receipt_version = Some(Decodable::decode(buf)?);
@@ -255,11 +255,11 @@ impl<T> BaseReceipt<T> {
         }
 
         match tx_type {
-            BaseTxType::Legacy => Ok(Self::Legacy(Receipt { status, cumulative_gas_used, logs })),
-            BaseTxType::Eip2930 => Ok(Self::Eip2930(Receipt { status, cumulative_gas_used, logs })),
-            BaseTxType::Eip1559 => Ok(Self::Eip1559(Receipt { status, cumulative_gas_used, logs })),
-            BaseTxType::Eip7702 => Ok(Self::Eip7702(Receipt { status, cumulative_gas_used, logs })),
-            BaseTxType::Deposit => Ok(Self::Deposit(DepositReceipt {
+            OpTxType::Legacy => Ok(Self::Legacy(Receipt { status, cumulative_gas_used, logs })),
+            OpTxType::Eip2930 => Ok(Self::Eip2930(Receipt { status, cumulative_gas_used, logs })),
+            OpTxType::Eip1559 => Ok(Self::Eip1559(Receipt { status, cumulative_gas_used, logs })),
+            OpTxType::Eip7702 => Ok(Self::Eip7702(Receipt { status, cumulative_gas_used, logs })),
+            OpTxType::Deposit => Ok(Self::Deposit(DepositReceipt {
                 inner: Receipt { status, cumulative_gas_used, logs },
                 deposit_nonce,
                 deposit_receipt_version,
@@ -284,12 +284,12 @@ impl<T: Encodable> Eip2718EncodableReceipt for BaseReceipt<T> {
 
 impl<T: Decodable> Eip2718DecodableReceipt for BaseReceipt<T> {
     fn typed_decode_with_bloom(ty: u8, buf: &mut &[u8]) -> Eip2718Result<ReceiptWithBloom<Self>> {
-        let tx_type = BaseTxType::try_from(ty).map_err(|_| Eip2718Error::UnexpectedType(ty))?;
+        let tx_type = OpTxType::try_from(ty).map_err(|_| Eip2718Error::UnexpectedType(ty))?;
         Ok(Self::rlp_decode_inner(buf, tx_type)?)
     }
 
     fn fallback_decode_with_bloom(buf: &mut &[u8]) -> Eip2718Result<ReceiptWithBloom<Self>> {
-        Ok(Self::rlp_decode_inner(buf, BaseTxType::Legacy)?)
+        Ok(Self::rlp_decode_inner(buf, OpTxType::Legacy)?)
     }
 }
 
@@ -323,14 +323,14 @@ impl<T: Decodable> RlpDecodableReceipt for BaseReceipt<T> {
 
         // Legacy receipt, reuse initial buffer without advancing
         if header.list {
-            return Self::rlp_decode_inner(buf, BaseTxType::Legacy);
+            return Self::rlp_decode_inner(buf, OpTxType::Legacy);
         }
 
         // Otherwise, advance the buffer and try decoding type flag followed by receipt
         *buf = *header_buf;
 
         let remaining = buf.len();
-        let tx_type = BaseTxType::decode(buf)?;
+        let tx_type = OpTxType::decode(buf)?;
         let this = Self::rlp_decode_inner(buf, tx_type)?;
 
         if buf.len() + header.payload_length != remaining {
@@ -417,7 +417,7 @@ impl<T> Typed2718 for BaseReceipt<T> {
 
 impl<T> IsTyped2718 for BaseReceipt<T> {
     fn is_type(type_id: u8) -> bool {
-        <BaseTxType as IsTyped2718>::is_type(type_id)
+        <OpTxType as IsTyped2718>::is_type(type_id)
     }
 }
 

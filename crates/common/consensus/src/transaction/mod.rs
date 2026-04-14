@@ -7,7 +7,7 @@ mod tx_type;
 pub use tx_type::DEPOSIT_TX_TYPE_ID;
 
 mod envelope;
-pub use envelope::{BaseTransaction, BaseTxEnvelope, BaseTxType};
+pub use envelope::{BaseTransaction, BaseTxEnvelope, OpTxType};
 
 mod typed;
 pub use typed::BaseTypedTransaction;

@@ -11,7 +11,7 @@ use alloy_primitives::{B256, BlockHash, Bytes, TxHash, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use base_access_lists::FBALBuilderDb;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTransactionSigned, BaseTxType, DepositReceipt};
+use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, L1BlockInfo, OpSpecId};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
@@ -451,7 +451,7 @@ impl OpPayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
-        ctx: ReceiptBuilderCtx<'_, BaseTxType, E>,
+        ctx: ReceiptBuilderCtx<'_, OpTxType, E>,
         deposit_nonce: Option<u64>,
     ) -> BaseReceipt {
         let receipt_builder = self.evm_config.block_executor_factory().receipt_builder();

@@ -11,7 +11,7 @@ use alloy_eips::{
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256, keccak256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
 
-use super::BaseTxType;
+use super::OpTxType;
 
 /// Deposit transactions, also known as deposits are initiated on L1, and executed on L2.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -139,8 +139,8 @@ impl TxDeposit {
     }
 
     /// Get the transaction type
-    pub const fn tx_type(&self) -> BaseTxType {
-        BaseTxType::Deposit
+    pub const fn tx_type(&self) -> OpTxType {
+        OpTxType::Deposit
     }
 
     /// Create an rlp header for the transaction.
@@ -197,13 +197,13 @@ impl TxDeposit {
 
 impl Typed2718 for TxDeposit {
     fn ty(&self) -> u8 {
-        BaseTxType::Deposit as u8
+        OpTxType::Deposit as u8
     }
 }
 
 impl IsTyped2718 for TxDeposit {
     fn is_type(ty: u8) -> bool {
-        BaseTxType::Deposit as u8 == ty
+        OpTxType::Deposit as u8 == ty
     }
 }
 
@@ -279,7 +279,7 @@ impl Transaction for TxDeposit {
 
 impl Encodable2718 for TxDeposit {
     fn type_flag(&self) -> Option<u8> {
-        Some(BaseTxType::Deposit as u8)
+        Some(OpTxType::Deposit as u8)
     }
 
     fn encode_2718_len(&self) -> usize {
@@ -294,8 +294,8 @@ impl Encodable2718 for TxDeposit {
 
 impl Decodable2718 for TxDeposit {
     fn typed_decode(ty: u8, data: &mut &[u8]) -> Eip2718Result<Self> {
-        let ty: BaseTxType = ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))?;
-        if ty != BaseTxType::Deposit as u8 {
+        let ty: OpTxType = ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))?;
+        if ty != OpTxType::Deposit as u8 {
             return Err(Eip2718Error::UnexpectedType(ty as u8));
         }
         let tx = Self::decode(data)?;

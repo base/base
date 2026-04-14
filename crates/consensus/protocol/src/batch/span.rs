@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::FixedBytes;
-use base_common_consensus::BaseTxType;
+use base_common_consensus::OpTxType;
 use base_consensus_genesis::RollupConfig;
 use tracing::{info, warn};
 
@@ -498,7 +498,7 @@ impl SpanBatch {
                     );
                     return BatchValidity::Drop(BatchDropReason::EmptyTransaction);
                 }
-                if tx.as_ref().first() == Some(&(BaseTxType::Deposit as u8)) {
+                if tx.as_ref().first() == Some(&(OpTxType::Deposit as u8)) {
                     warn!(
                         target: "batch_span",
                         "sequencers may not embed any deposits into batch data, but found tx that has one, tx_index: {}",
@@ -509,7 +509,7 @@ impl SpanBatch {
 
                 // If isthmus is not active yet and the transaction is a 7702, drop the batch.
                 if !cfg.is_isthmus_active(batch.timestamp)
-                    && tx.as_ref().first() == Some(&(BaseTxType::Eip7702 as u8))
+                    && tx.as_ref().first() == Some(&(OpTxType::Eip7702 as u8))
                 {
                     warn!(target: "batch_span", tx_index = i, "EIP-7702 transactions are not supported pre-isthmus");
                     return BatchValidity::Drop(BatchDropReason::Eip7702PreIsthmus);
@@ -1963,7 +1963,7 @@ mod tests {
         let second = SpanBatchElement {
             epoch_num: 10,
             timestamp: 20,
-            transactions: vec![Bytes::copy_from_slice(&[BaseTxType::Deposit as u8])],
+            transactions: vec![Bytes::copy_from_slice(&[OpTxType::Deposit as u8])],
         };
         let third =
             SpanBatchElement { epoch_num: 11, timestamp: 20, transactions: vec![filler_bytes] };

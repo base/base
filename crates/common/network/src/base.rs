@@ -3,7 +3,7 @@ use alloy_network::Network;
 use alloy_provider::fillers::{
     ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
 };
-use base_common_consensus::{BaseReceipt, BaseTxType};
+use base_common_consensus::{BaseReceipt, OpTxType};
 
 /// Types for a Base chain network.
 #[derive(Clone, Copy, Debug)]
@@ -12,7 +12,7 @@ pub struct Base {
 }
 
 impl Network for Base {
-    type TxType = BaseTxType;
+    type TxType = OpTxType;
 
     type TxEnvelope = base_common_consensus::BaseTxEnvelope;
 

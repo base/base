@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BaseTxType};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, OpTxType};
 use base_common_evm::{BaseBlockExecutor, BaseTxResult, OpHaltReason, OpTransaction};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::OpRethReceiptBuilder;
@@ -34,7 +34,7 @@ impl<P> FlashblocksCachedExecutionProvider<P> {
     }
 }
 
-impl<P> CachedExecutionProvider<BaseTxResult<OpHaltReason, BaseTxType>>
+impl<P> CachedExecutionProvider<BaseTxResult<OpHaltReason, OpTxType>>
     for FlashblocksCachedExecutionProvider<P>
 where
     P: BlockNumReader,
@@ -45,7 +45,7 @@ where
         parent_block_hash: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<BaseTxResult<OpHaltReason, BaseTxType>> {
+    ) -> Option<BaseTxResult<OpHaltReason, OpTxType>> {
         let flashblocks_state = self.flashblocks_state.as_ref()?;
 
         // if block_number is not found, we can't use cached execution
@@ -145,12 +145,12 @@ impl<'a, DB, E, C> BlockExecutor for CachedExecutor<E, C>
 where
     DB: Database + alloy_evm::Database + 'a,
     E: Evm<DB = &'a mut State<DB>, Tx = OpTransaction<TxEnv>>,
-    C: CachedExecutionProvider<BaseTxResult<E::HaltReason, BaseTxType>>,
+    C: CachedExecutionProvider<BaseTxResult<E::HaltReason, OpTxType>>,
 {
     type Transaction = BaseTxEnvelope;
     type Receipt = BaseReceipt;
     type Evm = E;
-    type Result = BaseTxResult<E::HaltReason, BaseTxType>;
+    type Result = BaseTxResult<E::HaltReason, OpTxType>;
 
     fn receipts(&self) -> &[Self::Receipt] {
         self.executor.receipts()

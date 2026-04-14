@@ -11,7 +11,7 @@ use alloy_rpc_types::{BlockTransactions, Withdrawal, state::StateOverride};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
-use base_common_consensus::BaseTxType;
+use base_common_consensus::OpTxType;
 use base_common_evm::{BaseTxResult, OpHaltReason};
 use base_common_flashblocks::Flashblock;
 use base_common_network::Base;
@@ -351,10 +351,7 @@ impl PendingBlocks {
     }
 
     /// Returns the receipt and state for a transaction.
-    pub fn get_op_tx_result(
-        &self,
-        tx_hash: &B256,
-    ) -> Option<BaseTxResult<OpHaltReason, BaseTxType>> {
+    pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<BaseTxResult<OpHaltReason, OpTxType>> {
         let (((result, state), tx), sender) = self
             .get_transaction_result(tx_hash)
             .zip(self.get_transaction_state(tx_hash))
@@ -835,7 +832,7 @@ mod tests {
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, da_footprint);
-        assert_eq!(result.inner.tx_type, BaseTxType::Legacy);
+        assert_eq!(result.inner.tx_type, OpTxType::Legacy);
         assert!(!result.is_deposit);
         assert_eq!(result.sender, test_sender());
         assert_eq!(result.inner.result.result.gas_used(), 21000);
@@ -848,7 +845,7 @@ mod tests {
         let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, 0);
-        assert_eq!(result.inner.tx_type, BaseTxType::Deposit);
+        assert_eq!(result.inner.tx_type, OpTxType::Deposit);
         assert!(result.is_deposit);
         assert_eq!(result.sender, test_sender());
         assert_eq!(result.inner.result.result.gas_used(), 21000);

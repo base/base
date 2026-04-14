@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_consensus::BlockBody;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
-use base_common_consensus::{BaseBlock, BaseTxEnvelope, BaseTxType};
+use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType};
 use base_consensus_derive::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
 use base_consensus_genesis::RollupConfig;
 use base_proof_executor::BlockBuildingOutcome;
@@ -119,7 +119,7 @@ where
                         // Strip out all transactions that are not deposits.
                         attributes.transactions = attributes.transactions.map(|txs| {
                             txs.into_iter()
-                                .filter(|tx| !tx.is_empty() && tx[0] == BaseTxType::Deposit as u8)
+                                .filter(|tx| !tx.is_empty() && tx[0] == OpTxType::Deposit as u8)
                                 .collect::<Vec<_>>()
                         });
 

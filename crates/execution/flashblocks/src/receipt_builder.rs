@@ -5,7 +5,7 @@
 
 use alloy_consensus::{Eip658Value, Receipt, transaction::Recovered};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTxEnvelope, BaseTxType, DepositReceipt};
+use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt, OpTxType};
 use reth_evm::Evm;
 use revm::{Database, context::result::ExecutionResult};
 
@@ -87,7 +87,7 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
             logs: result.logs().to_vec(),
         };
 
-        if tx_type == BaseTxType::Deposit {
+        if tx_type == OpTxType::Deposit {
             // Handle deposit transaction
             let is_canyon_active = self.chain_spec.is_canyon_active_at_timestamp(timestamp);
             let is_regolith_active = self.chain_spec.is_regolith_active_at_timestamp(timestamp);
@@ -113,11 +113,11 @@ impl<C: Upgrades> UnifiedReceiptBuilder<C> {
         } else {
             // Handle non-deposit transaction
             Ok(match tx_type {
-                BaseTxType::Legacy => BaseReceipt::Legacy(receipt),
-                BaseTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
-                BaseTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
-                BaseTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
-                BaseTxType::Deposit => unreachable!(),
+                OpTxType::Legacy => BaseReceipt::Legacy(receipt),
+                OpTxType::Eip2930 => BaseReceipt::Eip2930(receipt),
+                OpTxType::Eip1559 => BaseReceipt::Eip1559(receipt),
+                OpTxType::Eip7702 => BaseReceipt::Eip7702(receipt),
+                OpTxType::Deposit => unreachable!(),
             })
         }
     }

@@ -1,6 +1,6 @@
 //! Base Payload attributes that reference the parent L2 block.
 
-use base_common_consensus::BaseTxType;
+use base_common_consensus::OpTxType;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 
 use crate::{BlockInfo, L2BlockInfo};
@@ -66,16 +66,17 @@ impl AttributesWithParent {
         self.attributes
             .transactions
             .iter()
-            .all(|tx| tx.first().is_some_and(|tx| tx[0] == BaseTxType::Deposit as u8))
+            .all(|tx| tx.first().is_some_and(|tx| tx[0] == OpTxType::Deposit as u8))
     }
 
     /// Converts the [`AttributesWithParent`] into a deposits-only payload.
     pub fn as_deposits_only(&self) -> Self {
         let mut attributes = self.attributes.clone();
 
-        attributes.transactions.iter_mut().for_each(|txs| {
-            txs.retain(|tx| tx.first().copied() == Some(BaseTxType::Deposit as u8))
-        });
+        attributes
+            .transactions
+            .iter_mut()
+            .for_each(|txs| txs.retain(|tx| tx.first().copied() == Some(OpTxType::Deposit as u8)));
 
         Self {
             attributes,
@@ -117,11 +118,11 @@ mod tests {
     fn test_op_attributes_with_parent_as_deposits_only() {
         let attributes = BasePayloadAttributes {
             transactions: Some(vec![
-                vec![BaseTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![BaseTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
-                vec![BaseTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
-                vec![BaseTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
-                vec![BaseTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
+                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
+                vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
+                vec![OpTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
+                vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
+                vec![OpTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
                 vec![].into(),
             ]),
             ..BasePayloadAttributes::default()
@@ -134,7 +135,7 @@ mod tests {
 
         assert_eq!(
             deposits_only_attributes.attributes().transactions,
-            Some(vec![vec![BaseTxType::Deposit as u8, 0x0, 0x10, 0x20].into()])
+            Some(vec![vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into()])
         );
     }
 
@@ -142,13 +143,13 @@ mod tests {
     fn test_op_attributes_with_parent_as_deposits_multi_deposits() {
         let attributes = BasePayloadAttributes {
             transactions: Some(vec![
-                vec![BaseTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![BaseTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
-                vec![BaseTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
-                vec![BaseTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
-                vec![BaseTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
-                vec![BaseTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
-                vec![BaseTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
+                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
+                vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
+                vec![OpTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
+                vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
+                vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
+                vec![OpTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
+                vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
                 vec![].into(),
             ]),
             ..BasePayloadAttributes::default()
@@ -162,9 +163,9 @@ mod tests {
         assert_eq!(
             deposits_only_attributes.attributes().transactions,
             Some(vec![
-                vec![BaseTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![BaseTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
-                vec![BaseTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
+                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
+                vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
+                vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
             ])
         );
     }
@@ -175,10 +176,10 @@ mod tests {
     fn test_op_attributes_with_parent_as_deposits_no_deposits() {
         let attributes = BasePayloadAttributes {
             transactions: Some(vec![
-                vec![BaseTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
-                vec![BaseTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
-                vec![BaseTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
-                vec![BaseTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
+                vec![OpTxType::Legacy as u8, 0x0, 0x11, 0x21].into(),
+                vec![OpTxType::Eip2930 as u8, 0x0, 0x12, 0x22].into(),
+                vec![OpTxType::Eip1559 as u8, 0x0, 0x13, 0x23].into(),
+                vec![OpTxType::Eip7702 as u8, 0x0, 0x14, 0x24].into(),
                 vec![].into(),
             ]),
             ..BasePayloadAttributes::default()
@@ -196,9 +197,9 @@ mod tests {
     fn test_op_attributes_with_parent_as_deposits_only_deposits() {
         let attributes = BasePayloadAttributes {
             transactions: Some(vec![
-                vec![BaseTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![BaseTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
-                vec![BaseTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
+                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
+                vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
+                vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
                 vec![].into(),
             ]),
             ..BasePayloadAttributes::default()
@@ -212,9 +213,9 @@ mod tests {
         assert_eq!(
             deposits_only_attributes.attributes().transactions,
             Some(vec![
-                vec![BaseTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
-                vec![BaseTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
-                vec![BaseTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
+                vec![OpTxType::Deposit as u8, 0x0, 0x10, 0x20].into(),
+                vec![OpTxType::Deposit as u8, 0x98, 0x21, 0x31].into(),
+                vec![OpTxType::Deposit as u8, 0x56, 0x31, 0x41].into(),
             ])
         );
     }

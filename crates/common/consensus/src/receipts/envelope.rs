@@ -10,7 +10,7 @@ use alloy_eips::{
 use alloy_primitives::{Bloom, Log, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, length_of_length};
 
-use crate::{BaseTxType, DepositReceipt, DepositReceiptWithBloom};
+use crate::{DepositReceipt, DepositReceiptWithBloom, OpTxType};
 
 /// Receipt envelope, as defined in [EIP-2718], modified for Base.
 ///
@@ -57,7 +57,7 @@ impl BaseReceiptEnvelope<Log> {
         status: bool,
         cumulative_gas_used: u64,
         logs: impl IntoIterator<Item = &'a Log>,
-        tx_type: BaseTxType,
+        tx_type: OpTxType,
         deposit_nonce: Option<u64>,
         deposit_receipt_version: Option<u64>,
     ) -> Self {
@@ -66,19 +66,19 @@ impl BaseReceiptEnvelope<Log> {
         let inner_receipt =
             Receipt { status: Eip658Value::Eip658(status), cumulative_gas_used, logs };
         match tx_type {
-            BaseTxType::Legacy => {
+            OpTxType::Legacy => {
                 Self::Legacy(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
-            BaseTxType::Eip2930 => {
+            OpTxType::Eip2930 => {
                 Self::Eip2930(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
-            BaseTxType::Eip1559 => {
+            OpTxType::Eip1559 => {
                 Self::Eip1559(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
-            BaseTxType::Eip7702 => {
+            OpTxType::Eip7702 => {
                 Self::Eip7702(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
-            BaseTxType::Deposit => {
+            OpTxType::Deposit => {
                 let inner = DepositReceiptWithBloom {
                     receipt: DepositReceipt {
                         inner: inner_receipt,
@@ -94,14 +94,14 @@ impl BaseReceiptEnvelope<Log> {
 }
 
 impl<T> BaseReceiptEnvelope<T> {
-    /// Return the [`BaseTxType`] of the inner receipt.
-    pub const fn tx_type(&self) -> BaseTxType {
+    /// Return the [`OpTxType`] of the inner receipt.
+    pub const fn tx_type(&self) -> OpTxType {
         match self {
-            Self::Legacy(_) => BaseTxType::Legacy,
-            Self::Eip2930(_) => BaseTxType::Eip2930,
-            Self::Eip1559(_) => BaseTxType::Eip1559,
-            Self::Eip7702(_) => BaseTxType::Eip7702,
-            Self::Deposit(_) => BaseTxType::Deposit,
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip7702(_) => OpTxType::Eip7702,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
@@ -276,11 +276,11 @@ impl Decodable for BaseReceiptEnvelope {
 impl Typed2718 for BaseReceiptEnvelope {
     fn ty(&self) -> u8 {
         let ty = match self {
-            Self::Legacy(_) => BaseTxType::Legacy,
-            Self::Eip2930(_) => BaseTxType::Eip2930,
-            Self::Eip1559(_) => BaseTxType::Eip1559,
-            Self::Eip7702(_) => BaseTxType::Eip7702,
-            Self::Deposit(_) => BaseTxType::Deposit,
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip7702(_) => OpTxType::Eip7702,
+            Self::Deposit(_) => OpTxType::Deposit,
         };
         ty as u8
     }
@@ -288,7 +288,7 @@ impl Typed2718 for BaseReceiptEnvelope {
 
 impl IsTyped2718 for BaseReceiptEnvelope {
     fn is_type(type_id: u8) -> bool {
-        <BaseTxType as IsTyped2718>::is_type(type_id)
+        <OpTxType as IsTyped2718>::is_type(type_id)
     }
 }
 
@@ -314,14 +314,14 @@ impl Encodable2718 for BaseReceiptEnvelope {
 impl Decodable2718 for BaseReceiptEnvelope {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
         match ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))? {
-            BaseTxType::Legacy => {
+            OpTxType::Legacy => {
                 Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported")
                     .into())
             }
-            BaseTxType::Eip1559 => Ok(Self::Eip1559(Decodable::decode(buf)?)),
-            BaseTxType::Eip7702 => Ok(Self::Eip7702(Decodable::decode(buf)?)),
-            BaseTxType::Eip2930 => Ok(Self::Eip2930(Decodable::decode(buf)?)),
-            BaseTxType::Deposit => Ok(Self::Deposit(Decodable::decode(buf)?)),
+            OpTxType::Eip1559 => Ok(Self::Eip1559(Decodable::decode(buf)?)),
+            OpTxType::Eip7702 => Ok(Self::Eip7702(Decodable::decode(buf)?)),
+            OpTxType::Eip2930 => Ok(Self::Eip2930(Decodable::decode(buf)?)),
+            OpTxType::Deposit => Ok(Self::Deposit(Decodable::decode(buf)?)),
         }
     }
 
@@ -413,27 +413,21 @@ mod tests {
     #[test]
     fn legacy_receipt_from_parts() {
         let receipt =
-            BaseReceiptEnvelope::from_parts(true, 100, vec![], BaseTxType::Legacy, None, None);
+            BaseReceiptEnvelope::from_parts(true, 100, vec![], OpTxType::Legacy, None, None);
         assert!(receipt.status());
         assert_eq!(receipt.cumulative_gas_used(), 100);
         assert_eq!(receipt.logs().len(), 0);
-        assert_eq!(receipt.tx_type(), BaseTxType::Legacy);
+        assert_eq!(receipt.tx_type(), OpTxType::Legacy);
     }
 
     #[test]
     fn deposit_receipt_from_parts() {
-        let receipt = BaseReceiptEnvelope::from_parts(
-            true,
-            100,
-            vec![],
-            BaseTxType::Deposit,
-            Some(1),
-            Some(2),
-        );
+        let receipt =
+            BaseReceiptEnvelope::from_parts(true, 100, vec![], OpTxType::Deposit, Some(1), Some(2));
         assert!(receipt.status());
         assert_eq!(receipt.cumulative_gas_used(), 100);
         assert_eq!(receipt.logs().len(), 0);
-        assert_eq!(receipt.tx_type(), BaseTxType::Deposit);
+        assert_eq!(receipt.tx_type(), OpTxType::Deposit);
         assert_eq!(receipt.deposit_nonce(), Some(1));
         assert_eq!(receipt.deposit_receipt_version(), Some(2));
     }

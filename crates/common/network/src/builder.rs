@@ -2,7 +2,7 @@ use alloy_consensus::TxType;
 use alloy_network::{BuildResult, TransactionBuilder, TransactionBuilderError};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_rpc_types_eth::AccessList;
-use base_common_consensus::{BaseTxType, BaseTypedTransaction};
+use base_common_consensus::{BaseTypedTransaction, OpTxType};
 use base_common_rpc_types::BaseTransactionRequest;
 
 use crate::Base;
@@ -104,9 +104,9 @@ impl TransactionBuilder<Base> for BaseTransactionRequest {
         self.as_mut().set_access_list(access_list);
     }
 
-    fn complete_type(&self, ty: BaseTxType) -> Result<(), Vec<&'static str>> {
+    fn complete_type(&self, ty: OpTxType) -> Result<(), Vec<&'static str>> {
         match ty {
-            BaseTxType::Deposit => Err(vec!["not implemented for deposit tx"]),
+            OpTxType::Deposit => Err(vec!["not implemented for deposit tx"]),
             _ => {
                 let ty = TxType::try_from(ty as u8).map_err(|_| vec!["unsupported tx type"])?;
                 self.as_ref().complete_type(ty)
@@ -123,22 +123,22 @@ impl TransactionBuilder<Base> for BaseTransactionRequest {
     }
 
     #[doc(alias = "output_transaction_type")]
-    fn output_tx_type(&self) -> BaseTxType {
+    fn output_tx_type(&self) -> OpTxType {
         match self.as_ref().preferred_type() {
-            TxType::Eip1559 | TxType::Eip4844 => BaseTxType::Eip1559,
-            TxType::Eip2930 => BaseTxType::Eip2930,
-            TxType::Eip7702 => BaseTxType::Eip7702,
-            TxType::Legacy => BaseTxType::Legacy,
+            TxType::Eip1559 | TxType::Eip4844 => OpTxType::Eip1559,
+            TxType::Eip2930 => OpTxType::Eip2930,
+            TxType::Eip7702 => OpTxType::Eip7702,
+            TxType::Legacy => OpTxType::Legacy,
         }
     }
 
     #[doc(alias = "output_transaction_type_checked")]
-    fn output_tx_type_checked(&self) -> Option<BaseTxType> {
+    fn output_tx_type_checked(&self) -> Option<OpTxType> {
         self.as_ref().buildable_type().map(|tx_ty| match tx_ty {
-            TxType::Eip1559 | TxType::Eip4844 => BaseTxType::Eip1559,
-            TxType::Eip2930 => BaseTxType::Eip2930,
-            TxType::Eip7702 => BaseTxType::Eip7702,
-            TxType::Legacy => BaseTxType::Legacy,
+            TxType::Eip1559 | TxType::Eip4844 => OpTxType::Eip1559,
+            TxType::Eip2930 => OpTxType::Eip2930,
+            TxType::Eip7702 => OpTxType::Eip7702,
+            TxType::Legacy => OpTxType::Legacy,
         })
     }
 
@@ -148,7 +148,7 @@ impl TransactionBuilder<Base> for BaseTransactionRequest {
 
     fn build_unsigned(self) -> BuildResult<BaseTypedTransaction, Base> {
         if let Err((tx_type, missing)) = self.as_ref().missing_keys() {
-            let tx_type = BaseTxType::try_from(tx_type as u8).map_err(|e| {
+            let tx_type = OpTxType::try_from(tx_type as u8).map_err(|e| {
                 TransactionBuilderError::<Base>::custom(e).into_unbuilt(self.clone())
             })?;
             return Err(TransactionBuilderError::InvalidTransactionRequest(tx_type, missing)
@@ -185,11 +185,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case::legacy(BaseTxType::Legacy)]
-    #[case::eip2930(BaseTxType::Eip2930)]
-    #[case::eip1559(BaseTxType::Eip1559)]
-    #[case::eip7702(BaseTxType::Eip7702)]
-    fn complete_type_delegates_for_eth_types(#[case] ty: BaseTxType) {
+    #[case::legacy(OpTxType::Legacy)]
+    #[case::eip2930(OpTxType::Eip2930)]
+    #[case::eip1559(OpTxType::Eip1559)]
+    #[case::eip7702(OpTxType::Eip7702)]
+    fn complete_type_delegates_for_eth_types(#[case] ty: OpTxType) {
         let req = BaseTransactionRequest::default();
         // Should not panic — returns Ok or missing-fields Err from the inner request.
         let _ = req.complete_type(ty);
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn complete_type_rejects_deposit() {
         let req = BaseTransactionRequest::default();
-        let err = req.complete_type(BaseTxType::Deposit).unwrap_err();
+        let err = req.complete_type(OpTxType::Deposit).unwrap_err();
         assert_eq!(err, vec!["not implemented for deposit tx"]);
     }
 
@@ -215,14 +215,14 @@ mod tests {
         let err = req.build_unsigned().unwrap_err();
         assert!(matches!(
             err.error,
-            TransactionBuilderError::InvalidTransactionRequest(BaseTxType::Eip1559, _)
+            TransactionBuilderError::InvalidTransactionRequest(OpTxType::Eip1559, _)
         ));
     }
 
     #[test]
     fn build_unsigned_returns_custom_error_for_unmappable_tx_type() {
         // Force preferred_type() to return TxType::Eip4844 (u8 = 3), which has
-        // no corresponding BaseTxType variant.
+        // no corresponding OpTxType variant.
         let mut req = BaseTransactionRequest::default();
         req.as_mut().blob_versioned_hashes = Some(vec![B256::ZERO]);
         let err = req.build_unsigned().unwrap_err();

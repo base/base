@@ -23,15 +23,15 @@ use reth_codecs::{
 use reth_ethereum_primitives as _;
 
 use crate::{
-    BaseBlock, BasePooledTransaction, BaseReceipt, BaseTxEnvelope, BaseTxType,
-    BaseTypedTransaction, DEPOSIT_TX_TYPE_ID, DepositReceipt, TxDeposit,
+    BaseBlock, BasePooledTransaction, BaseReceipt, BaseTxEnvelope, BaseTypedTransaction,
+    DEPOSIT_TX_TYPE_ID, DepositReceipt, OpTxType, TxDeposit,
 };
 
 // ---------------------------------------------------------------------------
 // InMemorySize (reth-primitives-traits)
 // ---------------------------------------------------------------------------
 
-impl reth_primitives_traits::InMemorySize for BaseTxType {
+impl reth_primitives_traits::InMemorySize for OpTxType {
     #[inline]
     fn size(&self) -> usize {
         core::mem::size_of::<Self>()
@@ -207,10 +207,10 @@ impl Compact for TxDeposit {
 }
 
 // ---------------------------------------------------------------------------
-// Compact – BaseTxType
+// Compact – OpTxType
 // ---------------------------------------------------------------------------
 
-impl Compact for BaseTxType {
+impl Compact for OpTxType {
     fn to_compact<B>(&self, buf: &mut B) -> usize
     where
         B: BufMut + AsMut<[u8]>,
@@ -241,10 +241,10 @@ impl Compact for BaseTxType {
                     match extended_identifier {
                         EIP7702_TX_TYPE_ID => Self::Eip7702,
                         DEPOSIT_TX_TYPE_ID => Self::Deposit,
-                        _ => panic!("Unsupported BaseTxType identifier: {extended_identifier}"),
+                        _ => panic!("Unsupported OpTxType identifier: {extended_identifier}"),
                     }
                 }
-                _ => panic!("Unknown identifier for BaseTxType: {identifier}"),
+                _ => panic!("Unknown identifier for OpTxType: {identifier}"),
             },
             buf,
         )
@@ -272,25 +272,25 @@ impl Compact for BaseTypedTransaction {
     }
 
     fn from_compact(buf: &[u8], identifier: usize) -> (Self, &[u8]) {
-        let (tx_type, buf) = BaseTxType::from_compact(buf, identifier);
+        let (tx_type, buf) = OpTxType::from_compact(buf, identifier);
         match tx_type {
-            BaseTxType::Legacy => {
+            OpTxType::Legacy => {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
                 (Self::Legacy(tx), buf)
             }
-            BaseTxType::Eip2930 => {
+            OpTxType::Eip2930 => {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
                 (Self::Eip2930(tx), buf)
             }
-            BaseTxType::Eip1559 => {
+            OpTxType::Eip1559 => {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
                 (Self::Eip1559(tx), buf)
             }
-            BaseTxType::Eip7702 => {
+            OpTxType::Eip7702 => {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
                 (Self::Eip7702(tx), buf)
             }
-            BaseTxType::Deposit => {
+            OpTxType::Deposit => {
                 let (tx, buf) = Compact::from_compact(buf, buf.len());
                 (Self::Deposit(tx), buf)
             }
@@ -315,31 +315,31 @@ impl reth_codecs::alloy::transaction::ToTxCompact for BaseTxEnvelope {
 }
 
 impl reth_codecs::alloy::transaction::FromTxCompact for BaseTxEnvelope {
-    type TxType = BaseTxType;
+    type TxType = OpTxType;
 
-    fn from_tx_compact(buf: &[u8], tx_type: BaseTxType, signature: Signature) -> (Self, &[u8]) {
+    fn from_tx_compact(buf: &[u8], tx_type: OpTxType, signature: Signature) -> (Self, &[u8]) {
         match tx_type {
-            BaseTxType::Legacy => {
+            OpTxType::Legacy => {
                 let (tx, buf) = TxLegacy::from_compact(buf, buf.len());
                 let tx = Signed::new_unhashed(tx, signature);
                 (Self::Legacy(tx), buf)
             }
-            BaseTxType::Eip2930 => {
+            OpTxType::Eip2930 => {
                 let (tx, buf) = TxEip2930::from_compact(buf, buf.len());
                 let tx = Signed::new_unhashed(tx, signature);
                 (Self::Eip2930(tx), buf)
             }
-            BaseTxType::Eip1559 => {
+            OpTxType::Eip1559 => {
                 let (tx, buf) = TxEip1559::from_compact(buf, buf.len());
                 let tx = Signed::new_unhashed(tx, signature);
                 (Self::Eip1559(tx), buf)
             }
-            BaseTxType::Eip7702 => {
+            OpTxType::Eip7702 => {
                 let (tx, buf) = TxEip7702::from_compact(buf, buf.len());
                 let tx = Signed::new_unhashed(tx, signature);
                 (Self::Eip7702(tx), buf)
             }
-            BaseTxType::Deposit => {
+            OpTxType::Deposit => {
                 let (tx, buf) = TxDeposit::from_compact(buf, buf.len());
                 let tx = Sealed::new(tx);
                 (Self::Deposit(tx), buf)
@@ -399,13 +399,13 @@ impl Compact for BaseTxEnvelope {
     decompressor = reth_zstd_compressors::with_receipt_decompressor
 )]
 struct CompactBaseReceipt<'a> {
+    tx_type: OpTxType,
     success: bool,
     cumulative_gas_used: u64,
     #[expect(clippy::owned_cow)]
     logs: Cow<'a, Vec<alloy_primitives::Log>>,
     deposit_nonce: Option<u64>,
     deposit_receipt_version: Option<u64>,
-    tx_type: BaseTxType,
 }
 
 impl<'a> From<&'a BaseReceipt> for CompactBaseReceipt<'a> {
@@ -444,11 +444,11 @@ impl From<CompactBaseReceipt<'_>> for BaseReceipt {
             Receipt { status: success.into(), cumulative_gas_used, logs: logs.into_owned() };
 
         match tx_type {
-            BaseTxType::Legacy => Self::Legacy(inner),
-            BaseTxType::Eip2930 => Self::Eip2930(inner),
-            BaseTxType::Eip1559 => Self::Eip1559(inner),
-            BaseTxType::Eip7702 => Self::Eip7702(inner),
-            BaseTxType::Deposit => {
+            OpTxType::Legacy => Self::Legacy(inner),
+            OpTxType::Eip2930 => Self::Eip2930(inner),
+            OpTxType::Eip1559 => Self::Eip1559(inner),
+            OpTxType::Eip7702 => Self::Eip7702(inner),
+            OpTxType::Deposit => {
                 Self::Deposit(DepositReceipt { inner, deposit_nonce, deposit_receipt_version })
             }
         }

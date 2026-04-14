@@ -4,19 +4,19 @@ use core::fmt::Display;
 
 use alloy_consensus::InMemorySize;
 
-use crate::transaction::envelope::BaseTxType;
+use crate::transaction::envelope::OpTxType;
 
 /// Identifier for a deposit transaction
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 
 #[allow(clippy::derivable_impls)]
-impl Default for BaseTxType {
+impl Default for OpTxType {
     fn default() -> Self {
         Self::Legacy
     }
 }
 
-impl Display for BaseTxType {
+impl Display for OpTxType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Legacy => write!(f, "legacy"),
@@ -28,18 +28,18 @@ impl Display for BaseTxType {
     }
 }
 
-impl BaseTxType {
+impl OpTxType {
     /// List of all variants.
     pub const ALL: [Self; 5] =
         [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Eip7702, Self::Deposit];
 
-    /// Returns `true` if the type is [`BaseTxType::Deposit`].
+    /// Returns `true` if the type is [`OpTxType::Deposit`].
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit)
     }
 }
 
-impl InMemorySize for BaseTxType {
+impl InMemorySize for OpTxType {
     #[inline]
     fn size(&self) -> usize {
         core::mem::size_of::<Self>()
@@ -56,23 +56,23 @@ mod tests {
 
     #[test]
     fn test_all_tx_types() {
-        assert_eq!(BaseTxType::ALL.len(), 5);
+        assert_eq!(OpTxType::ALL.len(), 5);
         let all = vec![
-            BaseTxType::Legacy,
-            BaseTxType::Eip2930,
-            BaseTxType::Eip1559,
-            BaseTxType::Eip7702,
-            BaseTxType::Deposit,
+            OpTxType::Legacy,
+            OpTxType::Eip2930,
+            OpTxType::Eip1559,
+            OpTxType::Eip7702,
+            OpTxType::Deposit,
         ];
-        assert_eq!(BaseTxType::ALL.to_vec(), all);
+        assert_eq!(OpTxType::ALL.to_vec(), all);
     }
 
     #[test]
     fn tx_type_roundtrip() {
-        for &tx_type in &BaseTxType::ALL {
+        for &tx_type in &OpTxType::ALL {
             let mut buf = Vec::new();
             tx_type.encode(&mut buf);
-            let decoded = BaseTxType::decode(&mut &buf[..]).unwrap();
+            let decoded = OpTxType::decode(&mut &buf[..]).unwrap();
             assert_eq!(tx_type, decoded);
         }
     }

@@ -7,7 +7,7 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, ChainId, Signature, TxHash, bytes::BufMut};
 
 pub use crate::transaction::envelope::BaseTypedTransaction;
-use crate::{BaseTxEnvelope, BaseTxType, TxDeposit};
+use crate::{BaseTxEnvelope, OpTxType, TxDeposit};
 
 impl From<TxLegacy> for BaseTypedTransaction {
     fn from(tx: TxLegacy) -> Self {
@@ -73,14 +73,14 @@ impl From<BaseTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
 }
 
 impl BaseTypedTransaction {
-    /// Return the [`BaseTxType`] of the inner txn.
-    pub const fn tx_type(&self) -> BaseTxType {
+    /// Return the [`OpTxType`] of the inner txn.
+    pub const fn tx_type(&self) -> OpTxType {
         match self {
-            Self::Legacy(_) => BaseTxType::Legacy,
-            Self::Eip2930(_) => BaseTxType::Eip2930,
-            Self::Eip1559(_) => BaseTxType::Eip1559,
-            Self::Eip7702(_) => BaseTxType::Eip7702,
-            Self::Deposit(_) => BaseTxType::Deposit,
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip7702(_) => OpTxType::Eip7702,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 

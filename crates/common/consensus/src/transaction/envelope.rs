@@ -24,7 +24,7 @@ use crate::{
 ///
 /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
 #[derive(Debug, Clone, TransactionEnvelope)]
-#[envelope(tx_type_name = BaseTxType, typed = BaseTypedTransaction, serde_cfg(feature = "serde"))]
+#[envelope(tx_type_name = OpTxType, typed = BaseTypedTransaction, serde_cfg(feature = "serde"))]
 pub enum BaseTxEnvelope {
     /// An untagged [`TxLegacy`].
     #[envelope(ty = 0)]
@@ -405,14 +405,14 @@ impl BaseTxEnvelope {
         }
     }
 
-    /// Return the [`BaseTxType`] of the inner txn.
-    pub const fn tx_type(&self) -> BaseTxType {
+    /// Return the [`OpTxType`] of the inner txn.
+    pub const fn tx_type(&self) -> OpTxType {
         match self {
-            Self::Legacy(_) => BaseTxType::Legacy,
-            Self::Eip2930(_) => BaseTxType::Eip2930,
-            Self::Eip1559(_) => BaseTxType::Eip1559,
-            Self::Eip7702(_) => BaseTxType::Eip7702,
-            Self::Deposit(_) => BaseTxType::Deposit,
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip7702(_) => OpTxType::Eip7702,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
