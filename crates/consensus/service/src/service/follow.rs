@@ -110,11 +110,7 @@ impl FollowNode {
     /// Starts the follow node.
     pub async fn start(&self) -> Result<(), String> {
         let engine_client = Arc::new(
-            self.engine_config
-                .clone()
-                .build_engine_client()
-                .await
-                .map_err(|e| e.to_string())?,
+            self.engine_config.clone().build_engine_client().await.map_err(|e| e.to_string())?,
         );
         self.start_inner(engine_client).await
     }
