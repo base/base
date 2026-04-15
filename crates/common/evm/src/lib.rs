@@ -8,9 +8,6 @@ extern crate alloc;
 mod spec;
 pub use spec::{OpSpecId, name};
 
-mod rollup_config_ext;
-pub use rollup_config_ext::RollupConfigExt;
-
 mod constants;
 pub use constants::*;
 

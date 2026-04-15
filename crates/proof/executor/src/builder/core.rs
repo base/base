@@ -15,7 +15,6 @@ use alloy_evm::{
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope};
 use base_common_evm::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseTxEnv, OpSpecId,
-    RollupConfigExt,
 };
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::RollupConfig;
@@ -111,7 +110,7 @@ where
             attrs.payload_attributes.timestamp,
         )?;
         let evm_env = self.evm_env(
-            self.config.spec_id(attrs.payload_attributes.timestamp),
+            OpSpecId::from_timestamp(self.config, attrs.payload_attributes.timestamp),
             self.trie_db.parent_block_header(),
             &attrs,
             &base_fee_params,

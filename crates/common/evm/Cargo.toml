@@ -23,7 +23,6 @@ alloy-primitives.workspace = true
 base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-consensus = { workspace = true, features = ["evm"] }
-base-consensus-genesis.workspace = true
 
 # revm
 revm.workspace = true
@@ -53,17 +52,11 @@ std = [
 	"alloy-primitives/std",
 	"base-common-consensus/std",
 	"base-common-flz/std",
-	"base-consensus-genesis/std",
 	"revm/std",
 	"serde?/std",
 	"thiserror/std",
 ]
-serde = [
-	"alloy-primitives/serde",
-	"base-consensus-genesis/serde",
-	"dep:serde",
-	"revm/serde",
-]
+serde = [ "alloy-primitives/serde", "dep:serde", "revm/serde" ]
 reth = [ "dep:reth-evm", "std" ]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
