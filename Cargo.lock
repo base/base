@@ -3688,7 +3688,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-rpc-types",
  "base-execution-upgrades",
- "base-protocol",
  "derive_more",
  "reth-chainspec",
  "reth-ethereum-forks",

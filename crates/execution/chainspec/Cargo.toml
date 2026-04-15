@@ -19,7 +19,6 @@ reth-ethereum-forks.workspace = true
 reth-primitives-traits.workspace = true
 
 # op-reth
-base-protocol.workspace = true
 base-common-chains.workspace = true
 base-execution-upgrades.workspace = true
 
@@ -55,7 +54,6 @@ std = [
 	"base-common-consensus/std",
 	"base-common-rpc-types/std",
 	"base-execution-upgrades/std",
-	"base-protocol/std",
 	"derive_more/std",
 	"reth-chainspec/std",
 	"reth-ethereum-forks/std",
@@ -74,7 +72,6 @@ serde = [
 	"base-common-consensus/serde",
 	"base-common-rpc-types/serde",
 	"base-execution-upgrades/serde",
-	"base-protocol/serde",
 	"reth-ethereum-forks/serde",
 	"reth-primitives-traits/serde",
 ]
