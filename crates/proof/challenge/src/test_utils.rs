@@ -20,7 +20,7 @@ use base_proof_contracts::{
 };
 use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
-use base_protocol::Predeploys;
+use base_common_consensus::Predeploys;
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 use base_zk_client::{
     GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, ZkProofError,

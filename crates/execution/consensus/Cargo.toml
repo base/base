@@ -22,7 +22,6 @@ reth-consensus-common.workspace = true
 reth-primitives-traits.workspace = true
 
 # op-reth
-base-protocol.workspace = true
 base-common-chains.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 
@@ -60,7 +59,6 @@ std = [
 	"alloy-trie/std",
 	"base-common-consensus/std",
 	"base-execution-chainspec/std",
-	"base-protocol/std",
 	"reth-consensus-common/std",
 	"reth-consensus/std",
 	"reth-execution-types/std",
