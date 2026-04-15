@@ -34,7 +34,6 @@ reth-cli-util.workspace = true
 base-node-core.workspace = true
 reth-chainspec.workspace = true
 reth-rpc-layer.workspace = true
-reth-primitives.workspace = true
 reth-storage-api.workspace = true
 reth-chain-state.workspace = true
 reth-payload-util.workspace = true
@@ -137,7 +136,6 @@ secp256k1.workspace = true
 serde_with.workspace = true
 parking_lot.workspace = true
 derive_more.workspace = true
-shellexpand.workspace = true
 tar = { workspace = true, optional = true }
 ctor = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
@@ -226,7 +224,6 @@ test-utils = [
 	"reth-node-ethereum/test-utils",
 	"reth-payload-builder/test-utils",
 	"reth-primitives-traits/test-utils",
-	"reth-primitives/test-utils",
 	"reth-provider/test-utils",
 	"reth-revm/test-utils",
 	"reth-tasks/test-utils",

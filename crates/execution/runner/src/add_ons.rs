@@ -5,10 +5,9 @@ use base_execution_payload_builder::{
     config::{BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
-    MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
-    miner::BaseMinerExtApi,
+    miner::{MinerApiExtServer, BaseMinerExtApi},
     witness::BaseDebugWitnessApi,
 };
 use base_execution_txpool::BasePooledTx;
@@ -181,8 +180,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> NodeAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
+            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     Attrs,
@@ -197,7 +195,10 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    Attrs: Attributes<
+            Transaction = TxTy<N::Types>,
+            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
+        >,
     <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type Handle = RpcHandle<N, EthB::EthApi>;
@@ -218,10 +219,10 @@ where
         // Install additional rollup-specific RPC methods.
         let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
             ctx.node.provider().clone(),
-            Box::new(ctx.node.task_executor().clone()),
+            ctx.node.task_executor().clone(),
             builder,
         );
-        let miner_ext = BaseMinerExtApi::new(da_config, gas_limit_config);
+        let miner_ext = OpMinerExtApi::new(da_config, gas_limit_config);
 
         rpc_add_ons
             .launch_add_ons_with(ctx, move |container| {
@@ -261,8 +262,7 @@ impl<N, EthB, PVB, EB, EVB, Attrs, RpcMiddleware> RethRpcAddOns<N>
     for BaseAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>
 where
     N: FullNodeComponents<
-            Types: BaseNodeTypes
-                       + NodeTypes<Payload: PayloadTypes<PayloadBuilderAttributes = Attrs>>,
+            Types: BaseNodeTypes + NodeTypes<Payload: PayloadTypes<PayloadAttributes = Attrs>>,
             Evm: ConfigureEvm<
                 NextBlockEnvCtx: BuildNextEnv<
                     Attrs,
@@ -277,7 +277,10 @@ where
     EB: EngineApiBuilder<N>,
     EVB: EngineValidatorBuilder<N>,
     RpcMiddleware: RethRpcMiddleware,
-    Attrs: Attributes<Transaction = TxTy<N::Types>, RpcPayloadAttributes: DeserializeOwned>,
+    Attrs: Attributes<
+            Transaction = TxTy<N::Types>,
+            RpcPayloadAttributes: DeserializeOwned + Send + Sync + 'static,
+        >,
     <N::Types as NodeTypes>::Primitives: PayloadPrimitives<_Header: HeaderMut>,
 {
     type EthApi = EthB::EthApi;

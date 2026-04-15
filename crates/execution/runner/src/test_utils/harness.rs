@@ -8,11 +8,12 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_network::Base;
 use base_common_rpc_types::GenesisInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_payload_builder::OpPayloadBuilderAttributes;
 use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
@@ -180,19 +181,23 @@ impl TestHarness {
         let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
             | (base_fee_params.elasticity_multiplier as u64);
 
-        let payload_attributes = BasePayloadAttributes {
-            payload_attributes: PayloadAttributes {
-                timestamp: next_timestamp,
-                parent_beacon_block_root: Some(parent_beacon_block_root),
-                withdrawals: Some(vec![]),
-                ..Default::default()
+        let payload_attributes = OpPayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+            parent_hash,
+            BasePayloadAttributes {
+                payload_attributes: PayloadAttributes {
+                    timestamp: next_timestamp,
+                    parent_beacon_block_root: Some(parent_beacon_block_root),
+                    withdrawals: Some(vec![]),
+                    ..Default::default()
+                },
+                transactions: Some(transactions),
+                gas_limit: Some(GAS_LIMIT),
+                no_tx_pool: Some(true),
+                min_base_fee: Some(min_base_fee),
+                eip_1559_params: Some(B64::from(eip_1559_params)),
             },
-            transactions: Some(transactions),
-            gas_limit: Some(GAS_LIMIT),
-            no_tx_pool: Some(true),
-            min_base_fee: Some(min_base_fee),
-            eip_1559_params: Some(B64::from(eip_1559_params)),
-        };
+            3,
+        )?;
 
         let forkchoice_result = self
             .engine

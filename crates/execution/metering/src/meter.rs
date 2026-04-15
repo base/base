@@ -57,7 +57,6 @@ fn cache_state_from_bundle_state(bundle_state: &BundleState) -> CacheState {
             .iter()
             .map(|(&hash, code)| (hash, code.clone()))
             .collect(),
-        ..Default::default()
     }
 }
 

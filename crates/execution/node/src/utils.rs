@@ -4,12 +4,13 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_execution_chainspec::BaseChainSpecBuilder;
-use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_payload_builder::{
+    BaseBuiltPayload, BasePayloadBuilderAttributes, payload::EthPayloadBuilderAttributes,
+};
 use reth_e2e_test_utils::{
     NodeHelperType, TmpDB, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_node_api::NodeTypesWithDBAdapter;
-use reth_payload_builder::EthPayloadBuilderAttributes;
 use reth_provider::providers::BlockchainProvider;
 use tokio::sync::Mutex;
 
@@ -66,7 +67,16 @@ pub fn payload_attributes<T>(timestamp: u64) -> BasePayloadBuilderAttributes<T> 
     };
 
     BasePayloadBuilderAttributes {
-        payload_attributes: EthPayloadBuilderAttributes::new(B256::ZERO, attributes),
+        payload_attributes: EthPayloadBuilderAttributes {
+            id: Default::default(),
+            parent: B256::ZERO,
+            timestamp: attributes.timestamp,
+            suggested_fee_recipient: attributes.suggested_fee_recipient,
+            prev_randao: attributes.prev_randao,
+            has_withdrawals: attributes.withdrawals.is_some(),
+            withdrawals: attributes.withdrawals.unwrap_or_default().into(),
+            parent_beacon_block_root: attributes.parent_beacon_block_root,
+        },
         transactions: vec![],
         no_tx_pool: false,
         gas_limit: Some(30_000_000),

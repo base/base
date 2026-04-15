@@ -57,6 +57,22 @@ where
     }
 }
 
+impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storage> {
+    fn storage_by_hashed_key(
+        &self,
+        address: Address,
+        hashed_key: B256,
+    ) -> ProviderResult<Option<StorageValue>> {
+        Ok(self
+            .storage
+            .storage_hashed_cursor(keccak256(address.0), self.block_number)
+            .map_err(Into::<ProviderError>::into)?
+            .seek(hashed_key)
+            .map_err(Into::<ProviderError>::into)?
+            .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+    }
+}
+
 impl From<BaseProofsStorageError> for ProviderError {
     fn from(error: BaseProofsStorageError) -> Self {
         Self::other(error)
@@ -201,20 +217,6 @@ where
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
         self.storage_by_hashed_key(address, hashed_key)
-    }
-
-    fn storage_by_hashed_key(
-        &self,
-        address: Address,
-        hashed_key: B256,
-    ) -> ProviderResult<Option<StorageValue>> {
-        Ok(self
-            .storage
-            .storage_hashed_cursor(keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
     }
 }
 

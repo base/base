@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256};
 use revm::{
     Database, DatabaseCommit,
-    primitives::{HashMap, KECCAK_EMPTY, StorageKey, StorageValue},
+    primitives::{AddressMap, KECCAK_EMPTY, StorageKey, StorageValue},
     state::{Account, AccountInfo, Bytecode},
 };
 use tracing::error;
@@ -59,10 +59,7 @@ where
 
     /// Attempts to commit the changes to the underlying database
     /// as well as applies account/storage changes to the access list builder
-    fn try_commit(
-        &mut self,
-        changes: HashMap<Address, Account>,
-    ) -> Result<(), <DB as Database>::Error> {
+    fn try_commit(&mut self, changes: AddressMap<Account>) -> Result<(), <DB as Database>::Error> {
         for (address, account) in &changes {
             let account_changes = self.access_list.changes.entry(*address).or_default();
 
@@ -168,7 +165,7 @@ impl<DB> DatabaseCommit for FBALBuilderDb<DB>
 where
     DB: DatabaseCommit + Database,
 {
-    fn commit(&mut self, changes: HashMap<Address, Account>) {
+    fn commit(&mut self, changes: AddressMap<Account>) {
         if let Err(e) = self.try_commit(changes) {
             error!(error = ?e, "Failed to commit changes via FBALBuilderDb");
             self.error = Some(e);

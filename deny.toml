@@ -1,10 +1,6 @@
 [advisories]
 # Ignore unmaintained/vulnerable crates that come from upstream dependencies we cannot control
 ignore = [
-    # rustls-pemfile is unmaintained but comes from bollard -> testcontainers (dev dependency)
-    # No safe upgrade available, waiting for upstream to migrate to rustls-pki-types
-    "RUSTSEC-2025-0134",
-
     # bincode is unmaintained but comes from reth-nippy-jar (upstream reth dependency)
     # No safe upgrade available
     "RUSTSEC-2025-0141",
@@ -12,6 +8,34 @@ ignore = [
     # paste is unmaintained but widely used in ecosystem (alloy, reth, etc.)
     # No safe upgrade available
     "RUSTSEC-2024-0436",
+
+    # atomic-polyfill is unmaintained but comes from upstream reth/alloy dependencies
+    "RUSTSEC-2023-0089",
+
+    # tar PAX extension vulnerability — comes from reth-cli-commands, waiting for upstream fix
+    "RUSTSEC-2026-0066",
+
+    # AWS-LC X.509 vulnerabilities — transitive from aws-sdk deps, waiting for upstream fix
+    "RUSTSEC-2026-0044",
+    "RUSTSEC-2026-0048",
+
+    # backoff is unmaintained — transitive from upstream reth/alloy dependencies
+    "RUSTSEC-2025-0012",
+
+    # derivative is unmaintained — transitive from upstream reth dependencies
+    "RUSTSEC-2024-0388",
+
+    # instant is unmaintained — transitive from upstream reth dependencies
+    "RUSTSEC-2024-0384",
+
+    # aws-lc-sys SHAKE API — transitive from aws-sdk deps
+    "RUSTSEC-2026-0074",
+
+    # lz4 decompression info leak — transitive from reth-cli-commands
+    "RUSTSEC-2026-0041",
+
+    # rsa Marvin Attack — transitive from upstream dependencies
+    "RUSTSEC-2023-0071",
 ]
 
 [licenses]
@@ -31,6 +55,8 @@ allow = [
     "BSL-1.0",
     "OpenSSL",
     "CDLA-Permissive-2.0",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
 ]
 confidence-threshold = 0.8
 
@@ -104,12 +130,17 @@ skip = [
     "socket2",
     "bitflags",
     "redox_users",
+    "redox_syscall",
     "windows",
+    "windows-collections",
     "windows-core",
+    "windows-future",
     "windows-implement",
     "windows-link",
+    "windows-numerics",
     "windows-result",
     "windows-strings",
+    "windows-threading",
 
     # Network crates
     "tungstenite",

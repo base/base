@@ -20,6 +20,7 @@ reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
+reth-revm.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 

@@ -28,6 +28,29 @@ use crate::{
     DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
+/// The result of executing an OP transaction.
+#[derive(Debug)]
+pub struct BaseTxResult<H, T> {
+    /// The inner result of the transaction execution.
+    pub inner: EthTxResult<H, T>,
+    /// Whether the transaction is a deposit transaction.
+    pub is_deposit: bool,
+    /// The sender of the transaction.
+    pub sender: Address,
+}
+
+impl<H, T> TxResultTrait for BaseTxResult<H, T> {
+    type HaltReason = H;
+
+    fn result(&self) -> &ResultAndState<Self::HaltReason> {
+        &self.inner.result
+    }
+
+    fn into_result(self) -> ResultAndState<Self::HaltReason> {
+        self.inner.result
+    }
+}
+
 /// Block executor for Base.
 #[derive(Debug)]
 pub struct BaseBlockExecutor<Evm, R: BaseReceiptBuilder, Spec> {
@@ -127,11 +150,6 @@ where
     type Result = BaseTxResult<E::HaltReason, <R::Transaction as TransactionEnvelope>::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        // Set state clear flag if the block is after the Spurious Dragon hardfork.
-        let state_clear_flag =
-            self.spec.is_spurious_dragon_active_at_block(self.evm.block().number().saturating_to());
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
         self.system_caller.apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
         self.system_caller
             .apply_beacon_root_contract_call(self.ctx.parent_beacon_block_root, &mut self.evm)?;
@@ -253,7 +271,7 @@ where
                         // Success flag was added in `EIP-658: Embedding transaction status code
                         // in receipts`.
                         status: Eip658Value::Eip658(ctx.result.is_success()),
-                        cumulative_gas_used: self.gas_used,
+                        cumulative_gas_used: ctx.cumulative_gas_used,
                         logs: ctx.result.into_logs(),
                     };
 

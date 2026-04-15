@@ -1,11 +1,15 @@
 //! Abstraction over receipt building logic to allow plugging different primitive types into
 //! [`super::BaseBlockExecutor`].
 
+use alloc::boxed::Box;
 use core::fmt::Debug;
 
 use alloy_consensus::{Eip658Value, TransactionEnvelope};
 use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
 use base_common_consensus::{BaseReceiptEnvelope, BaseTxEnvelope, DepositReceipt, OpTxType};
+
+/// Boxed receipt-builder context returned for deposit transactions.
+pub(crate) type ReceiptBuilderError<'a, Tx, E> = Box<ReceiptBuilderCtx<'a, Tx, E>>;
 
 /// Type that knows how to build a receipt based on execution result.
 #[auto_impl::auto_impl(&, Arc)]
@@ -24,7 +28,7 @@ pub trait BaseReceiptBuilder: Debug {
         ctx: ReceiptBuilderCtx<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
     ) -> Result<
         Self::Receipt,
-        ReceiptBuilderCtx<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
+        ReceiptBuilderError<'a, <Self::Transaction as TransactionEnvelope>::TxType, E>,
     >;
 
     /// Builds receipt for a deposit transaction.
@@ -43,9 +47,9 @@ impl BaseReceiptBuilder for AlloyReceiptBuilder {
     fn build_receipt<'a, E: Evm>(
         &self,
         ctx: ReceiptBuilderCtx<'a, OpTxType, E>,
-    ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxType, E>> {
+    ) -> Result<Self::Receipt, ReceiptBuilderError<'a, OpTxType, E>> {
         match ctx.tx_type {
-            OpTxType::Deposit => Err(ctx),
+            OpTxType::Deposit => Err(Box::new(ctx)),
             ty => {
                 let receipt = alloy_consensus::Receipt {
                     status: Eip658Value::Eip658(ctx.result.is_success()),

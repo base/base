@@ -45,8 +45,7 @@ reth-codecs = { workspace = true, optional = true }
 reth-db-api = { workspace = true, optional = true }
 modular-bitfield = { workspace = true, optional = true }
 reth-zstd-compressors = { workspace = true, optional = true }
-reth-primitives-traits = { workspace = true, optional = true, features = ["serde-bincode-compat"] }
-reth-ethereum-primitives = { workspace = true, optional = true, features = ["serde-bincode-compat"] }
+reth-primitives-traits = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand.workspace = true
@@ -85,7 +84,6 @@ arbitrary = [
 	"dep:arbitrary",
 	"reth-codecs?/arbitrary",
 	"reth-db-api?/arbitrary",
-	"reth-ethereum-primitives?/arbitrary",
 	"reth-primitives-traits?/arbitrary",
 	"revm?/arbitrary",
 	"std",
@@ -99,7 +97,6 @@ serde = [
 	"dep:alloy-serde",
 	"dep:serde",
 	"reth-codecs?/serde",
-	"reth-ethereum-primitives?/serde",
 	"reth-primitives-traits?/serde",
 	"revm?/serde",
 ]
@@ -110,7 +107,6 @@ reth = [
 	"dep:modular-bitfield",
 	"dep:reth-codecs",
 	"dep:reth-db-api",
-	"dep:reth-ethereum-primitives",
 	"dep:reth-primitives-traits",
 	"dep:reth-zstd-compressors",
 	"k256",

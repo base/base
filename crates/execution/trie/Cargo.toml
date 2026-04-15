@@ -20,6 +20,7 @@ reth-provider.workspace = true
 reth-execution-errors.workspace = true
 reth-primitives-traits.workspace = true
 reth-db = { workspace = true, features = ["mdbx"] }
+reth-codecs.workspace = true
 reth-trie = { workspace = true, features = ["serde"] }
 reth-trie-common = { workspace = true, features = ["serde"] }
 
@@ -85,8 +86,6 @@ serde-bincode-compat = [
 	"alloy-eips/serde-bincode-compat",
 	"dep:reth-ethereum-primitives",
 	"reth-ethereum-primitives?/serde",
-	"reth-ethereum-primitives?/serde-bincode-compat",
-	"reth-primitives-traits/serde-bincode-compat",
 	"reth-trie-common/serde-bincode-compat",
 	"reth-trie/serde-bincode-compat",
 ]

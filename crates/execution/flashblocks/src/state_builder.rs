@@ -165,9 +165,6 @@ where
         ChainSpec: Clone,
     {
         let spec = self.receipt_builder.chain_spec();
-        let state_clear_flag = spec.is_spurious_dragon_active_at_block(self.pending_block.number);
-        self.evm.db_mut().set_state_clear_flag(state_clear_flag);
-
         let mut system_caller = SystemCaller::new(spec.clone());
         system_caller
             .apply_blockhashes_contract_call(parent_hash, &mut self.evm)

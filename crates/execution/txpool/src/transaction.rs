@@ -165,6 +165,10 @@ where
         self.inner.transaction().clone()
     }
 
+    fn consensus_ref(&self) -> Recovered<&Self::Consensus> {
+        self.inner.transaction().as_recovered_ref()
+    }
+
     fn into_consensus(self) -> Recovered<Self::Consensus> {
         self.inner.transaction
     }

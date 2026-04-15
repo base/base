@@ -79,4 +79,14 @@ impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
             Self::BaseProofs(cmd) => cmd.chain_spec(),
         }
     }
+
+    /// Returns `true` if this is a node command with debug RPC namespace enabled.
+    pub fn debug_namespace_enabled(&self) -> bool {
+        match self {
+            Self::Node(cmd) => {
+                cmd.rpc.is_namespace_enabled(reth_rpc_server_types::RethRpcModule::Debug)
+            }
+            _ => false,
+        }
+    }
 }

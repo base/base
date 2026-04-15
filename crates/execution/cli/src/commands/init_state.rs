@@ -19,8 +19,9 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseInitStateCommand<C> {
     /// Execute the `init` command
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
         self,
+        runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {
-        self.init_state.execute::<N>().await
+        self.init_state.execute::<N>(runtime).await
     }
 }
 

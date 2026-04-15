@@ -23,11 +23,12 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> Command<C> {
     /// Execute `base-proofs` command
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
         self,
+        runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {
         match self.command {
-            Subcommands::Init(cmd) => cmd.execute::<N>().await,
-            Subcommands::Prune(cmd) => cmd.execute::<N>().await,
-            Subcommands::Unwind(cmd) => cmd.execute::<N>().await,
+            Subcommands::Init(cmd) => cmd.execute::<N>(runtime.clone()).await,
+            Subcommands::Prune(cmd) => cmd.execute::<N>(runtime.clone()).await,
+            Subcommands::Unwind(cmd) => cmd.execute::<N>(runtime).await,
         }
     }
 }

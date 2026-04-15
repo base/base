@@ -3,11 +3,11 @@
 use alloy_consensus::{Transaction, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_evm::{
-    Database, EvmFactory, FromRecoveredTx, FromTxWithEncoded,
+    EvmFactory, FromRecoveredTx, FromTxWithEncoded,
     block::{BlockExecutorFactory, BlockExecutorFor},
 };
 use base_common_chains::{ChainUpgrades, Upgrades};
-use revm::{Inspector, database::State};
+use revm::Inspector;
 
 use crate::{
     AlloyReceiptBuilder, BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmFactory,
@@ -72,12 +72,12 @@ where
 
     fn create_executor<'a, DB, I>(
         &'a self,
-        evm: EvmF::Evm<&'a mut State<DB>, I>,
+        evm: EvmF::Evm<DB, I>,
         ctx: Self::ExecutionCtx<'a>,
     ) -> impl BlockExecutorFor<'a, Self, DB, I>
     where
-        DB: Database + 'a,
-        I: Inspector<EvmF::Context<&'a mut State<DB>>> + 'a,
+        DB: alloy_evm::block::StateDB + 'a,
+        I: Inspector<EvmF::Context<DB>> + 'a,
     {
         BaseBlockExecutor::new(evm, ctx, &self.spec, &self.receipt_builder)
     }

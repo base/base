@@ -24,7 +24,7 @@ use reth_evm::{
 };
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
-use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderAttributes};
+use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{
     HeaderTy, NodePrimitives, SealedHeader, SealedHeaderFor, SignedTransaction, TxTy,
@@ -181,7 +181,7 @@ where
             Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
         >,
     {
-        let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
+        let BuildArguments { mut cached_reads, config, cancel, best_payload, .. } = args;
 
         let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
@@ -213,12 +213,13 @@ where
         attributes: Attrs::RpcPayloadAttributes,
     ) -> Result<ExecutionWitness, PayloadBuilderError>
     where
-        Attrs: PayloadBuilderAttributes,
+        Attrs: Attributes,
     {
         let attributes =
             Attrs::try_new(parent.hash(), attributes, 3).map_err(PayloadBuilderError::other)?;
 
-        let config = PayloadConfig { parent_header: Arc::new(parent), attributes };
+        let payload_id = attributes.payload_id(&parent.hash());
+        let config = PayloadConfig::new(Arc::new(parent), attributes, payload_id);
         let ctx = BasePayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             builder_config: self.config.clone(),
@@ -278,6 +279,8 @@ where
         let args = BuildArguments {
             config,
             cached_reads: Default::default(),
+            execution_cache: None,
+            trie_handle: None,
             cancel: Default::default(),
             best_payload: None,
         };
@@ -372,10 +375,10 @@ impl<Txs> Builder<'_, Txs> {
         }
 
         let BlockBuilderOutcome { execution_result, hashed_state, trie_updates, block } =
-            builder.finish(state_provider)?;
+            builder.finish(state_provider, None)?;
 
         let sealed_block = Arc::new(block.sealed_block().clone());
-        debug!(target: "payload_builder", id=%ctx.attributes().payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
+        debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
 
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
@@ -586,8 +589,8 @@ where
     }
 
     /// Returns the unique id for this payload job.
-    pub fn payload_id(&self) -> PayloadId {
-        self.attributes().payload_id()
+    pub const fn payload_id(&self) -> PayloadId {
+        self.config.payload_id()
     }
 
     /// Returns true if the fees are higher than the previous payload.
@@ -602,7 +605,7 @@ where
     ) -> Result<
         impl BlockBuilder<
             Primitives = Evm::Primitives,
-            Executor: BlockExecutorFor<'a, Evm::BlockExecutorFactory, DB>,
+            Executor: BlockExecutorFor<'a, Evm::BlockExecutorFactory, &'a mut State<DB>>,
         > + 'a,
         PayloadBuilderError,
     > {

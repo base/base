@@ -4,11 +4,16 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, Bytes};
+use alloy_rpc_types_engine::PayloadId;
 use reth_payload_primitives::{ExecutionPayload, PayloadAttributes};
 
 use crate::{BasePayloadAttributes, ExecutionData};
 
 impl PayloadAttributes for BasePayloadAttributes {
+    fn payload_id(&self, parent_hash: &B256) -> PayloadId {
+        self.payload_attributes.payload_id(parent_hash)
+    }
+
     fn timestamp(&self) -> u64 {
         self.payload_attributes.timestamp
     }

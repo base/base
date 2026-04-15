@@ -551,10 +551,12 @@ async fn test_eth_call() -> Result<()> {
     // We included a big spending transaction in the payloads
     // and now don't have enough funds for this request, so this eth_call will fail
     let res =
-        provider.call(big_spend.clone().nonce(3)).block(BlockNumberOrTag::Pending.into()).await;
+        provider.call(big_spend.clone().nonce(2)).block(BlockNumberOrTag::Pending.into()).await;
     assert!(res.is_err());
+    let message = res.unwrap_err().as_error_resp().unwrap().message.clone();
     assert!(
-        res.unwrap_err().as_error_resp().unwrap().message.contains("insufficient funds for gas")
+        message.contains("insufficient funds") || message.contains("OutOfFunds"),
+        "unexpected eth_call error: {message}"
     );
 
     // read count1 from counter contract
@@ -597,13 +599,15 @@ async fn test_eth_estimate_gas() -> Result<()> {
     // We included a heavy spending transaction and now don't have enough funds for this request, so
     // this eth_estimate_gas will fail
     let res = provider
-        .estimate_gas(send_estimate_gas.nonce(4))
+        .estimate_gas(send_estimate_gas.nonce(2))
         .block(BlockNumberOrTag::Pending.into())
         .await;
 
     assert!(res.is_err());
+    let message = res.unwrap_err().as_error_resp().unwrap().message.clone();
     assert!(
-        res.unwrap_err().as_error_resp().unwrap().message.contains("insufficient funds for gas")
+        message.contains("insufficient funds") || message.contains("OutOfFunds"),
+        "unexpected estimate_gas error: {message}"
     );
 
     Ok(())

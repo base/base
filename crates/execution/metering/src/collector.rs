@@ -414,8 +414,7 @@ mod tests {
                 entry.tx_hash,
                 ExecutionResult::Success {
                     reason: revm::context::result::SuccessReason::Stop,
-                    gas_used: 21000,
-                    gas_refunded: 0,
+                    gas: revm::context::result::ResultGas::new(21_000, 21_000, 0, 0, 0),
                     logs: vec![],
                     output: revm::context::result::Output::Call(Bytes::new()),
                 },

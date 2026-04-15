@@ -3,21 +3,23 @@
 use alloy_provider::Provider;
 use base_builder_core::test_utils::{BlockTransactionsExt, setup_test_instance};
 
-/// This test ensures that the miner gas limit is respected
-/// We will set the limit to 60,000 and see that the builder will not include any transactions
+/// This test ensures that the miner gas limit is respected.
+/// We set the limit to 200,000 — enough for the deposit tx (~182,706 gas) but too low
+/// to fit any additional user transactions (~21,000 gas each).
 #[tokio::test]
 async fn miner_gas_limit() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
-    let call =
-        driver.provider().raw_request::<(u64,), bool>("miner_setGasLimit".into(), (60000,)).await?;
+    let call = driver
+        .provider()
+        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (200_000,))
+        .await?;
     assert!(call, "miner_setGasLimit should be executed successfully");
 
     let unfit_tx = driver.create_transaction().send().await?;
     let block = driver.build_new_block().await?;
 
-    // tx should not be included because the gas limit is less than the transaction gas
     assert!(!block.includes(unfit_tx.tx_hash()), "transaction should not be included in the block");
 
     Ok(())
@@ -78,14 +80,15 @@ async fn reset_gas_limit() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
 
-    let call =
-        driver.provider().raw_request::<(u64,), bool>("miner_setGasLimit".into(), (60000,)).await?;
+    let call = driver
+        .provider()
+        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (200_000,))
+        .await?;
     assert!(call, "miner_setGasLimit should be executed successfully");
 
     let unfit_tx = driver.create_transaction().send().await?;
     let block = driver.build_new_block().await?;
 
-    // tx should not be included because the gas limit is less than the transaction gas
     assert!(!block.includes(unfit_tx.tx_hash()), "transaction should not be included in the block");
 
     let reset_call =
@@ -97,7 +100,6 @@ async fn reset_gas_limit() -> eyre::Result<()> {
     let fit_tx = driver.create_transaction().send().await?;
     let block = driver.build_new_block().await?;
 
-    // tx should be included because the gas limit is reset to the default value
     assert!(block.includes(fit_tx.tx_hash()), "transaction should be in block");
 
     Ok(())
