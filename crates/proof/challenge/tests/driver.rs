@@ -275,8 +275,7 @@ async fn test_step_invalid_game_proof_succeeded() {
 
     let tx_manager = default_tx_manager();
 
-    let mut driver =
-        test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
+    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
 
     // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();
@@ -410,8 +409,7 @@ async fn test_step_pending_proof_skips_prove_block() {
 
     let tx_manager = default_tx_manager();
 
-    let mut driver =
-        test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
+    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
     // Step 1: proof is initiated but not ready (Unspecified) → session stored.
     driver.step().await.unwrap();
@@ -447,8 +445,7 @@ async fn test_step_nullification_failure_preserves_proof() {
         Ok(receipt_with_status(true, DEFAULT_TX_HASH)),
     ]);
 
-    let mut driver =
-        test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
+    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
 
     // Step 1: proof initiated but not yet polled.
     driver.step().await.unwrap();
@@ -541,8 +538,7 @@ async fn test_step_proof_retry_succeeds() {
 
     let tx_manager = default_tx_manager();
 
-    let mut driver =
-        test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
+    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
     // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();
@@ -582,8 +578,7 @@ async fn test_step_proof_exceeds_max_retries() {
     let zk = failed_zk_prover("fail-forever");
 
     let tx_manager = default_tx_manager();
-    let mut driver =
-        test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
+    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, zk, tx_manager);
 
     // Step 1: proof initiated, not yet polled.
     driver.step().await.unwrap();

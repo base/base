@@ -151,7 +151,7 @@ pub struct MockAggregateVerifier {
 
 impl MockAggregateVerifier {
     /// Creates a new mock verifier from a pre-built game state map.
-    pub fn new(games: HashMap<Address, MockGameState>) -> Self {
+    pub const fn new(games: HashMap<Address, MockGameState>) -> Self {
         Self { games: Mutex::new(games) }
     }
 
