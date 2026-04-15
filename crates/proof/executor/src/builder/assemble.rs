@@ -11,7 +11,8 @@ use base_common_consensus::BaseReceiptEnvelope;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
-use base_protocol::{OutputRoot, Predeploys};
+use base_common_consensus::Predeploys;
+use base_protocol::OutputRoot;
 use revm::{context::BlockEnv, database::BundleState};
 
 use super::StatelessL2Builder;

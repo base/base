@@ -5,12 +5,13 @@ use alloy_consensus::Header;
 use alloy_eips::{BlockNumHash, eip7840::BlobParams};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Sealable, Sealed, TxKind, U256};
-use base_common_consensus::{DepositSourceDomain, L1InfoDepositSource, TxDeposit};
+use base_common_consensus::{
+    DepositSourceDomain, L1InfoDepositSource, Predeploys, SystemAddresses, TxDeposit,
+};
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoIsthmus,
-    Predeploys, SystemAddresses,
     info::{
         L1BlockInfoBedrockBaseFields, L1BlockInfoEcotoneBaseFields as _, L1BlockInfoJovian,
         bedrock::L1BlockInfoBedrockOnlyFields as _, ecotone::L1BlockInfoEcotoneOnlyFields as _,
