@@ -69,6 +69,8 @@ impl EngineQueries {
     /// Handles the engine query request.
     pub async fn handle<EngineClient_: EngineClient>(
         self,
+        request_id: u64,
+        rpc_method: &'static str,
         state_recv: &tokio::sync::watch::Receiver<EngineState>,
         queue_length_recv: &tokio::sync::watch::Receiver<usize>,
         client: &Arc<EngineClient_>,
@@ -81,9 +83,22 @@ impl EngineQueries {
                 .send((**rollup_config).clone())
                 .map_err(|_| EngineQueriesError::OutputChannelClosed),
             Self::State(sender) => {
+                info!(
+                    target: "engine",
+                    request_id,
+                    rpc_method,
+                    "Preparing engine state RPC response"
+                );
                 sender.send(state).map_err(|_| EngineQueriesError::OutputChannelClosed)
             }
             Self::OutputAtBlock { block, sender } => {
+                info!(
+                    target: "engine",
+                    request_id,
+                    rpc_method,
+                    block = ?block,
+                    "Querying engine output at block"
+                );
                 let output_block = client.l2_block_by_label(block).await?;
                 let output_block = output_block.ok_or(EngineQueriesError::NoL2BlockFound(block))?;
                 // Cloning the l2 block below is cheaper than sending a network request to get the
@@ -105,6 +120,13 @@ impl EngineQueries {
                             .withdrawals_root
                             .ok_or(EngineQueriesError::NoWithdrawalsRoot)?
                     } else {
+                        info!(
+                            target: "engine",
+                            request_id,
+                            rpc_method,
+                            block = ?block,
+                            "Querying message passer storage proof"
+                        );
                         // Fetch the storage root for the L2 head block.
                         let l2_to_l1_message_passer = client
                             .get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, Default::default())
@@ -120,6 +142,13 @@ impl EngineQueries {
                     output_block.header.hash,
                 );
 
+                info!(
+                    target: "engine",
+                    request_id,
+                    rpc_method,
+                    block = ?block,
+                    "Sending engine output response"
+                );
                 sender
                     .send((output_block_info, output_response_v0, state))
                     .map_err(|_| EngineQueriesError::OutputChannelClosed)

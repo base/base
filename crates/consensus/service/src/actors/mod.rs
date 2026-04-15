@@ -33,7 +33,8 @@ pub use derivation::{
 mod l1_watcher;
 pub use l1_watcher::{
     AlloyL1BlockFetcher, BlockStream, L1BlockFetcher, L1WatcherActor, L1WatcherActorError,
-    L1WatcherDerivationClient, LogRetrier, QueuedL1WatcherDerivationClient,
+    L1WatcherDerivationClient, L1WatcherQueryExecutor, L1WatcherQueryProcessor, LogRetrier,
+    QueuedL1WatcherDerivationClient,
 };
 
 mod network;

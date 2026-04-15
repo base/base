@@ -17,6 +17,16 @@ pub trait EngineRpcClient: Debug + Send + Sync + Clone {
     async fn get_config(&self) -> RpcResult<RollupConfig>;
     /// Request the current [`EngineState`] snapshot.
     async fn get_state(&self) -> RpcResult<EngineState>;
+    /// Request the current [`EngineState`] snapshot with explicit tracing context.
+    async fn get_state_with_context(
+        &self,
+        request_id: u64,
+        rpc_method: &'static str,
+    ) -> RpcResult<EngineState> {
+        let _ = request_id;
+        let _ = rpc_method;
+        self.get_state().await
+    }
     /// Request the L2 output root for a specific [`BlockNumberOrTag`].
     ///
     /// Returns a tuple of [`L2BlockInfo`], [`OutputRoot`], and [`EngineState`] at the requested
@@ -25,6 +35,18 @@ pub trait EngineRpcClient: Debug + Send + Sync + Clone {
         &self,
         block: BlockNumberOrTag,
     ) -> RpcResult<(L2BlockInfo, OutputRoot, EngineState)>;
+    /// Request the L2 output root for a specific [`BlockNumberOrTag`] with explicit tracing
+    /// context.
+    async fn output_at_block_with_context(
+        &self,
+        request_id: u64,
+        rpc_method: &'static str,
+        block: BlockNumberOrTag,
+    ) -> RpcResult<(L2BlockInfo, OutputRoot, EngineState)> {
+        let _ = request_id;
+        let _ = rpc_method;
+        self.output_at_block(block).await
+    }
     /// Development API: Get the current number of pending tasks in the queue.
     async fn dev_get_task_queue_length(&self) -> RpcResult<usize>;
     /// Development API: Subscribes to engine queue length updates managed by the returned
