@@ -1,6 +1,8 @@
+//! Contains the context for base block execution.
+
 use alloy_primitives::{B256, Bytes};
 
-/// Context for OP block execution.
+/// Context for base block execution.
 #[derive(Debug, Default, Clone)]
 pub struct BaseBlockExecutionCtx {
     /// Parent block hash.
