@@ -46,7 +46,7 @@ pub struct RpcArgs {
     /// Maximum number of concurrent in-flight RPC requests.
     #[arg(
         long = "rpc.max-concurrent",
-        default_value = "256",
+        default_value = "1024",
         env = "BASE_NODE_RPC_MAX_CONCURRENT",
         value_parser = clap::value_parser!(NonZeroUsize),
     )]
