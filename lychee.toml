@@ -16,8 +16,9 @@ exclude = [
     'foo.bar',
     'localhost',
 
-    # Links to files moved in this rename (not yet on main)
+    # Links to files moved or renamed (not yet on main)
     'https://github\.com/base/base/blob/main/crates/execution/upgrades',
+    'https://github\.com/base/base/blob/main/crates/common/evm/src/spec_id\.rs',
 
     # Shields.io badges that query live GitHub stats (flaky, not real links)
     'https://img.shields.io/github/commit-activity/w/base/base',
