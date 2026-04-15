@@ -156,8 +156,7 @@ pub struct ProposerArgs {
     #[arg(
         long = "recovery-scan-concurrency",
         env = cli_env!("RECOVERY_SCAN_CONCURRENCY"),
-        default_value_t = RECOVERY_SCAN_CONCURRENCY,
-        value_parser = clap::value_parser!(usize).range(1..)
+        default_value_t = RECOVERY_SCAN_CONCURRENCY
     )]
     pub recovery_scan_concurrency: usize,
 
