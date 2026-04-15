@@ -20,6 +20,8 @@ impl RollupConfigExt for RollupConfig {
             OpSpecId::ISTHMUS
         } else if self.is_holocene_active(timestamp) {
             OpSpecId::HOLOCENE
+        } else if self.is_granite_active(timestamp) {
+            OpSpecId::GRANITE
         } else if self.is_fjord_active(timestamp) {
             OpSpecId::FJORD
         } else if self.is_ecotone_active(timestamp) {
@@ -54,6 +56,8 @@ mod tests {
         assert_eq!(config.spec_id(30), OpSpecId::ECOTONE);
         config.hardforks.fjord_time = Some(40);
         assert_eq!(config.spec_id(40), OpSpecId::FJORD);
+        config.hardforks.granite_time = Some(45);
+        assert_eq!(config.spec_id(45), OpSpecId::GRANITE);
         config.hardforks.holocene_time = Some(50);
         assert_eq!(config.spec_id(50), OpSpecId::HOLOCENE);
         config.hardforks.isthmus_time = Some(60);
