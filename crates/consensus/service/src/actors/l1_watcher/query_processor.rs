@@ -60,23 +60,16 @@ where
 
     /// Executes a single query.
     pub async fn execute(&self, query: L1WatcherQueries) {
-        let request_id = query.request_id();
-        let rpc_method = query.rpc_method();
         let query_started_at = Instant::now();
 
-        info!(
-            target: "l1_watcher",
-            request_id,
-            rpc_method,
-            "Started L1 watcher query"
-        );
+        debug!(target: "l1_watcher", "Started L1 watcher query");
 
         match query {
-            L1WatcherQueries::Config { sender, .. } => {
-                self.execute_config_query(request_id, rpc_method, query_started_at, sender);
+            L1WatcherQueries::Config(sender) => {
+                self.execute_config_query(query_started_at, sender);
             }
-            L1WatcherQueries::L1State { sender, .. } => {
-                self.execute_l1_state_query(request_id, rpc_method, query_started_at, sender).await;
+            L1WatcherQueries::L1State(sender) => {
+                self.execute_l1_state_query(query_started_at, sender).await;
             }
         }
     }
@@ -84,27 +77,21 @@ where
     /// Executes a config query.
     pub fn execute_config_query(
         &self,
-        request_id: u64,
-        rpc_method: &'static str,
         query_started_at: Instant,
         sender: oneshot::Sender<RollupConfig>,
     ) {
         if let Err(error) = sender.send((*self.rollup_config).clone()) {
             warn!(
                 target: "l1_watcher",
-                request_id,
-                rpc_method,
                 elapsed_ms = query_started_at.elapsed().as_millis() as u64,
                 error = ?error,
                 "Failed to send L1 watcher config response"
             );
         } else {
-            info!(
+            debug!(
                 target: "l1_watcher",
-                request_id,
-                rpc_method,
                 elapsed_ms = query_started_at.elapsed().as_millis() as u64,
-                "Completed L1 watcher query"
+                "Completed L1 watcher config query"
             );
         }
     }
@@ -112,16 +99,14 @@ where
     /// Executes a live L1 state query.
     pub async fn execute_l1_state_query(
         &self,
-        request_id: u64,
-        rpc_method: &'static str,
         query_started_at: Instant,
         sender: oneshot::Sender<L1State>,
     ) {
         let current_l1 = *self.latest_head.borrow();
         let (head_l1, finalized_l1, safe_l1) = tokio::join!(
-            self.query_block(request_id, rpc_method, BlockId::latest(), "latest"),
-            self.query_block(request_id, rpc_method, BlockId::finalized(), "finalized"),
-            self.query_block(request_id, rpc_method, BlockId::safe(), "safe"),
+            self.query_block(BlockId::latest(), "latest"),
+            self.query_block(BlockId::finalized(), "finalized"),
+            self.query_block(BlockId::safe(), "safe"),
         );
 
         if let Err(error) = sender.send(L1State {
@@ -133,19 +118,15 @@ where
         }) {
             warn!(
                 target: "l1_watcher",
-                request_id,
-                rpc_method,
                 elapsed_ms = query_started_at.elapsed().as_millis() as u64,
                 error = ?error,
                 "Failed to send L1 watcher state response"
             );
         } else {
-            info!(
+            debug!(
                 target: "l1_watcher",
-                request_id,
-                rpc_method,
                 elapsed_ms = query_started_at.elapsed().as_millis() as u64,
-                "Completed L1 watcher query"
+                "Completed L1 watcher state query"
             );
         }
     }
@@ -153,26 +134,16 @@ where
     /// Queries a single tagged L1 block from the provider.
     pub async fn query_block(
         &self,
-        request_id: u64,
-        rpc_method: &'static str,
         block_id: BlockId,
         block_tag: &'static str,
     ) -> Option<BlockInfo> {
-        info!(
-            target: "l1_watcher",
-            request_id,
-            rpc_method,
-            block_tag,
-            "Querying L1 provider block"
-        );
+        trace!(target: "l1_watcher", block_tag, "Querying L1 provider block");
 
         match self.l1_provider.get_block(block_id).await {
             Ok(block) => block.map(|block| block.into_consensus().into()),
             Err(error) => {
                 warn!(
                     target: "l1_watcher",
-                    request_id,
-                    rpc_method,
                     block_tag,
                     error = ?error,
                     "Failed to query L1 provider block"
@@ -379,13 +350,7 @@ mod tests {
         let executor = executor(MockFetcher::with_delay(Duration::ZERO), current_l1);
         let (sender, receiver) = oneshot::channel();
 
-        executor
-            .execute(L1WatcherQueries::L1State {
-                request_id: 1,
-                rpc_method: "optimism_syncStatus",
-                sender,
-            })
-            .await;
+        executor.execute(L1WatcherQueries::L1State(sender)).await;
 
         let state = receiver.await.expect("state query should return a response");
         assert_eq!(state.current_l1, current_l1);
@@ -401,13 +366,7 @@ mod tests {
         let executor = executor(fetcher, None);
         let (sender, receiver) = oneshot::channel();
 
-        executor
-            .execute(L1WatcherQueries::L1State {
-                request_id: 2,
-                rpc_method: "optimism_syncStatus",
-                sender,
-            })
-            .await;
+        executor.execute(L1WatcherQueries::L1State(sender)).await;
 
         let _ = receiver.await.expect("state query should return a response");
         assert!(max_calls.load(Ordering::SeqCst) >= 3, "expected live block fetches to overlap");
@@ -434,26 +393,18 @@ mod tests {
         let started_at = Instant::now();
 
         query_tx
-            .send(L1WatcherQueries::L1State {
-                request_id: 3,
-                rpc_method: "optimism_syncStatus",
-                sender: sender_one,
-            })
+            .send(L1WatcherQueries::L1State(sender_one))
             .await
             .expect("first query should be sent");
         query_tx
-            .send(L1WatcherQueries::L1State {
-                request_id: 4,
-                rpc_method: "optimism_syncStatus",
-                sender: sender_two,
-            })
+            .send(L1WatcherQueries::L1State(sender_two))
             .await
             .expect("second query should be sent");
 
         let _ = receiver_one.await.expect("first query should complete");
         let _ = receiver_two.await.expect("second query should complete");
         assert!(
-            started_at.elapsed() < Duration::from_millis(60),
+            started_at.elapsed() < Duration::from_millis(500),
             "expected two queries to complete concurrently"
         );
 

@@ -132,14 +132,7 @@ where
                     // Route the request to the appropriate channel.
                     match request {
                         EngineActorRequest::RpcRequest(rpc_req) => {
-                            let rpc_req = *rpc_req;
-                            info!(
-                                target: "engine",
-                                request_id = rpc_req.request_id(),
-                                rpc_method = rpc_req.rpc_method(),
-                                "Routing engine RPC request to query processor"
-                            );
-                            rpc_tx.send(rpc_req).await.map_err(|_| {
+                            rpc_tx.send(*rpc_req).await.map_err(|_| {
                                 error!(target: "engine", "Engine RPC request handler channel closed unexpectedly");
                                 self.cancellation_token.cancel();
                                 EngineError::ChannelClosed

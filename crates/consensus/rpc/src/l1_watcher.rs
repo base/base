@@ -17,7 +17,8 @@ pub struct L1State {
     ///
     /// This is a legacy sync-status attribute. This is deprecated.
     /// A previous version of the L1 finalization-signal was updated only after the block was
-    /// retrieved by number. This attribute just matches `finalized_l1` now.
+    /// retrieved by number. This intentionally duplicates `finalized_l1` to maintain API
+    /// compatibility with op-node.
     pub current_l1_finalized: Option<BlockInfo>,
     /// The L1 head block ref.
     ///
@@ -37,37 +38,7 @@ pub type L1WatcherQuerySender = tokio::sync::mpsc::Sender<L1WatcherQueries>;
 #[derive(Debug)]
 pub enum L1WatcherQueries {
     /// Get the rollup config from the L1 watcher.
-    Config {
-        /// Correlation id for the originating RPC request.
-        request_id: u64,
-        /// Originating RPC method name.
-        rpc_method: &'static str,
-        /// Response channel for the rollup config.
-        sender: Sender<RollupConfig>,
-    },
+    Config(Sender<RollupConfig>),
     /// Get a complete view of the L1 state.
-    L1State {
-        /// Correlation id for the originating RPC request.
-        request_id: u64,
-        /// Originating RPC method name.
-        rpc_method: &'static str,
-        /// Response channel for the L1 state snapshot.
-        sender: Sender<L1State>,
-    },
-}
-
-impl L1WatcherQueries {
-    /// Returns the originating RPC request id.
-    pub const fn request_id(&self) -> u64 {
-        match self {
-            Self::Config { request_id, .. } | Self::L1State { request_id, .. } => *request_id,
-        }
-    }
-
-    /// Returns the originating RPC method name.
-    pub const fn rpc_method(&self) -> &'static str {
-        match self {
-            Self::Config { rpc_method, .. } | Self::L1State { rpc_method, .. } => rpc_method,
-        }
-    }
+    L1State(Sender<L1State>),
 }
