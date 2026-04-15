@@ -1,13 +1,16 @@
 //! Contains the `[OpTransaction]` type and its implementation.
 
 mod abstraction;
-pub use abstraction::{BaseTransactionBuilder, BuildError, OpTransaction, OpTxTr};
+pub use abstraction::{OpTransaction, OpTxTr};
+
+mod builder;
+pub use builder::BaseTransactionBuilder;
 
 mod deposit;
 pub use deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
 
 mod error;
-pub use error::OpTransactionError;
+pub use error::{BuildError, OpTransactionError};
 
 #[cfg(test)]
 mod tests {

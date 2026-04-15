@@ -1,10 +1,31 @@
 //! Contains the `[OpTransactionError]` type.
 use core::fmt::Display;
 
-use revm::context_interface::{
-    result::{EVMError, InvalidTransaction},
-    transaction::TransactionError,
+use revm::{
+    context::tx::TxEnvBuildError,
+    context_interface::{
+        result::{EVMError, InvalidTransaction},
+        transaction::TransactionError,
+    },
 };
+
+/// Error type for building [`TxEnv`]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BuildError {
+    /// Base transaction build error
+    Base(TxEnvBuildError),
+    /// Missing enveloped transaction bytes
+    MissingEnvelopedTxBytes,
+    /// Missing source hash for deposit transaction
+    MissingSourceHashForDeposit,
+}
+
+impl From<TxEnvBuildError> for BuildError {
+    fn from(error: TxEnvBuildError) -> Self {
+        Self::Base(error)
+    }
+}
 
 /// Base transaction validation error.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
