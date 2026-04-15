@@ -74,6 +74,7 @@ async fn launch(
             ProxyGetRequestLayer::new([("/healthz", "healthz")])
                 .expect("Critical: Failed to build GET method proxy"),
         )
+        .layer(tower::limit::ConcurrencyLimitLayer::new(256))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, config.http_timeout));
     let server = Server::builder().set_http_middleware(middleware).build(config.socket).await?;
 
