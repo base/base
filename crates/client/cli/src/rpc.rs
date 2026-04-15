@@ -47,9 +47,10 @@ pub struct RpcArgs {
     #[arg(
         long = "rpc.max-concurrent",
         default_value = "256",
-        env = "BASE_NODE_RPC_MAX_CONCURRENT"
+        env = "BASE_NODE_RPC_MAX_CONCURRENT",
+        value_parser = clap::value_parser!(NonZeroUsize),
     )]
-    pub max_concurrent_requests: usize,
+    pub max_concurrent_requests: NonZeroUsize,
 }
 
 impl Default for RpcArgs {
@@ -73,8 +74,7 @@ impl From<RpcArgs> for Option<RpcBuilder> {
             ws_enabled: args.ws_enabled,
             dev_enabled: args.dev_enabled,
             http_timeout: Duration::from_secs(args.http_timeout_secs),
-            max_concurrent_requests: NonZeroUsize::new(args.max_concurrent_requests)
-                .expect("max_concurrent_requests must be > 0"),
+            max_concurrent_requests: args.max_concurrent_requests,
         })
     }
 }
