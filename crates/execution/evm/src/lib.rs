@@ -20,7 +20,6 @@ use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder, BaseTxEnv,
     OpSpecId, OpTransaction,
-    spec_by_timestamp_after_bedrock as revm_spec_by_timestamp_after_bedrock,
 };
 use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthChainSpec;
@@ -59,7 +58,7 @@ pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
 /// Builds an [`EvmEnv`] for a given block header using [`base_common_evm`]'s spec resolution.
 fn op_evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -> EvmEnv<OpSpecId> {
-    let spec = revm_spec_by_timestamp_after_bedrock(chain_spec, header.timestamp);
+    let spec = OpSpecId::from_header(chain_spec, header);
     let cfg_env =
         CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
 
@@ -91,7 +90,7 @@ fn op_next_evm_env(
     base_fee_per_gas: u64,
     chain_spec: &(impl Upgrades + EthChainSpec),
 ) -> EvmEnv<OpSpecId> {
-    let spec = revm_spec_by_timestamp_after_bedrock(chain_spec, attributes.timestamp);
+    let spec = OpSpecId::from_timestamp(chain_spec, attributes.timestamp);
     let cfg_env =
         CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
 
@@ -272,7 +271,7 @@ where
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();
 
-        let spec = revm_spec_by_timestamp_after_bedrock(self.chain_spec(), timestamp);
+        let spec = OpSpecId::from_timestamp(self.chain_spec(), timestamp);
 
         let cfg_env = CfgEnv::new()
             .with_chain_id(self.chain_spec().chain().id())

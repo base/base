@@ -42,9 +42,6 @@ mod compat;
 
 mod consensus_compat;
 
-mod spec_id;
-pub use spec_id::{spec, spec_by_timestamp_after_bedrock};
-
 mod evm;
 pub use evm::BaseEvm;
 

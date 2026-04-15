@@ -1,6 +1,9 @@
 //! Contains the `[OpSpecId]` type and its implementation.
+
 use core::str::FromStr;
 
+use alloy_consensus::BlockHeader;
+use base_common_chains::Upgrades;
 use revm::primitives::hardfork::{SpecId, UnknownHardfork};
 
 /// Base spec id.
@@ -47,6 +50,41 @@ impl OpSpecId {
     /// Checks if the [`OpSpecId`] is enabled in the other [`OpSpecId`].
     pub const fn is_enabled_in(self, other: Self) -> bool {
         other as u8 <= self as u8
+    }
+
+    /// Parses the [`OpSpecId`] from the chain spec and block header.
+    pub fn from_header(chain_spec: impl Upgrades, header: impl BlockHeader) -> Self {
+        Self::from_timestamp(chain_spec, header.timestamp())
+    }
+
+    /// Returns the revm [`OpSpecId`] at the given timestamp.
+    ///
+    /// # Note
+    ///
+    /// This is only intended to be used after the Bedrock, when hardforks are activated by
+    /// timestamp.
+    pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
+        if chain_spec.is_base_v1_active_at_timestamp(timestamp) {
+            Self::BASE_V1
+        } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
+            Self::JOVIAN
+        } else if chain_spec.is_isthmus_active_at_timestamp(timestamp) {
+            Self::ISTHMUS
+        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
+            Self::HOLOCENE
+        } else if chain_spec.is_granite_active_at_timestamp(timestamp) {
+            Self::GRANITE
+        } else if chain_spec.is_fjord_active_at_timestamp(timestamp) {
+            Self::FJORD
+        } else if chain_spec.is_ecotone_active_at_timestamp(timestamp) {
+            Self::ECOTONE
+        } else if chain_spec.is_canyon_active_at_timestamp(timestamp) {
+            Self::CANYON
+        } else if chain_spec.is_regolith_active_at_timestamp(timestamp) {
+            Self::REGOLITH
+        } else {
+            Self::BEDROCK
+        }
     }
 }
 
