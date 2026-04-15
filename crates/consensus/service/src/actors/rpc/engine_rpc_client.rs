@@ -30,9 +30,9 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         let (config_tx, config_rx) = oneshot::channel();
 
         self.engine_actor_request_tx
-            .send(EngineActorRequest::RpcRequest(Box::new(
-                EngineRpcRequest::EngineQuery(Box::new(EngineQueries::Config(config_tx))),
-            )))
+            .send(EngineActorRequest::RpcRequest(Box::new(EngineRpcRequest::EngineQuery(
+                Box::new(EngineQueries::Config(config_tx)),
+            ))))
             .await
             .map_err(|_| {
                 error!(target: "block_engine", "Failed to enqueue engine RPC request");
@@ -49,9 +49,9 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         let (state_tx, state_rx) = oneshot::channel();
 
         self.engine_actor_request_tx
-            .send(EngineActorRequest::RpcRequest(Box::new(
-                EngineRpcRequest::EngineQuery(Box::new(EngineQueries::State(state_tx))),
-            )))
+            .send(EngineActorRequest::RpcRequest(Box::new(EngineRpcRequest::EngineQuery(
+                Box::new(EngineQueries::State(state_tx)),
+            ))))
             .await
             .map_err(|_| {
                 error!(target: "block_engine", "Failed to enqueue engine RPC request");
@@ -71,12 +71,9 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         let (output_tx, output_rx) = oneshot::channel();
 
         self.engine_actor_request_tx
-            .send(EngineActorRequest::RpcRequest(Box::new(
-                EngineRpcRequest::EngineQuery(Box::new(EngineQueries::OutputAtBlock {
-                    block,
-                    sender: output_tx,
-                })),
-            )))
+            .send(EngineActorRequest::RpcRequest(Box::new(EngineRpcRequest::EngineQuery(
+                Box::new(EngineQueries::OutputAtBlock { block, sender: output_tx }),
+            ))))
             .await
             .map_err(|_| {
                 error!(target: "block_engine", "Failed to enqueue engine RPC request");
@@ -93,9 +90,9 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         let (length_tx, length_rx) = oneshot::channel();
 
         self.engine_actor_request_tx
-            .send(EngineActorRequest::RpcRequest(Box::new(
-                EngineRpcRequest::EngineQuery(Box::new(EngineQueries::TaskQueueLength(length_tx))),
-            )))
+            .send(EngineActorRequest::RpcRequest(Box::new(EngineRpcRequest::EngineQuery(
+                Box::new(EngineQueries::TaskQueueLength(length_tx)),
+            ))))
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
 
@@ -109,9 +106,9 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         let (sub_tx, sub_rx) = oneshot::channel();
 
         self.engine_actor_request_tx
-            .send(EngineActorRequest::RpcRequest(Box::new(
-                EngineRpcRequest::EngineQuery(Box::new(EngineQueries::QueueLengthReceiver(sub_tx))),
-            )))
+            .send(EngineActorRequest::RpcRequest(Box::new(EngineRpcRequest::EngineQuery(
+                Box::new(EngineQueries::QueueLengthReceiver(sub_tx)),
+            ))))
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
 
@@ -124,9 +121,9 @@ impl EngineRpcClient for QueuedEngineRpcClient {
         let (sub_tx, sub_rx) = oneshot::channel();
 
         self.engine_actor_request_tx
-            .send(EngineActorRequest::RpcRequest(Box::new(
-                EngineRpcRequest::EngineQuery(Box::new(EngineQueries::StateReceiver(sub_tx))),
-            )))
+            .send(EngineActorRequest::RpcRequest(Box::new(EngineRpcRequest::EngineQuery(
+                Box::new(EngineQueries::StateReceiver(sub_tx)),
+            ))))
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
 
