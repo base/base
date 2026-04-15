@@ -4,7 +4,7 @@ use base_consensus_engine::{EngineClient, EngineState};
 use base_consensus_genesis::RollupConfig;
 use derive_more::Constructor;
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{Semaphore, mpsc, watch},
     task::JoinHandle,
 };
 
@@ -61,6 +61,9 @@ where
     }
 }
 
+/// Maximum number of engine RPC queries processed concurrently.
+const MAX_CONCURRENT_ENGINE_RPC_QUERIES: usize = 32;
+
 impl<EngineClient_> EngineRpcRequestReceiver for EngineRpcProcessor<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
@@ -69,13 +72,20 @@ where
         self,
         mut request_channel: mpsc::Receiver<EngineRpcRequest>,
     ) -> JoinHandle<Result<(), EngineError>> {
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_ENGINE_RPC_QUERIES));
+        let this = Arc::new(self);
         tokio::spawn(async move {
             loop {
                 let Some(query) = request_channel.recv().await else {
                     error!(target: "engine", "Engine rpc request receiver closed unexpectedly");
                     return Err(EngineError::ChannelClosed);
                 };
-                self.handle_rpc_request(query).await?;
+                let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+                let handler = Arc::clone(&this);
+                tokio::spawn(async move {
+                    let _ = handler.handle_rpc_request(query).await;
+                    drop(permit);
+                });
             }
         })
     }
