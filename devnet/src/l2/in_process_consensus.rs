@@ -6,6 +6,7 @@
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    num::NonZeroUsize,
     sync::Arc,
     time::Duration,
 };
@@ -160,7 +161,7 @@ impl InProcessConsensus {
             ws_enabled: false,
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
-            max_concurrent_requests: 256,
+            max_concurrent_requests: NonZeroUsize::new(256).expect("nonzero"),
         };
 
         let mut builder = RollupNodeBuilder::new(

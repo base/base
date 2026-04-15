@@ -1,6 +1,6 @@
 //! Contains the RPC Configuration.
 
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, num::NonZeroUsize, path::PathBuf, time::Duration};
 
 /// The RPC configuration.
 #[derive(Debug, Clone)]
@@ -21,7 +21,7 @@ pub struct RpcBuilder {
     /// HTTP request timeout for the RPC server.
     pub http_timeout: Duration,
     /// Maximum number of concurrent in-flight RPC requests.
-    pub max_concurrent_requests: usize,
+    pub max_concurrent_requests: NonZeroUsize,
 }
 
 impl RpcBuilder {
