@@ -52,7 +52,7 @@ serde.workspace = true
 url.workspace = true
 futures.workspace = true
 http.workspace = true
-tower = { workspace = true, features = ["limit"] }
+tower = { workspace = true, features = ["limit", "load-shed"] }
 bytes.workspace = true
 discv5.workspace = true
 http-body.workspace = true
