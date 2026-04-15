@@ -2748,7 +2748,6 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
- "base-consensus-genesis",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
@@ -3627,8 +3626,6 @@ dependencies = [
  "alloy-primitives",
  "base-common-consensus",
  "base-common-evm",
- "base-consensus-genesis",
- "base-protocol",
  "revm",
  "rstest",
 ]
