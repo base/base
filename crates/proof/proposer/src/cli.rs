@@ -150,6 +150,14 @@ pub struct ProposerArgs {
     )]
     pub max_parallel_proofs: usize,
 
+    /// Maximum number of concurrent RPC calls during the recovery scan.
+    #[arg(
+        long = "recovery-scan-concurrency",
+        env = cli_env!("RECOVERY_SCAN_CONCURRENCY"),
+        default_value = "8"
+    )]
+    pub recovery_scan_concurrency: usize,
+
     /// Address of the `TEEProverRegistry` contract on L1.
     /// When set, the proposer validates signers before on-chain submission.
     #[arg(

@@ -85,6 +85,8 @@ pub struct ProposerConfig {
     /// Maximum number of concurrent proof tasks.
     /// When > 1, uses the parallel proving pipeline instead of the sequential driver.
     pub max_parallel_proofs: usize,
+    /// Maximum number of concurrent RPC calls during the recovery scan.
+    pub recovery_scan_concurrency: usize,
     /// Optional address of the `TEEProverRegistry` contract on L1.
     /// When set, the proposer validates signers before on-chain submission.
     pub tee_prover_registry_address: Option<Address>,
@@ -103,6 +105,14 @@ impl ProposerConfig {
         if proposer.max_parallel_proofs == 0 {
             return Err(ConfigError::OutOfRange {
                 field: "max-parallel-proofs",
+                constraint: "at least 1",
+                value: "0",
+            });
+        }
+
+        if proposer.recovery_scan_concurrency == 0 {
+            return Err(ConfigError::OutOfRange {
+                field: "recovery-scan-concurrency",
                 constraint: "at least 1",
                 value: "0",
             });
@@ -184,6 +194,7 @@ impl ProposerConfig {
             signing,
             tx_manager,
             max_parallel_proofs: proposer.max_parallel_proofs,
+            recovery_scan_concurrency: proposer.recovery_scan_concurrency,
             tee_prover_registry_address: proposer.tee_prover_registry_address,
         })
     }
@@ -252,6 +263,7 @@ mod tests {
                     signer_address: None,
                 },
                 max_parallel_proofs: 1,
+                recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
                 tx_manager: TxManagerCli::default(),
             },
@@ -431,6 +443,25 @@ mod tests {
         cli.proposer.max_parallel_proofs = 8;
         let config = ProposerConfig::from_cli(cli).unwrap();
         assert_eq!(config.max_parallel_proofs, 8);
+    }
+
+    #[test]
+    fn test_recovery_scan_concurrency_zero_rejected() {
+        let mut cli = minimal_cli();
+        cli.proposer.recovery_scan_concurrency = 0;
+        let result = ProposerConfig::from_cli(cli);
+        assert!(matches!(
+            result,
+            Err(ConfigError::OutOfRange { field: "recovery-scan-concurrency", .. })
+        ));
+    }
+
+    #[test]
+    fn test_recovery_scan_concurrency_custom() {
+        let mut cli = minimal_cli();
+        cli.proposer.recovery_scan_concurrency = 4;
+        let config = ProposerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.recovery_scan_concurrency, 4);
     }
 
     #[test]

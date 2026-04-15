@@ -49,7 +49,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     Metrics,
-    constants::{PROPOSAL_TIMEOUT, RECOVERY_SCAN_CONCURRENCY},
+    constants::PROPOSAL_TIMEOUT,
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::OutputProposer,
@@ -62,6 +62,8 @@ pub struct PipelineConfig {
     pub max_parallel_proofs: usize,
     /// Maximum retries for a single proof range before full pipeline reset.
     pub max_retries: u32,
+    /// Maximum number of concurrent RPC calls during the recovery scan.
+    pub recovery_scan_concurrency: usize,
     /// Base driver configuration.
     pub driver: DriverConfig,
     /// Optional address of the `TEEProverRegistry` contract on L1.
@@ -873,7 +875,7 @@ where
                         .map_err(ProposerError::Rpc)
                 }
             })
-            .buffered(RECOVERY_SCAN_CONCURRENCY)
+            .buffered(self.config.recovery_scan_concurrency)
             .try_collect()
             .await
     }
@@ -1403,6 +1405,7 @@ mod tests {
             PipelineConfig {
                 max_parallel_proofs: 1,
                 max_retries: 1,
+                recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
                     game_type: TEST_GAME_TYPE,
@@ -1432,6 +1435,7 @@ mod tests {
             PipelineConfig {
                 max_parallel_proofs: 2,
                 max_retries: 3,
+                recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_secs(3600),
@@ -1458,6 +1462,7 @@ mod tests {
             PipelineConfig {
                 max_parallel_proofs: 2,
                 max_retries: 3,
+                recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
                     poll_interval: Duration::from_millis(100),
@@ -1592,6 +1597,7 @@ mod tests {
             PipelineConfig {
                 max_parallel_proofs: 1,
                 max_retries: 1,
+                recovery_scan_concurrency: 8,
                 tee_prover_registry_address: None,
                 driver: DriverConfig {
                     game_type: TEST_GAME_TYPE,
