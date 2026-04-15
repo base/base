@@ -4,6 +4,7 @@
 
 use std::{
     net::{IpAddr, SocketAddr},
+    num::NonZeroUsize,
     path::PathBuf,
     time::Duration,
 };
@@ -72,7 +73,8 @@ impl From<RpcArgs> for Option<RpcBuilder> {
             ws_enabled: args.ws_enabled,
             dev_enabled: args.dev_enabled,
             http_timeout: Duration::from_secs(args.http_timeout_secs),
-            max_concurrent_requests: args.max_concurrent_requests,
+            max_concurrent_requests: NonZeroUsize::new(args.max_concurrent_requests)
+                .expect("max_concurrent_requests must be > 0"),
         })
     }
 }
