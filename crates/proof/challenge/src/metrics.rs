@@ -66,6 +66,9 @@ base_metrics::define_metrics! {
     #[describe("Total number of invalid ZK proposals detected (Path 3)")]
     invalid_zk_proposal_detected_total: counter,
 
+    #[describe("Total number of invalid dual proposals detected (Path 4)")]
+    invalid_dual_proposal_detected_total: counter,
+
     #[describe("Total number of resolve transaction outcomes")]
     #[label(name = "status", default = ["success", "reverted", "error", "already_resolved"])]
     resolve_tx_outcome_total: counter,

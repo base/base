@@ -715,7 +715,7 @@ mod tests {
         // Game 0: type 1, IN_PROGRESS, TEE only -> candidate (InvalidTeeProposal)
         // Game 1: type 99, IN_PROGRESS, TEE only -> candidate (all types scanned)
         // Game 2: type 1, status=1 (not in progress) -> skipped
-        // Game 3: type 1, IN_PROGRESS, TEE + ZK (dual proof) -> candidate (InvalidZkProposal)
+        // Game 3: type 1, IN_PROGRESS, TEE + ZK (dual proof) -> candidate (InvalidDualProposal)
         // Game 4: type 1, IN_PROGRESS, TEE only -> candidate (InvalidTeeProposal)
         let factory = Arc::new(MockDisputeGameFactory {
             games: vec![
@@ -754,7 +754,7 @@ mod tests {
         assert_eq!(candidates[1].factory.game_type, 99);
         assert_eq!(candidates[1].info.l2_block_number, 150);
         assert_eq!(candidates[2].index, 3);
-        assert_eq!(candidates[2].category, GameCategory::InvalidZkProposal);
+        assert_eq!(candidates[2].category, GameCategory::InvalidDualProposal);
         assert_eq!(candidates[3].index, 4);
         assert_eq!(candidates[3].factory.game_type, 1);
         assert_eq!(candidates[3].info.l2_block_number, 400);
@@ -770,11 +770,11 @@ mod tests {
         });
 
         let mut verifier_games = HashMap::new();
-        // Game 0: TEE + ZK (dual proof, no challenge) -> candidate (InvalidZkProposal)
+        // Game 0: TEE + ZK (dual proof, no challenge) -> candidate (InvalidDualProposal)
         verifier_games.insert(addr(0), mock_state(0, zk_addr, 100));
         // Game 1: TEE only -> candidate (InvalidTeeProposal)
         verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 200));
-        // Game 2: TEE + ZK (dual proof, no challenge) -> candidate (InvalidZkProposal)
+        // Game 2: TEE + ZK (dual proof, no challenge) -> candidate (InvalidDualProposal)
         verifier_games.insert(addr(2), mock_state(0, zk_addr, 300));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
@@ -785,11 +785,11 @@ mod tests {
 
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].index, 0);
-        assert_eq!(candidates[0].category, GameCategory::InvalidZkProposal);
+        assert_eq!(candidates[0].category, GameCategory::InvalidDualProposal);
         assert_eq!(candidates[1].index, 1);
         assert_eq!(candidates[1].category, GameCategory::InvalidTeeProposal);
         assert_eq!(candidates[2].index, 2);
-        assert_eq!(candidates[2].category, GameCategory::InvalidZkProposal);
+        assert_eq!(candidates[2].category, GameCategory::InvalidDualProposal);
     }
 
     /// Empty factory returns empty vec without error.
@@ -996,7 +996,7 @@ mod tests {
         let candidates = scanner.scan().await.unwrap();
 
         assert_eq!(candidates.len(), 1, "dual-proof game should be a candidate");
-        assert_eq!(candidates[0].category, GameCategory::InvalidZkProposal);
+        assert_eq!(candidates[0].category, GameCategory::InvalidDualProposal);
     }
 
     /// Games with both `teeProver` and `zkProver` at `Address::ZERO` are

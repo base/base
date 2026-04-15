@@ -2,7 +2,7 @@
 //!
 //! Scans the [`DisputeGameFactory`](base_proof_contracts::DisputeGameFactoryClient)
 //! for dispute games that require action. Each game is classified into one
-//! of three [`GameCategory`] variants based on its on-chain state:
+//! of four [`GameCategory`] variants based on its on-chain state:
 //!
 //! 1. **[`InvalidTeeProposal`](GameCategory::InvalidTeeProposal)** —
 //!    TEE-proposed game (`teeProver != 0`, `zkProver == 0`). The driver
@@ -21,12 +21,13 @@
 //!    The driver validates the intermediate roots and, if invalid,
 //!    nullifies with a ZK proof.
 //!
-//! Games where both TEE and ZK proofs are present but no challenge has
-//! been filed (`counteredByIntermediateRootIndexPlusOne == 0`) are
-//! classified as [`InvalidZkProposal`](GameCategory::InvalidZkProposal)
-//! so that both proofs are validated. If the roots are invalid, the ZK
-//! proof is nullified first; the subsequent scan then handles the TEE
-//! proof.
+//! 4. **[`InvalidDualProposal`](GameCategory::InvalidDualProposal)** —
+//!    Both TEE and ZK proofs are present but no challenge has been filed
+//!    (`counteredByIntermediateRootIndexPlusOne == 0`). The driver
+//!    nullifies the TEE proof first (fast, synchronous) and falls back to
+//!    ZK nullification if TEE proving is unavailable. After the TEE proof
+//!    is nullified, the subsequent scan reclassifies the game as
+//!    [`InvalidZkProposal`](GameCategory::InvalidZkProposal).
 //!
 //! Games that are not `IN_PROGRESS` or have been fully nullified (both
 //! provers zero) are skipped.
@@ -79,6 +80,17 @@ pub enum GameCategory {
     /// The driver validates the intermediate roots. If invalid it submits
     /// a ZK proof via `nullify()` to nullify the incorrect ZK proposal.
     InvalidZkProposal,
+
+    /// Path 4: Both TEE and ZK proofs present with no challenge
+    /// (`countered_index == 0`). The second proof was added via
+    /// `verifyProposalProof`, not via `challenge`.
+    ///
+    /// Both proofs may still verify an incorrect root. The driver
+    /// nullifies the TEE proof first (fast, synchronous) and falls back
+    /// to ZK nullification if TEE proving is unavailable or fails.
+    /// After TEE nullification the game becomes `(false, true, 0)` and
+    /// will be re-classified as [`InvalidZkProposal`] on the next scan.
+    InvalidDualProposal,
 }
 
 /// A dispute game that has been identified as a candidate for action.
@@ -211,7 +223,7 @@ impl GameScanner {
     /// Evaluates a single game at the given factory index.
     ///
     /// Returns `Some(CandidateGame)` if the game is `IN_PROGRESS` and
-    /// matches one of the three [`GameCategory`] variants. Returns `None`
+    /// matches one of the four [`GameCategory`] variants. Returns `None`
     /// if the game should be skipped (resolved, fully nullified, or in
     /// an unrecognized state).
     pub async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
@@ -287,12 +299,11 @@ impl GameScanner {
 
             // TEE + ZK present but no countered index — second proof was added
             // via `verifyProposalProof`, not via `challenge`. Both proofs may
-            // still verify an incorrect root, so validate the ZK proof first.
-            // After ZK nullification the game becomes (true, false, 0) and
-            // will be re-classified as `InvalidTeeProposal` on the next scan.
+            // still verify an incorrect root. Nullify the TEE proof first
+            // (fast) then the ZK proof on the next scan.
             (true, true, 0) => {
                 debug!(index = index, "dual-proof game selected for validation");
-                Some(GameCategory::InvalidZkProposal)
+                Some(GameCategory::InvalidDualProposal)
             }
 
             // Path 2: TEE-proposed and challenged by ZK.

@@ -913,10 +913,10 @@ async fn test_step_valid_zk_proposal_skipped() {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_step_dual_proof_invalid_initiates_zk_nullification() {
+async fn test_step_dual_proof_invalid_without_tee_config_falls_back_to_zk_nullify() {
     // A game with both TEE and ZK proofs verified (via verifyProposalProof,
-    // not challenge) where the output roots are invalid should trigger a
-    // ZK proof with DisputeIntent::Nullify to nullify the ZK proof first.
+    // not challenge) where the output roots are invalid and no TEE config is
+    // available should fall back to a ZK proof with DisputeIntent::Nullify.
     let (l2, factory, root_15, _root_20) = base_game_mocks();
 
     let verifier = single_game_verifier(MockGameState {
@@ -936,7 +936,58 @@ async fn test_step_dual_proof_invalid_initiates_zk_nullification() {
     assert_eq!(
         entry.intent,
         DisputeIntent::Nullify,
-        "dual-proof game should use Nullify intent to nullify ZK proof first"
+        "dual-proof game without TEE config should fall back to ZK Nullify"
+    );
+}
+
+#[tokio::test]
+async fn test_step_dual_proof_invalid_with_tee_config_nullifies_tee_first() {
+    // A game with both TEE and ZK proofs verified where output roots are
+    // invalid and a TEE config is available should attempt TEE nullification
+    // first (fast path). After TEE nullification the game will be rescanned
+    // as InvalidZkProposal on the next tick.
+    let (l2, factory, root_15, root_20) = base_game_mocks();
+
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        zk_prover: ZK_PROVER_ADDR,
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
+        ..game_state(20)
+    });
+
+    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+
+    let aggregate_proposal = Proposal {
+        output_root: root_20,
+        signature: Bytes::from(vec![0u8; 65]),
+        l1_origin_hash: DEFAULT_L1_HEAD,
+        l1_origin_number: 1000,
+        l2_block_number: 20,
+        prev_output_root: root_15,
+        config_hash: B256::ZERO,
+    };
+    let tee_provider = Arc::new(MockTeeProofProvider::success(ProofResult::Tee {
+        aggregate_proposal,
+        proposals: vec![],
+    }));
+
+    let tx_manager = default_tx_manager();
+
+    let mut driver = test_driver_with_tee(
+        factory,
+        verifier,
+        l2,
+        default_zk_prover(),
+        tx_manager,
+        Some(tee_config(tee_provider, l1_head)),
+    );
+
+    driver.step().await.unwrap();
+
+    // TEE proof was submitted synchronously; no pending ZK proof should remain.
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "TEE proof should have been submitted directly for dual-proof game"
     );
 }
 
@@ -956,6 +1007,43 @@ async fn test_step_dual_proof_valid_skipped() {
     driver.step().await.unwrap();
 
     assert!(driver.pending_proofs.is_empty(), "valid dual-proof game should not trigger any proof");
+}
+
+#[tokio::test]
+async fn test_step_dual_proof_tee_fails_falls_back_to_zk_nullify() {
+    // A dual-proof game where the TEE proof fails should fall back to ZK
+    // with DisputeIntent::Nullify (not Challenge).
+    let (l2, factory, root_15, _root_20) = base_game_mocks();
+
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        zk_prover: ZK_PROVER_ADDR,
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
+        ..game_state(20)
+    });
+
+    let tee = Arc::new(MockTeeProofProvider::failure("enclave unreachable"));
+
+    let mut driver = test_driver_with_tee(
+        factory,
+        verifier,
+        l2,
+        default_zk_prover(),
+        default_tx_manager(),
+        Some(tee_config(tee, Arc::new(MockL1HeadProvider::failure("dummy")))),
+    );
+
+    driver.step().await.unwrap();
+
+    let entry = driver
+        .pending_proofs
+        .get(&addr(0))
+        .expect("ZK proof should be pending after TEE fallback for dual-proof game");
+    assert_eq!(
+        entry.intent,
+        DisputeIntent::Nullify,
+        "dual-proof TEE fallback must use Nullify intent, not Challenge"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
