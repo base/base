@@ -1,3 +1,5 @@
+//! Contains the factory.
+
 use alloy_consensus::{Transaction, TxReceipt};
 use alloy_eips::Encodable2718;
 use alloy_evm::{

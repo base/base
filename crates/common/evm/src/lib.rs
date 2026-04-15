@@ -61,7 +61,4 @@ mod canyon;
 pub use canyon::ensure_create2_deployer;
 
 mod executor;
-pub use executor::{BaseBlockExecutor, BaseTxResult};
-
-mod executor_factory;
-pub use executor_factory::BaseBlockExecutorFactory;
+pub use executor::{BaseBlockExecutor, BaseBlockExecutorFactory, BaseTxResult};

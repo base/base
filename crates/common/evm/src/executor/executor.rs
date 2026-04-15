@@ -1,3 +1,5 @@
+//! Contains the block executor for base.
+
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
@@ -27,24 +29,6 @@ use crate::{
     DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo, canyon,
 };
 
-/// The result of executing an OP transaction.
-#[derive(Debug)]
-pub struct BaseTxResult<H, T> {
-    /// The inner result of the transaction execution.
-    pub inner: EthTxResult<H, T>,
-    /// Whether the transaction is a deposit transaction.
-    pub is_deposit: bool,
-    /// The sender of the transaction.
-    pub sender: Address,
-}
-
-impl<H, T> TxResultTrait for BaseTxResult<H, T> {
-    type HaltReason = H;
-
-    fn result(&self) -> &ResultAndState<Self::HaltReason> {
-        &self.inner.result
-    }
-}
 
 /// Block executor for Base.
 #[derive(Debug)]
