@@ -15,6 +15,9 @@ use crate::{EngineError, EngineRpcRequest};
 /// under a well-thought-out interface.
 pub trait EngineRpcRequestReceiver: Send + Sync {
     /// Starts a task to handle engine queries.
+    ///
+    /// Requests are processed concurrently and may complete out-of-order.
+    /// A bounded semaphore limits the number of in-flight requests.
     fn start(
         self,
         request_channel: mpsc::Receiver<EngineRpcRequest>,
@@ -80,10 +83,15 @@ where
                     error!(target: "engine", "Engine rpc request receiver closed unexpectedly");
                     return Err(EngineError::ChannelClosed);
                 };
-                let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
+                let permit = Arc::clone(&semaphore)
+                    .acquire_owned()
+                    .await
+                    .expect("semaphore is never closed");
                 let handler = Arc::clone(&this);
                 tokio::spawn(async move {
-                    let _ = handler.handle_rpc_request(query).await;
+                    if let Err(e) = handler.handle_rpc_request(query).await {
+                        error!(target: "engine", error = %e, "engine rpc request failed");
+                    }
                     drop(permit);
                 });
             }
