@@ -187,7 +187,7 @@ mod tests {
             ws_enabled: false,
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
-            max_concurrent_requests: NonZeroUsize::new(256).expect("nonzero"),
+            max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
         };
         let result = launch(&launcher, RpcModule::new(())).await;
         assert!(result.is_ok());
@@ -203,7 +203,7 @@ mod tests {
             ws_enabled: false,
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
-            max_concurrent_requests: NonZeroUsize::new(256).expect("nonzero"),
+            max_concurrent_requests: NonZeroUsize::new(1024).expect("nonzero"),
         };
         let mut modules = RpcModule::new(());
 
