@@ -1,6 +1,4 @@
-use std::time::Instant;
-
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use base_consensus_engine::{EngineClient, EngineState};
 use base_consensus_genesis::RollupConfig;
