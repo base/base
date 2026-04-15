@@ -6,7 +6,7 @@
 extern crate alloc;
 
 mod spec;
-pub use spec::{OpSpecId, name};
+pub use spec::OpSpecId;
 
 mod rollup_config_ext;
 pub use rollup_config_ext::RollupConfigExt;
