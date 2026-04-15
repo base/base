@@ -5,7 +5,9 @@ use std::{fmt, sync::Arc};
 use base_execution_chainspec::BaseChainSpec;
 use clap::Subcommand;
 use reth_cli_commands::{
-    config_cmd, db, dump_genesis, init_cmd,
+    config_cmd, db,
+    download::manifest_cmd::SnapshotManifestCommand,
+    dump_genesis, init_cmd,
     node::{self, NoArgs},
     prune, re_execute, stage,
 };
@@ -58,6 +60,9 @@ pub enum Commands<Ext: clap::Args + fmt::Debug = NoArgs> {
     /// Manage storage of historical proofs in expanded trie db in fault proof window.
     #[command(name = "proofs")]
     BaseProofs(base_proofs::Command<BaseChainSpecParser>),
+    /// Generate modular chunk archives and a snapshot manifest from a source datadir.
+    #[command(name = "snapshot-manifest")]
+    SnapshotManifest(SnapshotManifestCommand),
 }
 
 impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
@@ -77,6 +82,7 @@ impl<Ext: clap::Args + fmt::Debug> Commands<Ext> {
             Self::TestVectors(_) => None,
             Self::ReExecute(cmd) => cmd.chain_spec(),
             Self::BaseProofs(cmd) => cmd.chain_spec(),
+            Self::SnapshotManifest(_) => None,
         }
     }
 

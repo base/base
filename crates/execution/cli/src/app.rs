@@ -122,6 +122,10 @@ where
                 let runtime = runner.runtime();
                 runner.run_blocking_until_ctrl_c(command.execute::<BaseNode>(runtime))
             }
+            Commands::SnapshotManifest(command) => {
+                command.execute()?;
+                Ok(())
+            }
         }
     }
 
