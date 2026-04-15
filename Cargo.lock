@@ -3827,7 +3827,6 @@ dependencies = [
  "base-common-rpc-types-engine",
  "base-execution-evm",
  "base-execution-txpool",
- "base-protocol",
  "derive_more",
  "either",
  "reth-basic-payload-builder",
