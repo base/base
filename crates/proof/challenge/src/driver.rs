@@ -4,13 +4,16 @@
 //! invalid dispute games, validating output roots, requesting proofs, and
 //! submitting dispute transactions — into a single polling loop.
 //!
-//! Three dispute paths are supported:
+//! Four dispute paths are supported:
 //!
 //! 1. **Wrong TEE proof** — nullify with a TEE proof (`nullify()`) or
 //!    challenge with a ZK proof (`challenge()`).
 //! 2. **Correct TEE proof challenged with a wrong ZK proof** — nullify
 //!    the fraudulent ZK challenge with a ZK proof (`nullify()`).
 //! 3. **Wrong ZK proposal** — nullify with a ZK proof (`nullify()`).
+//! 4. **Wrong dual proposal (TEE + ZK, no challenge)** — nullify with a
+//!    TEE proof first (`nullify()`), falling back to ZK `nullify()`.
+//!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
 use std::{
     sync::{
@@ -271,7 +274,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             GameCategory::FraudulentZkChallenge { challenged_index } => {
                 self.process_fraudulent_zk_challenge(candidate, challenged_index).await
             }
-            GameCategory::InvalidZkProposal => {
+            GameCategory::InvalidZkProposal | GameCategory::InvalidDualProposal => {
                 self.process_invalid_proposal(candidate, DisputeIntent::Nullify).await
             }
         }
@@ -325,7 +328,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
     }
 
     /// Processes a game whose proposal may contain an invalid intermediate
-    /// root (Path 1: wrong TEE proof, Path 3: wrong ZK proof).
+    /// root (Path 1: wrong TEE proof, Path 3: wrong ZK proof, Path 4:
+    /// wrong dual proposal).
     ///
     /// Validates the intermediate roots against the local L2 node. If a
     /// mismatch is found, initiates a proof with the given `intent`.
@@ -360,12 +364,18 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             "invalid intermediate root detected, requesting proof"
         );
 
-        match candidate.category {
+        let try_tee_first = match candidate.category {
             GameCategory::InvalidTeeProposal => {
                 ChallengerMetrics::invalid_tee_proposal_detected_total().increment(1);
+                true
             }
             GameCategory::InvalidZkProposal => {
                 ChallengerMetrics::invalid_zk_proposal_detected_total().increment(1);
+                false
+            }
+            GameCategory::InvalidDualProposal => {
+                ChallengerMetrics::invalid_dual_proposal_detected_total().increment(1);
+                true
             }
             GameCategory::FraudulentZkChallenge { .. } => {
                 error!(
@@ -383,9 +393,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                     candidate.category
                 ));
             }
-        }
+        };
 
-        self.initiate_proof(candidate, invalid_index, expected_root, intent).await
+        self.initiate_proof(candidate, invalid_index, expected_root, intent, try_tee_first).await
     }
 
     /// Processes a game whose correct TEE proposal has been challenged with
@@ -477,23 +487,30 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
 
     /// Attempts TEE-first proof sourcing with ZK fallback.
     ///
-    /// The `intent` determines the on-chain action. For Path 1
-    /// ([`DisputeIntent::Challenge`]) the ZK proof targets `challenge()`.
+    /// The `intent` determines the on-chain action for the ZK fallback path.
     /// TEE proofs always use `nullify()` regardless of `intent`.
+    ///
+    /// When `try_tee_first` is `true` and the game has a non-zero TEE prover,
+    /// a synchronous TEE proof is attempted before falling back to ZK.
+    /// Path 1 (`InvalidTeeProposal`) sets `try_tee_first = true` with
+    /// `intent = Challenge`; Path 4 (`InvalidDualProposal`) sets
+    /// `try_tee_first = true` with `intent = Nullify` so the ZK fallback
+    /// also calls `nullify()`.
     async fn initiate_proof(
         &mut self,
         candidate: CandidateGame,
         invalid_index: u64,
         expected_root: B256,
         intent: DisputeIntent,
+        try_tee_first: bool,
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        // TEE-first: try if game has a TEE prover and we have a TEE config.
-        // TEE proofs only make sense when the intent is to challenge a TEE
-        // proposal — TEE nullification replaces the bad TEE proof.
+        // TEE-first: try if the game has a TEE prover, we have a TEE config,
+        // and the caller opted in. Path 1 (InvalidTeeProposal) and Path 4
+        // (InvalidDualProposal) set `try_tee_first = true`.
         if candidate.tee_prover != Address::ZERO
-            && intent == DisputeIntent::Challenge
+            && try_tee_first
             && let Some(tee) = &self.tee
         {
             ChallengerMetrics::tee_proof_attempts_total().increment(1);
