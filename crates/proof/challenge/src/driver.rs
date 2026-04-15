@@ -125,8 +125,6 @@ where
     pub cancel: CancellationToken,
     /// Indicates whether the driver has completed its first scan.
     pub ready: Arc<AtomicBool>,
-    /// The last L1 block number that was scanned.
-    pub last_scanned: Option<u64>,
 }
 
 impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
@@ -136,7 +134,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
         f.debug_struct("Driver")
             .field("pending_proofs", &self.pending_proofs.len())
             .field("poll_interval", &self.poll_interval)
-            .field("last_scanned", &self.last_scanned)
             .finish_non_exhaustive()
     }
 }
@@ -159,7 +156,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             poll_interval: config.poll_interval,
             cancel: config.cancel,
             ready: config.ready,
-            last_scanned: None,
         }
     }
 
@@ -209,8 +205,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         self.discover_claimable_bonds().await;
         self.poll_bond_claims().await;
 
-        let (candidates, new_last_scanned) = self.scanner.scan(self.last_scanned).await?;
-        self.last_scanned = new_last_scanned;
+        let candidates = self.scanner.scan().await?;
 
         for candidate in candidates {
             let index = candidate.index;
