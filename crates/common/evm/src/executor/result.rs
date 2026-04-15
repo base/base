@@ -1,5 +1,12 @@
 //! Contains the [`BaseTxResult`] type.
 
+use alloy_evm::{
+    block::TxResult as TxResultTrait,
+    eth::EthTxResult,
+};
+use alloy_primitives::Address;
+use revm::context::result::ResultAndState;
+
 /// The result of executing an OP transaction.
 #[derive(Debug)]
 pub struct BaseTxResult<H, T> {
@@ -18,4 +25,3 @@ impl<H, T> TxResultTrait for BaseTxResult<H, T> {
         &self.inner.result
     }
 }
-

@@ -25,10 +25,9 @@ use revm::{
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
     DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
-
 
 /// Block executor for Base.
 #[derive(Debug)]
