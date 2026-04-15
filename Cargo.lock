@@ -175,7 +175,7 @@ dependencies = [
  "num_enum",
  "proptest",
  "serde",
- "strum 0.27.2",
+ "strum",
 ]
 
 [[package]]
@@ -759,7 +759,7 @@ dependencies = [
  "jsonwebtoken",
  "rand 0.8.5",
  "serde",
- "strum 0.27.2",
+ "strum",
 ]
 
 [[package]]
@@ -3083,7 +3083,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "strum 0.28.0",
+ "strum",
  "thiserror 2.0.18",
 ]
 
@@ -3252,7 +3252,7 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
- "strum 0.28.0",
+ "strum",
  "tracing",
  "url",
 ]
@@ -3467,7 +3467,7 @@ dependencies = [
  "rand 0.9.4",
  "rstest",
  "serde",
- "strum 0.28.0",
+ "strum",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -3965,7 +3965,7 @@ dependencies = [
  "secp256k1 0.30.0",
  "serde",
  "serial_test",
- "strum 0.28.0",
+ "strum",
  "tempfile",
  "test-case",
  "thiserror 2.0.18",
@@ -7014,7 +7014,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -13627,7 +13627,7 @@ dependencies = [
  "itertools 0.14.0",
  "kasuari",
  "lru 0.16.3",
- "strum 0.27.2",
+ "strum",
  "thiserror 2.0.18",
  "unicode-segmentation",
  "unicode-truncate",
@@ -13679,7 +13679,7 @@ dependencies = [
  "itertools 0.14.0",
  "line-clipping",
  "ratatui-core",
- "strum 0.27.2",
+ "strum",
  "time",
  "unicode-segmentation",
  "unicode-width",
@@ -14314,7 +14314,7 @@ dependencies = [
  "reth-storage-errors",
  "reth-tracing",
  "rustc-hash",
- "strum 0.27.2",
+ "strum",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
@@ -15537,7 +15537,7 @@ dependencies = [
  "secp256k1 0.30.0",
  "serde",
  "shellexpand",
- "strum 0.27.2",
+ "strum",
  "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
@@ -15842,7 +15842,7 @@ dependencies = [
  "revm-database",
  "revm-state",
  "rocksdb",
- "strum 0.27.2",
+ "strum",
  "tokio",
  "tracing",
 ]
@@ -15887,7 +15887,7 @@ dependencies = [
  "modular-bitfield",
  "reth-codecs",
  "serde",
- "strum 0.27.2",
+ "strum",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -16223,7 +16223,7 @@ dependencies = [
  "reth-errors",
  "reth-network-api",
  "serde",
- "strum 0.27.2",
+ "strum",
 ]
 
 [[package]]
@@ -16348,7 +16348,7 @@ dependencies = [
  "fixed-map",
  "reth-stages-types",
  "serde",
- "strum 0.27.2",
+ "strum",
  "tracing",
 ]
 
@@ -17843,7 +17843,7 @@ dependencies = [
  "serde",
  "serde_with",
  "sha2 0.10.9",
- "strum 0.27.2",
+ "strum",
  "tempfile",
  "thiserror 2.0.18",
  "toml 0.8.23",
@@ -18967,16 +18967,7 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros 0.27.2",
-]
-
-[[package]]
-name = "strum"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
-dependencies = [
- "strum_macros 0.28.0",
+ "strum_macros",
 ]
 
 [[package]]
@@ -18984,18 +18975,6 @@ name = "strum_macros"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck",
  "proc-macro2",
