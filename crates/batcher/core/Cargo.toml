@@ -22,6 +22,7 @@ base-runtime = { workspace = true, features = ["tokio"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 
 # external
+auto_impl.workspace = true
 futures.workspace = true
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
