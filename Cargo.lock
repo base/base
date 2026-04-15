@@ -3740,7 +3740,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-upgrades",
  "base-node-core",
- "base-protocol",
  "reth-chainspec",
  "reth-consensus",
  "reth-consensus-common",
