@@ -297,18 +297,15 @@ Extend `into_eth_spec()` — if no new Ethereum EL upgrade is paired, reuse the 
 Self::ISTHMUS | Self::JOVIAN | Self::BASE_V1 => SpecId::PRAGUE,
 ```
 
-Add the string name and wire up `FromStr` and `From<OpSpecId> for &'static str`:
+Add a `#[strum(serialize = "...")]` attribute on the new variant with its canonical string name:
 
 ```rust
-// name module
-pub const BASE_V1: &str = "V1";
-
-// FromStr
-name::BASE_V1 => Ok(Self::BASE_V1),
-
-// From<OpSpecId> for &'static str
-OpSpecId::BASE_V1 => name::BASE_V1,
+/// Base V1 spec id.
+#[strum(serialize = "V1")]
+BASE_V1,
 ```
+
+`FromStr` and `From<OpSpecId> for &'static str` are derived automatically.
 
 ---
 
@@ -390,7 +387,7 @@ forks.push((BaseUpgrade::V1.boxed(), self[BaseUpgrade::V1]));  // <-- add
 
 ### Required when EVM execution changes
 
-- [ ] `OpSpecId` variant added with `into_eth_spec`, `FromStr`, `From<&str>`, `name::X`
+- [ ] `OpSpecId` variant added with `into_eth_spec` mapping and `#[strum(serialize = "...")]` attribute
 - [ ] Precompile match arm updated (or new precompile set added)
 - [ ] `spec_by_timestamp_after_bedrock` updated (`core/evm/src/spec_id.rs`)
 - [ ] `RollupConfig::spec_id` updated (`consensus/genesis/src/rollup.rs`)
