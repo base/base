@@ -1,7 +1,10 @@
 //! Contains the `[OpTransaction]` type and its implementation.
 
-mod abstraction;
-pub use abstraction::{OpTransaction, OpTxTr};
+mod traits;
+pub use traits::OpTxTr;
+
+mod core;
+pub use core::OpTransaction;
 
 mod builder;
 pub use builder::BaseTransactionBuilder;

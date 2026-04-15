@@ -8,7 +8,7 @@ use revm::{
 };
 
 use super::{
-    abstraction::OpTransaction,
+    core::OpTransaction,
     deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts},
     error::BuildError,
 };

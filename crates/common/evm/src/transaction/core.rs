@@ -1,7 +1,7 @@
 //! Base transaction abstraction containing the `[OpTxTr]` trait and corresponding `[OpTransaction]` type.
+
 use alloc::vec;
 
-use auto_impl::auto_impl;
 use revm::{
     context::TxEnv,
     context_interface::transaction::Transaction,
@@ -9,31 +9,15 @@ use revm::{
     primitives::{Address, B256, Bytes, TxKind, U256},
 };
 
-use super::{
-    builder::BaseTransactionBuilder,
-    deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts},
+
+use alloy_eips::Encodable2718;
+use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, tx::IntoTxEnv};
+use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+
+use crate::{
+    BaseTransactionBuilder, OpTxTr,
+    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
 };
-
-/// Base Transaction trait.
-#[auto_impl(&, &mut, Box, Arc)]
-pub trait OpTxTr: Transaction {
-    /// Enveloped transaction bytes.
-    fn enveloped_tx(&self) -> Option<&Bytes>;
-
-    /// Source hash of the deposit transaction.
-    fn source_hash(&self) -> Option<B256>;
-
-    /// Mint of the deposit transaction
-    fn mint(&self) -> Option<u128>;
-
-    /// Whether the transaction is a system transaction
-    fn is_system_transaction(&self) -> bool;
-
-    /// Returns `true` if transaction is of type [`DEPOSIT_TRANSACTION_TYPE`].
-    fn is_deposit(&self) -> bool {
-        self.tx_type() == DEPOSIT_TRANSACTION_TYPE
-    }
-}
 
 /// Base transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,6 +186,88 @@ impl<T: Transaction> OpTxTr for OpTransaction<T> {
 
     fn is_system_transaction(&self) -> bool {
         self.deposit.is_system_transaction
+    }
+}
+
+impl<T> IntoTxEnv<Self> for OpTransaction<T>
+where
+    T: Transaction,
+{
+    fn into_tx_env(self) -> Self {
+        self
+    }
+}
+
+#[cfg(feature = "reth")]
+impl<T: reth_evm::TransactionEnv> reth_evm::TransactionEnv for OpTransaction<T> {
+    fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.base.set_gas_limit(gas_limit);
+    }
+
+    fn nonce(&self) -> u64 {
+        reth_evm::TransactionEnv::nonce(&self.base)
+    }
+
+    fn set_nonce(&mut self, nonce: u64) {
+        self.base.set_nonce(nonce);
+    }
+
+    fn set_access_list(&mut self, access_list: revm::context_interface::transaction::AccessList) {
+        self.base.set_access_list(access_list);
+    }
+}
+
+impl FromRecoveredTx<BaseTxEnvelope> for OpTransaction<TxEnv> {
+    fn from_recovered_tx(tx: &BaseTxEnvelope, sender: Address) -> Self {
+        let encoded = tx.encoded_2718();
+        Self::from_encoded_tx(tx, sender, encoded.into())
+    }
+}
+
+impl FromTxWithEncoded<BaseTxEnvelope> for OpTransaction<TxEnv> {
+    fn from_encoded_tx(tx: &BaseTxEnvelope, caller: Address, encoded: Bytes) -> Self {
+        match tx {
+            BaseTxEnvelope::Legacy(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+            },
+            BaseTxEnvelope::Eip1559(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+            },
+            BaseTxEnvelope::Eip2930(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+            },
+            BaseTxEnvelope::Eip7702(tx) => Self {
+                base: TxEnv::from_recovered_tx(tx.tx(), caller),
+                enveloped_tx: Some(encoded),
+                deposit: Default::default(),
+            },
+            BaseTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
+        }
+    }
+}
+
+impl FromRecoveredTx<TxDeposit> for OpTransaction<TxEnv> {
+    fn from_recovered_tx(tx: &TxDeposit, sender: Address) -> Self {
+        let encoded = tx.encoded_2718();
+        Self::from_encoded_tx(tx, sender, encoded.into())
+    }
+}
+
+impl FromTxWithEncoded<TxDeposit> for OpTransaction<TxEnv> {
+    fn from_encoded_tx(tx: &TxDeposit, caller: Address, encoded: Bytes) -> Self {
+        let base = TxEnv::from_recovered_tx(tx, caller);
+        let deposit = DepositTransactionParts {
+            source_hash: tx.source_hash,
+            mint: Some(tx.mint),
+            is_system_transaction: tx.is_system_transaction,
+        };
+        Self { base, enveloped_tx: Some(encoded), deposit }
     }
 }
 

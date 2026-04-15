@@ -38,10 +38,6 @@ pub use op_evm::OpEvm;
 mod api;
 pub use api::{BaseError, Builder, DefaultOp, DefaultOpEvm, OpContext, OpContextTr};
 
-mod compat;
-
-mod consensus_compat;
-
 mod evm;
 pub use evm::BaseEvm;
 
