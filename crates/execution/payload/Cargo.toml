@@ -28,7 +28,6 @@ reth-payload-builder-primitives.workspace = true
 reth-revm = { workspace = true, features = ["witness"] }
 
 # op-reth
-base-protocol.workspace = true
 base-common-evm.workspace = true
 base-execution-evm.workspace = true
 base-execution-txpool.workspace = true
