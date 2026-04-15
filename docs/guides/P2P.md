@@ -601,13 +601,13 @@ For peer discovery, reth supports both discv4 (the older UDP-based Kademlia prot
 nodes and DNS-based discovery.
 
 
-### The OpNetworkBuilder
+### The BaseNetworkBuilder
 
-The [`OpNetworkBuilder`](https://github.com/base/base/blob/main/crates/execution/node/src/node.rs)
+The [`BaseNetworkBuilder`](https://github.com/base/base/blob/main/crates/execution/node/src/node.rs)
 is the component that configures reth's network for Base. It has two configuration knobs:
 
 ```rust
-pub struct OpNetworkBuilder {
+pub struct BaseNetworkBuilder {
     pub disable_txpool_gossip: bool,
     pub disable_discovery_v4: bool,
 }
@@ -805,7 +805,7 @@ networks are completely separate and serve different purposes.
 
 -
   [`crates/execution/node/src/node.rs`](https://github.com/base/base/blob/main/crates/execution/node/src/node.rs)
-  — OpNetworkBuilder and network configuration
+  — BaseNetworkBuilder and network configuration
 -
   [`crates/execution/node/src/args.rs`](https://github.com/base/base/blob/main/crates/execution/node/src/args.rs)
   — Rollup-specific CLI arguments
