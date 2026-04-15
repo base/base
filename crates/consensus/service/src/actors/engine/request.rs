@@ -67,30 +67,7 @@ pub enum EngineActorRequest {
 #[derive(Debug)]
 pub enum EngineRpcRequest {
     /// Engine RPC query.
-    EngineQuery {
-        /// Correlation id for the originating RPC request.
-        request_id: u64,
-        /// Originating RPC method name.
-        rpc_method: &'static str,
-        /// The engine query payload.
-        query: Box<EngineQueries>,
-    },
-}
-
-impl EngineRpcRequest {
-    /// Returns the originating RPC request id.
-    pub const fn request_id(&self) -> u64 {
-        match self {
-            Self::EngineQuery { request_id, .. } => *request_id,
-        }
-    }
-
-    /// Returns the originating RPC method name.
-    pub const fn rpc_method(&self) -> &'static str {
-        match self {
-            Self::EngineQuery { rpc_method, .. } => rpc_method,
-        }
-    }
+    EngineQuery(Box<EngineQueries>),
 }
 
 /// A request to build a payload.

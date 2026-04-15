@@ -22,13 +22,14 @@ use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
+use tracing::Instrument;
 
 use crate::{
     EngineRpcClient, L1State, L1WatcherQueries, OutputResponse, RollupNodeApiServer,
     l1_watcher::L1WatcherQuerySender,
 };
 
-static ROLLUP_RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+static RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// `RollupRpc`
 ///
@@ -81,52 +82,30 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
 
         Metrics::rpc_calls("op_outputAtBlock").increment(1.0);
 
-        let request_id = ROLLUP_RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+        let request_id = RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
         let request_started_at = Instant::now();
-
-        info!(
+        let span = info_span!(
             target: "rpc",
+            "rpc_request",
             request_id,
             rpc_method = RPC_METHOD,
             block = ?block_num,
-            "Started rollup RPC request"
         );
 
+        info!(target: "rpc", request_id, rpc_method = RPC_METHOD, block = ?block_num, "Started rollup RPC request");
+
         let ((l2_block_info, output_root, l2_sync_status), l1_sync_status) = tokio::try_join!(
+            self.engine_client.output_at_block(block_num).instrument(span.clone()),
             async {
-                info!(
-                    target: "rpc",
-                    request_id,
-                    rpc_method = RPC_METHOD,
-                    block = ?block_num,
-                    component = "engine",
-                    "Dispatching engine RPC subrequest"
-                );
-                self.engine_client
-                    .output_at_block_with_context(request_id, RPC_METHOD, block_num)
-                    .await
-            },
-            async {
-                info!(
-                    target: "rpc",
-                    request_id,
-                    rpc_method = RPC_METHOD,
-                    block = ?block_num,
-                    component = "l1_watcher",
-                    "Dispatching L1 watcher subrequest"
-                );
                 self.l1_watcher_sender
-                    .send(L1WatcherQueries::L1State {
-                        request_id,
-                        rpc_method: RPC_METHOD,
-                        sender: l1_sync_status_send,
-                    })
+                    .send(L1WatcherQueries::L1State(l1_sync_status_send))
                     .await
                     .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
 
                 l1_sync_status_recv.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
             }
+            .instrument(span.clone())
         )
         .map_err(|error| {
             warn!(
@@ -191,46 +170,28 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
 
         Metrics::rpc_calls("op_syncStatus").increment(1.0);
 
-        let request_id = ROLLUP_RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+        let request_id = RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
         let request_started_at = Instant::now();
-
-        info!(
+        let span = info_span!(
             target: "rpc",
+            "rpc_request",
             request_id,
             rpc_method = RPC_METHOD,
-            "Started rollup RPC request"
         );
+
+        info!(target: "rpc", request_id, rpc_method = RPC_METHOD, "Started rollup RPC request");
 
         let (l1_sync_status, l2_sync_status) = tokio::try_join!(
             async {
-                info!(
-                    target: "rpc",
-                    request_id,
-                    rpc_method = RPC_METHOD,
-                    component = "l1_watcher",
-                    "Dispatching L1 watcher subrequest"
-                );
                 self.l1_watcher_sender
-                    .send(L1WatcherQueries::L1State {
-                        request_id,
-                        rpc_method: RPC_METHOD,
-                        sender: l1_sync_status_send,
-                    })
+                    .send(L1WatcherQueries::L1State(l1_sync_status_send))
                     .await
                     .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
                 l1_sync_status_recv.await.map_err(|_| ErrorObject::from(ErrorCode::InternalError))
-            },
-            async {
-                info!(
-                    target: "rpc",
-                    request_id,
-                    rpc_method = RPC_METHOD,
-                    component = "engine",
-                    "Dispatching engine RPC subrequest"
-                );
-                self.engine_client.get_state_with_context(request_id, RPC_METHOD).await
             }
+            .instrument(span.clone()),
+            self.engine_client.get_state().instrument(span.clone())
         )
         .map_err(|error| {
             warn!(
