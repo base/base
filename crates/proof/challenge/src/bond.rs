@@ -1156,7 +1156,7 @@ mod tests {
             verifier_games.insert(addr(i), state);
         }
         let factory: Arc<dyn DisputeGameFactoryClient> = Arc::new(MockDisputeGameFactory { games });
-        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         (factory, verifier)
     }
 
@@ -1243,7 +1243,7 @@ mod tests {
         verifier_games.insert(addr(0), state);
 
         let factory: Arc<dyn DisputeGameFactoryClient> = Arc::new(MockDisputeGameFactory { games });
-        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let clock = fixed_clock(0);
         let mut mgr = BondManager::new(
@@ -1390,7 +1390,7 @@ mod tests {
 
         let mut verifier_games = HashMap::new();
         verifier_games.insert(game, state);
-        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let clock = fixed_clock(500);
         let phase = BondManager::determine_phase(&*verifier, game, &clock).await.unwrap().unwrap();
@@ -1414,7 +1414,7 @@ mod tests {
 
         let mut verifier_games = HashMap::new();
         verifier_games.insert(game, state);
-        let verifier = Arc::new(MockAggregateVerifier { games: verifier_games });
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let clock = fixed_clock(500);
         let mut mgr = BondManager::new(
@@ -1457,7 +1457,7 @@ mod tests {
             clock,
         );
 
-        let verifier = Arc::new(MockAggregateVerifier { games: HashMap::new() });
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
         mgr.discover_claimable_games(&*verifier).await.unwrap();
         assert_eq!(mgr.tracked_count(), 0);
         assert_eq!(mgr.bond_scan_head, 0);
