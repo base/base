@@ -4293,7 +4293,6 @@ dependencies = [
  "base-execution-trie",
  "base-execution-txpool",
  "base-node-core",
- "base-protocol",
  "clap",
  "eyre",
  "futures",
