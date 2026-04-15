@@ -51,4 +51,3 @@ pub const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = uint!(8_U256);
 
 /// An empty 64-bit set of scalar values.
 pub const EMPTY_SCALARS: [u8; 8] = [0u8; 8];
-

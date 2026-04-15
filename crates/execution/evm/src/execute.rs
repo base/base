@@ -10,8 +10,7 @@ mod tests {
 
     use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
     use alloy_primitives::{Address, Signature, StorageKey, StorageValue, U256, b256};
-    use base_common_consensus::{BaseReceipt, BaseTransactionSigned, TxDeposit};
-    use base_common_consensus::Predeploys;
+    use base_common_consensus::{BaseReceipt, BaseTransactionSigned, Predeploys, TxDeposit};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::MIN_TRANSACTION_GAS;
     use reth_evm::execute::{BasicBlockExecutor, Executor};
@@ -42,7 +41,12 @@ mod tests {
             .unwrap(),
         );
 
-        db.insert_account(Predeploys::L1_BLOCK_INFO, l1_block_contract_account, None, l1_block_storage);
+        db.insert_account(
+            Predeploys::L1_BLOCK_INFO,
+            l1_block_contract_account,
+            None,
+            l1_block_storage,
+        );
 
         db
     }

@@ -1,6 +1,7 @@
 //! Handler related to Base chain
 use alloc::boxed::Box;
 
+use base_common_consensus::Predeploys;
 use revm::{
     context::{
         LocalContextTr,
@@ -23,8 +24,6 @@ use revm::{
     interpreter::{Gas, interpreter::EthInterpreter, interpreter_action::FrameInit},
     primitives::{U256, hardfork::SpecId},
 };
-
-use base_common_consensus::Predeploys;
 
 use crate::{
     L1BlockInfo, OpContextTr, OpHaltReason, OpSpecId,
@@ -393,6 +392,7 @@ where
 mod tests {
 
     use alloy_primitives::uint;
+    use base_common_consensus::Predeploys;
     use revm::{
         bytecode::Bytecode,
         context::{BlockEnv, CfgEnv, Context, TxEnv},
@@ -403,8 +403,6 @@ mod tests {
         primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
         state::AccountInfo,
     };
-
-    use base_common_consensus::Predeploys;
 
     use super::*;
     use crate::{

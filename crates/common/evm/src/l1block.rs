@@ -14,8 +14,8 @@ use crate::{
         BASE_FEE_SCALAR_OFFSET, BLOB_BASE_FEE_SCALAR_OFFSET, DA_FOOTPRINT_GAS_SCALAR_OFFSET,
         DA_FOOTPRINT_GAS_SCALAR_SLOT, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
         EMPTY_SCALARS, L1_BASE_FEE_SLOT, L1_OVERHEAD_SLOT, L1_SCALAR_SLOT,
-        OPERATOR_FEE_CONSTANT_OFFSET, OPERATOR_FEE_JOVIAN_MULTIPLIER,
-        OPERATOR_FEE_SCALAR_DECIMAL, OPERATOR_FEE_SCALAR_OFFSET, OPERATOR_FEE_SCALARS_SLOT,
+        OPERATOR_FEE_CONSTANT_OFFSET, OPERATOR_FEE_JOVIAN_MULTIPLIER, OPERATOR_FEE_SCALAR_DECIMAL,
+        OPERATOR_FEE_SCALAR_OFFSET, OPERATOR_FEE_SCALARS_SLOT,
     },
     transaction::OpTxTr,
 };
@@ -61,8 +61,9 @@ pub struct L1BlockInfo {
 impl L1BlockInfo {
     /// Fetch the DA footprint gas scalar from the database.
     pub fn fetch_da_footprint_gas_scalar<DB: Database>(db: &mut DB) -> Result<u16, DB::Error> {
-        let da_footprint_gas_scalar_slot =
-            db.storage(Predeploys::L1_BLOCK_INFO, DA_FOOTPRINT_GAS_SCALAR_SLOT)?.to_be_bytes::<32>();
+        let da_footprint_gas_scalar_slot = db
+            .storage(Predeploys::L1_BLOCK_INFO, DA_FOOTPRINT_GAS_SCALAR_SLOT)?
+            .to_be_bytes::<32>();
 
         // Extract the first 2 bytes directly as a u16 in big-endian format
         let bytes = [
@@ -103,7 +104,8 @@ impl L1BlockInfo {
 
     /// Try to fetch the L1 block info from the database, post-Ecotone.
     fn try_fetch_ecotone<DB: Database>(&mut self, db: &mut DB) -> Result<(), DB::Error> {
-        self.l1_blob_base_fee = Some(db.storage(Predeploys::L1_BLOCK_INFO, ECOTONE_L1_BLOB_BASE_FEE_SLOT)?);
+        self.l1_blob_base_fee =
+            Some(db.storage(Predeploys::L1_BLOCK_INFO, ECOTONE_L1_BLOB_BASE_FEE_SLOT)?);
 
         let l1_fee_scalars =
             db.storage(Predeploys::L1_BLOCK_INFO, ECOTONE_L1_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();

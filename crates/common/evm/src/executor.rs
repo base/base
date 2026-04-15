@@ -359,7 +359,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_common_chains::{BaseUpgrade, ChainUpgrades};
-    use base_common_consensus::BaseTxEnvelope;
+    use base_common_consensus::{BaseTxEnvelope, Predeploys};
     use revm::{
         Context,
         context::BlockEnv,
@@ -370,13 +370,11 @@ mod tests {
     };
 
     use super::*;
-    use base_common_consensus::Predeploys;
-
     use crate::{
         AlloyReceiptBuilder, BASE_FEE_SCALAR_OFFSET, BaseBlockExecutorFactory, BaseEvm,
         BaseEvmFactory, Builder, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
-        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1BlockInfo,
-        OPERATOR_FEE_SCALARS_SLOT, OpSpecId,
+        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1BlockInfo, OPERATOR_FEE_SCALARS_SLOT,
+        OpSpecId,
     };
 
     #[test]
