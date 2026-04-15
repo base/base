@@ -37,7 +37,37 @@ pub type L1WatcherQuerySender = tokio::sync::mpsc::Sender<L1WatcherQueries>;
 #[derive(Debug)]
 pub enum L1WatcherQueries {
     /// Get the rollup config from the L1 watcher.
-    Config(Sender<RollupConfig>),
+    Config {
+        /// Correlation id for the originating RPC request.
+        request_id: u64,
+        /// Originating RPC method name.
+        rpc_method: &'static str,
+        /// Response channel for the rollup config.
+        sender: Sender<RollupConfig>,
+    },
     /// Get a complete view of the L1 state.
-    L1State(Sender<L1State>),
+    L1State {
+        /// Correlation id for the originating RPC request.
+        request_id: u64,
+        /// Originating RPC method name.
+        rpc_method: &'static str,
+        /// Response channel for the L1 state snapshot.
+        sender: Sender<L1State>,
+    },
+}
+
+impl L1WatcherQueries {
+    /// Returns the originating RPC request id.
+    pub const fn request_id(&self) -> u64 {
+        match self {
+            Self::Config { request_id, .. } | Self::L1State { request_id, .. } => *request_id,
+        }
+    }
+
+    /// Returns the originating RPC method name.
+    pub const fn rpc_method(&self) -> &'static str {
+        match self {
+            Self::Config { rpc_method, .. } | Self::L1State { rpc_method, .. } => rpc_method,
+        }
+    }
 }

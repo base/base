@@ -16,7 +16,7 @@ type L2BlockNumber = u64;
 /// It maintains a queue of derived L2 blocks that are awaiting finalization, and returns
 /// the L2 block numbers that can be finalized as new finalized L1 blocks are received.
 #[derive(Debug, Default)]
-pub(crate) struct L2Finalizer {
+pub struct L2Finalizer {
     /// A map of `L1 block number -> highest derived L2 block number` within the L1 epoch, used to
     /// track derived [`OpAttributesWithParent`] awaiting finalization. When a new finalized L1
     /// block is received, the highest L2 block whose inputs are contained within the finalized

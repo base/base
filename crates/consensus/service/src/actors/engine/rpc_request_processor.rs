@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use std::sync::Arc;
 
 use base_consensus_engine::{EngineClient, EngineState};
@@ -40,11 +42,20 @@ where
 {
     async fn handle_rpc_request(&self, request: EngineRpcRequest) -> Result<(), EngineError> {
         match request {
-            EngineRpcRequest::EngineQuery(req) => {
-                trace!(target: "engine", ?req, "Received engine query.");
+            EngineRpcRequest::EngineQuery { request_id, rpc_method, query } => {
+                let started_at = Instant::now();
 
-                if let Err(e) = req
+                info!(
+                    target: "engine",
+                    request_id,
+                    rpc_method,
+                    "Started engine RPC processing"
+                );
+
+                if let Err(e) = query
                     .handle(
+                        request_id,
+                        rpc_method,
                         &self.engine_state_receiver,
                         &self.engine_queue_length_receiver,
                         &self.engine_client,
@@ -52,7 +63,22 @@ where
                     )
                     .await
                 {
-                    warn!(target: "engine", err = ?e, "Failed to handle engine query.");
+                    warn!(
+                        target: "engine",
+                        request_id,
+                        rpc_method,
+                        elapsed_ms = started_at.elapsed().as_millis() as u64,
+                        error = ?e,
+                        "Engine RPC processing failed"
+                    );
+                } else {
+                    info!(
+                        target: "engine",
+                        request_id,
+                        rpc_method,
+                        elapsed_ms = started_at.elapsed().as_millis() as u64,
+                        "Completed engine RPC processing"
+                    );
                 }
             }
         }
