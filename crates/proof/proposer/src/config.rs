@@ -110,14 +110,6 @@ impl ProposerConfig {
             });
         }
 
-        if proposer.recovery_scan_concurrency == 0 {
-            return Err(ConfigError::OutOfRange {
-                field: "recovery-scan-concurrency",
-                constraint: "at least 1",
-                value: "0",
-            });
-        }
-
         // A zero address would be indistinguishable from an unconfigured value,
         // and is used as the "no parent" sentinel for the first game from anchor state.
         if proposer.anchor_state_registry_addr == Address::ZERO {
