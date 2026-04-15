@@ -74,8 +74,9 @@ async fn launch(
             ProxyGetRequestLayer::new([("/healthz", "healthz")])
                 .expect("Critical: Failed to build GET method proxy"),
         )
-        .layer(tower::limit::ConcurrencyLimitLayer::new(256))
-        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, config.http_timeout));
+        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, config.http_timeout))
+        .layer(tower::limit::ConcurrencyLimitLayer::new(config.max_concurrent_requests))
+        .layer(tower::load_shed::LoadShedLayer::new());
     let server = Server::builder().set_http_middleware(middleware).build(config.socket).await?;
 
     if let Ok(addr) = server.local_addr() {
@@ -186,6 +187,7 @@ mod tests {
             ws_enabled: false,
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
+            max_concurrent_requests: 256,
         };
         let result = launch(&launcher, RpcModule::new(())).await;
         assert!(result.is_ok());
@@ -201,6 +203,7 @@ mod tests {
             ws_enabled: false,
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
+            max_concurrent_requests: 256,
         };
         let mut modules = RpcModule::new(());
 

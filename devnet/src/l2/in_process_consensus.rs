@@ -160,6 +160,7 @@ impl InProcessConsensus {
             ws_enabled: false,
             dev_enabled: false,
             http_timeout: Duration::from_secs(60),
+            max_concurrent_requests: 256,
         };
 
         let mut builder = RollupNodeBuilder::new(

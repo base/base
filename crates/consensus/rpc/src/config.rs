@@ -20,6 +20,8 @@ pub struct RpcBuilder {
     pub dev_enabled: bool,
     /// HTTP request timeout for the RPC server.
     pub http_timeout: Duration,
+    /// Maximum number of concurrent in-flight RPC requests.
+    pub max_concurrent_requests: usize,
 }
 
 impl RpcBuilder {
