@@ -1,6 +1,7 @@
 //! Handler related to Base chain
 use alloc::boxed::Box;
 
+use base_common_consensus::Predeploys;
 use revm::{
     context::{
         LocalContextTr,
@@ -26,7 +27,6 @@ use revm::{
 
 use crate::{
     L1BlockInfo, OpContextTr, OpHaltReason, OpSpecId,
-    constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT},
     transaction::{DEPOSIT_TRANSACTION_TYPE, OpTransactionError, OpTxTr},
 };
 
@@ -290,9 +290,9 @@ where
 
         // Send fees to their respective recipients
         for (recipient, amount) in [
-            (L1_FEE_RECIPIENT, l1_cost),
-            (BASE_FEE_RECIPIENT, base_fee_amount),
-            (OPERATOR_FEE_RECIPIENT, operator_fee_cost),
+            (Predeploys::L1_FEE_VAULT, l1_cost),
+            (Predeploys::BASE_FEE_VAULT, base_fee_amount),
+            (Predeploys::OPERATOR_FEE_VAULT, operator_fee_cost),
         ] {
             ctx.journal_mut().balance_incr(recipient, amount)?;
         }
@@ -392,6 +392,7 @@ where
 mod tests {
 
     use alloy_primitives::uint;
+    use base_common_consensus::Predeploys;
     use revm::{
         bytecode::Bytecode,
         context::{BlockEnv, CfgEnv, Context, TxEnv},
@@ -408,7 +409,7 @@ mod tests {
         Builder, DefaultOp, OpContext, OpSpecId, OpTransaction,
         constants::{
             BASE_FEE_SCALAR_OFFSET, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
-            L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, OPERATOR_FEE_SCALARS_SLOT,
+            L1_BASE_FEE_SLOT, OPERATOR_FEE_SCALARS_SLOT,
         },
     };
 
@@ -609,7 +610,7 @@ mod tests {
             U256::from_limbs([OPERATOR_FEE_CONST, OPERATOR_FEE_SCALAR, 0, 0]);
 
         let mut db = InMemoryDB::default();
-        let l1_block_contract = db.load_account(L1_BLOCK_CONTRACT).unwrap();
+        let l1_block_contract = db.load_account(Predeploys::L1_BLOCK_INFO).unwrap();
         l1_block_contract.storage.insert(L1_BASE_FEE_SLOT, L1_BASE_FEE);
         l1_block_contract.storage.insert(ECOTONE_L1_BLOB_BASE_FEE_SLOT, L1_BLOB_BASE_FEE);
         l1_block_contract.storage.insert(ECOTONE_L1_FEE_SCALARS_SLOT, L1_FEE_SCALARS);

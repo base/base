@@ -34,7 +34,6 @@ reth-rpc-server-types.workspace = true
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 
 # op-reth
-base-protocol.workspace = true
 base-execution-rpc.workspace = true
 base-execution-txpool.workspace = true
 base-execution-storage.workspace = true
@@ -121,7 +120,6 @@ test-utils = [
 	"base-common-consensus/arbitrary",
 	"base-execution-exex/test-utils",
 	"base-node-core/test-utils",
-	"base-protocol/test-utils",
 	"reth-chainspec/test-utils",
 	"reth-codec",
 	"reth-consensus/test-utils",

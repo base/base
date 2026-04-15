@@ -9,8 +9,9 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, B256};
+use base_common_consensus::Predeploys;
 use base_proof_rpc::{L2Provider, RpcError};
-use base_protocol::{OutputRoot, Predeploys};
+use base_protocol::OutputRoot;
 use futures::stream::{self, StreamExt};
 use thiserror::Error;
 use tracing::{info, warn};

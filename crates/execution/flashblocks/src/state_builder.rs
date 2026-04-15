@@ -13,8 +13,8 @@ use alloy_primitives::B256;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
-use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope};
-use base_common_evm::{L1_BLOCK_CONTRACT, L1BlockInfo, OpHaltReason, ensure_create2_deployer};
+use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
+use base_common_evm::{L1BlockInfo, OpHaltReason, ensure_create2_deployer};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_execution_rpc::BaseReceiptBuilder as OpRpcReceiptBuilder;
@@ -240,7 +240,7 @@ where
 
         // Load the L1 block contract into the cache. If the L1 block contract is not pre-loaded the
         // database will panic when trying to fetch the DA footprint gas scalar.
-        self.evm.db_mut().basic(L1_BLOCK_CONTRACT).map_err(|err| {
+        self.evm.db_mut().basic(Predeploys::L1_BLOCK_INFO).map_err(|err| {
             StateProcessorError::Execution(ExecutionError::DaFootprintEstimation(err.to_string()))
         })?;
 

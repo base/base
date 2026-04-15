@@ -1,8 +1,6 @@
 //! Contains Deposit transaction parts.
+pub use base_common_consensus::DEPOSIT_TX_TYPE_ID as DEPOSIT_TRANSACTION_TYPE;
 use revm::primitives::B256;
-
-/// Deposit transaction type.
-pub const DEPOSIT_TRANSACTION_TYPE: u8 = 0x7E;
 
 /// Deposit transaction parts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

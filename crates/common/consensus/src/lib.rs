@@ -43,6 +43,9 @@ pub use source::{
     UserDepositSource,
 };
 
+mod predeploys;
+pub use predeploys::{Deployers, Predeploys, SystemAddresses};
+
 mod block;
 pub use block::BaseBlock;
 

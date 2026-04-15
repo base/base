@@ -3,7 +3,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_protocol::Predeploys;
+use base_common_consensus::Predeploys;
 use reth_storage_api::{StorageRootProvider, errors::ProviderResult};
 use reth_trie_common::HashedStorage;
 use revm::database::BundleState;

@@ -7,10 +7,9 @@ use alloy_primitives::{B256, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
-use base_common_consensus::BaseTransaction;
-use base_common_evm::{L1_BLOCK_CONTRACT, L1BlockInfo};
+use base_common_consensus::{BaseTransaction, Predeploys};
+use base_common_evm::L1BlockInfo;
 use base_execution_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
-use base_protocol::Predeploys;
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -343,7 +342,7 @@ impl<Txs> Builder<'_, Txs> {
         // Load the L1 block contract into the database cache. If the L1 block contract is not
         // pre-loaded the database will panic when trying to fetch the DA footprint gas
         // scalar.
-        db.load_cache_account(L1_BLOCK_CONTRACT).map_err(BlockExecutionError::other)?;
+        db.load_cache_account(Predeploys::L1_BLOCK_INFO).map_err(BlockExecutionError::other)?;
 
         let mut builder = ctx.block_builder(&mut db)?;
 

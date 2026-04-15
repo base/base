@@ -9,10 +9,11 @@ use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
+use base_common_consensus::Predeploys;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_upgrades::{Hardfork, Hardforks};
-use base_protocol::{Deposits, L1BlockInfoTx, L2BlockInfo, Predeploys};
+use base_protocol::{Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
 
 use crate::{

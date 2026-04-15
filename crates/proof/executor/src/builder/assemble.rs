@@ -7,11 +7,11 @@ use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_evm::{EvmFactory, block::BlockExecutionResult};
 use alloy_primitives::{B256, Sealable, U256, logs_bloom};
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_common_consensus::BaseReceiptEnvelope;
+use base_common_consensus::{BaseReceiptEnvelope, Predeploys};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::RollupConfig;
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
-use base_protocol::{OutputRoot, Predeploys};
+use base_protocol::OutputRoot;
 use revm::{context::BlockEnv, database::BundleState};
 
 use super::StatelessL2Builder;

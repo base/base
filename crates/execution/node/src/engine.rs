@@ -4,14 +4,13 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
-use base_common_consensus::BaseBlock;
+use base_common_consensus::{BaseBlock, Predeploys};
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BasePayloadAttributes, ExecutionData,
 };
 use base_execution_consensus::isthmus;
 use base_execution_payload_builder::{BasePayloadTypes, OpExecutionPayloadValidator};
-use base_protocol::Predeploys;
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,

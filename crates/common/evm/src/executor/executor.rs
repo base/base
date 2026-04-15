@@ -16,7 +16,7 @@ use alloy_evm::{
 };
 use alloy_primitives::Address;
 use base_common_chains::Upgrades;
-use base_common_consensus::DepositReceipt;
+use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use revm::{
     Database as _, DatabaseCommit,
@@ -26,7 +26,7 @@ use revm::{
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv,
-    DEPOSIT_TRANSACTION_TYPE, L1_BLOCK_CONTRACT, L1BlockInfo, canyon,
+    DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
 
 
@@ -104,7 +104,7 @@ where
 
         // Load the L1 block contract into the cache. If the L1 block contract is not pre-loaded the
         // database will panic when trying to fetch the DA footprint gas scalar.
-        self.evm.db_mut().basic(L1_BLOCK_CONTRACT).map_err(BlockExecutionError::other)?;
+        self.evm.db_mut().basic(Predeploys::L1_BLOCK_INFO).map_err(BlockExecutionError::other)?;
 
         let da_footprint_gas_scalar = L1BlockInfo::fetch_da_footprint_gas_scalar(self.evm.db_mut())
             .map_err(BlockExecutionError::other)?
@@ -343,7 +343,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Signature, U256, uint};
     use base_common_chains::{BaseUpgrade, ChainUpgrades};
-    use base_common_consensus::BaseTxEnvelope;
+    use base_common_consensus::{BaseTxEnvelope, Predeploys};
     use revm::{
         Context,
         context::BlockEnv,
@@ -357,8 +357,8 @@ mod tests {
     use crate::{
         AlloyReceiptBuilder, BASE_FEE_SCALAR_OFFSET, BaseBlockExecutorFactory, BaseEvm,
         BaseEvmFactory, Builder, DefaultOp, ECOTONE_L1_BLOB_BASE_FEE_SLOT,
-        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1BlockInfo,
-        OPERATOR_FEE_SCALARS_SLOT, OpSpecId,
+        ECOTONE_L1_FEE_SCALARS_SLOT, L1_BASE_FEE_SLOT, L1BlockInfo, OPERATOR_FEE_SCALARS_SLOT,
+        OpSpecId,
     };
 
     #[test]
@@ -411,7 +411,7 @@ mod tests {
         let mut db = revm::database::State::builder().with_database(InMemoryDB::default()).build();
 
         db.insert_account_with_storage(
-            L1_BLOCK_CONTRACT,
+            Predeploys::L1_BLOCK_INFO,
             Default::default(),
             HashMap::from_iter([
                 (L1_BASE_FEE_SLOT, L1_BASE_FEE),

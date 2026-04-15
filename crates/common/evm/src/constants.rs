@@ -1,8 +1,5 @@
 //! Base constants used in the Base EVM.
-use revm::primitives::{Address, U256, address, uint};
-
-/// The cost of a non-zero byte in the EVM.
-pub const NON_ZERO_BYTE_COST: u64 = 16;
+use revm::primitives::{U256, uint};
 
 /// The two 4-byte Ecotone fee scalar values are packed into the same storage slot as the 8-byte sequence number.
 /// Byte offset within the storage slot of the 4-byte baseFeeScalar attribute.
@@ -54,15 +51,3 @@ pub const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = uint!(8_U256);
 
 /// An empty 64-bit set of scalar values.
 pub const EMPTY_SCALARS: [u8; 8] = [0u8; 8];
-
-/// The address of L1 fee recipient.
-pub const L1_FEE_RECIPIENT: Address = address!("0x420000000000000000000000000000000000001A");
-
-/// The address of the operator fee recipient.
-pub const OPERATOR_FEE_RECIPIENT: Address = address!("0x420000000000000000000000000000000000001B");
-
-/// The address of the base fee recipient.
-pub const BASE_FEE_RECIPIENT: Address = address!("0x4200000000000000000000000000000000000019");
-
-/// The address of the `L1Block` contract.
-pub const L1_BLOCK_CONTRACT: Address = address!("0x4200000000000000000000000000000000000015");

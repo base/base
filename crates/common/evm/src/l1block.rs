@@ -1,5 +1,6 @@
 //! Contains the `[L1BlockInfo]` type and its implementation.
-use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_common_consensus::Predeploys;
+use base_common_flz::{NON_ZERO_BYTE_COST, tx_estimated_size_fjord as estimate_tx_compressed_size};
 use revm::{
     context_interface::cfg::gas::{NON_ZERO_BYTE_MULTIPLIER_ISTANBUL, STANDARD_TOKEN_COST},
     database_interface::Database,
@@ -12,9 +13,9 @@ use crate::{
     constants::{
         BASE_FEE_SCALAR_OFFSET, BLOB_BASE_FEE_SCALAR_OFFSET, DA_FOOTPRINT_GAS_SCALAR_OFFSET,
         DA_FOOTPRINT_GAS_SCALAR_SLOT, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
-        EMPTY_SCALARS, L1_BASE_FEE_SLOT, L1_BLOCK_CONTRACT, L1_OVERHEAD_SLOT, L1_SCALAR_SLOT,
-        NON_ZERO_BYTE_COST, OPERATOR_FEE_CONSTANT_OFFSET, OPERATOR_FEE_JOVIAN_MULTIPLIER,
-        OPERATOR_FEE_SCALAR_DECIMAL, OPERATOR_FEE_SCALAR_OFFSET, OPERATOR_FEE_SCALARS_SLOT,
+        EMPTY_SCALARS, L1_BASE_FEE_SLOT, L1_OVERHEAD_SLOT, L1_SCALAR_SLOT,
+        OPERATOR_FEE_CONSTANT_OFFSET, OPERATOR_FEE_JOVIAN_MULTIPLIER, OPERATOR_FEE_SCALAR_DECIMAL,
+        OPERATOR_FEE_SCALAR_OFFSET, OPERATOR_FEE_SCALARS_SLOT,
     },
     transaction::OpTxTr,
 };
@@ -60,8 +61,9 @@ pub struct L1BlockInfo {
 impl L1BlockInfo {
     /// Fetch the DA footprint gas scalar from the database.
     pub fn fetch_da_footprint_gas_scalar<DB: Database>(db: &mut DB) -> Result<u16, DB::Error> {
-        let da_footprint_gas_scalar_slot =
-            db.storage(L1_BLOCK_CONTRACT, DA_FOOTPRINT_GAS_SCALAR_SLOT)?.to_be_bytes::<32>();
+        let da_footprint_gas_scalar_slot = db
+            .storage(Predeploys::L1_BLOCK_INFO, DA_FOOTPRINT_GAS_SCALAR_SLOT)?
+            .to_be_bytes::<32>();
 
         // Extract the first 2 bytes directly as a u16 in big-endian format
         let bytes = [
@@ -82,7 +84,7 @@ impl L1BlockInfo {
     fn try_fetch_isthmus<DB: Database>(&mut self, db: &mut DB) -> Result<(), DB::Error> {
         // Post-isthmus L1 block info
         let operator_fee_scalars =
-            db.storage(L1_BLOCK_CONTRACT, OPERATOR_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
+            db.storage(Predeploys::L1_BLOCK_INFO, OPERATOR_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
 
         // The `operator_fee_scalar` is stored as a big endian u32 at
         // OPERATOR_FEE_SCALAR_OFFSET.
@@ -102,10 +104,11 @@ impl L1BlockInfo {
 
     /// Try to fetch the L1 block info from the database, post-Ecotone.
     fn try_fetch_ecotone<DB: Database>(&mut self, db: &mut DB) -> Result<(), DB::Error> {
-        self.l1_blob_base_fee = Some(db.storage(L1_BLOCK_CONTRACT, ECOTONE_L1_BLOB_BASE_FEE_SLOT)?);
+        self.l1_blob_base_fee =
+            Some(db.storage(Predeploys::L1_BLOCK_INFO, ECOTONE_L1_BLOB_BASE_FEE_SLOT)?);
 
         let l1_fee_scalars =
-            db.storage(L1_BLOCK_CONTRACT, ECOTONE_L1_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
+            db.storage(Predeploys::L1_BLOCK_INFO, ECOTONE_L1_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
 
         self.l1_base_fee_scalar = U256::from_be_slice(
             l1_fee_scalars[BASE_FEE_SCALAR_OFFSET..BASE_FEE_SCALAR_OFFSET + 4].as_ref(),
@@ -123,7 +126,7 @@ impl L1BlockInfo {
                 == EMPTY_SCALARS;
         self.l1_fee_overhead = self
             .empty_ecotone_scalars
-            .then(|| db.storage(L1_BLOCK_CONTRACT, L1_OVERHEAD_SLOT))
+            .then(|| db.storage(Predeploys::L1_BLOCK_INFO, L1_OVERHEAD_SLOT))
             .transpose()?;
 
         Ok(())
@@ -136,18 +139,18 @@ impl L1BlockInfo {
         spec_id: OpSpecId,
     ) -> Result<Self, DB::Error> {
         // Ensure the L1 Block account is loaded into the cache.
-        let _ = db.basic(L1_BLOCK_CONTRACT)?;
+        let _ = db.basic(Predeploys::L1_BLOCK_INFO)?;
 
         let mut out = Self {
             l2_block: Some(l2_block),
-            l1_base_fee: db.storage(L1_BLOCK_CONTRACT, L1_BASE_FEE_SLOT)?,
+            l1_base_fee: db.storage(Predeploys::L1_BLOCK_INFO, L1_BASE_FEE_SLOT)?,
             ..Default::default()
         };
 
         // Post-Ecotone
         if !spec_id.is_enabled_in(OpSpecId::ECOTONE) {
-            out.l1_base_fee_scalar = db.storage(L1_BLOCK_CONTRACT, L1_SCALAR_SLOT)?;
-            out.l1_fee_overhead = Some(db.storage(L1_BLOCK_CONTRACT, L1_OVERHEAD_SLOT)?);
+            out.l1_base_fee_scalar = db.storage(Predeploys::L1_BLOCK_INFO, L1_SCALAR_SLOT)?;
+            out.l1_fee_overhead = Some(db.storage(Predeploys::L1_BLOCK_INFO, L1_OVERHEAD_SLOT)?);
 
             return Ok(out);
         }

@@ -15,12 +15,12 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
 use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
 use async_trait::async_trait;
+use base_common_consensus::Predeploys;
 use base_proof_contracts::{
     AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
 use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
-use base_protocol::Predeploys;
 use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 use base_zk_client::{
     GetProofRequest, GetProofResponse, ProveBlockRequest, ProveBlockResponse, ZkProofError,

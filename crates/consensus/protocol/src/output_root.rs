@@ -9,7 +9,7 @@ use derive_more::Display;
 ///
 /// <https://specs.optimism.io/protocol/proposals.html#l2-output-commitment-construction>
 ///
-/// [Predeploys::L2_TO_L1_MESSAGE_PASSER]: crate::Predeploys::L2_TO_L1_MESSAGE_PASSER
+/// [Predeploys::L2_TO_L1_MESSAGE_PASSER]: base_common_consensus::Predeploys::L2_TO_L1_MESSAGE_PASSER
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
 #[display("OutputRootV0({}, {}, {})", state_root, bridge_storage_root, block_hash)]
 pub struct OutputRoot {

@@ -7,8 +7,8 @@ use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
 use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_consensus::Predeploys;
 use base_execution_upgrades::BASE_MAINNET_UPGRADES;
-use base_protocol::Predeploys;
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, DepositContract, DisplayHardforks, EthChainSpec,
