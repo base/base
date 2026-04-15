@@ -69,14 +69,14 @@ async fn launch(
     module: RpcModule<()>,
 ) -> Result<ServerHandle, std::io::Error> {
     let middleware = tower::ServiceBuilder::new()
+        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, config.http_timeout))
+        .layer(tower::limit::ConcurrencyLimitLayer::new(config.max_concurrent_requests.get()))
+        .layer(tower::load_shed::LoadShedLayer::new())
         .layer(EthHealthCheckLayer)
         .layer(
             ProxyGetRequestLayer::new([("/healthz", "healthz")])
                 .expect("Critical: Failed to build GET method proxy"),
-        )
-        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, config.http_timeout))
-        .layer(tower::limit::ConcurrencyLimitLayer::new(config.max_concurrent_requests.get()))
-        .layer(tower::load_shed::LoadShedLayer::new());
+        );
     let server = Server::builder().set_http_middleware(middleware).build(config.socket).await?;
 
     if let Ok(addr) = server.local_addr() {
