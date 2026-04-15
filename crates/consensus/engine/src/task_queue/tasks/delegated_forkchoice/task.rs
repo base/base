@@ -46,18 +46,34 @@ impl<EngineClient_: EngineClient> EngineTaskExt for DelegatedForkchoiceTask<Engi
         .execute(state)
         .await?;
 
-        let actual_safe = state.sync_state.safe_head().block_info.number;
+        let safe_head = state.sync_state.safe_head();
+        // If ConsolidateTask left safe_head at the uninitialized default (e.g. FCU returned
+        // Syncing), there is no meaningful canonical safe block to finalize against.
+        if safe_head == L2BlockInfo::default() {
+            return Ok(());
+        }
+
+        let actual_safe = safe_head.block_info.number;
         let Some(remote_finalized) = self.update.finalized_l2_number else {
             return Ok(());
         };
 
         let finalized_target = remote_finalized.min(actual_safe);
-        let current_finalized = state.sync_state.finalized_head().block_info.number;
-        if finalized_target <= current_finalized {
+        let current_finalized = state.sync_state.finalized_head();
+        let current_finalized_num = current_finalized.block_info.number;
+
+        // Block number alone is not sufficient at block 0: the default L2BlockInfo
+        // (hash=B256::ZERO, number=0) and the real genesis block (number=0, real hash) both
+        // share number 0.  Use the full struct equality for the zero case so that genesis
+        // finalization is not skipped when current_finalized is the uninitialized default.
+        let already_finalized = finalized_target < current_finalized_num
+            || (finalized_target == current_finalized_num
+                && current_finalized != L2BlockInfo::default());
+        if already_finalized {
             debug!(
                 target: "engine",
                 actual_safe,
-                current_finalized,
+                current_finalized = current_finalized_num,
                 finalized_target,
                 "Skipping delegated finalized update"
             );

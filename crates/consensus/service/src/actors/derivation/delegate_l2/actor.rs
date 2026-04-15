@@ -769,4 +769,294 @@ mod tests {
         let result = actor.run().await;
         assert!(result.is_err());
     }
+
+    // ── Hata 1 regresyon testleri: clamp pivot doğruluğu (actor/SyncFromSourceTask) ──
+
+    /// KÖK NEDEN REGRESYONu: Orijinal hatada `engine_head` (0 başlangıçlı) pivot
+    /// olarak kullanılıyordu. Bu test, `sent_head`'in pivot olduğunda ve
+    /// remote_safe > sent_head iken safe'in sent_head'e clamplanmasını doğrular.
+    ///
+    /// Senaryo: sent_head=5, remote_safe=100, remote_finalized=80
+    /// Beklenen: safe = min(100, 5) = 5  (engine_head=0 kullanılsaydı: 0 ← YANLIŞ)
+    #[tokio::test]
+    async fn clamp_pivot_is_sent_head_not_engine_head_fresh_follow_node() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+        let mut seq = Sequence::new();
+
+        // Blok 1'den 5'e kadar insert edilecek
+        for n in 1u64..=5 {
+            l2_source
+                .expect_get_payload_by_number()
+                .with(eq(n))
+                .times(1)
+                .in_sequence(&mut seq)
+                .returning(|n| Ok(dummy_payload_envelope(n)));
+        }
+
+        // Remote safe=100, ama sent_head=5 → clamped_safe = min(100,5) = 5
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(100));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(5u64)) // clamped_safe=5
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        // Remote finalized=80 → clamped_finalized = min(80,5) = 5
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(80));
+
+        engine_client.expect_send_delegated_forkchoice_update().once().returning(|update| {
+            // sent_head=5 → safe=5, finalized=min(80,5)=5
+            assert_eq!(
+                update.safe_l2.block_info.number,
+                5,
+                "safe must be clamped to sent_head=5, not remote_safe=100 or engine_head=0"
+            );
+            assert_eq!(
+                update.finalized_l2_number,
+                Some(5),
+                "finalized must be clamped to sent_head=5, not remote_finalized=80"
+            );
+            Ok(())
+        });
+
+        let (mut task, _rx, _cancel) = make_sync_task(engine_client, l2_source, 0, 5);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 5);
+    }
+
+    /// Kısmi senkronizasyon: sent_head=50, remote_safe=30 (sent_head'den küçük).
+    /// Beklenen: safe = min(30, 50) = 30 (remote'dan geride değil)
+    #[tokio::test]
+    async fn clamp_when_remote_safe_behind_sent_head() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        // Blok 51'den 55'e kadar
+        for n in 51u64..=55 {
+            l2_source
+                .expect_get_payload_by_number()
+                .with(eq(n))
+                .returning(|n| Ok(dummy_payload_envelope(n)));
+        }
+
+        // remote_safe=30 < sent_head=55 → clamped = min(30,55) = 30
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(30));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(30u64))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        // remote_finalized=20 → clamped = min(20,55) = 20
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(20));
+
+        engine_client.expect_send_delegated_forkchoice_update().once().returning(|update| {
+            assert_eq!(update.safe_l2.block_info.number, 30);
+            assert_eq!(update.finalized_l2_number, Some(20));
+            Ok(())
+        });
+
+        let (mut task, _rx, _cancel) = make_sync_task(engine_client, l2_source, 50, 55);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 55);
+    }
+
+    /// remote_safe = sent_head (tam eşitlik): safe = sent_head olmalı.
+    #[tokio::test]
+    async fn clamp_when_remote_safe_equals_sent_head() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        for n in 1u64..=3 {
+            l2_source
+                .expect_get_payload_by_number()
+                .with(eq(n))
+                .returning(|n| Ok(dummy_payload_envelope(n)));
+        }
+
+        // remote_safe=3 = sent_head_after_sync=3 → clamped = 3
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(3));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(3u64))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(3));
+
+        engine_client.expect_send_delegated_forkchoice_update().once().returning(|update| {
+            assert_eq!(update.safe_l2.block_info.number, 3, "safe==sent_head is valid");
+            assert_eq!(update.finalized_l2_number, Some(3));
+            Ok(())
+        });
+
+        let (mut task, _rx, _cancel) = make_sync_task(engine_client, l2_source, 0, 3);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 3);
+    }
+
+    /// finalized_l2_number = None olduğunda (remote Finalized sorgusu başarısız):
+    /// update gönderilmeli ama finalized=None olarak.
+    #[tokio::test]
+    async fn finalized_is_none_when_remote_finalized_unavailable() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1u64))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(1));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1u64))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        // Finalized sorgusu başarısız → None
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Err(DelegateL2ClientError::BlockNotFound("finalized".into())));
+
+        engine_client.expect_send_delegated_forkchoice_update().once().returning(|update| {
+            assert_eq!(update.safe_l2.block_info.number, 1);
+            assert_eq!(
+                update.finalized_l2_number,
+                None,
+                "finalized must be None when remote query fails"
+            );
+            Ok(())
+        });
+
+        let (mut task, _rx, _cancel) = make_sync_task(engine_client, l2_source, 0, 1);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 1);
+    }
+
+    /// Büyük fark: sent_head=1000, remote_safe=5000, remote_finalized=4000.
+    /// Beklenen: safe = min(5000,1000)=1000, finalized = min(4000,1000)=1000.
+    #[tokio::test]
+    async fn clamp_large_gap_between_remote_and_sent_head() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        // Tek bir blok sync (1000→1001)
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1001u64))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        // remote_safe=5000 >> sent_head_after=1001 → clamped=1001
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Ok(5000));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1001u64))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(4000));
+
+        engine_client.expect_send_delegated_forkchoice_update().once().returning(|update| {
+            assert_eq!(
+                update.safe_l2.block_info.number, 1001,
+                "safe must be clamped to sent_head=1001 (not remote 5000)"
+            );
+            assert_eq!(
+                update.finalized_l2_number,
+                Some(1001),
+                "finalized must be clamped to sent_head=1001 (not remote 4000)"
+            );
+            Ok(())
+        });
+
+        let (mut task, _rx, _cancel) = make_sync_task(engine_client, l2_source, 1000, 1001);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 1001);
+    }
+
+    /// Safe alma başarısız olduğunda: update gönderilmemeli.
+    #[tokio::test]
+    async fn no_update_sent_when_safe_block_number_unavailable() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+        let mut seq = Sequence::new();
+
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1u64))
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        // Safe sorgusu başarısız
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Safe))
+            .returning(|_| Err(DelegateL2ClientError::BlockNotFound("safe".into())));
+
+        // Hiç update gönderilmemeli
+        engine_client.expect_send_delegated_forkchoice_update().times(0);
+
+        let (mut task, _rx, _cancel) = make_sync_task(engine_client, l2_source, 0, 1);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 1);
+    }
+
+    /// target <= sent_head olduğunda sync yapılmamalı ve update da gönderilmemeli.
+    #[tokio::test]
+    async fn sync_noop_target_behind_sent_head_no_update() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let l2_source = MockL2SourceClient::new();
+
+        engine_client.expect_send_delegated_forkchoice_update().times(0);
+
+        let (mut task, _rx, _cancel) = make_sync_task(engine_client, l2_source, 100, 50);
+        let new_head = task.sync_from_source().await.unwrap();
+        assert_eq!(new_head, 100, "sent_head must not change when target <= sent_head");
+    }
+
+    /// İptal sonrası kısmi sync: sent_head doğru güncellenmeli, update gönderilmemeli.
+    #[tokio::test]
+    async fn cancelled_mid_sync_does_not_send_update() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        // İlk blok gelir, ikinci blokta iptal tetiklenir
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1u64))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        // İptal sonrası update gönderilmemeli
+        engine_client.expect_send_delegated_forkchoice_update().times(0);
+
+        let (mut task, _rx, cancel) = make_sync_task(engine_client, l2_source, 0, 100);
+
+        // Tokio spawn ile iptal: ilk blok insert olduktan hemen sonra cancel
+        cancel.cancel();
+        let new_head = task.sync_from_source().await.unwrap();
+
+        // İptal 0. blokta gerçekleşti (cancellation_token checked before each block)
+        assert_eq!(new_head, 0, "sent_head must remain 0 after immediate cancellation");
+    }
 }
