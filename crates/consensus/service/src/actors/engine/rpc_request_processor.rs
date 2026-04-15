@@ -65,7 +65,8 @@ where
 }
 
 /// Maximum number of engine RPC queries processed concurrently.
-const MAX_CONCURRENT_ENGINE_RPC_QUERIES: usize = 32;
+/// Bounds concurrent requests to avoid overwhelming the execution engine.
+const MAX_CONCURRENT_ENGINE_RPC_QUERIES: usize = 16;
 
 impl<EngineClient_> EngineRpcRequestReceiver for EngineRpcProcessor<EngineClient_>
 where
@@ -88,6 +89,11 @@ where
                     .await
                     .expect("semaphore is never closed");
                 let handler = Arc::clone(&this);
+                // Spawned sub-tasks are intentionally detached. On shutdown, when the
+                // request channel closes, this loop exits but in-flight sub-tasks may
+                // still be running. This is acceptable because each request sends its
+                // response through a oneshot channel that the caller has likely already
+                // dropped, so the worst case is wasted work — not incorrect behavior.
                 tokio::spawn(async move {
                     if let Err(e) = handler.handle_rpc_request(query).await {
                         error!(target: "engine", error = %e, "engine rpc request failed");
