@@ -8,7 +8,6 @@ use revm::{
 
 use crate::DEPOSIT_TRANSACTION_TYPE;
 
-
 /// Base Transaction trait.
 #[auto_impl(&, &mut, Box, Arc)]
 pub trait OpTxTr: Transaction {

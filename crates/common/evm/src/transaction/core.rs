@@ -2,6 +2,9 @@
 
 use alloc::vec;
 
+use alloy_eips::Encodable2718;
+use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, tx::IntoTxEnv};
+use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use revm::{
     context::TxEnv,
     context_interface::transaction::Transaction,
@@ -9,15 +12,7 @@ use revm::{
     primitives::{Address, B256, Bytes, TxKind, U256},
 };
 
-
-use alloy_eips::Encodable2718;
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, tx::IntoTxEnv};
-use base_common_consensus::{BaseTxEnvelope, TxDeposit};
-
-use crate::{
-    BaseTransactionBuilder, OpTxTr,
-    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
-};
+use crate::{BaseTransactionBuilder, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, OpTxTr};
 
 /// Base transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
