@@ -1,9 +1,6 @@
 //! Contains the [`BaseTxResult`] type.
 
-use alloy_evm::{
-    block::TxResult as TxResultTrait,
-    eth::EthTxResult,
-};
+use alloy_evm::{block::TxResult as TxResultTrait, eth::EthTxResult};
 use alloy_primitives::Address;
 use revm::context::result::ResultAndState;
 

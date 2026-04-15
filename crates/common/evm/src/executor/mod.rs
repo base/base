@@ -6,5 +6,5 @@ pub use result::BaseTxResult;
 mod factory;
 pub use factory::BaseBlockExecutorFactory;
 
-mod executor;
-pub use executor::BaseBlockExecutor;
+mod block_executor;
+pub use block_executor::BaseBlockExecutor;

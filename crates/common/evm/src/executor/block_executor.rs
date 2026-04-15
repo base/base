@@ -9,12 +9,11 @@ use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
         ExecutableTx, OnStateHook, StateChangePostBlockSource, StateChangeSource, StateDB,
-        SystemCaller, TxResult as TxResultTrait,
+        SystemCaller,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
-use alloy_primitives::Address;
 use base_common_chains::Upgrades;
 use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
