@@ -6,8 +6,20 @@ use revm::primitives::hardfork::SpecId;
 
 /// Base spec id.
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
-#[derive(strum::Display, strum::EnumString, strum::IntoStaticStr)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(non_camel_case_types)]
 pub enum OpSpecId {
@@ -102,7 +114,6 @@ impl From<OpSpecId> for SpecId {
         spec.into_eth_spec()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
