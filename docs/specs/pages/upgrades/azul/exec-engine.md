@@ -1,4 +1,4 @@
-# V1: Execution Engine
+# Azul: Execution Engine
 
 ## EVM Changes
 
@@ -39,7 +39,7 @@ with a gas cost of 3,450.
 
 Base already has the `p256Verify` precompile at the same address (added in Fjord via
 [RIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md)) with a gas cost of 3,450.
-From V1, the gas cost increases to 6,900 to match the L1 gas cost specified in EIP-7951, maintaining
+From Azul, the gas cost increases to 6,900 to match the L1 gas cost specified in EIP-7951, maintaining
 strict equivalence with L1 precompile pricing.
 
 ## Networking Changes
@@ -51,9 +51,9 @@ removing legacy fields from the `Status` message and simplifying the handshake.
 
 ### Remove Account Balances & Receipts
 
-The `FlashblocksMetadata` payload transmitted over the Flashblocks WebSocket is simplified in V1.
+The `FlashblocksMetadata` payload transmitted over the Flashblocks WebSocket is simplified in Azul.
 The `new_account_balances` and `receipts` fields are removed. The `access_list` field remains but
-will not be populated in V1.
+will not be populated in Azul.
 
 **Before:**
 
@@ -88,7 +88,7 @@ will not be populated in V1.
 
 ### Engine API Usage
 
-At and after V1 activation, block production and import use the following Engine API methods:
+At and after Azul activation, block production and import use the following Engine API methods:
 
 - `engine_forkchoiceUpdatedV3` for starting block builds and forkchoice synchronization.
 - `engine_getPayloadV5` for fetching built payloads.
@@ -96,9 +96,9 @@ At and after V1 activation, block production and import use the following Engine
 
 `engine_getPayloadV5` returns a V5 envelope, but the contained execution payload is still V4-shaped.
 As a result, payload insertion continues through `engine_newPayloadV4` (there is no `engine_newPayloadV5`
-path used by Base V1 clients).
+path used by Base Azul clients).
 
-V1 constraints for this flow:
+Azul constraints for this flow:
 
 - Blob-related Engine API inputs are constrained to empty values:
   - `expectedBlobVersionedHashes` MUST be an empty array.
@@ -110,7 +110,7 @@ V1 constraints for this flow:
 [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910) introduces the `eth_config` JSON-RPC method,
 which returns chain configuration parameters such as fork activation timestamps.
 
-Base V1 exposes `eth_config` using the standard EIP-7910 response schema.
+Base Azul exposes `eth_config` using the standard EIP-7910 response schema.
 
 The Base-specific behavior is:
 

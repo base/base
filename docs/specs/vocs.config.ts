@@ -166,7 +166,7 @@ const sidebar: SidebarItem[] = [
   {
     text: 'Upgrades',
     items: [
-      { text: 'V1', link: '/upgrades/v1/overview' },
+      { text: 'Azul', link: '/upgrades/azul/overview' },
       {
         text: 'Optimism',
         collapsed: true,

@@ -59,8 +59,8 @@ pub trait Upgrades: EthereumHardforks {
         self.upgrade_activation(BaseUpgrade::Jovian).active_at_timestamp(timestamp)
     }
 
-    /// Returns `true` if [`V1`](BaseUpgrade::V1) is active at given block timestamp.
-    fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.upgrade_activation(BaseUpgrade::V1).active_at_timestamp(timestamp)
+    /// Returns `true` if [`Azul`](BaseUpgrade::Azul) is active at given block timestamp.
+    fn is_base_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.upgrade_activation(BaseUpgrade::Azul).active_at_timestamp(timestamp)
     }
 }

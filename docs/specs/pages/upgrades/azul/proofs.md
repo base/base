@@ -1,6 +1,6 @@
-# V1: Proof System
+# Azul: Proof System
 
-V1 introduces a multi-proof system for the L2 checkpoints that secure withdrawals to L1. A
+Azul introduces a multi-proof system for the L2 checkpoints that secure withdrawals to L1. A
 checkpoint is a fixed interval of L2 blocks summarized by an output root. Each proposal about that
 checkpoint is submitted to `AggregateVerifier`, an L1 dispute game that can verify one or two
 proofs for the same proposal before withdrawals rely on it.
@@ -13,20 +13,20 @@ TEE signer identities up to date.
 ## Why Change the Proof System
 
 Base's current [fault-proof system](/protocol/fault-proof) is optimistic and interactive: a
-proposal resolves unless someone challenges it. That model has two limits for V1.
+proposal resolves unless someone challenges it. That model has two limits for Azul.
 
 - Withdrawals take at least 7 days because every proposal inherits the full challenge window.
 - Every bad proposal must be actively challenged. That creates an economic attack surface: if
   challengers cannot fund every dispute, an incorrect state can finalize. Centralized guardrails
   reduce that risk today, but that is not a long-term model for Stage 2 decentralization.
 
-V1 replaces that model with a multi-proof design built around TEE and ZK provers. TEE proofs
+Azul replaces that model with a multi-proof design built around TEE and ZK provers. TEE proofs
 support the common path, ZK proofs provide a permissionless backstop, and the architecture leaves
 room to adopt stronger proving systems over time.
 
 ## Finality Model
 
-The V1 design supports three settlement paths for a proposal on Ethereum:
+The Azul design supports three settlement paths for a proposal on Ethereum:
 
 | Proofs present | Settlement path | Target window | What it means                            |
 | -------------- | --------------- | ------------- | ---------------------------------------- |
@@ -36,7 +36,7 @@ The V1 design supports three settlement paths for a proposal on Ethereum:
 
 The long window gives independent provers time to verify a claim and dispute it if needed. The
 short window is available only when both proof systems back the same proposal. A ZK prover can also
-dispute an invalid TEE-backed claim and claim the TEE prover's bond as a reward. In V1, that delay
+dispute an invalid TEE-backed claim and claim the TEE prover's bond as a reward. In Azul, that delay
 lives in `AggregateVerifier` itself. `OptimismPortal2` and `AnchorStateRegistry` no longer add a
 separate 3.5 day delay, because keeping either legacy delay would eliminate the fast-finality path
 even when both proofs are present.
@@ -52,14 +52,14 @@ even when both proofs are present.
 
 ### New/Changed Onchain Components
 
-- `AggregateVerifier`: V1's dispute-game contract for checkpoint proposals. Each proposal is
+- `AggregateVerifier`: Azul's dispute-game contract for checkpoint proposals. Each proposal is
   initialized with one proof, a second proof can be added later for the same claimed root, and the
   contract calls proof-specific verifier contracts and aggregates their results to determine how the
-  proposal resolves. This is also where the V1 finality delay now lives.
+  proposal resolves. This is also where the Azul finality delay now lives.
 - `TEEVerifier` and `ZKVerifier`: proof-specific verifier contracts called by `AggregateVerifier`.
   Their addresses are immutable on the `AggregateVerifier` implementation, so each deployment has
   an explicit verifier set.
-- `DelayedWETH`: still escrows the proposal bond for each game, but V1 reduces its withdrawal delay
+- `DelayedWETH`: still escrows the proposal bond for each game, but Azul reduces its withdrawal delay
   to 1 day. That is sufficient here because the only bonds at stake are proposer bonds.
 - `OptimismPortal2`: no longer adds the separate 3.5 day proof-maturity delay for these proposals.
   That timing moves into `AggregateVerifier`, which keeps the 1 day path reachable instead of
@@ -69,7 +69,7 @@ even when both proofs are present.
 
 ### Proof Flow
 
-The proof flow for V1 is:
+The proof flow for Azul is:
 
 1. The proposer identifies the next canonical checkpoint range and requests a TEE proof.
 2. The TEE prover re-executes that L2 block range inside an AWS Nitro Enclave and signs the
@@ -115,7 +115,7 @@ enclave signs the resulting checkpoint outputs with a key that never leaves the 
 
 ## ZK Provers
 
-ZK provers are the permissionless proving backend in V1. They are used when a dispute requires a
+ZK provers are the permissionless proving backend in Azul. They are used when a dispute requires a
 ZK proof, especially to challenge an invalid TEE-backed proposal or to invalidate a bad ZK claim.
 In normal operation, the proposer does not depend on ZK provers to create new games. In the
 future, the proposer may integrate ZK provers directly so new roots can carry both proof paths from

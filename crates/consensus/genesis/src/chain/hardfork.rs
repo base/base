@@ -11,16 +11,16 @@ use base_common_chains::ChainConfig;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub struct HardforkConfig {
-    /// `v1` sets the activation time for the Base V1 network upgrade.
-    /// Active if `v1` != None && L2 block timestamp >= `Some(v1)`, inactive otherwise.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub v1: Option<u64>,
+    /// `azul` sets the activation time for the Base Azul network upgrade.
+    /// Active if `azul` != None && L2 block timestamp >= `Some(azul)`, inactive otherwise.
+    #[cfg_attr(feature = "serde", serde(alias = "v1", skip_serializing_if = "Option::is_none"))]
+    pub azul: Option<u64>,
 }
 
 impl HardforkConfig {
     /// Returns true if no Base-specific hardforks are configured.
     pub const fn is_empty(&self) -> bool {
-        self.v1.is_none()
+        self.azul.is_none()
     }
 }
 
@@ -125,7 +125,7 @@ impl HardForkConfig {
             ("Pectra Blob Schedule", self.pectra_blob_schedule_time),
             ("Isthmus", self.isthmus_time),
             ("Jovian", self.jovian_time),
-            ("Base V1", self.base.v1),
+            ("Azul", self.base.azul),
         ]
         .into_iter()
     }
@@ -144,7 +144,7 @@ impl From<&ChainConfig> for HardForkConfig {
             pectra_blob_schedule_time: cfg.pectra_blob_schedule_timestamp,
             isthmus_time: Some(cfg.isthmus_timestamp),
             jovian_time: Some(cfg.jovian_timestamp),
-            base: HardforkConfig { v1: cfg.base_v1_timestamp },
+            base: HardforkConfig { azul: cfg.azul_timestamp },
         }
     }
 }
@@ -259,7 +259,7 @@ mod tests {
             pectra_blob_schedule_time: Some(8),
             isthmus_time: Some(9),
             jovian_time: Some(10),
-            base: HardforkConfig { v1: Some(11) },
+            base: HardforkConfig { azul: Some(11) },
         };
 
         let mut iter = hardforks.iter();
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(iter.next(), Some(("Pectra Blob Schedule", Some(8))));
         assert_eq!(iter.next(), Some(("Isthmus", Some(9))));
         assert_eq!(iter.next(), Some(("Jovian", Some(10))));
-        assert_eq!(iter.next(), Some(("Base V1", Some(11))));
+        assert_eq!(iter.next(), Some(("Azul", Some(11))));
         assert_eq!(iter.next(), None);
     }
 }

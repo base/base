@@ -10,7 +10,7 @@ Const instances `BASE_MAINNET`, `BASE_SEPOLIA`, and `BASE_DEVNET_0_SEPOLIA_DEV_0
 duplicated configuration across the workspace.
 
 Also provides the `BaseUpgrade` enum, `BaseUpgrades` trait, and `BaseChainUpgrades` for the
-Base upgrade sequence (Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, V1).
+Base upgrade sequence (Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Azul).
 
 ## Usage
 

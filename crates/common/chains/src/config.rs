@@ -44,8 +44,8 @@ pub struct ChainConfig {
     pub isthmus_timestamp: u64,
     /// Jovian activation timestamp.
     pub jovian_timestamp: u64,
-    /// Base V1 activation timestamp (optional).
-    pub base_v1_timestamp: Option<u64>,
+    /// Base Azul activation timestamp (optional).
+    pub azul_timestamp: Option<u64>,
 
     // Genesis
     /// L1 genesis block hash.
@@ -165,7 +165,7 @@ const MAINNET: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 1_746_806_401,
     jovian_timestamp: 1_764_691_201,
-    base_v1_timestamp: Some(1_777_914_000),
+    azul_timestamp: Some(1_778_695_200),
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
     genesis_l1_number: 17_481_768,
@@ -226,7 +226,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: Some(1_742_486_400),
     isthmus_timestamp: 1_744_905_600,
     jovian_timestamp: 1_763_568_001,
-    base_v1_timestamp: Some(1_776_708_000),
+    azul_timestamp: Some(1_776_708_000),
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
     genesis_l1_number: 4_370_868,
@@ -279,7 +279,7 @@ const ALPHA: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: Some(1_742_486_400),
     isthmus_timestamp: 1_744_300_800,
     jovian_timestamp: 1_762_185_600,
-    base_v1_timestamp: Some(1_774_890_000),
+    azul_timestamp: Some(1_774_890_000),
 
     genesis_l1_hash: b256!("86252c512dc5bd7201d0532b31d50696ba84344a7cda545e04a98073a8e13d87"),
     genesis_l1_number: 4_344_216,
@@ -329,7 +329,7 @@ const DEVNET: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
-    base_v1_timestamp: Some(0),
+    azul_timestamp: Some(0),
 
     genesis_l1_hash: B256::ZERO,
     genesis_l1_number: 0,
@@ -379,7 +379,7 @@ const ZERONET: ChainConfig = ChainConfig {
     pectra_blob_schedule_timestamp: None,
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
-    base_v1_timestamp: Some(1_775_152_800),
+    azul_timestamp: Some(1_775_152_800),
 
     genesis_l1_hash: b256!("b7d4b69971ff31d5179be5e1b83f5a4f438f4cd1db886a6630623b7047f32cfd"),
     genesis_l1_number: 2_450_277,

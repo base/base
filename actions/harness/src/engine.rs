@@ -171,13 +171,13 @@ impl ActionEngineClient {
         set_ts!("jovianTime", hf.jovian_time);
 
         // V1 requires Osaka (the EL counterpart). Both must be set together.
-        match hf.base.v1 {
+        match hf.base.azul {
             Some(ts) => {
                 genesis.config.osaka_time = Some(ts);
                 genesis
                     .config
                     .extra_fields
-                    .insert("base".to_string(), serde_json::json!({ "v1": ts }));
+                    .insert("base".to_string(), serde_json::json!({ "azul": ts }));
             }
             None => {
                 genesis.config.osaka_time = None;

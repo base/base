@@ -2,7 +2,7 @@
 
 This guide covers every code change required to introduce a new network upgrade to this repository. Changes are split into two groups: those required for every upgrade, and those that depend on whether the upgrade changes EVM execution rules.
 
-The V1 upgrade is used as the running example throughout. Replace `V1` / `base_v1` / `BASE_V1` with the actual upgrade name.
+The V1 upgrade is used as the running example throughout. Replace `V1` / `azul` / `BASE_V1` with the actual upgrade name.
 
 ---
 
@@ -103,9 +103,9 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
 For standard upgrades (flat timestamp field), add directly to `HardForkConfig`:
 
 ```rust
-/// `base_v1_time` sets the activation time for the Base V1 network upgrade.
+/// `azul_time` sets the activation time for the Base V1 network upgrade.
 #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-pub base_v1_time: Option<u64>,
+pub azul_time: Option<u64>,
 ```
 
 For namespaced upgrades with the `{ "base": { "v1": <timestamp> } }` JSON shape, define a sub-struct and embed it:
@@ -144,14 +144,14 @@ There are two patterns depending on whether the new upgrade is **standalone** or
 
 ```rust
 /// Returns true if Base V1 is active at the given timestamp.
-pub fn is_base_v1_active(&self, timestamp: u64) -> bool {
-    self.hardforks.base.as_ref().and_then(|b| b.v1).is_some_and(|t| timestamp >= t)
+pub fn is_base_azul_active(&self, timestamp: u64) -> bool {
+    self.hardforks.base.as_ref().and_then(|b| b.azul).is_some_and(|t| timestamp >= t)
 }
 
 /// Returns true if the timestamp marks the first Base V1 block.
 pub fn is_first_base_v1_block(&self, timestamp: u64) -> bool {
-    self.is_base_v1_active(timestamp)
-        && !self.is_base_v1_active(timestamp.saturating_sub(self.block_time))
+    self.is_base_azul_active(timestamp)
+        && !self.is_base_azul_active(timestamp.saturating_sub(self.block_time))
 }
 ```
 
@@ -180,11 +180,11 @@ BaseUpgrade::Jovian => self
     .jovian_time
     .map(ForkCondition::Timestamp)
     .unwrap_or(ForkCondition::Never),  // standalone: no cascade
-BaseUpgrade::V1 => self
+BaseUpgrade::Azul => self
     .hardforks
     .base
     .as_ref()
-    .and_then(|b| b.v1)
+    .and_then(|b| b.azul)
     .map(ForkCondition::Timestamp)
     .unwrap_or(ForkCondition::Never),
 _ => ForkCondition::Never,  // required: BaseUpgrade is #[non_exhaustive]
@@ -199,9 +199,9 @@ For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition:
 **File:** [`crates/common/chains/src/upgrades.rs`](../../crates/common/chains/src/upgrades.rs)
 
 ```rust
-/// Returns `true` if [`V1`](BaseUpgrade::V1) is active at given block timestamp.
-fn is_base_v1_active_at_timestamp(&self, timestamp: u64) -> bool {
-    self.upgrade_activation(BaseUpgrade::V1).active_at_timestamp(timestamp)
+/// Returns `true` if [`Azul`](BaseUpgrade::Azul) is active at given block timestamp.
+fn is_base_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
+    self.upgrade_activation(BaseUpgrade::Azul).active_at_timestamp(timestamp)
 }
 ```
 
@@ -234,7 +234,7 @@ Update the `HardForkConfig` literal in both registry fixture files:
 hardforks: HardForkConfig {
     // ... existing fields ...
     jovian_time: Some(BASE_MAINNET_JOVIAN_TIMESTAMP),
-    base: Some(BaseHardforkConfig { v1: Some(BASE_MAINNET_BASE_V1_TIMESTAMP) }),
+    base: Some(BaseHardforkConfig { azul: Some(BASE_MAINNET_BASE_V1_TIMESTAMP) }),
 },
 ```
 
@@ -252,7 +252,7 @@ The `default_rollup_config()` function sets all upgrades active at genesis for d
 hardforks: HardForkConfig {
     // ... existing fields ...
     jovian_time: Some(0),
-    base: Some(BaseHardforkConfig { v1: Some(0) }),
+    base: Some(BaseHardforkConfig { azul: Some(0) }),
 },
 ```
 
@@ -267,7 +267,7 @@ These tests assert that `BaseChainConfig::mainnet().upgrade_activation(fork)` ma
 If there is a known discrepancy (e.g. the cascade causes a mismatch for an unset upgrade), add a skip with an explanatory comment as done for `Regolith`:
 
 ```rust
-if *fork == BaseUpgrade::V1 {
+if *fork == BaseUpgrade::Azul {
     continue; // explanation of why the two sides differ
 }
 ```
@@ -333,7 +333,7 @@ Add the new upgrade as the first check (newest upgrade wins):
 
 ```rust
 pub fn spec_by_timestamp_after_bedrock(chain_spec: impl BaseUpgrades, timestamp: u64) -> OpSpecId {
-    if chain_spec.is_base_v1_active_at_timestamp(timestamp) {
+    if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
         OpSpecId::BASE_V1
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
         OpSpecId::JOVIAN
@@ -347,7 +347,7 @@ Same pattern in the `#[cfg(feature = "revm")] impl RollupConfig` block:
 
 ```rust
 pub fn spec_id(&self, timestamp: u64) -> base_revm::OpSpecId {
-    if self.is_base_v1_active(timestamp) {
+    if self.is_base_azul_active(timestamp) {
         base_revm::OpSpecId::BASE_V1
     } else if self.is_jovian_active(timestamp) {
         base_revm::OpSpecId::JOVIAN
@@ -366,7 +366,7 @@ Append the new upgrade in `to_chain_hardforks()`. If it pairs with a new Ethereu
 ```rust
 // No paired Ethereum hardfork
 forks.push((BaseUpgrade::Jovian.boxed(), self[BaseUpgrade::Jovian]));
-forks.push((BaseUpgrade::V1.boxed(), self[BaseUpgrade::V1]));  // <-- add
+forks.push((BaseUpgrade::Azul.boxed(), self[BaseUpgrade::Azul]));  // <-- add
 ```
 
 ---

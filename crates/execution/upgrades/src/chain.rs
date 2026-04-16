@@ -11,7 +11,7 @@ pub trait ChainUpgradesExt {
     ///
     /// Pre-Bedrock Ethereum hardforks are set to block 0. Paired Ethereum hardforks
     /// use their Base counterpart's timestamp:
-    /// Shanghai=Canyon, Cancun=Ecotone, Prague=Isthmus, Osaka=V1.
+    /// Shanghai=Canyon, Cancun=Ecotone, Prague=Isthmus, Osaka=Azul.
     fn to_chain_hardforks(&self) -> ChainHardforks;
 }
 
@@ -67,10 +67,10 @@ impl ChainUpgradesExt for ChainUpgrades {
             forks.push((BaseUpgrade::Jovian.boxed(), jovian));
         }
 
-        let base_v1 = self[BaseUpgrade::V1];
-        if !matches!(base_v1, ForkCondition::Never) {
-            forks.push((EthereumHardfork::Osaka.boxed(), base_v1));
-            forks.push((BaseUpgrade::V1.boxed(), base_v1));
+        let azul = self[BaseUpgrade::Azul];
+        if !matches!(azul, ForkCondition::Never) {
+            forks.push((EthereumHardfork::Osaka.boxed(), azul));
+            forks.push((BaseUpgrade::Azul.boxed(), azul));
         }
 
         ChainHardforks::new(forks)
@@ -102,17 +102,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn base_v1_expands_to_osaka() {
+    fn azul_expands_to_osaka() {
         let hardforks =
             ChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(|(fork, cond)| {
-                if fork == BaseUpgrade::V1 {
+                if fork == BaseUpgrade::Azul {
                     (fork, ForkCondition::Timestamp(1_000_000))
                 } else {
                     (fork, cond)
                 }
             }))
             .to_chain_hardforks();
-        assert_eq!(hardforks.get(BaseUpgrade::V1), Some(ForkCondition::Timestamp(1_000_000)));
-        assert_eq!(hardforks.get(EthereumHardfork::Osaka), hardforks.get(BaseUpgrade::V1));
+        assert_eq!(hardforks.get(BaseUpgrade::Azul), Some(ForkCondition::Timestamp(1_000_000)));
+        assert_eq!(hardforks.get(EthereumHardfork::Osaka), hardforks.get(BaseUpgrade::Azul));
     }
 }

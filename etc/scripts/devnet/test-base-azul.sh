@@ -76,7 +76,7 @@ check_eth_config() {
         if [ "$MODE" = "before" ]; then
             fail_check \
                 "$check_name" \
-                "unexpectedly succeeded before Base V1 on $RPC_URL" \
+                "unexpectedly succeeded before Azul on $RPC_URL" \
                 "$raw_result"
         fi
 
@@ -92,14 +92,14 @@ check_eth_config() {
     if [ "$MODE" = "before" ]; then
         pass_check \
             "$check_name" \
-            "unavailable before Base V1" \
+            "unavailable before Azul" \
             "$(printf '%s' "$raw_result" | tr '\n\r' ' ' | sed 's/[[:space:]]\+/ /g')"
         return
     fi
 
     fail_check \
         "$check_name" \
-        "unavailable after Base V1 on $RPC_URL" \
+        "unavailable after Azul on $RPC_URL" \
         "$raw_result"
 }
 
@@ -131,27 +131,27 @@ check_modexp_size_limit() {
         if [ "$MODE" = "before" ]; then
             pass_check \
                 "$check_name" \
-                "oversized input accepted before Base V1" \
+                "oversized input accepted before Azul" \
                 "output: $raw_result"
             return
         fi
 
         fail_check \
             "$check_name" \
-            "oversized input unexpectedly succeeded after Base V1 on $RPC_URL" \
+            "oversized input unexpectedly succeeded after Azul on $RPC_URL" \
             "output: $raw_result"
     fi
 
     if [ "$MODE" = "before" ]; then
         fail_check \
             "$check_name" \
-            "oversized input unexpectedly rejected before Base V1 on $RPC_URL" \
+            "oversized input unexpectedly rejected before Azul on $RPC_URL" \
             "error: $raw_result"
     fi
 
     pass_check \
         "$check_name" \
-        "oversized input rejected after Base V1" \
+        "oversized input rejected after Azul" \
         "$(printf '%s' "$raw_result" | tr '\n\r' ' ' | sed 's/[[:space:]]\+/ /g')"
 }
 
@@ -311,12 +311,12 @@ check_clz_transaction() {
         esac
         if [ "$MODE" = "before" ]; then
             pass_check "$check_name" \
-                "deploy failed before Base V1 (CLZ opcode not available)" \
+                "deploy failed before Azul (CLZ opcode not available)" \
                 "$(printf '%s' "$deploy_result" | tr '\n\r' ' ' | sed 's/[[:space:]]\+/ /g')"
             return
         fi
         fail_check "$check_name" \
-            "deploy failed after Base V1" \
+            "deploy failed after Azul" \
             "$deploy_result"
     fi
 
@@ -347,7 +347,7 @@ check_clz_transaction() {
 
     if [ "$MODE" = "before" ]; then
         fail_check "$check_name" \
-            "unexpectedly succeeded before Base V1"
+            "unexpectedly succeeded before Azul"
     fi
 
     if [ "$actual" != "$expected" ]; then
@@ -375,7 +375,7 @@ run_case() {
         if [ "$MODE" = "before" ]; then
             fail_check \
                 "$check_name" \
-                "unexpectedly succeeded before Base V1" \
+                "unexpectedly succeeded before Azul" \
                 "input:  $input_word" \
                 "output: $raw_result"
         fi
@@ -387,13 +387,13 @@ run_case() {
                 if [ "$MODE" = "before" ]; then
                     pass_check \
                         "$check_name" \
-                        "unavailable before Base V1" \
+                        "unavailable before Azul" \
                         "$(printf '%s' "$raw_result" | tr '\n\r' ' ' | sed 's/[[:space:]]\+/ /g')"
                     return
                 fi
                 fail_check \
                     "$check_name" \
-                    "unavailable after Base V1 on $RPC_URL at block tag $BLOCK_TAG" \
+                    "unavailable after Azul on $RPC_URL at block tag $BLOCK_TAG" \
                     "$raw_result"
                 ;;
             *)
@@ -424,7 +424,7 @@ command -v cast >/dev/null 2>&1 || fail "'cast' is required"
     fail "mode must be 'before' or 'after'"
 }
 
-echo "Testing Base V1 mode '$MODE' on $RPC_URL (block tag: $BLOCK_TAG)"
+echo "Testing Azul mode '$MODE' on $RPC_URL (block tag: $BLOCK_TAG)"
 echo "Using state override at $PROBE_ADDRESS with runtime $CLZ_RUNTIME"
 echo
 
@@ -457,7 +457,7 @@ check_tx_gas_limit_cap
 check_eth_config
 
 if [ "$MODE" = "after" ]; then
-    echo "Base V1 is active on $RPC_URL"
+    echo "Azul is active on $RPC_URL"
 else
-    echo "Base V1 is not active on $RPC_URL"
+    echo "Azul is not active on $RPC_URL"
 fi

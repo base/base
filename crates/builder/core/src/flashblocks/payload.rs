@@ -1115,7 +1115,7 @@ where
     let _access_list = fal_builder.build(min_tx_index, max_tx_index);
 
     let metadata: FlashblocksMetadata =
-        if ctx.chain_spec.is_base_v1_active_at_timestamp(ctx.attributes().timestamp()) {
+        if ctx.chain_spec.is_base_azul_active_at_timestamp(ctx.attributes().timestamp()) {
             FlashblocksMetadata {
                 block_number: ctx.parent().number + 1,
                 access_list: None,
