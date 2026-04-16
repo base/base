@@ -11,7 +11,11 @@ use crate::{
     OpTransactionError,
 };
 
-/// Factory producing [`BaseEvm`]s.
+/// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
+///
+/// [`BasePrecompiles`] are eagerly flattened into a [`PrecompilesMap`] on construction
+/// so that precompile dispatch is a single hash-map lookup rather than a spec-aware
+/// branch on every call.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct BaseEvmFactory;
@@ -33,17 +37,15 @@ impl EvmFactory for BaseEvmFactory {
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
-        BaseEvm {
-            inner: Context::op()
-                .with_db(db)
-                .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
-                .build_op_with_inspector(NoOpInspector {})
-                .with_precompiles(PrecompilesMap::from_static(
-                    BasePrecompiles::new_with_spec(spec_id).precompiles(),
-                )),
-            inspect: false,
-        }
+        Context::op()
+            .with_db(db)
+            .with_block(input.block_env)
+            .with_cfg(input.cfg_env)
+            .build_op()
+            .with_inspector(NoOpInspector {})
+            .with_precompiles(PrecompilesMap::from_static(
+                BasePrecompiles::new_with_spec(spec_id).precompiles(),
+            ))
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -53,16 +55,13 @@ impl EvmFactory for BaseEvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
-        BaseEvm {
-            inner: Context::op()
-                .with_db(db)
-                .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
-                .build_op_with_inspector(inspector)
-                .with_precompiles(PrecompilesMap::from_static(
-                    BasePrecompiles::new_with_spec(spec_id).precompiles(),
-                )),
-            inspect: true,
-        }
+        Context::op()
+            .with_db(db)
+            .with_block(input.block_env)
+            .with_cfg(input.cfg_env)
+            .build_op_with_inspector(inspector)
+            .with_precompiles(PrecompilesMap::from_static(
+                BasePrecompiles::new_with_spec(spec_id).precompiles(),
+            ))
     }
 }

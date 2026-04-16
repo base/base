@@ -546,7 +546,7 @@ mod tests {
         handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
 
         // Check the account balance is updated.
-        let account = evm.ctx().journal_mut().load_account(caller).unwrap();
+        let account = evm.ctx_mut().journal_mut().load_account(caller).unwrap();
         assert_eq!(account.info.balance, U256::from(1010));
     }
 
@@ -587,7 +587,7 @@ mod tests {
         handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
 
         // Check the account balance is updated.
-        let account = evm.ctx().journal_mut().load_account(caller).unwrap();
+        let account = evm.ctx_mut().journal_mut().load_account(caller).unwrap();
         assert_eq!(account.info.balance, U256::from(10)); // 1058 - 1048 = 10
     }
 
