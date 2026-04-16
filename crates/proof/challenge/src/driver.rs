@@ -411,19 +411,9 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        // Fetch the onchain intermediate roots.
-        let intermediate_roots =
-            self.verifier_client.intermediate_output_roots(game_address).await?;
-
-        let idx = usize::try_from(challenged_index)
-            .map_err(|_| eyre::eyre!("challenged_index {challenged_index} overflows usize"))?;
-        let on_chain_root = intermediate_roots.get(idx).copied().ok_or_else(|| {
-            eyre::eyre!(
-                "challenged_index {challenged_index} out of bounds \
-                     (game has {} intermediate roots)",
-                intermediate_roots.len()
-            )
-        })?;
+        // Fetch only the challenged onchain intermediate root (not all roots).
+        let on_chain_root =
+            self.verifier_client.intermediate_output_root(game_address, challenged_index).await?;
 
         // Validate only the challenged root — not all intermediate roots.
         // The checkpoint block for index `i` is:
