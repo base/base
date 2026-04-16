@@ -221,6 +221,17 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(game_address, |s| s.intermediate_output_roots.clone())
     }
 
+    async fn intermediate_output_root(
+        &self,
+        game_address: Address,
+        index: u64,
+    ) -> Result<B256, ContractError> {
+        self.get(game_address, |s| {
+            let idx = index as usize;
+            s.intermediate_output_roots.get(idx).copied().unwrap_or(B256::ZERO)
+        })
+    }
+
     async fn countered_index(&self, game_address: Address) -> Result<u64, ContractError> {
         self.get(game_address, |s| s.countered_index)
     }

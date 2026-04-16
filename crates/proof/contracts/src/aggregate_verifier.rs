@@ -56,6 +56,9 @@ sol! {
         /// Returns the intermediate output roots submitted with this game.
         function intermediateOutputRoots() external view returns (bytes memory);
 
+        /// Returns the intermediate output root at the given index.
+        function intermediateOutputRoot(uint256 index) external view returns (bytes32);
+
         /// Returns the 1-based index of the challenged intermediate root.
         ///
         /// `0` means the game has not been challenged. When non-zero the
@@ -183,6 +186,13 @@ pub trait AggregateVerifierClient: Send + Sync {
         &self,
         game_address: Address,
     ) -> Result<Vec<B256>, ContractError>;
+
+    /// Returns a single intermediate output root at the given 0-based index.
+    async fn intermediate_output_root(
+        &self,
+        game_address: Address,
+        index: u64,
+    ) -> Result<B256, ContractError>;
 
     /// Returns the 1-based index of the challenged intermediate root.
     ///
@@ -393,6 +403,22 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let roots = raw.chunks_exact(32).map(|chunk| B256::from_slice(chunk)).collect();
 
         Ok(roots)
+    }
+
+    async fn intermediate_output_root(
+        &self,
+        game_address: Address,
+        index: u64,
+    ) -> Result<B256, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        let root =
+            contract.intermediateOutputRoot(U256::from(index)).call().await.map_err(|e| {
+                ContractError::Call { context: "intermediateOutputRoot failed".into(), source: e }
+            })?;
+
+        Ok(root)
     }
 
     async fn countered_index(&self, game_address: Address) -> Result<u64, ContractError> {
