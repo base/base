@@ -290,10 +290,6 @@ where
                     if chain_next {
                         self.try_submit(&mut state);
                     }
-                    // On failure / discard the proof stays in `proved`. Retry
-                    // can happen from the tick or prove_tasks arms, but those
-                    // fire at poll_interval (12s) or proof-completion cadence
-                    // (minutes), so the retry rate is naturally bounded.
                 }
 
                 Some(result) = state.prove_tasks.join_next() => {
@@ -352,12 +348,54 @@ where
         let mut start_block = recovered.l2_block_number;
         let mut start_output = recovered.output_root;
 
-        while cursor <= safe_head
-            && !state.inflight.contains(&cursor)
-            && !state.proved.contains_key(&cursor)
-            && state.submitting != Some(cursor)
-            && state.inflight.len() < self.config.max_parallel_proofs
-        {
+        while cursor <= safe_head && state.inflight.len() < self.config.max_parallel_proofs {
+            // Skip blocks already being handled (in-flight, proved, or
+            // submitting).  Track the last skipped block so we can fetch
+            // its output root once — only when we actually find a block
+            // to dispatch.
+            let mut last_skipped = None;
+            while cursor <= safe_head
+                && (state.inflight.contains(&cursor)
+                    || state.proved.contains_key(&cursor)
+                    || state.submitting == Some(cursor))
+            {
+                last_skipped = Some(cursor);
+                cursor = match cursor.checked_add(self.config.driver.block_interval) {
+                    Some(c) => c,
+                    // Overflow means there are no further blocks to dispatch.
+                    None => return Ok(()),
+                };
+            }
+
+            // Nothing left to dispatch after skipping.
+            if cursor > safe_head {
+                break;
+            }
+
+            // Still at max capacity after skipping.
+            if state.inflight.len() >= self.config.max_parallel_proofs {
+                break;
+            }
+
+            // Fetch the output root for the last skipped block so the
+            // proof request chains correctly.
+            if let Some(skipped) = last_skipped {
+                match self.rollup_client.output_at_block(skipped).await {
+                    Ok(output) => {
+                        start_block = skipped;
+                        start_output = output.output_root;
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            block = skipped,
+                            "Failed to fetch output root while skipping, stopping dispatch"
+                        );
+                        break;
+                    }
+                }
+            }
+
             match self.build_proof_request_for(start_block, start_output, cursor).await {
                 Ok(request) => {
                     let claimed_output = request.claimed_l2_output_root;
@@ -1823,6 +1861,149 @@ mod tests {
         // Both games verified, walk should reach game 1.
         assert_eq!(state.parent_address, proxy_addr(1));
         assert_eq!(state.l2_block_number, RECOVERY_BI * 2);
+    }
+
+    // ---- Dispatch: slot filling ----
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_skips_inflight_and_proved_blocks() {
+        // Scenario: 4 proof slots, blocks 512–2048 were dispatched on the
+        // first tick.  Proof for 512 completed (now in `proved`), proofs
+        // for 1024/1536/2048 are still in-flight.  The next tick calls
+        // dispatch_proofs which must skip past all four handled blocks and
+        // dispatch block 2560 to refill the freed slot.
+        let cancel = CancellationToken::new();
+        let safe_head = TEST_BLOCK_INTERVAL * 6;
+
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
+            delay: Duration::from_secs(3600),
+            block_interval: TEST_BLOCK_INTERVAL,
+        });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(safe_head, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let anchor_registry =
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
+        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 4,
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    block_interval: TEST_BLOCK_INTERVAL,
+                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                    ..Default::default()
+                },
+            },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            factory,
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel,
+        );
+
+        let recovered = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::ZERO,
+            l2_block_number: TEST_ANCHOR_BLOCK,
+        };
+
+        let mut state = PipelineState::new();
+        state.proved.insert(TEST_BLOCK_INTERVAL, {
+            let p = test_proposal(TEST_BLOCK_INTERVAL);
+            ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] }
+        });
+        state.inflight.insert(TEST_BLOCK_INTERVAL * 2);
+        state.inflight.insert(TEST_BLOCK_INTERVAL * 3);
+        state.inflight.insert(TEST_BLOCK_INTERVAL * 4);
+
+        pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
+
+        assert!(
+            state.inflight.contains(&(TEST_BLOCK_INTERVAL * 5)),
+            "block {} should have been dispatched to fill the freed slot",
+            TEST_BLOCK_INTERVAL * 5
+        );
+        assert_eq!(state.inflight.len(), 4, "should be back to max_parallel_proofs");
+        assert!(
+            state.proved.contains_key(&TEST_BLOCK_INTERVAL),
+            "proved entries must not be removed by dispatch"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_skips_submitting_block() {
+        let cancel = CancellationToken::new();
+        let safe_head = TEST_BLOCK_INTERVAL * 4;
+
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
+            delay: Duration::from_secs(3600),
+            block_interval: TEST_BLOCK_INTERVAL,
+        });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(safe_head, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let anchor_registry =
+            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
+        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 4,
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    block_interval: TEST_BLOCK_INTERVAL,
+                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                    ..Default::default()
+                },
+            },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            factory,
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel,
+        );
+
+        let recovered = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::ZERO,
+            l2_block_number: TEST_ANCHOR_BLOCK,
+        };
+
+        let mut state = PipelineState::new();
+        state.submitting = Some(TEST_BLOCK_INTERVAL);
+
+        pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
+
+        assert!(
+            !state.inflight.contains(&TEST_BLOCK_INTERVAL),
+            "submitting block must not be re-dispatched"
+        );
+        assert!(
+            state.inflight.contains(&(TEST_BLOCK_INTERVAL * 2)),
+            "block after submitting should be dispatched"
+        );
     }
 
     // ---- State management tests ----
