@@ -786,7 +786,7 @@ mod tests {
     fn sample_eip8130_tx(from: Address, payer: Address, phases: usize) -> OpTransactionSigned {
         let tx = TxEip8130 {
             chain_id: 8453,
-            from,
+            from: (from != Address::ZERO).then_some(from),
             nonce_key: U256::from(7_u64),
             nonce_sequence: 2,
             expiry: 1234,
@@ -794,7 +794,7 @@ mod tests {
             max_priority_fee_per_gas: 3,
             gas_limit: 55_000,
             calls: vec![vec![]; phases],
-            payer,
+            payer: (payer != Address::ZERO).then_some(payer),
             sender_auth: Bytes::from(vec![0xAA; 32]),
             payer_auth: (payer != Address::ZERO)
                 .then(|| Bytes::from(vec![0xBB; 16]))

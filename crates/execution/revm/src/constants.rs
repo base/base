@@ -93,6 +93,11 @@ pub const MAX_CALLS_PER_TX: usize = 100;
 /// Mirrors `base_alloy_consensus::MAX_ACCOUNT_CHANGES_PER_TX`.
 pub const MAX_ACCOUNT_CHANGES_PER_TX: usize = 10;
 
+/// Maximum number of owner-change operations across all config changes.
+///
+/// Mirrors `base_alloy_consensus::MAX_CONFIG_OPS_PER_TX`.
+pub const MAX_CONFIG_OPS_PER_TX: usize = 5;
+
 /// Delegate verifier contract address (1-hop delegation).
 ///
 /// Mirrors `base_alloy_consensus::DELEGATE_VERIFIER_ADDRESS`.

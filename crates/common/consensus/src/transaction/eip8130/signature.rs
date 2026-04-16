@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn parse_eoa_auth() {
         let tx = TxEip8130 {
-            from: Address::ZERO,
+            from: None,
             sender_auth: Bytes::from([0xABu8; 65].as_slice()),
             ..Default::default()
         };
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn parse_eoa_wrong_length() {
         let tx = TxEip8130 {
-            from: Address::ZERO,
+            from: None,
             sender_auth: Bytes::from_static(&[0x01; 64]),
             ..Default::default()
         };
@@ -125,7 +125,7 @@ mod tests {
         auth.extend_from_slice(K1_VERIFIER_ADDRESS.as_slice());
         auth.extend_from_slice(&[0xAB; 65]);
         let tx = TxEip8130 {
-            from: Address::repeat_byte(0x01),
+            from: Some(Address::repeat_byte(0x01)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -146,7 +146,7 @@ mod tests {
         auth.extend_from_slice(custom_verifier.as_slice());
         auth.extend_from_slice(&[0xDD; 32]);
         let tx = TxEip8130 {
-            from: Address::repeat_byte(0x01),
+            from: Some(Address::repeat_byte(0x01)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -164,7 +164,7 @@ mod tests {
     fn sender_payer_hashes_are_deterministic() {
         let tx = TxEip8130 {
             chain_id: 1,
-            from: Address::repeat_byte(0x01),
+            from: Some(Address::repeat_byte(0x01)),
             nonce_key: alloy_primitives::U256::ZERO,
             nonce_sequence: 1,
             ..Default::default()

@@ -312,10 +312,7 @@ mod tests {
     #[test]
     fn test_parse_txpool_custom_verifier_policy_default() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(
-            args.txpool_custom_verifier_policy,
-            TxpoolCustomVerifierPolicy::AllowlistOrPure
-        );
+        assert_eq!(args.txpool_custom_verifier_policy, TxpoolCustomVerifierPolicy::AllowlistOrPure);
     }
 
     #[test]

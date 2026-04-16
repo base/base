@@ -45,20 +45,19 @@ pub use transaction::{
     OWNER_CONFIG_BASE_SLOT, OpDepositInfo, OpEip8130Transaction, OpPooledTransaction,
     OpTransaction, OpTransactionInfo, OpTxEnvelope, OpTxType, OpTypedTransaction, Owner,
     OwnerChange, OwnerScope, OwnerTuple, P256_RAW_VERIFIER_ADDRESS, P256_WEBAUTHN_VERIFIER_ADDRESS,
-    ParsedSenderAuth, REVOKED_VERIFIER, SEQUENCE_BASE_SLOT, SLOAD_GAS, TX_CONTEXT_ADDRESS,
-    TxDeposit, TxEip8130, VerifierGasCosts, VerifierKind, account_change_units,
+    ParsedDelegateAuth, ParsedSenderAuth, REVOKED_VERIFIER, SEQUENCE_BASE_SLOT, SLOAD_GAS,
+    TX_CONTEXT_ADDRESS, TxDeposit, TxEip8130, VerifierGasCosts, VerifierKind, account_change_units,
     account_changes_cost, account_state_slot, auth_verifier_kind, authorizer_verification_gas,
     bytecode_cost, config_change_digest, create2_address, delegate_inner_verifier, deployment_code,
     deployment_header, derive_account_address, effective_salt, encode_account_state,
     encode_owner_config, expiring_ring_slot, expiring_seen_slot, intrinsic_gas,
     intrinsic_gas_with_costs, is_account_config_known_deployed, is_native_verifier, lock_slot,
     mark_account_config_deployed, nonce_key_cost, nonce_slot, owner_config_slot,
-    parse_account_state, parse_owner_config, parse_sender_auth, payer_auth_cost,
-    payer_signature_hash, payer_verification_gas, read_sequence, sender_auth_cost,
-    sender_signature_hash, sender_verification_gas, sequence_base_slot, total_verification_gas,
-    tx_payload_cost, verifier_kind, write_sequence,
+    parse_account_state, parse_delegate_auth, parse_delegate_data, parse_owner_config,
+    parse_sender_auth, payer_auth_cost, payer_signature_hash, payer_verification_gas,
+    read_sequence, sender_auth_cost, sender_signature_hash, sender_verification_gas,
+    sequence_base_slot, total_verification_gas, tx_payload_cost, verifier_kind, write_sequence,
 };
-pub use transaction::{PurityScanner, PurityVerdict, PurityViolation, ViolationCategory};
 #[cfg(feature = "evm")]
 pub use transaction::{
     CodePlacement, ExecutionCall, LockState, NONCE_MANAGER_GAS, PhaseResult, PrecompileError,
@@ -73,6 +72,7 @@ pub use transaction::{
 };
 #[cfg(feature = "native-verifier")]
 pub use transaction::{NativeVerifyError, NativeVerifyResult, try_native_verify};
+pub use transaction::{PurityScanner, PurityVerdict, PurityViolation, ViolationCategory};
 
 mod extra;
 pub use extra::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};

@@ -760,6 +760,7 @@ mod tests {
                 contract_address: None,
             },
             l1_block_info: L1BlockInfo::default(),
+            eip8130_fields: None,
         }
     }
 
@@ -802,6 +803,7 @@ mod tests {
                 contract_address: None,
             },
             l1_block_info: Default::default(),
+            eip8130_fields: None,
         }
     }
 
@@ -942,6 +944,7 @@ mod tests {
                 contract_address: None,
             },
             l1_block_info: Default::default(),
+            eip8130_fields: None,
         }
     }
 
@@ -1080,6 +1083,7 @@ mod tests {
                 contract_address: None,
             },
             l1_block_info: Default::default(),
+            eip8130_fields: None,
         };
 
         let header = Sealed::new_unchecked(Header::default(), B256::ZERO);

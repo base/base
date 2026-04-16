@@ -743,16 +743,108 @@ pub(crate) mod serde_bincode_compat {
 
     #[cfg(test)]
     mod tests {
-        use arbitrary::Arbitrary;
-        use rand::Rng;
+        use alloy_consensus::{
+            Sealable, SignableTransaction, TxEip1559 as AlloyTxEip1559,
+            TxEip2930 as AlloyTxEip2930, TxEip7702 as AlloyTxEip7702, TxLegacy as AlloyTxLegacy,
+        };
+        use alloy_primitives::{Address, Bytes, TxKind, U256};
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 
+        use crate::{TxDeposit, TxEip8130};
+
         use super::*;
 
-        /// Tests a bincode round-trip for [`OpTxEnvelope`] using an arbitrary instance.
+        fn sample_envelopes() -> Vec<super::super::OpTxEnvelope> {
+            let signature = Signature::test_signature();
+
+            vec![
+                super::super::OpTxEnvelope::Legacy(
+                    AlloyTxLegacy {
+                        chain_id: Some(1),
+                        nonce: 1,
+                        gas_price: 2,
+                        gas_limit: 21_000,
+                        to: TxKind::Call(Address::repeat_byte(0x11)),
+                        value: U256::from(3_u64),
+                        input: Bytes::from(vec![0x01]),
+                    }
+                    .into_signed(signature),
+                ),
+                super::super::OpTxEnvelope::Eip2930(
+                    AlloyTxEip2930 {
+                        chain_id: 1,
+                        nonce: 2,
+                        gas_price: 3,
+                        gas_limit: 22_000,
+                        to: TxKind::Call(Address::repeat_byte(0x22)),
+                        value: U256::from(4_u64),
+                        input: Bytes::from(vec![0x02]),
+                        access_list: Default::default(),
+                    }
+                    .into_signed(signature),
+                ),
+                super::super::OpTxEnvelope::Eip1559(
+                    AlloyTxEip1559 {
+                        chain_id: 1,
+                        nonce: 3,
+                        max_fee_per_gas: 5,
+                        max_priority_fee_per_gas: 1,
+                        gas_limit: 23_000,
+                        to: TxKind::Call(Address::repeat_byte(0x33)),
+                        value: U256::from(5_u64),
+                        input: Bytes::from(vec![0x03]),
+                        access_list: Default::default(),
+                    }
+                    .into_signed(signature),
+                ),
+                super::super::OpTxEnvelope::Eip7702(
+                    AlloyTxEip7702 {
+                        chain_id: 1,
+                        nonce: 4,
+                        max_fee_per_gas: 6,
+                        max_priority_fee_per_gas: 2,
+                        gas_limit: 24_000,
+                        to: Address::repeat_byte(0x44),
+                        value: U256::from(6_u64),
+                        input: Bytes::from(vec![0x04]),
+                        access_list: Default::default(),
+                        authorization_list: Default::default(),
+                    }
+                    .into_signed(signature),
+                ),
+                super::super::OpTxEnvelope::Eip8130(
+                    TxEip8130 {
+                        chain_id: 8453,
+                        from: Some(Address::repeat_byte(0x55)),
+                        nonce_sequence: 5,
+                        gas_limit: 100_000,
+                        max_fee_per_gas: 7,
+                        max_priority_fee_per_gas: 3,
+                        sender_auth: Bytes::from(vec![0xAB; 85]),
+                        ..Default::default()
+                    }
+                    .seal_slow(),
+                ),
+                super::super::OpTxEnvelope::Deposit(
+                    TxDeposit {
+                        source_hash: B256::left_padding_from(&[0x66]),
+                        from: Address::repeat_byte(0x66),
+                        to: TxKind::Call(Address::repeat_byte(0x77)),
+                        mint: 1,
+                        value: U256::from(7_u64),
+                        gas_limit: 25_000,
+                        input: Bytes::from(vec![0x05]),
+                        is_system_transaction: false,
+                    }
+                    .seal_slow(),
+                ),
+            ]
+        }
+
+        /// Tests bincode round-trips for representative supported [`OpTxEnvelope`] variants.
         #[test]
-        fn test_op_tx_envelope_bincode_roundtrip_arbitrary() {
+        fn test_op_tx_envelope_bincode_roundtrip_supported_variants() {
             #[serde_as]
             #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
             struct Data {
@@ -761,20 +853,17 @@ pub(crate) mod serde_bincode_compat {
                 envelope: super::super::OpTxEnvelope,
             }
 
-            let mut bytes = [0u8; 1024];
-            rand::rng().fill(bytes.as_mut_slice());
-            let data = Data {
-                envelope: super::super::OpTxEnvelope::arbitrary(&mut arbitrary::Unstructured::new(
-                    &bytes,
-                ))
-                .unwrap(),
-            };
-
-            let encoded = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap();
-            let (decoded, _) =
-                bincode::serde::decode_from_slice::<Data, _>(&encoded, bincode::config::legacy())
-                    .unwrap();
-            assert_eq!(decoded, data);
+            for envelope in sample_envelopes() {
+                let data = Data { envelope };
+                let encoded =
+                    bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap();
+                let (decoded, _) = bincode::serde::decode_from_slice::<Data, _>(
+                    &encoded,
+                    bincode::config::legacy(),
+                )
+                .unwrap();
+                assert_eq!(decoded, data);
+            }
         }
     }
 }
@@ -907,7 +996,7 @@ mod tests {
 
         let mut tx = TxEip8130 {
             chain_id: 84532,
-            from: Address::ZERO,
+            from: None,
             nonce_sequence: 0,
             gas_limit: 100_000,
             max_fee_per_gas: 1_000_000_000,
@@ -939,7 +1028,7 @@ mod tests {
         let explicit_sender = Address::repeat_byte(0x42);
         let tx = TxEip8130 {
             chain_id: 84532,
-            from: explicit_sender,
+            from: Some(explicit_sender),
             sender_auth: Bytes::from(vec![0xAB; 85]),
             ..Default::default()
         };

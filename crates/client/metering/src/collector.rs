@@ -375,6 +375,7 @@ mod tests {
                     contract_address: None,
                 },
                 l1_block_info: L1BlockInfo::default(),
+                eip8130_fields: None,
             };
 
             let flashblock = Flashblock {

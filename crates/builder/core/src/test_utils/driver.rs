@@ -1,4 +1,8 @@
 use core::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
@@ -24,6 +28,7 @@ use crate::BuilderConfig;
 pub struct ChainDriver<RpcProtocol: Protocol = Ipc> {
     engine_api: EngineApi<RpcProtocol>,
     provider: RootProvider<Base>,
+    nonce_tracker: Arc<Mutex<HashMap<alloy_primitives::Address, u64>>>,
     signer: Option<PrivateKeySigner>,
     gas_limit: Option<u64>,
     builder_config: BuilderConfig,
@@ -40,6 +45,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         Ok(ChainDriver::<Ipc> {
             engine_api: instance.engine_api(),
             provider: instance.provider().await?,
+            nonce_tracker: Arc::new(Mutex::new(HashMap::new())),
             signer: Default::default(),
             gas_limit: None,
             builder_config: instance.builder_config().clone(),
@@ -52,6 +58,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         Self {
             engine_api,
             provider,
+            nonce_tracker: Arc::new(Mutex::new(HashMap::new())),
             signer: Default::default(),
             gas_limit: None,
             builder_config: BuilderConfig::default(),
@@ -304,7 +311,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
     /// Returns a transaction builder that can be used to create and send transactions.
     pub fn create_transaction(&self) -> TransactionBuilder {
-        TransactionBuilder::new(self.provider.clone())
+        TransactionBuilder::new(self.provider.clone(), Arc::clone(&self.nonce_tracker))
     }
 
     /// Returns a reference to the underlying alloy provider that is used to

@@ -1,12 +1,13 @@
 #![allow(missing_docs)]
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::TxHash;
+use alloy_provider::Provider;
 use base_builder_core::test_utils::{
-    ChainDriver, ChainDriverExt, ExternalTransactionPool, ONE_ETH, PrivateKeySigner, Protocol,
-    TransactionBuilderExt, setup_test_instance,
+    ChainDriver, ChainDriverExt, ExternalTransactionPool, LocalInstance, ONE_ETH, PrivateKeySigner,
+    Protocol, TransactionBuilderExt, setup_test_instance,
 };
 use base_txpool::{BasePooledTransaction, unix_time_millis};
 
@@ -57,6 +58,36 @@ async fn insert_bundle_transaction_with_nonce<P: Protocol>(
     Ok(tx_hash)
 }
 
+async fn wait_for_pool_visibility(
+    rbuilder: &LocalInstance,
+    tx_hashes: &[TxHash],
+) -> eyre::Result<()> {
+    let wait_result = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if tx_hashes.iter().all(|hash| rbuilder.pool().exists(*hash)) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await;
+
+    if wait_result.is_err() {
+        let statuses = tx_hashes
+            .iter()
+            .map(|hash| {
+                let status = rbuilder.pool().tx_status(*hash);
+                let history = rbuilder.pool().history(*hash);
+                format!("hash={hash:?} status={status:?} history={history:?}")
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(eyre::eyre!("timed out waiting for bundle txs to enter the pool: {statuses}"));
+    }
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn bundle_tx_targeting_current_block_is_included() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
@@ -68,6 +99,7 @@ async fn bundle_tx_targeting_current_block_is_included() -> eyre::Result<()> {
 
     let tx_hash =
         insert_bundle_transaction(&pool, &driver, &signer, Some(target_block), None, None).await?;
+    wait_for_pool_visibility(&rbuilder, &[tx_hash]).await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -88,6 +120,7 @@ async fn bundle_tx_targeting_different_block_is_excluded() -> eyre::Result<()> {
 
     let tx_hash =
         insert_bundle_transaction(&pool, &driver, &signer, Some(target_block), None, None).await?;
+    wait_for_pool_visibility(&rbuilder, &[tx_hash]).await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -106,6 +139,7 @@ async fn expired_bundle_tx_is_excluded() -> eyre::Result<()> {
 
     let tx_hash =
         insert_bundle_transaction(&pool, &driver, &signer, None, None, Some(max_timestamp)).await?;
+    wait_for_pool_visibility(&rbuilder, &[tx_hash]).await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -124,6 +158,7 @@ async fn future_bundle_tx_is_deferred_but_not_invalidated() -> eyre::Result<()> 
 
     let tx_hash =
         insert_bundle_transaction(&pool, &driver, &signer, None, Some(min_timestamp), None).await?;
+    wait_for_pool_visibility(&rbuilder, &[tx_hash]).await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -157,12 +192,13 @@ async fn two_valid_bundles_from_same_sender_are_both_included() -> eyre::Result<
     let latest = driver.latest().await?;
     let target_block = latest.header.number + 1;
     let pool = rbuilder.pool_handle();
+    let base_nonce = driver.provider().get_transaction_count(signer.address()).pending().await?;
 
     let tx_hash_0 = insert_bundle_transaction_with_nonce(
         &pool,
         &driver,
         &signer,
-        Some(0),
+        Some(base_nonce),
         Some(target_block),
         None,
         None,
@@ -173,12 +209,13 @@ async fn two_valid_bundles_from_same_sender_are_both_included() -> eyre::Result<
         &pool,
         &driver,
         &signer,
-        Some(1),
+        Some(base_nonce + 1),
         Some(target_block),
         None,
         None,
     )
     .await?;
+    wait_for_pool_visibility(&rbuilder, &[tx_hash_0, tx_hash_1]).await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -197,6 +234,7 @@ async fn expired_bundle_excluded_while_valid_bundle_included_for_same_sender() -
     let latest = driver.latest().await?;
     let target_block = latest.header.number + 1;
     let pool = rbuilder.pool_handle();
+    let base_nonce = driver.provider().get_transaction_count(signer.address()).pending().await?;
 
     let expired_timestamp = 1u64;
 
@@ -204,7 +242,7 @@ async fn expired_bundle_excluded_while_valid_bundle_included_for_same_sender() -
         &pool,
         &driver,
         &signer,
-        Some(0),
+        Some(base_nonce),
         Some(target_block),
         None,
         None,
@@ -215,12 +253,15 @@ async fn expired_bundle_excluded_while_valid_bundle_included_for_same_sender() -
         &pool,
         &driver,
         &signer,
-        Some(1),
+        Some(base_nonce + 1),
         Some(target_block),
         None,
         Some(expired_timestamp),
     )
     .await?;
+    // Only the valid tx is required to remain in the pool. The expired one can
+    // be evicted before block build due to bundle timestamp constraints.
+    wait_for_pool_visibility(&rbuilder, &[valid_tx_hash]).await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 

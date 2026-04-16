@@ -22,7 +22,7 @@ use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256, U256};
 use base_alloy_consensus::{
     ACCOUNT_CONFIG_ADDRESS, AccountChangeEntry, NONCE_MANAGER_ADDRESS, TxEip8130, nonce_slot,
-    owner_config_slot,
+    owner_config_slot, parse_delegate_auth,
 };
 use futures::StreamExt;
 use parking_lot::RwLock;
@@ -159,9 +159,6 @@ impl Eip8130InvalidationIndex {
 /// from validation to track the exact owner config slots. Falls back to a
 /// hash-based proxy when `None`.
 ///
-/// `authorizer_owner_ids` provides the resolved owner_id for each config
-/// change entry's authorizer (in order). If the authorizer's owner config
-/// changes, the tx is invalidated.
 pub fn compute_invalidation_keys(
     tx: &TxEip8130,
     resolved_sender: Address,
@@ -201,6 +198,18 @@ pub fn compute_invalidation_keys(
         }
     }
 
+    // Delegate-native auth also depends on the delegate account's nested owner
+    // table. Any config change on that account bumps the packed sequence slot.
+    for auth in [&tx.sender_auth, &tx.payer_auth] {
+        if let Some(delegate_account) = delegate_account_from_auth(auth) {
+            let delegate_seq_slot = base_alloy_consensus::sequence_base_slot(delegate_account);
+            keys.insert(InvalidationKey {
+                address: ACCOUNT_CONFIG_ADDRESS,
+                slot: delegate_seq_slot,
+            });
+        }
+    }
+
     // 4. Account changes — each create entry depends on the target address having
     //    no code, and each config change depends on the sender's lock state and
     //    change sequence.
@@ -236,6 +245,21 @@ pub fn compute_invalidation_keys(
         }
     }
 
+    // Config-change authorizers can also use delegate auth. Track the delegate
+    // account sequence slot so authorizer revocations invalidate pending txs.
+    for change in &tx.account_changes {
+        let AccountChangeEntry::ConfigChange(cc) = change else {
+            continue;
+        };
+        if let Some(delegate_account) = delegate_account_from_auth(&cc.authorizer_auth) {
+            let delegate_seq_slot = base_alloy_consensus::sequence_base_slot(delegate_account);
+            keys.insert(InvalidationKey {
+                address: ACCOUNT_CONFIG_ADDRESS,
+                slot: delegate_seq_slot,
+            });
+        }
+    }
+
     keys
 }
 
@@ -255,6 +279,10 @@ pub fn process_fal(fal: &[(Address, B256)], index: &Eip8130InvalidationIndex) ->
 
 /// How often (in blocks) the stale-entry pruning pass runs.
 const PRUNE_INTERVAL_BLOCKS: u64 = 16;
+
+fn delegate_account_from_auth(auth: &[u8]) -> Option<Address> {
+    parse_delegate_auth(auth).map(|parsed| parsed.delegate_account)
+}
 
 /// Maintenance loop that evicts EIP-8130 transactions from the pool when the
 /// storage slots they depend on change.
@@ -428,7 +456,8 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
     use base_alloy_consensus::{
         ACCOUNT_CONFIG_ADDRESS, AccountChangeEntry, ConfigChangeEntry, CreateEntry,
-        NONCE_MANAGER_ADDRESS, OP_AUTHORIZE_OWNER, OwnerChange, TxEip8130, nonce_slot,
+        DELEGATE_VERIFIER_ADDRESS, NONCE_MANAGER_ADDRESS, OP_AUTHORIZE_OWNER, OwnerChange,
+        TxEip8130, nonce_slot,
     };
 
     use super::*;
@@ -503,6 +532,67 @@ mod tests {
         assert!(
             keys.contains(&InvalidationKey { address: ACCOUNT_CONFIG_ADDRESS, slot: lock_key })
         );
+    }
+
+    #[test]
+    fn compute_keys_include_delegate_sequence_slot_for_sender_auth() {
+        let from = Address::repeat_byte(0x42);
+        let delegate_account = Address::repeat_byte(0x99);
+        let nested_verifier = Address::repeat_byte(0x11);
+        let mut sender_auth = DELEGATE_VERIFIER_ADDRESS.as_slice().to_vec();
+        sender_auth.extend_from_slice(delegate_account.as_slice());
+        sender_auth.extend_from_slice(nested_verifier.as_slice());
+        sender_auth.extend_from_slice(&[0xAA; 32]);
+
+        let tx = TxEip8130 {
+            chain_id: 1,
+            from: Some(from),
+            sender_auth: Bytes::from(sender_auth),
+            ..Default::default()
+        };
+
+        let keys = compute_invalidation_keys(&tx, from, None, None);
+        let delegate_seq_slot = base_alloy_consensus::sequence_base_slot(delegate_account);
+        assert!(keys.contains(&InvalidationKey {
+            address: ACCOUNT_CONFIG_ADDRESS,
+            slot: delegate_seq_slot
+        }));
+    }
+
+    #[test]
+    fn compute_keys_include_delegate_sequence_slot_for_authorizer_auth() {
+        let from = Address::repeat_byte(0x42);
+        let delegate_account = Address::repeat_byte(0x55);
+        let nested_verifier = Address::repeat_byte(0x77);
+        let mut authorizer_auth = DELEGATE_VERIFIER_ADDRESS.as_slice().to_vec();
+        authorizer_auth.extend_from_slice(delegate_account.as_slice());
+        authorizer_auth.extend_from_slice(nested_verifier.as_slice());
+        authorizer_auth.extend_from_slice(&[0xBB; 32]);
+
+        let tx = TxEip8130 {
+            chain_id: 1,
+            from: Some(from),
+            sender_auth: Bytes::from(vec![0u8; 65]),
+            account_changes: vec![AccountChangeEntry::ConfigChange(ConfigChangeEntry {
+                chain_id: 1,
+                sequence: 0,
+                owner_changes: vec![OwnerChange {
+                    change_type: OP_AUTHORIZE_OWNER,
+                    verifier: Address::repeat_byte(0x01),
+                    owner_id: B256::repeat_byte(0x02),
+                    scope: 0,
+                }],
+                authorizer_auth: Bytes::from(authorizer_auth),
+            })],
+            ..Default::default()
+        };
+
+        let keys = compute_invalidation_keys(&tx, from, None, None);
+        let delegate_seq_slot = base_alloy_consensus::sequence_base_slot(delegate_account);
+        assert!(keys.contains(&InvalidationKey {
+            address: ACCOUNT_CONFIG_ADDRESS,
+            slot: delegate_seq_slot
+        }));
     }
 
     #[test]

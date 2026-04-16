@@ -272,9 +272,10 @@ where
     fn best_transactions(
         &self,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
+        let base_fee = self.protocol_pool.block_info().pending_basefee;
         let standard = self.protocol_pool.best_transactions();
-        let eip8130 = self.eip8130_pool.best_transactions();
-        Box::new(MergedBestTransactions::new(standard, eip8130))
+        let eip8130 = self.eip8130_pool.best_transactions_with_base_fee(base_fee);
+        Box::new(MergedBestTransactions::with_base_fee(standard, eip8130, base_fee))
     }
 
     fn best_transactions_with_attributes(
@@ -282,8 +283,8 @@ where
         attr: BestTransactionsAttributes,
     ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
         let standard = self.protocol_pool.best_transactions_with_attributes(attr);
-        let eip8130 = self.eip8130_pool.best_transactions();
-        Box::new(MergedBestTransactions::new(standard, eip8130))
+        let eip8130 = self.eip8130_pool.best_transactions_with_base_fee(attr.basefee);
+        Box::new(MergedBestTransactions::with_base_fee(standard, eip8130, attr.basefee))
     }
 
     fn pending_transactions(&self) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {

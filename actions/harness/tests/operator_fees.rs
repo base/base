@@ -360,18 +360,10 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let mut isthmus_block_hash = Default::default();
-    let mut block4_hash = Default::default();
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
-    for i in 1..=4u64 {
+    for _ in 1..=4u64 {
         // All blocks carry user transactions — Isthmus allows user txs at transition.
         let block = builder.build_next_block_with_single_transaction();
-        if i == 3 {
-            isthmus_block_hash = block.header.hash_slow();
-        }
-        if i == 4 {
-            block4_hash = block.header.hash_slow();
-        }
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
     }
@@ -380,16 +372,6 @@ async fn isthmus_derivation_crosses_operator_fee_boundary() {
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    // The Isthmus activation block (block 3) has upgrade deposit transactions
-    // injected by the derivation pipeline that the sequencer did not execute.
-    // These contract deployments change the EVM state root, so we clear the
-    // sequencer's registered state root for blocks 3 and 4 to skip state-root
-    // validation for those blocks. Block 4's root also differs because it is
-    // derived starting from the pipeline's block 3 state (which includes the
-    // Isthmus upgrade contracts), while the sequencer computed it from its own
-    // block 3 state (without those contracts).
-    node.register_block_hash(3, isthmus_block_hash);
-    node.register_block_hash(4, block4_hash);
     node.initialize().await;
 
     for i in 1..=4u64 {

@@ -8,8 +8,7 @@ use alloy_primitives::{Address, B256, Bytes, ChainId, TxKind, U256, keccak256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header, length_of_length};
 
 use super::{
-    AccountChangeEntry, Call, DELEGATE_VERIFIER_ADDRESS, auth_verifier_kind,
-    constants::AA_TX_TYPE_ID,
+    AccountChangeEntry, Call, auth_verifier_kind, constants::AA_TX_TYPE_ID, parse_delegate_auth,
 };
 
 /// An EIP-8130 account-abstracted transaction.
@@ -65,20 +64,17 @@ pub struct TxEip8130 {
 
 impl TxEip8130 {
     fn auth_uses_delegate_staticcall(auth: &[u8]) -> bool {
-        if auth.len() < 60 {
+        let Some(parsed) = parse_delegate_auth(auth) else {
             return false;
-        }
-        if auth_verifier_kind(auth).is_none_or(|kind| kind.address() != DELEGATE_VERIFIER_ADDRESS) {
-            return false;
-        }
-        let nested_verifier = Address::from_slice(&auth[40..60]);
+        };
+        let nested_verifier = parsed.nested_verifier;
         if nested_verifier == Address::ZERO {
             return false;
         }
         // Delegate envelope:
         // DELEGATE(20) || delegate_account(20) || nested_auth(verifier(20) || ...)
         // Only nested custom verifiers require STATICCALL.
-        auth_verifier_kind(&auth[40..]).is_some_and(|kind| kind.is_custom())
+        auth_verifier_kind(parsed.nested_auth).is_some_and(|kind| kind.is_custom())
     }
 
     /// Returns `true` if this is an EOA-mode transaction (sender derived via ecrecover).

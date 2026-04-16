@@ -46,11 +46,11 @@ pub use spec::*;
 mod transaction;
 pub use transaction::{
     DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, Eip8130AuthorizerValidation, Eip8130Call,
-    Eip8130CodePlacement, Eip8130ConfigLog, Eip8130ConfigOp, Eip8130Parts, Eip8130PhaseResult,
-    Eip8130SequenceUpdate, Eip8130StorageWrite, Eip8130VerifyCall, OpBuildError, OpTransaction,
-    OpTransactionBuilder, OpTransactionError, OpTxTr, config_log_to_system_log,
-    decode_phase_statuses, encode_phase_statuses, extract_phase_statuses_from_logs,
-    phase_statuses_log_topic, phase_statuses_system_log,
+    Eip8130CodePlacement, Eip8130ConfigLog, Eip8130ConfigOp, Eip8130DelegateNativeValidation,
+    Eip8130Parts, Eip8130PhaseResult, Eip8130SequenceUpdate, Eip8130StorageWrite,
+    Eip8130VerifyCall, OpBuildError, OpTransaction, OpTransactionBuilder, OpTransactionError,
+    OpTxTr, config_log_to_system_log, decode_phase_statuses, encode_phase_statuses,
+    extract_phase_statuses_from_logs, phase_statuses_log_topic, phase_statuses_system_log,
 };
 
 mod compat;

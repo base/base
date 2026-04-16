@@ -118,6 +118,8 @@ pub struct Eip8130Parts {
     /// - each create entry initial owner counts as 1,
     /// - each config operation counts as 1.
     pub account_change_units: usize,
+    /// Total owner-change operations across all config-change entries.
+    pub total_config_ops: usize,
     /// Gas charged for sender + payer native signature verification.
     pub verification_gas: u64,
     /// Full AA intrinsic gas cost (protocol-computed, non-refundable).
@@ -166,6 +168,10 @@ pub struct Eip8130Parts {
     pub sender_verify_call: Option<Eip8130VerifyCall>,
     /// Pre-encoded STATICCALL for custom payer verifier. Same semantics.
     pub payer_verify_call: Option<Eip8130VerifyCall>,
+    /// Inclusion-time nested-owner revalidation for native delegate sender auth.
+    pub sender_delegate_native_validation: Option<Eip8130DelegateNativeValidation>,
+    /// Inclusion-time nested-owner revalidation for native delegate payer auth.
+    pub payer_delegate_native_validation: Option<Eip8130DelegateNativeValidation>,
     /// Per-config-change authorizer validation data. One entry per
     /// `ConfigChangeEntry` in `account_changes`. The handler validates
     /// these before applying `pre_writes`.
@@ -230,6 +236,23 @@ pub struct Eip8130VerifyCall {
     pub account: Address,
     /// Required scope bit for the owner (`OwnerScope::SENDER` or `PAYER`).
     pub required_scope: u8,
+}
+
+/// Inclusion-time revalidation input for native delegate auth.
+///
+/// Native delegate auth verifies two owner-config states:
+/// - outer binding on the source account (handled by `owner_id` + `sender_verifier` /
+///   `payer_verifier`)
+/// - nested owner on the delegate account (captured here)
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Eip8130DelegateNativeValidation {
+    /// Delegate account whose nested owner config must remain valid.
+    pub account: Address,
+    /// Expected nested verifier (K1/P256/WebAuthn).
+    pub verifier: Address,
+    /// Nested owner identifier resolved from native signature verification.
+    pub owner_id: B256,
 }
 
 /// Encodes phase results into the output bytes of an AA transaction.

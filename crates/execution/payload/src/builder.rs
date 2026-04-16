@@ -496,9 +496,12 @@ impl<T: reth_transaction_pool::EthPoolTransaction + Clone> OpPayloadTransactions
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
+        let base_fee = attr.basefee;
         let standard = pool.best_transactions_with_attributes(attr);
-        let eip8130 = self.eip8130_pool.best_transactions();
-        BestPayloadTransactions::new(Box::new(MergedBestTransactions::new(standard, eip8130)))
+        let eip8130 = self.eip8130_pool.best_transactions_with_base_fee(base_fee);
+        BestPayloadTransactions::new(Box::new(MergedBestTransactions::with_base_fee(
+            standard, eip8130, base_fee,
+        )))
     }
 }
 

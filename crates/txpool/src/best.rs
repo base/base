@@ -8,17 +8,20 @@
 //!
 //! Follows the pattern established by Tempo's `MergeBestTransactions`.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use alloy_primitives::B256;
 use reth_transaction_pool::{
     BestTransactions, EthPoolTransaction, ValidPoolTransaction, error::InvalidPoolTransactionError,
 };
 
-/// Merges two [`BestTransactions`] iterators by effective priority (tip).
+/// Merges two [`BestTransactions`] iterators by effective tip.
 ///
 /// At each step the iterator peeks at the heads of both sub-iterators and
-/// yields the one with the higher `max_priority_fee_per_gas`. On equal
+/// yields the one with the higher basefee-aware effective tip. On equal
 /// priority the standard pool (left) wins to preserve existing ordering
 /// behaviour for non-AA transactions.
 ///
@@ -35,12 +38,21 @@ where
     peeked_left: Option<L::Item>,
     peeked_right: Option<R::Item>,
     seen: HashSet<B256>,
+    selected_from: HashMap<B256, SelectedSource>,
+    base_fee: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectedSource {
+    Left,
+    Right,
 }
 
 impl<L: BestTransactions, R: BestTransactions> core::fmt::Debug for MergedBestTransactions<L, R> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("MergedBestTransactions")
             .field("seen_len", &self.seen.len())
+            .field("selected_from_len", &self.selected_from.len())
             .finish_non_exhaustive()
     }
 }
@@ -52,7 +64,20 @@ where
 {
     /// Creates a new merged iterator from two sub-iterators.
     pub fn new(left: L, right: R) -> Self {
-        Self { left, right, peeked_left: None, peeked_right: None, seen: HashSet::new() }
+        Self::with_base_fee(left, right, 0)
+    }
+
+    /// Creates a merged iterator with an explicit base-fee context.
+    pub fn with_base_fee(left: L, right: R, base_fee: u64) -> Self {
+        Self {
+            left,
+            right,
+            peeked_left: None,
+            peeked_right: None,
+            seen: HashSet::new(),
+            selected_from: HashMap::new(),
+            base_fee,
+        }
     }
 }
 
@@ -75,22 +100,25 @@ where
 
             let chosen = match (&self.peeked_left, &self.peeked_right) {
                 (Some(l), Some(r)) => {
-                    let l_prio = l.transaction.max_priority_fee_per_gas().unwrap_or_default();
-                    let r_prio = r.transaction.max_priority_fee_per_gas().unwrap_or_default();
+                    let l_prio =
+                        l.transaction.effective_tip_per_gas(self.base_fee).unwrap_or_default();
+                    let r_prio =
+                        r.transaction.effective_tip_per_gas(self.base_fee).unwrap_or_default();
                     if l_prio >= r_prio {
-                        self.peeked_left.take()
+                        self.peeked_left.take().map(|tx| (tx, SelectedSource::Left))
                     } else {
-                        self.peeked_right.take()
+                        self.peeked_right.take().map(|tx| (tx, SelectedSource::Right))
                     }
                 }
-                (Some(_), None) => self.peeked_left.take(),
-                (None, Some(_)) => self.peeked_right.take(),
+                (Some(_), None) => self.peeked_left.take().map(|tx| (tx, SelectedSource::Left)),
+                (None, Some(_)) => self.peeked_right.take().map(|tx| (tx, SelectedSource::Right)),
                 (None, None) => return None,
             };
 
-            if let Some(tx) = chosen {
+            if let Some((tx, source)) = chosen {
                 let hash = *tx.hash();
                 if self.seen.insert(hash) {
+                    self.selected_from.insert(hash, source);
                     return Some(tx);
                 }
                 // duplicate — skip and try again
@@ -106,8 +134,14 @@ where
     R: BestTransactions<Item = Arc<ValidPoolTransaction<T>>>,
 {
     fn mark_invalid(&mut self, transaction: &Self::Item, kind: &InvalidPoolTransactionError) {
-        self.left.mark_invalid(transaction, kind);
-        self.right.mark_invalid(transaction, kind);
+        match self.selected_from.remove(transaction.hash()) {
+            Some(SelectedSource::Left) => self.left.mark_invalid(transaction, kind),
+            Some(SelectedSource::Right) => self.right.mark_invalid(transaction, kind),
+            None => {
+                self.left.mark_invalid(transaction, kind);
+                self.right.mark_invalid(transaction, kind);
+            }
+        }
     }
 
     fn no_updates(&mut self) {
@@ -129,6 +163,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::sync::{Arc as StdArc, Mutex};
     use std::time::Instant;
 
     use alloy_consensus::{Transaction, TxEip1559};
@@ -150,13 +185,22 @@ mod tests {
         nonce: u64,
         priority_fee: u128,
     ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        make_valid_tx_with_caps(sender_byte, nonce, 1000, priority_fee)
+    }
+
+    fn make_valid_tx_with_caps(
+        sender_byte: u8,
+        nonce: u64,
+        max_fee_per_gas: u128,
+        max_priority_fee_per_gas: u128,
+    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
         let sender = Address::repeat_byte(sender_byte);
         let tx = TxEip1559 {
             chain_id: 1,
             nonce,
             gas_limit: 21_000,
-            max_fee_per_gas: 1000,
-            max_priority_fee_per_gas: priority_fee,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
             to: TxKind::Call(Address::repeat_byte(0xFF)),
             value: U256::ZERO,
             access_list: Default::default(),
@@ -164,7 +208,7 @@ mod tests {
         };
         let sig = Signature::new(
             U256::from(sender_byte as u64 * 1000 + nonce),
-            U256::from(priority_fee),
+            U256::from(max_priority_fee_per_gas),
             false,
         );
         let signed = OpTransactionSigned::new_unhashed(OpTypedTransaction::Eip1559(tx), sig);
@@ -211,6 +255,39 @@ mod tests {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             f.debug_struct("VecBest").field("len", &self.txs.len()).finish()
         }
+    }
+
+    #[derive(Debug)]
+    struct SpyBest {
+        txs: VecDeque<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+        marked_invalid: StdArc<Mutex<usize>>,
+    }
+
+    impl SpyBest {
+        fn new(
+            txs: Vec<Arc<ValidPoolTransaction<BasePooledTransaction>>>,
+            marked_invalid: StdArc<Mutex<usize>>,
+        ) -> Self {
+            Self { txs: txs.into(), marked_invalid }
+        }
+    }
+
+    impl Iterator for SpyBest {
+        type Item = Arc<ValidPoolTransaction<BasePooledTransaction>>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.txs.pop_front()
+        }
+    }
+
+    impl BestTransactions for SpyBest {
+        fn mark_invalid(&mut self, _tx: &Self::Item, _kind: &InvalidPoolTransactionError) {
+            *self.marked_invalid.lock().expect("poisoned lock") += 1;
+        }
+
+        fn no_updates(&mut self) {}
+        fn skip_blobs(&mut self) {}
+        fn set_skip_blobs(&mut self, _skip: bool) {}
     }
 
     #[test]
@@ -277,5 +354,37 @@ mod tests {
 
         assert!(merged.next().is_some());
         assert!(merged.next().is_none());
+    }
+
+    #[test]
+    fn merged_uses_effective_tip_with_base_fee() {
+        let left = VecBest::new(vec![make_valid_tx_with_caps(0x01, 0, 101, 100)]);
+        let right = VecBest::new(vec![make_valid_tx_with_caps(0x02, 0, 500, 5)]);
+        let mut merged = MergedBestTransactions::with_base_fee(left, right, 100);
+
+        let first = merged.next().expect("missing first tx");
+        assert_eq!(
+            first.sender(),
+            Address::repeat_byte(0x02),
+            "right tx should win because effective tip is 5 vs 1"
+        );
+    }
+
+    #[test]
+    fn merged_mark_invalid_routes_to_selected_source() {
+        let left_invalid = StdArc::new(Mutex::new(0usize));
+        let right_invalid = StdArc::new(Mutex::new(0usize));
+        let left = SpyBest::new(vec![make_valid_tx(0x01, 0, 10)], left_invalid.clone());
+        let right = SpyBest::new(vec![make_valid_tx(0x02, 0, 50)], right_invalid.clone());
+        let mut merged = MergedBestTransactions::new(left, right);
+
+        let first = merged.next().expect("missing tx");
+        assert_eq!(first.sender(), Address::repeat_byte(0x02), "right tx should be selected first");
+
+        let err = InvalidPoolTransactionError::Other(Box::new(crate::Eip8130PoolError::PoolFull));
+        merged.mark_invalid(&first, &err);
+
+        assert_eq!(*left_invalid.lock().expect("poisoned lock"), 0);
+        assert_eq!(*right_invalid.lock().expect("poisoned lock"), 1);
     }
 }

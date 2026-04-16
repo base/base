@@ -250,27 +250,39 @@ mod tests {
     fn deployed_addresses_are_deterministic() {
         assert_eq!(
             BaseV1::k1_verifier_address(),
-            "0x5Be482Da3E457aB3b439B184532224EC42c6b8Db".parse().unwrap()
+            "0x5Be482Da3E457aB3b439B184532224EC42c6b8Db"
+                .parse::<alloy_primitives::Address>()
+                .unwrap()
         );
         assert_eq!(
             BaseV1::p256_verifier_address(),
-            "0x6751c7ED0C58319e75437f8E6Dafa2d7F6b8306F".parse().unwrap()
+            "0x6751c7ED0C58319e75437f8E6Dafa2d7F6b8306F"
+                .parse::<alloy_primitives::Address>()
+                .unwrap()
         );
         assert_eq!(
             BaseV1::webauthn_verifier_address(),
-            "0x3572bb3F611a40DDcA70e5b55Cc797D58357AD44".parse().unwrap()
+            "0x3572bb3F611a40DDcA70e5b55Cc797D58357AD44"
+                .parse::<alloy_primitives::Address>()
+                .unwrap()
         );
         assert_eq!(
             BaseV1::account_configuration_address(),
-            "0xf946601D5424118A4e4054BB0B13133f216b4FeE".parse().unwrap()
+            "0xf946601D5424118A4e4054BB0B13133f216b4FeE"
+                .parse::<alloy_primitives::Address>()
+                .unwrap()
         );
         assert_eq!(
             BaseV1::delegate_verifier_address(),
-            "0xc758A89C53542164aaB7f6439e8c8cAcf628fF62".parse().unwrap()
+            "0xc758A89C53542164aaB7f6439e8c8cAcf628fF62"
+                .parse::<alloy_primitives::Address>()
+                .unwrap()
         );
         assert_eq!(
             BaseV1::default_account_address(),
-            "0xAb4eE49EE97e49807e180BD5Fb9D9F35783b84F2".parse().unwrap()
+            "0xAb4eE49EE97e49807e180BD5Fb9D9F35783b84F2"
+                .parse::<alloy_primitives::Address>()
+                .unwrap()
         );
     }
 

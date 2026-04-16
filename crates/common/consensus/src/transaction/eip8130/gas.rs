@@ -1,8 +1,7 @@
 //! EIP-8130 intrinsic gas calculation.
 
-use alloy_rlp::Encodable;
-
 use alloy_primitives::Address;
+use alloy_rlp::Encodable;
 
 use super::{
     AccountChangeEntry, TxEip8130,
@@ -11,25 +10,9 @@ use super::{
         CONFIG_CHANGE_SKIP_GAS, EXPIRING_NONCE_GAS, NONCE_KEY_COLD_GAS, NONCE_KEY_MAX,
         NONCE_KEY_WARM_GAS, SLOAD_GAS, VerifierGasCosts,
     },
-    predeploys::{DELEGATE_VERIFIER_ADDRESS, K1_VERIFIER_ADDRESS},
+    delegate_inner_verifier,
+    predeploys::K1_VERIFIER_ADDRESS,
 };
-
-/// Extracts the inner verifier address for a DELEGATE auth blob.
-///
-/// For canonical delegate auth
-/// (`DELEGATE_VERIFIER_ADDRESS(20) || delegate_account(20) || inner_verifier(20) || inner_data...`),
-/// returns `Some(inner_verifier)`. If `inner_verifier == address(0)`, this
-/// represents implicit EOA auth and is normalized to `K1_VERIFIER_ADDRESS`.
-/// For non-delegate auth or blobs too short to contain all three addresses,
-/// returns `None`.
-pub fn delegate_inner_verifier(auth: &[u8]) -> Option<Address> {
-    if auth.len() >= 60 && Address::from_slice(&auth[..20]) == DELEGATE_VERIFIER_ADDRESS {
-        let inner = Address::from_slice(&auth[40..60]);
-        if inner == Address::ZERO { Some(K1_VERIFIER_ADDRESS) } else { Some(inner) }
-    } else {
-        None
-    }
-}
 
 /// Computes the intrinsic gas for an AA transaction.
 ///
@@ -422,10 +405,10 @@ mod tests {
     #[test]
     fn sender_auth_cost_always_sload() {
         let mut tx = TxEip8130::default();
-        tx.from = Address::ZERO; // EOA — still needs config check (revocation)
+        tx.from = None; // EOA — still needs config check (revocation)
         assert_eq!(sender_auth_cost(&tx), SLOAD_GAS);
 
-        tx.from = Address::repeat_byte(1); // Configured
+        tx.from = Some(Address::repeat_byte(1)); // Configured
         assert_eq!(sender_auth_cost(&tx), SLOAD_GAS);
     }
 
@@ -434,7 +417,7 @@ mod tests {
         let mut tx = TxEip8130::default();
         assert_eq!(payer_auth_cost(&tx), 0); // self-pay
 
-        tx.payer = Address::repeat_byte(0xCC);
+        tx.payer = Some(Address::repeat_byte(0xCC));
         assert_eq!(payer_auth_cost(&tx), SLOAD_GAS);
     }
 
@@ -444,7 +427,7 @@ mod tests {
         auth.extend_from_slice(&[0xAB; 65]);
         let tx = TxEip8130 {
             chain_id: 8453,
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
             sender_auth: Bytes::from(auth),
@@ -457,7 +440,7 @@ mod tests {
     #[test]
     fn sender_verification_gas_eoa_uses_k1() {
         let tx = TxEip8130 {
-            from: Address::ZERO,
+            from: None,
             sender_auth: Bytes::from_static(&[0xAB; 65]),
             ..Default::default()
         };
@@ -470,7 +453,7 @@ mod tests {
         let mut auth = K1_VERIFIER_ADDRESS.as_slice().to_vec();
         auth.push(0xAB);
         let tx = TxEip8130 {
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -482,7 +465,7 @@ mod tests {
         let mut auth = P256_RAW_VERIFIER_ADDRESS.as_slice().to_vec();
         auth.push(0xAB);
         let tx = TxEip8130 {
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -494,7 +477,7 @@ mod tests {
         let mut auth = P256_WEBAUTHN_VERIFIER_ADDRESS.as_slice().to_vec();
         auth.push(0xAB);
         let tx = TxEip8130 {
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -506,7 +489,7 @@ mod tests {
         let mut auth = DELEGATE_VERIFIER_ADDRESS.as_slice().to_vec();
         auth.push(0xAB);
         let tx = TxEip8130 {
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -519,7 +502,7 @@ mod tests {
         let mut auth = DELEGATE_VERIFIER_ADDRESS.as_slice().to_vec();
         auth.push(0xAB);
         let tx = TxEip8130 {
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -533,7 +516,7 @@ mod tests {
     #[test]
     fn sender_verification_gas_empty_auth_defaults_to_k1() {
         let tx = TxEip8130 {
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::new(),
             ..Default::default()
         };
@@ -543,7 +526,7 @@ mod tests {
     #[test]
     fn payer_verification_gas_empty_auth_defaults_to_k1() {
         let tx = TxEip8130 {
-            payer: Address::repeat_byte(0xCC),
+            payer: Some(Address::repeat_byte(0xCC)),
             payer_auth: Bytes::new(),
             ..Default::default()
         };
@@ -556,7 +539,7 @@ mod tests {
         let mut auth = custom_verifier.as_slice().to_vec();
         auth.extend_from_slice(&[0xDD; 20]);
         let tx = TxEip8130 {
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -574,7 +557,7 @@ mod tests {
         let mut auth = K1_VERIFIER_ADDRESS.as_slice().to_vec();
         auth.push(0xAB);
         let tx = TxEip8130 {
-            payer: Address::repeat_byte(0xCC),
+            payer: Some(Address::repeat_byte(0xCC)),
             payer_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -586,9 +569,9 @@ mod tests {
         let mut payer_auth = P256_RAW_VERIFIER_ADDRESS.as_slice().to_vec();
         payer_auth.push(0xAB);
         let tx = TxEip8130 {
-            from: Address::ZERO,
+            from: None,
             sender_auth: Bytes::from_static(&[0xAB; 65]),
-            payer: Address::repeat_byte(0xCC),
+            payer: Some(Address::repeat_byte(0xCC)),
             payer_auth: Bytes::from(payer_auth),
             ..Default::default()
         };
@@ -646,7 +629,7 @@ mod tests {
         auth.push(0xAB);
         let tx = TxEip8130 {
             chain_id: 8453,
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };
@@ -669,7 +652,7 @@ mod tests {
         auth.extend_from_slice(&[0xAB; 65]);
         let tx = TxEip8130 {
             chain_id: 8453,
-            from: Address::repeat_byte(1),
+            from: Some(Address::repeat_byte(1)),
             sender_auth: Bytes::from(auth),
             ..Default::default()
         };

@@ -954,31 +954,47 @@ impl<T: PoolTransaction> Eip8130Pool<T> {
 }
 
 impl<T: EthPoolTransaction + Clone> Eip8130Pool<T> {
+    /// Snapshots ready transactions using a zero base fee.
+    pub fn best_transactions(&self) -> BestEip8130Transactions<T> {
+        self.best_transactions_with_base_fee(0)
+    }
+
     /// Snapshots the ready (executable) transactions across all sequences.
     ///
     /// A transaction is ready when its `is_pending` flag is set, meaning it
     /// forms part of a contiguous nonce chain from the on-chain nonce.
-    /// Results are sorted by effective priority (max_priority_fee descending).
-    pub fn best_transactions(&self) -> BestEip8130Transactions<T> {
+    /// Results are sorted by effective tip for the provided `base_fee`.
+    pub fn best_transactions_with_base_fee(&self, base_fee: u64) -> BestEip8130Transactions<T> {
         let inner = self.inner.read();
         let mut ready = Vec::new();
+        let mut by_hash = HashMap::new();
 
         for seq in inner.sequences.values() {
             for entry in seq.txs.values() {
                 if entry.is_pending {
-                    ready.push(Self::wrap_entry(entry));
+                    if entry.transaction.effective_tip_per_gas(base_fee).is_none() {
+                        continue;
+                    }
+                    let tx = Self::wrap_entry(entry);
+                    by_hash.insert(*tx.hash(), entry.id.clone());
+                    ready.push(ReadyTx { id: entry.id.clone(), tx });
                 }
             }
         }
 
         ready.sort_by(|a, b| {
-            let a_prio = a.transaction.max_priority_fee_per_gas().unwrap_or_default();
-            let b_prio = b.transaction.max_priority_fee_per_gas().unwrap_or_default();
+            let a_prio = a.tx.transaction.effective_tip_per_gas(base_fee).unwrap_or_default();
+            let b_prio = b.tx.transaction.effective_tip_per_gas(base_fee).unwrap_or_default();
             b_prio.cmp(&a_prio)
         });
 
-        BestEip8130Transactions { ready: ready.into(), invalid: HashSet::new() }
+        BestEip8130Transactions { ready: ready.into(), invalid: HashMap::new(), by_hash }
     }
+}
+
+struct ReadyTx<T: PoolTransaction> {
+    id: Eip8130TxId,
+    tx: Arc<ValidPoolTransaction<T>>,
 }
 
 /// Iterator over ready 2D-nonce transactions, sorted by priority.
@@ -986,8 +1002,9 @@ impl<T: EthPoolTransaction + Clone> Eip8130Pool<T> {
 /// Implements [`reth_transaction_pool::BestTransactions`] so it can be merged
 /// with the standard pool's iterator during block building.
 pub struct BestEip8130Transactions<T: PoolTransaction> {
-    ready: VecDeque<Arc<ValidPoolTransaction<T>>>,
-    invalid: HashSet<Address>,
+    ready: VecDeque<ReadyTx<T>>,
+    invalid: HashMap<Eip8130SequenceId, u64>,
+    by_hash: HashMap<B256, Eip8130TxId>,
 }
 
 impl<T: PoolTransaction> core::fmt::Debug for BestEip8130Transactions<T> {
@@ -995,6 +1012,7 @@ impl<T: PoolTransaction> core::fmt::Debug for BestEip8130Transactions<T> {
         f.debug_struct("BestEip8130Transactions")
             .field("ready_len", &self.ready.len())
             .field("invalid_len", &self.invalid.len())
+            .field("by_hash_len", &self.by_hash.len())
             .finish()
     }
 }
@@ -1004,18 +1022,29 @@ impl<T: EthPoolTransaction> Iterator for BestEip8130Transactions<T> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let tx = self.ready.pop_front()?;
-            if self.invalid.contains(&tx.sender()) {
+            let ready = self.ready.pop_front()?;
+            let seq_id = ready.id.sequence_id();
+            if self
+                .invalid
+                .get(&seq_id)
+                .is_some_and(|invalid_from| ready.id.nonce_sequence >= *invalid_from)
+            {
                 continue;
             }
-            return Some(tx);
+            return Some(ready.tx);
         }
     }
 }
 
 impl<T: EthPoolTransaction> reth_transaction_pool::BestTransactions for BestEip8130Transactions<T> {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: &InvalidPoolTransactionError) {
-        self.invalid.insert(transaction.sender());
+        let Some(id) = self.by_hash.get(transaction.hash()) else {
+            return;
+        };
+        self.invalid
+            .entry(id.sequence_id())
+            .and_modify(|invalid_from| *invalid_from = (*invalid_from).min(id.nonce_sequence))
+            .or_insert(id.nonce_sequence);
     }
 
     fn no_updates(&mut self) {}
@@ -1913,6 +1942,50 @@ mod tests {
             "should skip remaining txs from sender 0x01"
         );
         assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn best_transactions_mark_invalid_keeps_other_lanes_for_same_sender() {
+        let pool = TestPool::new();
+
+        let lane_one_slot = make_slot(0x01, 1);
+        let lane_two_slot = make_slot(0x01, 2);
+
+        let tx1 = make_tx(0x01, 0, 50);
+        let id1 = make_id(0x01, 1, 0);
+        add_self_pay(&pool, id1, tx1, lane_one_slot, &default_result).unwrap();
+
+        let tx2 = make_tx(0x01, 0, 40);
+        let id2 = make_id(0x01, 2, 0);
+        add_self_pay(&pool, id2, tx2, lane_two_slot, &default_result).unwrap();
+
+        let mut best = pool.best_transactions();
+        let first = best.next().unwrap();
+        assert_eq!(first.sender(), Address::repeat_byte(0x01));
+
+        use reth_transaction_pool::BestTransactions;
+        let err = InvalidPoolTransactionError::Other(Box::new(Eip8130PoolError::PoolFull));
+        best.mark_invalid(&first, &err);
+
+        let next = best.next().unwrap();
+        assert_eq!(next.sender(), Address::repeat_byte(0x01));
+        assert_ne!(next.hash(), first.hash(), "different nonce lanes should remain eligible");
+    }
+
+    #[test]
+    fn best_transactions_with_base_fee_filters_ineligible_transactions() {
+        let pool = TestPool::new();
+
+        let tx = make_tx(0x01, 0, 10);
+        let id = make_id(0x01, 1, 0);
+        let slot = make_slot(0x01, 1);
+        add_self_pay(&pool, id, tx, slot, &default_result).unwrap();
+
+        let mut best = pool.best_transactions_with_base_fee(2_000);
+        assert!(
+            best.next().is_none(),
+            "tx with max_fee_per_gas below base fee should be excluded from ready set"
+        );
     }
 
     // ------------------------------------------------------------------ //

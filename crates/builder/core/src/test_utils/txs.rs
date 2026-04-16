@@ -1,5 +1,8 @@
 use core::cmp::max;
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex},
+};
 
 use alloy_consensus::TxEip1559;
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
@@ -21,6 +24,7 @@ use super::{PrivateKeySigner, funded_signer, sign_op_tx};
 #[derive(Clone, Debug)]
 pub struct TransactionBuilder {
     provider: RootProvider<Base>,
+    nonce_tracker: Arc<Mutex<HashMap<Address, u64>>>,
     signer: Option<PrivateKeySigner>,
     nonce: Option<u64>,
     base_fee: Option<u128>,
@@ -29,9 +33,13 @@ pub struct TransactionBuilder {
 
 impl TransactionBuilder {
     /// Creates a new builder with default EIP-1559 parameters for the test chain (chain ID 901).
-    pub fn new(provider: RootProvider<Base>) -> Self {
+    pub fn new(
+        provider: RootProvider<Base>,
+        nonce_tracker: Arc<Mutex<HashMap<Address, u64>>>,
+    ) -> Self {
         Self {
             provider,
+            nonce_tracker,
             signer: None,
             nonce: None,
             base_fee: None,
@@ -71,7 +79,7 @@ impl TransactionBuilder {
 
     /// Sets an explicit nonce instead of fetching it from the provider.
     pub const fn with_nonce(mut self, nonce: u64) -> Self {
-        self.tx.nonce = nonce;
+        self.nonce = Some(nonce);
         self
     }
 
@@ -109,15 +117,25 @@ impl TransactionBuilder {
     /// fee from the provider when not explicitly set.
     pub async fn build(mut self) -> Recovered<OpTxEnvelope> {
         let signer = self.signer.unwrap_or_else(funded_signer);
+        let signer_address = signer.address();
 
         let nonce = match self.nonce {
             Some(nonce) => nonce,
-            None => self
-                .provider
-                .get_transaction_count(signer.address())
-                .pending()
-                .await
-                .expect("Failed to get transaction count"),
+            None => {
+                let pending_nonce = self
+                    .provider
+                    .get_transaction_count(signer_address)
+                    .pending()
+                    .await
+                    .expect("Failed to get transaction count");
+                let mut tracker = self.nonce_tracker.lock().expect("nonce tracker lock poisoned");
+                let next_nonce = match tracker.get(&signer_address).copied() {
+                    Some(cached_nonce) => pending_nonce.max(cached_nonce),
+                    None => pending_nonce,
+                };
+                tracker.insert(signer_address, next_nonce + 1);
+                next_nonce
+            }
         };
 
         let base_fee = match self.base_fee {
@@ -148,12 +166,41 @@ impl TransactionBuilder {
     }
 
     /// Builds, signs, and broadcasts the transaction, returning a pending transaction handle.
-    pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Base>> {
+    pub async fn send(mut self) -> eyre::Result<PendingTransactionBuilder<Base>> {
         let provider = self.provider.clone();
-        let transaction = self.build().await;
-        let transaction_encoded = transaction.encoded_2718();
+        let signer_address = self.signer.clone().unwrap_or_else(funded_signer).address();
+        let can_retry_nonce = self.nonce.is_none();
 
-        Ok(provider.send_raw_transaction(transaction_encoded.as_slice()).await?)
+        let mut retries = 0usize;
+        loop {
+            let transaction = self.clone().build().await;
+            let transaction_encoded = transaction.encoded_2718();
+
+            match provider.send_raw_transaction(transaction_encoded.as_slice()).await {
+                Ok(pending) => return Ok(pending),
+                Err(err) => {
+                    let message = err.to_string();
+                    let retryable_nonce_err = message.contains("already known")
+                        || message.contains("nonce is not consistent")
+                        || message.contains("nonce too low");
+
+                    if can_retry_nonce && retryable_nonce_err && retries < 3 {
+                        let next_nonce = provider
+                            .get_transaction_count(signer_address)
+                            .pending()
+                            .await
+                            .map_err(|e| {
+                                eyre::eyre!("failed to refresh nonce after send error: {e}")
+                            })?;
+                        self.nonce = Some(next_nonce);
+                        retries += 1;
+                        continue;
+                    }
+
+                    return Err(err.into());
+                }
+            }
+        }
     }
 }
 

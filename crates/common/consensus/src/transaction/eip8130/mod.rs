@@ -7,6 +7,11 @@
 mod verifier;
 pub use verifier::{NativeVerifier, VerifierKind, auth_verifier_kind, verifier_kind};
 
+mod delegate;
+pub use delegate::{
+    ParsedDelegateAuth, delegate_inner_verifier, parse_delegate_auth, parse_delegate_data,
+};
+
 mod constants;
 pub use constants::{
     AA_BASE_COST, AA_PAYER_TYPE, AA_TX_TYPE_ID, BYTECODE_BASE_GAS, BYTECODE_PER_BYTE_GAS,
@@ -35,9 +40,9 @@ pub use signature::{
 mod gas;
 pub use gas::{
     account_change_units, account_changes_cost, authorizer_verification_gas, bytecode_cost,
-    delegate_inner_verifier, intrinsic_gas, intrinsic_gas_with_costs, nonce_key_cost,
-    payer_auth_cost, payer_verification_gas, sender_auth_cost, sender_verification_gas,
-    total_verification_gas, tx_payload_cost,
+    intrinsic_gas, intrinsic_gas_with_costs, nonce_key_cost, payer_auth_cost,
+    payer_verification_gas, sender_auth_cost, sender_verification_gas, total_verification_gas,
+    tx_payload_cost,
 };
 
 mod address;

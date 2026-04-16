@@ -720,7 +720,7 @@ mod tests {
         OpTxEnvelope::Eip8130(
             TxEip8130 {
                 chain_id: 0,
-                from: Address::repeat_byte(0x11),
+                from: Some(Address::repeat_byte(0x11)),
                 nonce_key: U256::from(7_u64),
                 nonce_sequence: 2,
                 expiry: 1234,

@@ -67,6 +67,7 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
         target_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        aa_metadata: None,
     };
 
     let result: Result<(), _> =
@@ -96,6 +97,7 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
         target_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        aa_metadata: None,
     };
 
     // EIP-1559 transactions are supported by the pool
@@ -118,6 +120,7 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
         target_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        aa_metadata: None,
     };
 
     let result: Result<(), _> =

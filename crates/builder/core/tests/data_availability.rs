@@ -2,7 +2,7 @@
 
 use alloy_provider::Provider;
 use base_builder_core::test_utils::{
-    BlockTransactionsExt, ChainDriverExt, TransactionBuilderExt, setup_test_instance,
+    BlockTransactionsExt, ChainDriverExt, ONE_ETH, TransactionBuilderExt, setup_test_instance,
 };
 
 /// This test ensures that the transaction size limit is respected.
@@ -57,6 +57,8 @@ async fn block_size_limit() -> eyre::Result<()> {
 async fn block_fill() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
+    let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
+    let base_nonce = driver.provider().get_transaction_count(signer.address()).pending().await?;
 
     // Set DA limit so only 3 user transactions can fit (each tx is ~100 bytes)
     // Limit = 100 * 3 = 300 bytes, so 3 txs fit and the 4th won't
@@ -67,10 +69,29 @@ async fn block_fill() -> eyre::Result<()> {
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
     // Send transactions - some should fit within the DA limit and one should not
-    let fit_tx_1 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
-    let fit_tx_2 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
-    let fit_tx_3 = driver.create_transaction().with_max_priority_fee_per_gas(50).send().await?;
-    let unfit_tx_4 = driver.create_transaction().send().await?;
+    let fit_tx_1 = driver
+        .create_transaction()
+        .with_signer(&signer)
+        .with_nonce(base_nonce)
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?;
+    let fit_tx_2 = driver
+        .create_transaction()
+        .with_signer(&signer)
+        .with_nonce(base_nonce + 1)
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?;
+    let fit_tx_3 = driver
+        .create_transaction()
+        .with_signer(&signer)
+        .with_nonce(base_nonce + 2)
+        .with_max_priority_fee_per_gas(50)
+        .send()
+        .await?;
+    let unfit_tx_4 =
+        driver.create_transaction().with_signer(&signer).with_nonce(base_nonce + 3).send().await?;
 
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
@@ -98,6 +119,8 @@ async fn block_fill() -> eyre::Result<()> {
 async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
     let rbuilder = setup_test_instance().await?;
     let driver = rbuilder.driver().await?;
+    let signer = driver.fund_accounts(1, ONE_ETH).await?.remove(0);
+    let base_nonce = driver.provider().get_transaction_count(signer.address()).pending().await?;
 
     // DA footprint scalar from JOVIAN_DATA is 400
     // Set a constrained gas limit so DA footprint becomes the limiting factor
@@ -124,10 +147,12 @@ async fn da_footprint_fills_to_limit() -> eyre::Result<()> {
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
     let mut tx_hashes = Vec::new();
-    for _ in 0..12 {
+    for i in 0..12u64 {
         // Send more transactions to ensure some don't fit
         let tx = driver
             .create_transaction()
+            .with_signer(&signer)
+            .with_nonce(base_nonce + i)
             .random_valid_transfer()
             .with_gas_limit(21000)
             .send()

@@ -28,13 +28,12 @@ use base_alloy_consensus::{
     AA_TX_TYPE_ID, ACCOUNT_CONFIG_ADDRESS, AccountChangeEntry, DELEGATE_VERIFIER_ADDRESS,
     K1_VERIFIER_ADDRESS, MAX_CONFIG_OPS_PER_TX, NONCE_FREE_MAX_EXPIRY_WINDOW, NONCE_KEY_MAX,
     NONCE_MANAGER_ADDRESS, NativeVerifier, NativeVerifyResult, OwnerScope, ParsedSenderAuth,
-    PurityScanner, PurityVerdict, REVOKED_VERIFIER, TxEip8130, ValidationError,
-    VerifierGasCosts,
+    PurityScanner, PurityVerdict, REVOKED_VERIFIER, TxEip8130, ValidationError, VerifierGasCosts,
     build_eip8130_parts_with_costs, config_change_digest, encode_verify_call, expiring_seen_slot,
     implicit_eoa_owner_id, intrinsic_gas, is_native_verifier, lock_slot, nonce_slot,
-    owner_config_slot, parse_account_state, parse_owner_config, parse_sender_auth,
-    payer_signature_hash, read_sequence, sender_signature_hash, sequence_base_slot,
-    try_native_verify, validate_expiry, validate_structure,
+    owner_config_slot, parse_account_state, parse_delegate_data, parse_owner_config,
+    parse_sender_auth, payer_signature_hash, read_sequence, sender_signature_hash,
+    sequence_base_slot, try_native_verify, validate_expiry, validate_structure,
 };
 
 use crate::{
@@ -272,6 +271,13 @@ pub enum Eip8130ValidationError {
         /// Gas limit in the transaction.
         gas_limit: u64,
     },
+    /// `max_priority_fee_per_gas` exceeds `max_fee_per_gas`.
+    PriorityFeeAboveMaxFee {
+        /// Priority fee cap from the transaction.
+        max_priority_fee_per_gas: u128,
+        /// Total fee cap from the transaction.
+        max_fee_per_gas: u128,
+    },
     /// Payer has insufficient balance to cover `gas_limit * max_fee_per_gas`.
     InsufficientBalance {
         /// Required balance.
@@ -337,6 +343,12 @@ impl std::fmt::Display for Eip8130ValidationError {
             Self::IntrinsicGasTooLow { intrinsic, gas_limit } => {
                 write!(f, "gas limit below intrinsic (intrinsic={intrinsic}, limit={gas_limit})")
             }
+            Self::PriorityFeeAboveMaxFee { max_priority_fee_per_gas, max_fee_per_gas } => {
+                write!(
+                    f,
+                    "max_priority_fee_per_gas exceeds max_fee_per_gas ({max_priority_fee_per_gas} > {max_fee_per_gas})"
+                )
+            }
             Self::InsufficientBalance { required, available } => {
                 write!(f, "payer insufficient balance (required={required}, available={available})")
             }
@@ -366,6 +378,7 @@ impl reth_transaction_pool::error::PoolTransactionError for Eip8130ValidationErr
                 | Self::SenderAuthInvalid(_)
                 | Self::PayerAuthInvalid(_)
                 | Self::AuthorizerAuthInvalid(_)
+                | Self::PriorityFeeAboveMaxFee { .. }
                 | Self::TooManyConfigOperations { .. }
         )
     }
@@ -479,7 +492,8 @@ fn ensure_custom_verifier_admitted(
         return Ok(());
     }
 
-    if verifier_policy.mode().allows_allowlist() && verifier_policy.allowlist().is_allowed(&verifier)
+    if verifier_policy.mode().allows_allowlist()
+        && verifier_policy.allowlist().is_allowed(&verifier)
     {
         return Ok(());
     }
@@ -524,13 +538,15 @@ fn verify_custom_via_evm(
     use revm::{
         context::{Cfg, CfgEnv, LocalContextTr, TxEnv},
         context_interface::ContextTr,
+        context_interface::JournalTr,
         database::CacheDB,
         handler::{EthFrame, EvmTr, Handler},
-        context_interface::JournalTr,
         interpreter::{
             SharedMemory,
             interpreter::EthInterpreter,
-            interpreter_action::{CallInput, CallInputs, CallScheme, CallValue, FrameInit, FrameInput},
+            interpreter_action::{
+                CallInput, CallInputs, CallScheme, CallValue, FrameInit, FrameInput,
+            },
         },
         primitives::TxKind,
     };
@@ -758,16 +774,15 @@ fn verify_delegate_auth_with_scope(
     remaining_custom_verifier_gas: &mut u64,
     pending_owners: Option<&HashMap<B256, PendingOwnerState>>,
 ) -> Result<B256, Eip8130ValidationError> {
-    if delegate_data.len() < 40 {
+    let Some(parsed) = parse_delegate_data(delegate_data) else {
         return Err(role.auth_invalid(format!(
             "delegate auth too short: expected >= 40 bytes, got {}",
             delegate_data.len()
         )));
-    }
-
-    let delegate_account = Address::from_slice(&delegate_data[..20]);
-    let nested_verifier = Address::from_slice(&delegate_data[20..40]);
-    let nested_data = Bytes::copy_from_slice(&delegate_data[40..]);
+    };
+    let delegate_account = parsed.delegate_account;
+    let nested_verifier = parsed.nested_verifier;
+    let nested_data = Bytes::copy_from_slice(parsed.nested_data);
 
     if nested_verifier == DELEGATE_VERIFIER_ADDRESS {
         return Err(role.auth_invalid("nested delegation is not allowed".into()));
@@ -1197,6 +1212,13 @@ where
         });
     }
 
+    if tx.max_priority_fee_per_gas > tx.max_fee_per_gas {
+        return Err(Eip8130ValidationError::PriorityFeeAboveMaxFee {
+            max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
+            max_fee_per_gas: tx.max_fee_per_gas,
+        });
+    }
+
     // 2. Expiry check
     validate_expiry(&tx, block_timestamp).map_err(|e| match e {
         ValidationError::Expired { expiry, current } => {
@@ -1459,9 +1481,9 @@ pub fn compute_account_tier(
 mod tests {
     use base_alloy_consensus::{
         ACCOUNT_CONFIG_ADDRESS, AccountChangeEntry, ConfigChangeEntry, DELEGATE_VERIFIER_ADDRESS,
-        NONCE_MANAGER_ADDRESS, OpPrimitives, OwnerScope,
-        P256_RAW_VERIFIER_ADDRESS, P256_WEBAUTHN_VERIFIER_ADDRESS, TX_CONTEXT_ADDRESS, TxEip8130,
-        VerifierGasCosts, build_eip8130_parts_with_costs, encode_owner_config, owner_config_slot,
+        NONCE_MANAGER_ADDRESS, OpPrimitives, OwnerScope, P256_RAW_VERIFIER_ADDRESS,
+        P256_WEBAUTHN_VERIFIER_ADDRESS, TX_CONTEXT_ADDRESS, TxEip8130, VerifierGasCosts,
+        build_eip8130_parts_with_costs, encode_owner_config, owner_config_slot,
     };
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use reth_storage_api::StateProviderFactory;
@@ -1626,7 +1648,10 @@ mod tests {
 
     #[test]
     fn verifier_policy_defaults_to_allowlist_or_pure() {
-        assert_eq!(VerifierAdmissionPolicy::default().mode(), CustomVerifierPolicy::AllowlistOrPure);
+        assert_eq!(
+            VerifierAdmissionPolicy::default().mode(),
+            CustomVerifierPolicy::AllowlistOrPure
+        );
     }
 
     #[test]
@@ -1636,10 +1661,8 @@ mod tests {
         let code = return_verifier_bytecode(owner_id);
 
         let provider = MockEthProvider::<OpPrimitives>::new();
-        provider.add_account(
-            verifier,
-            ExtendedAccount::new(1, U256::ZERO).with_bytecode(code.clone()),
-        );
+        provider
+            .add_account(verifier, ExtendedAccount::new(1, U256::ZERO).with_bytecode(code.clone()));
 
         let state = provider.latest().expect("latest state should exist");
         let policy = VerifierAdmissionPolicy::default();
@@ -1678,7 +1701,9 @@ mod tests {
         )
         .expect_err("impure verifier should be rejected");
 
-        assert!(matches!(err, Eip8130ValidationError::VerifierNotAllowed(addr) if addr == verifier));
+        assert!(
+            matches!(err, Eip8130ValidationError::VerifierNotAllowed(addr) if addr == verifier)
+        );
     }
 
     #[test]
@@ -1696,8 +1721,13 @@ mod tests {
         let allowlist = VerifierAllowlist::new([verifier]);
         let policy = VerifierAdmissionPolicy::allowlist_or_pure(allowlist);
 
-        ensure_custom_verifier_admitted(&*state, verifier, &policy, &VerifierPurityCache::default())
-            .expect("allowlisted verifier should be admitted even if impure");
+        ensure_custom_verifier_admitted(
+            &*state,
+            verifier,
+            &policy,
+            &VerifierPurityCache::default(),
+        )
+        .expect("allowlisted verifier should be admitted even if impure");
     }
 
     #[test]
@@ -1723,7 +1753,10 @@ mod tests {
         provider.add_account(
             nested_verifier,
             ExtendedAccount::new(1, U256::ZERO).with_bytecode(
-                staticcall_precompile_then_return_verifier_bytecode(NONCE_MANAGER_ADDRESS, &calldata),
+                staticcall_precompile_then_return_verifier_bytecode(
+                    NONCE_MANAGER_ADDRESS,
+                    &calldata,
+                ),
             ),
         );
         provider.add_account(
@@ -1743,10 +1776,8 @@ mod tests {
                 ),
                 (
                     delegate_owner_slot.into(),
-                    U256::from_be_bytes(
-                        encode_owner_config(nested_verifier, OwnerScope::SENDER).0,
-                    )
-                    .into(),
+                    U256::from_be_bytes(encode_owner_config(nested_verifier, OwnerScope::SENDER).0)
+                        .into(),
                 ),
             ]),
         );
@@ -1941,7 +1972,9 @@ mod tests {
             None,
         );
 
-        assert!(matches!(result, Err(Eip8130ValidationError::SenderNotAuthorized(detail)) if detail == "custom verifier STATICCALL reverted"));
+        assert!(
+            matches!(result, Err(Eip8130ValidationError::SenderNotAuthorized(detail)) if detail == "custom verifier STATICCALL reverted")
+        );
     }
 
     #[test]
@@ -2005,7 +2038,10 @@ mod tests {
         provider.add_account(
             verifier,
             ExtendedAccount::new(1, U256::ZERO).with_bytecode(
-                staticcall_precompile_then_return_verifier_bytecode(NONCE_MANAGER_ADDRESS, &calldata),
+                staticcall_precompile_then_return_verifier_bytecode(
+                    NONCE_MANAGER_ADDRESS,
+                    &calldata,
+                ),
             ),
         );
         provider.add_account(

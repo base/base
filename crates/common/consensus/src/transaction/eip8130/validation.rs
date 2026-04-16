@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn resolve_sender_eoa_requires_recovered_sender() {
-        let tx = TxEip8130 { from: Address::ZERO, ..Default::default() };
+        let tx = TxEip8130 { from: None, ..Default::default() };
         assert!(matches!(
             resolve_sender(&tx, None),
             Err(ValidationError::InvalidSenderAuth("EOA sender must be recovered at ingress"))
@@ -627,7 +627,7 @@ mod tests {
     #[test]
     fn resolve_sender_configured_uses_from() {
         let from = address!("0x8888888888888888888888888888888888888888");
-        let tx = TxEip8130 { from, ..Default::default() };
+        let tx = TxEip8130 { from: Some(from), ..Default::default() };
         assert_eq!(resolve_sender(&tx, None).unwrap(), from);
         assert_eq!(resolve_sender(&tx, Some(Address::repeat_byte(0x99))).unwrap(), from);
     }

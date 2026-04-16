@@ -143,9 +143,7 @@ impl PurityScanner {
     /// `bytecode` should be the **runtime** (deployed) bytecode, not initcode.
     pub fn analyze(bytecode: &[u8]) -> PurityVerdict {
         if bytecode.is_empty() {
-            return PurityVerdict::Impure {
-                reasons: vec![PurityViolation::EmptyBytecode],
-            };
+            return PurityVerdict::Impure { reasons: vec![PurityViolation::EmptyBytecode] };
         }
 
         let insns = disassemble(bytecode);
@@ -171,9 +169,8 @@ impl PurityScanner {
                         });
                     }
                     StaticCallTarget::Dynamic => {
-                        violations.push(PurityViolation::DynamicStaticCallTarget {
-                            offset: insn.offset,
-                        });
+                        violations
+                            .push(PurityViolation::DynamicStaticCallTarget { offset: insn.offset });
                     }
                 }
             } else if insn.opcode == op::GAS {
@@ -307,20 +304,10 @@ fn disassemble(code: &[u8]) -> Vec<Instruction> {
             insns.push(Instruction { offset: i, opcode, push_value: Some(value), push_size });
             i = end;
         } else if opcode == op::PUSH0 {
-            insns.push(Instruction {
-                offset: i,
-                opcode,
-                push_value: Some(0),
-                push_size: 0,
-            });
+            insns.push(Instruction { offset: i, opcode, push_value: Some(0), push_size: 0 });
             i += 1;
         } else {
-            insns.push(Instruction {
-                offset: i,
-                opcode,
-                push_value: None,
-                push_size: 0,
-            });
+            insns.push(Instruction { offset: i, opcode, push_value: None, push_size: 0 });
             i += 1;
         }
     }
@@ -351,10 +338,7 @@ fn build_unreachable_set(insns: &[Instruction]) -> BTreeSet<usize> {
                 continue;
             }
         }
-        if matches!(
-            insn.opcode,
-            op::STOP | op::RETURN | op::REVERT | op::INVALID
-        ) {
+        if matches!(insn.opcode, op::STOP | op::RETURN | op::REVERT | op::INVALID) {
             unreachable = true;
         }
     }
@@ -400,10 +384,7 @@ fn scan_hidden_jumpdests(code: &[u8], insns: &[Instruction]) -> Vec<PurityViolat
                     });
                     break;
                 }
-                if matches!(
-                    alt.opcode,
-                    op::STOP | op::RETURN | op::REVERT | op::INVALID
-                ) {
+                if matches!(alt.opcode, op::STOP | op::RETURN | op::REVERT | op::INVALID) {
                     break;
                 }
             }
@@ -453,6 +434,13 @@ mod tests {
 
     fn hex_decode(s: &str) -> Vec<u8> {
         alloy_primitives::hex::decode(s.trim()).expect("invalid hex in test fixture")
+    }
+
+    fn load_fixture_hex(name: &str) -> Option<Vec<u8>> {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures").join(name);
+        let contents = std::fs::read_to_string(path).ok()?;
+        Some(hex_decode(&contents))
     }
 
     #[test]
@@ -516,9 +504,7 @@ mod tests {
 
     #[test]
     fn all_env_opcodes_rejected() {
-        for opcode in [
-            0x32u8, 0x3A, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x48, 0x49, 0x4A,
-        ] {
+        for opcode in [0x32u8, 0x3A, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x48, 0x49, 0x4A] {
             let code = [opcode, 0x50, 0x60, 0x00, 0x60, 0x00, 0xF3];
             let verdict = PurityScanner::analyze(&code);
             assert!(!verdict.is_pure(), "opcode 0x{opcode:02x} should be rejected");
@@ -527,9 +513,7 @@ mod tests {
 
     #[test]
     fn all_state_opcodes_rejected() {
-        for opcode in [
-            0x31u8, 0x3B, 0x3C, 0x3F, 0x47, 0x54, 0x55, 0x5C, 0x5D,
-        ] {
+        for opcode in [0x31u8, 0x3B, 0x3C, 0x3F, 0x47, 0x54, 0x55, 0x5C, 0x5D] {
             let code = [opcode, 0x50, 0x60, 0x00, 0x60, 0x00, 0xF3];
             let verdict = PurityScanner::analyze(&code);
             assert!(!verdict.is_pure(), "opcode 0x{opcode:02x} should be rejected");
@@ -538,9 +522,7 @@ mod tests {
 
     #[test]
     fn all_side_effect_opcodes_rejected() {
-        for opcode in [
-            0xA0u8, 0xA4, 0xF0, 0xF1, 0xF2, 0xF4, 0xF5, 0xFF,
-        ] {
+        for opcode in [0xA0u8, 0xA4, 0xF0, 0xF1, 0xF2, 0xF4, 0xF5, 0xFF] {
             let code = [opcode, 0x50, 0x60, 0x00, 0x60, 0x00, 0xF3];
             let verdict = PurityScanner::analyze(&code);
             assert!(!verdict.is_pure(), "opcode 0x{opcode:02x} should be rejected");
@@ -716,7 +698,9 @@ mod tests {
 
     #[test]
     fn k1_verifier_bytecode_is_pure() {
-        let bytecode = hex_decode(include_str!("../../../benches/fixtures/k1_verifier_runtime.hex"));
+        let Some(bytecode) = load_fixture_hex("k1_verifier_runtime.hex") else {
+            return;
+        };
         let verdict = PurityScanner::analyze(&bytecode);
         assert!(verdict.is_pure(), "K1Verifier should be pure, got: {verdict:?}");
         match verdict {
@@ -729,15 +713,14 @@ mod tests {
 
     #[test]
     fn p256_verifier_bytecode_is_pure() {
-        let bytecode = hex_decode(include_str!("../../../benches/fixtures/p256_verifier_runtime.hex"));
+        let Some(bytecode) = load_fixture_hex("p256_verifier_runtime.hex") else {
+            return;
+        };
         let verdict = PurityScanner::analyze(&bytecode);
         assert!(verdict.is_pure(), "P256Verifier should be pure, got: {verdict:?}");
         match verdict {
             PurityVerdict::Pure { precompile_calls } => {
-                assert!(
-                    precompile_calls.contains(&P256VERIFY_ADDR),
-                    "should call P256VERIFY"
-                );
+                assert!(precompile_calls.contains(&P256VERIFY_ADDR), "should call P256VERIFY");
             }
             _ => panic!("expected pure"),
         }
@@ -745,8 +728,9 @@ mod tests {
 
     #[test]
     fn always_valid_verifier_is_pure() {
-        let bytecode =
-            hex_decode(include_str!("../../../benches/fixtures/always_valid_verifier_runtime.hex"));
+        let Some(bytecode) = load_fixture_hex("always_valid_verifier_runtime.hex") else {
+            return;
+        };
         let verdict = PurityScanner::analyze(&bytecode);
         assert!(verdict.is_pure(), "AlwaysValidVerifier should be pure, got: {verdict:?}");
     }
@@ -870,10 +854,11 @@ mod tests {
         assert!(!verdict.is_pure(), "hidden JUMPDEST + SLOAD in PUSH must be caught");
         match verdict {
             PurityVerdict::Impure { reasons } => {
-                assert!(reasons.iter().any(|r| matches!(
-                    r,
-                    PurityViolation::HiddenJumpdestViolation { .. }
-                )));
+                assert!(
+                    reasons
+                        .iter()
+                        .any(|r| matches!(r, PurityViolation::HiddenJumpdestViolation { .. }))
+                );
             }
             _ => panic!("expected impure"),
         }

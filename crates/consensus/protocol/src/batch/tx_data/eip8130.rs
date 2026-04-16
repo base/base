@@ -34,6 +34,18 @@ pub struct SpanBatchEip8130TransactionData {
 }
 
 impl SpanBatchEip8130TransactionData {
+    fn u256_to_u128_checked(value: U256) -> Result<u128, SpanBatchError> {
+        let bytes = value.to_be_bytes::<32>();
+        if bytes[..16].iter().any(|byte| *byte != 0) {
+            return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
+        }
+        Ok(u128::from_be_bytes(
+            bytes[16..]
+                .try_into()
+                .map_err(|_| SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?,
+        ))
+    }
+
     /// Converts [`SpanBatchEip8130TransactionData`] into a [`TxEip8130`].
     pub fn to_tx(&self, nonce: u64, gas: u64, chain_id: u64) -> Result<TxEip8130, SpanBatchError> {
         Ok(TxEip8130 {
@@ -42,16 +54,8 @@ impl SpanBatchEip8130TransactionData {
             nonce_key: self.nonce_key,
             nonce_sequence: nonce,
             expiry: self.expiry,
-            max_priority_fee_per_gas: u128::from_be_bytes(
-                self.max_priority_fee_per_gas.to_be_bytes::<32>()[16..].try_into().map_err(
-                    |_| SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData),
-                )?,
-            ),
-            max_fee_per_gas: u128::from_be_bytes(
-                self.max_fee_per_gas.to_be_bytes::<32>()[16..].try_into().map_err(|_| {
-                    SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData)
-                })?,
-            ),
+            max_priority_fee_per_gas: Self::u256_to_u128_checked(self.max_priority_fee_per_gas)?,
+            max_fee_per_gas: Self::u256_to_u128_checked(self.max_fee_per_gas)?,
             gas_limit: gas,
             account_changes: self.account_changes.clone(),
             calls: self.calls.clone(),
@@ -98,5 +102,27 @@ mod tests {
         };
 
         assert_eq!(aa_tx, decoded_aa_tx);
+    }
+
+    #[test]
+    fn to_tx_rejects_fee_overflow() {
+        let aa_tx = SpanBatchEip8130TransactionData {
+            from: Address::repeat_byte(0xAA),
+            nonce_key: U256::ZERO,
+            expiry: 0,
+            max_priority_fee_per_gas: U256::from(1_u128) << 200,
+            max_fee_per_gas: U256::from(1_u64),
+            account_changes: vec![],
+            calls: vec![],
+            payer: Address::ZERO,
+            sender_auth: Bytes::new(),
+            payer_auth: Bytes::new(),
+        };
+
+        let result = aa_tx.to_tx(0, 21_000, 8453);
+        assert!(matches!(
+            result,
+            Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))
+        ));
     }
 }

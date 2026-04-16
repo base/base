@@ -378,7 +378,7 @@ mod tests {
     fn eip8130_pooled_type_and_roundtrip() {
         let tx = TxEip8130 {
             chain_id: 8453,
-            from: address!("0123456789012345678901234567890123456789"),
+            from: Some(address!("0123456789012345678901234567890123456789")),
             nonce_sequence: 3,
             max_fee_per_gas: 10,
             max_priority_fee_per_gas: 2,

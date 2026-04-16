@@ -20,7 +20,7 @@ mod integration {
     fn simple_tx(from: Address) -> TxEip8130 {
         TxEip8130 {
             chain_id: 8453,
-            from,
+            from: Some(from),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
             expiry: 0,
@@ -32,7 +32,7 @@ mod integration {
                 to: Address::repeat_byte(0xBB),
                 data: Bytes::from_static(&[0x01, 0x02]),
             }]],
-            payer: Address::ZERO,
+            payer: None,
             sender_auth: Bytes::from(vec![0u8; 65]),
             payer_auth: Bytes::default(),
         }
@@ -77,9 +77,13 @@ mod integration {
     fn sponsored_tx_payer_set() {
         let from = Address::repeat_byte(0xAA);
         let payer = Address::repeat_byte(0xCC);
-        let tx = TxEip8130 { payer, payer_auth: Bytes::from(vec![0u8; 65]), ..simple_tx(from) };
+        let tx = TxEip8130 {
+            payer: Some(payer),
+            payer_auth: Bytes::from(vec![0u8; 65]),
+            ..simple_tx(from)
+        };
 
-        assert_eq!(tx.payer, payer);
+        assert_eq!(tx.payer, Some(payer));
         assert!(!tx.payer_auth.is_empty());
 
         let sender_hash = sender_signature_hash(&tx);
@@ -202,8 +206,8 @@ mod integration {
 
     #[test]
     fn auto_delegation_zero_from() {
-        let tx = simple_tx(Address::ZERO);
-        assert_eq!(tx.from, Address::ZERO);
+        let tx = TxEip8130 { from: None, ..simple_tx(Address::repeat_byte(0xAA)) };
+        assert!(tx.from.is_none());
     }
 
     // -----------------------------------------------------------------------
@@ -277,7 +281,7 @@ mod integration {
     #[test]
     fn sender_and_payer_hashes_differ() {
         let tx = TxEip8130 {
-            payer: Address::repeat_byte(0xBB),
+            payer: Some(Address::repeat_byte(0xBB)),
             payer_auth: Bytes::from(vec![0u8; 65]),
             ..simple_tx(Address::repeat_byte(0xAA))
         };
@@ -311,7 +315,7 @@ mod integration {
     #[test]
     fn parse_eoa_sender_auth_too_short() {
         let tx = TxEip8130 {
-            from: Address::ZERO,
+            from: None,
             sender_auth: Bytes::from(vec![0u8; 64]),
             ..simple_tx(Address::ZERO)
         };
@@ -432,7 +436,7 @@ mod integration {
     fn complex_tx_with_all_features() {
         let tx = TxEip8130 {
             chain_id: 8453,
-            from: Address::repeat_byte(0x42),
+            from: Some(Address::repeat_byte(0x42)),
             nonce_key: U256::from(42),
             nonce_sequence: 7,
             expiry: 1_700_000_000,
@@ -468,7 +472,7 @@ mod integration {
                     Call { to: Address::repeat_byte(0x30), data: Bytes::default() },
                 ],
             ],
-            payer: Address::repeat_byte(0xCC),
+            payer: Some(Address::repeat_byte(0xCC)),
             sender_auth: Bytes::from(vec![0xAA; 65]),
             payer_auth: Bytes::from(vec![0xBB; 65]),
         };
@@ -498,7 +502,7 @@ mod evm_integration {
     fn simple_tx(from: Address) -> TxEip8130 {
         TxEip8130 {
             chain_id: 8453,
-            from,
+            from: Some(from),
             nonce_key: U256::ZERO,
             nonce_sequence: 0,
             expiry: 0,
@@ -510,7 +514,7 @@ mod evm_integration {
                 to: Address::repeat_byte(0xBB),
                 data: Bytes::from_static(&[0x01, 0x02]),
             }]],
-            payer: Address::ZERO,
+            payer: None,
             sender_auth: Bytes::from(vec![0u8; 65]),
             payer_auth: Bytes::default(),
         }
@@ -567,7 +571,7 @@ mod evm_integration {
             ],
             ..simple_tx(Address::repeat_byte(0xAA))
         };
-        let calls = build_execution_calls(&tx, tx.from);
+        let calls = build_execution_calls(&tx, tx.from.unwrap_or(Address::ZERO));
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[1].len(), 2);
     }

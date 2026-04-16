@@ -14,6 +14,7 @@ use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount, root::state_root_unhashed};
 use base_alloy_chains::BaseUpgrade;
 use base_alloy_consensus::{BaseBlock, OpTxEnvelope};
 use base_alloy_rpc_types_engine::{OpExecutionPayload, OpNetworkPayloadEnvelope, PayloadHash};
+use base_consensus_derive::UpgradeTransactions;
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_execution_chainspec::OpChainSpecBuilder;
 use base_execution_evm::OpEvmConfig;
@@ -246,8 +247,13 @@ impl SharedBlockHashRegistry {
 /// Each block contains:
 /// - A correct L1-info deposit transaction (type `0x7E`) as the first
 ///   transaction, built from the actual L1 block at the current epoch.
-/// - A configurable number of signed EIP-1559 user transactions from the
-///   test account ([`TEST_ACCOUNT_KEY`]).
+/// - Any caller-supplied deposit transactions, inserted after the L1-info
+///   deposit.
+/// - Any hardfork upgrade deposits scheduled for the transition into the new
+///   L2 timestamp, inserted after deposit transactions and before
+///   non-deposit transactions.
+/// - Remaining caller-supplied transactions, typically signed EIP-1559 user
+///   transactions from the test account ([`TEST_ACCOUNT_KEY`]).
 ///
 /// Epoch selection mirrors the real sequencer: the epoch advances to the next
 /// L1 block once that block's timestamp is ≤ the new L2 block's timestamp,
@@ -413,8 +419,9 @@ impl L2Sequencer {
 
     /// Build the next L2 block and advance the internal head.
     ///
-    /// Returns a fully-formed [`BaseBlock`] containing the L1-info deposit and
-    /// any configured user transactions, with a real state root and block hash.
+    /// Returns a fully-formed [`BaseBlock`] containing the canonical system
+    /// transaction prefix plus the caller-supplied transactions, with a real
+    /// state root and block hash.
     ///
     /// # Panics
     ///
@@ -441,7 +448,6 @@ impl L2Sequencer {
         &mut self,
         transactions: Vec<OpTxEnvelope>,
     ) -> Result<BaseBlock, L2SequencerError> {
-        let mut transactions = transactions;
         let next_number = self.head.block_info.number + 1;
         let next_timestamp = self.head.block_info.timestamp + self.rollup_config.block_time;
         let parent_hash = self.head.block_info.hash;
@@ -485,7 +491,37 @@ impl L2Sequencer {
             next_timestamp,
         )?;
 
-        transactions.insert(0, OpTxEnvelope::Deposit(deposit_tx));
+        let upgrade_transactions = UpgradeTransactions::for_transition(
+            &self.rollup_config,
+            self.head.block_info.timestamp,
+            next_timestamp,
+        )
+        .into_iter()
+        .map(|raw| {
+            OpTxEnvelope::decode_2718(&mut raw.as_ref())
+                .map_err(|e| L2SequencerError::Evm(format!("upgrade tx decode: {e}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+        let mut deposit_transactions = Vec::new();
+        let mut non_deposit_transactions = Vec::new();
+        for tx in transactions {
+            if tx.is_deposit() {
+                deposit_transactions.push(tx);
+            } else {
+                non_deposit_transactions.push(tx);
+            }
+        }
+
+        let mut transactions = Vec::with_capacity(
+            1 + deposit_transactions.len()
+                + upgrade_transactions.len()
+                + non_deposit_transactions.len(),
+        );
+        transactions.push(OpTxEnvelope::Deposit(deposit_tx));
+        transactions.extend(deposit_transactions);
+        transactions.extend(upgrade_transactions);
+        transactions.extend(non_deposit_transactions);
 
         // Execute transactions against the in-memory EVM.
         let (state_root, gas_used) = self.executor.execute_transactions(

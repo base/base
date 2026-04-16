@@ -404,7 +404,6 @@ async fn jovian_derivation_crosses_activation_boundary() {
     let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
     let mut builder = h.create_l2_sequencer(l1_chain);
 
-    let mut block_hashes = [Default::default(); 5];
     let mut batcher = Batcher::new(ActionL2Source::new(), &h.rollup_config, batcher_cfg.clone());
     for i in 1..=4u64 {
         let block = if i == 3 {
@@ -413,7 +412,6 @@ async fn jovian_derivation_crosses_activation_boundary() {
         } else {
             builder.build_next_block_with_single_transaction()
         };
-        block_hashes[i as usize] = block.header.hash_slow();
         batcher.push_block(block);
         batcher.advance(&mut h.l1).await;
     }
@@ -422,14 +420,6 @@ async fn jovian_derivation_crosses_activation_boundary() {
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
-    // The Jovian activation block (block 3) has upgrade deposit transactions
-    // injected by the derivation pipeline that the sequencer did not execute.
-    // These contract deployments change the EVM state root, causing a permanent
-    // EVM state divergence from the sequencer for all subsequent blocks. Clear
-    // the sequencer-registered state roots for blocks 3 and 4 so the node
-    // skips state-root validation for them.
-    node.register_block_hash(3, block_hashes[3]);
-    node.register_block_hash(4, block_hashes[4]);
     node.initialize().await;
 
     for i in 1..=4u64 {

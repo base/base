@@ -13,7 +13,7 @@ extern crate alloc;
 extern crate tracing;
 
 mod attributes;
-pub use attributes::StatefulAttributesBuilder;
+pub use attributes::{StatefulAttributesBuilder, UpgradeTransactions};
 
 mod errors;
 pub use errors::{

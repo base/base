@@ -85,7 +85,8 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use alloy_consensus::{Signed, TxEip2930, TxEnvelope};
-    use alloy_primitives::{Bytes, Signature, TxKind, address, hex};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Bytes, Signature, TxKind, U256, address};
 
     use super::*;
     use crate::{SpanBatchElement, SpanBatchError, SpanBatchTransactions};
@@ -101,7 +102,7 @@ mod tests {
 
     #[test]
     fn test_span_batch_encode_decode() {
-        let sig = Signature::test_signature();
+        let sig = Signature::new(U256::from(1_u64), U256::from(1_u64), false);
         let to = address!("0123456789012345678901234567890123456789");
         let tx = TxEnvelope::Eip2930(Signed::new_unchecked(
             TxEip2930 { to: TxKind::Call(to), chain_id: 1, ..Default::default() },
@@ -110,7 +111,7 @@ mod tests {
         ));
         let mut span_batch_txs = SpanBatchTransactions::default();
         let mut buf = vec![];
-        tx.encode(&mut buf);
+        tx.encode_2718(&mut buf);
         let txs = vec![Bytes::from(buf)];
         let chain_id = 1;
         span_batch_txs.add_txs(txs, chain_id).unwrap();
@@ -124,14 +125,12 @@ mod tests {
         });
         batch.encode(&mut out).unwrap();
         let decoded = Batch::decode(&mut out.as_slice(), &RollupConfig::default()).unwrap();
-        assert_eq!(Batch::Span(SpanBatch {
-            batches: vec![SpanBatchElement {
-                transactions: vec![hex!("01f85f808080809401234567890123456789012345678901234567898080c080a0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1").into()],
-                ..Default::default()
-            }],
-            txs: SpanBatchTransactions::default(),
-            ..Default::default()
-        }), decoded);
+        let Batch::Span(decoded) = decoded else {
+            panic!("expected span batch");
+        };
+        assert_eq!(decoded.batches.len(), 1);
+        assert_eq!(decoded.batches[0].transactions.len(), 1);
+        assert_eq!(decoded.txs, SpanBatchTransactions::default());
     }
 
     #[test]

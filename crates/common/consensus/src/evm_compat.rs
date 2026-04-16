@@ -8,8 +8,9 @@ use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use base_revm::{
     DepositTransactionParts, Eip8130AuthorizerValidation, Eip8130Call, Eip8130CodePlacement,
-    Eip8130ConfigLog, Eip8130ConfigOp, Eip8130Parts, Eip8130SequenceUpdate, Eip8130StorageWrite,
-    Eip8130VerifyCall, OpTransaction, custom_verifier_gas_cap,
+    Eip8130ConfigLog, Eip8130ConfigOp, Eip8130DelegateNativeValidation, Eip8130Parts,
+    Eip8130SequenceUpdate, Eip8130StorageWrite, Eip8130VerifyCall, OpTransaction,
+    custom_verifier_gas_cap,
 };
 use revm::context::TxEnv;
 
@@ -24,8 +25,8 @@ use crate::{
 };
 #[cfg(feature = "native-verifier")]
 use crate::{
-    NativeVerifier, NativeVerifyResult, ParsedSenderAuth, VerifierKind, parse_sender_auth,
-    try_native_verify,
+    NativeVerifier, NativeVerifyResult, ParsedSenderAuth, VerifierKind, parse_delegate_auth,
+    parse_sender_auth, try_native_verify,
 };
 
 #[cfg(feature = "native-verifier")]
@@ -116,6 +117,55 @@ fn derive_payer_owner_id(tx: &TxEip8130) -> B256 {
 #[cfg(not(feature = "native-verifier"))]
 fn derive_payer_owner_id(_tx: &TxEip8130) -> B256 {
     B256::ZERO
+}
+
+#[cfg(feature = "native-verifier")]
+fn derive_delegate_native_validation(
+    auth: &[u8],
+    sig_hash: B256,
+) -> Option<Eip8130DelegateNativeValidation> {
+    let parsed = parse_delegate_auth(auth)?;
+
+    let delegate_data = Bytes::copy_from_slice(&auth[20..]);
+    if !matches!(
+        try_native_verify(DELEGATE_VERIFIER_ADDRESS, &delegate_data, sig_hash),
+        NativeVerifyResult::Verified(_)
+    ) {
+        return None;
+    }
+
+    let delegate_account = parsed.delegate_account;
+    let nested_verifier = parsed.nested_verifier;
+    if nested_verifier == DELEGATE_VERIFIER_ADDRESS {
+        return None;
+    }
+
+    let nested_data = Bytes::copy_from_slice(parsed.nested_data);
+    let (verifier, owner_id) = if nested_verifier == Address::ZERO {
+        let owner_id = match try_native_verify(K1_VERIFIER_ADDRESS, &nested_data, sig_hash) {
+            NativeVerifyResult::Verified(owner_id) => owner_id,
+            NativeVerifyResult::Invalid(_) | NativeVerifyResult::Unsupported => return None,
+        };
+        (K1_VERIFIER_ADDRESS, owner_id)
+    } else if NativeVerifier::from_address(nested_verifier).is_some() {
+        let owner_id = match try_native_verify(nested_verifier, &nested_data, sig_hash) {
+            NativeVerifyResult::Verified(owner_id) => owner_id,
+            NativeVerifyResult::Invalid(_) | NativeVerifyResult::Unsupported => return None,
+        };
+        (nested_verifier, owner_id)
+    } else {
+        return None;
+    };
+
+    Some(Eip8130DelegateNativeValidation { account: delegate_account, verifier, owner_id })
+}
+
+#[cfg(not(feature = "native-verifier"))]
+fn derive_delegate_native_validation(
+    _auth: &[u8],
+    _sig_hash: B256,
+) -> Option<Eip8130DelegateNativeValidation> {
+    None
 }
 
 /// Builds a [`Eip8130VerifyCall`] for verifier auth that must run in-EVM.
@@ -321,6 +371,14 @@ pub fn build_eip8130_parts_with_costs(
     let has_create_entry =
         tx.account_changes.iter().any(|e| matches!(e, AccountChangeEntry::Create(_)));
     let total_account_change_units = account_change_units(tx);
+    let total_config_ops = tx
+        .account_changes
+        .iter()
+        .filter_map(|entry| match entry {
+            AccountChangeEntry::ConfigChange(cc) => Some(cc.owner_changes.len()),
+            _ => None,
+        })
+        .sum();
 
     let mut pre_writes = Vec::new();
     let mut config_writes = Vec::new();
@@ -419,10 +477,22 @@ pub fn build_eip8130_parts_with_costs(
     } else {
         None
     };
+    let sender_delegate_native_validation = if !tx.is_eoa() {
+        let sig_hash = sender_signature_hash(tx);
+        derive_delegate_native_validation(&tx.sender_auth, sig_hash)
+    } else {
+        None
+    };
 
     let payer_verify_call = if !tx.is_self_pay() && !tx.payer_auth.is_empty() {
         let sig_hash = payer_signature_hash(tx);
         build_verify_call(&tx.payer_auth, sig_hash, payer, OwnerScope::PAYER, true)
+    } else {
+        None
+    };
+    let payer_delegate_native_validation = if !tx.is_self_pay() && !tx.payer_auth.is_empty() {
+        let sig_hash = payer_signature_hash(tx);
+        derive_delegate_native_validation(&tx.payer_auth, sig_hash)
     } else {
         None
     };
@@ -454,16 +524,14 @@ pub fn build_eip8130_parts_with_costs(
 
     let sender_verifier = if tx.is_eoa() {
         K1_VERIFIER_ADDRESS
-    } else if tx.sender_auth.is_empty() {
-        Address::ZERO
     } else {
-        Address::from_slice(&tx.sender_auth[..20])
+        auth_verifier_kind(&tx.sender_auth).map_or(Address::ZERO, |kind| kind.address())
     };
 
-    let payer_verifier = if tx.is_self_pay() || tx.payer_auth.is_empty() {
+    let payer_verifier = if tx.is_self_pay() {
         Address::ZERO
     } else {
-        Address::from_slice(&tx.payer_auth[..20])
+        auth_verifier_kind(&tx.payer_auth).map_or(Address::ZERO, |kind| kind.address())
     };
 
     Eip8130Parts {
@@ -477,6 +545,7 @@ pub fn build_eip8130_parts_with_costs(
         has_create_entry,
         delegation_target,
         account_change_units: total_account_change_units,
+        total_config_ops,
         verification_gas,
         aa_intrinsic_gas,
         payer_intrinsic_gas,
@@ -491,6 +560,8 @@ pub fn build_eip8130_parts_with_costs(
         call_phases,
         sender_verify_call,
         payer_verify_call,
+        sender_delegate_native_validation,
+        payer_delegate_native_validation,
         authorizer_validations,
         account_creation_logs,
         config_change_logs,
@@ -536,6 +607,7 @@ impl FromRecoveredTx<OpTxEnvelope> for TxEnv {
                         .saturating_add(verifier_cap)
                         .saturating_add(inner.gas_limit),
                     nonce: inner.nonce_sequence,
+                    chain_id: Some(inner.chain_id),
                     kind: revm::primitives::TxKind::Call(caller),
                     value: alloy_primitives::U256::ZERO,
                     data: alloy_primitives::Bytes::default(),
@@ -677,7 +749,7 @@ mod tests {
 
         let mut tx = TxEip8130 {
             chain_id: 8453,
-            from: sender,
+            from: Some(sender),
             nonce_key: U256::ZERO,
             nonce_sequence: 7,
             max_priority_fee_per_gas: 1,
@@ -703,7 +775,7 @@ mod tests {
     #[test]
     fn derive_owner_id_unsupported_verifier_returns_zero() {
         let tx = TxEip8130 {
-            from: Address::repeat_byte(0x11),
+            from: Some(Address::repeat_byte(0x11)),
             sender_auth: Bytes::copy_from_slice(Address::repeat_byte(0x22).as_slice()),
             ..Default::default()
         };
@@ -712,11 +784,47 @@ mod tests {
     }
 
     #[test]
+    fn build_parts_populates_delegate_native_validation() {
+        let signing_key = SigningKey::random(&mut OsRng);
+        let sender = Address::repeat_byte(0x11);
+        let delegate_account = Address::repeat_byte(0x22);
+
+        let mut tx = TxEip8130 {
+            chain_id: 8453,
+            from: Some(sender),
+            nonce_key: U256::ZERO,
+            nonce_sequence: 7,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            gas_limit: 21_000,
+            ..Default::default()
+        };
+        let sig_hash = sender_signature_hash(&tx);
+        let (signature, recovery_id) = signing_key.sign_prehash(sig_hash.as_slice()).unwrap();
+
+        let mut sender_auth = Vec::new();
+        sender_auth.extend_from_slice(DELEGATE_VERIFIER_ADDRESS.as_slice());
+        sender_auth.extend_from_slice(delegate_account.as_slice());
+        sender_auth.extend_from_slice(K1_VERIFIER_ADDRESS.as_slice());
+        sender_auth.extend_from_slice(&signature.to_bytes());
+        sender_auth.push(recovery_id.to_byte());
+        tx.sender_auth = Bytes::from(sender_auth);
+
+        let parts = build_eip8130_parts_with_costs(&tx, sender, &VerifierGasCosts::BASE_V1);
+        let delegate = parts
+            .sender_delegate_native_validation
+            .expect("delegate metadata should be populated for native nested verifier");
+        assert_eq!(delegate.account, delegate_account);
+        assert_eq!(delegate.verifier, K1_VERIFIER_ADDRESS);
+        assert_ne!(delegate.owner_id, B256::ZERO);
+    }
+
+    #[test]
     fn build_eip8130_parts_preserves_native_authorizer_verifier() {
         let sender = Address::repeat_byte(0x11);
         let mut tx = TxEip8130 {
             chain_id: 8453,
-            from: sender,
+            from: Some(sender),
             nonce_key: U256::ZERO,
             nonce_sequence: 1,
             max_priority_fee_per_gas: 1,
@@ -749,7 +857,7 @@ mod tests {
         let custom_verifier = Address::repeat_byte(0x77);
         let mut tx = TxEip8130 {
             chain_id: 8453,
-            from: sender,
+            from: Some(sender),
             nonce_key: U256::ZERO,
             nonce_sequence: 1,
             max_priority_fee_per_gas: 1,

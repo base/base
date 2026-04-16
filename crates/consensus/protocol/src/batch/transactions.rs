@@ -392,7 +392,7 @@ mod tests {
 
     use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxEip7702, TxEnvelope};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Signature, TxKind, address};
+    use alloy_primitives::{Signature, TxKind, U256, address};
     use base_alloy_consensus::TxEip8130;
 
     use super::*;
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_span_batch_transactions_add_eip2930_tx_wrong_chain_id() {
-        let sig = Signature::test_signature();
+        let sig = Signature::new(U256::from(1_u64), U256::from(1_u64), false);
         let to = address!("0123456789012345678901234567890123456789");
         let tx = TxEnvelope::Eip2930(Signed::new_unchecked(
             TxEip2930 { to: TxKind::Call(to), ..Default::default() },
@@ -448,7 +448,7 @@ mod tests {
         ));
         let mut span_batch_txs = SpanBatchTransactions::default();
         let mut buf = vec![];
-        tx.encode(&mut buf);
+        tx.encode_2718(&mut buf);
         let txs = vec![Bytes::from(buf)];
         let chain_id = 1;
         let err = span_batch_txs.add_txs(txs, chain_id).unwrap_err();
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn test_span_batch_transactions_add_eip2930_tx() {
-        let sig = Signature::test_signature();
+        let sig = Signature::new(U256::from(1_u64), U256::from(1_u64), false);
         let to = address!("0123456789012345678901234567890123456789");
         let tx = TxEnvelope::Eip2930(Signed::new_unchecked(
             TxEip2930 { to: TxKind::Call(to), chain_id: 1, ..Default::default() },
@@ -466,7 +466,7 @@ mod tests {
         ));
         let mut span_batch_txs = SpanBatchTransactions::default();
         let mut buf = vec![];
-        tx.encode(&mut buf);
+        tx.encode_2718(&mut buf);
         let txs = vec![Bytes::from(buf)];
         let chain_id = 1;
         let result = span_batch_txs.add_txs(txs, chain_id);
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_span_batch_transactions_add_eip1559_tx() {
-        let sig = Signature::test_signature();
+        let sig = Signature::new(U256::from(1_u64), U256::from(1_u64), false);
         let to = address!("0123456789012345678901234567890123456789");
         let tx = TxEnvelope::Eip1559(Signed::new_unchecked(
             TxEip1559 { to: TxKind::Call(to), chain_id: 1, ..Default::default() },
@@ -485,7 +485,7 @@ mod tests {
         ));
         let mut span_batch_txs = SpanBatchTransactions::default();
         let mut buf = vec![];
-        tx.encode(&mut buf);
+        tx.encode_2718(&mut buf);
         let txs = vec![Bytes::from(buf)];
         let chain_id = 1;
         let result = span_batch_txs.add_txs(txs, chain_id);
@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn test_span_batch_transactions_add_eip7702_tx() {
-        let sig = Signature::test_signature();
+        let sig = Signature::new(U256::from(1_u64), U256::from(1_u64), false);
         let to = address!("0123456789012345678901234567890123456789");
         let tx = TxEnvelope::Eip7702(Signed::new_unchecked(
             TxEip7702 { to, chain_id: 1, ..Default::default() },
@@ -504,7 +504,7 @@ mod tests {
         ));
         let mut span_batch_txs = SpanBatchTransactions::default();
         let mut buf = vec![];
-        tx.encode(&mut buf);
+        tx.encode_2718(&mut buf);
         let txs = vec![Bytes::from(buf)];
         let chain_id = 1;
         let result = span_batch_txs.add_txs(txs, chain_id);
@@ -516,7 +516,7 @@ mod tests {
     fn test_span_batch_transactions_add_eip8130_tx() {
         let tx = TxEip8130 {
             chain_id: 1,
-            from: address!("0123456789012345678901234567890123456789"),
+            from: Some(address!("0123456789012345678901234567890123456789")),
             nonce_sequence: 7,
             max_fee_per_gas: 11,
             max_priority_fee_per_gas: 3,
@@ -537,7 +537,7 @@ mod tests {
     fn test_span_batch_transactions_roundtrip_eip8130_tx() {
         let tx = TxEip8130 {
             chain_id: 1,
-            from: address!("0123456789012345678901234567890123456789"),
+            from: Some(address!("0123456789012345678901234567890123456789")),
             nonce_key: U256::from(9_u64),
             nonce_sequence: 7,
             expiry: 1234,

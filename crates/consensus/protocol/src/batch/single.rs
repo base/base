@@ -456,7 +456,7 @@ mod tests {
     fn eip_8130_tx() -> TxEip8130 {
         TxEip8130 {
             chain_id: 8453u64,
-            from: Address::repeat_byte(0x11),
+            from: Some(Address::repeat_byte(0x11)),
             nonce_sequence: 2,
             max_fee_per_gas: 3,
             max_priority_fee_per_gas: 4,

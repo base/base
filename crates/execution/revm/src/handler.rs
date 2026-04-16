@@ -369,6 +369,30 @@ where
     Ok(())
 }
 
+/// Re-validates nested owner-config state for native delegate auth.
+fn validate_delegate_native_owner<EVM, ERROR>(
+    evm: &mut EVM,
+    sender: Address,
+    delegate: &crate::Eip8130DelegateNativeValidation,
+    required_scope: u8,
+    pending_sender_owner_overrides: &HashMap<U256, PendingOwnerState>,
+) -> Result<(), ERROR>
+where
+    EVM: EvmTr<Context: OpContextTr>,
+    ERROR: EvmTrError<EVM> + From<OpTransactionError>,
+{
+    let pending_overrides =
+        if delegate.account == sender { Some(pending_sender_owner_overrides) } else { None };
+    validate_owner_config::<EVM, ERROR>(
+        evm,
+        delegate.account,
+        U256::from_be_bytes(delegate.owner_id.0),
+        delegate.verifier,
+        required_scope,
+        pending_overrides,
+    )
+}
+
 /// Re-validates config-change preconditions at inclusion time.
 ///
 /// This ensures config updates are still valid even when state changed after
@@ -556,17 +580,6 @@ where
     let mut pending_owners: HashMap<U256, PendingOwnerState> = HashMap::new();
 
     for validation in &eip8130.authorizer_validations {
-        // Placeholder entries (no auth payload) are used for empty/malformed
-        // config-change auth blobs and should be ignored here. Native-authorized
-        // entries also have `verify_call == None`, so we only skip the true
-        // placeholder shape.
-        if validation.verify_call.is_none()
-            && validation.owner_id == B256::ZERO
-            && validation.owner_changes.is_empty()
-        {
-            continue;
-        }
-
         let owner_id = if let Some(verify_call) = &validation.verify_call {
             // Custom verifier: STATICCALL to get owner_id.
             run_custom_verifier_staticcall::<EVM, ERROR, FRAME>(
@@ -691,6 +704,10 @@ where
                 .into());
             }
 
+            // Keep canonical env checks (including chain-id checks) aligned
+            // with non-AA transaction validation.
+            self.mainnet.validate_env(evm)?;
+
             let ctx = evm.ctx();
 
             if !ctx.cfg().is_base_fee_check_disabled() {
@@ -748,6 +765,17 @@ where
                     format!(
                         "EIP-8130: too many account changes ({total_account_changes} > {})",
                         crate::constants::MAX_ACCOUNT_CHANGES_PER_TX
+                    )
+                    .into(),
+                ))
+                .into());
+            }
+            let total_config_ops = ctx.tx().eip8130_parts().total_config_ops;
+            if total_config_ops > crate::constants::MAX_CONFIG_OPS_PER_TX {
+                return Err(OpTransactionError::Base(InvalidTransaction::Str(
+                    format!(
+                        "EIP-8130: too many config ops ({total_config_ops} > {})",
+                        crate::constants::MAX_CONFIG_OPS_PER_TX
                     )
                     .into(),
                 ))
@@ -1250,6 +1278,27 @@ where
                     eip8130.payer_owner_id,
                     crate::constants::OWNER_SCOPE_PAYER,
                     payer_pending_overrides,
+                )?;
+            }
+
+            // Native delegate auth also depends on nested owner state on the
+            // delegate account. Re-check it at inclusion time.
+            if let Some(delegate) = &eip8130.sender_delegate_native_validation {
+                validate_delegate_native_owner::<EVM, ERROR>(
+                    evm,
+                    sender,
+                    delegate,
+                    crate::constants::OWNER_SCOPE_SENDER,
+                    &pending_sender_owner_overrides,
+                )?;
+            }
+            if let Some(delegate) = &eip8130.payer_delegate_native_validation {
+                validate_delegate_native_owner::<EVM, ERROR>(
+                    evm,
+                    sender,
+                    delegate,
+                    crate::constants::OWNER_SCOPE_PAYER,
+                    &pending_sender_owner_overrides,
                 )?;
             }
         }
