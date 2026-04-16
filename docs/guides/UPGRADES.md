@@ -286,7 +286,7 @@ Skip this section if the upgrade only affects protocol-level behavior (batch dec
 pub enum OpSpecId {
     // ... existing variants ...
     JOVIAN,
-    BASE_V1,  // <-- add
+    AZUL,  // <-- add
     OSAKA,
 }
 ```
@@ -294,15 +294,15 @@ pub enum OpSpecId {
 Extend `into_eth_spec()` — if no new Ethereum EL upgrade is paired, reuse the previous mapping:
 
 ```rust
-Self::ISTHMUS | Self::JOVIAN | Self::BASE_V1 => SpecId::PRAGUE,
+Self::ISTHMUS | Self::JOVIAN | Self::AZUL => SpecId::PRAGUE,
 ```
 
 Add a `#[strum(serialize = "...")]` attribute on the new variant with its canonical string name:
 
 ```rust
-/// Base V1 spec id.
-#[strum(serialize = "V1")]
-BASE_V1,
+/// Base Azul spec id.
+#[strum(serialize = "Azul")]
+AZUL,
 ```
 
 `FromStr` and `From<OpSpecId> for &'static str` are derived automatically.
@@ -317,10 +317,10 @@ If the upgrade introduces new precompiles, add a new `pub fn base_v1()` method o
 
 ```rust
 // Reuse previous precompile set
-OpSpecId::JOVIAN | OpSpecId::BASE_V1 => Self::jovian(),
+OpSpecId::JOVIAN | OpSpecId::AZUL => Self::jovian(),
 
 // Or add a new set
-OpSpecId::BASE_V1 => Self::base_v1(),
+OpSpecId::AZUL => Self::base_v1(),
 ```
 
 ---
@@ -334,7 +334,7 @@ Add the new upgrade as the first check (newest upgrade wins):
 ```rust
 pub fn spec_by_timestamp_after_bedrock(chain_spec: impl BaseUpgrades, timestamp: u64) -> OpSpecId {
     if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
-        OpSpecId::BASE_V1
+        OpSpecId::AZUL
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
         OpSpecId::JOVIAN
     } // ... remaining checks unchanged
@@ -348,7 +348,7 @@ Same pattern in the `#[cfg(feature = "revm")] impl RollupConfig` block:
 ```rust
 pub fn spec_id(&self, timestamp: u64) -> base_revm::OpSpecId {
     if self.is_base_azul_active(timestamp) {
-        base_revm::OpSpecId::BASE_V1
+        base_revm::OpSpecId::AZUL
     } else if self.is_jovian_active(timestamp) {
         base_revm::OpSpecId::JOVIAN
     } // ... remaining checks unchanged

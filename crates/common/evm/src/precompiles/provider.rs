@@ -34,7 +34,7 @@ impl BasePrecompiles {
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => Self::granite(),
             OpSpecId::ISTHMUS => Self::isthmus(),
             OpSpecId::JOVIAN => Self::jovian(),
-            OpSpecId::BASE_V1 => Self::base_v1(),
+            OpSpecId::AZUL => Self::base_v1(),
         };
 
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
@@ -113,13 +113,13 @@ impl BasePrecompiles {
         })
     }
 
-    /// Returns precompiles for the Base V1 spec.
+    /// Returns precompiles for the Base Azul spec.
     pub fn base_v1() -> &'static Precompiles {
         static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
         INSTANCE.get_or_init(|| {
             let mut precompiles = Self::jovian().clone();
 
-            // Base V1 adopts Osaka pricing and bounds for MODEXP and P256VERIFY.
+            // Base Azul adopts Osaka pricing and bounds for MODEXP and P256VERIFY.
             precompiles.extend([modexp::OSAKA, secp256r1::P256VERIFY_OSAKA]);
 
             precompiles
@@ -249,34 +249,33 @@ mod tests {
     }
 
     #[test]
-    fn test_get_base_v1_precompile_with_bad_input_len() {
-        assert_jovian_input_limits(OpSpecId::BASE_V1);
+    fn test_get_azul_precompile_with_bad_input_len() {
+        assert_jovian_input_limits(OpSpecId::AZUL);
     }
 
     #[test]
-    fn test_get_base_v1_precompile_with_osaka_rules() {
+    fn test_get_azul_precompile_with_osaka_rules() {
         let jovian_precompiles = BasePrecompiles::new_with_spec(OpSpecId::JOVIAN);
-        let base_v1_precompiles = BasePrecompiles::new_with_spec(OpSpecId::BASE_V1);
+        let azul_precompiles = BasePrecompiles::new_with_spec(OpSpecId::AZUL);
 
         let jovian_p256 =
             jovian_precompiles.precompiles().get(secp256r1::P256VERIFY.address()).unwrap();
-        let base_v1_p256 =
-            base_v1_precompiles.precompiles().get(secp256r1::P256VERIFY_OSAKA.address()).unwrap();
+        let azul_p256 =
+            azul_precompiles.precompiles().get(secp256r1::P256VERIFY_OSAKA.address()).unwrap();
 
         assert!(matches!(
             jovian_p256.execute(&[], 5_000),
             Ok(output) if output.gas_used == secp256r1::P256VERIFY_BASE_GAS_FEE
         ));
-        assert!(matches!(base_v1_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)));
+        assert!(matches!(azul_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)));
 
         let jovian_modexp = jovian_precompiles.precompiles().get(modexp::BERLIN.address()).unwrap();
-        let base_v1_modexp =
-            base_v1_precompiles.precompiles().get(modexp::OSAKA.address()).unwrap();
+        let azul_modexp = azul_precompiles.precompiles().get(modexp::OSAKA.address()).unwrap();
         let oversized_input = oversized_modexp_input();
 
         assert!(jovian_modexp.execute(&oversized_input, u64::MAX).is_ok());
         assert!(matches!(
-            base_v1_modexp.execute(&oversized_input, u64::MAX),
+            azul_modexp.execute(&oversized_input, u64::MAX),
             Err(PrecompileError::ModexpEip7823LimitSize)
         ));
     }

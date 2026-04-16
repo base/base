@@ -52,7 +52,7 @@ where
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => BasePrecompiles::granite(),
             OpSpecId::ISTHMUS => BasePrecompiles::isthmus(),
             OpSpecId::JOVIAN => BasePrecompiles::jovian(),
-            OpSpecId::BASE_V1 => BasePrecompiles::base_v1(),
+            OpSpecId::AZUL => BasePrecompiles::base_v1(),
         };
 
         let accelerated_precompiles = match spec {
@@ -62,7 +62,7 @@ where
             OpSpecId::ECOTONE | OpSpecId::FJORD => accelerated_ecotone::<H, O>(),
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => accelerated_granite::<H, O>(),
             OpSpecId::ISTHMUS => accelerated_isthmus::<H, O>(),
-            OpSpecId::JOVIAN | OpSpecId::BASE_V1 => accelerated_jovian::<H, O>(),
+            OpSpecId::JOVIAN | OpSpecId::AZUL => accelerated_jovian::<H, O>(),
         };
 
         Self {
@@ -326,22 +326,22 @@ mod tests {
     }
 
     #[test]
-    fn test_jovian_and_base_v1_use_different_precompile_sets() {
+    fn test_jovian_and_azul_use_different_precompile_sets() {
         let (hw, or_) = make_hw_or();
         let jovian = FpvmPrecompiles::new_with_spec(OpSpecId::JOVIAN, hw.clone(), or_.clone());
-        let base_v1 = FpvmPrecompiles::new_with_spec(OpSpecId::BASE_V1, hw, or_);
+        let azul = FpvmPrecompiles::new_with_spec(OpSpecId::AZUL, hw, or_);
 
         assert!(
-            !core::ptr::eq(jovian.precompiles(), base_v1.precompiles()),
-            "JOVIAN and BASE_V1 must resolve to different static precompile sets",
+            !core::ptr::eq(jovian.precompiles(), azul.precompiles()),
+            "JOVIAN and AZUL must resolve to different static precompile sets",
         );
     }
 
     #[test]
-    fn test_base_v1_modexp_enforces_eip7823_size_limit() {
+    fn test_azul_modexp_enforces_eip7823_size_limit() {
         let (hw, or_) = make_hw_or();
         let jovian = FpvmPrecompiles::new_with_spec(OpSpecId::JOVIAN, hw.clone(), or_.clone());
-        let base_v1 = FpvmPrecompiles::new_with_spec(OpSpecId::BASE_V1, hw, or_);
+        let azul = FpvmPrecompiles::new_with_spec(OpSpecId::AZUL, hw, or_);
 
         let modexp_berlin = modexp::BERLIN;
         let addr = modexp_berlin.address();
@@ -352,8 +352,8 @@ mod tests {
             "JOVIAN MODEXP must accept oversized input (Berlin pricing, no EIP-7823 limit)",
         );
         assert!(
-            base_v1.precompiles().get(addr).unwrap().execute(&input, u64::MAX).is_err(),
-            "BASE_V1 MODEXP must reject oversized input (Osaka pricing, EIP-7823 limit)",
+            azul.precompiles().get(addr).unwrap().execute(&input, u64::MAX).is_err(),
+            "AZUL MODEXP must reject oversized input (Osaka pricing, EIP-7823 limit)",
         );
     }
 }

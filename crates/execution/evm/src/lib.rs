@@ -365,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn test_evm_env_uses_base_v1_for_genesis_chain_spec() {
+    fn test_evm_env_uses_azul_for_genesis_chain_spec() {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(0.into())
@@ -376,7 +376,7 @@ mod tests {
         let evm_config = BaseEvmConfig::optimism(chain_spec);
         let header = Header { timestamp: 0, ..Default::default() };
         let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
-        assert_eq!(cfg_env.spec, OpSpecId::BASE_V1);
+        assert_eq!(cfg_env.spec, OpSpecId::AZUL);
     }
 
     #[test]

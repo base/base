@@ -654,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn test_base_v1_tx_gas_limit_cap_rejected() {
+    fn test_azul_tx_gas_limit_cap_rejected() {
         let ctx = Context::op()
             .with_tx(
                 OpTransaction::builder()
@@ -662,7 +662,7 @@ mod tests {
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BASE_V1));
+            .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
         let mut evm = ctx.build_op();
         let handler =
             OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -671,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn test_base_v1_tx_gas_limit_at_cap_ok() {
+    fn test_azul_tx_gas_limit_at_cap_ok() {
         let ctx = Context::op()
             .with_tx(
                 OpTransaction::builder()
@@ -679,7 +679,7 @@ mod tests {
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BASE_V1));
+            .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
         let mut evm = ctx.build_op();
         let handler =
             OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -705,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn test_base_v1_deposit_skips_gas_limit_cap() {
+    fn test_azul_deposit_skips_gas_limit_cap() {
         let ctx = Context::op()
             .with_tx(
                 OpTransaction::builder()
@@ -713,7 +713,7 @@ mod tests {
                     .source_hash(B256::from([1u8; 32]))
                     .build_fill(),
             )
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BASE_V1));
+            .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
         let mut evm = ctx.build_op();
         let handler =
             OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -722,8 +722,8 @@ mod tests {
     }
 
     #[test]
-    fn test_osaka_opcodes_activated_base_v1() {
-        assert_eq!(OpSpecId::BASE_V1.into_eth_spec(), SpecId::OSAKA);
+    fn test_osaka_opcodes_activated_azul() {
+        assert_eq!(OpSpecId::AZUL.into_eth_spec(), SpecId::OSAKA);
     }
 
     /// Runs CLZ bytecode (`PUSH1 0x80, CLZ, PUSH1 0x00, MSTORE, PUSH1 0x20, PUSH1 0x00, RETURN`)
@@ -768,9 +768,9 @@ mod tests {
     }
 
     #[test]
-    fn test_clz_opcode_base_v1() {
-        let result = run_clz_bytecode(OpSpecId::BASE_V1);
-        assert!(result.is_success(), "CLZ opcode should execute successfully on BASE_V1");
+    fn test_clz_opcode_azul() {
+        let result = run_clz_bytecode(OpSpecId::AZUL);
+        assert!(result.is_success(), "CLZ opcode should execute successfully on AZUL");
 
         let output = result.output().unwrap();
         let expected = U256::from(248);

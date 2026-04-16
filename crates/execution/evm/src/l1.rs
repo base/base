@@ -303,7 +303,7 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
 /// `base-execution-upgrades`.
 fn op_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> OpSpecId {
     if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
-        OpSpecId::BASE_V1
+        OpSpecId::AZUL
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
         OpSpecId::JOVIAN
     } else if chain_spec.is_isthmus_active_at_timestamp(timestamp) {
