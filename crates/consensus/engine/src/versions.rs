@@ -95,7 +95,7 @@ impl EngineGetPayloadVersion {
     ///
     /// Uses the [`RollupConfig`] to check which hardfork is active at the given timestamp.
     pub fn from_cfg(cfg: &RollupConfig, timestamp: u64) -> Self {
-        if cfg.is_base_v1_active(timestamp) {
+        if cfg.is_base_azul_active(timestamp) {
             Self::V5
         } else if cfg.is_isthmus_active(timestamp) {
             Self::V4
@@ -119,7 +119,7 @@ mod tests {
             hardforks: HardForkConfig {
                 ecotone_time: Some(20),
                 jovian_time: Some(30),
-                base: HardforkConfig { v1: Some(40) },
+                base: HardforkConfig { azul: Some(40) },
                 ..Default::default()
             },
             ..Default::default()

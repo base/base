@@ -19,9 +19,9 @@ echo "L1 RPC URL: $L1_RPC_URL"
 echo "L1 Chain ID: $L1_CHAIN_ID"
 echo "L2 Chain ID: $L2_CHAIN_ID"
 if [ -n "$L2_BASE_V1_BLOCK" ]; then
-  echo "Base V1 activation block: $L2_BASE_V1_BLOCK"
+  echo "Base Azul activation block: $L2_BASE_V1_BLOCK"
 else
-  echo "Base V1 activation block: <unset>"
+  echo "Base Azul activation block: <unset>"
 fi
 echo "Output directory: $OUTPUT_DIR"
 
@@ -135,36 +135,36 @@ if [ -n "$L2_BASE_V1_BLOCK" ]; then
   L2_BASE_V1_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_V1_BLOCK))
 
   echo ""
-  echo "=== Configuring Base V1 Activation ==="
+  echo "=== Configuring Base Azul Activation ==="
   echo "L2 genesis time: $L2_GENESIS_TIME"
   echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base V1 activation block: $L2_BASE_V1_BLOCK"
-  echo "Derived Base V1 activation timestamp: $L2_BASE_V1_TIME"
+  echo "Base Azul activation block: $L2_BASE_V1_BLOCK"
+  echo "Derived Base Azul activation timestamp: $L2_BASE_V1_TIME"
 
   TMP_ROLLUP=$(mktemp)
   jq \
-    --argjson base_v1_time "$L2_BASE_V1_TIME" \
-    '.base = ((.base // {}) + {v1: $base_v1_time})' \
+    --argjson azul_time "$L2_BASE_V1_TIME" \
+    '.base = ((.base // {}) + {azul: $azul_time})' \
     "$OUTPUT_DIR/rollup.json" \
     >"$TMP_ROLLUP"
   mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
 
   TMP_GENESIS=$(mktemp)
   jq \
-    --argjson base_v1_time "$L2_BASE_V1_TIME" \
-    '.config.osakaTime = $base_v1_time
-    | .config.base = ((.config.base // {}) + {v1: $base_v1_time})' \
+    --argjson azul_time "$L2_BASE_V1_TIME" \
+    '.config.osakaTime = $azul_time
+    | .config.base = ((.config.base // {}) + {azul: $azul_time})' \
     "$OUTPUT_DIR/genesis.json" \
     >"$TMP_GENESIS"
   mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
 
-  echo "Patched Base V1 activation into rollup and genesis configs"
+  echo "Patched Base Azul activation into rollup and genesis configs"
 else
   echo ""
-  echo "=== Configuring Base V1 Activation ==="
+  echo "=== Configuring Base Azul Activation ==="
   echo "L2 genesis time: $L2_GENESIS_TIME"
   echo "L2 block time: $L2_BLOCK_TIME"
-  echo "Base V1 activation block is unset; leaving base.v1 and osakaTime unchanged"
+  echo "Base Azul activation block is unset; leaving base.azul and osakaTime unchanged"
 fi
 
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."

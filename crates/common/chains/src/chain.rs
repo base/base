@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::ops::Index;
 
 use BaseUpgrade::{
-    Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
+    Azul, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
 };
 // Production imports for upgrade implementations
 use EthereumHardfork::{
@@ -79,7 +79,7 @@ impl EthereumHardforks for ChainUpgrades {
             Shanghai if forks_len <= Canyon.idx() => ForkCondition::Never,
             Cancun if forks_len <= Ecotone.idx() => ForkCondition::Never,
             Prague if forks_len <= Isthmus.idx() => ForkCondition::Never,
-            Osaka if forks_len <= V1.idx() => ForkCondition::Never,
+            Osaka if forks_len <= Azul.idx() => ForkCondition::Never,
             _ => self[fork],
         }
     }
@@ -109,7 +109,7 @@ impl Index<BaseUpgrade> for ChainUpgrades {
             Holocene => &self.forks[Holocene.idx()].1,
             Isthmus => &self.forks[Isthmus.idx()].1,
             Jovian => &self.forks[Jovian.idx()].1,
-            V1 => &self.forks[V1.idx()].1,
+            Azul => &self.forks[Azul.idx()].1,
         }
     }
 }
@@ -132,7 +132,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
             Shanghai => &self[Canyon],
             Cancun => &self[Ecotone],
             Prague => &self[Isthmus],
-            Osaka => &self[V1],
+            Osaka => &self[Azul],
             _ => unreachable!(),
         }
     }
@@ -141,7 +141,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
 #[cfg(test)]
 mod tests {
     use BaseUpgrade::{
-        Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
+        Azul, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
     };
     use alloy_hardforks::EthereumHardfork;
 
@@ -188,8 +188,8 @@ mod tests {
             ForkCondition::Timestamp(ChainConfig::mainnet().jovian_timestamp)
         );
         assert_eq!(
-            base_mainnet_forks[V1],
-            ForkCondition::Timestamp(ChainConfig::mainnet().base_v1_timestamp.unwrap())
+            base_mainnet_forks[Azul],
+            ForkCondition::Timestamp(ChainConfig::mainnet().azul_timestamp.unwrap())
         );
     }
 
@@ -233,8 +233,8 @@ mod tests {
             ForkCondition::Timestamp(ChainConfig::sepolia().jovian_timestamp)
         );
         assert_eq!(
-            base_sepolia_forks[V1],
-            ForkCondition::Timestamp(ChainConfig::sepolia().base_v1_timestamp.unwrap())
+            base_sepolia_forks[Azul],
+            ForkCondition::Timestamp(ChainConfig::sepolia().azul_timestamp.unwrap())
         );
     }
 
@@ -270,38 +270,38 @@ mod tests {
     }
 
     #[test]
-    fn is_base_v1_active_at_timestamp() {
-        // V1 is scheduled on mainnet at 1777914000
+    fn is_base_azul_active_at_timestamp() {
+        // Azul is scheduled on mainnet at 1778695200
         let base_mainnet_forks = ChainUpgrades::mainnet();
-        assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(0));
-        assert!(!base_mainnet_forks.is_base_v1_active_at_timestamp(1_777_913_999));
-        assert!(base_mainnet_forks.is_base_v1_active_at_timestamp(1_777_914_000));
-        assert!(base_mainnet_forks.is_base_v1_active_at_timestamp(u64::MAX));
+        assert!(!base_mainnet_forks.is_base_azul_active_at_timestamp(0));
+        assert!(!base_mainnet_forks.is_base_azul_active_at_timestamp(1_778_695_199));
+        assert!(base_mainnet_forks.is_base_azul_active_at_timestamp(1_778_695_200));
+        assert!(base_mainnet_forks.is_base_azul_active_at_timestamp(u64::MAX));
 
-        // V1 is scheduled on sepolia at 1776708000
+        // Azul is scheduled on sepolia at 1776708000
         let base_sepolia_forks = ChainUpgrades::sepolia();
-        assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(0));
-        assert!(!base_sepolia_forks.is_base_v1_active_at_timestamp(1_776_707_999));
-        assert!(base_sepolia_forks.is_base_v1_active_at_timestamp(1_776_708_000));
-        assert!(base_sepolia_forks.is_base_v1_active_at_timestamp(u64::MAX));
+        assert!(!base_sepolia_forks.is_base_azul_active_at_timestamp(0));
+        assert!(!base_sepolia_forks.is_base_azul_active_at_timestamp(1_776_707_999));
+        assert!(base_sepolia_forks.is_base_azul_active_at_timestamp(1_776_708_000));
+        assert!(base_sepolia_forks.is_base_azul_active_at_timestamp(u64::MAX));
 
-        // V1 is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
+        // Azul is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
         let devnet_forks = ChainUpgrades::devnet();
-        assert!(devnet_forks.is_base_v1_active_at_timestamp(0));
+        assert!(devnet_forks.is_base_azul_active_at_timestamp(0));
 
-        // V1 is scheduled on devnet-0-sepolia-dev-0 at 1774890000
+        // Azul is scheduled on devnet-0-sepolia-dev-0 at 1774890000
         let devnet0_forks = ChainUpgrades::base_devnet_0_sepolia_dev_0();
-        assert!(!devnet0_forks.is_base_v1_active_at_timestamp(0));
-        assert!(!devnet0_forks.is_base_v1_active_at_timestamp(1_774_889_999));
-        assert!(devnet0_forks.is_base_v1_active_at_timestamp(1_774_890_000));
-        assert!(devnet0_forks.is_base_v1_active_at_timestamp(u64::MAX));
+        assert!(!devnet0_forks.is_base_azul_active_at_timestamp(0));
+        assert!(!devnet0_forks.is_base_azul_active_at_timestamp(1_774_889_999));
+        assert!(devnet0_forks.is_base_azul_active_at_timestamp(1_774_890_000));
+        assert!(devnet0_forks.is_base_azul_active_at_timestamp(u64::MAX));
 
-        // V1 is scheduled on zeronet at 1775152800
+        // Azul is scheduled on zeronet at 1775152800
         let zeronet_forks = ChainUpgrades::zeronet();
-        assert!(!zeronet_forks.is_base_v1_active_at_timestamp(0));
-        assert!(!zeronet_forks.is_base_v1_active_at_timestamp(1_775_152_799));
-        assert!(zeronet_forks.is_base_v1_active_at_timestamp(1_775_152_800));
-        assert!(zeronet_forks.is_base_v1_active_at_timestamp(u64::MAX));
+        assert!(!zeronet_forks.is_base_azul_active_at_timestamp(0));
+        assert!(!zeronet_forks.is_base_azul_active_at_timestamp(1_775_152_799));
+        assert!(zeronet_forks.is_base_azul_active_at_timestamp(1_775_152_800));
+        assert!(zeronet_forks.is_base_azul_active_at_timestamp(u64::MAX));
     }
 
     #[test]
@@ -309,7 +309,7 @@ mod tests {
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert_eq!(
             base_mainnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
-            ForkCondition::Timestamp(1_777_914_000)
+            ForkCondition::Timestamp(1_778_695_200)
         );
 
         let base_sepolia_forks = ChainUpgrades::sepolia();

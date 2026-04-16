@@ -270,7 +270,7 @@ impl From<Genesis> for BaseChainSpec {
 
         // Time-based hardforks
         // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
-        let base_v1_time = genesis_info.base.v1;
+        let azul_time = genesis_info.base.azul;
         let time_hardfork_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
@@ -283,8 +283,8 @@ impl From<Genesis> for BaseChainSpec {
             (EthereumHardfork::Prague.boxed(), genesis_info.isthmus_time),
             (BaseUpgrade::Isthmus.boxed(), genesis_info.isthmus_time),
             (BaseUpgrade::Jovian.boxed(), genesis_info.jovian_time),
-            (EthereumHardfork::Osaka.boxed(), base_v1_time),
-            (BaseUpgrade::V1.boxed(), base_v1_time),
+            (EthereumHardfork::Osaka.boxed(), azul_time),
+            (BaseUpgrade::Azul.boxed(), azul_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts
@@ -451,10 +451,10 @@ mod tests {
                 (
                     Head {
                         number: 0,
-                        timestamp: ChainConfig::mainnet().base_v1_timestamp.unwrap(),
+                        timestamp: ChainConfig::mainnet().azul_timestamp.unwrap(),
                         ..Default::default()
                     },
-                    BASE_MAINNET.hardfork_fork_id(BaseUpgrade::V1).unwrap(),
+                    BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
                 ),
             ],
         );
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn latest_base_mainnet_fork_id() {
         assert_eq!(
-            BASE_MAINNET.hardfork_fork_id(BaseUpgrade::V1).unwrap(),
+            BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
             BASE_MAINNET.latest_fork_id()
         )
     }
@@ -567,7 +567,7 @@ mod tests {
     fn latest_base_mainnet_fork_id_with_builder() {
         let base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         assert_eq!(
-            BASE_MAINNET.hardfork_fork_id(BaseUpgrade::V1).unwrap(),
+            BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
             base_mainnet.latest_fork_id()
         )
     }
@@ -623,8 +623,8 @@ mod tests {
         assert!(!chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Osaka, 54));
         assert!(chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Osaka, 55));
         assert!(chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Osaka, 98));
-        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::V1, 54));
-        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::V1, 55));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 54));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 55));
     }
 
     #[test]
@@ -856,7 +856,7 @@ mod tests {
             BaseUpgrade::Isthmus.boxed(),
             BaseUpgrade::Jovian.boxed(),
             EthereumHardfork::Osaka.boxed(),
-            BaseUpgrade::V1.boxed(),
+            BaseUpgrade::Azul.boxed(),
         ];
 
         for (expected, actual) in expected_hardforks.iter().zip(hardforks.iter()) {

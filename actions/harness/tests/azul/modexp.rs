@@ -80,11 +80,11 @@ async fn base_v1_modexp_upper_bound() {
     };
 
     // Base V1 activates at ts=6 (block 3).
-    let base_v1_time = 6u64;
+    let base_azul_time = 6u64;
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
         .through_isthmus()
         .with_jovian_at(0)
-        .with_base_v1_at(base_v1_time)
+        .with_base_v1_at(base_azul_time)
         .build();
     let chain_id = rollup_cfg.l2_chain_id.id();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
@@ -190,11 +190,11 @@ async fn base_v1_modexp_gas_cost_increase() {
     };
 
     // Base V1 activates at ts=6 (block 3).
-    let base_v1_time = 6u64;
+    let base_azul_time = 6u64;
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
         .through_isthmus()
         .with_jovian_at(0)
-        .with_base_v1_at(base_v1_time)
+        .with_base_v1_at(base_azul_time)
         .build();
     let chain_id = rollup_cfg.l2_chain_id.id();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);

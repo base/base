@@ -153,7 +153,10 @@ async fn test_get_payload_v5_success(#[values(true, false)] with_channel: bool) 
     // Activate Base V1 (Osaka) at the default attributes timestamp (2000) so that
     // `EngineGetPayloadVersion::V5` is selected.
     let cfg = Arc::new(RollupConfig {
-        hardforks: HardForkConfig { base: HardforkConfig { v1: Some(2000) }, ..Default::default() },
+        hardforks: HardForkConfig {
+            base: HardforkConfig { azul: Some(2000) },
+            ..Default::default()
+        },
         ..Default::default()
     });
 

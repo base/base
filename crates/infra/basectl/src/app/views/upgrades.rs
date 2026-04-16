@@ -80,7 +80,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
         UpgradeSpec { name: "Holocene", timestamp: Some(cfg.holocene_timestamp) },
         UpgradeSpec { name: "Isthmus", timestamp: Some(cfg.isthmus_timestamp) },
         UpgradeSpec { name: "Jovian", timestamp: Some(cfg.jovian_timestamp) },
-        UpgradeSpec { name: "V1", timestamp: cfg.base_v1_timestamp },
+        UpgradeSpec { name: "Azul", timestamp: cfg.azul_timestamp },
     ]
 }
 
@@ -128,8 +128,8 @@ fn all_chains() -> [ChainUpgrades; 4] {
 
 // ── Check types ───────────────────────────────────────────────────────────────
 
-/// Expected check names for V1, in execution order.
-const V1_CHECK_NAMES: &[&str] = &[
+/// Expected check names for Azul, in execution order.
+const AZUL_CHECK_NAMES: &[&str] = &[
     "CLZ zero",
     "CLZ one",
     "CLZ high-bit",
@@ -145,7 +145,7 @@ const JOVIAN_CHECK_NAMES: &[&str] = &["bn256Pairing limit", "extra data v1", "GP
 
 fn check_names_for(hardfork: &str) -> &'static [&'static str] {
     match hardfork {
-        "V1" => V1_CHECK_NAMES,
+        "Azul" => AZUL_CHECK_NAMES,
         "Jovian" => JOVIAN_CHECK_NAMES,
         _ => &[],
     }
@@ -415,7 +415,7 @@ impl View for UpgradesView {
                 let chain = &self.chains[self.selected_chain];
                 // Find the last hardfork that has a scheduled timestamp and has
                 // defined checks. This lets mainnet run Jovian checks instead of
-                // silently doing nothing when V1 has no timestamp.
+                // silently doing nothing when Azul has no timestamp.
                 if let Some(spec) = target_hardfork(chain)
                     .and_then(|name| chain.specs.iter().find(|s| s.name == name))
                 {
@@ -947,7 +947,7 @@ async fn run_checks_streaming(
     tx: mpsc::Sender<CheckUpdate>,
 ) {
     match hardfork {
-        "V1" => run_v1_checks_streaming(rpc_url, tx).await,
+        "Azul" => run_azul_checks_streaming(rpc_url, tx).await,
         "Jovian" => run_jovian_checks_streaming(rpc_url, mode, tx).await,
         _ => {}
     }
@@ -1131,7 +1131,7 @@ async fn run_jovian_checks_streaming(
     send_result!("GPO implementation", gpo_check);
 }
 
-// ── V1 activation checks (ported from v1.py run_v1_checks) ───────────────────
+// ── Azul activation checks (ported from v1.py run_v1_checks) ─────────────────
 
 const CLZ_PROBE_ADDR: &str = "0x000000000000000000000000000000000000001e";
 const CLZ_RUNTIME: &str = "0x6000351e60005260206000f3";
@@ -1230,14 +1230,14 @@ fn evaluate_gas_probe(
     let success_val = norm(PROBE_SUCCESS);
 
     let (passed, detail) = if actual == success_val {
-        (false, format!("{gas_label} CALL succeeded — expected OOG ({after_desc} after V1)"))
+        (false, format!("{gas_label} CALL succeeded — expected OOG ({after_desc} after Azul)"))
     } else {
-        (true, format!("{gas_label} CALL OOG ({after_desc} after V1)"))
+        (true, format!("{gas_label} CALL OOG ({after_desc} after Azul)"))
     };
     CheckResult { passed: Some(passed), detail }
 }
 
-async fn run_v1_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>) {
+async fn run_azul_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>) {
     macro_rules! send_start {
         ($name:expr) => {
             if tx.send(CheckUpdate::Starting($name.to_string())).await.is_err() {
@@ -1265,7 +1265,7 @@ async fn run_v1_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>)
                 detail: format!("cannot build client for {rpc_url}: {e}"),
             };
             send_result!("CLZ zero", conn_result);
-            for &name in &V1_CHECK_NAMES[1..] {
+            for &name in &AZUL_CHECK_NAMES[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -1282,7 +1282,7 @@ async fn run_v1_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>)
             let conn_result =
                 CheckResult { passed: Some(false), detail: format!("cannot reach {rpc_url}: {e}") };
             send_result!("CLZ zero", conn_result);
-            for &name in &V1_CHECK_NAMES[1..] {
+            for &name in &AZUL_CHECK_NAMES[1..] {
                 send_result!(
                     name,
                     CheckResult { passed: None, detail: "skipped (no connection)".into() }
@@ -1349,8 +1349,10 @@ async fn run_v1_checks_streaming(rpc_url: String, tx: mpsc::Sender<CheckUpdate>)
             .await
             .map_err(|e| e.to_string());
     let eth_config_check = match cfg_result {
-        Ok(_) => CheckResult { passed: Some(true), detail: "available after V1".to_string() },
-        Err(e) => CheckResult { passed: Some(false), detail: format!("unavailable after V1: {e}") },
+        Ok(_) => CheckResult { passed: Some(true), detail: "available after Azul".to_string() },
+        Err(e) => {
+            CheckResult { passed: Some(false), detail: format!("unavailable after Azul: {e}") }
+        }
     };
     send_result!("eth_config", eth_config_check);
 }

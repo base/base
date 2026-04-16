@@ -29,15 +29,15 @@ hardfork!(
         Isthmus,
         /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
         Jovian,
-        /// V1: First Base-specific network upgrade.
-        V1,
+        /// Azul: First Base-specific network upgrade.
+        Azul,
     }
 );
 
 impl BaseUpgrade {
     /// Returns the list of upgrades with their activation conditions for the given chain config.
     pub const fn forks_for(cfg: &ChainConfig) -> [(Self, ForkCondition); 10] {
-        let v1 = match cfg.base_v1_timestamp {
+        let azul = match cfg.azul_timestamp {
             Some(ts) => ForkCondition::Timestamp(ts),
             None => ForkCondition::Never,
         };
@@ -51,7 +51,7 @@ impl BaseUpgrade {
             (Self::Holocene, ForkCondition::Timestamp(cfg.holocene_timestamp)),
             (Self::Isthmus, ForkCondition::Timestamp(cfg.isthmus_timestamp)),
             (Self::Jovian, ForkCondition::Timestamp(cfg.jovian_timestamp)),
-            (Self::V1, v1),
+            (Self::Azul, azul),
         ]
     }
 
@@ -100,7 +100,7 @@ mod tests {
     fn check_base_upgrade_from_str() {
         let upgrade_str = [
             "beDrOck", "rEgOlITH", "cAnYoN", "eCoToNe", "FJorD", "GRaNiTe", "hOlOcEnE", "isthMUS",
-            "jOvIaN", "v1",
+            "jOvIaN", "aZuL",
         ];
         let expected_upgrades = [
             BaseUpgrade::Bedrock,
@@ -112,7 +112,7 @@ mod tests {
             BaseUpgrade::Holocene,
             BaseUpgrade::Isthmus,
             BaseUpgrade::Jovian,
-            BaseUpgrade::V1,
+            BaseUpgrade::Azul,
         ];
 
         let upgrades: alloc::vec::Vec<BaseUpgrade> =
@@ -138,7 +138,7 @@ mod tests {
             _ if timestamp < cfg.holocene_timestamp => BaseUpgrade::Granite,
             _ if timestamp < cfg.isthmus_timestamp => BaseUpgrade::Holocene,
             _ if timestamp < cfg.jovian_timestamp => BaseUpgrade::Isthmus,
-            _ if cfg.base_v1_timestamp.is_some_and(|v1| timestamp >= v1) => BaseUpgrade::V1,
+            _ if cfg.azul_timestamp.is_some_and(|azul| timestamp >= azul) => BaseUpgrade::Azul,
             _ => BaseUpgrade::Jovian,
         })
     }

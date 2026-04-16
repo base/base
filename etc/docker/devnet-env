@@ -145,7 +145,7 @@ MINIO_CONSOLE_PORT=7001
 L1_CHAIN_ID=1337
 L2_CHAIN_ID=84538453
 # Optional: set to a non-negative block number to schedule Base V1 in devnet.
-# Leave unset to avoid setting base.v1/osakaTime during genesis generation.
+# Leave unset to avoid setting base.azul/osakaTime during genesis generation.
 L2_BASE_V1_BLOCK=20
 
 # Metering Resource Limits

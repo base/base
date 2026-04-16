@@ -142,7 +142,7 @@ impl TestRollupConfigBuilder {
     /// Base V1 is a standalone Base-specific fork, independent of the OP
     /// cascade chain. Chaining after any `through_*` method is fine.
     pub const fn with_base_v1_at(mut self, t: u64) -> Self {
-        self.config.hardforks.base.v1 = Some(t);
+        self.config.hardforks.base.azul = Some(t);
         self
     }
 
@@ -161,7 +161,7 @@ impl TestRollupConfigBuilder {
         self.config.hardforks.pectra_blob_schedule_time = Some(0);
         self.config.hardforks.isthmus_time = Some(0);
         self.config.hardforks.jovian_time = Some(0);
-        self.config.hardforks.base.v1 = Some(0);
+        self.config.hardforks.base.azul = Some(0);
         self
     }
 

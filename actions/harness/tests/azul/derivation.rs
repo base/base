@@ -21,11 +21,11 @@ async fn base_v1_derivation_crosses_activation_boundary() {
     //   block 2 → ts=4  (first Base V1 block)
     //   block 3 → ts=6  (post-Base V1)
     //   block 4 → ts=8  (post-Base V1)
-    let base_v1_time = 4u64;
+    let base_azul_time = 4u64;
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
         .through_isthmus()
         .with_jovian_at(0)
-        .with_base_v1_at(base_v1_time)
+        .with_base_v1_at(base_azul_time)
         .build();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
 

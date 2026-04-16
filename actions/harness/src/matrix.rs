@@ -26,7 +26,7 @@ static FORK_PROGRESSION: &[(&str, ForkSetter)] = &[
     ("pectra-blob-schedule", |h| h.pectra_blob_schedule_time = Some(0)),
     ("isthmus", |h| h.isthmus_time = Some(0)),
     ("jovian", |h| h.jovian_time = Some(0)),
-    ("base-v1", |h| h.base.v1 = Some(0)),
+    ("azul", |h| h.base.azul = Some(0)),
 ];
 
 /// Named hardfork schedules for parametrizing harness tests across protocol upgrades.
@@ -54,7 +54,7 @@ impl ForkMatrix {
 
     /// Returns the cumulative OP hardforks from Isthmus onward.
     ///
-    /// Base-specific forks (e.g. `base-v1`) are excluded.
+    /// Base-specific forks (e.g. `azul`) are excluded.
     pub fn from_isthmus() -> Self {
         Self::all().retain(|_, h| h.isthmus_time.is_some() && h.base.is_empty())
     }
@@ -178,7 +178,7 @@ mod tests {
                 "pectra-blob-schedule",
                 "isthmus",
                 "jovian",
-                "base-v1",
+                "azul",
             ]
         );
     }
@@ -246,11 +246,11 @@ mod tests {
                 }
                 "jovian" => {
                     assert!(cfg.is_jovian_active(0));
-                    assert!(!cfg.is_base_v1_active(0));
+                    assert!(!cfg.is_base_azul_active(0));
                 }
-                "base-v1" => {
+                "azul" => {
                     assert!(cfg.is_jovian_active(0));
-                    assert!(cfg.is_base_v1_active(0));
+                    assert!(cfg.is_base_azul_active(0));
                 }
                 _ => unreachable!("unexpected fork {fork_name}"),
             }

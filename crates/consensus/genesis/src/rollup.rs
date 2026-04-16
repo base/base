@@ -236,15 +236,15 @@ impl RollupConfig {
             && !self.is_jovian_active(timestamp.saturating_sub(self.block_time))
     }
 
-    /// Returns true if Base V1 is active at the given timestamp.
-    pub fn is_base_v1_active(&self, timestamp: u64) -> bool {
-        self.hardforks.base.v1.is_some_and(|t| timestamp >= t)
+    /// Returns true if Base Azul is active at the given timestamp.
+    pub fn is_base_azul_active(&self, timestamp: u64) -> bool {
+        self.hardforks.base.azul.is_some_and(|t| timestamp >= t)
     }
 
-    /// Returns true if the timestamp marks the first Base V1 block.
+    /// Returns true if the timestamp marks the first Base Azul block.
     pub fn is_first_base_v1_block(&self, timestamp: u64) -> bool {
-        self.is_base_v1_active(timestamp)
-            && !self.is_base_v1_active(timestamp.saturating_sub(self.block_time))
+        self.is_base_azul_active(timestamp)
+            && !self.is_base_azul_active(timestamp.saturating_sub(self.block_time))
     }
 
     /// Returns the max sequencer drift for the given timestamp.
@@ -373,11 +373,14 @@ impl Upgrades for RollupConfig {
                 .jovian_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
-            // V1 is standalone: not part of the Base upgrade cascade chain. It only activates
+            // Azul is standalone: not part of the Base upgrade cascade chain. It only activates
             // when explicitly configured and never implies (or is implied by) Jovian being active.
-            BaseUpgrade::V1 => {
-                self.hardforks.base.v1.map(ForkCondition::Timestamp).unwrap_or(ForkCondition::Never)
-            }
+            BaseUpgrade::Azul => self
+                .hardforks
+                .base
+                .azul
+                .map(ForkCondition::Timestamp)
+                .unwrap_or(ForkCondition::Never),
             _ => ForkCondition::Never,
         }
     }
@@ -402,8 +405,8 @@ impl RollupConfig {
         Self::GRANITE_CHANNEL_TIMEOUT
     }
 
-    /// The activation banner for the Base V1 hardfork, printed when the first block of the fork is built or processed.
-    const BASE_V1_ACTIVATION_BANNER: &str = include_str!("../static/base_v1_activation_banner.txt");
+    /// The activation banner for the Base Azul hardfork, printed when the first block of the fork is built or processed.
+    const AZUL_ACTIVATION_BANNER: &str = include_str!("../static/azul_activation_banner.txt");
 
     /// Logs hardfork activation when building or processing the first block of a fork.
     pub fn log_upgrade_activation(&self, block_number: u64, timestamp: u64) {
@@ -420,10 +423,10 @@ impl RollupConfig {
         } else if self.is_first_jovian_block(timestamp) {
             tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
         } else if self.is_first_base_v1_block(timestamp) {
-            for line in Self::BASE_V1_ACTIVATION_BANNER.lines() {
+            for line in Self::AZUL_ACTIVATION_BANNER.lines() {
                 tracing::info!(target: "upgrades", "{line}");
             }
-            tracing::info!(target: "upgrades", block_number, "Activating base v1 upgrade");
+            tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
         }
     }
 }
@@ -621,21 +624,21 @@ mod tests {
         assert!(config.is_isthmus_active(10));
         assert!(config.is_jovian_active(10));
         assert!(!config.is_jovian_active(9));
-        assert!(!config.is_base_v1_active(10));
+        assert!(!config.is_base_azul_active(10));
     }
 
     #[test]
     fn test_base_v1_active() {
         use crate::HardforkConfig;
         let mut config = RollupConfig::default();
-        assert!(!config.is_base_v1_active(0));
-        config.hardforks.base = HardforkConfig { v1: Some(10) };
-        // V1 does not cascade upward to existing forks
+        assert!(!config.is_base_azul_active(0));
+        config.hardforks.base = HardforkConfig { azul: Some(10) };
+        // Azul does not cascade upward to existing forks
         assert!(!config.is_regolith_active(10));
         assert!(!config.is_canyon_active(10));
         assert!(!config.is_jovian_active(10));
-        assert!(config.is_base_v1_active(10));
-        assert!(!config.is_base_v1_active(9));
+        assert!(config.is_base_azul_active(10));
+        assert!(!config.is_base_azul_active(9));
     }
 
     #[test]
@@ -653,7 +656,7 @@ mod tests {
                 pectra_blob_schedule_time: Some(80),
                 isthmus_time: Some(90),
                 jovian_time: Some(100),
-                base: HardforkConfig { v1: Some(110) },
+                base: HardforkConfig { azul: Some(110) },
             },
             block_time: 2,
             ..Default::default()
@@ -709,7 +712,7 @@ mod tests {
         assert!(cfg.is_first_jovian_block(100));
         assert!(!cfg.is_first_jovian_block(102));
 
-        // Base V1
+        // Base Azul
         assert!(!cfg.is_first_base_v1_block(108));
         assert!(cfg.is_first_base_v1_block(110));
         assert!(!cfg.is_first_base_v1_block(112));

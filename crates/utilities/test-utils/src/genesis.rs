@@ -108,6 +108,6 @@ pub fn build_test_genesis() -> Genesis {
 pub fn build_test_genesis_v1() -> Genesis {
     let mut genesis = build_test_genesis();
     genesis.config.osaka_time = Some(0);
-    genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "v1": 0 }));
+    genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "azul": 0 }));
     genesis
 }

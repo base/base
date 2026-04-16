@@ -36,8 +36,9 @@ impl TryFrom<&OtherFields> for ChainInfo {
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HardforkInfo {
-    /// Base V1 hardfork timestamp.
-    pub v1: Option<u64>,
+    /// Base Azul hardfork timestamp.
+    #[serde(alias = "v1")]
+    pub azul: Option<u64>,
 }
 
 /// The Base chain-specific genesis block specification.
@@ -147,7 +148,7 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
-                base: HardforkInfo { v1: Some(14) },
+                base: HardforkInfo { azul: Some(14) },
             }
         );
     }
@@ -211,7 +212,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { v1: Some(14) },
+                    base: HardforkInfo { azul: Some(14) },
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
@@ -236,7 +237,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { v1: Some(14) },
+                    base: HardforkInfo { azul: Some(14) },
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
