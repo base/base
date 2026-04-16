@@ -64,8 +64,7 @@ impl Metrics {
     /// Counter for the L1 block number forwarded to derivation after verifier confirmation delay.
     pub const L1_VERIFIER_DERIVATION_HEAD: &str = "base_node_l1_verifier_derivation_head";
     /// Counter for failed attempts to fetch a delayed L1 block for verifier confirmation.
-    pub const L1_VERIFIER_DELAYED_FETCH_ERRORS: &str =
-        "base_node_l1_verifier_delayed_fetch_errors";
+    pub const L1_VERIFIER_DELAYED_FETCH_ERRORS: &str = "base_node_l1_verifier_delayed_fetch_errors";
 
     /// Initializes metrics for the node service.
     ///
