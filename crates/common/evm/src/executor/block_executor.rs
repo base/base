@@ -1,3 +1,5 @@
+//! Contains the block executor for base.
+
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 
 use alloy_consensus::{Eip658Value, Header, Transaction, TransactionEnvelope, TxReceipt};
@@ -7,12 +9,11 @@ use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
         ExecutableTx, OnStateHook, StateChangePostBlockSource, StateChangeSource, StateDB,
-        SystemCaller, TxResult as TxResultTrait,
+        SystemCaller,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
 };
-use alloy_primitives::Address;
 use base_common_chains::Upgrades;
 use base_common_consensus::{DepositReceipt, Predeploys};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
@@ -23,28 +24,9 @@ use revm::{
 };
 
 use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
     DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
-
-/// The result of executing an OP transaction.
-#[derive(Debug)]
-pub struct BaseTxResult<H, T> {
-    /// The inner result of the transaction execution.
-    pub inner: EthTxResult<H, T>,
-    /// Whether the transaction is a deposit transaction.
-    pub is_deposit: bool,
-    /// The sender of the transaction.
-    pub sender: Address,
-}
-
-impl<H, T> TxResultTrait for BaseTxResult<H, T> {
-    type HaltReason = H;
-
-    fn result(&self) -> &ResultAndState<Self::HaltReason> {
-        &self.inner.result
-    }
-}
 
 /// Block executor for Base.
 #[derive(Debug)]

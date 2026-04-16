@@ -41,9 +41,6 @@ pub use factory::BaseEvmFactory;
 mod tx_env;
 pub use tx_env::BaseTxEnv;
 
-mod ctx;
-pub use ctx::BaseBlockExecutionCtx;
-
 mod error;
 pub use error::BaseBlockExecutionError;
 
@@ -54,7 +51,6 @@ mod canyon;
 pub use canyon::ensure_create2_deployer;
 
 mod executor;
-pub use executor::{BaseBlockExecutor, BaseTxResult};
-
-mod executor_factory;
-pub use executor_factory::BaseBlockExecutorFactory;
+pub use executor::{
+    BaseBlockExecutionCtx, BaseBlockExecutor, BaseBlockExecutorFactory, BaseTxResult,
+};
