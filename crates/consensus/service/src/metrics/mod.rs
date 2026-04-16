@@ -59,6 +59,14 @@ impl Metrics {
     pub const SEQUENCER_STALE_BUILD_DISCARDED_TOTAL: &str =
         "base_node_sequencer_stale_build_discarded_total";
 
+    /// Gauge for the configured verifier L1 confirmation depth.
+    pub const L1_VERIFIER_CONFS_DEPTH: &str = "base_node_l1_verifier_confs_depth";
+    /// Counter for the L1 block number forwarded to derivation after verifier confirmation delay.
+    pub const L1_VERIFIER_DERIVATION_HEAD: &str = "base_node_l1_verifier_derivation_head";
+    /// Counter for failed attempts to fetch a delayed L1 block for verifier confirmation.
+    pub const L1_VERIFIER_DELAYED_FETCH_ERRORS: &str =
+        "base_node_l1_verifier_delayed_fetch_errors";
+
     /// Initializes metrics for the node service.
     ///
     /// This does two things:
@@ -149,6 +157,20 @@ impl Metrics {
             Self::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL,
             "Pre-built payloads discarded because the unsafe head advanced past their parent"
         );
+
+        // Verifier L1 confirmation delay
+        metrics::describe_gauge!(
+            Self::L1_VERIFIER_CONFS_DEPTH,
+            "Configured verifier L1 confirmation depth"
+        );
+        metrics::describe_counter!(
+            Self::L1_VERIFIER_DERIVATION_HEAD,
+            "L1 block number forwarded to derivation after verifier confirmation delay"
+        );
+        metrics::describe_counter!(
+            Self::L1_VERIFIER_DELAYED_FETCH_ERRORS,
+            "Failed attempts to fetch a delayed L1 block for verifier confirmation"
+        );
     }
 
     /// Initializes metrics to `0` so they can be queried immediately by consumers of prometheus
@@ -193,5 +215,6 @@ impl Metrics {
         base_metrics::set!(counter, Self::SEQUENCER_RECOVERY_MODE_BLOCKS_TOTAL, 0);
         base_metrics::set!(counter, Self::SEQUENCER_DRIFT_EMPTY_BLOCKS_TOTAL, 0);
         base_metrics::set!(counter, Self::SEQUENCER_STALE_BUILD_DISCARDED_TOTAL, 0);
+        base_metrics::set!(counter, Self::L1_VERIFIER_DELAYED_FETCH_ERRORS, 0);
     }
 }

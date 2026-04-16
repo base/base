@@ -141,6 +141,7 @@ impl InProcessConsensus {
             beacon: config.l1_beacon_url,
             rpc_url: config.l1_rpc_url.clone(),
             slot_duration_override: config.l1_slot_duration_override,
+            verifier_l1_confs: 0,
         };
 
         let engine_config = EngineConfig {

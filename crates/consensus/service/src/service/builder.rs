@@ -50,6 +50,8 @@ pub struct L1ConfigBuilder {
     /// The duration in seconds of an L1 slot. This can be used to hardcode a fixed slot
     /// duration if the l1-beacon's slot configuration is not available.
     pub slot_duration_override: Option<u64>,
+    /// Number of L1 blocks to keep distance from the L1 head for the verifier.
+    pub verifier_l1_confs: u64,
 }
 
 /// The [`RollupNodeBuilder`] is used to construct a [`RollupNode`] service.
@@ -174,6 +176,7 @@ impl RollupNodeBuilder {
             beacon_client: l1_beacon,
             engine_provider: RootProvider::new_http(self.l1_config_builder.rpc_url.clone()),
             finalized_poll_interval,
+            verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
         };
 
         let jwt_secret = self.engine_config.l2_jwt_secret;

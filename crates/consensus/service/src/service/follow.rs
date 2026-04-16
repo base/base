@@ -191,6 +191,7 @@ impl FollowNode {
             cancellation.clone(),
             head_stream,
             finalized_stream,
+            self.l1_config.verifier_l1_confs,
         );
         let l1_query_processor = L1WatcherQueryProcessor::new(
             Arc::clone(&self.config),
