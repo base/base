@@ -778,17 +778,23 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 }
             }
             Err(e) => {
-                warn!(
-                    error = %e,
-                    game = %game_address,
-                    "dispute tx failed, will retry next tick"
-                );
                 if targets_tee && let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    warn!(
+                        error = %e,
+                        game = %game_address,
+                        "TEE dispute tx failed, falling back to ZK"
+                    );
                     // Don't retry the failed TEE submission — switch to the ZK
                     // fallback so the next retry uses the pre-built ZK request.
                     p.phase = ProofPhase::NeedsRetry;
                     return self.handle_proof_retry(game_address).await;
                 }
+                warn!(
+                    error = %e,
+                    game = %game_address,
+                    "dispute tx failed, will retry next tick"
+                );
+                // Leave entry as ReadyToSubmit for retry.
             }
         }
 
@@ -841,6 +847,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                     if let Some(intent) = fallback_intent {
                         p.kind = ProofKind::Zk { prove_request: request };
                         p.intent = intent;
+                        p.retry_count = 0;
                     }
                 }
             }
