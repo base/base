@@ -19,7 +19,7 @@ pub trait MeteringProvider: Debug + Send + Sync + 'static {
     /// Inserts metering information for a transaction.
     fn insert(&self, _tx_hash: TxHash, _metering: MeterBundleResponse) {}
 
-    /// Signals that a transaction was skipped (e.g. MeteringDataPending) and
+    /// Signals that a transaction was skipped (e.g. `MeteringDataPending`) and
     /// will be retried later, clearing any pending late-arrival tracking.
     fn skip(&self, _tx_hash: &TxHash) {}
 
