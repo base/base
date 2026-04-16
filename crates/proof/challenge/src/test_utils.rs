@@ -228,7 +228,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     ) -> Result<B256, ContractError> {
         self.get(game_address, |s| {
             let idx = index as usize;
-            s.intermediate_output_roots.get(idx).copied().unwrap_or(B256::ZERO)
+            s.intermediate_output_roots
+                .get(idx)
+                .copied()
+                .expect("intermediate_output_root: index out of bounds")
         })
     }
 
