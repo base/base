@@ -171,7 +171,7 @@ where
         const MAX_BACKOFF: Duration = Duration::from_millis(500);
 
         #[cfg(feature = "metrics")]
-        metrics::gauge!(Metrics::L1_VERIFIER_CONFS_DEPTH, self.verifier_l1_confs as f64);
+        metrics::gauge!(Metrics::L1_VERIFIER_CONFS_DEPTH).set(self.verifier_l1_confs as f64);
         if self.verifier_l1_confs > 0 {
             info!(
                 target: "l1_watcher",
@@ -212,7 +212,7 @@ where
                                 Ok(Some(block)) => block.into_consensus().into(),
                                 Ok(None) => {
                                     #[cfg(feature = "metrics")]
-                                    metrics::counter!(Metrics::L1_VERIFIER_DELAYED_FETCH_ERRORS, 1);
+                                    metrics::counter!(Metrics::L1_VERIFIER_DELAYED_FETCH_ERRORS).increment(1);
                                     warn!(
                                         target: "l1_watcher",
                                         head = head_block_info.number,
@@ -223,7 +223,7 @@ where
                                 }
                                 Err(e) => {
                                     #[cfg(feature = "metrics")]
-                                    metrics::counter!(Metrics::L1_VERIFIER_DELAYED_FETCH_ERRORS, 1);
+                                    metrics::counter!(Metrics::L1_VERIFIER_DELAYED_FETCH_ERRORS).increment(1);
                                     warn!(
                                         target: "l1_watcher",
                                         error = %e,
@@ -239,10 +239,8 @@ where
                         };
 
                         #[cfg(feature = "metrics")]
-                        metrics::counter!(
-                            Metrics::L1_VERIFIER_DERIVATION_HEAD,
-                            derivation_block.number
-                        );
+                        metrics::counter!(Metrics::L1_VERIFIER_DERIVATION_HEAD)
+                            .absolute(derivation_block.number);
                         self.derivation_client.send_new_l1_head(derivation_block).await.map_err(|e| {
                             warn!(target: "l1_watcher", error = %e, "Error sending l1 head update to derivation actor");
                             L1WatcherActorError::DerivationClientError(e)
