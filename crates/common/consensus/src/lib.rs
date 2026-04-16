@@ -10,9 +10,6 @@
 
 extern crate alloc;
 
-#[cfg(feature = "alloy-compat")]
-mod alloy_compat;
-
 #[cfg(feature = "evm")]
 mod evm_compat;
 
