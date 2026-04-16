@@ -739,6 +739,88 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
 }
 
 #[tokio::test]
+async fn test_step_tee_submission_failure_falls_back_to_zk() {
+    // TEE proof succeeds but the on-chain nullify() tx fails.
+    // The driver should immediately fall back to a ZK proof instead of
+    // retrying the same TEE proof indefinitely.
+    let (l2, factory, root_15, root_20) = base_game_mocks();
+
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        // root_15 is correct, index 1 is bogus — invalid_index == 1
+        intermediate_output_roots: vec![root_15, BOGUS_ROOT],
+        ..game_state(20)
+    });
+
+    let l1_head = Arc::new(MockL1HeadProvider::success(DEFAULT_L1_HEAD, 100));
+
+    let aggregate_proposal = Proposal {
+        output_root: root_20,
+        signature: Bytes::from(vec![0u8; 65]),
+        l1_origin_hash: DEFAULT_L1_HEAD,
+        l1_origin_number: 1000,
+        l2_block_number: 20,
+        prev_output_root: root_15,
+        config_hash: B256::ZERO,
+    };
+    let tee_provider = Arc::new(MockTeeProofProvider::success(ProofResult::Tee {
+        aggregate_proposal,
+        proposals: vec![],
+    }));
+
+    let zk = succeeded_zk_prover("zk-fallback-after-tee-tx-fail", vec![0xDE, 0xAD]);
+
+    // TEE nullify() tx fails (NonceTooLow), ZK challenge() tx succeeds.
+    let tx_manager = MockTxManager::with_responses(vec![
+        Err(TxManagerError::NonceTooLow),
+        Ok(receipt_with_status(true, DEFAULT_TX_HASH)),
+    ]);
+
+    let mut driver = test_driver_with_tee(
+        factory,
+        Arc::clone(&verifier),
+        l2,
+        zk,
+        tx_manager,
+        Some(tee_config(tee_provider, l1_head)),
+    );
+
+    // Step 1: TEE proof obtained, nullify() tx fails, falls back to ZK.
+    driver.step().await.unwrap();
+
+    // The entry should now be a ZK proof in AwaitingProof phase (ZK fallback).
+    let entry = driver
+        .pending_proofs
+        .get(&addr(0))
+        .expect("ZK fallback proof should be pending after TEE tx failure");
+    assert!(
+        matches!(entry.phase, ProofPhase::AwaitingProof { .. }),
+        "phase should be AwaitingProof (ZK fallback) after TEE tx failure"
+    );
+    assert_eq!(
+        entry.intent,
+        DisputeIntent::Challenge,
+        "ZK fallback should use Challenge intent for Path 1"
+    );
+    assert!(
+        matches!(entry.kind, base_challenger::ProofKind::Zk { .. }),
+        "kind should have transitioned from Tee to Zk after fallback"
+    );
+
+    // Simulate the on-chain effect of a successful challenge: game is
+    // resolved. This prevents the scanner from re-discovering the game
+    // after the pending proof is submitted in step 2.
+    verifier.update_game(addr(0), MockGameState { status: 1, ..game_state(20) });
+
+    // Step 2: ZK proof polled → Succeeded → entry cleaned up.
+    driver.step().await.unwrap();
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "entry should be removed after ZK fallback completes"
+    );
+}
+
+#[tokio::test]
 async fn test_step_nullified_game_not_reprocessed() {
     // Both provers zeroed (post-nullification) → scanner filters it out.
     let (l2, factory, root_15, _root_20) = base_game_mocks();

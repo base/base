@@ -507,12 +507,32 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 }
                 Ok(Ok(proof_bytes)) => {
                     info!(game = %game_address, path = "tee", "TEE proof obtained");
+
+                    let (zk_fallback_request, zk_fallback_intent) =
+                        match self.build_zk_request(&candidate, invalid_index) {
+                            Ok(req) => (Some(req), Some(intent)),
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    game = %game_address,
+                                    "failed to build ZK fallback request; \
+                                     TEE proof will have no ZK fallback"
+                                );
+                                (None, None)
+                            }
+                        };
                     self.pending_proofs.insert(
                         game_address,
-                        PendingProof::ready_tee(proof_bytes, invalid_index, expected_root),
+                        PendingProof::ready_tee(
+                            proof_bytes,
+                            invalid_index,
+                            expected_root,
+                            zk_fallback_request,
+                            zk_fallback_intent,
+                        ),
                     );
                     if let Err(e) = self.poll_or_submit(game_address).await {
-                        warn!(error = %e, game = %game_address, "initial TEE submission failed, will retry next tick");
+                        warn!(error = %e, game = %game_address, "initial TEE submission failed");
                     }
                     ChallengerMetrics::tee_proof_obtained_total().increment(1);
                     return Ok(());
@@ -590,6 +610,28 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         }
     }
 
+    /// Builds a [`ProveBlockRequest`] for the given candidate and invalid index.
+    fn build_zk_request(
+        &self,
+        candidate: &CandidateGame,
+        invalid_index: u64,
+    ) -> eyre::Result<ProveBlockRequest> {
+        let game_address = candidate.factory.proxy;
+        let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
+        let session_id = PendingProof::derive_session_id(game_address, invalid_index);
+        let prover_address = format!("{:#x}", self.submitter.sender_address());
+
+        Ok(ProveBlockRequest {
+            start_block_number,
+            number_of_blocks_to_prove: candidate.intermediate_block_interval,
+            sequence_window: None,
+            proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
+            session_id: Some(session_id),
+            prover_address: Some(prover_address),
+            l1_head: Some(format!("{:#x}", candidate.l1_head)),
+        })
+    }
+
     /// Requests a ZK proof, stores the session, and polls for the result.
     async fn initiate_zk_proof(
         &mut self,
@@ -604,19 +646,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         // invalid_index == 0) is a trusted anchor, so the ZK proof only
         // needs to cover the single interval that contains the invalid
         // checkpoint: [prior_checkpoint .. invalid_checkpoint].
-        let start_block_number = candidate.checkpoint_start_block(invalid_index)?;
-
-        let session_id = PendingProof::derive_session_id(game_address, invalid_index);
-        let prover_address = format!("{:#x}", self.submitter.sender_address());
-        let request = ProveBlockRequest {
-            start_block_number,
-            number_of_blocks_to_prove: candidate.intermediate_block_interval,
-            sequence_window: None,
-            proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
-            session_id: Some(session_id),
-            prover_address: Some(prover_address),
-            l1_head: Some(format!("{:#x}", candidate.l1_head)),
-        };
+        let request = self.build_zk_request(&candidate, invalid_index)?;
 
         let prove_response = self.zk_prover.prove_block(request.clone()).await?;
 
@@ -760,6 +790,17 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 }
             }
             Err(e) => {
+                if targets_tee && let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    warn!(
+                        error = %e,
+                        game = %game_address,
+                        "TEE dispute tx failed, falling back to ZK"
+                    );
+                    // Don't retry the failed TEE submission — switch to the ZK
+                    // fallback so the next retry uses the pre-built ZK request.
+                    p.phase = ProofPhase::NeedsRetry;
+                    return self.handle_proof_retry(game_address).await;
+                }
                 warn!(
                     error = %e,
                     game = %game_address,
@@ -794,12 +835,34 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             return Ok(());
         }
 
+        // If this was a TEE proof, eagerly transition to ZK *before*
+        // calling `prove_block` so that subsequent retries take the ZK branch
+        // and the fallback metric is emitted exactly once per transition.
         let request = match &pending.kind {
-            ProofKind::Tee => {
-                // TEE proofs have no ZK session to re-initiate — drop the entry.
-                debug!(game = %game_address, "TEE proof has no ZK request, dropping entry");
-                self.pending_proofs.remove(&game_address);
-                return Ok(());
+            ProofKind::Tee { zk_fallback_request, zk_fallback_intent } => {
+                let (Some(fallback_request), Some(fallback_intent)) =
+                    (zk_fallback_request.clone(), *zk_fallback_intent)
+                else {
+                    // No ZK fallback available — nothing more we can do.
+                    debug!(
+                        game = %game_address,
+                        "TEE proof has no ZK fallback request, dropping entry"
+                    );
+                    self.pending_proofs.remove(&game_address);
+                    return Ok(());
+                };
+
+                debug!(game = %game_address, "TEE proof needs retry, falling back to ZK");
+                ChallengerMetrics::tee_proof_fallback_total().increment(1);
+
+                // Transition eagerly so retries use the ZK path.
+                if let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    p.kind = ProofKind::Zk { prove_request: fallback_request.clone() };
+                    p.intent = fallback_intent;
+                    p.retry_count = 0;
+                }
+
+                fallback_request
             }
             ProofKind::Zk { prove_request } => prove_request.clone(),
         };
