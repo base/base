@@ -5,12 +5,9 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-use alloy_primitives::{Address, address};
+use alloy_primitives::Address;
 use base_proof_contracts::TEEProverRegistryClient;
 use jsonrpsee::core::async_trait;
-
-/// Well-known test signer address (Hardhat account #0).
-pub const TEST_SIGNER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
 /// In-memory mock of [`TEEProverRegistryClient`] for unit tests.
 ///

@@ -69,10 +69,7 @@ mod tests {
     use base_proof_contracts::TEEProverRegistryClient;
 
     use super::*;
-    use crate::{
-        test_utils::{MockRegistry, TEST_SIGNER},
-        transport::NitroTransport,
-    };
+    use crate::{test_utils::MockRegistry, transport::NitroTransport};
 
     fn test_healthz_with_mock(
         registry: impl TEEProverRegistryClient + 'static,
@@ -86,8 +83,7 @@ mod tests {
 
     #[tokio::test]
     async fn healthz_returns_ok_when_valid() {
-        let (checker, rpc) = test_healthz_with_mock(MockRegistry::new(true));
-        checker.set_signer_for_test(TEST_SIGNER);
+        let (_checker, rpc) = test_healthz_with_mock(MockRegistry::new(true));
         let result = HealthzApiServer::healthz(&rpc).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap().version, "0.0.0");
@@ -95,8 +91,7 @@ mod tests {
 
     #[tokio::test]
     async fn healthz_returns_error_when_not_valid() {
-        let (checker, rpc) = test_healthz_with_mock(MockRegistry::new(false));
-        checker.set_signer_for_test(TEST_SIGNER);
+        let (_checker, rpc) = test_healthz_with_mock(MockRegistry::new(false));
         let result = HealthzApiServer::healthz(&rpc).await;
         assert!(result.is_err());
     }
@@ -104,15 +99,13 @@ mod tests {
     #[tokio::test]
     async fn healthz_latches_after_first_success() {
         let registry = MockRegistry::new(true);
-        let (checker, rpc) = test_healthz_with_mock(registry.clone());
-        checker.set_signer_for_test(TEST_SIGNER);
+        let (_checker, rpc) = test_healthz_with_mock(registry.clone());
 
         let result = HealthzApiServer::healthz(&rpc).await;
         assert!(result.is_ok());
 
         registry.valid.store(false, Ordering::Relaxed);
         registry.should_fail.store(true, Ordering::Relaxed);
-        checker.set_cache_for_test(None).await;
 
         let result = HealthzApiServer::healthz(&rpc).await;
         assert!(result.is_ok());
@@ -122,8 +115,7 @@ mod tests {
     async fn healthz_errors_on_rpc_failure_before_latch() {
         let registry = MockRegistry::new(false);
         registry.should_fail.store(true, Ordering::Relaxed);
-        let (checker, rpc) = test_healthz_with_mock(registry);
-        checker.set_signer_for_test(TEST_SIGNER);
+        let (_checker, rpc) = test_healthz_with_mock(registry);
         let result = HealthzApiServer::healthz(&rpc).await;
         assert!(result.is_err());
     }
@@ -132,8 +124,7 @@ mod tests {
     async fn healthz_rpc_call_count() {
         let registry = MockRegistry::new(true);
         let call_count = Arc::clone(&registry.call_count);
-        let (checker, rpc) = test_healthz_with_mock(registry);
-        checker.set_signer_for_test(TEST_SIGNER);
+        let (_checker, rpc) = test_healthz_with_mock(registry);
 
         let _ = HealthzApiServer::healthz(&rpc).await;
         assert_eq!(call_count.load(Ordering::Relaxed), 1);
