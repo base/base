@@ -206,10 +206,7 @@ where
                         {
                             let target = head_block_info.number - self.verifier_l1_confs;
                             match self.l1_provider.get_block(BlockId::Number(target.into())).await {
-                                Ok(Some(block)) => {
-                                    let info: BlockInfo = block.into_consensus().into();
-                                    info
-                                }
+                                Ok(Some(block)) => block.into_consensus().into(),
                                 Ok(None) => {
                                     Metrics::l1_verifier_delayed_fetch_errors().increment(1);
                                     warn!(
