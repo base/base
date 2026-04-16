@@ -311,7 +311,7 @@ BASE_V1,
 
 ### 10. Route precompiles
 
-**File:** [`crates/common/evm/src/precompiles.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/precompiles.rs)
+**File:** [`crates/common/evm/src/precompiles/provider.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/precompiles/provider.rs)
 
 If the upgrade introduces new precompiles, add a new `pub fn base_v1()` method on `BasePrecompiles`. If it reuses the previous set, extend the existing arm in `new_with_spec`:
 
@@ -327,7 +327,7 @@ OpSpecId::BASE_V1 => Self::base_v1(),
 
 ### 11. Update spec resolution
 
-**File:** [`crates/common/evm/src/spec_id.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/spec_id.rs)
+**File:** [`crates/common/evm/src/spec.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/spec.rs)
 
 Add the new upgrade as the first check (newest upgrade wins):
 
@@ -389,6 +389,6 @@ forks.push((BaseUpgrade::V1.boxed(), self[BaseUpgrade::V1]));  // <-- add
 
 - [ ] `OpSpecId` variant added with `into_eth_spec` mapping and `#[strum(serialize = "...")]` attribute
 - [ ] Precompile match arm updated (or new precompile set added)
-- [ ] `spec_by_timestamp_after_bedrock` updated (`core/evm/src/spec_id.rs`)
+- [ ] `spec_by_timestamp_after_bedrock` updated (`common/evm/src/spec.rs`)
 - [ ] `RollupConfig::spec_id` updated (`consensus/genesis/src/rollup.rs`)
 - [ ] `to_chain_hardforks` updated (`execution/upgrades/src/chain.rs`)
