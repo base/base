@@ -29,8 +29,13 @@ use crate::{
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
 /// [`EthInstructions`] / [`EthFrame`], keeping [`BaseEvm`] field and constructor signatures tidy.
-type InnerEvm<DB, I, P> =
-    RevmEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P, EthFrame<EthInterpreter>>;
+type InnerEvm<DB, I, P> = RevmEvm<
+    OpContext<DB>,
+    I,
+    EthInstructions<EthInterpreter, OpContext<DB>>,
+    P,
+    EthFrame<EthInterpreter>,
+>;
 
 /// The Base EVM, wrapping [`RevmEvm`] with an [`OpContext`] and an optional [`Inspector`].
 ///
