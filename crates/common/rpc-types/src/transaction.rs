@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 mod request;
 pub use request::BaseTransactionRequest;
 
-/// OP Transaction type
+/// Base transaction type
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Deref, derive_more::DerefMut,
 )]

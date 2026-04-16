@@ -4,7 +4,7 @@ use alloy_evm::{block::TxResult as TxResultTrait, eth::EthTxResult};
 use alloy_primitives::Address;
 use revm::context::result::ResultAndState;
 
-/// The result of executing an OP transaction.
+/// The result of executing a Base transaction.
 #[derive(Debug)]
 pub struct BaseTxResult<H, T> {
     /// The inner result of the transaction execution.

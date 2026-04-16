@@ -176,7 +176,7 @@ where
         self.apply_op_checks(outcome)
     }
 
-    /// Performs the necessary opstack specific checks based on top of the regular eth outcome.
+    /// Performs the necessary Base-specific checks based on top of the regular eth outcome.
     fn apply_op_checks(
         &self,
         outcome: TransactionValidationOutcome<Tx>,

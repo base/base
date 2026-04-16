@@ -355,13 +355,13 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
         self
     }
 
-    /// Configure the data availability configuration for the OP builder.
+    /// Configure the data availability configuration for the Base builder.
     pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = Some(da_config);
         self
     }
 
-    /// Configure the gas limit configuration for the OP payload builder.
+    /// Configure the gas limit configuration for the Base payload builder.
     pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = Some(gas_limit_config);
         self

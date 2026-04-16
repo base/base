@@ -8,7 +8,7 @@ use base_common_consensus::{
 };
 use serde::{Deserialize, Serialize};
 
-/// OP Transaction Receipt type
+/// Base transaction receipt type
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[doc(alias = "OpTxReceipt")]

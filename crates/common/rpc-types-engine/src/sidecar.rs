@@ -19,7 +19,7 @@ pub struct BaseExecutionPayloadSidecar {
     /// NOTE: Blob versioned hashes should always be empty. See <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv3>.
     ecotone: MaybeCancunPayloadFields,
     /// Isthmus request params, inherited from Prague, introduced in `engine_newPayloadV4` that are
-    /// not present in the [`OpExecutionPayloadV4`](crate::BaseExecutionPayloadV4).
+    /// not present in the [`BaseExecutionPayloadV4`].
     ///
     /// NOTE: These fields, i.e. the EL request hashes, should always be empty. See <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>.
     isthmus: MaybePraguePayloadFields,

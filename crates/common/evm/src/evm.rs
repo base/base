@@ -14,7 +14,7 @@ use crate::{
     BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
 };
 
-/// OP EVM implementation.
+/// Base EVM implementation.
 ///
 /// This is a wrapper type around the `revm` evm with optional [`Inspector`] (tracing)
 /// support. [`Inspector`] support is configurable at runtime because it's part of the underlying
@@ -39,7 +39,7 @@ impl<DB: Database, I, P> BaseEvm<DB, I, P> {
 }
 
 impl<DB: Database, I, P> BaseEvm<DB, I, P> {
-    /// Creates a new OP EVM instance.
+    /// Creates a new [`BaseEvm`] instance.
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
     /// [`OpEvm`] should be invoked on [`Evm::transact`].

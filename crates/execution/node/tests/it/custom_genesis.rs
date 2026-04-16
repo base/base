@@ -18,7 +18,7 @@ use reth_provider::{HeaderProvider, StageCheckpointReader, providers::Blockchain
 use reth_stages_types::StageId;
 use tokio::sync::Mutex;
 
-/// Tests that an OP node can initialize with a custom genesis block number.
+/// Tests that a Base node can initialize with a custom genesis block number.
 #[tokio::test]
 async fn test_op_node_custom_genesis_number() {
     reth_tracing::init_test_tracing();

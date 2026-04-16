@@ -22,7 +22,7 @@ use crate::{ExecutionError, ProtocolError, Result};
 /// Result of assembling a block from flashblocks.
 #[derive(Debug, Clone)]
 pub struct AssembledBlock {
-    /// The reconstructed OP block.
+    /// The reconstructed Base block.
     pub block: BaseBlock,
     /// The base payload data from the first flashblock.
     pub base: ExecutionPayloadBaseV1,

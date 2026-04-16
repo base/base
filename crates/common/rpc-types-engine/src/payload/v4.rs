@@ -7,7 +7,7 @@ use alloy_eips::Decodable2718;
 use alloy_primitives::{B256, Bytes, U256};
 use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
 
-/// The Opstack execution payload for `newPayloadV4` of the engine API introduced with isthmus.
+/// The Base execution payload for `newPayloadV4` of the engine API introduced with isthmus.
 /// See also <https://specs.optimism.io/protocol/isthmus/exec-engine.html#engine_newpayloadv4-api>
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

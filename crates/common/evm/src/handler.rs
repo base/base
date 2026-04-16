@@ -69,8 +69,6 @@ impl<EVM, ERROR, FRAME> Handler for OpHandler<EVM, ERROR, FRAME>
 where
     EVM: EvmTr<Context: OpContextTr, Frame = FRAME>,
     ERROR: EvmTrError<EVM> + From<OpTransactionError> + FromStringError + IsTxError,
-    // TODO `FrameResult` should be a generic trait.
-    // TODO `FrameInit` should be a generic.
     FRAME: FrameTr<FrameResult = FrameResult, FrameInit = FrameInit>,
 {
     type Evm = EVM;

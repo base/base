@@ -93,7 +93,7 @@ impl BaseNode {
             .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
     }
 
-    /// Instantiates the [`ProviderFactoryBuilder`] for an opstack node.
+    /// Instantiates the [`ProviderFactoryBuilder`] for a Base node.
     ///
     /// # Open a Providerfactory in read-only mode from a datadir
     ///
