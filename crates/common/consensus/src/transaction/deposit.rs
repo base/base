@@ -17,6 +17,11 @@ use alloy_rpc_types_eth::ConversionError;
 
 use super::OpTxType;
 
+#[cfg(feature = "evm")]
+use alloy_evm::FromRecoveredTx;
+#[cfg(feature = "evm")]
+use revm::context::TxEnv;
+
 /// Deposit transactions, also known as deposits are initiated on L1, and executed on L2.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
@@ -380,6 +385,31 @@ impl From<TxDeposit> for alloy_rpc_types_eth::TransactionRequest {
             value: Some(value),
             gas: Some(gas_limit),
             input: input.into(),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(feature = "evm")]
+impl FromRecoveredTx<TxDeposit> for TxEnv {
+    fn from_recovered_tx(tx: &TxDeposit, caller: alloy_primitives::Address) -> Self {
+        let TxDeposit {
+            to,
+            value,
+            gas_limit,
+            input,
+            source_hash: _,
+            from: _,
+            mint: _,
+            is_system_transaction: _,
+        } = tx;
+        Self {
+            tx_type: tx.ty(),
+            caller,
+            gas_limit: *gas_limit,
+            kind: *to,
+            value: *value,
+            data: input.clone(),
             ..Default::default()
         }
     }

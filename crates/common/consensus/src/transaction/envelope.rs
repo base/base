@@ -18,6 +18,11 @@ use crate::{
     transaction::{BaseTransactionInfo, DepositInfo},
 };
 
+#[cfg(feature = "evm")]
+use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
+#[cfg(feature = "evm")]
+use revm::context::TxEnv;
+
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for Base.
 ///
 /// # Note:
@@ -183,6 +188,30 @@ impl TryFrom<BaseTxEnvelope> for TxEnvelope {
 
     fn try_from(value: BaseTxEnvelope) -> Result<Self, Self::Error> {
         value.try_into_eth_envelope()
+    }
+}
+
+#[cfg(feature = "evm")]
+impl FromRecoveredTx<BaseTxEnvelope> for TxEnv {
+    fn from_recovered_tx(tx: &BaseTxEnvelope, caller: alloy_primitives::Address) -> Self {
+        match tx {
+            BaseTxEnvelope::Legacy(tx) => Self::from_recovered_tx(tx.tx(), caller),
+            BaseTxEnvelope::Eip1559(tx) => Self::from_recovered_tx(tx.tx(), caller),
+            BaseTxEnvelope::Eip2930(tx) => Self::from_recovered_tx(tx.tx(), caller),
+            BaseTxEnvelope::Eip7702(tx) => Self::from_recovered_tx(tx.tx(), caller),
+            BaseTxEnvelope::Deposit(tx) => Self::from_recovered_tx(tx.inner(), caller),
+        }
+    }
+}
+
+#[cfg(feature = "evm")]
+impl FromTxWithEncoded<BaseTxEnvelope> for TxEnv {
+    fn from_encoded_tx(
+        tx: &BaseTxEnvelope,
+        caller: alloy_primitives::Address,
+        _encoded: alloy_primitives::Bytes,
+    ) -> Self {
+        Self::from_recovered_tx(tx, caller)
     }
 }
 
