@@ -417,9 +417,9 @@ impl View for UpgradesView {
                 // defined checks. This lets mainnet run Jovian checks instead of
                 // silently doing nothing when V1 has no timestamp.
                 if let Some(spec) = target_hardfork(chain)
-                    .and_then(|name| chain.specs.iter().find(|s| s.name == name))
+                    .and_then(|name| chain.specs.iter().find(|s| s.name == name && s.timestamp.is_some()))
                 {
-                    let ts = spec.timestamp.unwrap();
+                    let Some(ts) = spec.timestamp else { return Action::None; };
                     if let Some(rpc) = self.rpc_for_selected(resources) {
                         let mode = if ts > now { CheckMode::Before } else { CheckMode::After };
                         self.checks.start(self.selected_chain, rpc, spec.name, mode);
