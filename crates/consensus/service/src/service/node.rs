@@ -52,6 +52,10 @@ pub struct L1Config {
     /// - Ethereum mainnet/Sepolia: one epoch (~384 s = 32 slots × 12 s)
     /// - Devnet local L1: near-instant finality, poll aggressively (~2 s)
     pub finalized_poll_interval: Duration,
+    /// Number of L1 blocks to keep distance from the L1 head for the verifier (derivation
+    /// pipeline). When non-zero, the L1 watcher delays derivation heads by this many blocks,
+    /// providing reorg protection. Equivalent to op-node's `OP_NODE_VERIFIER_L1_CONFS`.
+    pub verifier_l1_confs: u64,
 }
 
 impl L1Config {
@@ -451,6 +455,7 @@ impl RollupNode {
             cancellation.clone(),
             head_stream,
             finalized_stream,
+            self.l1_config.verifier_l1_confs,
         );
         let l1_query_processor = L1WatcherQueryProcessor::new(
             Arc::clone(&self.config),

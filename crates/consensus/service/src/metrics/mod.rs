@@ -44,4 +44,10 @@ base_metrics::define_metrics! {
     sequencer_drift_empty_blocks_total: counter,
     #[describe("Pre-built payloads discarded because the unsafe head advanced past their parent")]
     sequencer_stale_build_discarded_total: counter,
+    #[describe("Configured verifier L1 confirmation depth")]
+    l1_verifier_confs_depth: gauge,
+    #[describe("L1 block number forwarded to derivation after verifier confirmation delay")]
+    l1_verifier_derivation_head: counter,
+    #[describe("Failed attempts to fetch a delayed L1 block for verifier confirmation")]
+    l1_verifier_delayed_fetch_errors: counter,
 }
