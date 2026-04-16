@@ -362,7 +362,8 @@ where
                 last_skipped = Some(cursor);
                 cursor = match cursor.checked_add(self.config.driver.block_interval) {
                     Some(c) => c,
-                    None => break,
+                    // Overflow means there are no further blocks to dispatch.
+                    None => return Ok(()),
                 };
             }
 
