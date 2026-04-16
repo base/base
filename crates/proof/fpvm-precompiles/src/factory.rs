@@ -71,19 +71,17 @@ where
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
-        BaseEvm::new(
-            Context::op()
-                .with_db(db)
-                .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
-                .build_op_with_inspector(NoOpInspector {})
-                .with_precompiles(FpvmPrecompiles::new_with_spec(
-                    spec_id,
-                    self.hint_writer.clone(),
-                    self.oracle_reader.clone(),
-                )),
-            false,
-        )
+        Context::op()
+            .with_db(db)
+            .with_block(input.block_env)
+            .with_cfg(input.cfg_env)
+            .build_op()
+            .with_inspector(NoOpInspector {})
+            .with_precompiles(FpvmPrecompiles::new_with_spec(
+                spec_id,
+                self.hint_writer.clone(),
+                self.oracle_reader.clone(),
+            ))
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -93,18 +91,15 @@ where
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
-        BaseEvm::new(
-            Context::op()
-                .with_db(db)
-                .with_block(input.block_env)
-                .with_cfg(input.cfg_env)
-                .build_op_with_inspector(inspector)
-                .with_precompiles(FpvmPrecompiles::new_with_spec(
-                    spec_id,
-                    self.hint_writer.clone(),
-                    self.oracle_reader.clone(),
-                )),
-            true,
-        )
+        Context::op()
+            .with_db(db)
+            .with_block(input.block_env)
+            .with_cfg(input.cfg_env)
+            .build_op_with_inspector(inspector)
+            .with_precompiles(FpvmPrecompiles::new_with_spec(
+                spec_id,
+                self.hint_writer.clone(),
+                self.oracle_reader.clone(),
+            ))
     }
 }

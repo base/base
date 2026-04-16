@@ -1,46 +1,61 @@
-//! Base builder trait [`Builder`] used to build [`OpEvm`].
+//! [`Builder`] trait for constructing a [`BaseEvm`] directly from an [`OpContext`].
+use alloy_evm::Database;
 use revm::{
-    Context, Database,
-    context::Cfg,
-    context_interface::{Block, JournalTr},
-    handler::instructions::EthInstructions,
+    context::FrameStack,
+    handler::{EthFrame, instructions::EthInstructions},
     interpreter::interpreter::EthInterpreter,
-    state::EvmState,
 };
 
-use crate::{L1BlockInfo, OpEvm, OpSpecId, precompiles::BasePrecompiles, transaction::OpTxTr};
+use crate::{BaseEvm, BasePrecompiles, OpContext, OpSpecId};
 
-/// Type alias for default `OpEvm`
-pub type DefaultOpEvm<CTX, INSP = ()> =
-    OpEvm<CTX, INSP, EthInstructions<EthInterpreter, CTX>, BasePrecompiles>;
-
-/// Trait that allows for Base `OpEvm` to be built.
+/// Trait that allows constructing a [`BaseEvm`] from an [`OpContext`].
+///
+/// Implemented for [`OpContext<DB>`] of any database. The resulting [`BaseEvm`]
+/// uses [`BasePrecompiles`] for the active [`OpSpecId`]; call
+/// [`BaseEvm::with_precompiles`] afterwards to substitute a custom precompile set.
 pub trait Builder: Sized {
-    /// Type of the context.
-    type Context;
+    /// The database type of the context.
+    type Db: Database;
 
-    /// Build the op.
-    fn build_op(self) -> DefaultOpEvm<Self::Context>;
+    /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
+    /// so [`Inspector`][revm::Inspector] callbacks are never invoked via
+    /// [`alloy_evm::Evm::transact`].
+    fn build_op(self) -> BaseEvm<Self::Db, ()>;
 
-    /// Build the op with an inspector.
-    fn build_op_with_inspector<INSP>(self, inspector: INSP) -> DefaultOpEvm<Self::Context, INSP>;
+    /// Builds a [`BaseEvm`] with the given inspector. The inspect flag is `true`,
+    /// so [`Inspector`][revm::Inspector] callbacks are invoked on every
+    /// [`alloy_evm::Evm::transact`] call.
+    fn build_op_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<Self::Db, INSP>;
 }
 
-impl<BLOCK, TX, CFG, DB, JOURNAL> Builder for Context<BLOCK, TX, CFG, DB, JOURNAL, L1BlockInfo>
-where
-    BLOCK: Block,
-    TX: OpTxTr,
-    CFG: Cfg<Spec = OpSpecId>,
-    DB: Database,
-    JOURNAL: JournalTr<Database = DB, State = EvmState>,
-{
-    type Context = Self;
+impl<DB: Database> Builder for OpContext<DB> {
+    type Db = DB;
 
-    fn build_op(self) -> DefaultOpEvm<Self::Context> {
-        OpEvm::new(self, ())
+    fn build_op(self) -> BaseEvm<DB, ()> {
+        let spec: OpSpecId = self.cfg.spec;
+        BaseEvm::new(
+            revm::context::Evm {
+                ctx: self,
+                inspector: (),
+                instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
+                precompiles: BasePrecompiles::new_with_spec(spec),
+                frame_stack: FrameStack::<EthFrame<EthInterpreter>>::new_prealloc(8),
+            },
+            false,
+        )
     }
 
-    fn build_op_with_inspector<INSP>(self, inspector: INSP) -> DefaultOpEvm<Self::Context, INSP> {
-        OpEvm::new(self, inspector)
+    fn build_op_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<DB, INSP> {
+        let spec: OpSpecId = self.cfg.spec;
+        BaseEvm::new(
+            revm::context::Evm {
+                ctx: self,
+                inspector,
+                instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
+                precompiles: BasePrecompiles::new_with_spec(spec),
+                frame_stack: FrameStack::<EthFrame<EthInterpreter>>::new_prealloc(8),
+            },
+            true,
+        )
     }
 }

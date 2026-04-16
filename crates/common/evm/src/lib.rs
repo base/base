@@ -29,11 +29,8 @@ pub use handler::{IsTxError, OpHandler};
 mod precompiles;
 pub use precompiles::BasePrecompiles;
 
-mod op_evm;
-pub use op_evm::OpEvm;
-
 mod api;
-pub use api::{BaseError, Builder, DefaultOp, DefaultOpEvm, OpContext, OpContextTr};
+pub use api::{BaseError, Builder, DefaultOp, OpContext, OpContextTr};
 
 mod evm;
 pub use evm::BaseEvm;

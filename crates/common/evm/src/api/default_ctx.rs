@@ -28,10 +28,7 @@ impl DefaultOp for OpContext<EmptyDB> {
 
 #[cfg(test)]
 mod tests {
-    use revm::{
-        ExecuteEvm,
-        inspector::{InspectEvm, NoOpInspector},
-    };
+    use revm::{ExecuteEvm, InspectEvm, inspector::NoOpInspector};
 
     use super::*;
     use crate::Builder;
@@ -39,11 +36,10 @@ mod tests {
     #[test]
     fn default_run_op() {
         let ctx = Context::op();
-        // convert to Base context
         let mut evm = ctx.build_op_with_inspector(NoOpInspector {});
-        // execute
+        // execute without inspector
         let _ = evm.transact(OpTransaction::builder().build_fill());
-        // inspect
+        // execute with inspector callbacks
         let _ = evm.inspect_one_tx(OpTransaction::builder().build_fill());
     }
 }
