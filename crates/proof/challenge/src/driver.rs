@@ -411,57 +411,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
     ) -> eyre::Result<()> {
         let game_address = candidate.factory.proxy;
 
-        let (result, intermediate_roots) = match self.validate_game(&candidate).await? {
-            Some(pair) => pair,
-            None => return Ok(()),
-        };
+        // Fetch the onchain intermediate roots.
+        let intermediate_roots =
+            self.verifier_client.intermediate_output_roots(game_address).await?;
 
-        // For Path 2: If the original proposal's root at the challenged index
-        // is valid, the ZK challenge was fraudulent. If it's invalid, the
-        // challenge was legitimate — skip.
-        //
-        // The validator scans intermediate roots sequentially and reports the
-        // first invalid index. If `first_invalid <= challenged_index`, the
-        // root at the challenged index (or an earlier one) was wrong, so the
-        // ZK challenge was legitimate.
-        if !result.is_valid {
-            match result.invalid_intermediate_index {
-                Some(first_invalid) => {
-                    let first_invalid_u64 = u64::try_from(first_invalid).map_err(|_| {
-                        eyre::eyre!(
-                            "first invalid intermediate index {first_invalid} overflows u64"
-                        )
-                    })?;
-                    if first_invalid_u64 <= challenged_index {
-                        debug!(
-                            game = %game_address,
-                            challenged_index = challenged_index,
-                            first_invalid_index = first_invalid,
-                            "ZK challenge is legitimate (original root was wrong), skipping"
-                        );
-                        return Ok(());
-                    }
-                    // first_invalid > challenged_index: all roots up to and
-                    // including the challenged index are valid, so the ZK
-                    // challenge was fraudulent. Fall through to nullify.
-                }
-                None => {
-                    // Validation says invalid but no specific index was identified.
-                    // Cannot confirm the challenged root is correct, so skip to
-                    // avoid submitting a potentially wrong nullification.
-                    warn!(
-                        game = %game_address,
-                        challenged_index = challenged_index,
-                        "validation returned invalid without specific index, skipping"
-                    );
-                    return Ok(());
-                }
-            }
-        }
-
-        // The on-chain root at the challenged index is correct.
-        // Use the on-chain root value as `intermediateRootToProve` — the
-        // contract requires it to match `intermediateOutputRoot(index)`.
         let idx = usize::try_from(challenged_index)
             .map_err(|_| eyre::eyre!("challenged_index {challenged_index} overflows usize"))?;
         let on_chain_root = intermediate_roots.get(idx).copied().ok_or_else(|| {
@@ -471,6 +424,45 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 intermediate_roots.len()
             )
         })?;
+
+        // Validate only the challenged root — not all intermediate roots.
+        // The checkpoint block for index `i` is:
+        //   starting_block + interval * (i + 1)
+        let checkpoint_block = candidate.checkpoint_start_block(challenged_index + 1)?;
+
+        let expected_root = match self.validator.compute_output_root(checkpoint_block).await {
+            Ok(root) => root,
+            Err(ValidatorError::BlockNotAvailable { .. }) => {
+                debug!(
+                    game = %game_address,
+                    block = checkpoint_block,
+                    "block not yet available, skipping game"
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                warn!(
+                    game = %game_address,
+                    block = checkpoint_block,
+                    error = %e,
+                    "output root computation failed, skipping game"
+                );
+                return Ok(());
+            }
+        };
+
+        // If the onchain root at the challenged index does not match the
+        // locally computed root, the ZK challenge was legitimate — skip.
+        if on_chain_root != expected_root {
+            debug!(
+                game = %game_address,
+                challenged_index = challenged_index,
+                on_chain = %on_chain_root,
+                expected = %expected_root,
+                "ZK challenge is legitimate (challenged root was wrong), skipping"
+            );
+            return Ok(());
+        }
 
         info!(
             game = %game_address,

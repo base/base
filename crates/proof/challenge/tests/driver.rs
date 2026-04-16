@@ -868,6 +868,38 @@ async fn test_step_fraudulent_zk_challenge_nullifies() {
     );
 }
 
+#[tokio::test]
+async fn test_step_fraudulent_zk_challenge_nullifies_despite_earlier_invalid_root() {
+    // Regression: an earlier intermediate root (index 0) is invalid, but the
+    // challenged root (index 1) is correct. The ZK challenge targets a valid
+    // root, so it is fraudulent and must be nullified. Previously the
+    // challenger incorrectly skipped because the first invalid index was
+    // <= the challenged index.
+    let (l2, factory, _root_15, root_20) = base_game_mocks();
+
+    let verifier = single_game_verifier(MockGameState {
+        zk_prover: ZK_PROVER_ADDR,
+        tee_prover: DEFAULT_TEE_PROVER,
+        // Index 0 is bogus, index 1 (challenged) is correct.
+        intermediate_output_roots: vec![BOGUS_ROOT, root_20],
+        countered_index: 2, // 1-based → challenged_index = 1
+        ..game_state(20)
+    });
+
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
+    driver.step().await.unwrap();
+
+    let entry = driver
+        .pending_proofs
+        .get(&addr(0))
+        .expect("proof should be pending — challenged root is valid, ZK challenge is fraudulent");
+    assert_eq!(
+        entry.intent,
+        DisputeIntent::Nullify,
+        "intent should be Nullify when challenged root is valid despite earlier invalid root"
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Path 3: Wrong ZK proposal → nullify with ZK
 // ──────────────────────────────────────────────────────────────────────────
