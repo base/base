@@ -275,7 +275,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         index: u64,
     ) -> Result<B256, ContractError> {
         let roots = self.intermediate_output_roots(addr).await?;
-        Ok(roots.get(index as usize).copied().unwrap_or(B256::ZERO))
+        Ok(roots
+            .get(index as usize)
+            .copied()
+            .expect("intermediate_output_root: index out of bounds"))
     }
     async fn countered_index(&self, _: Address) -> Result<u64, ContractError> {
         Ok(0)
