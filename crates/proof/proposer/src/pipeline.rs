@@ -491,6 +491,10 @@ where
                         error: e,
                     }
                 }
+                Err(SubmitAction::GameAlreadyExists) => {
+                    submit_timer.disarm();
+                    SubmitOutcome::GameAlreadyExists { target_block: next_to_submit }
+                }
                 Err(SubmitAction::Discard(e)) => {
                     submit_timer.disarm();
                     SubmitOutcome::Discard { target_block: next_to_submit, error: e }
@@ -535,6 +539,32 @@ where
                     }
                     Err(e) => {
                         warn!(error = %e, "Failed to recover state after submission");
+                    }
+                }
+                state.record_gauges();
+                true
+            }
+            SubmitOutcome::GameAlreadyExists { target_block } => {
+                info!(target_block, "Game already exists on chain");
+                Metrics::last_proposed_block().set(target_block as f64);
+                state.retry_counts.remove(&target_block);
+                state.submitting = None;
+                // The game exists but the forward walk missed it — most
+                // likely because `game_count` was read from a different L1
+                // RPC replica than the one serving `factory.games()`.
+                // Decrement the cached game_count so the next recovery sees
+                // `actual_count > cached_count` and performs an incremental
+                // forward walk from the cached tip (O(1): a single
+                // `factory.games()` lookup at the next expected block).
+                if let Some(ref mut cached) = state.cached_recovery {
+                    cached.game_count = cached.game_count.saturating_sub(1);
+                }
+                match self.recover_latest_state(&mut state.cached_recovery).await {
+                    Ok(recovered) => {
+                        state.prune_stale(recovered.l2_block_number);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to recover state after GameAlreadyExists");
                     }
                 }
                 state.record_gauges();
@@ -1154,7 +1184,7 @@ where
                         target_block,
                         "Game already exists, next tick will load fresh state from chain"
                     );
-                    Ok(())
+                    Err(SubmitAction::GameAlreadyExists)
                 } else {
                     propose_timer.disarm();
                     Err(SubmitAction::Failed(e))
@@ -1234,6 +1264,10 @@ where
 enum SubmitAction {
     /// Output root mismatch — proved root no longer matches canonical chain.
     RootMismatch,
+    /// The dispute game already exists on-chain by a previous attempt whose
+    /// result was lost to an RPC propagation delay. The pipeline must invalidate
+    /// its recovery cache so the next forward walk discovers the existing game.
+    GameAlreadyExists,
     /// Transient failure — retry later with the same proof.
     Failed(ProposerError),
     /// Proof is permanently invalid (e.g. signer not registered) — discard
@@ -1245,6 +1279,7 @@ impl std::fmt::Display for SubmitAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RootMismatch => write!(f, "output root mismatch"),
+            Self::GameAlreadyExists => write!(f, "game already exists"),
             Self::Failed(e) | Self::Discard(e) => write!(f, "{e}"),
         }
     }
@@ -1253,6 +1288,7 @@ impl std::fmt::Display for SubmitAction {
 /// Result of a concurrent submission task, returned to the coordinator.
 enum SubmitOutcome {
     Success { target_block: u64 },
+    GameAlreadyExists { target_block: u64 },
     RootMismatch { target_block: u64 },
     Failed { target_block: u64, proof: ProofResult, error: ProposerError },
     Discard { target_block: u64, error: ProposerError },
