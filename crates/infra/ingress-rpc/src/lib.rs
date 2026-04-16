@@ -29,7 +29,10 @@ use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use base_alloy_network::Base;
 use base_bundles::MeterBundleResponse;
 use clap::Args;
-use tokio::sync::{Semaphore, broadcast};
+use tokio::{
+    sync::{Semaphore, broadcast},
+    task::JoinSet,
+};
 use tracing::{debug, error, info, warn};
 use url::Url;
 pub use validation::{AccountInfo, AccountInfoLookup, L1BlockInfoLookup, validate_bundle};
@@ -161,7 +164,7 @@ impl BuilderConnector {
     /// that slow responses don't block the recv loop and risk broadcast channel
     /// lag.
     pub fn connect(metering_rx: broadcast::Receiver<MeterBundleResponse>, builder_rpc: Url) {
-        let rpc_url = builder_rpc.clone();
+        let rpc_url: Arc<str> = Arc::from(builder_rpc.as_str());
         let builder: RootProvider<Base> = ProviderBuilder::new()
             .disable_recommended_fillers()
             .network::<Base>()
@@ -170,8 +173,16 @@ impl BuilderConnector {
         tokio::spawn(async move {
             let mut event_rx = metering_rx;
             let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_RPCS));
+            let mut join_set = JoinSet::new();
             info!(url = %rpc_url, "BuilderConnector started, waiting for metering data");
             loop {
+                // Drain completed tasks to observe panics / errors.
+                while let Some(result) = join_set.try_join_next() {
+                    if let Err(e) = result {
+                        error!(url = %rpc_url, error = %e, "RPC forwarding task failed");
+                    }
+                }
+
                 match event_rx.recv().await {
                     Ok(event) => {
                         if event.results.is_empty() {
@@ -188,8 +199,8 @@ impl BuilderConnector {
                             break;
                         };
                         let builder = builder.clone();
-                        let url = rpc_url.clone();
-                        tokio::spawn(async move {
+                        let url = Arc::clone(&rpc_url);
+                        join_set.spawn(async move {
                             match builder
                                 .client()
                                 .request::<(TxHash, MeterBundleResponse), ()>(
@@ -224,6 +235,13 @@ impl BuilderConnector {
                         info!(url = %rpc_url, "BuilderConnector channel closed, shutting down");
                         break;
                     }
+                }
+            }
+
+            // Drain remaining in-flight tasks on shutdown.
+            while let Some(result) = join_set.join_next().await {
+                if let Err(e) = result {
+                    error!(url = %rpc_url, error = %e, "RPC forwarding task failed during shutdown");
                 }
             }
         });
@@ -344,10 +362,11 @@ mod tests {
     async fn test_builder_connector_forwards_concurrently() {
         let mock_server = MockServer::start().await;
 
-        // Each response takes 100ms. With sequential forwarding, 5 messages
-        // would take >=500ms. Concurrent forwarding completes in ~100ms.
+        // Each response takes 200ms. Sequential forwarding would need >=1000ms
+        // for 5 messages. Concurrent forwarding completes in ~200ms; we allow
+        // a generous 2s budget so CI load doesn't cause flaky failures.
         Mock::given(method("POST"))
-            .respond_with(jsonrpc_ok().set_delay(Duration::from_millis(100)))
+            .respond_with(jsonrpc_ok().set_delay(Duration::from_millis(200)))
             .expect(5)
             .mount(&mock_server)
             .await;
@@ -359,8 +378,8 @@ mod tests {
             tx.send(response_with_results()).unwrap();
         }
 
-        // Allow 300ms — enough for concurrent but not sequential (>=500ms).
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // 2s is generous for concurrent (~200ms) but well under sequential (>=1s).
+        tokio::time::sleep(Duration::from_millis(2000)).await;
 
         // wiremock verifies exactly 5 calls were made within the time window.
     }
