@@ -149,14 +149,17 @@ mod tests {
     use super::*;
     use crate::{
         BaseEvmFactory, OpSpecId,
-        precompiles::{bls12_381, bn254_pair},
+        JOVIAN, JOVIAN_MAX_INPUT_SIZE,
+        JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE,
+        JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE,
+        JOVIAN_PAIRING, JOVIAN_PAIRING_MAX_INPUT_SIZE,
     };
 
     #[rstest]
-    #[case::bn254_pair(*bn254_pair::JOVIAN.address(), bn254_pair::JOVIAN_MAX_INPUT_SIZE)]
-    #[case::bls12_g1_msm(*bls12_381::JOVIAN_G1_MSM.address(), bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE)]
-    #[case::bls12_g2_msm(*bls12_381::JOVIAN_G2_MSM.address(), bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
-    #[case::bls12_pairing(*bls12_381::JOVIAN_PAIRING.address(), bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE)]
+    #[case::bn254_pair(*JOVIAN.address(), JOVIAN_MAX_INPUT_SIZE)]
+    #[case::bls12_g1_msm(*JOVIAN_G1_MSM.address(), JOVIAN_G1_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_g2_msm(*JOVIAN_G2_MSM.address(), JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_pairing(*JOVIAN_PAIRING.address(), JOVIAN_PAIRING_MAX_INPUT_SIZE)]
     fn precompile_jovian_at_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
@@ -178,10 +181,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::bn254_pair(*bn254_pair::JOVIAN.address(), bn254_pair::JOVIAN_MAX_INPUT_SIZE)]
-    #[case::bls12_g1_msm(*bls12_381::JOVIAN_G1_MSM.address(), bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE)]
-    #[case::bls12_g2_msm(*bls12_381::JOVIAN_G2_MSM.address(), bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
-    #[case::bls12_pairing(*bls12_381::JOVIAN_PAIRING.address(), bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE)]
+    #[case::bn254_pair(*JOVIAN.address(), JOVIAN_MAX_INPUT_SIZE)]
+    #[case::bls12_g1_msm(*JOVIAN_G1_MSM.address(), JOVIAN_G1_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_g2_msm(*JOVIAN_G2_MSM.address(), JOVIAN_G2_MSM_MAX_INPUT_SIZE)]
+    #[case::bls12_pairing(*JOVIAN_PAIRING.address(), JOVIAN_PAIRING_MAX_INPUT_SIZE)]
     fn precompile_jovian_over_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
