@@ -8,19 +8,18 @@ use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
     eip2930::AccessList,
 };
+#[cfg(feature = "evm")]
+use alloy_evm::FromRecoveredTx;
 #[cfg(feature = "alloy-compat")]
 use alloy_network::{UnknownTxEnvelope, UnknownTypedTransaction};
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256, keccak256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
 #[cfg(feature = "alloy-compat")]
 use alloy_rpc_types_eth::ConversionError;
-
-use super::OpTxType;
-
-#[cfg(feature = "evm")]
-use alloy_evm::FromRecoveredTx;
 #[cfg(feature = "evm")]
 use revm::context::TxEnv;
+
+use super::OpTxType;
 
 /// Deposit transactions, also known as deposits are initiated on L1, and executed on L2.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]

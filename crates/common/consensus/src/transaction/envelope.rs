@@ -5,6 +5,8 @@ use alloy_consensus::{
     transaction::{TransactionInfo, TxHashRef},
 };
 use alloy_eips::eip2718::Encodable2718;
+#[cfg(feature = "evm")]
+use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 #[cfg(feature = "alloy-compat")]
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope};
 use alloy_primitives::{B256, Bytes, Signature, TxHash};
@@ -12,16 +14,13 @@ use alloy_primitives::{B256, Bytes, Signature, TxHash};
 use alloy_rpc_types_eth::{ConversionError, Transaction as AlloyRpcTransaction};
 #[cfg(feature = "alloy-compat")]
 use alloy_serde::WithOtherFields;
+#[cfg(feature = "evm")]
+use revm::context::TxEnv;
 
 use crate::{
     BasePooledTransaction, TxDeposit,
     transaction::{BaseTransactionInfo, DepositInfo},
 };
-
-#[cfg(feature = "evm")]
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
-#[cfg(feature = "evm")]
-use revm::context::TxEnv;
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for Base.
 ///
