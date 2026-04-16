@@ -161,7 +161,7 @@ fn cascade_implies_all_preceding_forks_and_no_later_forks() {
 
     // Azul is a standalone Base-specific fork; Jovian does NOT imply it.
     assert!(!rc.is_base_azul_active(jovian_time), "Azul must not be implied by Jovian");
-    // And setting only Azul does not imply Jovian (tested in base_v1_is_standalone).
+    // And setting only Azul does not imply Jovian (tested in base_azul_is_standalone).
 }
 
 /// Fjord changes `max_sequencer_drift` from the per-chain configured value
@@ -222,7 +222,7 @@ fn granite_changes_channel_timeout_at_mainnet_timestamp() {
 /// `Azul` is a standalone Base-specific hardfork. It is not part of the OP
 /// cascade chain: Jovian does not imply it, and it does not imply Jovian.
 #[test]
-fn base_v1_is_standalone_from_jovian() {
+fn base_azul_is_standalone_from_jovian() {
     let rc = TestRollupConfigBuilder::mainnet();
     let jovian_time = rc.hardforks.jovian_time.expect("jovian_time");
     let base_azul_time = rc.hardforks.base.azul.expect("azul_time");
