@@ -508,8 +508,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 Ok(Ok(proof_bytes)) => {
                     info!(game = %game_address, path = "tee", "TEE proof obtained");
 
-                    // Build the ZK fallback request proactively so we can
-                    // fall back to ZK if the TEE transaction submission fails.
                     let zk_fallback_request = self.build_zk_request(&candidate, invalid_index)?;
                     self.pending_proofs.insert(
                         game_address,
@@ -601,9 +599,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
     }
 
     /// Builds a [`ProveBlockRequest`] for the given candidate and invalid index.
-    ///
-    /// This is used both when initiating a ZK proof directly and when
-    /// pre-building a ZK fallback request for TEE proofs.
     fn build_zk_request(
         &self,
         candidate: &CandidateGame,
@@ -783,78 +778,21 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 }
             }
             Err(e) => {
-                if targets_tee {
-                    // TEE nullification tx failed — fall back to ZK immediately
-                    // rather than retrying the same TEE proof indefinitely.
-                    warn!(
-                        error = %e,
-                        game = %game_address,
-                        "TEE dispute tx failed, falling back to ZK proof"
-                    );
-                    self.initiate_tee_zk_fallback(game_address).await;
-                } else {
-                    warn!(
-                        error = %e,
-                        game = %game_address,
-                        "dispute tx failed, will retry next tick"
-                    );
-                    // Leave entry as ReadyToSubmit for retry.
+                warn!(
+                    error = %e,
+                    game = %game_address,
+                    "dispute tx failed, will retry next tick"
+                );
+                if targets_tee && let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    // Don't retry the failed TEE submission — switch to the ZK
+                    // fallback so the next retry uses the pre-built ZK request.
+                    p.phase = ProofPhase::NeedsRetry;
+                    return self.handle_proof_retry(game_address).await;
                 }
             }
         }
 
         Ok(())
-    }
-
-    /// Replaces a failed TEE pending proof with a ZK proof session.
-    ///
-    /// Extracts the pre-built ZK fallback request from the TEE entry,
-    /// initiates `prove_block`, and transitions the entry to
-    /// `AwaitingProof` with the ZK fallback intent.
-    async fn initiate_tee_zk_fallback(&mut self, game_address: Address) {
-        let pending = match self.pending_proofs.get(&game_address) {
-            Some(p) => p,
-            None => return,
-        };
-
-        let (request, fallback_intent) = match &pending.kind {
-            ProofKind::Tee { zk_fallback_request, zk_fallback_intent } => {
-                (zk_fallback_request.clone(), *zk_fallback_intent)
-            }
-            _ => return,
-        };
-
-        let invalid_index = pending.invalid_index;
-        let expected_root = pending.expected_root;
-
-        ChallengerMetrics::tee_proof_fallback_total().increment(1);
-
-        match self.zk_prover.prove_block(request.clone()).await {
-            Ok(response) => {
-                info!(
-                    game = %game_address,
-                    session_id = %response.session_id,
-                    intent = ?fallback_intent,
-                    "ZK fallback proof initiated after TEE submission failure"
-                );
-                let new_pending = PendingProof::awaiting(
-                    response.session_id,
-                    invalid_index,
-                    expected_root,
-                    request,
-                    fallback_intent,
-                );
-                self.pending_proofs.insert(game_address, new_pending);
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    game = %game_address,
-                    "ZK fallback prove_block failed, dropping entry"
-                );
-                self.pending_proofs.remove(&game_address);
-            }
-        }
     }
 
     /// Handles a proof that needs retrying after failure.
@@ -881,8 +819,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
 
         let (request, fallback_intent) = match &pending.kind {
             ProofKind::Tee { zk_fallback_request, zk_fallback_intent } => {
-                // TEE proofs carry a pre-built ZK fallback request — use it
-                // to initiate a ZK proof instead of dropping the entry.
                 debug!(game = %game_address, "TEE proof needs retry, falling back to ZK");
                 ChallengerMetrics::tee_proof_fallback_total().increment(1);
                 (zk_fallback_request.clone(), Some(*zk_fallback_intent))
@@ -902,8 +838,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 );
                 if let Some(p) = self.pending_proofs.get_mut(&game_address) {
                     p.phase = ProofPhase::AwaitingProof { session_id: response.session_id };
-                    // When falling back from TEE to ZK, update the kind and
-                    // intent so subsequent retries use the ZK path.
                     if let Some(intent) = fallback_intent {
                         p.kind = ProofKind::Zk { prove_request: request };
                         p.intent = intent;
