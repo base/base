@@ -27,6 +27,11 @@ use crate::{
     handler::OpHandler,
 };
 
+/// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
+/// [`EthInstructions`] / [`EthFrame`], keeping [`BaseEvm`] field and constructor signatures tidy.
+type InnerEvm<DB, I, P> =
+    RevmEvm<OpContext<DB>, I, EthInstructions<EthInterpreter, OpContext<DB>>, P, EthFrame<EthInterpreter>>;
+
 /// The Base EVM, wrapping [`RevmEvm`] with an [`OpContext`] and an optional [`Inspector`].
 ///
 /// Parameterized over a database [`DB`], inspector [`I`], and precompile set [`P`]
@@ -40,13 +45,7 @@ use crate::{
 pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
     /// Inner revm EVM with Base-specific context, fixed [`EthInstructions`] and
     /// [`EthFrame`], and generic precompile set [`P`].
-    pub(crate) inner: RevmEvm<
-        OpContext<DB>,
-        I,
-        EthInstructions<EthInterpreter, OpContext<DB>>,
-        P,
-        EthFrame<EthInterpreter>,
-    >,
+    pub(crate) inner: InnerEvm<DB, I, P>,
     /// Whether to invoke the [`Inspector`] on each [`Evm::transact`] call.
     pub(crate) inspect: bool,
 }
@@ -56,16 +55,7 @@ impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     ///
     /// Prefer [`crate::Builder::build_op`] or [`crate::Builder::build_op_with_inspector`]
     /// to construct from an [`OpContext`] directly.
-    pub const fn new(
-        inner: RevmEvm<
-            OpContext<DB>,
-            I,
-            EthInstructions<EthInterpreter, OpContext<DB>>,
-            P,
-            EthFrame<EthInterpreter>,
-        >,
-        inspect: bool,
-    ) -> Self {
+    pub const fn new(inner: InnerEvm<DB, I, P>, inspect: bool) -> Self {
         Self { inner, inspect }
     }
 
