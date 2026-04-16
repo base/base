@@ -137,11 +137,11 @@ impl TestRollupConfigBuilder {
         self
     }
 
-    /// Sets the Base V1 activation timestamp.
+    /// Sets the Base Azul activation timestamp.
     ///
-    /// Base V1 is a standalone Base-specific fork, independent of the OP
+    /// Base Azul is a standalone Base-specific fork, independent of the OP
     /// cascade chain. Chaining after any `through_*` method is fine.
-    pub const fn with_base_v1_at(mut self, t: u64) -> Self {
+    pub const fn with_azul_at(mut self, t: u64) -> Self {
         self.config.hardforks.base.azul = Some(t);
         self
     }

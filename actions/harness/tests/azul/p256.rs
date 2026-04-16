@@ -1,4 +1,4 @@
-//! P256VERIFY precompile gas cost test across the Base V1 boundary.
+//! P256VERIFY precompile gas cost test across the Base Azul boundary.
 
 use alloy_primitives::{Bytes, TxKind, U256, hex};
 use base_action_harness::{
@@ -30,20 +30,20 @@ const P256_GAS_DELTA_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
 /// Storage slot where the P256 sentinel value (`1`) is written.
 const P256_SENTINEL_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
 
-/// P256VERIFY gas cost doubles after Base V1 (3,450 → 6,900).
+/// P256VERIFY gas cost doubles after Base Azul (3,450 → 6,900).
 #[tokio::test]
-async fn base_v1_p256_verify_gas_cost_increase() {
+async fn azul_p256_verify_gas_cost_increase() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..Default::default()
     };
 
-    // Base V1 activates at ts=6 (block 3).
+    // Base Azul activates at ts=6 (block 3).
     let base_azul_time = 6u64;
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
         .through_isthmus()
         .with_jovian_at(0)
-        .with_base_v1_at(base_azul_time)
+        .with_azul_at(base_azul_time)
         .build();
     let chain_id = rollup_cfg.l2_chain_id.id();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
@@ -114,7 +114,7 @@ async fn base_v1_p256_verify_gas_cost_increase() {
         assert_eq!(success, U256::from(1), "P256VERIFY must succeed post-fork");
     }
 
-    // The base gas fee doubles from 3,450 to 6,900 at Base V1.
+    // The base gas fee doubles from 3,450 to 6,900 at Base Azul.
     assert!(
         gas_delta_post > gas_delta_pre,
         "post-fork P256VERIFY gas delta ({gas_delta_post}) must exceed pre-fork delta \
@@ -136,6 +136,6 @@ async fn base_v1_p256_verify_gas_cost_increase() {
     assert_eq!(
         node.l2_safe().block_info.number,
         3,
-        "all 3 L2 blocks must derive through the Base V1 boundary"
+        "all 3 L2 blocks must derive through the Base Azul boundary"
     );
 }

@@ -1,4 +1,4 @@
-//! MODEXP precompile tests across the Base V1 boundary.
+//! MODEXP precompile tests across the Base Azul boundary.
 
 use alloy_primitives::{Bytes, TxKind, U256, hex};
 use base_action_harness::{
@@ -69,22 +69,22 @@ fn modexp_input(base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
     input
 }
 
-/// EIP-7823: MODEXP rejects inputs with any field length > 1024 bytes after Base V1.
+/// EIP-7823: MODEXP rejects inputs with any field length > 1024 bytes after Base Azul.
 ///
 /// Pre-fork the oversized call succeeds; post-fork it fails.
 #[tokio::test]
-async fn base_v1_modexp_upper_bound() {
+async fn azul_modexp_upper_bound() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..Default::default()
     };
 
-    // Base V1 activates at ts=6 (block 3).
+    // Base Azul activates at ts=6 (block 3).
     let base_azul_time = 6u64;
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
         .through_isthmus()
         .with_jovian_at(0)
-        .with_base_v1_at(base_azul_time)
+        .with_azul_at(base_azul_time)
         .build();
     let chain_id = rollup_cfg.l2_chain_id.id();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
@@ -177,24 +177,24 @@ async fn base_v1_modexp_upper_bound() {
     assert_eq!(
         node.l2_safe().block_info.number,
         3,
-        "all 3 L2 blocks must derive through the Base V1 boundary"
+        "all 3 L2 blocks must derive through the Base Azul boundary"
     );
 }
 
-/// EIP-7883: MODEXP gas cost increases after Base V1 (min 200→500, general cost tripled).
+/// EIP-7883: MODEXP gas cost increases after Base Azul (min 200→500, general cost tripled).
 #[tokio::test]
-async fn base_v1_modexp_gas_cost_increase() {
+async fn azul_modexp_gas_cost_increase() {
     let batcher_cfg = BatcherConfig {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..Default::default()
     };
 
-    // Base V1 activates at ts=6 (block 3).
+    // Base Azul activates at ts=6 (block 3).
     let base_azul_time = 6u64;
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
         .through_isthmus()
         .with_jovian_at(0)
-        .with_base_v1_at(base_azul_time)
+        .with_azul_at(base_azul_time)
         .build();
     let chain_id = rollup_cfg.l2_chain_id.id();
     let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
