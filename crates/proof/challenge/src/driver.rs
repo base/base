@@ -508,7 +508,19 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 Ok(Ok(proof_bytes)) => {
                     info!(game = %game_address, path = "tee", "TEE proof obtained");
 
-                    let zk_fallback_request = self.build_zk_request(&candidate, invalid_index)?;
+                    let (zk_fallback_request, zk_fallback_intent) =
+                        match self.build_zk_request(&candidate, invalid_index) {
+                            Ok(req) => (Some(req), Some(intent)),
+                            Err(e) => {
+                                warn!(
+                                    error = %e,
+                                    game = %game_address,
+                                    "failed to build ZK fallback request; \
+                                     TEE proof will have no ZK fallback"
+                                );
+                                (None, None)
+                            }
+                        };
                     self.pending_proofs.insert(
                         game_address,
                         PendingProof::ready_tee(
@@ -516,7 +528,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                             invalid_index,
                             expected_root,
                             zk_fallback_request,
-                            intent,
+                            zk_fallback_intent,
                         ),
                     );
                     if let Err(e) = self.poll_or_submit(game_address).await {
@@ -823,18 +835,41 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             return Ok(());
         }
 
-        let (request, fallback_intent) = match &pending.kind {
+        // If this was a TEE proof, eagerly transition to ZK *before*
+        // calling `prove_block` so that subsequent retries take the ZK branch
+        // and the fallback metric is emitted exactly once per transition.
+        let request = match &pending.kind {
             ProofKind::Tee { zk_fallback_request, zk_fallback_intent } => {
+                let (Some(fallback_request), Some(fallback_intent)) =
+                    (zk_fallback_request.clone(), *zk_fallback_intent)
+                else {
+                    // No ZK fallback available — nothing more we can do.
+                    debug!(
+                        game = %game_address,
+                        "TEE proof has no ZK fallback request, dropping entry"
+                    );
+                    self.pending_proofs.remove(&game_address);
+                    return Ok(());
+                };
+
                 debug!(game = %game_address, "TEE proof needs retry, falling back to ZK");
                 ChallengerMetrics::tee_proof_fallback_total().increment(1);
-                (zk_fallback_request.clone(), Some(*zk_fallback_intent))
+
+                // Transition eagerly so retries use the ZK path.
+                if let Some(p) = self.pending_proofs.get_mut(&game_address) {
+                    p.kind = ProofKind::Zk { prove_request: fallback_request.clone() };
+                    p.intent = fallback_intent;
+                    p.retry_count = 0;
+                }
+
+                fallback_request
             }
-            ProofKind::Zk { prove_request } => (prove_request.clone(), None),
+            ProofKind::Zk { prove_request } => prove_request.clone(),
         };
 
         ChallengerMetrics::proof_retries_total().increment(1);
 
-        match self.zk_prover.prove_block(request.clone()).await {
+        match self.zk_prover.prove_block(request).await {
             Ok(response) => {
                 info!(
                     game = %game_address,
@@ -844,11 +879,6 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                 );
                 if let Some(p) = self.pending_proofs.get_mut(&game_address) {
                     p.phase = ProofPhase::AwaitingProof { session_id: response.session_id };
-                    if let Some(intent) = fallback_intent {
-                        p.kind = ProofKind::Zk { prove_request: request };
-                        p.intent = intent;
-                        p.retry_count = 0;
-                    }
                 }
             }
             Err(e) => {
