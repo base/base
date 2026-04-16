@@ -20,7 +20,7 @@ pub struct MeteringStore {
     cache: Cache<TxHash, MeterBundleResponse>,
     /// Records when `get()` first returned `None` for a tx hash — the moment
     /// the builder needed metering data but didn't have it. Cleared when the
-    /// tx is skipped (MeteringDataPending) so only txs that were actually
+    /// tx is skipped (`MeteringDataPending`) so only txs that were actually
     /// included without data retain their entry for late-arrival detection.
     needed_at: Cache<TxHash, Instant>,
     /// Whether resource metering is enabled.
