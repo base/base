@@ -2,7 +2,7 @@
 
 This guide covers every code change required to introduce a new network upgrade to this repository. Changes are split into two groups: those required for every upgrade, and those that depend on whether the upgrade changes EVM execution rules.
 
-The V1 upgrade is used as the running example throughout. Replace `V1` / `azul` / `BASE_V1` with the actual upgrade name.
+The Azul upgrade is used as the running example throughout. Replace `Azul` / `azul` / `BASE_AZUL` with the actual upgrade name.
 
 ---
 
@@ -32,8 +32,8 @@ hardfork!(
         // ... existing variants ...
         /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
         Jovian,
-        /// V1: First Base-specific network upgrade.
-        V1,   // <-- add here
+        /// Azul: First Base-specific network upgrade.
+        Azul,   // <-- add here
     }
 );
 ```
@@ -44,14 +44,14 @@ Then update all four chain config array methods from `[(Self, ForkCondition); N]
 pub const fn mainnet() -> [(Self, ForkCondition); 10] {
     [
         // ... existing entries ...
-        (Self::V1, ForkCondition::Never),
+        (Self::Azul, ForkCondition::Never),
     ]
 }
 
 pub const fn devnet() -> [(Self, ForkCondition); 10] {
     [
         // ... existing entries ...
-        (Self::V1, ForkCondition::ZERO_TIMESTAMP),
+        (Self::Azul, ForkCondition::ZERO_TIMESTAMP),
     ]
 }
 ```
@@ -63,7 +63,7 @@ pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
     [
         // ... existing entries ...
         (Self::Jovian, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
-        (Self::V1, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
+        (Self::Azul, ForkCondition::Timestamp(BASE_DEVNET_0_SEPOLIA_DEV_0_JOVIAN_TIMESTAMP)),
     ]
 }
 ```
@@ -76,11 +76,11 @@ Update `check_base_upgrade_from_str` in the test module to include the new upgra
 
 **File:** [`crates/common/chains/src/chain.rs`](../../crates/common/chains/src/chain.rs)
 
-Add `V1` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
+Add `Azul` to the `use BaseUpgrade::{...}` import and add a match arm to `Index<BaseUpgrade>`:
 
 ```rust
 use BaseUpgrade::{
-    Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith, V1,
+    Azul, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
 };
 
 impl Index<BaseUpgrade> for BaseChainUpgrades {
@@ -88,7 +88,7 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
         match hf {
             // ... existing arms ...
             Jovian  => &self.forks[Jovian.idx()].1,
-            V1      => &self.forks[V1.idx()].1,  // <-- add
+            Azul    => &self.forks[Azul.idx()].1,  // <-- add
         }
     }
 }
@@ -103,12 +103,12 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
 For standard upgrades (flat timestamp field), add directly to `HardForkConfig`:
 
 ```rust
-/// `azul_time` sets the activation time for the Base V1 network upgrade.
+/// `azul_time` sets the activation time for the Base Azul network upgrade.
 #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
 pub azul_time: Option<u64>,
 ```
 
-For namespaced upgrades with the `{ "base": { "v1": <timestamp> } }` JSON shape, define a sub-struct and embed it:
+For namespaced upgrades with the `{ "base": { "azul": <timestamp> } }` JSON shape, define a sub-struct and embed it:
 
 ```rust
 /// Hardfork configuration for Base-specific upgrades.
@@ -118,7 +118,7 @@ For namespaced upgrades with the `{ "base": { "v1": <timestamp> } }` JSON shape,
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub struct BaseHardforkConfig {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-    pub v1: Option<u64>,
+    pub azul: Option<u64>,
 }
 
 pub struct HardForkConfig {
@@ -140,16 +140,16 @@ Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods.
 
 There are two patterns depending on whether the new upgrade is **standalone** or **cascading**:
 
-**Standalone** (e.g. `pectra_blob_schedule`, `V1`) — activated independently, never implied by a later upgrade being active. Use this pattern when the upgrade affects only protocol-level behavior and is not a prerequisite for the next upgrade:
+**Standalone** (e.g. `pectra_blob_schedule`, `Azul`) — activated independently, never implied by a later upgrade being active. Use this pattern when the upgrade affects only protocol-level behavior and is not a prerequisite for the next upgrade:
 
 ```rust
-/// Returns true if Base V1 is active at the given timestamp.
+/// Returns true if Base Azul is active at the given timestamp.
 pub fn is_base_azul_active(&self, timestamp: u64) -> bool {
     self.hardforks.base.as_ref().and_then(|b| b.azul).is_some_and(|t| timestamp >= t)
 }
 
-/// Returns true if the timestamp marks the first Base V1 block.
-pub fn is_first_base_v1_block(&self, timestamp: u64) -> bool {
+/// Returns true if the timestamp marks the first Base Azul block.
+pub fn is_first_base_azul_block(&self, timestamp: u64) -> bool {
     self.is_base_azul_active(timestamp)
         && !self.is_base_azul_active(timestamp.saturating_sub(self.block_time))
 }
@@ -218,12 +218,12 @@ Add named constants once an activation timestamp is confirmed:
 
 ```rust
 // mainnet.rs
-/// Base V1 mainnet activation timestamp.
-pub const BASE_MAINNET_BASE_V1_TIMESTAMP: u64 = <timestamp>;
+/// Base Azul mainnet activation timestamp.
+pub const BASE_MAINNET_BASE_AZUL_TIMESTAMP: u64 = <timestamp>;
 
 // sepolia.rs
-/// Base V1 sepolia activation timestamp.
-pub const BASE_SEPOLIA_BASE_V1_TIMESTAMP: u64 = <timestamp>;
+/// Base Azul sepolia activation timestamp.
+pub const BASE_SEPOLIA_BASE_AZUL_TIMESTAMP: u64 = <timestamp>;
 ```
 
 Re-export from `lib.rs` alongside the other timestamp constants.
@@ -234,7 +234,7 @@ Update the `HardForkConfig` literal in both registry fixture files:
 hardforks: HardForkConfig {
     // ... existing fields ...
     jovian_time: Some(BASE_MAINNET_JOVIAN_TIMESTAMP),
-    base: Some(BaseHardforkConfig { azul: Some(BASE_MAINNET_BASE_V1_TIMESTAMP) }),
+    base: Some(BaseHardforkConfig { azul: Some(BASE_MAINNET_BASE_AZUL_TIMESTAMP) }),
 },
 ```
 
@@ -313,14 +313,14 @@ AZUL,
 
 **File:** [`crates/common/evm/src/precompiles/provider.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/precompiles/provider.rs)
 
-If the upgrade introduces new precompiles, add a new `pub fn base_v1()` method on `BasePrecompiles`. If it reuses the previous set, extend the existing arm in `new_with_spec`:
+If the upgrade introduces new precompiles, add a new `pub fn azul()` method on `BasePrecompiles`. If it reuses the previous set, extend the existing arm in `new_with_spec`:
 
 ```rust
 // Reuse previous precompile set
 OpSpecId::JOVIAN | OpSpecId::AZUL => Self::jovian(),
 
 // Or add a new set
-OpSpecId::AZUL => Self::base_v1(),
+OpSpecId::AZUL => Self::azul(),
 ```
 
 ---

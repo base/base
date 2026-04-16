@@ -9,7 +9,7 @@
 //! - **Bedrock, Canyon, Delta** → V2 methods
 //! - **Ecotone (Cancun)** → V3 methods
 //! - **Isthmus, Jovian** → V4 methods
-//! - **Base V1 (Osaka)** → `getPayloadV5`, `newPayloadV4`
+//! - **Base Azul (Osaka)** → `getPayloadV5`, `newPayloadV4`
 //!
 //! Adapted from the [OP Node version providers](https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/types.go#L546).
 
@@ -47,7 +47,7 @@ impl EngineForkchoiceVersion {
 /// Progressive version selection based on hardfork activation:
 /// - V2: Basic payload processing
 /// - V3: Adds Cancun/Ecotone support
-/// - V4: Adds Isthmus hardfork support (also used for Jovian and Base V1)
+/// - V4: Adds Isthmus hardfork support (also used for Jovian and Base Azul)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EngineNewPayloadVersion {
     /// Version 2: Basic payload processing for early hardforks.
@@ -86,7 +86,7 @@ pub enum EngineGetPayloadVersion {
     V3,
     /// Version 4: Extended payload format for Isthmus.
     V4,
-    /// Version 5: Osaka payload retrieval for Base V1.
+    /// Version 5: Osaka payload retrieval for Base Azul.
     V5,
 }
 
@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn get_payload_version_uses_v4_for_jovian_before_base_v1() {
+    fn get_payload_version_uses_v4_for_jovian_before_azul() {
         assert_eq!(
             EngineGetPayloadVersion::from_cfg(&test_rollup_config(), 35),
             EngineGetPayloadVersion::V4
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn get_payload_version_uses_v5_for_base_v1() {
+    fn get_payload_version_uses_v5_for_azul() {
         assert_eq!(
             EngineGetPayloadVersion::from_cfg(&test_rollup_config(), 45),
             EngineGetPayloadVersion::V5

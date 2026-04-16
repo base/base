@@ -242,7 +242,7 @@ impl RollupConfig {
     }
 
     /// Returns true if the timestamp marks the first Base Azul block.
-    pub fn is_first_base_v1_block(&self, timestamp: u64) -> bool {
+    pub fn is_first_base_azul_block(&self, timestamp: u64) -> bool {
         self.is_base_azul_active(timestamp)
             && !self.is_base_azul_active(timestamp.saturating_sub(self.block_time))
     }
@@ -422,7 +422,7 @@ impl RollupConfig {
             tracing::info!(target: "upgrades", block_number, "Activating isthmus upgrade");
         } else if self.is_first_jovian_block(timestamp) {
             tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
-        } else if self.is_first_base_v1_block(timestamp) {
+        } else if self.is_first_base_azul_block(timestamp) {
             for line in Self::AZUL_ACTIVATION_BANNER.lines() {
                 tracing::info!(target: "upgrades", "{line}");
             }
@@ -628,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn test_base_v1_active() {
+    fn test_base_azul_active() {
         use crate::HardforkConfig;
         let mut config = RollupConfig::default();
         assert!(!config.is_base_azul_active(0));
@@ -713,9 +713,9 @@ mod tests {
         assert!(!cfg.is_first_jovian_block(102));
 
         // Base Azul
-        assert!(!cfg.is_first_base_v1_block(108));
-        assert!(cfg.is_first_base_v1_block(110));
-        assert!(!cfg.is_first_base_v1_block(112));
+        assert!(!cfg.is_first_base_azul_block(108));
+        assert!(cfg.is_first_base_azul_block(110));
+        assert!(!cfg.is_first_base_azul_block(112));
     }
 
     #[test]

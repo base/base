@@ -370,7 +370,7 @@ mod tests {
             BaseChainSpecBuilder::default()
                 .chain(0.into())
                 .genesis(Genesis::default())
-                .base_v1_activated()
+                .azul_activated()
                 .build(),
         );
         let evm_config = BaseEvmConfig::optimism(chain_spec);

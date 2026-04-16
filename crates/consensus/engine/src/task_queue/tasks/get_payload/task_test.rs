@@ -42,7 +42,7 @@ fn v2_envelope() -> ExecutionPayloadEnvelopeV2 {
     }
 }
 
-/// A non-zero [`BaseExecutionPayloadEnvelopeV5`] for Osaka / Base V1 testing.
+/// A non-zero [`BaseExecutionPayloadEnvelopeV5`] for Osaka / Base Azul testing.
 fn v5_envelope() -> BaseExecutionPayloadEnvelopeV5 {
     BaseExecutionPayloadEnvelopeV5 {
         execution_payload: BaseExecutionPayloadV4 {
@@ -141,7 +141,7 @@ async fn test_get_payload_v2_success(#[values(true, false)] with_channel: bool) 
 }
 
 /// When the unsafe head matches the attributes parent and the engine returns a valid V5 payload
-/// (Osaka / Base V1), `GetPayloadTask` must call `get_payload_v5`, wrap the inner
+/// (Osaka / Base Azul), `GetPayloadTask` must call `get_payload_v5`, wrap the inner
 /// [`BaseExecutionPayloadV4`] as an [`BaseExecutionPayload::V4`] variant, and source
 /// `parent_beacon_block_root` from the attributes rather than the payload envelope.
 #[rstest]
@@ -150,7 +150,7 @@ async fn test_get_payload_v5_success(#[values(true, false)] with_channel: bool) 
     let attributes = TestAttributesBuilder::new().build();
     let parent = attributes.parent;
 
-    // Activate Base V1 (Osaka) at the default attributes timestamp (2000) so that
+    // Activate Base Azul (Osaka) at the default attributes timestamp (2000) so that
     // `EngineGetPayloadVersion::V5` is selected.
     let cfg = Arc::new(RollupConfig {
         hardforks: HardForkConfig {

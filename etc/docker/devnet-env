@@ -144,9 +144,9 @@ MINIO_CONSOLE_PORT=7001
 # Chain Configuration
 L1_CHAIN_ID=1337
 L2_CHAIN_ID=84538453
-# Optional: set to a non-negative block number to schedule Base V1 in devnet.
+# Optional: set to a non-negative block number to schedule Base Azul in devnet.
 # Leave unset to avoid setting base.azul/osakaTime during genesis generation.
-L2_BASE_V1_BLOCK=20
+L2_BASE_AZUL_BLOCK=20
 
 # Metering Resource Limits
 # Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.

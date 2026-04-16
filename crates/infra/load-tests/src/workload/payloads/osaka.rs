@@ -5,7 +5,7 @@ use alloy_rpc_types::TransactionRequest;
 use super::Payload;
 use crate::{config::OsakaTarget, workload::SeededRng};
 
-/// CLZ opcode value (EIP-7939, Base V1 / Osaka).
+/// CLZ opcode value (EIP-7939, Base Azul / Osaka).
 const CLZ_OPCODE: u8 = 0x1e;
 
 /// P256VERIFY precompile address 0x0000…0100 (EIP-7951, Osaka pricing 6 900 gas).
@@ -27,7 +27,7 @@ const P256VERIFY_OSAKA_GAS_LIMIT: u64 = 30_000;
 /// Gas limit for MODEXP Osaka calls (21k intrinsic + tripled cost + margin; min gas 500).
 const MODEXP_OSAKA_GAS_LIMIT: u64 = 30_000;
 
-/// Generates transactions that exercise Osaka (Base V1) opcodes and precompiles:
+/// Generates transactions that exercise Osaka (Base Azul) opcodes and precompiles:
 ///
 /// - [`OsakaTarget::Clz`]: CREATE with initcode that loops the CLZ opcode (EIP-7939).
 /// - [`OsakaTarget::P256verifyOsaka`]: call to precompile 0x0100 at Osaka pricing (EIP-7951).

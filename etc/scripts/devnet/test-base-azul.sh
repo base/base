@@ -179,18 +179,18 @@ check_modexp_gas_increase() {
     if [ "$actual" = "$success" ]; then
         if [ "$MODE" = "before" ]; then
             pass_check "$check_name" \
-                "MODEXP CALL with 400 gas succeeded (min gas = 200 before V1)"
+                "MODEXP CALL with 400 gas succeeded (min gas = 200 before Azul)"
         else
             fail_check "$check_name" \
-                "MODEXP CALL with 400 gas succeeded, expected OOG after V1 (min gas = 500)"
+                "MODEXP CALL with 400 gas succeeded, expected OOG after Azul (min gas = 500)"
         fi
     elif [ "$actual" = "$failure" ]; then
         if [ "$MODE" = "after" ]; then
             pass_check "$check_name" \
-                "MODEXP CALL with 400 gas hit OOG (min gas = 500 after V1)"
+                "MODEXP CALL with 400 gas hit OOG (min gas = 500 after Azul)"
         else
             fail_check "$check_name" \
-                "MODEXP CALL with 400 gas hit OOG, expected success before V1 (min gas = 200)"
+                "MODEXP CALL with 400 gas hit OOG, expected success before Azul (min gas = 200)"
         fi
     else
         fail_check "$check_name" \
@@ -222,18 +222,18 @@ check_p256_gas_increase() {
     if [ "$actual" = "$success" ]; then
         if [ "$MODE" = "before" ]; then
             pass_check "$check_name" \
-                "P256VERIFY CALL with 5000 gas succeeded (cost = 3450 before V1)"
+                "P256VERIFY CALL with 5000 gas succeeded (cost = 3450 before Azul)"
         else
             fail_check "$check_name" \
-                "P256VERIFY CALL with 5000 gas succeeded, expected OOG after V1 (cost = 6900)"
+                "P256VERIFY CALL with 5000 gas succeeded, expected OOG after Azul (cost = 6900)"
         fi
     elif [ "$actual" = "$failure" ]; then
         if [ "$MODE" = "after" ]; then
             pass_check "$check_name" \
-                "P256VERIFY CALL with 5000 gas hit OOG (cost = 6900 after V1)"
+                "P256VERIFY CALL with 5000 gas hit OOG (cost = 6900 after Azul)"
         else
             fail_check "$check_name" \
-                "P256VERIFY CALL with 5000 gas hit OOG, expected success before V1 (cost = 3450)"
+                "P256VERIFY CALL with 5000 gas hit OOG, expected success before Azul (cost = 3450)"
         fi
     else
         fail_check "$check_name" \
@@ -256,12 +256,12 @@ check_tx_gas_limit_cap() {
     )"; then
         if [ "$MODE" = "before" ]; then
             pass_check "$check_name" \
-                "tx with gas_limit=$TX_GAS_LIMIT_OVER accepted before V1"
+                "tx with gas_limit=$TX_GAS_LIMIT_OVER accepted before Azul"
             return
         fi
 
         fail_check "$check_name" \
-            "tx with gas_limit=$TX_GAS_LIMIT_OVER unexpectedly accepted after V1" \
+            "tx with gas_limit=$TX_GAS_LIMIT_OVER unexpectedly accepted after Azul" \
             "$raw_result"
     fi
 
@@ -276,13 +276,13 @@ check_tx_gas_limit_cap() {
 
     if [ "$MODE" = "after" ]; then
         pass_check "$check_name" \
-            "tx with gas_limit=$TX_GAS_LIMIT_OVER rejected after V1 (cap = $TX_GAS_LIMIT_CAP)" \
+            "tx with gas_limit=$TX_GAS_LIMIT_OVER rejected after Azul (cap = $TX_GAS_LIMIT_CAP)" \
             "$(printf '%s' "$raw_result" | tr '\n\r' ' ' | sed 's/[[:space:]]\+/ /g')"
         return
     fi
 
     fail_check "$check_name" \
-        "tx with gas_limit=$TX_GAS_LIMIT_OVER unexpectedly rejected before V1" \
+        "tx with gas_limit=$TX_GAS_LIMIT_OVER unexpectedly rejected before Azul" \
         "$raw_result"
 }
 

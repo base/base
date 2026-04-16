@@ -123,7 +123,7 @@ impl BaseChainSpecBuilder {
     }
 
     /// Enable Base Azul at genesis.
-    pub fn base_v1_activated(mut self) -> Self {
+    pub fn azul_activated(mut self) -> Self {
         self = self.jovian_activated();
         self.inner = self.inner.with_fork(EthereumHardfork::Osaka, ForkCondition::Timestamp(0));
         self.inner = self.inner.with_fork(BaseUpgrade::Azul, ForkCondition::Timestamp(0));

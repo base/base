@@ -56,8 +56,8 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
     ///
     /// - `engine_getPayloadV2` is used for payloads with a timestamp before the Ecotone fork.
     /// - `engine_getPayloadV3` is used for payloads with a timestamp after the Ecotone fork.
-    /// - `engine_getPayloadV4` is used for Isthmus/Jovian payloads before Base V1.
-    /// - `engine_getPayloadV5` is used for Base V1 / Osaka payloads.
+    /// - `engine_getPayloadV4` is used for Isthmus/Jovian payloads before Base Azul.
+    /// - `engine_getPayloadV5` is used for Base Azul / Osaka payloads.
     async fn seal_payload(
         &self,
         cfg: &RollupConfig,

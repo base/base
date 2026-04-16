@@ -311,7 +311,7 @@ pub fn chain_spec() -> Arc<BaseChainSpec> {
 
 /// Returns a chain spec identical to the default test chain spec but with
 /// `BaseUpgrade::Azul` activated at genesis (timestamp 0).
-pub fn chain_spec_with_base_v1() -> Arc<BaseChainSpec> {
+pub fn chain_spec_with_azul() -> Arc<BaseChainSpec> {
     use base_common_chains::BaseUpgrade;
     use reth_chainspec::ForkCondition;
 
@@ -324,8 +324,8 @@ pub fn chain_spec_with_base_v1() -> Arc<BaseChainSpec> {
 
 /// Returns a node config using a chain spec with `BaseUpgrade::Azul` activated
 /// at genesis.
-pub fn default_node_config_with_base_v1() -> NodeConfig<BaseChainSpec> {
-    node_config_with_chain_spec(chain_spec_with_base_v1())
+pub fn default_node_config_with_azul() -> NodeConfig<BaseChainSpec> {
+    node_config_with_chain_spec(chain_spec_with_azul())
 }
 
 fn node_config_with_chain_spec(spec: Arc<BaseChainSpec>) -> NodeConfig<BaseChainSpec> {

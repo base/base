@@ -52,7 +52,7 @@ where
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => BasePrecompiles::granite(),
             OpSpecId::ISTHMUS => BasePrecompiles::isthmus(),
             OpSpecId::JOVIAN => BasePrecompiles::jovian(),
-            OpSpecId::AZUL => BasePrecompiles::base_v1(),
+            OpSpecId::AZUL => BasePrecompiles::azul(),
         };
 
         let accelerated_precompiles = match spec {

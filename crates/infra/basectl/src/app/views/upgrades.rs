@@ -1131,7 +1131,7 @@ async fn run_jovian_checks_streaming(
     send_result!("GPO implementation", gpo_check);
 }
 
-// ── Azul activation checks (ported from v1.py run_v1_checks) ─────────────────
+// ── Azul activation checks ────────────────────────────────────────────────────
 
 const CLZ_PROBE_ADDR: &str = "0x000000000000000000000000000000000000001e";
 const CLZ_RUNTIME: &str = "0x6000351e60005260206000f3";

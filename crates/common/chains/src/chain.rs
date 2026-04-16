@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn osaka_tracks_base_v1_activation() {
+    fn osaka_tracks_base_azul_activation() {
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert_eq!(
             base_mainnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),

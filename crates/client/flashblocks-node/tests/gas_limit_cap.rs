@@ -1,8 +1,8 @@
 //! Integration tests for EIP-7825 transaction gas limit cap enforcement.
 //!
-//! Base V1 introduces a per-transaction gas limit cap of 2^24 (16,777,216).
+//! Base Azul introduces a per-transaction gas limit cap of 2^24 (16,777,216).
 //! These tests verify that `eth_sendRawTransaction` correctly rejects
-//! transactions exceeding this cap when V1 is active.
+//! transactions exceeding this cap when Azul is active.
 
 use std::sync::Arc;
 
@@ -15,7 +15,7 @@ use alloy_signer::SignerSync;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::TestHarnessBuilder;
-use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis, build_test_genesis_v1};
+use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis, build_test_genesis_azul};
 use eyre::Result;
 
 const GAS_LIMIT_CAP: u64 = 1 << 24; // 16,777,216
@@ -38,32 +38,32 @@ fn sign_tx_with_gas_limit(from: Account, to: alloy_primitives::Address, gas_limi
 }
 
 #[tokio::test]
-async fn v1_gas_limit_cap() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
+async fn azul_gas_limit_cap() -> Result<()> {
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
 
     // Reject tx above cap
     let raw_tx = sign_tx_with_gas_limit(Account::Alice, Account::Bob.address(), GAS_LIMIT_CAP + 1);
     let result = harness.provider().send_raw_transaction(&raw_tx).await;
-    assert!(result.is_err(), "tx with gas_limit > cap should be rejected when V1 is active");
+    assert!(result.is_err(), "tx with gas_limit > cap should be rejected when Azul is active");
 
     // Accept tx within cap
     let raw_tx = sign_tx_with_gas_limit(Account::Alice, Account::Bob.address(), 21_000);
     let result = harness.provider().send_raw_transaction(&raw_tx).await;
-    assert!(result.is_ok(), "tx with gas_limit <= cap should be accepted when V1 is active");
+    assert!(result.is_ok(), "tx with gas_limit <= cap should be accepted when Azul is active");
 
     Ok(())
 }
 
 #[tokio::test]
-async fn pre_v1_accepts_tx_above_gas_limit_cap() -> Result<()> {
+async fn pre_azul_accepts_tx_above_gas_limit_cap() -> Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
 
     let raw_tx = sign_tx_with_gas_limit(Account::Alice, Account::Bob.address(), GAS_LIMIT_CAP + 1);
 
     let result = harness.provider().send_raw_transaction(&raw_tx).await;
-    assert!(result.is_ok(), "tx with gas_limit > cap should be accepted when V1 is not active");
+    assert!(result.is_ok(), "tx with gas_limit > cap should be accepted when Azul is not active");
 
     Ok(())
 }

@@ -151,7 +151,7 @@ services:
       - L1_RPC_URL=http://l1-el:${L1_HTTP_PORT}
       - L1_CHAIN_ID=${L1_CHAIN_ID}
       - L2_CHAIN_ID=${L2_CHAIN_ID}
-      - L2_BASE_V1_BLOCK=${L2_BASE_V1_BLOCK-}
+      - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
       - OUTPUT_DIR=/devnet/l2/configs
       - L2_DATA_DIR=/data
       - DEPLOYER_ADDR=${DEPLOYER_ADDR}

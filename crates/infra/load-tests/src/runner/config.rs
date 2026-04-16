@@ -48,7 +48,7 @@ pub enum TxType {
         /// Looper contract address (required when iterations > 1).
         looper_contract: Option<Address>,
     },
-    /// Osaka (Base V1) opcode or precompile transaction.
+    /// Osaka (Base Azul) opcode or precompile transaction.
     Osaka {
         /// Target Osaka feature.
         target: OsakaTarget,

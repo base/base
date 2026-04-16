@@ -100,12 +100,12 @@ pub fn build_test_genesis() -> Genesis {
     }
 }
 
-/// Builds a test genesis with Base V1 (Osaka) enabled at timestamp 0.
+/// Builds a test genesis with Base Azul (Osaka) enabled at timestamp 0.
 ///
 /// Extends [`build_test_genesis`] with:
 /// - `osaka_time` set to 0
-/// - Base V1 activation at timestamp 0
-pub fn build_test_genesis_v1() -> Genesis {
+/// - Base Azul activation at timestamp 0
+pub fn build_test_genesis_azul() -> Genesis {
     let mut genesis = build_test_genesis();
     genesis.config.osaka_time = Some(0);
     genesis.config.extra_fields.insert("base".to_string(), serde_json::json!({ "azul": 0 }));

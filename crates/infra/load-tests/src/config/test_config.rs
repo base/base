@@ -176,7 +176,7 @@ pub struct WeightedTxType {
     pub tx_type: TxTypeConfig,
 }
 
-/// Osaka (Base V1) transaction target.
+/// Osaka (Base Azul) transaction target.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OsakaTarget {
@@ -222,7 +222,7 @@ pub enum TxTypeConfig {
         iterations: u32,
     },
 
-    /// Osaka (Base V1) opcode or precompile transaction.
+    /// Osaka (Base Azul) opcode or precompile transaction.
     Osaka {
         /// Target Osaka feature.
         target: OsakaTarget,

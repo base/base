@@ -34,7 +34,7 @@ impl BasePrecompiles {
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => Self::granite(),
             OpSpecId::ISTHMUS => Self::isthmus(),
             OpSpecId::JOVIAN => Self::jovian(),
-            OpSpecId::AZUL => Self::base_v1(),
+            OpSpecId::AZUL => Self::azul(),
         };
 
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
@@ -114,7 +114,7 @@ impl BasePrecompiles {
     }
 
     /// Returns precompiles for the Base Azul spec.
-    pub fn base_v1() -> &'static Precompiles {
+    pub fn azul() -> &'static Precompiles {
         static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
         INSTANCE.get_or_init(|| {
             let mut precompiles = Self::jovian().clone();

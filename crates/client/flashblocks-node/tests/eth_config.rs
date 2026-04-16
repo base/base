@@ -6,7 +6,7 @@ use alloy_eips::eip7910::{EthConfig, EthForkConfig, SystemContract};
 use alloy_provider::Provider;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::TestHarnessBuilder;
-use base_test_utils::build_test_genesis_v1;
+use base_test_utils::build_test_genesis_azul;
 use eyre::Result;
 
 fn assert_zero_blob_schedule(config: &EthConfig) {
@@ -74,7 +74,7 @@ fn assert_supported_system_contracts(fork: &EthForkConfig) {
 fn assert_sanitized_system_contracts(config: &EthConfig) {
     assert!(
         config.current.system_contracts.contains_key(&SystemContract::HistoryStorage),
-        "expected HistoryStorage to remain enabled in the active V1 config"
+        "expected HistoryStorage to remain enabled in the active Azul config"
     );
     assert_supported_system_contracts(&config.current);
 
@@ -88,9 +88,9 @@ fn assert_sanitized_system_contracts(config: &EthConfig) {
 }
 
 #[tokio::test]
-async fn eth_config_available_on_base_v1_node() -> Result<()> {
+async fn eth_config_available_on_base_azul_node() -> Result<()> {
     let harness = TestHarnessBuilder::new()
-        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1())))
+        .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul())))
         .build()
         .await?;
     let provider = harness.provider();

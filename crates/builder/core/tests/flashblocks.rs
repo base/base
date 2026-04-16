@@ -6,12 +6,12 @@ use alloy_primitives::{Address, B256, U256};
 use base_builder_core::{
     BuilderConfig,
     test_utils::{
-        TransactionBuilderExt, default_node_config_with_base_v1, funded_signer,
+        TransactionBuilderExt, default_node_config_with_azul, funded_signer,
         setup_test_instance_with_builder_config, setup_test_instance_with_node_config,
     },
 };
 
-/// Verify that pre-Base-V1 flashblock metadata contains `new_account_balances`
+/// Verify that pre-Base-Azul flashblock metadata contains `new_account_balances`
 /// and `receipts` (but no `access_list`).
 ///
 /// Regression test for the bug where `new_account_balances` was read after
@@ -53,7 +53,7 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
     let balances = last_fb
         .metadata
         .get("new_account_balances")
-        .expect("pre-V1 metadata should contain new_account_balances");
+        .expect("pre-Azul metadata should contain new_account_balances");
     let balances_map = balances.as_object().expect("new_account_balances should be an object");
     assert!(!balances_map.is_empty(), "new_account_balances should not be empty");
 
@@ -95,27 +95,27 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
     assert!(has_receipt(&tx_a_key), "receipt for tx_a ({tx_a_key}) should be present");
     assert!(has_receipt(&tx_b_key), "receipt for tx_b ({tx_b_key}) should be present");
 
-    // Pre-V1 metadata must NOT contain access_list
+    // Pre-Azul metadata must NOT contain access_list
     for fb in &flashblocks {
         assert!(
             fb.metadata.get("access_list").is_none(),
-            "pre-V1 flashblock metadata must not contain access_list"
+            "pre-Azul flashblock metadata must not contain access_list"
         );
     }
 
     flashblocks_listener.stop().await
 }
 
-/// Verify that post-Base-V1 flashblock metadata contains `access_list` but
+/// Verify that post-Base-Azul flashblock metadata contains `access_list` but
 /// omits `receipts` and `new_account_balances`.
 ///
-/// After Base V1 activates the builder stops including per-transaction
+/// After Base Azul activates the builder stops including per-transaction
 /// receipts and balance diffs, replacing them with a flashblock access list.
 #[tokio::test]
-async fn test_flashblock_metadata_post_base_v1() -> eyre::Result<()> {
+async fn test_flashblock_metadata_post_base_azul() -> eyre::Result<()> {
     let config =
         BuilderConfig::for_tests().with_block_time_ms(1000).with_flashblocks_leeway_time_ms(50);
-    let node_config = default_node_config_with_base_v1();
+    let node_config = default_node_config_with_azul();
     let rbuilder = setup_test_instance_with_node_config(config, node_config).await?;
     let driver = rbuilder.driver().await?;
     let flashblocks_listener = rbuilder.spawn_flashblocks_listener();
@@ -136,15 +136,15 @@ async fn test_flashblock_metadata_post_base_v1() -> eyre::Result<()> {
     for fb in &flashblocks {
         assert!(
             fb.metadata.get("receipts").is_none(),
-            "post-V1 flashblock metadata must not contain receipts"
+            "post-Azul flashblock metadata must not contain receipts"
         );
         assert!(
             fb.metadata.get("new_account_balances").is_none(),
-            "post-V1 flashblock metadata must not contain new_account_balances"
+            "post-Azul flashblock metadata must not contain new_account_balances"
         );
         assert!(
             fb.metadata.get("access_list").is_none(),
-            "post-V1 flashblock metadata must not contain access_list"
+            "post-Azul flashblock metadata must not contain access_list"
         );
     }
 
