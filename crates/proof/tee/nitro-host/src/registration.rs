@@ -78,11 +78,7 @@ impl RegistrationChecker {
         transport: Arc<NitroTransport>,
         registry: impl TEEProverRegistryClient + 'static,
     ) -> Self {
-        Self {
-            transport,
-            registry: Box::new(registry),
-            healthy: OnceCell::new(),
-        }
+        Self { transport, registry: Box::new(registry), healthy: OnceCell::new() }
     }
 
     async fn signer_address(&self) -> Result<Address, RegistrationError> {
