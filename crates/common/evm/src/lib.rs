@@ -28,14 +28,12 @@ pub use handler::{IsTxError, OpHandler};
 
 mod precompiles;
 pub use precompiles::{
-    BasePrecompiles,
-    GRANITE, GRANITE_MAX_INPUT_SIZE, JOVIAN, JOVIAN_MAX_INPUT_SIZE, run_pair_granite,
-    run_pair_jovian,
-    ISTHMUS_G1_MSM, ISTHMUS_G1_MSM_MAX_INPUT_SIZE, ISTHMUS_G2_MSM, ISTHMUS_G2_MSM_MAX_INPUT_SIZE,
-    ISTHMUS_PAIRING, ISTHMUS_PAIRING_MAX_INPUT_SIZE, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE,
-    JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_PAIRING, JOVIAN_PAIRING_MAX_INPUT_SIZE,
-    run_g1_msm_isthmus, run_g1_msm_jovian, run_g2_msm_isthmus, run_g2_msm_jovian,
-    run_pairing_isthmus, run_pairing_jovian,
+    BasePrecompiles, GRANITE, GRANITE_MAX_INPUT_SIZE, ISTHMUS_G1_MSM,
+    ISTHMUS_G1_MSM_MAX_INPUT_SIZE, ISTHMUS_G2_MSM, ISTHMUS_G2_MSM_MAX_INPUT_SIZE, ISTHMUS_PAIRING,
+    ISTHMUS_PAIRING_MAX_INPUT_SIZE, JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE,
+    JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
+    JOVIAN_PAIRING_MAX_INPUT_SIZE, run_g1_msm_isthmus, run_g1_msm_jovian, run_g2_msm_isthmus,
+    run_g2_msm_jovian, run_pair_granite, run_pair_jovian, run_pairing_isthmus, run_pairing_jovian,
 };
 
 mod op_evm;

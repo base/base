@@ -104,8 +104,7 @@ pub fn run_pairing_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
 
 #[cfg(test)]
 mod tests {
-    use revm::precompile::PrecompileError;
-    use revm::primitives::Bytes;
+    use revm::{precompile::PrecompileError, primitives::Bytes};
 
     use super::*;
 

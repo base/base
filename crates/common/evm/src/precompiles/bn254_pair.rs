@@ -40,8 +40,10 @@ pub fn run_pair_jovian(input: &[u8], gas_limit: u64) -> PrecompileResult {
 
 #[cfg(test)]
 mod tests {
-    use revm::precompile::{PrecompileError, bn254};
-    use revm::primitives::hex;
+    use revm::{
+        precompile::{PrecompileError, bn254},
+        primitives::hex,
+    };
 
     use super::*;
 
@@ -85,10 +87,7 @@ mod tests {
 
         // Valid input length shorter than 112687
         let at_gas_limit = vec![1u8; 586 * bn254::PAIR_ELEMENT_LEN];
-        assert!(matches!(
-            run_pair_granite(&at_gas_limit, 260_000),
-            Err(PrecompileError::OutOfGas)
-        ));
+        assert!(matches!(run_pair_granite(&at_gas_limit, 260_000), Err(PrecompileError::OutOfGas)));
 
         // Input length longer than 112687
         let over_limit = vec![1u8; 587 * bn254::PAIR_ELEMENT_LEN];
@@ -113,9 +112,6 @@ mod tests {
     #[test]
     fn test_bn254_pair_jovian_bad_input_len() {
         let input = [0u8; JOVIAN_MAX_INPUT_SIZE + 1];
-        assert!(matches!(
-            run_pair_jovian(&input, u64::MAX),
-            Err(PrecompileError::Bn254PairLength)
-        ));
+        assert!(matches!(run_pair_jovian(&input, u64::MAX), Err(PrecompileError::Bn254PairLength)));
     }
 }

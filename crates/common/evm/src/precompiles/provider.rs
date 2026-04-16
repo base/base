@@ -9,8 +9,8 @@ use revm::{
     primitives::{Address, OnceLock, hardfork::SpecId},
 };
 
-use crate::OpSpecId;
 use super::{bls12_381, bn254_pair};
+use crate::OpSpecId;
 
 /// Base precompile provider.
 #[derive(Debug, Clone)]
@@ -173,13 +173,15 @@ mod tests {
     use std::vec;
 
     use revm::{
-        precompile::{PrecompileError, Precompiles, bn254, bls12_381_const, modexp, secp256r1},
+        precompile::{PrecompileError, Precompiles, bls12_381_const, bn254, modexp, secp256r1},
         primitives::eip7823,
     };
 
     use super::*;
-    use crate::OpSpecId;
-    use crate::precompiles::{bn254_pair, bls12_381};
+    use crate::{
+        OpSpecId,
+        precompiles::{bls12_381, bn254_pair},
+    };
 
     fn encode_length(len: usize) -> [u8; 32] {
         let mut encoded = [0u8; 32];
@@ -330,7 +332,10 @@ mod tests {
     fn test_modexp_eip7823_boundary() {
         let input_ok = modexp_input(eip7823::INPUT_SIZE_LIMIT, 1, 1);
         assert!(
-            !matches!(modexp::osaka_run(&input_ok, u64::MAX), Err(PrecompileError::ModexpEip7823LimitSize)),
+            !matches!(
+                modexp::osaka_run(&input_ok, u64::MAX),
+                Err(PrecompileError::ModexpEip7823LimitSize)
+            ),
             "base_len=1024 should not hit size limit"
         );
 
@@ -363,7 +368,10 @@ mod tests {
     fn test_modexp_eip7823_all_fields_at_limit() {
         let limit = eip7823::INPUT_SIZE_LIMIT;
         assert!(
-            !matches!(modexp::osaka_run(&modexp_input(limit, limit, limit), u64::MAX), Err(PrecompileError::ModexpEip7823LimitSize)),
+            !matches!(
+                modexp::osaka_run(&modexp_input(limit, limit, limit), u64::MAX),
+                Err(PrecompileError::ModexpEip7823LimitSize)
+            ),
             "all fields at limit should not trigger size error"
         );
     }
@@ -393,10 +401,7 @@ mod tests {
             secp256r1::p256_verify_osaka(&[], 6_900),
             Ok(output) if output.gas_used == 6_900
         ));
-        assert!(matches!(
-            secp256r1::p256_verify_osaka(&[], 6_899),
-            Err(PrecompileError::OutOfGas)
-        ));
+        assert!(matches!(secp256r1::p256_verify_osaka(&[], 6_899), Err(PrecompileError::OutOfGas)));
     }
 
     #[test]
