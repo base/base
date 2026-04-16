@@ -769,6 +769,10 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
     let l2 = default_l2();
     let mut game_state = mock_state_with_tee(0, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20);
     game_state.countered_index = 2; // challenged at 0-based index 1
+    // Provide intermediate roots so the scanner's FraudulentZkChallenge
+    // processing (which runs after the pending proof is submitted) does not
+    // panic when fetching the root at the challenged index.
+    game_state.intermediate_output_roots = vec![B256::repeat_byte(0x01), B256::repeat_byte(0x02)];
     let verifier = single_game_verifier(game_state);
 
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
