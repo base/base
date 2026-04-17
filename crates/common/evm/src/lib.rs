@@ -8,9 +8,6 @@ extern crate alloc;
 mod spec;
 pub use spec::OpSpecId;
 
-mod constants;
-pub use constants::*;
-
 mod result;
 pub use result::OpHaltReason;
 

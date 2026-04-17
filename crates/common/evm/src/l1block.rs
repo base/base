@@ -5,20 +5,10 @@ use revm::{
     context_interface::cfg::gas::{NON_ZERO_BYTE_MULTIPLIER_ISTANBUL, STANDARD_TOKEN_COST},
     database_interface::Database,
     interpreter::{Gas, gas::get_tokens_in_calldata_istanbul},
-    primitives::U256,
+    primitives::{U256, uint},
 };
 
-use crate::{
-    OpSpecId,
-    constants::{
-        BASE_FEE_SCALAR_OFFSET, BLOB_BASE_FEE_SCALAR_OFFSET, DA_FOOTPRINT_GAS_SCALAR_OFFSET,
-        DA_FOOTPRINT_GAS_SCALAR_SLOT, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
-        EMPTY_SCALARS, L1_BASE_FEE_SLOT, L1_OVERHEAD_SLOT, L1_SCALAR_SLOT,
-        OPERATOR_FEE_CONSTANT_OFFSET, OPERATOR_FEE_JOVIAN_MULTIPLIER, OPERATOR_FEE_SCALAR_DECIMAL,
-        OPERATOR_FEE_SCALAR_OFFSET, OPERATOR_FEE_SCALARS_SLOT,
-    },
-    transaction::OpTxTr,
-};
+use crate::{OpSpecId, transaction::OpTxTr};
 
 /// L1 block info
 ///
@@ -59,16 +49,59 @@ pub struct L1BlockInfo {
 }
 
 impl L1BlockInfo {
+    /// The two 4-byte Ecotone fee scalar values are packed into the same storage slot as the
+    /// 8-byte sequence number. Byte offset within the storage slot of the 4-byte baseFeeScalar
+    /// attribute.
+    pub const BASE_FEE_SCALAR_OFFSET: usize = 16;
+    /// The two 4-byte Ecotone fee scalar values are packed into the same storage slot as the
+    /// 8-byte sequence number. Byte offset within the storage slot of the 4-byte blobBaseFeeScalar
+    /// attribute.
+    pub const BLOB_BASE_FEE_SCALAR_OFFSET: usize = 20;
+    /// The Isthmus operator fee scalar values are similarly packed. Byte offset within the storage
+    /// slot of the 4-byte operatorFeeScalar attribute.
+    pub const OPERATOR_FEE_SCALAR_OFFSET: usize = 20;
+    /// The Isthmus operator fee scalar values are similarly packed. Byte offset within the storage
+    /// slot of the 8-byte operatorFeeConstant attribute.
+    pub const OPERATOR_FEE_CONSTANT_OFFSET: usize = 24;
+    /// The Jovian daFootprintGasScalar value is packed into a single storage slot. Byte offset
+    /// within the storage slot of the 16-byte daFootprintGasScalar attribute.
+    pub const DA_FOOTPRINT_GAS_SCALAR_OFFSET: usize = 18;
+    /// Fixed point decimal scaling factor for the operator fee scalar (6 decimal points of
+    /// precision).
+    pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 = 1_000_000;
+    /// Jovian multiplier applied to the operator fee scalar component.
+    pub const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 = 100;
+    /// The L1 base fee storage slot.
+    pub const L1_BASE_FEE_SLOT: U256 = uint!(1_U256);
+    /// The L1 overhead storage slot.
+    pub const L1_OVERHEAD_SLOT: U256 = uint!(5_U256);
+    /// The L1 scalar storage slot.
+    pub const L1_SCALAR_SLOT: U256 = uint!(6_U256);
+    /// Added in Ecotone; stores the L1 blobBaseFee attribute.
+    pub const ECOTONE_L1_BLOB_BASE_FEE_SLOT: U256 = uint!(7_U256);
+    /// As of Ecotone, stores the 32-bit basefeeScalar and blobBaseFeeScalar attributes at offsets
+    /// [`Self::BASE_FEE_SCALAR_OFFSET`] and [`Self::BLOB_BASE_FEE_SCALAR_OFFSET`] respectively.
+    pub const ECOTONE_L1_FEE_SCALARS_SLOT: U256 = uint!(3_U256);
+    /// Stores the 32-bit operatorFeeScalar and operatorFeeConstant attributes at offsets
+    /// [`Self::OPERATOR_FEE_SCALAR_OFFSET`] and [`Self::OPERATOR_FEE_CONSTANT_OFFSET`]
+    /// respectively.
+    pub const OPERATOR_FEE_SCALARS_SLOT: U256 = uint!(8_U256);
+    /// As of Jovian, stores the 16-bit daFootprintGasScalar attribute at offset
+    /// [`Self::DA_FOOTPRINT_GAS_SCALAR_OFFSET`].
+    pub const DA_FOOTPRINT_GAS_SCALAR_SLOT: U256 = uint!(8_U256);
+    /// An empty 64-bit set of scalar values.
+    pub const EMPTY_SCALARS: [u8; 8] = [0u8; 8];
+
     /// Fetch the DA footprint gas scalar from the database.
     pub fn fetch_da_footprint_gas_scalar<DB: Database>(db: &mut DB) -> Result<u16, DB::Error> {
         let da_footprint_gas_scalar_slot = db
-            .storage(Predeploys::L1_BLOCK_INFO, DA_FOOTPRINT_GAS_SCALAR_SLOT)?
+            .storage(Predeploys::L1_BLOCK_INFO, Self::DA_FOOTPRINT_GAS_SCALAR_SLOT)?
             .to_be_bytes::<32>();
 
         // Extract the first 2 bytes directly as a u16 in big-endian format
         let bytes = [
-            da_footprint_gas_scalar_slot[DA_FOOTPRINT_GAS_SCALAR_OFFSET],
-            da_footprint_gas_scalar_slot[DA_FOOTPRINT_GAS_SCALAR_OFFSET + 1],
+            da_footprint_gas_scalar_slot[Self::DA_FOOTPRINT_GAS_SCALAR_OFFSET],
+            da_footprint_gas_scalar_slot[Self::DA_FOOTPRINT_GAS_SCALAR_OFFSET + 1],
         ];
         Ok(u16::from_be_bytes(bytes))
     }
@@ -84,18 +117,18 @@ impl L1BlockInfo {
     fn try_fetch_isthmus<DB: Database>(&mut self, db: &mut DB) -> Result<(), DB::Error> {
         // Post-isthmus L1 block info
         let operator_fee_scalars =
-            db.storage(Predeploys::L1_BLOCK_INFO, OPERATOR_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
+            db.storage(Predeploys::L1_BLOCK_INFO, Self::OPERATOR_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
 
         // The `operator_fee_scalar` is stored as a big endian u32 at
         // OPERATOR_FEE_SCALAR_OFFSET.
         self.operator_fee_scalar = Some(U256::from_be_slice(
-            operator_fee_scalars[OPERATOR_FEE_SCALAR_OFFSET..OPERATOR_FEE_SCALAR_OFFSET + 4]
+            operator_fee_scalars[Self::OPERATOR_FEE_SCALAR_OFFSET..Self::OPERATOR_FEE_SCALAR_OFFSET + 4]
                 .as_ref(),
         ));
         // The `operator_fee_constant` is stored as a big endian u64 at
         // OPERATOR_FEE_CONSTANT_OFFSET.
         self.operator_fee_constant = Some(U256::from_be_slice(
-            operator_fee_scalars[OPERATOR_FEE_CONSTANT_OFFSET..OPERATOR_FEE_CONSTANT_OFFSET + 8]
+            operator_fee_scalars[Self::OPERATOR_FEE_CONSTANT_OFFSET..Self::OPERATOR_FEE_CONSTANT_OFFSET + 8]
                 .as_ref(),
         ));
 
@@ -105,28 +138,28 @@ impl L1BlockInfo {
     /// Try to fetch the L1 block info from the database, post-Ecotone.
     fn try_fetch_ecotone<DB: Database>(&mut self, db: &mut DB) -> Result<(), DB::Error> {
         self.l1_blob_base_fee =
-            Some(db.storage(Predeploys::L1_BLOCK_INFO, ECOTONE_L1_BLOB_BASE_FEE_SLOT)?);
+            Some(db.storage(Predeploys::L1_BLOCK_INFO, Self::ECOTONE_L1_BLOB_BASE_FEE_SLOT)?);
 
         let l1_fee_scalars =
-            db.storage(Predeploys::L1_BLOCK_INFO, ECOTONE_L1_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
+            db.storage(Predeploys::L1_BLOCK_INFO, Self::ECOTONE_L1_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
 
         self.l1_base_fee_scalar = U256::from_be_slice(
-            l1_fee_scalars[BASE_FEE_SCALAR_OFFSET..BASE_FEE_SCALAR_OFFSET + 4].as_ref(),
+            l1_fee_scalars[Self::BASE_FEE_SCALAR_OFFSET..Self::BASE_FEE_SCALAR_OFFSET + 4].as_ref(),
         );
 
         let l1_blob_base_fee = U256::from_be_slice(
-            l1_fee_scalars[BLOB_BASE_FEE_SCALAR_OFFSET..BLOB_BASE_FEE_SCALAR_OFFSET + 4].as_ref(),
+            l1_fee_scalars[Self::BLOB_BASE_FEE_SCALAR_OFFSET..Self::BLOB_BASE_FEE_SCALAR_OFFSET + 4].as_ref(),
         );
         self.l1_blob_base_fee_scalar = Some(l1_blob_base_fee);
 
         // Check if the L1 fee scalars are empty. If so, we use the Bedrock cost function.
         // The L1 fee overhead is only necessary if `empty_ecotone_scalars` is true, as it was deprecated in Ecotone.
         self.empty_ecotone_scalars = l1_blob_base_fee.is_zero()
-            && l1_fee_scalars[BASE_FEE_SCALAR_OFFSET..BLOB_BASE_FEE_SCALAR_OFFSET + 4]
-                == EMPTY_SCALARS;
+            && l1_fee_scalars[Self::BASE_FEE_SCALAR_OFFSET..Self::BLOB_BASE_FEE_SCALAR_OFFSET + 4]
+                == Self::EMPTY_SCALARS;
         self.l1_fee_overhead = self
             .empty_ecotone_scalars
-            .then(|| db.storage(Predeploys::L1_BLOCK_INFO, L1_OVERHEAD_SLOT))
+            .then(|| db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_OVERHEAD_SLOT))
             .transpose()?;
 
         Ok(())
@@ -143,14 +176,14 @@ impl L1BlockInfo {
 
         let mut out = Self {
             l2_block: Some(l2_block),
-            l1_base_fee: db.storage(Predeploys::L1_BLOCK_INFO, L1_BASE_FEE_SLOT)?,
+            l1_base_fee: db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_BASE_FEE_SLOT)?,
             ..Default::default()
         };
 
         // Post-Ecotone
         if !spec_id.is_enabled_in(OpSpecId::ECOTONE) {
-            out.l1_base_fee_scalar = db.storage(Predeploys::L1_BLOCK_INFO, L1_SCALAR_SLOT)?;
-            out.l1_fee_overhead = Some(db.storage(Predeploys::L1_BLOCK_INFO, L1_OVERHEAD_SLOT)?);
+            out.l1_base_fee_scalar = db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_SCALAR_SLOT)?;
+            out.l1_fee_overhead = Some(db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_OVERHEAD_SLOT)?);
 
             return Ok(out);
         }
@@ -191,9 +224,9 @@ impl L1BlockInfo {
 
         let product = if spec_id.is_enabled_in(OpSpecId::JOVIAN) {
             gas.saturating_mul(operator_fee_scalar)
-                .saturating_mul(U256::from(OPERATOR_FEE_JOVIAN_MULTIPLIER))
+                .saturating_mul(U256::from(Self::OPERATOR_FEE_JOVIAN_MULTIPLIER))
         } else {
-            gas.saturating_mul(operator_fee_scalar) / U256::from(OPERATOR_FEE_SCALAR_DECIMAL)
+            gas.saturating_mul(operator_fee_scalar) / U256::from(Self::OPERATOR_FEE_SCALAR_DECIMAL)
         };
 
         product.saturating_add(operator_fee_constant)

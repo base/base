@@ -403,13 +403,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{
-        Builder, DefaultOp, OpContext, OpSpecId, OpTransaction,
-        constants::{
-            BASE_FEE_SCALAR_OFFSET, ECOTONE_L1_BLOB_BASE_FEE_SLOT, ECOTONE_L1_FEE_SCALARS_SLOT,
-            L1_BASE_FEE_SLOT, OPERATOR_FEE_SCALARS_SLOT,
-        },
-    };
+    use crate::{Builder, DefaultOp, L1BlockInfo, OpContext, OpSpecId, OpTransaction};
 
     /// Creates frame result.
     fn call_last_frame_return(
@@ -598,7 +592,8 @@ mod tests {
         const L1_BLOB_BASE_FEE_SCALAR: u64 = 4;
         const L1_FEE_SCALARS: U256 = U256::from_limbs([
             0,
-            (L1_BASE_FEE_SCALAR << (64 - BASE_FEE_SCALAR_OFFSET * 2)) | L1_BLOB_BASE_FEE_SCALAR,
+            (L1_BASE_FEE_SCALAR << (64 - L1BlockInfo::BASE_FEE_SCALAR_OFFSET * 2))
+                | L1_BLOB_BASE_FEE_SCALAR,
             0,
             0,
         ]);
@@ -609,10 +604,10 @@ mod tests {
 
         let mut db = InMemoryDB::default();
         let l1_block_contract = db.load_account(Predeploys::L1_BLOCK_INFO).unwrap();
-        l1_block_contract.storage.insert(L1_BASE_FEE_SLOT, L1_BASE_FEE);
-        l1_block_contract.storage.insert(ECOTONE_L1_BLOB_BASE_FEE_SLOT, L1_BLOB_BASE_FEE);
-        l1_block_contract.storage.insert(ECOTONE_L1_FEE_SCALARS_SLOT, L1_FEE_SCALARS);
-        l1_block_contract.storage.insert(OPERATOR_FEE_SCALARS_SLOT, OPERATOR_FEE);
+        l1_block_contract.storage.insert(L1BlockInfo::L1_BASE_FEE_SLOT, L1_BASE_FEE);
+        l1_block_contract.storage.insert(L1BlockInfo::ECOTONE_L1_BLOB_BASE_FEE_SLOT, L1_BLOB_BASE_FEE);
+        l1_block_contract.storage.insert(L1BlockInfo::ECOTONE_L1_FEE_SCALARS_SLOT, L1_FEE_SCALARS);
+        l1_block_contract.storage.insert(L1BlockInfo::OPERATOR_FEE_SCALARS_SLOT, OPERATOR_FEE);
         db.insert_account_info(
             Address::ZERO,
             AccountInfo { balance: U256::from(1000), ..Default::default() },
