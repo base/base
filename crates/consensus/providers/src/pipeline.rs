@@ -13,13 +13,16 @@ use base_consensus_derive::{
 use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
-use crate::{AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider};
+use crate::{
+    AlloyChainProvider, AlloyL2ChainProvider, ConfDepthProvider, L1HeadNumber, OnlineBeaconClient,
+    OnlineBlobProvider,
+};
 
 /// An online polled derivation pipeline.
 type OnlinePolledDerivationPipeline = DerivationPipeline<
     PolledAttributesQueueStage<
         OnlineDataProvider,
-        AlloyChainProvider,
+        ConfDepthProvider,
         AlloyL2ChainProvider,
         OnlineAttributesBuilder,
     >,
@@ -28,11 +31,11 @@ type OnlinePolledDerivationPipeline = DerivationPipeline<
 
 /// An RPC-backed Ethereum data source.
 type OnlineDataProvider =
-    EthereumDataSource<AlloyChainProvider, OnlineBlobProvider<OnlineBeaconClient>>;
+    EthereumDataSource<ConfDepthProvider, OnlineBlobProvider<OnlineBeaconClient>>;
 
 /// An RPC-backed payload attributes builder for the `AttributesQueue` stage of the derivation
 /// pipeline.
-type OnlineAttributesBuilder = StatefulAttributesBuilder<AlloyChainProvider, AlloyL2ChainProvider>;
+type OnlineAttributesBuilder = StatefulAttributesBuilder<ConfDepthProvider, AlloyL2ChainProvider>;
 
 /// An online derivation pipeline.
 #[derive(Debug)]
@@ -43,6 +46,7 @@ pub struct OnlinePipeline {
 
 impl OnlinePipeline {
     /// Constructs a new polled derivation pipeline that is initialized.
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         cfg: Arc<RollupConfig>,
         l1_cfg: Arc<ChainConfig>,
@@ -50,6 +54,8 @@ impl OnlinePipeline {
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
         l2_chain_provider: AlloyL2ChainProvider,
+        l1_head_number: L1HeadNumber,
+        verifier_l1_confs: u64,
     ) -> PipelineResult<Self> {
         let mut pipeline = Self::new_polled(
             Arc::clone(&cfg),
@@ -57,6 +63,8 @@ impl OnlinePipeline {
             blob_provider,
             chain_provider,
             l2_chain_provider,
+            l1_head_number,
+            verifier_l1_confs,
         );
 
         // Reset the pipeline to populate the initial L1/L2 cursor and system configuration in L1
@@ -73,13 +81,18 @@ impl OnlinePipeline {
     /// Before using the returned pipeline, a [`ResetSignal`] must be sent to
     /// instantiate the pipeline state. [`Self::new`] is a convenience method that
     /// constructs a new online pipeline and sends the reset signal.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_polled(
         cfg: Arc<RollupConfig>,
         l1_cfg: Arc<ChainConfig>,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
         l2_chain_provider: AlloyL2ChainProvider,
+        l1_head_number: L1HeadNumber,
+        verifier_l1_confs: u64,
     ) -> Self {
+        let chain_provider =
+            ConfDepthProvider::new(chain_provider, l1_head_number, verifier_l1_confs);
         let attributes = StatefulAttributesBuilder::new(
             Arc::clone(&cfg),
             l1_cfg,

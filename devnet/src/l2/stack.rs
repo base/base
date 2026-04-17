@@ -48,6 +48,9 @@ pub struct L2StackConfig {
     /// Optional transaction forwarding configuration for the client node.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
+    /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
+    /// consensus node's derivation pipeline.
+    pub verifier_l1_confs: u64,
 }
 
 /// A complete L2 network stack composed of Builder + Consensus + Batcher.
@@ -135,6 +138,7 @@ impl L2Stack {
             unsafe_block_signer: SEQUENCER.address,
             l1_slot_duration_override: Some(4),
             sequencer_stopped: true,
+            verifier_l1_confs: 0,
         };
         let builder_consensus = InProcessConsensus::start(builder_consensus_config)
             .await
@@ -197,6 +201,7 @@ impl L2Stack {
             unsafe_block_signer: SEQUENCER.address,
             l1_slot_duration_override: Some(4),
             sequencer_stopped: false,
+            verifier_l1_confs: config.verifier_l1_confs,
         };
         let client_consensus = InProcessConsensus::start(client_consensus_config)
             .await
