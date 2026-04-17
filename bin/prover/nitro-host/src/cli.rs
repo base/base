@@ -24,7 +24,7 @@ use clap::{Parser, Subcommand};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
-use tracing::info;
+use tracing::{info, warn};
 
 base_cli_utils::define_log_args!("BASE_PROVER_NITRO_HOST");
 base_cli_utils::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
@@ -115,8 +115,8 @@ struct ServerArgs {
     server: ProverServerArgs,
 
     /// Vsock CID of the enclave.
-    #[arg(long, env = "VSOCK_CID")]
-    vsock_cid: u32,
+    #[arg(long, env = "VSOCK_CID", value_delimiter = ',')]
+    vsock_cid: Vec<u32>,
 }
 
 impl Cli {
@@ -161,13 +161,23 @@ impl ServerArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let transport = Arc::new(NitroTransport::vsock(self.vsock_cid, VSOCK_PORT));
+        let transports: Vec<Arc<NitroTransport>> = self
+            .vsock_cid
+            .iter()
+            .map(|&cid| Arc::new(NitroTransport::vsock(cid, VSOCK_PORT)))
+            .collect();
+        if transports.len() > 1 && self.server.tee_prover_registry_address.is_none() {
+            return Err(eyre!(
+                "multi-CID requires --tee-prover-registry-address for on-chain routing"
+            ));
+        }
         let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
-        let mut server = NitroProverServer::new(config, transport, timeout);
+        let mut server = NitroProverServer::new_multi(config, transports, timeout);
         if let Some(reg) = registration_health {
             server = server.with_registration_health(reg);
         }
 
+        info!(cids = ?self.vsock_cid, "configured vsock CIDs");
         info!(addr = %self.server.listen_addr, "starting nitro prover host server");
         let handle = server.run(self.server.listen_addr).await?;
         handle.stopped().await;
@@ -181,6 +191,9 @@ impl ServerArgs {
 struct LocalArgs {
     #[command(flatten)]
     server: ProverServerArgs,
+
+    #[arg(long, env = "LOCAL_ENCLAVE_COUNT", default_value = "1")]
+    local_enclave_count: usize,
 }
 
 #[cfg(feature = "local")]
@@ -206,10 +219,20 @@ impl LocalArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
-        let enclave_server = Arc::new(EnclaveServer::new_local()?);
-        let transport = Arc::new(NitroTransport::local(enclave_server));
+        let transports: Vec<Arc<NitroTransport>> = (0..self.local_enclave_count)
+            .map(|_| {
+                let server = Arc::new(EnclaveServer::new_local()?);
+                Ok(Arc::new(NitroTransport::local(server)))
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
+        if self.local_enclave_count > 1 && self.server.tee_prover_registry_address.is_none() {
+            warn!(
+                count = self.local_enclave_count,
+                "multiple local enclaves without registry; defaulting to index 0 for routing"
+            );
+        }
         let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
-        let mut server = NitroProverServer::new(prover_config, transport, timeout);
+        let mut server = NitroProverServer::new_multi(prover_config, transports, timeout);
         if let Some(reg) = registration_health {
             server = server.with_registration_health(reg);
         }
