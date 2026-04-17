@@ -24,14 +24,18 @@ const MAX_USER_DATA_BYTES: usize = 512;
 /// Maximum allowed size for the `nonce` attestation field (NSM limit).
 const MAX_NONCE_BYTES: usize = 512;
 
+struct EnclaveService {
+    transport: Arc<NitroTransport>,
+    service: ProverService<NitroBackend>,
+}
+
 /// Host-side TEE prover server exposing a JSON-RPC interface.
 ///
 /// Implements two JSON-RPC namespaces:
 /// - `prover_*`: proving operations (forwarded to the enclave via transport)
 /// - `enclave_*`: signer info queries (also forwarded via transport)
 pub struct NitroProverServer {
-    service: ProverService<NitroBackend>,
-    transport: Arc<NitroTransport>,
+    enclaves: Vec<EnclaveService>,
     proof_request_timeout: Duration,
     registration_health: Option<RegistrationHealthConfig>,
 }
@@ -49,10 +53,26 @@ impl NitroProverServer {
         transport: Arc<NitroTransport>,
         proof_request_timeout: Duration,
     ) -> Self {
-        let backend = NitroBackend::new(Arc::clone(&transport));
+        Self::new_multi(config, vec![transport], proof_request_timeout)
+    }
+
+    pub fn new_multi(
+        config: ProverConfig,
+        transports: Vec<Arc<NitroTransport>>,
+        proof_request_timeout: Duration,
+    ) -> Self {
+        let enclaves = transports
+            .into_iter()
+            .map(|transport| {
+                let backend = NitroBackend::new(Arc::clone(&transport));
+                EnclaveService {
+                    transport,
+                    service: ProverService::new(config.clone(), backend),
+                }
+            })
+            .collect();
         Self {
-            service: ProverService::new(config, backend),
-            transport,
+            enclaves,
             proof_request_timeout,
             registration_health: None,
         }
@@ -74,6 +94,11 @@ impl NitroProverServer {
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
+        let transports: Vec<Arc<NitroTransport>> = self
+            .enclaves
+            .iter()
+            .map(|enclave| Arc::clone(&enclave.transport))
+            .collect();
 
         let checker = match self.registration_health {
             Some(config) => {
@@ -86,7 +111,7 @@ impl NitroProverServer {
                 let registry =
                     TEEProverRegistryContractClient::new(config.registry_address, l1_url);
                 let checker = Arc::new(
-                    RegistrationChecker::new(vec![Arc::clone(&self.transport)], registry)
+                    RegistrationChecker::new(transports.clone(), registry)
                         .map_err(|e| eyre::eyre!("registration checker init failed: {e}"))?,
                 );
                 module.merge(
@@ -103,15 +128,14 @@ impl NitroProverServer {
 
         module.merge(
             NitroProverRpc {
-                service: self.service,
+                enclaves: self.enclaves,
                 proof_request_timeout: self.proof_request_timeout,
                 checker,
             }
             .into_rpc(),
         )?;
 
-        module
-            .merge(NitroSignerRpc { transports: vec![Arc::clone(&self.transport)] }.into_rpc())?;
+        module.merge(NitroSignerRpc { transports }.into_rpc())?;
 
         Ok(server.start(module))
     }
@@ -119,7 +143,7 @@ impl NitroProverServer {
 
 /// Inner RPC handler for `prover_*` methods.
 struct NitroProverRpc {
-    service: ProverService<NitroBackend>,
+    enclaves: Vec<EnclaveService>,
     proof_request_timeout: Duration,
     checker: Option<Arc<RegistrationChecker>>,
 }
@@ -127,17 +151,20 @@ struct NitroProverRpc {
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        if let Some(checker) = &self.checker {
-            checker.require_valid_signer().await.map_err(|e| {
+        let service = if let Some(checker) = &self.checker {
+            let signer = checker.select_valid_enclave().await.map_err(|e| {
                 warn!(error = %e, "rejecting proof request: signer validation failed");
                 jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
             })?;
-        }
+            &self.enclaves[signer.index].service
+        } else {
+            &self.enclaves[0].service
+        };
 
         let l2_block = request.claimed_l2_block_number;
         let timeout = self.proof_request_timeout;
 
-        match tokio::time::timeout(timeout, self.service.prove_block(request)).await {
+        match tokio::time::timeout(timeout, service.prove_block(request)).await {
             Ok(result) => result.map_err(|e| {
                 jsonrpsee::types::ErrorObjectOwned::owned(-32000, e.to_string(), None::<()>)
             }),
