@@ -130,6 +130,7 @@ pub struct DevnetBuilder {
     output_dir: Option<PathBuf>,
     stable_config: Option<StableDevnetConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
+    verifier_l1_confs: u64,
 }
 
 impl DevnetBuilder {
@@ -173,6 +174,13 @@ impl DevnetBuilder {
     /// the `base_insertValidatedTransaction` RPC endpoint.
     pub fn with_tx_forwarding(mut self, config: TxForwardingConfig) -> Self {
         self.tx_forwarding_config = Some(config);
+        self
+    }
+
+    /// Sets the number of L1 blocks to keep distance from the L1 head for the
+    /// client (validator) node's derivation pipeline.
+    pub const fn with_verifier_l1_confs(mut self, confs: u64) -> Self {
+        self.verifier_l1_confs = confs;
         self
     }
 
@@ -274,6 +282,7 @@ impl DevnetBuilder {
             l1_beacon_url: l1_stack.beacon().beacon_url().await?,
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
+            verifier_l1_confs: self.verifier_l1_confs,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

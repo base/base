@@ -13,20 +13,23 @@ use base_consensus_derive::{
 use base_consensus_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use base_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
 
-use crate::{AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider};
+use crate::{
+    AlloyChainProvider, AlloyL2ChainProvider, ConfDepthProvider, L1HeadNumber, OnlineBeaconClient,
+    OnlineBlobProvider,
+};
 
-/// An online polled derivation pipeline.
+/// An online polled derivation pipeline (verifier mode — enforces confirmation depth).
 type OnlinePolledDerivationPipeline = DerivationPipeline<
     PolledAttributesQueueStage<
-        OnlineDataProvider,
-        AlloyChainProvider,
+        OnlinePolledDataProvider,
+        ConfDepthProvider,
         AlloyL2ChainProvider,
-        OnlineAttributesBuilder,
+        OnlinePolledAttributesBuilder,
     >,
     AlloyL2ChainProvider,
 >;
 
-/// An online managed derivation pipeline.
+/// An online managed derivation pipeline (sequencer mode — no confirmation depth).
 type OnlineManagedDerivationPipeline = DerivationPipeline<
     IndexedAttributesQueueStage<
         OnlineDataProvider,
@@ -37,12 +40,19 @@ type OnlineManagedDerivationPipeline = DerivationPipeline<
     AlloyL2ChainProvider,
 >;
 
-/// An RPC-backed Ethereum data source.
+/// An RPC-backed Ethereum data source for the polled (verifier) pipeline.
+type OnlinePolledDataProvider =
+    EthereumDataSource<ConfDepthProvider, OnlineBlobProvider<OnlineBeaconClient>>;
+
+/// An RPC-backed payload attributes builder for the polled (verifier) pipeline.
+type OnlinePolledAttributesBuilder =
+    StatefulAttributesBuilder<ConfDepthProvider, AlloyL2ChainProvider>;
+
+/// An RPC-backed Ethereum data source for the managed (sequencer) pipeline.
 type OnlineDataProvider =
     EthereumDataSource<AlloyChainProvider, OnlineBlobProvider<OnlineBeaconClient>>;
 
-/// An RPC-backed payload attributes builder for the `AttributesQueue` stage of the derivation
-/// pipeline.
+/// An RPC-backed payload attributes builder for the managed (sequencer) pipeline.
 type OnlineAttributesBuilder = StatefulAttributesBuilder<AlloyChainProvider, AlloyL2ChainProvider>;
 
 /// An online derivation pipeline.
@@ -56,6 +66,7 @@ pub enum OnlinePipeline {
 
 impl OnlinePipeline {
     /// Constructs a new polled derivation pipeline that is initialized.
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         cfg: Arc<RollupConfig>,
         l1_cfg: Arc<L1ChainConfig>,
@@ -64,6 +75,8 @@ impl OnlinePipeline {
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
         mut l2_chain_provider: AlloyL2ChainProvider,
+        l1_head_number: L1HeadNumber,
+        verifier_l1_confs: u64,
     ) -> PipelineResult<Self> {
         let mut pipeline = Self::new_polled(
             Arc::clone(&cfg),
@@ -71,6 +84,8 @@ impl OnlinePipeline {
             blob_provider,
             chain_provider,
             l2_chain_provider.clone(),
+            l1_head_number,
+            verifier_l1_confs,
         );
 
         // Reset the pipeline to populate the initial L1/L2 cursor and system configuration in L1
@@ -99,13 +114,18 @@ impl OnlinePipeline {
     /// Before using the returned pipeline, a [`ResetSignal`] must be sent to
     /// instantiate the pipeline state. [`Self::new`] is a convenience method that
     /// constructs a new online pipeline and sends the reset signal.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_polled(
         cfg: Arc<RollupConfig>,
         l1_cfg: Arc<L1ChainConfig>,
         blob_provider: OnlineBlobProvider<OnlineBeaconClient>,
         chain_provider: AlloyChainProvider,
         l2_chain_provider: AlloyL2ChainProvider,
+        l1_head_number: L1HeadNumber,
+        verifier_l1_confs: u64,
     ) -> Self {
+        let chain_provider =
+            ConfDepthProvider::new(chain_provider, l1_head_number, verifier_l1_confs);
         let attributes = StatefulAttributesBuilder::new(
             Arc::clone(&cfg),
             l1_cfg,

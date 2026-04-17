@@ -1,7 +1,13 @@
 //! [`NodeActor`] implementation for an L1 chain watcher that polls for L1 block updates over HTTP
 //! RPC.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use alloy_eips::BlockId;
 use alloy_primitives::Address;
@@ -119,6 +125,13 @@ where
     /// When non-zero, derivation receives the block at `head - verifier_l1_confs` rather than
     /// the real head. The sequencer's watch channel always receives the real head.
     verifier_l1_confs: u64,
+    /// Shared atomic holding the current L1 head block number.
+    ///
+    /// Updated on every new L1 head so the [`ConfDepthProvider`] in the derivation pipeline
+    /// can enforce the confirmation depth cutoff at the chain-provider level.
+    ///
+    /// [`ConfDepthProvider`]: base_consensus_providers::ConfDepthProvider
+    l1_head_number: Arc<AtomicU64>,
 }
 impl<BlockStream, L1Provider, L1WatcherDerivationClient_>
     L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
@@ -139,6 +152,7 @@ where
         head_stream: BlockStream,
         finalized_stream: BlockStream,
         verifier_l1_confs: u64,
+        l1_head_number: Arc<AtomicU64>,
     ) -> Self {
         Self {
             rollup_config,
@@ -150,6 +164,7 @@ where
             head_stream,
             finalized_stream,
             verifier_l1_confs,
+            l1_head_number,
         }
     }
 }
@@ -201,6 +216,10 @@ where
                         // Always broadcast the real head so the sequencer's
                         // DelayedL1OriginSelectorProvider can compute its own offset.
                         self.latest_head.send_replace(Some(head_block_info));
+
+                        // Update the shared atomic so the ConfDepthProvider in the
+                        // derivation pipeline can enforce the confirmation depth cutoff.
+                        self.l1_head_number.store(head_block_info.number, Ordering::Relaxed);
 
                         // Apply verifier confirmation delay: derive from
                         // `head - verifier_l1_confs` when the chain is deep enough.
@@ -481,15 +500,17 @@ mod tests {
 
     /// Build and run an [`L1WatcherActor`] to completion (stream ends → `StreamEnded`).
     ///
-    /// Returns the derivation client for assertion and the watch receiver for the raw head.
+    /// Returns the derivation client, the watch receiver for the raw head, and the
+    /// shared atomic holding the L1 head number.
     async fn run_actor<F: L1BlockFetcher>(
         fetcher: F,
         head_blocks: Vec<BlockInfo>,
         verifier_l1_confs: u64,
-    ) -> (RecordingDerivationClient, watch::Receiver<Option<BlockInfo>>) {
+    ) -> (RecordingDerivationClient, watch::Receiver<Option<BlockInfo>>, Arc<AtomicU64>) {
         let derivation_client = RecordingDerivationClient::default();
         let (l1_head_tx, l1_head_rx) = watch::channel(None);
         let cancel = CancellationToken::new();
+        let l1_head_number = Arc::new(AtomicU64::new(0));
 
         let head_stream: BoxedBlockStream = Box::pin(futures::stream::iter(head_blocks));
         // Finalized stream that never yields — actor will exit via head stream ending.
@@ -505,12 +526,13 @@ mod tests {
             head_stream,
             finalized_stream,
             verifier_l1_confs,
+            Arc::clone(&l1_head_number),
         );
 
         // The actor loop will process all head_stream items then return StreamEnded.
         let _ = actor.start(()).await;
 
-        (derivation_client, l1_head_rx)
+        (derivation_client, l1_head_rx, l1_head_number)
     }
 
     // ---------------------------------------------------------------------------
@@ -586,7 +608,7 @@ mod tests {
     #[tokio::test]
     async fn zero_confs_forwards_real_head_to_derivation() {
         let head = block_at(100);
-        let (client, rx) =
+        let (client, rx, l1_head_number) =
             run_actor(ConfigurableFetcher::returning_default_block(), vec![head], 0).await;
 
         // Derivation receives the real head block.
@@ -596,13 +618,16 @@ mod tests {
 
         // Watch channel also has the real head.
         assert_eq!(rx.borrow().unwrap().number, 100);
+
+        // L1 head number atomic is updated to the real head.
+        assert_eq!(l1_head_number.load(Ordering::Relaxed), 100);
     }
 
     #[tokio::test]
     async fn confs_delay_fetches_earlier_block_for_derivation() {
         let fetcher = ConfigurableFetcher::returning_default_block();
         let head = block_at(100);
-        let (client, rx) = run_actor(fetcher, vec![head], 4).await;
+        let (client, rx, l1_head_number) = run_actor(fetcher, vec![head], 4).await;
 
         // Derivation receives the *delayed* block (default Block → BlockInfo with number 0).
         let heads = client.sent_heads();
@@ -612,6 +637,9 @@ mod tests {
 
         // Watch channel still has the real head.
         assert_eq!(rx.borrow().unwrap().number, 100);
+
+        // L1 head number atomic is set to the real head (not the delayed one).
+        assert_eq!(l1_head_number.load(Ordering::Relaxed), 100);
     }
 
     #[tokio::test]
@@ -641,7 +669,7 @@ mod tests {
         // Head number (2) < verifier_l1_confs (4), so no delay is applied.
         let fetcher = ConfigurableFetcher::returning_default_block();
         let ids = Arc::clone(&fetcher.get_block_requested_ids);
-        let (client, _rx) = run_actor(fetcher, vec![block_at(2)], 4).await;
+        let (client, _rx, _) = run_actor(fetcher, vec![block_at(2)], 4).await;
 
         // No get_block call should have been made.
         assert!(ids.lock().unwrap().is_empty());
@@ -654,7 +682,7 @@ mod tests {
 
     #[tokio::test]
     async fn confs_delayed_block_not_found_skips_derivation() {
-        let (client, rx) =
+        let (client, rx, _) =
             run_actor(ConfigurableFetcher::returning_none(), vec![block_at(100)], 4).await;
 
         // Derivation should NOT receive any head — the block was not found.
@@ -666,7 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn confs_delayed_block_fetch_error_skips_derivation() {
-        let (client, rx) =
+        let (client, rx, _) =
             run_actor(ConfigurableFetcher::returning_error(), vec![block_at(100)], 4).await;
 
         // Derivation should NOT receive any head — the fetch errored.
@@ -677,11 +705,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn confs_l1_head_number_tracks_last_head() {
+        // Verify the shared atomic always holds the most recent L1 head number,
+        // which the ConfDepthProvider reads to enforce the confirmation cutoff.
+        let fetcher = ConfigurableFetcher::returning_default_block();
+        let (_, _, l1_head_number) =
+            run_actor(fetcher, vec![block_at(10), block_at(20), block_at(30)], 4).await;
+
+        // After processing all three heads, the atomic should hold the last one.
+        assert_eq!(l1_head_number.load(Ordering::Relaxed), 30);
+    }
+
+    #[tokio::test]
     async fn confs_mixed_shallow_and_deep_heads() {
         // First head is too shallow (3 < 4), second is deep enough (10 >= 4).
         let fetcher = ConfigurableFetcher::returning_default_block();
         let ids = Arc::clone(&fetcher.get_block_requested_ids);
-        let (client, _rx) = run_actor(fetcher, vec![block_at(3), block_at(10)], 4).await;
+        let (client, _rx, _) = run_actor(fetcher, vec![block_at(3), block_at(10)], 4).await;
 
         let heads = client.sent_heads();
         // Two derivation sends: block 3 forwarded directly, block 10 fetched as delayed.
