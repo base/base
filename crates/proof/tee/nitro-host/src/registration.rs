@@ -110,6 +110,32 @@ impl RegistrationChecker {
         }
     }
 
+    async fn fetch_validity(&self) -> Result<bool, RegistrationError> {
+        let mut first_rpc_error = None;
+
+        for (index, transport) in self.transports.iter().enumerate() {
+            let signer = match Self::signer_address(transport).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, index, "skipping transport: key fetch failed");
+                    continue;
+                }
+            };
+
+            match self.is_valid_signer(signer).await {
+                Ok(true) => return Ok(true),
+                Ok(false) => {
+                    warn!(signer = %signer, index, "signer not valid in TEEProverRegistry");
+                }
+                Err(e) => {
+                    first_rpc_error.get_or_insert(e);
+                }
+            };
+        }
+
+        first_rpc_error.map_or(Ok(false), Err)
+    }
+
     /// Latching health check: returns `true` once the signer has ever been
     /// confirmed valid, and stays `true` forever after — even if the signer
     /// is later deregistered.  See the [module-level docs](self) for the
