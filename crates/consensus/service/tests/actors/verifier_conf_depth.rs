@@ -124,8 +124,7 @@ async fn l1_watcher_and_conf_depth_provider_end_to_end() {
     let cancel = CancellationToken::new();
 
     // Stream the head at block 100.
-    let head_stream: BoxedBlockStream =
-        Box::pin(futures::stream::iter(vec![block_at(100)]));
+    let head_stream: BoxedBlockStream = Box::pin(futures::stream::iter(vec![block_at(100)]));
     let finalized_stream: BoxedBlockStream = Box::pin(futures::stream::pending());
 
     let actor = L1WatcherActor::new(

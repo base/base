@@ -1,5 +1,10 @@
 //! Contains the [`RollupNode`] implementation.
-use std::{ops::Not as _, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    ops::Not as _,
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
@@ -18,8 +23,6 @@ use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListen
 use base_protocol::L2BlockInfo;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
-
-use std::sync::atomic::AtomicU64;
 
 use crate::{
     AlloyL1BlockFetcher, Conductor, ConductorClient, DelayedL1OriginSelectorProvider,
@@ -280,8 +283,7 @@ impl RollupNode {
     /// finalizes `safe` blocks that it has derived when L1 finalized block updates are
     /// received.
     pub async fn start(&self) -> Result<(), String> {
-        let l1_head_number: base_consensus_providers::L1HeadNumber =
-            Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         let engine_client =
             Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
@@ -302,8 +304,7 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
-        let l1_head_number: base_consensus_providers::L1HeadNumber =
-            Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let engine_client =
             Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
         self.start_inner(engine_client, pipeline, l1_head_number).await
@@ -318,8 +319,7 @@ impl RollupNode {
         &self,
         engine_client: Arc<E>,
     ) -> Result<(), String> {
-        let l1_head_number: base_consensus_providers::L1HeadNumber =
-            Arc::new(AtomicU64::new(0));
+        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         self.start_inner(engine_client, pipeline, l1_head_number).await
     }

@@ -43,7 +43,11 @@ pub struct ConfDepthProvider {
 
 impl ConfDepthProvider {
     /// Creates a new [`ConfDepthProvider`].
-    pub const fn new(inner: AlloyChainProvider, l1_head_number: L1HeadNumber, conf_depth: u64) -> Self {
+    pub const fn new(
+        inner: AlloyChainProvider,
+        l1_head_number: L1HeadNumber,
+        conf_depth: u64,
+    ) -> Self {
         Self { inner, l1_head_number, conf_depth }
     }
 }
@@ -92,8 +96,10 @@ mod tests {
     fn provider_with_head(head: u64, conf_depth: u64) -> ConfDepthProvider {
         // We cannot issue real RPC calls in a unit test, so we only exercise the
         // conf-depth gating logic — not the inner provider's responses.
-        let dummy_inner =
-            AlloyChainProvider::new(alloy_provider::RootProvider::new_http("http://localhost:1".parse().unwrap()), 1);
+        let dummy_inner = AlloyChainProvider::new(
+            alloy_provider::RootProvider::new_http("http://localhost:1".parse().unwrap()),
+            1,
+        );
         let l1_head = Arc::new(AtomicU64::new(head));
         ConfDepthProvider::new(dummy_inner, l1_head, conf_depth)
     }
