@@ -66,17 +66,10 @@ impl NitroProverServer {
             .into_iter()
             .map(|transport| {
                 let backend = NitroBackend::new(Arc::clone(&transport));
-                EnclaveService {
-                    transport,
-                    service: ProverService::new(config.clone(), backend),
-                }
+                EnclaveService { transport, service: ProverService::new(config.clone(), backend) }
             })
             .collect();
-        Self {
-            enclaves,
-            proof_request_timeout,
-            registration_health: None,
-        }
+        Self { enclaves, proof_request_timeout, registration_health: None }
     }
 
     /// Enables registration-gated health checks. When set, `/healthz` verifies
@@ -95,11 +88,8 @@ impl NitroProverServer {
         info!(addr = %addr, "nitro rpc server started");
 
         let mut module = RpcModule::new(());
-        let transports: Vec<Arc<NitroTransport>> = self
-            .enclaves
-            .iter()
-            .map(|enclave| Arc::clone(&enclave.transport))
-            .collect();
+        let transports: Vec<Arc<NitroTransport>> =
+            self.enclaves.iter().map(|enclave| Arc::clone(&enclave.transport)).collect();
 
         let checker = match self.registration_health {
             Some(config) => {
