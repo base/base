@@ -298,6 +298,11 @@ impl RollupNode {
     ///
     /// Production callers should use [`Self::start`], which constructs the standard
     /// [`OnlinePipeline`] automatically.
+    ///
+    /// **Note:** `verifier_l1_confs` has no effect when using this method. The
+    /// [`ConfDepthProvider`](base_consensus_providers::ConfDepthProvider) is only wired into
+    /// pipelines constructed by [`Self::start`]. If the caller's pipeline needs confirmation
+    /// depth gating, it must enforce that in its own chain provider.
     pub async fn start_with<P>(&self, pipeline: P) -> Result<(), String>
     where
         P: Pipeline + SignalReceiver + Send + Sync + 'static,
