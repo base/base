@@ -59,9 +59,9 @@ type OnlineAttributesBuilder = StatefulAttributesBuilder<AlloyChainProvider, All
 #[derive(Debug)]
 pub enum OnlinePipeline {
     /// An online derivation pipeline that uses a polled traversal stage.
-    Polled(OnlinePolledDerivationPipeline),
+    Polled(Box<OnlinePolledDerivationPipeline>),
     /// An online derivation pipeline that uses a managed traversal stage.
-    Managed(OnlineManagedDerivationPipeline),
+    Managed(Box<OnlineManagedDerivationPipeline>),
 }
 
 impl OnlinePipeline {
@@ -143,7 +143,7 @@ impl OnlinePipeline {
             .origin(BlockInfo::default())
             .build_polled();
 
-        Self::Polled(pipeline)
+        Self::Polled(Box::new(pipeline))
     }
 
     /// Constructs a new indexed derivation pipeline that is uninitialized.
@@ -177,7 +177,7 @@ impl OnlinePipeline {
             .origin(BlockInfo::default())
             .build_indexed();
 
-        Self::Managed(pipeline)
+        Self::Managed(Box::new(pipeline))
     }
 }
 
