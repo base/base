@@ -56,6 +56,7 @@ impl NitroProverServer {
         Self::new_multi(config, vec![transport], proof_request_timeout)
     }
 
+    /// Create a server with multiple enclave transports for dual-enclave deployments.
     pub fn new_multi(
         config: ProverConfig,
         transports: Vec<Arc<NitroTransport>>,
