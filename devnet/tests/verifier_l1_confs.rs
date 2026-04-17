@@ -102,12 +102,30 @@ async fn safe_head_is_delayed_by_verifier_l1_confs() -> Result<()> {
     .await
     .wrap_err("Client block sync timed out")??;
 
+    // Advancing the safe head requires the batcher → L1 mining → derivation pipeline
+    // cycle, which takes considerably longer than gossip-synced latest blocks. Wait
+    // explicitly for the builder's safe head to advance past genesis before sampling,
+    // so we have a non-zero baseline to compare against.
+    println!("\nWaiting for builder safe head to advance past genesis (batcher + derivation)...");
+    timeout(Duration::from_secs(120), async {
+        loop {
+            let safe = block_number_by_tag(&builder_provider, BlockNumberOrTag::Safe).await?;
+            if safe.is_some_and(|n| n > 0) {
+                return Ok::<_, eyre::Error>(());
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+    })
+    .await
+    .wrap_err("Builder safe head never advanced — check batcher and derivation pipeline")??;
+
     // Print block numbers for all tags, matching the Slack message format.
-    // Sample 5 times, 2s apart.
+    // Sample 10 times, 2s apart, giving the client time to also advance (it lags
+    // behind the builder by verifier_l1_confs L1 blocks).
     println!("\n=== Comparing block tags (like `cast block <tag>`) ===\n");
 
     let mut safe_head_delayed = false;
-    for round in 1..=5 {
+    for round in 1..=10 {
         println!("--- Round {round} ---");
         for tag in ["latest", "safe", "finalized"] {
             let tag_enum = match tag {
@@ -128,8 +146,8 @@ async fn safe_head_is_delayed_by_verifier_l1_confs() -> Result<()> {
                     let annotation = if c > 0 && b > c {
                         safe_head_delayed = true;
                         " <-- client safe head is delayed (CORRECT)"
-                    } else if b == c {
-                        " <-- same as builder (BUG if verifier_l1_confs > 0)"
+                    } else if b > 0 && b == c {
+                        " <-- same as builder (BUG: safe head not delayed)"
                     } else {
                         ""
                     };
@@ -141,7 +159,7 @@ async fn safe_head_is_delayed_by_verifier_l1_confs() -> Result<()> {
         }
         println!();
 
-        if round < 5 {
+        if round < 10 {
             sleep(Duration::from_secs(2)).await;
         }
     }
