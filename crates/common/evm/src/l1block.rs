@@ -116,19 +116,22 @@ impl L1BlockInfo {
     /// Try to fetch the L1 block info from the database, post-Isthmus.
     fn try_fetch_isthmus<DB: Database>(&mut self, db: &mut DB) -> Result<(), DB::Error> {
         // Post-isthmus L1 block info
-        let operator_fee_scalars =
-            db.storage(Predeploys::L1_BLOCK_INFO, Self::OPERATOR_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
+        let operator_fee_scalars = db
+            .storage(Predeploys::L1_BLOCK_INFO, Self::OPERATOR_FEE_SCALARS_SLOT)?
+            .to_be_bytes::<32>();
 
         // The `operator_fee_scalar` is stored as a big endian u32 at
         // OPERATOR_FEE_SCALAR_OFFSET.
         self.operator_fee_scalar = Some(U256::from_be_slice(
-            operator_fee_scalars[Self::OPERATOR_FEE_SCALAR_OFFSET..Self::OPERATOR_FEE_SCALAR_OFFSET + 4]
+            operator_fee_scalars
+                [Self::OPERATOR_FEE_SCALAR_OFFSET..Self::OPERATOR_FEE_SCALAR_OFFSET + 4]
                 .as_ref(),
         ));
         // The `operator_fee_constant` is stored as a big endian u64 at
         // OPERATOR_FEE_CONSTANT_OFFSET.
         self.operator_fee_constant = Some(U256::from_be_slice(
-            operator_fee_scalars[Self::OPERATOR_FEE_CONSTANT_OFFSET..Self::OPERATOR_FEE_CONSTANT_OFFSET + 8]
+            operator_fee_scalars
+                [Self::OPERATOR_FEE_CONSTANT_OFFSET..Self::OPERATOR_FEE_CONSTANT_OFFSET + 8]
                 .as_ref(),
         ));
 
@@ -140,15 +143,18 @@ impl L1BlockInfo {
         self.l1_blob_base_fee =
             Some(db.storage(Predeploys::L1_BLOCK_INFO, Self::ECOTONE_L1_BLOB_BASE_FEE_SLOT)?);
 
-        let l1_fee_scalars =
-            db.storage(Predeploys::L1_BLOCK_INFO, Self::ECOTONE_L1_FEE_SCALARS_SLOT)?.to_be_bytes::<32>();
+        let l1_fee_scalars = db
+            .storage(Predeploys::L1_BLOCK_INFO, Self::ECOTONE_L1_FEE_SCALARS_SLOT)?
+            .to_be_bytes::<32>();
 
         self.l1_base_fee_scalar = U256::from_be_slice(
             l1_fee_scalars[Self::BASE_FEE_SCALAR_OFFSET..Self::BASE_FEE_SCALAR_OFFSET + 4].as_ref(),
         );
 
         let l1_blob_base_fee = U256::from_be_slice(
-            l1_fee_scalars[Self::BLOB_BASE_FEE_SCALAR_OFFSET..Self::BLOB_BASE_FEE_SCALAR_OFFSET + 4].as_ref(),
+            l1_fee_scalars
+                [Self::BLOB_BASE_FEE_SCALAR_OFFSET..Self::BLOB_BASE_FEE_SCALAR_OFFSET + 4]
+                .as_ref(),
         );
         self.l1_blob_base_fee_scalar = Some(l1_blob_base_fee);
 
@@ -183,7 +189,8 @@ impl L1BlockInfo {
         // Post-Ecotone
         if !spec_id.is_enabled_in(OpSpecId::ECOTONE) {
             out.l1_base_fee_scalar = db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_SCALAR_SLOT)?;
-            out.l1_fee_overhead = Some(db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_OVERHEAD_SLOT)?);
+            out.l1_fee_overhead =
+                Some(db.storage(Predeploys::L1_BLOCK_INFO, Self::L1_OVERHEAD_SLOT)?);
 
             return Ok(out);
         }
