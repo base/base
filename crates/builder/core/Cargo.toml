@@ -90,7 +90,6 @@ base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-network.workspace = true
 base-common-rpc-types.workspace = true
-base-consensus-genesis.workspace = true
 base-common-rpc-types-engine.workspace = true
 base-common-evm = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
