@@ -323,6 +323,9 @@ impl EthereumHardforks for RollupConfig {
         } else if fork <= EthereumHardfork::Prague {
             // Isthmus activates Prague hardfork.
             self.upgrade_activation(BaseUpgrade::Isthmus)
+        } else if fork <= EthereumHardfork::Osaka {
+            // Azul activates Osaka hardfork.
+            self.upgrade_activation(BaseUpgrade::Azul)
         } else {
             ForkCondition::Never
         }
@@ -474,176 +477,237 @@ fn chain_id_from_u64<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Resul
 mod tests {
     #[cfg(feature = "serde")]
     use alloy_eips::BlockNumHash;
-    use alloy_primitives::address;
     #[cfg(feature = "serde")]
-    use alloy_primitives::{U256, b256};
+    use alloy_primitives::{U256, address, b256};
+    #[cfg(feature = "arbitrary")]
+    use arbitrary::Arbitrary;
+    #[cfg(feature = "arbitrary")]
+    use rand::Rng;
 
     use super::*;
+    use crate::HardforkConfig;
+    #[cfg(feature = "serde")]
+    use crate::SystemConfig;
+
+    type ActivationCheck = fn(&RollupConfig, u64) -> bool;
+    type ActivationSetup = fn(&mut RollupConfig, u64);
 
     #[test]
     #[cfg(feature = "arbitrary")]
     fn test_arbitrary_rollup_config() {
-        use arbitrary::Arbitrary;
-        use rand::Rng;
         let mut bytes = [0u8; 1024];
         rand::rng().fill(bytes.as_mut_slice());
         RollupConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
     }
 
     #[test]
-    fn test_regolith_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_regolith_active(0));
-        config.hardforks.regolith_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(!config.is_regolith_active(9));
-    }
+    fn test_hardfork_activation_matrix() {
+        const ACTIVATION_TIMESTAMP: u64 = 10;
+        const PRE_ACTIVATION_TIMESTAMP: u64 = ACTIVATION_TIMESTAMP - 1;
 
-    #[test]
-    fn test_canyon_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_canyon_active(0));
-        config.hardforks.canyon_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(!config.is_canyon_active(9));
-    }
+        let cascade_checks = [
+            ("regolith", RollupConfig::is_regolith_active as ActivationCheck),
+            ("canyon", RollupConfig::is_canyon_active as ActivationCheck),
+            ("delta", RollupConfig::is_delta_active as ActivationCheck),
+            ("ecotone", RollupConfig::is_ecotone_active as ActivationCheck),
+            ("fjord", RollupConfig::is_fjord_active as ActivationCheck),
+            ("granite", RollupConfig::is_granite_active as ActivationCheck),
+            ("holocene", RollupConfig::is_holocene_active as ActivationCheck),
+            ("isthmus", RollupConfig::is_isthmus_active as ActivationCheck),
+            ("jovian", RollupConfig::is_jovian_active as ActivationCheck),
+        ];
+        let independent_checks = [
+            (
+                "pectra blob schedule",
+                RollupConfig::is_pectra_blob_schedule_active as ActivationCheck,
+            ),
+            ("base azul", RollupConfig::is_base_azul_active as ActivationCheck),
+        ];
+        let cascade_cases = [
+            (
+                "regolith",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.regolith_time = Some(timestamp);
+                }) as ActivationSetup,
+                None,
+            ),
+            (
+                "canyon",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.canyon_time = Some(timestamp);
+                }) as ActivationSetup,
+                Some(EthereumHardfork::Shanghai),
+            ),
+            (
+                "delta",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.delta_time = Some(timestamp);
+                }) as ActivationSetup,
+                None,
+            ),
+            (
+                "ecotone",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.ecotone_time = Some(timestamp);
+                }) as ActivationSetup,
+                Some(EthereumHardfork::Cancun),
+            ),
+            (
+                "fjord",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.fjord_time = Some(timestamp);
+                }) as ActivationSetup,
+                None,
+            ),
+            (
+                "granite",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.granite_time = Some(timestamp);
+                }) as ActivationSetup,
+                None,
+            ),
+            (
+                "holocene",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.holocene_time = Some(timestamp);
+                }) as ActivationSetup,
+                None,
+            ),
+            (
+                "isthmus",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.isthmus_time = Some(timestamp);
+                }) as ActivationSetup,
+                Some(EthereumHardfork::Prague),
+            ),
+            (
+                "jovian",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.jovian_time = Some(timestamp);
+                }) as ActivationSetup,
+                None,
+            ),
+        ];
+        let independent_cases = [
+            (
+                "pectra blob schedule",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.pectra_blob_schedule_time = Some(timestamp);
+                }) as ActivationSetup,
+                RollupConfig::is_pectra_blob_schedule_active as ActivationCheck,
+                None,
+            ),
+            (
+                "base azul",
+                (|config: &mut RollupConfig, timestamp| {
+                    config.hardforks.base = HardforkConfig { azul: Some(timestamp) };
+                }) as ActivationSetup,
+                RollupConfig::is_base_azul_active as ActivationCheck,
+                Some(EthereumHardfork::Osaka),
+            ),
+        ];
 
-    #[test]
-    fn test_delta_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_delta_active(0));
-        config.hardforks.delta_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(config.is_delta_active(10));
-        assert!(!config.is_delta_active(9));
-    }
+        for (case_index, (case_name, setup, ethereum_fork)) in cascade_cases.into_iter().enumerate()
+        {
+            let mut config = RollupConfig::default();
 
-    #[test]
-    fn test_ecotone_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_ecotone_active(0));
-        config.hardforks.ecotone_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(config.is_delta_active(10));
-        assert!(config.is_ecotone_active(10));
-        assert!(!config.is_ecotone_active(9));
-    }
+            if let Some(fork) = ethereum_fork {
+                assert_eq!(config.ethereum_fork_activation(fork), ForkCondition::Never);
+            }
 
-    #[test]
-    fn test_fjord_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_fjord_active(0));
-        config.hardforks.fjord_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(config.is_delta_active(10));
-        assert!(config.is_ecotone_active(10));
-        assert!(config.is_fjord_active(10));
-        assert!(!config.is_fjord_active(9));
-    }
+            setup(&mut config, ACTIVATION_TIMESTAMP);
 
-    #[test]
-    fn test_granite_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_granite_active(0));
-        config.hardforks.granite_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(config.is_delta_active(10));
-        assert!(config.is_ecotone_active(10));
-        assert!(config.is_fjord_active(10));
-        assert!(config.is_granite_active(10));
-        assert!(!config.is_granite_active(9));
-    }
+            for (check_index, (check_name, check)) in cascade_checks.iter().enumerate() {
+                assert_eq!(
+                    check(&config, ACTIVATION_TIMESTAMP),
+                    check_index <= case_index,
+                    "expected {check_name} activation to match {case_name} cascade",
+                );
+                assert!(
+                    !check(&config, PRE_ACTIVATION_TIMESTAMP),
+                    "expected {check_name} to be inactive before {case_name}",
+                );
+            }
 
-    #[test]
-    fn test_holocene_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_holocene_active(0));
-        config.hardforks.holocene_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(config.is_delta_active(10));
-        assert!(config.is_ecotone_active(10));
-        assert!(config.is_fjord_active(10));
-        assert!(config.is_granite_active(10));
-        assert!(config.is_holocene_active(10));
-        assert!(!config.is_holocene_active(9));
-    }
+            for (check_name, check) in independent_checks {
+                assert!(
+                    !check(&config, ACTIVATION_TIMESTAMP),
+                    "expected {check_name} to remain inactive when {case_name} activates",
+                );
+                assert!(
+                    !check(&config, PRE_ACTIVATION_TIMESTAMP),
+                    "expected {check_name} to be inactive before {case_name}",
+                );
+            }
 
-    #[test]
-    fn test_pectra_blob_schedule_active() {
-        let mut config = RollupConfig::default();
-        config.hardforks.pectra_blob_schedule_time = Some(10);
-        // Pectra blob schedule is a unique fork, not included in the hierarchical ordering. Its
-        // activation does not imply the activation of any other forks.
-        assert!(!config.is_regolith_active(10));
-        assert!(!config.is_canyon_active(10));
-        assert!(!config.is_delta_active(10));
-        assert!(!config.is_ecotone_active(10));
-        assert!(!config.is_fjord_active(10));
-        assert!(!config.is_granite_active(10));
-        assert!(!config.is_holocene_active(0));
-        assert!(config.is_pectra_blob_schedule_active(10));
-        assert!(!config.is_pectra_blob_schedule_active(9));
-    }
+            if let Some(fork) = ethereum_fork {
+                assert_eq!(
+                    config.ethereum_fork_activation(fork),
+                    ForkCondition::Timestamp(ACTIVATION_TIMESTAMP)
+                );
+                assert!(
+                    config.ethereum_fork_activation(fork).active_at_timestamp(ACTIVATION_TIMESTAMP)
+                );
+                assert!(
+                    !config
+                        .ethereum_fork_activation(fork)
+                        .active_at_timestamp(PRE_ACTIVATION_TIMESTAMP)
+                );
+            }
+        }
 
-    #[test]
-    fn test_isthmus_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_isthmus_active(0));
-        config.hardforks.isthmus_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(config.is_delta_active(10));
-        assert!(config.is_ecotone_active(10));
-        assert!(config.is_fjord_active(10));
-        assert!(config.is_granite_active(10));
-        assert!(config.is_holocene_active(10));
-        assert!(!config.is_pectra_blob_schedule_active(10));
-        assert!(config.is_isthmus_active(10));
-        assert!(!config.is_isthmus_active(9));
-    }
+        for (case_name, setup, active_check, ethereum_fork) in independent_cases {
+            let mut config = RollupConfig::default();
 
-    #[test]
-    fn test_jovian_active() {
-        let mut config = RollupConfig::default();
-        assert!(!config.is_jovian_active(0));
-        config.hardforks.jovian_time = Some(10);
-        assert!(config.is_regolith_active(10));
-        assert!(config.is_canyon_active(10));
-        assert!(config.is_delta_active(10));
-        assert!(config.is_ecotone_active(10));
-        assert!(config.is_fjord_active(10));
-        assert!(config.is_granite_active(10));
-        assert!(config.is_holocene_active(10));
-        assert!(!config.is_pectra_blob_schedule_active(10));
-        assert!(config.is_isthmus_active(10));
-        assert!(config.is_jovian_active(10));
-        assert!(!config.is_jovian_active(9));
-        assert!(!config.is_base_azul_active(10));
-    }
+            if let Some(fork) = ethereum_fork {
+                assert_eq!(config.ethereum_fork_activation(fork), ForkCondition::Never);
+            }
 
-    #[test]
-    fn test_base_azul_active() {
-        use crate::HardforkConfig;
-        let mut config = RollupConfig::default();
-        assert!(!config.is_base_azul_active(0));
-        config.hardforks.base = HardforkConfig { azul: Some(10) };
-        // Azul does not cascade upward to existing forks
-        assert!(!config.is_regolith_active(10));
-        assert!(!config.is_canyon_active(10));
-        assert!(!config.is_jovian_active(10));
-        assert!(config.is_base_azul_active(10));
-        assert!(!config.is_base_azul_active(9));
+            setup(&mut config, ACTIVATION_TIMESTAMP);
+
+            for (check_name, check) in cascade_checks {
+                assert!(
+                    !check(&config, ACTIVATION_TIMESTAMP),
+                    "expected {check_name} to remain inactive when {case_name} activates",
+                );
+                assert!(
+                    !check(&config, PRE_ACTIVATION_TIMESTAMP),
+                    "expected {check_name} to be inactive before {case_name}",
+                );
+            }
+
+            for (check_name, check) in independent_checks {
+                let expected = core::ptr::fn_addr_eq(check, active_check);
+                assert_eq!(
+                    check(&config, ACTIVATION_TIMESTAMP),
+                    expected,
+                    "expected {check_name} activation to match {case_name}",
+                );
+                assert!(
+                    !check(&config, PRE_ACTIVATION_TIMESTAMP),
+                    "expected {check_name} to be inactive before {case_name}",
+                );
+            }
+
+            if let Some(fork) = ethereum_fork {
+                assert_eq!(
+                    config.ethereum_fork_activation(fork),
+                    ForkCondition::Timestamp(ACTIVATION_TIMESTAMP)
+                );
+                assert!(
+                    config.ethereum_fork_activation(fork).active_at_timestamp(ACTIVATION_TIMESTAMP)
+                );
+                assert!(
+                    !config
+                        .ethereum_fork_activation(fork)
+                        .active_at_timestamp(PRE_ACTIVATION_TIMESTAMP)
+                );
+            }
+        }
     }
 
     #[test]
     fn test_is_first_fork_block() {
-        use crate::HardforkConfig;
         let cfg = RollupConfig {
             hardforks: HardForkConfig {
                 regolith_time: Some(10),
@@ -743,8 +807,6 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_deserialize_reference_rollup_config() {
-        use crate::SystemConfig;
-
         let raw: &str = r#"
         {
           "genesis": {
