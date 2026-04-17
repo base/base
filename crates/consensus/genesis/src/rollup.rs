@@ -594,7 +594,6 @@ mod tests {
                 (|config: &mut RollupConfig, timestamp| {
                     config.hardforks.pectra_blob_schedule_time = Some(timestamp);
                 }) as ActivationSetup,
-                RollupConfig::is_pectra_blob_schedule_active as ActivationCheck,
                 None,
             ),
             (
@@ -602,7 +601,6 @@ mod tests {
                 (|config: &mut RollupConfig, timestamp| {
                     config.hardforks.base = HardforkConfig { azul: Some(timestamp) };
                 }) as ActivationSetup,
-                RollupConfig::is_base_azul_active as ActivationCheck,
                 Some(EthereumHardfork::Osaka),
             ),
         ];
@@ -656,7 +654,9 @@ mod tests {
             }
         }
 
-        for (case_name, setup, active_check, ethereum_fork) in independent_cases {
+        for (case_index, (case_name, setup, ethereum_fork)) in
+            independent_cases.into_iter().enumerate()
+        {
             let mut config = RollupConfig::default();
 
             if let Some(fork) = ethereum_fork {
@@ -676,8 +676,8 @@ mod tests {
                 );
             }
 
-            for (check_name, check) in independent_checks {
-                let expected = core::ptr::fn_addr_eq(check, active_check);
+            for (check_index, (check_name, check)) in independent_checks.into_iter().enumerate() {
+                let expected = check_index == case_index;
                 assert_eq!(
                     check(&config, ACTIVATION_TIMESTAMP),
                     expected,
