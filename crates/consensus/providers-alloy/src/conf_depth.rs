@@ -66,7 +66,7 @@ impl ChainProvider for ConfDepthProvider {
             // Only filter when the L1 head is known (non-zero). A number-based
             // BlockNotFound maps to a Temporary pipeline error, causing the pipeline
             // to yield and retry once the chain advances.
-            if l1_head > 0 && number + self.conf_depth > l1_head {
+            if l1_head > 0 && l1_head.saturating_sub(number) < self.conf_depth {
                 return Err(AlloyChainProviderError::BlockNotFound(number.into()));
             }
         }
