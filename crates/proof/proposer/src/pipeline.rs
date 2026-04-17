@@ -836,6 +836,12 @@ where
                         // All other RPC errors (retryable or not) propagate so
                         // recovery retries on the next tick rather than caching
                         // a partial result.
+                        warn!(
+                            expected_block,
+                            parent_block,
+                            error = %e,
+                            "Forward walk failed to fetch canonical roots"
+                        );
                         return Err(e);
                     }
                 };
