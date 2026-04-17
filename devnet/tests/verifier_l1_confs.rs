@@ -6,7 +6,7 @@
 //! sequencer (no delay), while `finalized` was correctly delayed.
 //!
 //! Run with:
-//!   cargo test -p devnet -- verifier_l1_confs --nocapture
+//!   cargo test -p devnet -- `verifier_l1_confs` --nocapture
 //!
 //! Requires Docker (L1 stack runs Reth + Lighthouse containers).
 
