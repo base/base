@@ -21,6 +21,7 @@ pub use context::{
 };
 
 mod payload;
+pub(crate) use payload::BuilderStateHook;
 
 mod service;
 pub use service::FlashblocksServiceBuilder;

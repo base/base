@@ -40,6 +40,7 @@ reth-payload-util.workspace = true
 reth-node-builder.workspace = true
 reth-tracing-otlp.workspace = true
 reth-cli-commands.workspace = true
+reth-trie-parallel.workspace = true
 reth-network-peers.workspace = true
 base-execution-evm.workspace = true
 reth-node-ethereum.workspace = true
@@ -47,6 +48,7 @@ reth-rpc-eth-types.workspace = true
 reth-rpc-engine-api.workspace = true
 reth-execution-types.workspace = true
 reth-payload-builder.workspace = true
+reth-execution-cache.workspace = true
 base-execution-txpool.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
@@ -165,7 +167,9 @@ reth-node-builder = { workspace = true, features = ["test-utils"] }
 
 # trie
 reth-trie-common.workspace = true
-base-execution-trie.workspace = true
+reth-trie-db.workspace = true
+reth-engine-tree.workspace = true
+reth-db-common.workspace = true
 
 # metrics
 metrics-exporter-prometheus.workspace = true
@@ -236,3 +240,4 @@ test-utils = [
 [[bench]]
 name = "state_root"
 harness = false
+

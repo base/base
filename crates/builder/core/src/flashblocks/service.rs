@@ -57,8 +57,10 @@ impl FlashblocksServiceBuilder {
 
         let ws_pub: Arc<WebSocketPublisher> =
             WebSocketPublisher::new(self.0.flashblocks_ws_addr)?.into();
+
+        let evm_config = BaseEvmConfig::base(ctx.chain_spec());
         let payload_builder = BasePayloadBuilder::new(
-            BaseEvmConfig::base(ctx.chain_spec()),
+            evm_config,
             pool,
             ctx.provider().clone(),
             self.0.clone(),

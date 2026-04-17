@@ -1,6 +1,7 @@
 use std::{
+    pin::Pin,
     sync::Arc,
-    task::Waker,
+    task::{Context, Poll, Waker},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -8,6 +9,7 @@ use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use parking_lot::Mutex;
 use reth_basic_payload_builder::{HeaderForPayload, PayloadConfig, PrecachedState};
+use reth_execution_cache::SavedCache;
 use reth_node_api::{NodePrimitives, PayloadKind};
 use reth_payload_builder::{
     BuildNewPayload, KeepPayloadJobAlive, PayloadBuilderError, PayloadId, PayloadJob,
@@ -18,6 +20,7 @@ use reth_primitives_traits::HeaderTy;
 use reth_provider::{BlockReaderIdExt, CanonStateNotification, StateProviderFactory};
 use reth_revm::cached::CachedReads;
 use reth_tasks::Runtime;
+use reth_trie_parallel::state_root_task::StateRootHandle;
 use tokio::{
     sync::oneshot,
     time::{Duration, Sleep},
@@ -167,6 +170,8 @@ where
             deadline,
             build_complete: None,
             cached_reads: self.maybe_pre_cached(parent_hash),
+            execution_cache: input.cache,
+            trie_handle: input.trie_handle,
         };
 
         job.spawn_build_job();
@@ -193,11 +198,6 @@ where
         self.pre_cached = Some(PrecachedState { block: committed.tip().hash(), cached });
     }
 }
-
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
 
 /// A [`PayloadJob`] that builds empty blocks.
 pub struct BlockPayloadJob<Builder>
@@ -227,6 +227,10 @@ where
     /// This is used to avoid reading the same state over and over again when new attempts are
     /// triggered, because during the building process we'll repeatedly execute the transactions.
     pub(crate) cached_reads: Option<CachedReads>,
+    /// Optional execution cache shared by the engine.
+    pub(crate) execution_cache: Option<SavedCache>,
+    /// Optional sparse trie handle shared by the engine.
+    pub(crate) trie_handle: Option<StateRootHandle>,
 }
 
 impl<Builder> std::fmt::Debug for BlockPayloadJob<Builder>
@@ -279,6 +283,10 @@ where
 pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
+    /// Optional execution cache shared by the engine.
+    pub execution_cache: Option<SavedCache>,
+    /// Optional sparse trie handle shared by the engine.
+    pub trie_handle: Option<StateRootHandle>,
     /// How to configure the payload.
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
@@ -308,9 +316,13 @@ where
         let (tx, rx) = oneshot::channel();
         self.build_complete = Some(rx);
         let cached_reads = self.cached_reads.take().unwrap_or_default();
+        let execution_cache = self.execution_cache.clone();
+        let trie_handle = self.trie_handle.take();
         self.executor.spawn_blocking_task(Box::pin(async move {
             let args = BuildArguments {
                 cached_reads,
+                execution_cache,
+                trie_handle,
                 config: payload_config,
                 cancel,
                 publish_guard,

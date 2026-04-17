@@ -1,7 +1,10 @@
 use core::time::Duration;
 use std::{
     ops::{Div, Rem},
-    sync::Arc,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Instant,
 };
 
@@ -10,7 +13,10 @@ use alloy_consensus::{
     proofs,
 };
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
-use alloy_evm::Database;
+use alloy_evm::{
+    Database,
+    block::{OnStateHook, StateChangeSource},
+};
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
 use base_access_lists::FlashblockAccessList;
 use base_builder_publish::WebSocketPublisher;
@@ -26,7 +32,11 @@ use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttribu
 use either::Either;
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
-use reth_evm::{ConfigureEvm, execute::BlockBuilder};
+use reth_evm::{
+    ConfigureEvm,
+    execute::{BlockBuilder, BlockExecutor},
+};
+use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::ChangedAccount;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_payload_primitives::PayloadAttributes;
@@ -41,7 +51,9 @@ use reth_revm::{
 };
 use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
+use reth_trie_parallel::state_root_task::StateRootHandle;
 use revm::Database as _;
+use revm::state::EvmState;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use tokio::sync::mpsc;
@@ -72,8 +84,63 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     >,
 >;
 
+type BackgroundStateRoot = (BuilderStateHook, StateRootHandle);
+
+/// Shared [`OnStateHook`] forwarder.
+///
+/// Reth's hook signals `FinishedStateUpdates` when dropped. Flashblocks needs
+/// to install the hook for pre-execution changes and also forward per-tx diffs
+/// from direct `evm.transact` calls, so we keep one shared hook alive until the
+/// final payload is sealed.
+#[derive(Clone)]
+pub(crate) struct BuilderStateHook {
+    hook: Arc<Mutex<Option<Box<dyn OnStateHook>>>>,
+    tx_idx: Arc<AtomicUsize>,
+}
+
+impl BuilderStateHook {
+    pub(crate) fn new(hook: impl OnStateHook) -> Self {
+        Self {
+            hook: Arc::new(Mutex::new(Some(Box::new(hook)))),
+            tx_idx: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Forwards a per-transaction state update to the sparse trie task.
+    pub(crate) fn send_state_update(&self, state: &EvmState) {
+        let idx = self.tx_idx.fetch_add(1, Ordering::Relaxed);
+        self.forward(StateChangeSource::Transaction(idx), state);
+    }
+
+    /// Boxed hook for `BlockExecutor::set_state_hook`.
+    pub(crate) fn as_on_state_hook(&self) -> Box<dyn OnStateHook> {
+        Box::new(self.clone())
+    }
+
+    /// Drops the inner hook, triggering `FinishedStateUpdates`.
+    /// Must run before awaiting the state root result.
+    pub(crate) fn finish(&self) {
+        self.hook.lock().expect("state hook poisoned").take();
+    }
+
+    fn forward(&self, source: StateChangeSource, state: &EvmState) {
+        let mut guard = self.hook.lock().expect("state hook poisoned");
+        if let Some(h) = guard.as_mut() {
+            h.on_state(source, state);
+        } else {
+            debug_assert!(false, "state update after finish() - diff lost for sparse trie");
+        }
+    }
+}
+
+impl OnStateHook for BuilderStateHook {
+    fn on_state(&mut self, source: StateChangeSource, state: &EvmState) {
+        self.forward(source, state);
+    }
+}
+
 /// Base payload builder
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub(super) struct BasePayloadBuilder<Pool, Client> {
     /// The type responsible for creating the evm.
     pub evm_config: BaseEvmConfig,
@@ -106,6 +173,80 @@ impl<Pool, Client> BasePayloadBuilder<Pool, Client> {
     ) -> Self {
         Self { evm_config, pool, client, payload_tx, ws_pub, config, rejected_tx_sender }
     }
+}
+
+/// Flushes pending updates, awaits the background root, falls back to
+/// synchronous computation on any failure.
+fn finalize_state_root<DB, P>(
+    background_state_root: Option<BackgroundStateRoot>,
+    state: &mut State<DB>,
+    block_number: u64,
+) -> Result<(B256, TrieUpdates, HashedPostState), PayloadBuilderError>
+where
+    DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
+    P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+{
+    let start = Instant::now();
+
+    // revm's commit() pushes to transition_state; we read bundle_state
+    // below, so merge first. Safe on the final-block path: build_block's
+    // later merge is a no-op once transition_state is drained.
+    state.merge_transitions(BundleRetention::Reverts);
+
+    let provider = state.database.as_ref();
+    let hashed_state = provider.hashed_post_state(&state.bundle_state);
+
+    if let Some((hook, mut handle)) = background_state_root {
+        hook.finish();
+
+        // Blocking recv is safe: build_payload runs on a spawn_blocking_task
+        // thread (see generator.rs), so we won't stall the tokio runtime.
+        match handle.state_root() {
+            Ok(outcome) => {
+                let elapsed = start.elapsed();
+                BuilderMetrics::state_root_task_completed_count().increment(1);
+                BuilderMetrics::state_root_task_duration().record(elapsed);
+                info!(
+                    target: "state_root_task",
+                    block_number,
+                    duration_ms = elapsed.as_millis(),
+                    state_root = %outcome.state_root,
+                    "completed"
+                );
+                #[cfg(debug_assertions)]
+                {
+                    if let Ok((sync_root, _)) =
+                        provider.state_root_with_updates(hashed_state.clone())
+                    {
+                        debug_assert_eq!(
+                            outcome.state_root, sync_root,
+                            "background state root diverges from synchronous computation \
+                             (block {block_number}): hook may have missed a state update",
+                        );
+                    }
+                }
+
+                return Ok((
+                    outcome.state_root,
+                    Arc::unwrap_or_clone(outcome.trie_updates),
+                    hashed_state,
+                ));
+            }
+            Err(err) => warn!(target: "state_root_task", block_number, %err, "task failed"),
+        }
+        BuilderMetrics::state_root_task_error_count().increment(1);
+    }
+
+    warn!(target: "state_root_task", block_number, "falling back to synchronous state root");
+    let (state_root, trie_output) = provider
+        .state_root_with_updates(hashed_state.clone())
+        .inspect_err(|err| warn!(target: "payload_builder", %err, "state root failure"))?;
+
+    let elapsed = start.elapsed();
+    BuilderMetrics::state_root_calculation_duration().record(elapsed);
+    BuilderMetrics::state_root_calculation_gauge().set(elapsed);
+
+    Ok((state_root, trie_output, hashed_state))
 }
 
 impl<Pool, Client> reth_basic_payload_builder::PayloadBuilder for BasePayloadBuilder<Pool, Client>
@@ -212,6 +353,8 @@ where
         let block_build_start_time = Instant::now();
         let BuildArguments {
             mut cached_reads,
+            execution_cache,
+            trie_handle,
             config,
             cancel: block_cancel,
             finalized_cell,
@@ -239,15 +382,29 @@ where
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
+        if let Some(execution_cache) = execution_cache {
+            state_provider = Box::new(CachedStateProvider::new(
+                state_provider,
+                execution_cache.cache().clone(),
+                CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder),
+            ));
+        }
         let db = StateProviderDatabase::new(state_provider);
+
+        let mut state_root = trie_handle.map(|handle| {
+            BuilderMetrics::state_root_task_started_count().increment(1);
+            let hook = BuilderStateHook::new(handle.state_hook());
+            (hook, handle)
+        });
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
         let mut state =
             State::builder().with_database(cached_reads.as_db_mut(db)).with_bundle_update().build();
 
-        let mut info = execute_pre_steps(&mut state, &ctx)?;
+        let mut info =
+            execute_pre_steps(&mut state, &ctx, state_root.as_ref().map(|(hook, _)| hook))?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
         BuilderMetrics::sequencer_tx_duration().record(sequencer_tx_time);
         BuilderMetrics::sequencer_tx_gauge().set(sequencer_tx_time);
@@ -258,12 +415,16 @@ where
 
         let skip_flashblocks_building = ctx.attributes().no_tx_pool || flashblocks_per_block == 0;
 
-        let (payload, fb_payload) = build_block(
-            &mut state,
-            &ctx,
-            &mut info,
-            skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
-        )?;
+        // Final block when skipping flashblocks — compute state root now.
+        let fallback_state_root = if skip_flashblocks_building {
+            let (root, updates, hs) =
+                finalize_state_root(state_root.take(), &mut state, ctx.block_number())?;
+            Some((root, updates, hs))
+        } else {
+            None
+        };
+
+        let (payload, fb_payload) = build_block(&mut state, &ctx, &mut info, fallback_state_root)?;
 
         self.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
         best_payload.set(payload.clone());
@@ -436,7 +597,13 @@ where
                     &span,
                     "Payload building complete, target flashblock count reached",
                 );
-                self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                self.finalize_payload(
+                    &mut state,
+                    &ctx,
+                    &mut info,
+                    &finalized_cell,
+                    state_root.take(),
+                )?;
                 return Ok(());
             }
 
@@ -452,6 +619,7 @@ where
                     &publish_guard,
                     &fb_span,
                     &mut executed_sender_nonces,
+                    state_root.as_ref().map(|(hook, _)| hook),
                 )
                 .await
             {
@@ -464,7 +632,13 @@ where
                         &span,
                         "Payload building complete, job cancelled or target flashblock count reached",
                     );
-                    self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                    self.finalize_payload(
+                        &mut state,
+                        &ctx,
+                        &mut info,
+                        &finalized_cell,
+                        state_root.take(),
+                    )?;
                     return Ok(());
                 }
                 Err(err) => {
@@ -491,7 +665,13 @@ where
                         &span,
                         "Payload building complete, channel closed or job cancelled",
                     );
-                    self.finalize_payload(&mut state, &ctx, &mut info, &finalized_cell)?;
+                    self.finalize_payload(
+                        &mut state,
+                        &ctx,
+                        &mut info,
+                        &finalized_cell,
+                        state_root.take(),
+                    )?;
                     return Ok(());
                 }
             }
@@ -513,6 +693,7 @@ where
         publish_guard: &parking_lot::Mutex<()>,
         span: &tracing::Span,
         executed_sender_nonces: &mut HashMap<Address, u64>,
+        state_hook: Option<&BuilderStateHook>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let target_gas_for_batch = ctx.extra.target_gas_for_batch;
@@ -582,7 +763,7 @@ where
             block_uncompressed_size_limit: ctx.builder_config.max_uncompressed_block_size,
         };
         let diag = ctx
-            .execute_best_transactions(info, state, best_txs, &limits)
+            .execute_best_transactions(info, state, best_txs, &limits, state_hook)
             .wrap_err("failed to execute best transactions")?;
 
         // Evict permanently rejected transactions from the iterator and pool.
@@ -644,7 +825,7 @@ where
             .set(payload_transaction_simulation_time);
 
         let total_block_built_duration = Instant::now();
-        let build_result = build_block(state, ctx, info, ctx.attributes().no_tx_pool);
+        let build_result = build_block(state, ctx, info, None);
         let total_block_built_duration = total_block_built_duration.elapsed();
         BuilderMetrics::total_block_built_duration().record(total_block_built_duration);
         BuilderMetrics::total_block_built_gauge().set(total_block_built_duration);
@@ -808,22 +989,25 @@ where
         span.record("flashblock_count", ctx.flashblock_index());
     }
 
-    /// Finalize the payload by computing the state root and setting the finalized cell.
+    /// Computes the final state root and sets the finalized cell.
     fn finalize_payload<DB, P>(
         &self,
         state: &mut State<DB>,
         ctx: &BasePayloadBuilderCtx,
         info: &mut ExecutionInfo,
         finalized_cell: &BlockCell<BaseBuiltPayload>,
+        state_root: Option<BackgroundStateRoot>,
     ) -> Result<(), PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P>,
+        DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
         let start_time = Instant::now();
 
-        // Build the final block WITH state root computed
-        let (final_payload, _) = build_block(state, ctx, info, true)?;
+        let (state_root, trie_output, hashed_state) =
+            finalize_state_root(state_root, state, ctx.block_number())?;
+        let (final_payload, _) =
+            build_block(state, ctx, info, Some((state_root, trie_output, hashed_state)))?;
 
         ctx.flush_rejected_txs(info);
 
@@ -918,27 +1102,38 @@ struct FlashblocksMetadata {
 pub(crate) fn execute_pre_steps<DB>(
     state: &mut State<DB>,
     ctx: &BasePayloadBuilderCtx,
+    state_hook: Option<&BuilderStateHook>,
 ) -> Result<ExecutionInfo, PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + std::fmt::Debug + revm::Database,
 {
-    // 1. apply pre-execution changes
-    ctx.evm_config
-        .builder_for_next_block(state, ctx.parent(), ctx.block_env_attributes.clone())
-        .map_err(PayloadBuilderError::other)?
-        .apply_pre_execution_changes()?;
+    // 1. apply pre-execution changes with the state hook installed so that
+    //    system-call diffs (EIP-4788 beacon root, EIP-2935 blockhashes) are
+    //    sent to the sparse trie task.
+    {
+        let mut builder = ctx
+            .evm_config
+            .builder_for_next_block(state, ctx.parent(), ctx.block_env_attributes.clone())
+            .map_err(PayloadBuilderError::other)?;
+        if let Some(state_hook) = state_hook {
+            builder.executor_mut().set_state_hook(Some(state_hook.as_on_state_hook()));
+        }
+        builder.apply_pre_execution_changes()?;
+    }
 
     // 2. execute sequencer transactions
-    let info = ctx.execute_sequencer_transactions(state)?;
+    let info = ctx.execute_sequencer_transactions(state, state_hook)?;
 
     Ok(info)
 }
 
+/// Build a block. Pass `Some` with precomputed state root data, or `None`
+/// to skip state root (intermediate flashblocks).
 pub(crate) fn build_block<DB, P>(
     state: &mut State<DB>,
     ctx: &BasePayloadBuilderCtx,
     info: &mut ExecutionInfo,
-    calculate_state_root: bool,
+    state_root_data: Option<(B256, TrieUpdates, HashedPostState)>,
 ) -> Result<(BaseBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P> + revm::Database,
@@ -972,28 +1167,9 @@ where
     );
     let logs_bloom: Bloom = logs_bloom(info.receipts.iter().flat_map(|r| r.logs()));
 
-    // TODO: maybe recreate state with bundle in here
-    // calculate the state root
-    let state_root_start_time = Instant::now();
-    let mut state_root = B256::ZERO;
-    let mut trie_output = TrieUpdates::default();
-    let mut hashed_state = HashedPostState::default();
-
-    if calculate_state_root {
-        let state_provider = state.database.as_ref();
-        hashed_state = state_provider.hashed_post_state(&state.bundle_state);
-        (state_root, trie_output) =
-            state_provider.state_root_with_updates(hashed_state.clone()).inspect_err(|err| {
-                warn!(target: "payload_builder",
-                    parent_header=%ctx.parent().hash(),
-                    %err,
-                    "failed to calculate state root for payload"
-                );
-            })?;
-        let state_root_calculation_time = state_root_start_time.elapsed();
-        BuilderMetrics::state_root_calculation_duration().record(state_root_calculation_time);
-        BuilderMetrics::state_root_calculation_gauge().set(state_root_calculation_time);
-    }
+    // Use precomputed state root data, or default to zeros (for intermediate flashblocks).
+    let (state_root, trie_output, hashed_state) = state_root_data
+        .unwrap_or_else(|| (B256::ZERO, TrieUpdates::default(), HashedPostState::default()));
 
     let mut requests_hash = None;
     let withdrawals_root =
@@ -1187,6 +1363,7 @@ mod tests {
     use reth_primitives_traits::SealedHeader;
     use reth_provider::noop::NoopProvider;
     use reth_revm::{State, database::StateProviderDatabase};
+    use reth_trie::{HashedPostState, updates::TrieUpdates};
 
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
@@ -1234,7 +1411,7 @@ mod tests {
         let mut info = ExecutionInfo::default();
 
         let (payload, fb_payload) =
-            build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+            build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, None)
                 .expect("build_block should succeed for an empty block");
 
         // Block number must be parent + 1.
@@ -1265,9 +1442,13 @@ mod tests {
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let (payload, _fb_payload) =
-            build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, true)
-                .expect("build_block with state root should succeed");
+        let (payload, _fb_payload) = build_block::<_, NoopProvider>(
+            &mut state,
+            &ctx,
+            &mut info,
+            Some((B256::ZERO, TrieUpdates::default(), HashedPostState::default())),
+        )
+        .expect("build_block with state root should succeed");
 
         // NoopProvider returns B256::default() for all state root queries,
         // which equals B256::ZERO.
@@ -1301,7 +1482,7 @@ mod tests {
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let err = build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+        let err = build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, None)
             .expect_err("build_block should fail on block number mismatch");
 
         let msg = err.to_string();
@@ -1330,7 +1511,7 @@ mod tests {
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let mut info = ExecutionInfo::default();
 
-        let err = build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, false)
+        let err = build_block::<_, NoopProvider>(&mut state, &ctx, &mut info, None)
             .expect_err("build_block should fail without beacon block root");
 
         let msg = err.to_string();

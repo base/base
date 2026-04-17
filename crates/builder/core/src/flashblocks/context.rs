@@ -42,7 +42,7 @@ use tracing::{debug, error, trace, warn};
 
 use crate::{
     BuilderConfig, BuilderMetrics, ExecutionInfo, ExecutionMeteringLimitExceeded, PayloadTxsBounds,
-    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome,
+    ResourceLimits, TxResources, TxnExecutionError, TxnOutcome, flashblocks::BuilderStateHook,
 };
 
 /// Records the priority fee of a rejected transaction with the given reason as a label.
@@ -547,6 +547,7 @@ impl BasePayloadBuilderCtx {
     pub(super) fn execute_sequencer_transactions(
         &self,
         db: &mut State<impl Database>,
+        state_hook: Option<&BuilderStateHook>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
         let no_tx_pool = self.attributes().no_tx_pool;
@@ -627,6 +628,10 @@ impl BasePayloadBuilderCtx {
 
             info.receipts.push(self.build_receipt(ctx, depositor_nonce));
 
+            if let Some(state_hook) = state_hook {
+                state_hook.send_state_update(&state);
+            }
+
             // commit changes
             evm.db_mut().commit(state);
 
@@ -666,6 +671,7 @@ impl BasePayloadBuilderCtx {
         db: &mut State<impl Database>,
         best_txs: &mut impl PayloadTxsBounds,
         limits: &ResourceLimits,
+        state_hook: Option<&BuilderStateHook>,
     ) -> Result<FlashblockDiagnostics, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -1026,6 +1032,10 @@ impl BasePayloadBuilderCtx {
             };
             info.receipts.push(self.build_receipt(ctx, None));
 
+            if let Some(state_hook) = state_hook {
+                state_hook.send_state_update(&state);
+            }
+
             // commit changes
             evm.db_mut().commit(state);
 
@@ -1377,7 +1387,7 @@ mod tests {
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let err = ctx
-            .execute_sequencer_transactions(&mut state)
+            .execute_sequencer_transactions(&mut state, None)
             .expect_err("invalid sequencer tx must fail when no_tx_pool=true");
         assert!(
             matches!(err, PayloadBuilderError::EvmExecutionError(_)),
@@ -1391,7 +1401,7 @@ mod tests {
         let db = StateProviderDatabase::new(NoopProvider::default());
         let mut state = State::builder().with_database(db).with_bundle_update().build();
         let info = ctx
-            .execute_sequencer_transactions(&mut state)
+            .execute_sequencer_transactions(&mut state, None)
             .expect("invalid pre-include is skipped when no_tx_pool=false");
         assert_eq!(info.cumulative_gas_used, 0, "skipped tx should not consume gas");
         assert!(info.receipts.is_empty(), "skipped tx should not produce a receipt");

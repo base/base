@@ -375,6 +375,7 @@ reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.
 reth-rpc-engine-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
 reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
+reth-execution-cache = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
 reth-exex-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }
 reth-rpc-server-types = { git = "https://github.com/paradigmxyz/reth", tag = "v2.2.0" }

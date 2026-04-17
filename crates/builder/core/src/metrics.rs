@@ -217,6 +217,14 @@ base_metrics::define_metrics! {
     rejected_txs_forwarded: counter,
     #[describe("Number of failed rejected transaction batch forwards to audit-archiver")]
     rejected_tx_forward_failures: counter,
+    #[describe("Number of state root tasks started")]
+    state_root_task_started_count: counter,
+    #[describe("Number of state root tasks completed successfully")]
+    state_root_task_completed_count: counter,
+    #[describe("Number of state root tasks that encountered errors")]
+    state_root_task_error_count: counter,
+    #[describe("Histogram of state root task duration (completed tasks only)")]
+    state_root_task_duration: histogram,
 }
 
 impl BuilderMetrics {
