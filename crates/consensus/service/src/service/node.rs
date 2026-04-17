@@ -1,5 +1,10 @@
 //! Contains the [`RollupNode`] implementation.
-use std::{ops::Not as _, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    ops::Not as _,
+    path::PathBuf,
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
@@ -191,7 +196,10 @@ impl RollupNode {
         )
     }
 
-    async fn create_pipeline(&self) -> OnlinePipeline {
+    async fn create_pipeline(
+        &self,
+        l1_head_number: base_consensus_providers::L1HeadNumber,
+    ) -> OnlinePipeline {
         // Create the caching L1/L2 EL providers for derivation.
         let l1_derivation_provider = AlloyChainProvider::new_with_trust(
             self.l1_config.engine_provider.clone(),
@@ -211,6 +219,8 @@ impl RollupNode {
             OnlineBlobProvider::init(self.l1_config.beacon_client.clone()).await,
             l1_derivation_provider,
             l2_derivation_provider,
+            l1_head_number,
+            self.l1_config.verifier_l1_confs,
         )
     }
 
@@ -273,10 +283,11 @@ impl RollupNode {
     /// finalizes `safe` blocks that it has derived when L1 finalized block updates are
     /// received.
     pub async fn start(&self) -> Result<(), String> {
-        let pipeline = self.create_pipeline().await;
+        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
+        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         let engine_client =
             Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
-        self.start_inner(engine_client, pipeline).await
+        self.start_inner(engine_client, pipeline, l1_head_number).await
     }
 
     /// Starts the rollup node service with a pre-built derivation pipeline.
@@ -287,15 +298,21 @@ impl RollupNode {
     ///
     /// Production callers should use [`Self::start`], which constructs the standard
     /// [`OnlinePipeline`] automatically.
+    ///
+    /// **Note:** `verifier_l1_confs` has no effect when using this method. The
+    /// [`ConfDepthProvider`](base_consensus_providers::ConfDepthProvider) is only wired into
+    /// pipelines constructed by [`Self::start`]. If the caller's pipeline needs confirmation
+    /// depth gating, it must enforce that in its own chain provider.
     pub async fn start_with<P>(&self, pipeline: P) -> Result<(), String>
     where
         P: Pipeline + SignalReceiver + Send + Sync + 'static,
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
+        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let engine_client =
             Arc::new(self.engine_config().build_engine_client().await.map_err(|e| e.to_string())?);
-        self.start_inner(engine_client, pipeline).await
+        self.start_inner(engine_client, pipeline, l1_head_number).await
     }
 
     /// Starts the rollup node with a pre-built engine client.
@@ -307,11 +324,17 @@ impl RollupNode {
         &self,
         engine_client: Arc<E>,
     ) -> Result<(), String> {
-        let pipeline = self.create_pipeline().await;
-        self.start_inner(engine_client, pipeline).await
+        let l1_head_number: base_consensus_providers::L1HeadNumber = Arc::new(AtomicU64::new(0));
+        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
+        self.start_inner(engine_client, pipeline, l1_head_number).await
     }
 
-    async fn start_inner<E, P>(&self, engine_client: Arc<E>, pipeline: P) -> Result<(), String>
+    async fn start_inner<E, P>(
+        &self,
+        engine_client: Arc<E>,
+        pipeline: P,
+        l1_head_number: base_consensus_providers::L1HeadNumber,
+    ) -> Result<(), String>
     where
         E: EngineClient + 'static,
         P: Pipeline + SignalReceiver + Send + Sync + 'static,
@@ -456,6 +479,7 @@ impl RollupNode {
             head_stream,
             finalized_stream,
             self.l1_config.verifier_l1_confs,
+            l1_head_number,
         );
         let l1_query_processor = L1WatcherQueryProcessor::new(
             Arc::clone(&self.config),

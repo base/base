@@ -63,6 +63,8 @@ pub struct InProcessConsensusConfig {
     pub l1_slot_duration_override: Option<u64>,
     /// Whether the sequencer should start in stopped mode.
     pub sequencer_stopped: bool,
+    /// Number of L1 blocks to keep distance from the L1 head for the verifier.
+    pub verifier_l1_confs: u64,
 }
 
 /// A running in-process consensus node.
@@ -142,7 +144,7 @@ impl InProcessConsensus {
             beacon: config.l1_beacon_url,
             rpc_url: config.l1_rpc_url.clone(),
             slot_duration_override: config.l1_slot_duration_override,
-            verifier_l1_confs: 0,
+            verifier_l1_confs: config.verifier_l1_confs,
         };
 
         let engine_config = EngineConfig {

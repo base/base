@@ -141,6 +141,12 @@ KAFKA_PORT=9092
 MINIO_API_PORT=7000
 MINIO_CONSOLE_PORT=7001
 
+# Verifier L1 confirmation depth for the client (validator) consensus node.
+# When non-zero, the client's derivation pipeline stays this many L1 blocks
+# behind the L1 head before deriving L2 safe blocks.
+# Set to 0 to disable (default). Try 4 to test delayed safe head.
+BASE_NODE_VERIFIER_L1_CONFS=15
+
 # Chain Configuration
 L1_CHAIN_ID=1337
 L2_CHAIN_ID=84538453

@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, atomic::AtomicU64},
+    time::Duration,
+};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
@@ -192,6 +195,7 @@ impl FollowNode {
             head_stream,
             finalized_stream,
             self.l1_config.verifier_l1_confs,
+            Arc::new(AtomicU64::new(0)),
         );
         let l1_query_processor = L1WatcherQueryProcessor::new(
             Arc::clone(&self.config),
