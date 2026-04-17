@@ -51,6 +51,21 @@ pub enum RegistrationError {
         /// The signer address that failed validation.
         signer: Address,
     },
+    /// No enclave signer is currently valid in `TEEProverRegistry`.
+    #[error("no valid signer found among: {signers:?}")]
+    NoValidSigner {
+        /// The signer addresses that were checked.
+        signers: Vec<Address>,
+    },
+}
+
+/// A signer that has been confirmed valid on-chain via `TEEProverRegistry`.
+#[derive(Debug)]
+pub struct ValidSigner {
+    /// Index of the enclave in the configured transport list.
+    pub index: usize,
+    /// Ethereum address of the valid signer.
+    pub signer: Address,
 }
 
 /// Checks whether the enclave signer is a **valid** signer in the on-chain
@@ -61,7 +76,7 @@ pub enum RegistrationError {
 /// unnecessary.  A separate latching flag tracks whether the signer has *ever*
 /// been valid — once set, [`check_health`](Self::check_health) always succeeds.
 pub struct RegistrationChecker {
-    transport: Arc<NitroTransport>,
+    transports: Vec<Arc<NitroTransport>>,
     registry: Box<dyn TEEProverRegistryClient>,
     healthy: OnceCell<()>,
 }
@@ -73,17 +88,21 @@ impl std::fmt::Debug for RegistrationChecker {
 }
 
 impl RegistrationChecker {
-    /// Creates a new checker for the given transport and registry client.
+    /// Creates a new checker for the given transports and registry client.
+    ///
+    /// Returns an error if `transports` is empty.
     pub fn new(
-        transport: Arc<NitroTransport>,
+        transports: Vec<Arc<NitroTransport>>,
         registry: impl TEEProverRegistryClient + 'static,
-    ) -> Self {
-        Self { transport, registry: Box::new(registry), healthy: OnceCell::new() }
+    ) -> Result<Self, RegistrationError> {
+        if transports.is_empty() {
+            return Err(RegistrationError::Setup("at least one transport is required".into()));
+        }
+        Ok(Self { transports, registry: Box::new(registry), healthy: OnceCell::new() })
     }
 
-    async fn signer_address(&self) -> Result<Address, RegistrationError> {
-        let public_key = self
-            .transport
+    async fn signer_address(transport: &NitroTransport) -> Result<Address, RegistrationError> {
+        let public_key = transport
             .signer_public_key()
             .await
             .map_err(|e| RegistrationError::Setup(format!("signer public key: {e}")))?;
@@ -92,21 +111,43 @@ impl RegistrationChecker {
         Ok(public_key_to_address(&verifying_key))
     }
 
-    async fn fetch_validity(&self) -> Result<(bool, Address), RegistrationError> {
-        let signer = self.signer_address().await?;
-
+    async fn is_valid_signer(&self, signer: Address) -> Result<bool, RegistrationError> {
         let result =
             tokio::time::timeout(CHECK_TIMEOUT, self.registry.is_valid_signer(signer)).await;
 
         match result {
-            Ok(Ok(valid)) => {
-                if !valid {
-                    warn!(signer = %signer, "signer is not a valid signer in TEEProverRegistry");
-                }
-                Ok((valid, signer))
-            }
+            Ok(Ok(valid)) => Ok(valid),
             Ok(Err(e)) => Err(RegistrationError::Rpc { signer, reason: e.to_string() }),
             Err(_) => Err(RegistrationError::Rpc { signer, reason: "request timed out".into() }),
+        }
+    }
+
+    async fn fetch_validity(&self) -> Result<bool, RegistrationError> {
+        let mut first_rpc_error = None;
+
+        for (index, transport) in self.transports.iter().enumerate() {
+            let signer = match Self::signer_address(transport).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, index, "skipping transport: key fetch failed");
+                    continue;
+                }
+            };
+
+            match self.is_valid_signer(signer).await {
+                Ok(true) => return Ok(true),
+                Ok(false) => {
+                    warn!(signer = %signer, index, "signer not valid in TEEProverRegistry");
+                }
+                Err(e) => {
+                    first_rpc_error.get_or_insert(e);
+                }
+            };
+        }
+
+        match first_rpc_error {
+            Some(e) => Err(e),
+            None => Ok(false),
         }
     }
 
@@ -118,41 +159,77 @@ impl RegistrationChecker {
         if self.healthy.get().is_some() {
             return Ok(true);
         }
-        let (valid, _) = self.fetch_validity().await?;
+        let valid = self.fetch_validity().await?;
         if valid {
             let _ = self.healthy.set(());
         }
         Ok(valid)
     }
 
-    /// Fails the request unless the signer is currently valid.
+    /// Fails the request unless the **first** transport's signer is currently
+    /// valid.
     ///
     /// Fail-closed: if L1 is unreachable or the signer is not valid, the
     /// proof request is rejected.
     pub async fn require_valid_signer(&self) -> Result<(), RegistrationError> {
-        match self.fetch_validity().await {
-            Ok((true, _)) => Ok(()),
-            Ok((false, signer)) => Err(RegistrationError::NotValid { signer }),
+        // Constructor guarantees at least one transport.
+        let signer = Self::signer_address(&self.transports[0]).await?;
+
+        match self.is_valid_signer(signer).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(RegistrationError::NotValid { signer }),
             Err(e) => Err(e),
         }
+    }
+
+    /// Selects the first enclave whose signer is currently valid on-chain.
+    ///
+    /// Returns as soon as a valid signer is found (config order).
+    pub async fn select_valid_enclave(&self) -> Result<ValidSigner, RegistrationError> {
+        let mut discovered = Vec::new();
+
+        for (index, transport) in self.transports.iter().enumerate() {
+            let signer = match Self::signer_address(transport).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, index, "skipping transport: key fetch failed");
+                    continue;
+                }
+            };
+
+            discovered.push(signer);
+
+            match self.is_valid_signer(signer).await {
+                Ok(true) => return Ok(ValidSigner { index, signer }),
+                Ok(false) => {
+                    warn!(signer = %signer, index, "signer not valid in TEEProverRegistry");
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(RegistrationError::NoValidSigner { signers: discovered })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, atomic::Ordering};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, atomic::Ordering},
+    };
 
     use base_proof_contracts::TEEProverRegistryClient;
 
     use super::*;
-    use crate::test_utils::MockRegistry;
+    use crate::test_utils::{AddressBasedMockRegistry, MockRegistry};
 
     fn test_checker_with_mock(
         registry: impl TEEProverRegistryClient + 'static,
     ) -> RegistrationChecker {
         let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
-        RegistrationChecker::new(transport, registry)
+        RegistrationChecker::new(vec![transport], registry).unwrap()
     }
 
     fn test_checker() -> RegistrationChecker {
@@ -163,7 +240,29 @@ mod tests {
             alloy_primitives::Address::ZERO,
             dummy_url,
         );
-        RegistrationChecker::new(transport, registry)
+        RegistrationChecker::new(vec![transport], registry).unwrap()
+    }
+
+    fn two_transport_checker(
+        registry: impl TEEProverRegistryClient + 'static,
+    ) -> RegistrationChecker {
+        let s1 = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
+        let s2 = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
+        let t1 = Arc::new(NitroTransport::local(s1));
+        let t2 = Arc::new(NitroTransport::local(s2));
+        RegistrationChecker::new(vec![t1, t2], registry).unwrap()
+    }
+
+    async fn transport_signer_address(transport: &NitroTransport) -> Address {
+        let pk = transport.signer_public_key().await.unwrap();
+        let vk = VerifyingKey::from_sec1_bytes(&pk).unwrap();
+        public_key_to_address(&vk)
+    }
+
+    async fn two_transport_signers(checker: &RegistrationChecker) -> (Address, Address) {
+        let a = transport_signer_address(&checker.transports[0]).await;
+        let b = transport_signer_address(&checker.transports[1]).await;
+        (a, b)
     }
 
     #[tokio::test]
@@ -244,5 +343,91 @@ mod tests {
 
         assert!(checker.require_valid_signer().await.is_ok());
         assert_eq!(call_count.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn select_first_invalid_second_valid_returns_index_1() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone());
+        let (addr0, addr1) = two_transport_signers(&checker).await;
+
+        registry.validity_map.lock().unwrap().insert(addr0, false);
+        registry.validity_map.lock().unwrap().insert(addr1, true);
+
+        let valid = checker.select_valid_enclave().await.unwrap();
+        assert_eq!(valid.index, 1);
+        assert_eq!(valid.signer, addr1);
+    }
+
+    #[tokio::test]
+    async fn select_both_valid_returns_first() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone());
+        let (addr0, addr1) = two_transport_signers(&checker).await;
+
+        registry.validity_map.lock().unwrap().insert(addr0, true);
+        registry.validity_map.lock().unwrap().insert(addr1, true);
+
+        let valid = checker.select_valid_enclave().await.unwrap();
+        assert_eq!(valid.index, 0);
+        assert_eq!(valid.signer, addr0);
+    }
+
+    #[tokio::test]
+    async fn select_none_valid_returns_no_valid_signer() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry);
+
+        let err = checker.select_valid_enclave().await.unwrap_err();
+        match err {
+            RegistrationError::NoValidSigner { signers } => {
+                assert_eq!(signers.len(), 2);
+            }
+            other => panic!("expected NoValidSigner, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn health_any_valid_returns_true() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone());
+        let (addr0, addr1) = two_transport_signers(&checker).await;
+
+        registry.validity_map.lock().unwrap().insert(addr0, false);
+        registry.validity_map.lock().unwrap().insert(addr1, true);
+
+        assert!(checker.check_health().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn health_latches_with_multi_transport() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone());
+        let (addr0, addr1) = two_transport_signers(&checker).await;
+
+        registry.validity_map.lock().unwrap().insert(addr0, true);
+        registry.validity_map.lock().unwrap().insert(addr1, false);
+
+        assert!(checker.check_health().await.unwrap());
+
+        registry.validity_map.lock().unwrap().insert(addr0, false);
+        registry.should_fail.store(true, Ordering::Relaxed);
+
+        assert!(checker.check_health().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn require_valid_signer_checks_first_transport_only() {
+        let registry = AddressBasedMockRegistry::new(HashMap::new());
+        let checker = two_transport_checker(registry.clone());
+        let (addr0, addr1) = two_transport_signers(&checker).await;
+
+        registry.validity_map.lock().unwrap().insert(addr0, false);
+        registry.validity_map.lock().unwrap().insert(addr1, true);
+
+        assert!(matches!(
+            checker.require_valid_signer().await.unwrap_err(),
+            RegistrationError::NotValid { .. }
+        ));
     }
 }

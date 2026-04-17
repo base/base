@@ -7,7 +7,7 @@ mod backend;
 pub use backend::NitroBackend;
 
 mod registration;
-pub use registration::{RegistrationChecker, RegistrationError};
+pub use registration::{RegistrationChecker, RegistrationError, ValidSigner};
 
 mod health;
 pub use health::{RegistrationHealthConfig, RegistrationHealthzRpc};

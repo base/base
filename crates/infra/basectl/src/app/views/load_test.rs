@@ -939,23 +939,29 @@ impl View for LoadTestView {
         match key.code {
             // Network selection — only while idle.
             KeyCode::Left | KeyCode::Char('h')
-                if matches!(self.state, RunState::Idle | RunState::Complete { .. })
-                    && !self.configs.is_empty() =>
+                if matches!(
+                    self.state,
+                    RunState::Idle | RunState::Complete { .. } | RunState::Error(_)
+                ) && !self.configs.is_empty() =>
             {
                 let n = self.configs.len();
                 self.selected = (self.selected + n - 1) % n;
             }
             KeyCode::Right | KeyCode::Char('l')
-                if matches!(self.state, RunState::Idle | RunState::Complete { .. })
-                    && !self.configs.is_empty() =>
+                if matches!(
+                    self.state,
+                    RunState::Idle | RunState::Complete { .. } | RunState::Error(_)
+                ) && !self.configs.is_empty() =>
             {
                 self.selected = (self.selected + 1) % self.configs.len();
             }
 
             // Begin single run.
             KeyCode::Char('b')
-                if matches!(self.state, RunState::Idle | RunState::Complete { .. })
-                    && !self.configs.is_empty() =>
+                if matches!(
+                    self.state,
+                    RunState::Idle | RunState::Complete { .. } | RunState::Error(_)
+                ) && !self.configs.is_empty() =>
             {
                 self.continuous = false;
                 self.state = RunState::Idle;
@@ -964,8 +970,10 @@ impl View for LoadTestView {
 
             // Begin continuous run.
             KeyCode::Char('c')
-                if matches!(self.state, RunState::Idle | RunState::Complete { .. })
-                    && !self.configs.is_empty() =>
+                if matches!(
+                    self.state,
+                    RunState::Idle | RunState::Complete { .. } | RunState::Error(_)
+                ) && !self.configs.is_empty() =>
             {
                 self.continuous = true;
                 self.state = RunState::Idle;

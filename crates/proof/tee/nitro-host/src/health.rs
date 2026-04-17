@@ -76,7 +76,7 @@ mod tests {
     ) -> (Arc<RegistrationChecker>, RegistrationHealthzRpc) {
         let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
-        let checker = Arc::new(RegistrationChecker::new(transport, registry));
+        let checker = Arc::new(RegistrationChecker::new(vec![transport], registry).unwrap());
         let rpc = RegistrationHealthzRpc::new("0.0.0", Arc::clone(&checker));
         (checker, rpc)
     }
