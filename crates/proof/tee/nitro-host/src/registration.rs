@@ -145,10 +145,7 @@ impl RegistrationChecker {
             };
         }
 
-        match first_rpc_error {
-            Some(e) => Err(e),
-            None => Ok(false),
-        }
+        first_rpc_error.map_or(Ok(false), Err)
     }
 
     /// Latching health check: returns `true` once the signer has ever been
