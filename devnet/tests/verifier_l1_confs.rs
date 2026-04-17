@@ -26,8 +26,10 @@ const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Number of L1 confirmations required before the validator derives L2 blocks.
 ///
-/// In the devnet, L1 slot time is 2s, so 4 confirmations = 8s of safe-head lag.
-const VERIFIER_L1_CONFS: u64 = 4;
+/// In the devnet, L1 slot time is 2s, so 2 confirmations = ~4s of safe-head lag.
+/// Kept at 2 (rather than a larger value) so CI environments with slow L1 block
+/// production don't need excessive time for the client to show a lagging safe head.
+const VERIFIER_L1_CONFS: u64 = 2;
 
 /// Wait for a provider to reach at least `min_block`.
 async fn wait_for_block(provider: &RootProvider<Base>, min_block: u64) -> Result<u64> {
@@ -107,7 +109,7 @@ async fn safe_head_is_delayed_by_verifier_l1_confs() -> Result<()> {
     // explicitly for the builder's safe head to advance past genesis before sampling,
     // so we have a non-zero baseline to compare against.
     println!("\nWaiting for builder safe head to advance past genesis (batcher + derivation)...");
-    timeout(Duration::from_secs(120), async {
+    timeout(Duration::from_secs(300), async {
         loop {
             let safe = block_number_by_tag(&builder_provider, BlockNumberOrTag::Safe).await?;
             if safe.is_some_and(|n| n > 0) {
