@@ -65,8 +65,7 @@ async fn test_op_node_custom_genesis_number() {
         .await
         .expect("Failed to launch node");
 
-    let mut node =
-        NodeTestContext::new(node_handle.node, payload_attributes).await.unwrap();
+    let mut node = NodeTestContext::new(node_handle.node, payload_attributes).await.unwrap();
 
     // Verify stage checkpoints are initialized to genesis block number (1000)
     for stage in StageId::ALL {

@@ -58,8 +58,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
         let timestamp = evm_env.block_env.timestamp().saturating_to();
 
         let transactions_root = proofs::calculate_transaction_root(&transactions);
-        let receipts_root =
-            calculate_receipt_root_no_memo(receipts, &self.chain_spec, timestamp);
+        let receipts_root = calculate_receipt_root_no_memo(receipts, &self.chain_spec, timestamp);
         let logs_bloom = logs_bloom(receipts.iter().flat_map(|r| r.logs()));
 
         let mut requests_hash = None;
