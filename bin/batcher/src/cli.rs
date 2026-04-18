@@ -45,13 +45,20 @@ impl Cli {
 /// CLI arguments for the batcher.
 #[derive(Args, Clone, Debug)]
 pub(crate) struct BatcherArgs {
-    /// L1 RPC endpoint.
-    #[arg(long = "l1-rpc-url", env = "BATCHER_L1_RPC_URL")]
-    pub l1_rpc_url: Url,
+    /// L1 RPC endpoint(s).
+    ///
+    /// Accepts a comma-separated list. The service connects to each in order at
+    /// startup and uses the first that responds; later endpoints serve as
+    /// startup-time fallbacks only (no per-call rotation).
+    #[arg(long = "l1-rpc-url", env = "BATCHER_L1_RPC_URL", value_delimiter = ',', num_args = 1..)]
+    pub l1_rpc_url: Vec<Url>,
 
-    /// L2 HTTP RPC endpoint (used for all JSON-RPC calls including throttle control).
-    #[arg(long = "l2-rpc-url", env = "BATCHER_L2_RPC_URL")]
-    pub l2_rpc_url: Url,
+    /// L2 HTTP RPC endpoint(s) (used for all JSON-RPC calls including throttle control).
+    ///
+    /// Accepts a comma-separated list with the same connection-time failover
+    /// semantics as `--l1-rpc-url`.
+    #[arg(long = "l2-rpc-url", env = "BATCHER_L2_RPC_URL", value_delimiter = ',', num_args = 1..)]
+    pub l2_rpc_url: Vec<Url>,
 
     /// Optional L1 WebSocket endpoint for new-block subscriptions.
     ///
@@ -68,9 +75,17 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "l2-ws-url", env = "BATCHER_L2_WS_URL")]
     pub l2_ws_url: Option<Url>,
 
-    /// Rollup node RPC endpoint.
-    #[arg(long = "rollup-rpc-url", env = "BATCHER_ROLLUP_RPC_URL")]
-    pub rollup_rpc_url: Url,
+    /// Rollup node RPC endpoint(s).
+    ///
+    /// Accepts a comma-separated list with the same connection-time failover
+    /// semantics as `--l1-rpc-url`.
+    #[arg(
+        long = "rollup-rpc-url",
+        env = "BATCHER_ROLLUP_RPC_URL",
+        value_delimiter = ',',
+        num_args = 1..
+    )]
+    pub rollup_rpc_url: Vec<Url>,
 
     /// Batcher private key (hex-encoded 32-byte secret).
     #[arg(long = "private-key", env = "BATCHER_PRIVATE_KEY")]
@@ -210,6 +225,26 @@ pub(crate) struct BatcherArgs {
     #[arg(long = "stopped", env = "BATCHER_STOPPED")]
     pub stopped: bool,
 
+    /// Block startup until the rollup node reports a non-zero sync status.
+    ///
+    /// Polls `optimism_syncStatus` on the poll interval until both `current_l1`
+    /// and `unsafe_l2` heads are non-zero. Useful when the batcher is started
+    /// alongside a fresh node so it does not race the node's initial sync.
+    /// Matches op-batcher's `--wait-node-sync`.
+    #[arg(long = "wait-node-sync", env = "BATCHER_WAIT_NODE_SYNC")]
+    pub wait_node_sync: bool,
+
+    /// Disable the throttle-driven blob-DA override.
+    ///
+    /// By default, when DA-backlog throttling activates, the encoder is forced
+    /// to emit blob-typed submissions even if `--data-availability-type=calldata`
+    /// is configured (matching op-batcher's behaviour, since blobs amortise DA
+    /// cost more efficiently under congestion). Pass this flag to keep the
+    /// configured DA type regardless of throttle state. No-op for blob-configured
+    /// batchers.
+    #[arg(long = "no-force-blobs-when-throttling", env = "BATCHER_NO_FORCE_BLOBS_WHEN_THROTTLING")]
+    pub no_force_blobs_when_throttling: bool,
+
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -258,6 +293,8 @@ impl BatcherArgs {
             check_recent_txs_depth: self.check_recent_txs_depth,
             admin_addr: self.admin_port.map(|port| SocketAddr::new(self.admin_addr, port)),
             stopped: self.stopped,
+            wait_node_sync: self.wait_node_sync,
+            force_blobs_when_throttling: !self.no_force_blobs_when_throttling,
         })
     }
 
@@ -265,8 +302,9 @@ impl BatcherArgs {
     async fn exec(self) -> eyre::Result<()> {
         let config = self.into_config()?;
         info!(
-            l1_rpc = %config.l1_rpc_url,
-            l2_rpc = %config.l2_rpc_url,
+            l1_rpc_count = config.l1_rpc_url.len(),
+            l2_rpc_count = config.l2_rpc_url.len(),
+            rollup_rpc_count = config.rollup_rpc_url.len(),
             "batcher configured"
         );
 
@@ -374,5 +412,58 @@ mod tests {
         let config = cli.args.into_config().expect("config should build");
 
         assert!(config.stopped);
+    }
+
+    #[test]
+    fn rpc_urls_default_to_single_endpoint() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+        assert_eq!(config.l1_rpc_url.len(), 1);
+        assert_eq!(config.l2_rpc_url.len(), 1);
+        assert_eq!(config.rollup_rpc_url.len(), 1);
+    }
+
+    #[test]
+    fn rpc_urls_accept_comma_separated_list() {
+        // base_args() already sets `--l1-rpc-url http://localhost:8545`, so
+        // appending a second `--l1-rpc-url` with three comma-separated values
+        // accumulates: clap appends rather than overrides for `Vec` args.
+        let cli = parse_cli(&[
+            "--l1-rpc-url",
+            "http://l1-a:8545,http://l1-b:8545,http://l1-c:8545",
+        ]);
+        let config = cli.args.into_config().expect("config should build");
+        assert_eq!(config.l1_rpc_url.len(), 4);
+        assert_eq!(config.l1_rpc_url[0].as_str(), "http://localhost:8545/");
+        assert_eq!(config.l1_rpc_url[1].as_str(), "http://l1-a:8545/");
+        assert_eq!(config.l1_rpc_url[3].as_str(), "http://l1-c:8545/");
+    }
+
+    #[test]
+    fn wait_node_sync_defaults_to_false() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+        assert!(!config.wait_node_sync);
+    }
+
+    #[test]
+    fn wait_node_sync_flag_sets_config() {
+        let cli = parse_cli(&["--wait-node-sync"]);
+        let config = cli.args.into_config().expect("config should build");
+        assert!(config.wait_node_sync);
+    }
+
+    #[test]
+    fn force_blobs_when_throttling_defaults_to_true() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+        assert!(config.force_blobs_when_throttling);
+    }
+
+    #[test]
+    fn no_force_blobs_when_throttling_flag_inverts_default() {
+        let cli = parse_cli(&["--no-force-blobs-when-throttling"]);
+        let config = cli.args.into_config().expect("config should build");
+        assert!(!config.force_blobs_when_throttling);
     }
 }

@@ -161,6 +161,7 @@ impl<S: L2BlockProvider> Batcher<S> {
                 inbox: config.inbox_address,
                 max_pending_transactions: 16,
                 drain_timeout: Duration::from_secs(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(throttle, Arc::new(NoopThrottleClient)),
             l1_source,

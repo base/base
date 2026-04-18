@@ -214,8 +214,9 @@ impl<TC: crate::ThrottleClient> DaThrottle<TC> {
     /// Compute new DA limits from `backlog_bytes` and push them to the client
     /// only when they differ from the last applied limits.
     ///
+    /// Returns `true` if throttling is currently active (intensity > 0).
     /// Logs throttle on/off transitions.
-    pub async fn apply(&mut self, backlog_bytes: u64) {
+    pub async fn apply(&mut self, backlog_bytes: u64) -> bool {
         let throttle_params = self.controller.update(backlog_bytes);
         let is_throttling = throttle_params.as_ref().is_some_and(ThrottleParams::is_throttling);
 
@@ -231,7 +232,7 @@ impl<TC: crate::ThrottleClient> DaThrottle<TC> {
 
         let new_limits = (max_tx_size, max_block_size);
         if self.last_applied == Some(new_limits) {
-            return;
+            return is_throttling;
         }
 
         if let Err(e) = self.client.set_max_da_size(max_tx_size, max_block_size).await {
@@ -253,6 +254,7 @@ impl<TC: crate::ThrottleClient> DaThrottle<TC> {
             }
             self.last_applied = Some(new_limits);
         }
+        is_throttling
     }
 
     /// Compute a point-in-time snapshot of the current throttle state.

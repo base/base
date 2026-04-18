@@ -79,6 +79,7 @@ impl DriverFixture {
                 inbox: Address::ZERO,
                 max_pending_transactions: max_pending,
                 drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
             },
             DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,

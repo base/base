@@ -11,6 +11,8 @@ pub struct OpenChannel {
     pub out: ChannelOut<ShadowCompressor>,
     /// L1 block number when this channel was opened (for `MaxChannelDuration`).
     pub opened_at_l1: u64,
+    /// Number of L2 blocks fed into this channel so far.
+    pub blocks_added: usize,
 }
 
 impl fmt::Debug for OpenChannel {
@@ -18,6 +20,7 @@ impl fmt::Debug for OpenChannel {
         f.debug_struct("OpenChannel")
             .field("channel_id", &self.out.id)
             .field("opened_at_l1", &self.opened_at_l1)
+            .field("blocks_added", &self.blocks_added)
             .finish()
     }
 }

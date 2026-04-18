@@ -245,6 +245,80 @@ impl BatcherService {
         L1Subscription::Ws(WsL1HeadSubscription::new(ws_provider, stream))
     }
 
+    /// Try each URL in order, returning the first that connects.
+    ///
+    /// Logs each failed attempt with the endpoint that produced it so operators
+    /// can tell whether failover occurred. Returns an error containing the last
+    /// failure if every endpoint fails. The list must be non-empty.
+    async fn connect_first<T, F, Fut, E>(
+        urls: &[Url],
+        label: &'static str,
+        mut build: F,
+    ) -> eyre::Result<T>
+    where
+        F: FnMut(&Url) -> Fut,
+        Fut: std::future::Future<Output = Result<T, E>>,
+        E: std::fmt::Display,
+    {
+        let mut last_err: Option<String> = None;
+        for url in urls {
+            match build(url).await {
+                Ok(t) => {
+                    info!(endpoint = %label, url = %url, "connected to endpoint");
+                    return Ok(t);
+                }
+                Err(e) => {
+                    warn!(endpoint = %label, url = %url, error = %e, "endpoint connection failed, trying next");
+                    last_err = Some(e.to_string());
+                }
+            }
+        }
+        Err(eyre::eyre!(
+            "failed to connect to any {label} endpoint ({} candidate(s)): {}",
+            urls.len(),
+            last_err.unwrap_or_else(|| "no candidates".to_string()),
+        ))
+    }
+
+    /// Block until the rollup node reports a non-zero sync status.
+    ///
+    /// Polls `optimism_syncStatus` on the configured interval and returns
+    /// once both `current_l1.number` and `unsafe_l2.block_info.number` are
+    /// non-zero. Transient RPC errors are logged and retried.
+    async fn wait_for_node_sync(
+        rollup_client: &HttpClient,
+        poll_interval: std::time::Duration,
+    ) -> eyre::Result<()> {
+        info!("waiting for rollup node to report a non-zero sync status");
+        loop {
+            match rollup_client.sync_status().await {
+                Ok(status)
+                    if status.current_l1.number > 0
+                        && status.unsafe_l2.block_info.number > 0 =>
+                {
+                    info!(
+                        current_l1 = %status.current_l1.number,
+                        unsafe_l2 = %status.unsafe_l2.block_info.number,
+                        safe_l2 = %status.safe_l2.block_info.number,
+                        "rollup node reports sync, proceeding with batcher startup"
+                    );
+                    return Ok(());
+                }
+                Ok(status) => {
+                    info!(
+                        current_l1 = %status.current_l1.number,
+                        unsafe_l2 = %status.unsafe_l2.block_info.number,
+                        "rollup node not yet synced, waiting"
+                    );
+                }
+                Err(e) => {
+                    warn!(error = %e, "optimism_syncStatus RPC failed during wait, retrying");
+                }
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
+
     /// Initialise all batcher components and return a [`ReadyBatcher`].
     ///
     /// Connects to the L2 and L1 RPC endpoints, fetches the rollup config,
@@ -263,22 +337,39 @@ impl BatcherService {
                  resume because the admin JSON-RPC server is not enabled"
             );
         }
+        if self.config.l1_rpc_url.is_empty() {
+            eyre::bail!("at least one L1 RPC endpoint is required");
+        }
+        if self.config.l2_rpc_url.is_empty() {
+            eyre::bail!("at least one L2 RPC endpoint is required");
+        }
+        if self.config.rollup_rpc_url.is_empty() {
+            eyre::bail!("at least one rollup RPC endpoint is required");
+        }
 
         info!(
-            l1_rpc = %self.config.l1_rpc_url,
-            l2_rpc = %self.config.l2_rpc_url,
+            l1_rpc_count = self.config.l1_rpc_url.len(),
+            l2_rpc_count = self.config.l2_rpc_url.len(),
+            rollup_rpc_count = self.config.rollup_rpc_url.len(),
             l2_ws = self.config.l2_ws_url.as_ref().map(|u| u.as_str()),
             l1_ws = self.config.l1_ws_url.as_ref().map(|u| u.as_str()),
             "starting batcher service"
         );
 
-        // Connect to the L2 RPC endpoint.
+        // Connect to the L2 RPC endpoint, with connection-time failover across
+        // the configured endpoint list.
         let l2_provider: Arc<dyn Provider<Base> + Send + Sync> = Arc::new(
-            ProviderBuilder::new()
-                .disable_recommended_fillers()
-                .network::<Base>()
-                .connect(self.config.l2_rpc_url.as_str())
-                .await?,
+            Self::connect_first(&self.config.l2_rpc_url, "l2-rpc", |url| {
+                let url = url.clone();
+                async move {
+                    ProviderBuilder::new()
+                        .disable_recommended_fillers()
+                        .network::<Base>()
+                        .connect(url.as_str())
+                        .await
+                }
+            })
+            .await?,
         );
 
         // Build the L2 block subscription. When l2_ws_url is configured the
@@ -291,10 +382,27 @@ impl BatcherService {
         // Connect to the rollup node using a typed jsonrpsee HTTP client so that
         // `optimism_rollupConfig` and `optimism_syncStatus` are called through the
         // generated `RollupNodeApiClient` trait rather than raw JSON requests.
-        let rollup_client: HttpClient = HttpClientBuilder::default()
-            .build(self.config.rollup_rpc_url.as_str())
-            .map_err(|e| eyre::eyre!("failed to build rollup RPC client: {e}"))?;
-        info!(rollup_rpc = %self.config.rollup_rpc_url, "fetching rollup config");
+        // `HttpClientBuilder::build` is sync but only validates the URL; the first
+        // real RPC call below (`rollup_config`) is what actually exercises the
+        // endpoint, so we probe via `rollup_config` to drive failover.
+        let rollup_client: HttpClient =
+            Self::connect_first(&self.config.rollup_rpc_url, "rollup-rpc", |url| {
+                let url = url.clone();
+                async move {
+                    let client = HttpClientBuilder::default()
+                        .build(url.as_str())
+                        .map_err(|e| eyre::eyre!("failed to build rollup RPC client: {e}"))?;
+                    // Issue a cheap probe call so a non-responsive endpoint
+                    // triggers failover instead of falling through to the next
+                    // step and erroring with no fallback.
+                    client
+                        .rollup_config()
+                        .await
+                        .map_err(|e| eyre::eyre!("optimism_rollupConfig probe failed: {e}"))?;
+                    eyre::Ok(client)
+                }
+            })
+            .await?;
         let rollup_config = Arc::new(
             rollup_client
                 .rollup_config()
@@ -305,6 +413,12 @@ impl BatcherService {
             inbox = %rollup_config.batch_inbox_address,
             "rollup config loaded"
         );
+
+        // Optionally block startup until the rollup node reports a non-zero
+        // sync status. Mirrors op-batcher's `--wait-node-sync`.
+        if self.config.wait_node_sync {
+            Self::wait_for_node_sync(&rollup_client, self.config.poll_interval).await?;
+        }
 
         // Fetch sync status to determine the safe L2 head for startup backfill.
         let sync_status = rollup_client
@@ -328,11 +442,17 @@ impl BatcherService {
         }
 
         // Connect to L1 early so it is available for the optional recent-tx scan.
-        let l1_provider: RootProvider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .connect(self.config.l1_rpc_url.as_str())
-            .await
-            .map_err(|e| eyre::eyre!("failed to connect to L1: {e}"))?;
+        let l1_provider: RootProvider =
+            Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
+                let url = url.clone();
+                async move {
+                    ProviderBuilder::new()
+                        .disable_recommended_fillers()
+                        .connect(url.as_str())
+                        .await
+                }
+            })
+            .await?;
 
         // Optionally scan recent L1 blocks to find the highest L2 block already
         // submitted but not yet reflected in the safe head, preventing re-submissions
@@ -391,14 +511,15 @@ impl BatcherService {
         let encoder =
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone());
 
-        // Build the throttle controller and the appropriate client.
-        // When throttling is disabled we use a NoopThrottleClient so the driver
-        // never calls miner_setMaxDASize on the sequencer.
+        // Build the throttle controller and the appropriate client. The throttle
+        // RPC uses the L2 endpoint; we use the first configured L2 URL since
+        // `RpcThrottleClient::new` does not currently support failover lists
+        // (the RPC call itself is what would need rotation, not the constructor).
         let throttle_client = match &self.config.throttle {
             None => ServiceThrottle::Noop(NoopThrottleClient),
-            Some(_) => {
-                ServiceThrottle::Rpc(RpcThrottleClient::new(self.config.l2_rpc_url.as_str())?)
-            }
+            Some(_) => ServiceThrottle::Rpc(RpcThrottleClient::new(
+                self.config.l2_rpc_url[0].as_str(),
+            )?),
         };
         let (throttle_config, throttle_strategy) = self.config.throttle.clone().map_or_else(
             || (ThrottleConfig::default(), ThrottleStrategy::Off),
@@ -410,11 +531,16 @@ impl BatcherService {
         let l1_head_subscription =
             Self::build_l1_subscription(self.config.l1_ws_url.as_ref()).await;
         let l1_head_poller = RpcL1HeadPollingSource::new(Arc::new(
-            ProviderBuilder::new()
-                .disable_recommended_fillers()
-                .connect(self.config.l1_rpc_url.as_str())
-                .await
-                .map_err(|e| eyre::eyre!("failed to connect to L1 for polling: {e}"))?,
+            Self::connect_first(&self.config.l1_rpc_url, "l1-rpc-poller", |url| {
+                let url = url.clone();
+                async move {
+                    ProviderBuilder::new()
+                        .disable_recommended_fillers()
+                        .connect(url.as_str())
+                        .await
+                }
+            })
+            .await?,
         ));
         let l1_head_source = HybridL1HeadSource::new(
             l1_head_subscription,
@@ -470,6 +596,7 @@ impl BatcherService {
                 inbox: rollup_config.batch_inbox_address,
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout: self.config.resubmission_timeout * 2,
+                force_blobs_when_throttling: self.config.force_blobs_when_throttling,
             },
             DaThrottle::new(throttle, throttle_client),
             l1_head_source,

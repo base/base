@@ -59,6 +59,10 @@ where
     stopped: bool,
     /// Admin command channel, wired in via [`Self::with_admin_rx`].
     admin_rx: Option<mpsc::Receiver<AdminCommand>>,
+    /// When `true`, the driver toggles a blob-DA override on the pipeline
+    /// whenever DA-backlog throttling activates. Lifted from
+    /// [`BatchDriverConfig::force_blobs_when_throttling`].
+    force_blobs_when_throttling: bool,
 }
 
 impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
@@ -100,6 +104,7 @@ where
             drain_timeout: config.drain_timeout,
             stopped: false,
             admin_rx: None,
+            force_blobs_when_throttling: config.force_blobs_when_throttling,
         }
     }
 
@@ -152,7 +157,10 @@ where
         let mut draining = false;
         loop {
             self.drain_encoding()?;
-            self.throttle.apply(self.pipeline.da_backlog_bytes()).await;
+            let is_throttling = self.throttle.apply(self.pipeline.da_backlog_bytes()).await;
+            if self.force_blobs_when_throttling {
+                self.pipeline.set_blob_override(is_throttling);
+            }
             self.submissions.recover_txpool().await;
             self.submissions.submit_pending(&mut self.pipeline).await;
 

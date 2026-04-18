@@ -64,6 +64,11 @@ pub struct BatchEncoder {
     /// been open too long and must be flushed, since `current_channel` is `None` between
     /// span flushes. Cleared when `close_current_channel()` drains the accumulator.
     span_opened_at_l1: Option<u64>,
+    /// Driver-controlled override that forces [`DaType::Blob`] on every emitted
+    /// submission, regardless of the configured `da_type`. Toggled by the driver
+    /// when DA-backlog throttling activates and `force_blobs_when_throttling` is
+    /// set. No-op when the configured `da_type` is already [`DaType::Blob`].
+    blob_override: bool,
 }
 
 impl fmt::Debug for BatchEncoder {
@@ -107,6 +112,7 @@ impl BatchEncoder {
             span_accumulator: Vec::new(),
             span_raw_bytes: 0,
             span_opened_at_l1: None,
+            blob_override: false,
         }
     }
 
@@ -186,9 +192,13 @@ impl BatchEncoder {
                     .current_channel
                     .as_mut()
                     .map(|open| {
-                        open.out.add_batch(Batch::Span(span_batch)).map_err(|e| {
+                        let ok = open.out.add_batch(Batch::Span(span_batch)).map_err(|e| {
                             warn!(error = %e, total, "failed to add span batch to channel; blocks preserved in accumulator");
-                        }).is_ok()
+                        }).is_ok();
+                        if ok {
+                            open.blocks_added += total;
+                        }
+                        ok
                     })
                     .unwrap_or(false);
 
@@ -219,6 +229,7 @@ impl BatchEncoder {
         // Capture stats before flushing so we can record metrics after draining.
         let input_bytes = open.out.input_bytes();
         let opened_at_l1 = open.opened_at_l1;
+        let blocks_added = open.blocks_added;
 
         // Flush and close the compressor.
         let _ = open.out.flush();
@@ -265,6 +276,7 @@ impl BatchEncoder {
         // Emit close counter and channel lifetime / compression ratio histograms.
         BatcherMetrics::channel_closed_total(close_reason).increment(1);
         BatcherMetrics::channel_duration_blocks().record(duration_blocks as f64);
+        BatcherMetrics::l2_blocks_per_channel().record(blocks_added as f64);
         if input_bytes > 0 {
             let ratio = compressed_bytes as f64 / input_bytes as f64;
             BatcherMetrics::channel_compression_ratio().record(ratio);
@@ -300,7 +312,11 @@ impl BatchEncoder {
         debug!(channel_id = ?id, l1_head = %self.l1_head, "opened new channel");
         BatcherMetrics::channel_opened_total().increment(1);
 
-        self.current_channel = Some(OpenChannel { out: channel_out, opened_at_l1: self.l1_head });
+        self.current_channel = Some(OpenChannel {
+            out: channel_out,
+            opened_at_l1: self.l1_head,
+            blocks_added: 0,
+        });
     }
 
     /// Check if the current channel (or span accumulator) has timed out and close it if so.
@@ -440,6 +456,7 @@ impl BatchPipeline for BatchEncoder {
                 let open = self.current_channel.as_mut().unwrap();
                 Ok(match open.out.add_batch(batch) {
                     Ok(()) => {
+                        open.blocks_added += 1;
                         self.block_cursor += 1;
 
                         debug!(
@@ -463,13 +480,22 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn next_submission(&mut self) -> Option<BatchSubmission> {
+        // The driver may have set `blob_override` to force blob submissions
+        // while DA throttling is active. When set, frames are emitted as blobs
+        // even though the configured `da_type` is calldata. The override is a
+        // no-op when the configured `da_type` is already blob.
+        let effective_da_type = if self.blob_override && self.config.da_type == DaType::Calldata {
+            DaType::Blob
+        } else {
+            self.config.da_type
+        };
         // Find the first ready channel with unsubmitted frames.
         for (chan_idx, channel) in self.ready_channels.iter_mut().enumerate() {
             if channel.cursor < channel.frames.len() {
                 let frame_start = channel.cursor;
                 // Pack up to `target_num_frames` frames into a single L1 transaction.
                 let available = channel.frames.len() - frame_start;
-                let frame_count = if self.config.da_type == DaType::Calldata {
+                let frame_count = if effective_da_type == DaType::Calldata {
                     if let Some(max_size) = self.config.max_l1_tx_size_bytes {
                         // For calldata, accumulate frames until the next frame would push
                         // the total calldata size over `max_l1_tx_size_bytes`.
@@ -527,7 +553,7 @@ impl BatchPipeline for BatchEncoder {
                 return Some(BatchSubmission {
                     id,
                     channel_id: channel.id,
-                    da_type: self.config.da_type,
+                    da_type: effective_da_type,
                     frames,
                 });
             }
@@ -562,6 +588,8 @@ impl BatchPipeline for BatchEncoder {
                 block_range_end = %block_range.end,
                 "channel fully confirmed, pruning blocks"
             );
+
+            BatcherMetrics::channel_fully_submitted_total().increment(1);
 
             // Remove the channel.
             self.ready_channels.remove(chan_idx);
@@ -704,6 +732,16 @@ impl BatchPipeline for BatchEncoder {
             .filter(|tx| !matches!(tx, BaseTxEnvelope::Deposit(_)))
             .map(|tx| tx.encode_2718_len() as u64)
             .sum()
+    }
+
+    fn set_blob_override(&mut self, active: bool) {
+        if self.blob_override == active {
+            return;
+        }
+        self.blob_override = active;
+        if self.config.da_type == DaType::Calldata {
+            debug!(active, "blob override toggled for calldata-configured encoder");
+        }
     }
 }
 
@@ -1690,5 +1728,53 @@ mod tests {
         encoder.add_block(block).expect("add block");
         let frames = encoder.encode_and_drain().expect("encode_and_drain");
         assert!(!frames.is_empty(), "blob DA must still produce frames despite tiny size limit");
+    }
+
+    /// `set_blob_override(true)` flips a calldata-configured encoder to emit
+    /// blob-typed submissions. Clearing the override restores calldata.
+    #[test]
+    fn blob_override_flips_calldata_submissions_to_blob() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig {
+            da_type: DaType::Calldata,
+            target_num_frames: 1,
+            max_frame_size: 200,
+            target_frame_size: 200,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+
+        encoder.add_block(make_block_with_user_tx(B256::ZERO)).expect("add block");
+        loop {
+            if encoder.step().expect("step") == StepResult::Idle {
+                break;
+            }
+        }
+        encoder.force_close_channel();
+
+        encoder.set_blob_override(true);
+        let sub = encoder.next_submission().expect("submission while override active");
+        assert_eq!(sub.da_type, DaType::Blob, "override must flip da_type to Blob");
+        encoder.requeue(sub.id);
+
+        encoder.set_blob_override(false);
+        let sub = encoder.next_submission().expect("submission after override cleared");
+        assert_eq!(sub.da_type, DaType::Calldata, "configured calldata da_type must return");
+    }
+
+    /// `set_blob_override(true)` is a no-op for blob-configured encoders —
+    /// submissions are blob-typed regardless of the override.
+    #[test]
+    fn blob_override_is_noop_for_blob_configured_encoder() {
+        let rollup_config = Arc::new(RollupConfig::default());
+        let config = EncoderConfig { da_type: DaType::Blob, ..EncoderConfig::default() };
+        let mut encoder = BatchEncoder::new(rollup_config, config);
+
+        encoder.add_block(make_block_with_user_tx(B256::ZERO)).expect("add block");
+        encoder.encode_and_drain().expect("encode_and_drain");
+        encoder.set_blob_override(true);
+        // No assertion on next_submission — drain already consumed everything.
+        // The contract is just that the override does not corrupt state.
+        assert!(encoder.next_submission().is_none());
     }
 }

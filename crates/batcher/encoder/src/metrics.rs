@@ -8,12 +8,16 @@ base_metrics::define_metrics! {
     #[describe("Total number of encoding channels closed")]
     #[label(reason)]
     channel_closed_total: counter,
+    #[describe("Total number of channels for which every frame was confirmed on L1")]
+    channel_fully_submitted_total: counter,
     #[describe("Total number of L1 batch submissions")]
     #[label(outcome)]
     submission_total: counter,
     #[describe("Total bytes of frame payload submitted to the DA layer")]
     #[label(da_type)]
     da_bytes_submitted_total: counter,
+    #[describe("Total bytes of frame payload packed into EIP-4844 blobs")]
+    blob_used_bytes_total: counter,
     #[describe("Number of frames currently waiting for L1 submission")]
     pending_frames: gauge,
     #[describe("Number of L2 blocks buffered in the encoder input queue")]
@@ -24,6 +28,8 @@ base_metrics::define_metrics! {
     channel_compression_ratio: histogram,
     #[describe("Channel lifetime in L1 blocks")]
     channel_duration_blocks: histogram,
+    #[describe("Number of L2 blocks included in each closed channel")]
+    l2_blocks_per_channel: histogram,
 }
 
 impl BatcherMetrics {
