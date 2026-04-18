@@ -1,4 +1,4 @@
-//! OP types for genesis data.
+//! Base types for genesis data.
 
 use alloy_serde::OtherFields;
 use serde::de::Error;

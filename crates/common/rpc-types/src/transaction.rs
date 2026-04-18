@@ -202,7 +202,7 @@ impl<T> AsRef<T> for Transaction<T> {
 }
 
 mod tx_serde {
-    //! Helper module for serializing and deserializing OP [`Transaction`].
+    //! Helper module for serializing and deserializing Base [`Transaction`].
     //!
     //! This is needed because we might need to deserialize the `from` field into both
     //! [`alloy_consensus::transaction::Recovered::signer`] which resides in

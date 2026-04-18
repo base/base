@@ -1,8 +1,4 @@
 //! P2P CLI Flags
-//!
-//! These are based on p2p flags from the [`op-node`][op-node] CLI.
-//!
-//! [op-node]: https://github.com/ethereum-optimism/optimism/blob/develop/op-node/flags/p2p_flags.go
 
 use std::{
     net::{IpAddr, SocketAddr, ToSocketAddrs},

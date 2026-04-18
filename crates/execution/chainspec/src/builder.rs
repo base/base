@@ -9,7 +9,7 @@ use reth_primitives_traits::SealedHeader;
 
 use crate::BaseChainSpec;
 
-/// Chain spec builder for an OP stack chain.
+/// Chain spec builder for a Base chain.
 #[derive(Debug, Default, From)]
 pub struct BaseChainSpecBuilder {
     /// [`ChainSpecBuilder`]

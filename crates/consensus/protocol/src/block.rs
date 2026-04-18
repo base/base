@@ -128,7 +128,7 @@ impl arbitrary::Arbitrary<'_> for L2BlockInfo {
     }
 }
 
-/// An error that can occur when converting an OP [`Block`] to [`L2BlockInfo`].
+/// An error that can occur when converting a [`Block`] to [`L2BlockInfo`].
 #[derive(Debug, thiserror::Error)]
 pub enum FromBlockError {
     /// The genesis block hash does not match the expected value.

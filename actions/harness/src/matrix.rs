@@ -63,7 +63,7 @@ impl ForkMatrix {
     ///
     /// The `pectra-blob-schedule` compatibility patch (a Base Sepolia-only quirk)
     /// and Base-specific forks are excluded; this matrix covers only the upstream
-    /// OP mainnet upgrade sequence.
+    /// Base mainnet upgrade sequence.
     pub fn from_granite() -> Self {
         static PROGRESSION: &[(&str, ForkSetter)] = &[
             ("granite", |h| h.granite_time = Some(0)),

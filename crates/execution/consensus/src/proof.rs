@@ -40,7 +40,7 @@ pub fn calculate_receipt_root_optimism<R: DepositReceiptExt>(
     ordered_trie_root_with_encoder(receipts, |r, buf| r.encode_2718(buf))
 }
 
-/// Calculates the receipt root for a header for the reference type of an OP receipt.
+/// Calculates the receipt root for a header for the reference type of a Base receipt.
 ///
 /// NOTE: Prefer calculate receipt root optimism if you have log blooms memoized.
 pub fn calculate_receipt_root_no_memo_optimism<R: DepositReceiptExt>(

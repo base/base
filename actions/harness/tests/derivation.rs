@@ -58,7 +58,7 @@ async fn single_l2_block_derived_from_batcher_frame() {
 /// advances by one L2 block per L1 block.
 ///
 /// All three L2 blocks belong to the same L1 epoch (genesis). This is the
-/// realistic Optimism scenario: with 12 s L1 blocks and 2 s L2 blocks there
+/// realistic Base scenario: with 12 s L1 blocks and 2 s L2 blocks there
 /// are ~6 L2 slots per L1 epoch; each batch may land in a different L1 block
 /// within the sequencer window while still referencing the same L1 epoch.
 #[tokio::test]

@@ -1,4 +1,4 @@
-//! Addresses of OP pre-deploys.
+//! Addresses of Base pre-deploys.
 //!
 //! This module contains predeploy contract addresses and system addresses for Base.
 //! See the complete set of predeploys at <https://specs.optimism.io/protocol/predeploys.html#predeploys>
@@ -20,14 +20,14 @@ impl Predeploys {
         Self::L2_CROSS_DOMAIN_MESSENGER,
         Self::L2_STANDARD_BRIDGE,
         Self::SEQUENCER_FEE_VAULT,
-        Self::OP_MINTABLE_ERC20_FACTORY,
+        Self::BASE_MINTABLE_ERC20_FACTORY,
         Self::L1_BLOCK_NUMBER,
         Self::GAS_PRICE_ORACLE,
         Self::GOVERNANCE_TOKEN,
         Self::L1_BLOCK_INFO,
         Self::L2_TO_L1_MESSAGE_PASSER,
         Self::L2_ERC721_BRIDGE,
-        Self::OP_MINTABLE_ERC721_FACTORY,
+        Self::BASE_MINTABLE_ERC721_FACTORY,
         Self::PROXY_ADMIN,
         Self::BASE_FEE_VAULT,
         Self::L1_FEE_VAULT,
@@ -73,7 +73,7 @@ impl Predeploys {
 
     /// The mintable ERC20 factory proxy address.
     /// <https://specs.optimism.io/protocol/predeploys.html#optimismmintableerc20factory>
-    pub const OP_MINTABLE_ERC20_FACTORY: Address =
+    pub const BASE_MINTABLE_ERC20_FACTORY: Address =
         address!("0x4200000000000000000000000000000000000012");
 
     /// Returns the last known L1 block number (legacy system).
@@ -103,7 +103,7 @@ impl Predeploys {
 
     /// The mintable ERC721 proxy address.
     /// <https://specs.optimism.io/protocol/predeploys.html#optimismmintableerc721factory>
-    pub const OP_MINTABLE_ERC721_FACTORY: Address =
+    pub const BASE_MINTABLE_ERC721_FACTORY: Address =
         address!("0x4200000000000000000000000000000000000017");
 
     /// The L2 proxy admin address.

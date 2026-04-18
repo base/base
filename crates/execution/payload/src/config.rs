@@ -1,18 +1,18 @@
-//! Additional configuration for the OP builder
+//! Additional configuration for the Base payload builder
 
 use std::sync::{Arc, atomic::AtomicU64};
 
-/// Settings for the OP builder.
+/// Settings for the Base payload builder.
 #[derive(Debug, Clone, Default)]
 pub struct BaseBuilderConfig {
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the Base payload builder.
     pub da_config: BaseDAConfig,
-    /// Gas limit configuration for the OP builder.
+    /// Gas limit configuration for the Base payload builder.
     pub gas_limit_config: GasLimitConfig,
 }
 
 impl BaseBuilderConfig {
-    /// Creates a new OP builder configuration with the given data availability configuration.
+    /// Creates a new Base payload builder configuration with the given data availability configuration.
     pub const fn new(da_config: BaseDAConfig, gas_limit_config: GasLimitConfig) -> Self {
         Self { da_config, gas_limit_config }
     }
