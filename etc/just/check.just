@@ -27,20 +27,20 @@ udeps: _build-contracts
 # Runs cargo deny to check dependencies
 deny:
     @command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny
-    cargo deny check bans --hide-inclusion-graph
+    (cd {{justfile_directory()}} && cargo deny check bans --hide-inclusion-graph)
 
 # Checks no_std crates compile without std
 no-std:
-    ./etc/scripts/ci/check-no-std.sh
+    {{justfile_directory()}}/etc/scripts/ci/check-no-std.sh
 
 # Checks proof crates compile for bare-metal FPVM
 no-std-proof:
-    ./etc/scripts/ci/check-no-std-proof.sh
+    {{justfile_directory()}}/etc/scripts/ci/check-no-std-proof.sh
 
 # Checks crate dependency boundary rules
 crate-deps:
-    ./etc/scripts/ci/check-crate-deps.sh
+    {{justfile_directory()}}/etc/scripts/ci/check-crate-deps.sh
 
 [private]
 _build-contracts:
-    cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
+    cd {{justfile_directory()}}/crates/utilities/test-utils/contracts && forge soldeer install && forge build
