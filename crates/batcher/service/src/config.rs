@@ -31,13 +31,14 @@ pub struct BatcherConfig {
     ///
     /// When set, the batcher subscribes to new L1 block headers over this
     /// connection to advance the pipeline's L1 head, falling back to polling
-    /// [`l1_rpc_url`] only on failure. When absent, polling is used exclusively.
+    /// [`l1_rpc_url`](Self::l1_rpc_url) only on failure. When absent, polling
+    /// is used exclusively.
     pub l1_ws_url: Option<Url>,
     /// Optional L2 WebSocket endpoint for new-block subscriptions.
     ///
     /// When set, the batcher subscribes to new block headers over this
-    /// connection and falls back to polling [`l2_rpc_url`] only on failure.
-    /// When absent, the batcher uses polling exclusively.
+    /// connection and falls back to polling [`l2_rpc_url`](Self::l2_rpc_url)
+    /// only on failure. When absent, the batcher uses polling exclusively.
     pub l2_ws_url: Option<Url>,
     /// Rollup node RPC endpoint(s).
     ///
@@ -89,6 +90,13 @@ pub struct BatcherConfig {
     /// node's derivation pipeline and could submit redundant data.
     /// Matches op-batcher's `--wait-node-sync` flag.
     pub wait_node_sync: bool,
+    /// Maximum time to wait for the rollup node to report sync when
+    /// [`wait_node_sync`](Self::wait_node_sync) is set.
+    ///
+    /// On expiry the service exits with an error rather than hanging
+    /// indefinitely, giving operators a clear signal that the upstream node is
+    /// misconfigured or unreachable. Default: 10 minutes.
+    pub wait_node_sync_timeout: Duration,
     /// When `true` and DA-backlog throttling is active, force the encoder to
     /// emit blob-typed submissions even when its configured `da_type` is
     /// calldata. No-op for blob-configured batchers. Default: `true`.
@@ -114,6 +122,7 @@ impl Default for BatcherConfig {
             admin_addr: None,
             stopped: false,
             wait_node_sync: false,
+            wait_node_sync_timeout: Duration::from_secs(600),
             force_blobs_when_throttling: true,
         }
     }

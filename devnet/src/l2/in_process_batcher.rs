@@ -44,9 +44,9 @@ impl InProcessBatcher {
         let signer = PrivateKeySigner::from_bytes(&config.batcher_key)
             .map_err(|e| eyre::eyre!("invalid batcher key: {e}"))?;
         let batcher_config = BatcherConfig {
-            l1_rpc_url: config.l1_rpc_url,
-            l2_rpc_url: config.l2_rpc_url,
-            rollup_rpc_url: config.rollup_rpc_url,
+            l1_rpc_url: vec![config.l1_rpc_url],
+            l2_rpc_url: vec![config.l2_rpc_url],
+            rollup_rpc_url: vec![config.rollup_rpc_url],
             batcher_private_key: Some(signer),
             // Devnet defaults come from the shared batcher config:
             // poll_interval: 1s, num_confirmations: 1, resubmission_timeout: 48s —

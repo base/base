@@ -737,7 +737,7 @@ impl BatchPipeline for BatchEncoder {
         }
         self.blob_override = active;
         if self.config.da_type == DaType::Calldata {
-            debug!(active, "blob override toggled for calldata-configured encoder");
+            debug!(active = active, "blob override toggled for calldata-configured encoder");
         }
     }
 }

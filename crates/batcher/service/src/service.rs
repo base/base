@@ -280,16 +280,30 @@ impl BatcherService {
         ))
     }
 
-    /// Block until the rollup node reports a non-zero sync status.
+    /// Block until the rollup node reports a non-zero sync status, or until
+    /// `timeout` elapses.
     ///
-    /// Polls `optimism_syncStatus` on the configured interval and returns
-    /// once both `current_l1.number` and `unsafe_l2.block_info.number` are
-    /// non-zero. Transient RPC errors are logged and retried.
+    /// Polls `optimism_syncStatus` on `poll_interval` and returns once both
+    /// `current_l1.number` and `unsafe_l2.block_info.number` are non-zero.
+    /// RPC errors are logged and retried with exponential backoff (capped at
+    /// 30 seconds) so a permanently-broken endpoint is not hammered at the
+    /// poll cadence. Returns an error when `timeout` is exceeded so operators
+    /// see an explicit failure rather than a silent hang.
     async fn wait_for_node_sync(
         rollup_client: &HttpClient,
         poll_interval: std::time::Duration,
+        timeout: std::time::Duration,
     ) -> eyre::Result<()> {
-        info!("waiting for rollup node to report a non-zero sync status");
+        // Cap RPC-error backoff so a broken endpoint backs off but eventually
+        // recovers within a reasonable window.
+        const MAX_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
+
+        info!(
+            timeout_secs = %timeout.as_secs(),
+            "waiting for rollup node to report a non-zero sync status"
+        );
+        let deadline = std::time::Instant::now() + timeout;
+        let mut error_backoff = poll_interval;
         loop {
             match rollup_client.sync_status().await {
                 Ok(status)
@@ -304,18 +318,52 @@ impl BatcherService {
                     return Ok(());
                 }
                 Ok(status) => {
+                    // Reset error backoff: the RPC is responsive, the node
+                    // just hasn't produced/derived blocks yet.
+                    error_backoff = poll_interval;
                     info!(
                         current_l1 = %status.current_l1.number,
                         unsafe_l2 = %status.unsafe_l2.block_info.number,
                         "rollup node not yet synced, waiting"
                     );
+                    Self::sleep_or_timeout(poll_interval, deadline).await?;
                 }
                 Err(e) => {
-                    warn!(error = %e, "optimism_syncStatus RPC failed during wait, retrying");
+                    warn!(
+                        error = %e,
+                        backoff_secs = %error_backoff.as_secs(),
+                        "optimism_syncStatus RPC failed during wait, backing off"
+                    );
+                    Self::sleep_or_timeout(error_backoff, deadline).await?;
+                    error_backoff = (error_backoff * 2).min(MAX_ERROR_BACKOFF);
                 }
             }
-            tokio::time::sleep(poll_interval).await;
         }
+    }
+
+    /// Sleep for `dur` or until `deadline`, whichever is sooner.
+    ///
+    /// Returns `Err` if the deadline is reached before or during the sleep so
+    /// callers surface a single timeout error rather than silently looping
+    /// past the deadline.
+    async fn sleep_or_timeout(
+        dur: std::time::Duration,
+        deadline: std::time::Instant,
+    ) -> eyre::Result<()> {
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return Err(eyre::eyre!(
+                "wait_for_node_sync timed out before the rollup node reported a non-zero sync status"
+            ));
+        }
+        let remaining = deadline - now;
+        tokio::time::sleep(dur.min(remaining)).await;
+        if std::time::Instant::now() >= deadline {
+            return Err(eyre::eyre!(
+                "wait_for_node_sync timed out before the rollup node reported a non-zero sync status"
+            ));
+        }
+        Ok(())
     }
 
     /// Initialise all batcher components and return a [`ReadyBatcher`].
@@ -416,7 +464,12 @@ impl BatcherService {
         // Optionally block startup until the rollup node reports a non-zero
         // sync status. Mirrors op-batcher's `--wait-node-sync`.
         if self.config.wait_node_sync {
-            Self::wait_for_node_sync(&rollup_client, self.config.poll_interval).await?;
+            Self::wait_for_node_sync(
+                &rollup_client,
+                self.config.poll_interval,
+                self.config.wait_node_sync_timeout,
+            )
+            .await?;
         }
 
         // Fetch sync status to determine the safe L2 head for startup backfill.
@@ -508,13 +561,14 @@ impl BatcherService {
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone());
 
         // Build the throttle controller and the appropriate client. The throttle
-        // RPC uses the L2 endpoint; we use the first configured L2 URL since
-        // `RpcThrottleClient::new` does not currently support failover lists
-        // (the RPC call itself is what would need rotation, not the constructor).
+        // RPC uses the L2 endpoint(s); `RpcThrottleClient` rotates per-call
+        // across the full L2 endpoint list so a single dead L2 RPC does not
+        // silently disable throttle delivery to the sequencer.
         let throttle_client = match &self.config.throttle {
             None => ServiceThrottle::Noop(NoopThrottleClient),
             Some(_) => {
-                ServiceThrottle::Rpc(RpcThrottleClient::new(self.config.l2_rpc_url[0].as_str())?)
+                let urls: Vec<&str> = self.config.l2_rpc_url.iter().map(Url::as_str).collect();
+                ServiceThrottle::Rpc(RpcThrottleClient::new(&urls)?)
             }
         };
         let (throttle_config, throttle_strategy) = self.config.throttle.clone().map_or_else(
