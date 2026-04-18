@@ -26,7 +26,7 @@ pub mod rpc;
 pub use rpc::OpEngineApiBuilder;
 
 pub mod version;
-pub use version::OP_NAME_CLIENT;
+pub use version::CLIENT_NAME;
 
 pub mod proof_history;
 

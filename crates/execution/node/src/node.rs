@@ -132,15 +132,16 @@ impl PayloadAttributesBuilder<BasePayloadAttributes> for BaseLocalPayloadAttribu
         );
 
         let default_eip_1559_params = BaseFeeParams::optimism();
-        let denominator = std::env::var("OP_DEV_EIP1559_DENOMINATOR")
+        let denominator = std::env::var("BASE_DEV_EIP1559_DENOMINATOR")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(default_eip_1559_params.max_change_denominator as u32);
-        let elasticity = std::env::var("OP_DEV_EIP1559_ELASTICITY")
+        let elasticity = std::env::var("BASE_DEV_EIP1559_ELASTICITY")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(default_eip_1559_params.elasticity_multiplier as u32);
-        let gas_limit = std::env::var("OP_DEV_GAS_LIMIT").ok().and_then(|v| v.parse::<u64>().ok());
+        let gas_limit =
+            std::env::var("BASE_DEV_GAS_LIMIT").ok().and_then(|v| v.parse::<u64>().ok());
 
         let mut eip1559_bytes = [0u8; 8];
         eip1559_bytes[0..4].copy_from_slice(&denominator.to_be_bytes());

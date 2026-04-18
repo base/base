@@ -21,7 +21,7 @@ use tracing::{debug, instrument, trace};
 /// The list of all supported Engine capabilities available over the engine endpoint.
 ///
 /// Spec: <https://specs.optimism.io/protocol/exec-engine.html>
-pub const OP_ENGINE_CAPABILITIES: &[&str] = &[
+pub const ENGINE_CAPABILITIES: &[&str] = &[
     "engine_forkchoiceUpdatedV1",
     "engine_forkchoiceUpdatedV2",
     "engine_forkchoiceUpdatedV3",

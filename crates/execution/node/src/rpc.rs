@@ -90,7 +90,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::ClientVersionV1;
 use base_common_rpc_types_engine::ExecutionData;
-use base_execution_rpc::{BaseEngineApi, engine::OP_ENGINE_CAPABILITIES};
+use base_execution_rpc::{BaseEngineApi, engine::ENGINE_CAPABILITIES};
 use reth_chainspec::EthereumHardforks;
 use reth_node_api::{
     AddOnsContext, EngineApiValidator, EngineTypes, FullNodeComponents, NodeTypes,
@@ -100,7 +100,7 @@ use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_payload_builder::PayloadStore;
 use reth_rpc_engine_api::{EngineApi, EngineCapabilities};
 
-use crate::OP_NAME_CLIENT;
+use crate::CLIENT_NAME;
 
 /// Builder for basic [`BaseEngineApi`] implementation.
 #[derive(Debug, Default, Clone)]
@@ -133,7 +133,7 @@ where
         let engine_validator = engine_validator_builder.build(ctx).await?;
         let client = ClientVersionV1 {
             code: CLIENT_CODE,
-            name: OP_NAME_CLIENT.to_string(),
+            name: CLIENT_NAME.to_string(),
             version: version_metadata().cargo_pkg_version.to_string(),
             commit: version_metadata().vergen_git_sha.to_string(),
         };
@@ -145,7 +145,7 @@ where
             ctx.node.pool().clone(),
             Box::new(ctx.node.task_executor().clone()),
             client,
-            EngineCapabilities::new(OP_ENGINE_CAPABILITIES.iter().copied()),
+            EngineCapabilities::new(ENGINE_CAPABILITIES.iter().copied()),
             engine_validator,
             ctx.config.engine.accept_execution_requests_hash,
             ctx.node.network().clone(),

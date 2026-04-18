@@ -57,7 +57,7 @@ mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
 /// Builds an [`EvmEnv`] for a given block header using [`base_common_evm`]'s spec resolution.
-fn op_evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -> EvmEnv<OpSpecId> {
+fn build_evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -> EvmEnv<OpSpecId> {
     let spec = OpSpecId::from_header(chain_spec, header);
     let cfg_env =
         CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
@@ -84,7 +84,7 @@ fn op_evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -> E
 }
 
 /// Builds an [`EvmEnv`] for the next block given a parent header.
-fn op_next_evm_env(
+fn build_next_evm_env(
     parent: &Header,
     attributes: &OpNextBlockEnvAttributes,
     base_fee_per_gas: u64,
@@ -214,7 +214,7 @@ where
     }
 
     fn evm_env(&self, header: &Header) -> Result<EvmEnv<OpSpecId>, Self::Error> {
-        Ok(op_evm_env(header, self.chain_spec()))
+        Ok(build_evm_env(header, self.chain_spec()))
     }
 
     fn next_evm_env(
@@ -225,7 +225,7 @@ where
         let base_fee =
             self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default();
 
-        Ok(op_next_evm_env(parent, attributes, base_fee, self.chain_spec()))
+        Ok(build_next_evm_env(parent, attributes, base_fee, self.chain_spec()))
     }
 
     fn context_for_block(

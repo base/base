@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Environment variable for setting the signer key in local mode.
-const SIGNER_KEY_ENV_VAR: &str = "OP_ENCLAVE_SIGNER_KEY";
+const SIGNER_KEY_ENV_VAR: &str = "BASE_ENCLAVE_SIGNER_KEY";
 
 /// PCR0 is a SHA-384 hash (48 bytes) per the AWS Nitro Enclaves specification.
 const PCR0_LENGTH: usize = 48;
@@ -93,7 +93,7 @@ impl Server {
     /// Create a new server instance in local mode for development.
     ///
     /// Uses the OS RNG and sets `tee_image_hash` to zero. Optionally reads a
-    /// signer key from the `OP_ENCLAVE_SIGNER_KEY` environment variable.
+    /// signer key from the `BASE_ENCLAVE_SIGNER_KEY` environment variable.
     pub fn new_local() -> Result<Self> {
         let signer_key = match std::env::var(SIGNER_KEY_ENV_VAR) {
             Ok(hex_key) => {

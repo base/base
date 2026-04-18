@@ -123,7 +123,7 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
                 header.logs_bloom(),
             )
         } else {
-            verify_receipts_optimism(
+            verify_receipts(
                 header.receipts_root(),
                 header.logs_bloom(),
                 receipts,
@@ -156,7 +156,7 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
 }
 
 /// Verify the calculated receipts root against the expected receipts root.
-fn verify_receipts_optimism<R: DepositReceiptExt>(
+fn verify_receipts<R: DepositReceiptExt>(
     expected_receipts_root: B256,
     expected_logs_bloom: Bloom,
     receipts: &[R],
