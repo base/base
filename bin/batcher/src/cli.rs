@@ -428,10 +428,8 @@ mod tests {
         // base_args() already sets `--l1-rpc-url http://localhost:8545`, so
         // appending a second `--l1-rpc-url` with three comma-separated values
         // accumulates: clap appends rather than overrides for `Vec` args.
-        let cli = parse_cli(&[
-            "--l1-rpc-url",
-            "http://l1-a:8545,http://l1-b:8545,http://l1-c:8545",
-        ]);
+        let cli =
+            parse_cli(&["--l1-rpc-url", "http://l1-a:8545,http://l1-b:8545,http://l1-c:8545"]);
         let config = cli.args.into_config().expect("config should build");
         assert_eq!(config.l1_rpc_url.len(), 4);
         assert_eq!(config.l1_rpc_url[0].as_str(), "http://localhost:8545/");

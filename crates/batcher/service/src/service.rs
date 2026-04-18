@@ -293,8 +293,7 @@ impl BatcherService {
         loop {
             match rollup_client.sync_status().await {
                 Ok(status)
-                    if status.current_l1.number > 0
-                        && status.unsafe_l2.block_info.number > 0 =>
+                    if status.current_l1.number > 0 && status.unsafe_l2.block_info.number > 0 =>
                 {
                     info!(
                         current_l1 = %status.current_l1.number,
@@ -446,10 +445,7 @@ impl BatcherService {
             Self::connect_first(&self.config.l1_rpc_url, "l1-rpc", |url| {
                 let url = url.clone();
                 async move {
-                    ProviderBuilder::new()
-                        .disable_recommended_fillers()
-                        .connect(url.as_str())
-                        .await
+                    ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await
                 }
             })
             .await?;
@@ -517,9 +513,9 @@ impl BatcherService {
         // (the RPC call itself is what would need rotation, not the constructor).
         let throttle_client = match &self.config.throttle {
             None => ServiceThrottle::Noop(NoopThrottleClient),
-            Some(_) => ServiceThrottle::Rpc(RpcThrottleClient::new(
-                self.config.l2_rpc_url[0].as_str(),
-            )?),
+            Some(_) => {
+                ServiceThrottle::Rpc(RpcThrottleClient::new(self.config.l2_rpc_url[0].as_str())?)
+            }
         };
         let (throttle_config, throttle_strategy) = self.config.throttle.clone().map_or_else(
             || (ThrottleConfig::default(), ThrottleStrategy::Off),
@@ -534,10 +530,7 @@ impl BatcherService {
             Self::connect_first(&self.config.l1_rpc_url, "l1-rpc-poller", |url| {
                 let url = url.clone();
                 async move {
-                    ProviderBuilder::new()
-                        .disable_recommended_fillers()
-                        .connect(url.as_str())
-                        .await
+                    ProviderBuilder::new().disable_recommended_fillers().connect(url.as_str()).await
                 }
             })
             .await?,

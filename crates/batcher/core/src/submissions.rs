@@ -109,8 +109,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
             let candidate = match da_type {
                 DaType::Blob => match BlobEncoder::encode_packed(&frames) {
                     Ok(blob) => {
-                        BatcherMetrics::blob_used_bytes_total()
-                            .increment(payload_size as u64);
+                        BatcherMetrics::blob_used_bytes_total().increment(payload_size as u64);
                         TxCandidate {
                             to: Some(self.inbox),
                             tx_data: Bytes::new(),

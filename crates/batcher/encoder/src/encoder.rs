@@ -312,11 +312,8 @@ impl BatchEncoder {
         debug!(channel_id = ?id, l1_head = %self.l1_head, "opened new channel");
         BatcherMetrics::channel_opened_total().increment(1);
 
-        self.current_channel = Some(OpenChannel {
-            out: channel_out,
-            opened_at_l1: self.l1_head,
-            blocks_added: 0,
-        });
+        self.current_channel =
+            Some(OpenChannel { out: channel_out, opened_at_l1: self.l1_head, blocks_added: 0 });
     }
 
     /// Check if the current channel (or span accumulator) has timed out and close it if so.
