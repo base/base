@@ -53,7 +53,7 @@ jobs:
           foundry: "true"
           rust-cache-shared-key: "stable"
           rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
-      - run: just build-ci
+      - run: just build::ci
 
   test:
     name: Test
@@ -123,7 +123,7 @@ jobs:
           components: rustfmt
           rust-cache-shared-key: "nightly"
           rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
-      - run: just check-format
+      - run: just check::format
 
   clippy:
     name: Clippy
@@ -144,7 +144,7 @@ jobs:
           foundry: "true"
           components: clippy
           rust-cache-shared-key: "stable"
-      - run: just check-clippy-ci
+      - run: just check::clippy-ci
 
   changes:
     name: Detect Changes
@@ -245,7 +245,7 @@ jobs:
           foundry: "true"
           tools: cargo-udeps
           rust-cache-shared-key: "nightly"
-      - run: just check-udeps
+      - run: just check::udeps
 
   crate-deps:
     name: Crate Dependencies
@@ -259,7 +259,7 @@ jobs:
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup
-      - run: just check-crate-deps
+      - run: just check::crate-deps
 
   deny:
     name: Cargo Deny
@@ -273,7 +273,7 @@ jobs:
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup
-      - run: just check-deny
+      - run: just check::deny
 
   devnet-tests:
     name: Devnet Tests

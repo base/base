@@ -40,6 +40,6 @@ jobs:
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
       - name: Build test contracts
-        run: just build-contracts
+        run: just build::contracts
       - name: Run action tests
         run: just actions::test
