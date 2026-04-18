@@ -221,12 +221,12 @@ impl ChainConfig {
 
     /// Returns a devnet configuration for local development.
     ///
-    /// The devnet addresses are fetched dynamically from the op-node via the
+    /// The devnet addresses are fetched dynamically from the consensus node via the
     /// `optimism_rollupConfig` RPC method since they are regenerated each time
     /// the devnet is started.
     ///
     /// Use `load("devnet")` to get a fully configured devnet with addresses
-    /// fetched from the running op-node.
+    /// fetched from the running consensus node.
     fn devnet_base() -> Self {
         Self {
             name: "devnet".to_string(),
@@ -287,7 +287,7 @@ impl ChainConfig {
         }
     }
 
-    /// Fetches the rollup config from the op-node via the `optimism_rollupConfig` RPC method.
+    /// Fetches the rollup config from the consensus node via the `optimism_rollupConfig` RPC method.
     async fn fetch_rollup_config(op_node_url: &Url) -> Result<RollupConfig> {
         let provider = ProviderBuilder::new()
             .connect(op_node_url.as_str())
@@ -310,7 +310,7 @@ impl ChainConfig {
     /// 3. Or treat as standalone file path
     ///
     /// For devnet, the `system_config` and `batcher_address` are fetched dynamically
-    /// from the op-node via the `optimism_rollupConfig` RPC method.
+    /// from the consensus node via the `optimism_rollupConfig` RPC method.
     pub async fn load(name_or_path: &str) -> Result<Self> {
         let base_config = match name_or_path {
             "mainnet" => Some(Self::mainnet()),
@@ -352,7 +352,7 @@ impl ChainConfig {
         )
     }
 
-    /// Load devnet config by fetching addresses from the op-node.
+    /// Load devnet config by fetching addresses from the consensus node.
     async fn load_devnet() -> Result<Self> {
         let mut config = Self::devnet_base();
 

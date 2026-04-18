@@ -150,7 +150,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_op_proofs_store_error_to_db_error() {
+    fn test_base_proofs_store_error_to_db_error() {
         let original_error = BaseProofsStorageError::NoBlocksFound;
 
         let db_error = DatabaseError::from(original_error);
@@ -161,16 +161,16 @@ mod tests {
     }
 
     #[test]
-    fn test_db_error_to_op_proofs_store_error() {
+    fn test_db_error_to_base_proofs_store_error() {
         let original_error = DatabaseError::Decode;
 
-        let op_proofs_store_error = BaseProofsStorageError::from(original_error);
+        let base_proofs_store_error = BaseProofsStorageError::from(original_error);
         assert!(matches!(
-            op_proofs_store_error,
+            base_proofs_store_error,
             BaseProofsStorageError::DatabaseError(DatabaseError::Decode)
         ));
 
-        let converted_error = DatabaseError::from(op_proofs_store_error);
+        let converted_error = DatabaseError::from(base_proofs_store_error);
         assert!(matches!(converted_error, DatabaseError::Decode))
     }
 
@@ -179,18 +179,18 @@ mod tests {
         let block_execution_error =
             BlockExecutionError::Validation(BlockValidationError::IncrementBalanceFailed);
 
-        let op_proofs_store_error = BaseProofsStorageError::from(block_execution_error);
+        let base_proofs_store_error = BaseProofsStorageError::from(block_execution_error);
         assert!(
-            matches!(op_proofs_store_error, BaseProofsStorageError::ExecutionError(err) if matches!(*err, BlockExecutionError::Validation(BlockValidationError::IncrementBalanceFailed)))
+            matches!(base_proofs_store_error, BaseProofsStorageError::ExecutionError(err) if matches!(*err, BlockExecutionError::Validation(BlockValidationError::IncrementBalanceFailed)))
         )
     }
 
     #[test]
     fn test_conversion_from_provider_error() {
         let provider_error = ProviderError::SenderRecoveryError;
-        let op_proofs_store_error = BaseProofsStorageError::from(provider_error);
+        let base_proofs_store_error = BaseProofsStorageError::from(provider_error);
         assert!(
-            matches!(op_proofs_store_error, BaseProofsStorageError::ProviderError(err) if matches!(*err, ProviderError::SenderRecoveryError))
+            matches!(base_proofs_store_error, BaseProofsStorageError::ProviderError(err) if matches!(*err, ProviderError::SenderRecoveryError))
         )
     }
 }

@@ -1,4 +1,4 @@
-//! State provider factory for OP Proofs `ExEx`.
+//! State provider factory for Base Proofs `ExEx`.
 
 use alloy_eips::BlockId;
 use base_execution_trie::{

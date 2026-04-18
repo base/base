@@ -48,7 +48,7 @@ pub struct GossipDriver<G: ConnectionGate> {
     /// This is an option to allow to take the underlying value when the gossip driver gets
     /// activated.
     ///
-    /// TODO: remove the sync-req-resp protocol once the `op-node` phases it out.
+    /// TODO: remove the sync-req-resp protocol once it is fully deprecated upstream.
     #[debug(skip)]
     pub sync_protocol: Option<IncomingStreams>,
     /// A mapping from [`PeerId`] to [`Multiaddr`].
@@ -136,9 +136,8 @@ where
     ///
     /// ## Note
     ///
-    /// This is used to ensure op-nodes are not penalizing base-nodes for not supporting it.
-    /// This feature is being deprecated by the op-node team. Once it is fully removed from the
-    /// op-node's implementation we will remove this handler.
+    /// This is used to ensure peer nodes are not penalizing base-nodes for not supporting it.
+    /// This feature is being deprecated upstream. Once it is fully removed we will remove this handler.
     pub(super) fn sync_protocol_handler(&mut self) {
         let Some(mut sync_protocol) = self.sync_protocol.take() else {
             return;

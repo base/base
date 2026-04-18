@@ -1,4 +1,4 @@
-//! Command that initializes the OP proofs storage with the current state of the chain.
+//! Command that initializes the Base Proofs storage with the current state of the chain.
 
 use std::{path::PathBuf, sync::Arc};
 

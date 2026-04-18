@@ -1,4 +1,4 @@
-//! Command that prunes the OP proofs storage.
+//! Command that prunes the Base Proofs storage.
 
 use std::{path::PathBuf, sync::Arc};
 

@@ -59,7 +59,7 @@ pub struct L1Config {
     pub finalized_poll_interval: Duration,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier (derivation
     /// pipeline). When non-zero, the L1 watcher delays derivation heads by this many blocks,
-    /// providing reorg protection. Equivalent to op-node's `OP_NODE_VERIFIER_L1_CONFS`.
+    /// providing reorg protection. Controlled via `BASE_NODE_VERIFIER_L1_CONFS`.
     pub verifier_l1_confs: u64,
 }
 

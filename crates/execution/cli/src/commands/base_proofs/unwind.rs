@@ -1,4 +1,4 @@
-//! Command that unwinds the OP proofs storage to a specific block number.
+//! Command that unwinds the Base Proofs storage to a specific block number.
 
 use std::{path::PathBuf, sync::Arc};
 

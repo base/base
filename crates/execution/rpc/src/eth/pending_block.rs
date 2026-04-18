@@ -1,4 +1,4 @@
-//! Loads OP pending block for a RPC response.
+//! Loads Base pending block for a RPC response.
 
 use alloy_eips::BlockNumberOrTag;
 use reth_rpc_eth_api::{

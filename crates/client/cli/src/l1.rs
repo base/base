@@ -34,7 +34,7 @@ pub struct L1ClientArgs {
     )]
     pub l1_slot_duration_override: Option<u64>,
     /// Number of L1 blocks to keep distance from the L1 head for the verifier (derivation
-    /// pipeline). Equivalent to op-node's `OP_NODE_VERIFIER_L1_CONFS`. Defaults to 0, meaning
+    /// pipeline). Controlled via `BASE_NODE_VERIFIER_L1_CONFS`. Defaults to 0, meaning
     /// the verifier derives from the latest L1 head with no confirmation delay.
     #[arg(long = "l1.verifier-confs", default_value = "0", env = "BASE_NODE_VERIFIER_L1_CONFS")]
     pub l1_verifier_confs: u64,

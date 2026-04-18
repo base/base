@@ -1,4 +1,4 @@
-//! Loads and formats OP block RPC response.
+//! Loads and formats Base block RPC response.
 
 use reth_rpc_eth_api::{
     FromEvmError, RpcConvert,

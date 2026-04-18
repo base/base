@@ -1,4 +1,4 @@
-//! OP Proofs management commands
+//! Base Proofs management commands
 
 use std::sync::Arc;
 
@@ -12,7 +12,7 @@ pub mod init;
 pub mod prune;
 pub mod unwind;
 
-/// `op-reth op-proofs` command
+/// `base-node base-proofs` command
 #[derive(Debug, Parser)]
 pub struct Command<C: ChainSpecParser> {
     #[command(subcommand)]
@@ -20,7 +20,7 @@ pub struct Command<C: ChainSpecParser> {
 }
 
 impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> Command<C> {
-    /// Execute `op-proofs` command
+    /// Execute `base-proofs` command
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
         self,
     ) -> eyre::Result<()> {
@@ -43,7 +43,7 @@ impl<C: ChainSpecParser> Command<C> {
     }
 }
 
-/// `op-reth op-proofs` subcommands
+/// `base-node base-proofs` subcommands
 #[derive(Debug, Subcommand)]
 pub enum Subcommands<C: ChainSpecParser> {
     /// Initialize the proofs storage with the current state of the chain

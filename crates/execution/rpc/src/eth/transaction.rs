@@ -1,4 +1,4 @@
-//! Loads and formats OP transaction RPC response.
+//! Loads and formats Base transaction RPC response.
 
 use std::{
     fmt::{Debug, Formatter},
