@@ -31,7 +31,7 @@ use reth_primitives_traits::{
 };
 
 mod proof;
-pub use proof::{calculate_receipt_root_no_memo_optimism, calculate_receipt_root_optimism};
+pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
 
 pub mod validation;
 pub use validation::{canyon, isthmus, validate_block_post_execution};

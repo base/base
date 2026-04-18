@@ -248,7 +248,7 @@ mod tests {
         chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
         db: &mut InMemoryDB,
     ) -> impl Evm<HaltReason = OpHaltReason, DB = &mut InMemoryDB> + '_ {
-        let evm_config = BaseEvmConfig::optimism(chain_spec);
+        let evm_config = BaseEvmConfig::base(chain_spec);
         let header = Header::default();
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
         evm_config.evm_with_env(db, evm_env)

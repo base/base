@@ -225,7 +225,7 @@ mod tests {
         test_utils::{TestAttributesBuilder, TestAttributesProvider, new_test_attributes_provider},
     };
 
-    fn default_optimism_payload_attributes() -> BasePayloadAttributes {
+    fn default_payload_attributes() -> BasePayloadAttributes {
         BasePayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: 0,
@@ -366,7 +366,7 @@ mod tests {
     async fn test_create_next_attributes_success() {
         let cfg = RollupConfig::default();
         let mock = new_test_attributes_provider(None, vec![]);
-        let mut payload_attributes = default_optimism_payload_attributes();
+        let mut payload_attributes = default_payload_attributes();
         let mock_builder =
             TestAttributesBuilder { attributes: vec![Ok(payload_attributes.clone())] };
         let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
@@ -396,7 +396,7 @@ mod tests {
         let cfg = RollupConfig::default();
         let mock =
             new_test_attributes_provider(Some(Default::default()), vec![Ok(Default::default())]);
-        let mut pa = default_optimism_payload_attributes();
+        let mut pa = default_payload_attributes();
         let mock_builder = TestAttributesBuilder { attributes: vec![Ok(pa.clone())] };
         let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
         // If we load the batch, we should get the last in span.

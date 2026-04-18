@@ -10,7 +10,7 @@ use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
-use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
+use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
@@ -59,7 +59,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
 
         let transactions_root = proofs::calculate_transaction_root(&transactions);
         let receipts_root =
-            calculate_receipt_root_no_memo_optimism(receipts, &self.chain_spec, timestamp);
+            calculate_receipt_root_no_memo(receipts, &self.chain_spec, timestamp);
         let logs_bloom = logs_bloom(receipts.iter().flat_map(|r| r.logs()));
 
         let mut requests_hash = None;

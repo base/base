@@ -145,7 +145,7 @@ impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
 
 impl<ChainSpec: Upgrades> BaseEvmConfig<ChainSpec> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec for Base chains.
-    pub fn optimism(chain_spec: Arc<ChainSpec>) -> Self {
+    pub fn base(chain_spec: Arc<ChainSpec>) -> Self {
         Self::new(chain_spec, OpRethReceiptBuilder::default())
     }
 }
@@ -361,7 +361,7 @@ mod tests {
     use super::*;
 
     fn test_evm_config() -> BaseEvmConfig {
-        BaseEvmConfig::optimism(BASE_MAINNET.clone())
+        BaseEvmConfig::base(BASE_MAINNET.clone())
     }
 
     #[test]
@@ -373,7 +373,7 @@ mod tests {
                 .azul_activated()
                 .build(),
         );
-        let evm_config = BaseEvmConfig::optimism(chain_spec);
+        let evm_config = BaseEvmConfig::base(chain_spec);
         let header = Header { timestamp: 0, ..Default::default() };
         let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
         assert_eq!(cfg_env.spec, OpSpecId::AZUL);
@@ -397,7 +397,7 @@ mod tests {
         // Use the `BaseEvmConfig` to create the `cfg_env` and `block_env` based on the ChainSpec,
         // Header, and total difficulty
         let EvmEnv { cfg_env, .. } =
-            BaseEvmConfig::optimism(Arc::new(BaseChainSpec { inner: chain_spec.clone() }))
+            BaseEvmConfig::base(Arc::new(BaseChainSpec { inner: chain_spec.clone() }))
                 .evm_env(&header)
                 .unwrap();
 

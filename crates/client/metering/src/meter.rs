@@ -303,7 +303,7 @@ where
 
     let total_start = Instant::now();
     {
-        let evm_config = BaseEvmConfig::optimism(chain_spec);
+        let evm_config = BaseEvmConfig::base(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, header, attributes)?;
 
         // Cap the base fee at MIN_BASEFEE so transactions aren't rejected for

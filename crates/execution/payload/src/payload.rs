@@ -100,7 +100,7 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> PayloadBuilderAtt
         attributes: BasePayloadAttributes,
         version: u8,
     ) -> Result<Self, Self::Error> {
-        let id = payload_id_optimism(&parent, &attributes, version);
+        let id = payload_id(&parent, &attributes, version);
 
         let transactions = attributes
             .transactions
@@ -381,7 +381,7 @@ where
 ///
 /// Note: This must be updated whenever the [`BasePayloadAttributes`] changes for a hardfork.
 /// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
-pub fn payload_id_optimism(
+pub fn payload_id(
     parent: &B256,
     attributes: &BasePayloadAttributes,
     payload_version: u8,
@@ -512,7 +512,7 @@ mod tests {
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
         assert_eq!(
             expected,
-            payload_id_optimism(
+            payload_id(
                 &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
                 &attrs,
                 EngineApiMessageVersion::V3 as u8
@@ -543,7 +543,7 @@ mod tests {
         // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
         assert_eq!(
             expected,
-            payload_id_optimism(
+            payload_id(
                 &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
                 &attrs,
                 EngineApiMessageVersion::V4 as u8

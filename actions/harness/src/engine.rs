@@ -220,7 +220,7 @@ impl ActionEngineClient {
         init_genesis(&provider_factory).expect("failed to initialize genesis in action engine");
         let blockchain_provider = BlockchainProvider::new(provider_factory.clone())
             .expect("failed to create blockchain provider");
-        let evm_config = BaseEvmConfig::optimism(Arc::clone(&chain_spec));
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
 
         let inner = Arc::new(Mutex::new(ActionEngineClientInner {
             provider_factory,

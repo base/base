@@ -10,7 +10,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 
 /// Calculates the receipt root for a header.
-pub fn calculate_receipt_root_optimism<R: DepositReceiptExt>(
+pub fn calculate_receipt_root<R: DepositReceiptExt>(
     receipts: &[ReceiptWithBloom<&R>],
     chain_spec: impl Upgrades,
     timestamp: u64,
@@ -42,8 +42,8 @@ pub fn calculate_receipt_root_optimism<R: DepositReceiptExt>(
 
 /// Calculates the receipt root for a header for the reference type of a Base receipt.
 ///
-/// NOTE: Prefer calculate receipt root optimism if you have log blooms memoized.
-pub fn calculate_receipt_root_no_memo_optimism<R: DepositReceiptExt>(
+/// NOTE: Prefer [`calculate_receipt_root`] if you have log blooms memoized.
+pub fn calculate_receipt_root_no_memo<R: DepositReceiptExt>(
     receipts: &[R],
     chain_spec: impl Upgrades,
     timestamp: u64,
@@ -463,7 +463,7 @@ mod tests {
                     ],
                 }),
             ];
-            let root = calculate_receipt_root_optimism(
+            let root = calculate_receipt_root(
                 &receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>(),
                 BASE_SEPOLIA.as_ref(),
                 case.1,
@@ -488,7 +488,7 @@ mod tests {
         });
         let receipt = ReceiptWithBloom { receipt: &inner, logs_bloom };
         let receipt = vec![receipt];
-        let root = calculate_receipt_root_optimism(&receipt, BASE_SEPOLIA.as_ref(), 0);
+        let root = calculate_receipt_root(&receipt, BASE_SEPOLIA.as_ref(), 0);
         assert_eq!(
             root,
             b256!("0xfe70ae4a136d98944951b2123859698d59ad251a381abc9960fa81cae3d0d4a0")

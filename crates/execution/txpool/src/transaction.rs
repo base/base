@@ -440,7 +440,7 @@ mod tests {
         let client = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(BASE_MAINNET.clone())
             .with_genesis_block();
-        let evm_config = BaseEvmConfig::optimism(BASE_MAINNET.clone());
+        let evm_config = BaseEvmConfig::base(BASE_MAINNET.clone());
         let validator = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()

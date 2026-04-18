@@ -19,7 +19,7 @@ use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
-use base_execution_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
+use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
 use base_execution_payload_builder::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use either::Either;
@@ -971,7 +971,7 @@ where
         ));
     }
 
-    let receipts_root = calculate_receipt_root_no_memo_optimism(
+    let receipts_root = calculate_receipt_root_no_memo(
         &info.receipts,
         &ctx.chain_spec,
         ctx.attributes().timestamp(),

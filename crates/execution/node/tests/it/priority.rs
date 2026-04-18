@@ -16,7 +16,7 @@ use base_node_core::{
         BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
         BaseNodeTypes, BasePoolBuilder, OpPayloadBuilder,
     },
-    utils::optimism_payload_attributes,
+    utils::payload_attributes,
 };
 use reth_chainspec::EthChainSpec;
 use reth_db::test_utils::create_test_rw_db_with_path;
@@ -153,7 +153,7 @@ async fn test_custom_block_priority_config() {
         .expect("Failed to launch node");
 
     // Advance the chain with a single block.
-    let block_payloads = NodeTestContext::new(node_handle.node, optimism_payload_attributes)
+    let block_payloads = NodeTestContext::new(node_handle.node, payload_attributes)
         .await
         .unwrap()
         .advance(1, |_| {
