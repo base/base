@@ -9,7 +9,7 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 use crate::errors::PreimageOracleError;
 
-/// <https://specs.optimism.io/experimental/fault-proof/index.html#pre-image-key-types>
+/// <https://specs.base.org/protocol/fault-proof#pre-image-key-types>
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(u8)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]

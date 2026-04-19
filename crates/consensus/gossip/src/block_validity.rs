@@ -99,13 +99,13 @@ impl BlockHandler {
 
     /// The maximum number of blocks to keep per height.
     /// This value is chosen according to the Base specs:
-    /// <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-validation>
+    /// <https://specs.base.org/protocol/consensus/p2p#block-validation>
     const MAX_BLOCKS_TO_KEEP: usize = 5;
 
     /// Determines if a block is valid.
     ///
     /// We validate the block according to the rules defined here:
-    /// <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-validation>
+    /// <https://specs.base.org/protocol/consensus/p2p#block-validation>
     ///
     /// The block encoding/compression are assumed to be valid at this point (they are first checked
     /// in the handle).

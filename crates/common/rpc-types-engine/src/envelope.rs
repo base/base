@@ -28,7 +28,7 @@ pub struct BaseExecutionPayloadEnvelope {
 impl BaseExecutionPayloadEnvelope {
     /// Returns the payload hash over the ssz encoded payload envelope data.
     ///
-    /// <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-signatures>
+    /// <https://specs.base.org/protocol/consensus/p2p#block-signatures>
     #[cfg(feature = "std")]
     pub fn payload_hash(&self) -> crate::PayloadHash {
         use ssz::Encode;
@@ -45,7 +45,7 @@ impl ssz::Encode for BaseExecutionPayloadEnvelope {
 
     fn ssz_append(&self, buf: &mut Vec<u8>) {
         // Write parent beacon block root only if the payload is not a v1 or v2 payload.
-        // <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-encoding>
+        // <https://specs.base.org/protocol/consensus/p2p#block-encoding>
         if !matches!(
             self.execution_payload,
             BaseExecutionPayload::V1(_) | BaseExecutionPayload::V2(_)
@@ -155,14 +155,14 @@ impl ExecutionData {
 
     /// Creates a new instance from args to engine API method `newPayloadV2`.
     ///
-    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv2>
+    /// Spec: <https://specs.base.org/protocol/execution#engine_newpayloadv2>
     pub fn v2(payload: ExecutionPayloadInputV2) -> Self {
         Self::new(BaseExecutionPayload::v2(payload), BaseExecutionPayloadSidecar::default())
     }
 
     /// Creates a new instance from args to engine API method `newPayloadV3`.
     ///
-    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv3>
+    /// Spec: <https://specs.base.org/protocol/execution#engine_newpayloadv3>
     pub fn v3(
         payload: ExecutionPayloadV3,
         versioned_hashes: Vec<B256>,
@@ -179,7 +179,7 @@ impl ExecutionData {
 
     /// Creates a new instance from args to engine API method `newPayloadV4`.
     ///
-    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>
+    /// Spec: <https://specs.base.org/protocol/execution#engine_newpayloadv4>
     pub fn v4(
         payload: BaseExecutionPayloadV4,
         versioned_hashes: Vec<B256>,

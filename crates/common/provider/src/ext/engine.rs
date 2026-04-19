@@ -17,7 +17,7 @@ use base_common_rpc_types_engine::{
 /// > The provider should use a JWT authentication layer.
 ///
 /// This follows the Base specs:
-/// <https://specs.optimism.io/protocol/exec-engine.html#engine-api>
+/// <https://specs.base.org/protocol/execution#engine-api>
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait BaseEngineApi<N, T> {
@@ -70,7 +70,7 @@ pub trait BaseEngineApi<N, T> {
     ///
     /// OP modifications:
     /// - The `payload_attributes` parameter is extended with the [`BasePayloadAttributes`] type
-    ///   as described in <https://specs.optimism.io/protocol/exec-engine.html#extended-payloadattributesv2>
+    ///   as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
@@ -86,7 +86,7 @@ pub trait BaseEngineApi<N, T> {
     /// - Must be called with an Ecotone payload
     /// - Attributes must contain the parent beacon block root field
     /// - The `payload_attributes` parameter is extended with the [`BasePayloadAttributes`] type
-    ///   as described in <https://specs.optimism.io/protocol/exec-engine.html#extended-payloadattributesv2>
+    ///   as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,

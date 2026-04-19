@@ -26,7 +26,7 @@ pub fn ensure_empty_withdrawals_root<H: BlockHeader>(header: &H) -> Result<(), C
 }
 
 /// Verifies that withdrawals in block body (Shanghai) is always empty in Canyon.
-/// <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-validation>
+/// <https://specs.base.org/protocol/consensus/p2p#block-validation>
 #[inline]
 pub fn ensure_empty_shanghai_withdrawals<T: BlockBody>(body: &T) -> Result<(), BaseConsensusError> {
     // Shanghai rule

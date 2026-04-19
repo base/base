@@ -26,7 +26,7 @@ let mut buf = [0u8; 32];
 BasicKernelInterface::read(fd, &mut buf)?;
 ```
 
-[g-fault-proof-vm]: https://specs.optimism.io/experimental/fault-proof/index.html#fault-proof-vm
+[g-fault-proof-vm]: https://specs.base.org/protocol/fault-proof#fault-proof-vm
 
 ## License
 

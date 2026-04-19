@@ -46,7 +46,7 @@ pub enum BaseReceiptEnvelope<T = Log> {
     Eip7702(ReceiptWithBloom<Receipt<T>>),
     /// Receipt envelope with type flag 126, containing a [deposit] receipt.
     ///
-    /// [deposit]: https://specs.optimism.io/protocol/deposits.html
+    /// [deposit]: https://specs.base.org/protocol/bridging/deposits
     #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
     Deposit(ReceiptWithBloom<DepositReceipt<T>>),
 }

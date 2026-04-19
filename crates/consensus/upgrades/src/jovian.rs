@@ -2,7 +2,7 @@
 //!
 //! Jovian network upgrade transactions are defined in the [Base Specs][specs].
 //!
-//! [specs]: https://specs.optimism.io/protocol/jovian/derivation.html#network-upgrade-automation-transactions
+//! [specs]: https://specs.base.org/upgrades/jovian/derivation#network-upgrade-automation-transactions
 
 use alloc::vec::Vec;
 

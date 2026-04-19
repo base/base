@@ -22,7 +22,7 @@ use crate::Metrics;
 /// 2. **Safe** - Derived from L1 data
 /// 3. **Finalized** - Derived from finalized L1 data only
 ///
-/// See the [Base specifications](https://specs.optimism.io) for detailed safety definitions.
+/// See the [Base specifications](https://specs.base.org) for detailed safety definitions.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub struct EngineSyncState {
     /// Most recent block found on the P2P network (lowest safety level).
@@ -131,7 +131,7 @@ impl EngineState {
     /// is ahead of the safe head. When the two are equal, consolidation isn't
     /// required and the [`crate::BuildTask`] can be used to build the block.
     ///
-    /// [Consolidation]: https://specs.optimism.io/protocol/derivation.html#l1-consolidation-payload-attributes-matching
+    /// [Consolidation]: https://specs.base.org/protocol/consensus/derivation#l1-consolidation-payload-attributes-matching
     pub fn needs_consolidation(&self) -> bool {
         self.sync_state.safe_head() != self.sync_state.unsafe_head()
     }

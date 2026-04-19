@@ -19,7 +19,7 @@ use super::utils::precompile_run;
 
 /// The maximum input size for the BLS12-381 g1 msm operation after the Isthmus Hardfork.
 ///
-/// See: <https://specs.optimism.io/protocol/isthmus/exec-engine.html#evm-changes>
+/// See: <https://specs.base.org/upgrades/isthmus/exec-engine#evm-changes>
 const BLS12_MAX_G1_MSM_SIZE_ISTHMUS: usize = 513760;
 
 /// The maximum input size for the BLS12-381 g1 msm operation after the Jovian Hardfork.

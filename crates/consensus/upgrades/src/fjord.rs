@@ -26,7 +26,7 @@ impl Fjord {
     pub const SET_FJORD_METHOD_SIGNATURE: [u8; 4] = hex!("8e98b106");
 
     /// The Fjord Gas Price Oracle code hash.
-    /// See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-deployment>
+    /// See: <https://specs.base.org/upgrades/fjord/derivation#gaspriceoracle-deployment>
     pub const GAS_PRICE_ORACLE_CODE_HASH: B256 = alloy_primitives::b256!(
         "0xa88fa50a2745b15e6794247614b5298483070661adacb8d32d716434ed24c6b2"
     );
@@ -58,7 +58,7 @@ impl Fjord {
     pub fn deposits() -> impl Iterator<Item = TxDeposit> {
         ([
             // Deploys the Fjord Gas Price Oracle contract.
-            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-deployment>
+            // See: <https://specs.base.org/upgrades/fjord/derivation#gaspriceoracle-deployment>
             TxDeposit {
                 source_hash: Self::deploy_fjord_gas_price_oracle_source(),
                 from: Deployers::FJORD_GAS_PRICE_ORACLE,
@@ -70,7 +70,7 @@ impl Fjord {
                 input: Self::gas_price_oracle_deployment_bytecode(),
             },
             // Updates the gas price Oracle proxy to point to the Fjord Gas Price Oracle.
-            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-proxy-update>
+            // See: <https://specs.base.org/upgrades/fjord/derivation#gaspriceoracle-proxy-update>
             TxDeposit {
                 source_hash: Self::update_fjord_gas_price_oracle_source(),
                 from: Address::ZERO,
@@ -82,7 +82,7 @@ impl Fjord {
                 input: UpgradeCalldata::build(Self::FJORD_GAS_PRICE_ORACLE),
             },
             // Enables the Fjord Gas Price Oracle.
-            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-enable-fjord>
+            // See: <https://specs.base.org/upgrades/fjord/derivation#gaspriceoracle-enable-fjord>
             TxDeposit {
                 source_hash: Self::enable_fjord_source(),
                 from: SystemAddresses::DEPOSITOR_ACCOUNT,

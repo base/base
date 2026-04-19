@@ -19,7 +19,7 @@ use super::utils::precompile_run;
 /// Performs an FPVM-accelerated BLS12-381 map fp2 check.
 ///
 /// Notice, there is no input size limit for this precompile.
-/// See: <https://specs.optimism.io/protocol/isthmus/exec-engine.html#evm-changes>
+/// See: <https://specs.base.org/upgrades/isthmus/exec-engine#evm-changes>
 pub(crate) fn fpvm_bls12_map_fp2<H, O>(
     input: &[u8],
     gas_limit: u64,

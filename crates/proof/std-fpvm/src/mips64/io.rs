@@ -7,7 +7,7 @@ pub(crate) struct Mips64IO;
 
 /// Relevant system call numbers for the `MIPS64r2` target architecture.
 ///
-/// See [Cannon System Call Specification](https://specs.optimism.io/experimental/fault-proof/cannon-fault-proof-vm.html#syscalls)
+/// See [Cannon System Call Specification](https://specs.base.org/protocol/fault-proof/cannon-fault-proof-vm#syscalls)
 ///
 /// **Note**: This is not an exhaustive list of system calls available to the `client` program,
 /// only the ones necessary for the [`BasicKernelInterface`] trait implementation. If an extension

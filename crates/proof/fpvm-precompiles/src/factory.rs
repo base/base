@@ -95,7 +95,7 @@ where
             .with_db(db)
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
-            .build_op_with_inspector(inspector)
+            .build_with_inspector(inspector)
             .with_precompiles(FpvmPrecompiles::new_with_spec(
                 spec_id,
                 self.hint_writer.clone(),

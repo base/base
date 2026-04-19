@@ -78,7 +78,7 @@ where
         }
 
         trace!(tx_hash = ?tx_hash, "cache hit for transaction");
-        pending_blocks.get_op_tx_result(tx_hash)
+        pending_blocks.get_tx_result(tx_hash)
     }
 }
 

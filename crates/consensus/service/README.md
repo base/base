@@ -5,7 +5,7 @@
 
 An implementation of the Base [RollupNode][rn-spec] service.
 
-[rn-spec]: https://specs.optimism.io/protocol/rollup-node.html
+[rn-spec]: https://specs.base.org/protocol/consensus
 
 ## Overview
 

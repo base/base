@@ -13,7 +13,7 @@ const VERSION_BYTE: u8 = 1;
 /// - 4 bytes `elasticity_multiplier` (big-endian u32)
 /// - 8 bytes `min_base_fee` (big-endian u64)
 ///
-/// See: <https://specs.optimism.io/protocol/jovian/exec-engine.html>
+/// See: <https://specs.base.org/upgrades/jovian/exec-engine>
 #[derive(Debug)]
 pub struct JovianExtraData;
 

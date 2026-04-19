@@ -30,12 +30,12 @@ impl Ecotone {
     pub const EIP4788_FROM: Address = address!("0B799C86a49DEeb90402691F1041aa3AF2d3C875");
 
     /// The L1 Block Deployer Code Hash
-    /// See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-deployment>
+    /// See: <https://specs.base.org/upgrades/ecotone/derivation#l1block-deployment>
     pub const L1_BLOCK_DEPLOYER_CODE_HASH: B256 = alloy_primitives::b256!(
         "0xc88a313aa75dc4fbf0b6850d9f9ae41e04243b7008cf3eadb29256d4a71c1dfd"
     );
     /// The Gas Price Oracle Code Hash
-    /// See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-deployment>
+    /// See: <https://specs.base.org/upgrades/ecotone/derivation#gaspriceoracle-deployment>
     pub const GAS_PRICE_ORACLE_CODE_HASH: B256 = alloy_primitives::b256!(
         "0x8b71360ea773b4cfaf1ae6d2bd15464a4e1e2e360f786e475f63aeaed8da0ae5"
     );
@@ -95,7 +95,7 @@ impl Ecotone {
     pub fn deposits() -> impl Iterator<Item = TxDeposit> {
         ([
             // Deploy the L1 Block contract for Ecotone.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-deployment>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#l1block-deployment>
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
                 from: Deployers::ECOTONE_L1_BLOCK,
@@ -107,7 +107,7 @@ impl Ecotone {
                 input: Self::l1_block_deployment_bytecode(),
             },
             // Deploy the Gas Price Oracle contract for Ecotone.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-deployment>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#gaspriceoracle-deployment>
             TxDeposit {
                 source_hash: Self::deploy_gas_price_oracle_source(),
                 from: Deployers::ECOTONE_GAS_PRICE_ORACLE,
@@ -119,7 +119,7 @@ impl Ecotone {
                 input: Self::ecotone_gas_price_oracle_deployment_bytecode(),
             },
             // Updates the l1 block proxy to point to the new L1 Block contract.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-proxy-update>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#l1block-proxy-update>
             TxDeposit {
                 source_hash: Self::update_l1_block_source(),
                 from: Address::ZERO,
@@ -131,7 +131,7 @@ impl Ecotone {
                 input: UpgradeCalldata::build(Self::NEW_L1_BLOCK),
             },
             // Updates the gas price oracle proxy to point to the new Gas Price Oracle contract.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-proxy-update>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#gaspriceoracle-proxy-update>
             TxDeposit {
                 source_hash: Self::update_gas_price_oracle_source(),
                 from: Address::ZERO,
@@ -143,7 +143,7 @@ impl Ecotone {
                 input: UpgradeCalldata::build(Self::GAS_PRICE_ORACLE),
             },
             // Enables the Ecotone Gas Price Oracle.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-enable-ecotone>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#gaspriceoracle-enable-ecotone>
             TxDeposit {
                 source_hash: Self::enable_ecotone_source(),
                 from: SystemAddresses::DEPOSITOR_ACCOUNT,
@@ -155,7 +155,7 @@ impl Ecotone {
                 input: Self::ENABLE_ECOTONE_INPUT.into(),
             },
             // Deploys the beacon block roots contract.
-            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#beacon-block-roots-contract-deployment-eip-4788>
+            // See: <https://specs.base.org/upgrades/ecotone/derivation#beacon-block-roots-contract-deployment-eip-4788>
             TxDeposit {
                 source_hash: Self::beacon_roots_source(),
                 from: Self::EIP4788_FROM,

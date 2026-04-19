@@ -132,7 +132,7 @@ where
     /// Handles the sync request/response protocol.
     ///
     /// This is a mock handler that supports the `payload_by_number` protocol.
-    /// It always returns: not found (1), version (0). `<https://specs.optimism.io/protocol/rollup-node-p2p.html#payload_by_number>`
+    /// It always returns: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
     ///
     /// ## Note
     ///
@@ -162,7 +162,7 @@ where
 
                     debug!(target: "gossip", bytes_received, peer_id = %peer_id, payload = ?buffer, "Received inbound sync request");
 
-                    // We return: not found (1), version (0). `<https://specs.optimism.io/protocol/rollup-node-p2p.html#payload_by_number>`
+                    // We return: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
                     // Response format: <response> = <res><version><payload>
                     // No payload is returned.
                     const OUTPUT: [u8; 2] = hex!("0100");

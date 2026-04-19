@@ -16,12 +16,12 @@ pub struct BaseExecutionPayloadSidecar {
     /// Ecotone request params, inherited from Cancun, introduced in `engine_newPayloadV3` that are
     /// not present in the [`ExecutionPayloadV3`](alloy_rpc_types_engine::ExecutionPayloadV3).
     ///
-    /// NOTE: Blob versioned hashes should always be empty. See <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv3>.
+    /// NOTE: Blob versioned hashes should always be empty. See <https://specs.base.org/protocol/execution#engine_newpayloadv3>.
     ecotone: MaybeCancunPayloadFields,
     /// Isthmus request params, inherited from Prague, introduced in `engine_newPayloadV4` that are
     /// not present in the [`BaseExecutionPayloadV4`].
     ///
-    /// NOTE: These fields, i.e. the EL request hashes, should always be empty. See <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>.
+    /// NOTE: These fields, i.e. the EL request hashes, should always be empty. See <https://specs.base.org/protocol/execution#engine_newpayloadv4>.
     isthmus: MaybePraguePayloadFields,
 }
 

@@ -451,7 +451,7 @@ mod tests {
             })
             .modify_cfg_chained(|cfg| cfg.spec = OpSpecId::JOVIAN);
 
-        let evm = ctx.build_op_with_inspector(NoOpInspector {});
+        let evm = ctx.build_with_inspector(NoOpInspector {});
 
         BaseBlockExecutor::new(
             evm,

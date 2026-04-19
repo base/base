@@ -32,7 +32,7 @@ pub trait BatchStreamProvider {
 /// It slots in between the [`ChannelReader`] and [`BatchQueue`]
 /// stages, buffering span batches until they are validated.
 ///
-/// [`Holocene`]: https://specs.optimism.io/protocol/holocene/overview.html
+/// [`Holocene`]: https://specs.base.org/upgrades/holocene/overview
 /// [`ChannelReader`]: crate::stages::ChannelReader
 /// [`BatchQueue`]: crate::stages::BatchQueue
 #[derive(Debug)]

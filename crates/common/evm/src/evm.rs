@@ -58,7 +58,7 @@ pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
 impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     /// Constructs a [`BaseEvm`] from a pre-built [`RevmEvm`] and an inspect flag.
     ///
-    /// Prefer [`crate::Builder::build_op`] or [`crate::Builder::build_op_with_inspector`]
+    /// Prefer [`crate::Builder::build_op`] or [`crate::Builder::build_with_inspector`]
     /// to construct from an [`OpContext`] directly.
     pub const fn new(inner: InnerEvm<DB, I, P>, inspect: bool) -> Self {
         Self { inner, inspect }

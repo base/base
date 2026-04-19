@@ -4,7 +4,7 @@
 
 A `no_std` compatible implementation of Base's [derivation pipeline][derive].
 
-[derive]: https://specs.optimism.io/protocol/derivation.html#l2-chain-derivation-specification
+[derive]: https://specs.base.org/protocol/consensus/derivation#l2-chain-derivation-specification
 
 ## Overview
 

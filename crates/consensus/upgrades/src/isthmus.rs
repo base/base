@@ -2,7 +2,7 @@
 //!
 //! Isthmus network upgrade transactions are defined in the [Base Specs][specs].
 //!
-//! [specs]: https://specs.optimism.io/protocol/isthmus/derivation.html#network-upgrade-automation-transactions
+//! [specs]: https://specs.base.org/upgrades/isthmus/derivation#network-upgrade-automation-transactions
 
 use alloc::vec::Vec;
 
@@ -41,18 +41,18 @@ impl Isthmus {
     pub const OPERATOR_FEE_VAULT: Address = address!("4fa2be8cd41504037f1838bce3bcc93bc68ff537");
 
     /// The Isthmus L1 Block Deployer Code Hash
-    /// See: <https://specs.optimism.io/protocol/isthmus/derivation.html#l1block-deployment>
+    /// See: <https://specs.base.org/upgrades/isthmus/derivation#l1block-deployment>
     pub const L1_BLOCK_DEPLOYER_CODE_HASH: B256 = alloy_primitives::b256!(
         "0x8e3fe7a416d3e5f3b7be74ddd4e7e58e516fa3f80b67c6d930e3cd7297da4a4b"
     );
 
     /// The Isthmus Gas Price Oracle Code Hash
-    /// See: <https://specs.optimism.io/protocol/isthmus/derivation.html#gaspriceoracle-deployment>
+    /// See: <https://specs.base.org/upgrades/isthmus/derivation#gaspriceoracle-deployment>
     pub const GAS_PRICE_ORACLE_CODE_HASH: B256 = alloy_primitives::b256!(
         "0x4d195a9d7caf9fb6d4beaf80de252c626c853afd5868c4f4f8d19c9d301c2679"
     );
     /// The Isthmus Operator Fee Vault Code Hash
-    /// See: <https://specs.optimism.io/protocol/isthmus/derivation.html#operator-fee-vault-deployment>
+    /// See: <https://specs.base.org/upgrades/isthmus/derivation#operator-fee-vault-deployment>
     pub const OPERATOR_FEE_VAULT_CODE_HASH: B256 = alloy_primitives::b256!(
         "0x57dc55c9c09ca456fa728f253fe7b895d3e6aae0706104935fe87c7721001971"
     );

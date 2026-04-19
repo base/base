@@ -351,7 +351,7 @@ impl PendingBlocks {
     }
 
     /// Returns the receipt and state for a transaction.
-    pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<BaseTxResult<OpHaltReason, OpTxType>> {
+    pub fn get_tx_result(&self, tx_hash: &B256) -> Option<BaseTxResult<OpHaltReason, OpTxType>> {
         let (((result, state), tx), sender) = self
             .get_transaction_result(tx_hash)
             .zip(self.get_transaction_state(tx_hash))
@@ -824,12 +824,12 @@ mod tests {
     }
 
     #[test]
-    fn get_op_tx_result_reconstructs_all_fields_for_legacy_tx() {
+    fn get_tx_result_reconstructs_all_fields_for_legacy_tx() {
         let da_footprint = 42_000u64;
         let (tx_hash, pending_blocks) =
             build_pending_blocks(test_legacy_transaction(), Some(da_footprint));
 
-        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+        let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, da_footprint);
         assert_eq!(result.inner.tx_type, OpTxType::Legacy);
@@ -839,10 +839,10 @@ mod tests {
     }
 
     #[test]
-    fn get_op_tx_result_reconstructs_all_fields_for_deposit_tx() {
+    fn get_tx_result_reconstructs_all_fields_for_deposit_tx() {
         let (tx_hash, pending_blocks) = build_pending_blocks(test_deposit_transaction(), Some(0));
 
-        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+        let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, 0);
         assert_eq!(result.inner.tx_type, OpTxType::Deposit);
@@ -852,16 +852,16 @@ mod tests {
     }
 
     #[test]
-    fn get_op_tx_result_defaults_blob_gas_to_zero_when_receipt_field_is_none() {
+    fn get_tx_result_defaults_blob_gas_to_zero_when_receipt_field_is_none() {
         let (tx_hash, pending_blocks) = build_pending_blocks(test_legacy_transaction(), None);
 
-        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+        let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, 0);
     }
 
     #[test]
-    fn get_op_tx_result_defaults_blob_gas_to_zero_without_receipt() {
+    fn get_tx_result_defaults_blob_gas_to_zero_without_receipt() {
         let tx = test_legacy_transaction();
         let tx_hash = tx.tx_hash();
         let mut builder = PendingBlocksBuilder::default();
@@ -874,7 +874,7 @@ mod tests {
         // Intentionally skip with_receipt to test the no-receipt fallback path
         let pending_blocks = builder.build().expect("should build pending blocks");
 
-        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+        let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, 0);
     }

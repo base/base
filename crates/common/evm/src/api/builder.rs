@@ -25,7 +25,7 @@ pub trait Builder: Sized {
     /// Builds a [`BaseEvm`] with the given inspector. The inspect flag is `true`,
     /// so [`Inspector`][revm::Inspector] callbacks are invoked on every
     /// [`alloy_evm::Evm::transact`] call.
-    fn build_op_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<Self::Db, INSP>;
+    fn build_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<Self::Db, INSP>;
 }
 
 impl<DB: Database> Builder for OpContext<DB> {
@@ -45,7 +45,7 @@ impl<DB: Database> Builder for OpContext<DB> {
         )
     }
 
-    fn build_op_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<DB, INSP> {
+    fn build_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<DB, INSP> {
         let spec: OpSpecId = self.cfg.spec;
         BaseEvm::new(
             revm::context::Evm {

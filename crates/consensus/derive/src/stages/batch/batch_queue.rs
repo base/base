@@ -138,7 +138,7 @@ where
                 BatchValidity::Future => {
                     // Drop Future batches post-holocene.
                     //
-                    // See: <https://specs.optimism.io/protocol/holocene/derivation.html#batch_queue>
+                    // See: <https://specs.base.org/upgrades/holocene/derivation#batch_queue>
                     if !self.cfg.is_holocene_active(origin.timestamp) {
                         remaining.push(batch.clone());
                     } else {

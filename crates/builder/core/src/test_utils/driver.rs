@@ -331,7 +331,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 // 2. Zero operator fee scalar
 // 3. Zero operator fee constant
 // 4. DA footprint of 400 applied
-// See: // https://specs.optimism.io/protocol/jovian/l1-attributes.html for Jovian specs.
+// See: // https://specs.base.org/upgrades/jovian/l1-attributes for Jovian specs.
 const JOVIAN_DATA: &[u8] = &hex!(
     "3db6be2b0000146b000f79c500000000000000040000000066d052e700000000013ad8a
     3000000000000000000000000000000000000000000000000000000003ef12787000000

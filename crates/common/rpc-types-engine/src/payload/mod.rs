@@ -352,7 +352,7 @@ impl BaseExecutionPayload {
     /// Creates a new instance from `newPayloadV2` payload, i.e. [`V1`](Self::V1) or
     /// [`V2`](Self::V2) variant.
     ///
-    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv2>
+    /// Spec: <https://specs.base.org/protocol/execution#engine_newpayloadv2>
     pub fn v2(payload: ExecutionPayloadInputV2) -> Self {
         match payload.into_payload() {
             ExecutionPayload::V1(payload) => Self::V1(payload),
@@ -363,14 +363,14 @@ impl BaseExecutionPayload {
 
     /// Creates a new instance from `newPayloadV3` payload, i.e. [`V3`](Self::V3) variant.
     ///
-    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv3>
+    /// Spec: <https://specs.base.org/protocol/execution#engine_newpayloadv3>
     pub const fn v3(payload: ExecutionPayloadV3) -> Self {
         Self::V3(payload)
     }
 
     /// Creates a new instance from `newPayloadV4` payload, i.e. [`V4`](Self::V4) variant.
     ///
-    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>
+    /// Spec: <https://specs.base.org/protocol/execution#engine_newpayloadv4>
     pub const fn v4(payload: BaseExecutionPayloadV4) -> Self {
         Self::V4(payload)
     }

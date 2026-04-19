@@ -36,7 +36,7 @@ pub struct Behaviour {
     #[debug(skip)]
     pub identify: libp2p::identify::Behaviour,
     /// Enables the sync request/response protocol.
-    /// See `<https://specs.optimism.io/protocol/rollup-node-p2p.html#payload_by_number>`
+    /// See `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
     #[debug(skip)]
     pub sync_req_resp: libp2p_stream::Behaviour,
 }

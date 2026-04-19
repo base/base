@@ -36,7 +36,7 @@ mod tests {
     #[test]
     fn default_run_op() {
         let ctx = Context::op();
-        let mut evm = ctx.build_op_with_inspector(NoOpInspector {});
+        let mut evm = ctx.build_with_inspector(NoOpInspector {});
         // execute without inspector
         let _ = evm.transact(OpTransaction::builder().build_fill());
         // execute with inspector callbacks

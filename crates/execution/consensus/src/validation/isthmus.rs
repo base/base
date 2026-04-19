@@ -61,7 +61,7 @@ pub fn withdrawals_root_prehashed<DB: StorageRootProvider>(
 ///
 /// Takes state updates resulting from execution of block.
 ///
-/// See <https://specs.optimism.io/protocol/isthmus/exec-engine.html#l2tol1messagepasser-storage-root-in-header>.
+/// See <https://specs.base.org/upgrades/isthmus/exec-engine#l2tol1messagepasser-storage-root-in-header>.
 pub fn verify_withdrawals_root<DB, H>(
     state_updates: &BundleState,
     state: DB,
@@ -99,7 +99,7 @@ where
 /// Takes pre-hashed storage updates of `L2ToL1MessagePasser.sol` predeploy, resulting from
 /// execution of block, if any. Otherwise takes empty [`HashedStorage::default`].
 ///
-/// See <https://specs.optimism.io/protocol/isthmus/exec-engine.html#l2tol1messagepasser-storage-root-in-header>.
+/// See <https://specs.base.org/upgrades/isthmus/exec-engine#l2tol1messagepasser-storage-root-in-header>.
 pub fn verify_withdrawals_root_prehashed<DB, H>(
     hashed_storage_updates: HashedStorage,
     state: DB,

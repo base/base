@@ -188,7 +188,7 @@ impl<EngineClient_: EngineClient> Ord for EngineTask<EngineClient_> {
     fn cmp(&self, other: &Self) -> Ordering {
         // Order (descending): BuildBlock -> InsertUnsafe -> Consolidate -> Finalize
         //
-        // https://specs.optimism.io/protocol/derivation.html#forkchoice-synchronization
+        // https://specs.base.org/protocol/consensus/derivation#forkchoice-synchronization
         //
         // - Block building jobs are prioritized above all other tasks, to give priority to the
         //   sequencer. BuildTask handles forkchoice updates automatically.

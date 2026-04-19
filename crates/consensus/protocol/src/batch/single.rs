@@ -60,7 +60,7 @@ impl SingleBatch {
     ///
     /// The batch format type is defined in the [Base Specs][specs].
     ///
-    /// [specs]: https://specs.optimism.io/protocol/derivation.html#batch-format
+    /// [specs]: https://specs.base.org/protocol/consensus/derivation#batch-format
     pub fn check_batch(
         &self,
         cfg: &RollupConfig,

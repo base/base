@@ -102,7 +102,7 @@ where
     /// This method is called by the `BatchStream` if an invalid span batch is found.
     /// In the case of an invalid span batch, the associated channel must be flushed.
     ///
-    /// See: <https://specs.optimism.io/protocol/holocene/derivation.html#span-batches>
+    /// See: <https://specs.base.org/upgrades/holocene/derivation#span-batches>
     ///
     /// SAFETY: Only called post-holocene activation.
     fn flush(&mut self) {

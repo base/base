@@ -1,7 +1,7 @@
 //! Addresses of Base pre-deploys.
 //!
 //! This module contains predeploy contract addresses and system addresses for Base.
-//! See the complete set of predeploys at <https://specs.optimism.io/protocol/predeploys.html#predeploys>
+//! See the complete set of predeploys at <https://specs.base.org/protocol/execution/evm/predeploys#predeploys>
 
 use alloy_primitives::{Address, address};
 
@@ -41,93 +41,93 @@ impl Predeploys {
 
     /// The `LegacyMessagePasser` contract stores commitments to withdrawal transactions before the
     /// Bedrock upgrade.
-    /// <https://specs.optimism.io/protocol/predeploys.html#legacymessagepasser>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#legacymessagepasser>
     pub const LEGACY_MESSAGE_PASSER: Address =
         address!("0x4200000000000000000000000000000000000000");
 
     /// The `DeployerWhitelist` was used to provide additional safety during initial phases of
     /// Base.
-    /// <https://specs.optimism.io/protocol/predeploys.html#deployerwhitelist>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#deployerwhitelist>
     pub const DEPLOYER_WHITELIST: Address = address!("0x4200000000000000000000000000000000000002");
 
     /// The `LegacyERC20ETH` predeploy represented all ether in the system before the Bedrock upgrade.
-    /// <https://specs.optimism.io/protocol/predeploys.html#legacyerc20eth>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#legacyerc20eth>
     pub const LEGACY_ERC20_ETH: Address = address!("0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000");
 
     /// The WETH9 predeploy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#weth9>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#weth9>
     pub const WETH9: Address = address!("0x4200000000000000000000000000000000000006");
 
     /// Higher level API for sending cross domain messages.
-    /// <https://specs.optimism.io/protocol/predeploys.html#l2crossdomainmessenger>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l2crossdomainmessenger>
     pub const L2_CROSS_DOMAIN_MESSENGER: Address =
         address!("0x4200000000000000000000000000000000000007");
 
     /// The L2 cross-domain messenger proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#l2standardbridge>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l2standardbridge>
     pub const L2_STANDARD_BRIDGE: Address = address!("0x4200000000000000000000000000000000000010");
 
     /// The sequencer fee vault proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#sequencerfeevault>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#sequencerfeevault>
     pub const SEQUENCER_FEE_VAULT: Address = address!("0x4200000000000000000000000000000000000011");
 
     /// The mintable ERC20 factory proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#optimismmintableerc20factory>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#optimismmintableerc20factory>
     pub const BASE_MINTABLE_ERC20_FACTORY: Address =
         address!("0x4200000000000000000000000000000000000012");
 
     /// Returns the last known L1 block number (legacy system).
-    /// <https://specs.optimism.io/protocol/predeploys.html#l1blocknumber>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l1blocknumber>
     pub const L1_BLOCK_NUMBER: Address = address!("0x4200000000000000000000000000000000000013");
 
     /// The gas price oracle proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#gaspriceoracle>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#gaspriceoracle>
     pub const GAS_PRICE_ORACLE: Address = address!("0x420000000000000000000000000000000000000F");
 
     /// The governance token proxy address.
-    /// <https://specs.optimism.io/governance/gov-token.html>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#governancetoken>
     pub const GOVERNANCE_TOKEN: Address = address!("0x4200000000000000000000000000000000000042");
 
     /// The L1 block information proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#l1block>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l1block>
     pub const L1_BLOCK_INFO: Address = address!("0x4200000000000000000000000000000000000015");
 
     /// The L2 contract `L2ToL1MessagePasser`, stores commitments to withdrawal transactions.
-    /// <https://specs.optimism.io/protocol/predeploys.html#l2tol1messagepasser>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l2tol1messagepasser>
     pub const L2_TO_L1_MESSAGE_PASSER: Address =
         address!("0x4200000000000000000000000000000000000016");
 
     /// The L2 ERC721 bridge proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys>
     pub const L2_ERC721_BRIDGE: Address = address!("0x4200000000000000000000000000000000000014");
 
     /// The mintable ERC721 proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#optimismmintableerc721factory>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#optimismmintableerc721factory>
     pub const BASE_MINTABLE_ERC721_FACTORY: Address =
         address!("0x4200000000000000000000000000000000000017");
 
     /// The L2 proxy admin address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#proxyadmin>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#proxyadmin>
     pub const PROXY_ADMIN: Address = address!("0x4200000000000000000000000000000000000018");
 
     /// The base fee vault address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#basefeevault>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#basefeevault>
     pub const BASE_FEE_VAULT: Address = address!("0x4200000000000000000000000000000000000019");
 
     /// The L1 fee vault address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#l1feevault>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#l1feevault>
     pub const L1_FEE_VAULT: Address = address!("0x420000000000000000000000000000000000001a");
 
     /// The schema registry proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#schemaregistry>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#schemaregistry>
     pub const SCHEMA_REGISTRY: Address = address!("0x4200000000000000000000000000000000000020");
 
     /// The EAS proxy address.
-    /// <https://specs.optimism.io/protocol/predeploys.html#eas>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#eas>
     pub const EAS: Address = address!("0x4200000000000000000000000000000000000021");
 
     /// Provides access to L1 beacon block roots (EIP-4788).
-    /// <https://specs.optimism.io/protocol/predeploys.html#beacon-block-root>
+    /// <https://specs.base.org/protocol/execution/evm/predeploys#beacon-block-root>
     pub const BEACON_BLOCK_ROOT: Address = address!("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02");
 
     /// The Operator Fee Vault proxy address.
@@ -147,7 +147,7 @@ pub struct SystemAddresses;
 
 impl SystemAddresses {
     /// The depositor address of the L1 attributes transaction (`L1Block` contract depositor).
-    /// <https://specs.optimism.io/protocol/deposits.html#l1-attributes-deposited-transaction>
+    /// <https://specs.base.org/protocol/bridging/deposits#l1-attributes-deposited-transaction>
     pub const DEPOSITOR_ACCOUNT: Address = address!("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
 }
 
