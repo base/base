@@ -273,6 +273,8 @@ jobs:
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup
+        with:
+          tools: cargo-deny
       - run: just check::deny
 
   devnet-tests:

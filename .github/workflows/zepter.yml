@@ -26,4 +26,7 @@ jobs:
         with:
           fetch-depth: 1
       - uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+      - uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+        with:
+          tool: zepter
       - run: just zepter
