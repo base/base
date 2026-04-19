@@ -54,7 +54,7 @@ impl<EngineRpcClient_: EngineRpcClient> RollupRpc<EngineRpcClient_> {
         Self { engine_client, l1_watcher_sender, safe_db_reader }
     }
 
-    // Important note: we zero-out the fields that can't be derived yet to follow op-node's
+    // Important note: we zero-out the fields that can't be derived yet to follow the reference node's
     // behaviour.
     fn sync_status_from_actor_queries(
         l1_sync_status: L1State,

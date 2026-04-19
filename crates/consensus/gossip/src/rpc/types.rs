@@ -227,7 +227,7 @@ pub struct PeerStats {
     Eq,
     Copy,
     Default,
-    // We need to use `serde_repr` to serialize the enum as an integer to match the `op-node` API.
+    // We need to use `serde_repr` to serialize the enum as an integer to match the reference node API.
     serde_repr::Serialize_repr,
     serde_repr::Deserialize_repr,
 )]

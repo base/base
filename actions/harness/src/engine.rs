@@ -670,7 +670,7 @@ impl EngineClient for ActionEngineClient {
     async fn new_payload_v1(&self, _payload: ExecutionPayloadV1) -> TransportResult<PayloadStatus> {
         Err(TransportError::from(TransportErrorKind::custom_str(
             "ActionEngineClient does not support new_payload_v1 \
-             (OP Stack derivation uses new_payload_v2 or later)",
+             (Base derivation uses new_payload_v2 or later)",
         )))
     }
 

@@ -11,7 +11,7 @@
 //! - **Isthmus, Jovian** → V4 methods
 //! - **Base Azul (Osaka)** → `getPayloadV5`, `newPayloadV4`
 //!
-//! Adapted from the [OP Node version providers](https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/types.go#L546).
+//! Adapted from the [reference node version providers](https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/types.go#L546).
 
 use base_consensus_genesis::RollupConfig;
 

@@ -2,7 +2,7 @@
 //!
 //! Wraps an [`AlloyChainProvider`] to enforce an L1 confirmation depth cutoff on
 //! `block_info_by_number` lookups. This prevents the derivation pipeline from reading
-//! L1 blocks that are too close to the chain tip, matching the behaviour of op-node's
+//! L1 blocks that are too close to the chain tip, matching the behaviour of the reference node's
 //! `ConfDepth` wrapper.
 
 use std::sync::{
@@ -28,7 +28,7 @@ pub type L1HeadNumber = Arc<AtomicU64>;
 ///
 /// When `conf_depth > 0`, `block_info_by_number(n)` returns a temporary `BlockNotFound`
 /// error for any block `n` where `n + conf_depth > l1_head`. This causes the derivation
-/// pipeline to yield and retry later, matching the behavior of op-node's `ConfDepth` wrapper.
+/// pipeline to yield and retry later, matching the behavior of the reference node's `ConfDepth` wrapper.
 ///
 /// All other methods delegate to the inner [`AlloyChainProvider`] unchanged.
 #[derive(Debug, Clone)]

@@ -92,7 +92,7 @@ fn test_gas_included_in_balance_change() {
     assert!(!sender_changes.balance_changes.is_empty(), "Sender should have balance change");
 
     // Verify there's a fee vault/beneficiary that received the gas payment
-    // In OP stack this is typically the sequencer fee vault
+    // In Base this is typically the sequencer fee vault
     let fee_recipients: Vec<_> = access_list
         .account_changes
         .iter()

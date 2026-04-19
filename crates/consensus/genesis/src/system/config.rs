@@ -124,7 +124,7 @@ impl SystemConfig {
     ///
     /// Each config update log is applied independently. Malformed or invalid updates are
     /// skipped so that subsequent valid updates in the same block are still processed.
-    /// This matches the op-node reference behavior in `UpdateSystemConfigWithL1Receipts`.
+    /// This matches the reference node behavior in `UpdateSystemConfigWithL1Receipts`.
     ///
     /// Returns the successfully applied update kinds and any errors encountered.
     pub fn update_with_receipts(

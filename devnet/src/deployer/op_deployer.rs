@@ -58,9 +58,9 @@ impl Default for RoleAddresses {
     }
 }
 
-/// op-deployer container wrapper for L2 contract deployment.
+/// Container wrapper for L2 contract deployment via op-deployer.
 #[derive(Debug)]
-pub struct OpDeployerContainer {
+pub struct DeployerContainer {
     l1_rpc_url: Url,
     l1_chain_id: u64,
     l2_chain_id: u64,
@@ -70,8 +70,8 @@ pub struct OpDeployerContainer {
     network: Option<String>,
 }
 
-impl OpDeployerContainer {
-    /// Creates a new op-deployer container wrapper.
+impl DeployerContainer {
+    /// Creates a new deployer container wrapper.
     pub fn new(
         l1_rpc_url: Url,
         l1_chain_id: u64,

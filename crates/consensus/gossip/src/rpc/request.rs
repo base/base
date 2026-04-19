@@ -318,7 +318,7 @@ impl P2pRpcRequest {
 
         // We consider that base-nodes are gossiping blocks if their peers are subscribed to any of
         // the blocks topics.
-        // This is the same heuristic as the one used in the op-node (`<https://github.com/ethereum-optimism/optimism/blob/6a8b2349c29c2a14f948fcb8aefb90526130acec/op-node/p2p/rpc_server.go#L179-L183>`).
+        // This is the same heuristic as the one used in the reference node (`<https://github.com/ethereum-optimism/optimism/blob/6a8b2349c29c2a14f948fcb8aefb90526130acec/op-node/p2p/rpc_server.go#L179-L183>`).
         let peer_gossip_info = gossip
             .swarm
             .behaviour()
@@ -417,7 +417,7 @@ impl P2pRpcRequest {
                             connectedness: peer_connectedness,
                             direction,
                             // Note: we use the chain id from the ENR if it exists, otherwise we
-                            // use 0 to be consistent with op-node's behavior (`<https://github.com/ethereum-optimism/optimism/blob/6a8b2349c29c2a14f948fcb8aefb90526130acec/op-service/apis/p2p.go#L55>`).
+                            // use 0 to be consistent with the reference node's behavior (`<https://github.com/ethereum-optimism/optimism/blob/6a8b2349c29c2a14f948fcb8aefb90526130acec/op-service/apis/p2p.go#L55>`).
                             chain_id: base_enr.map(|enr| enr.chain_id).unwrap_or(0),
                             gossip_blocks: peer_gossip_info.contains(peer_id),
                             protected: protected_peers.contains(peer_id),

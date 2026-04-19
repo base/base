@@ -123,7 +123,7 @@ where
     /// - `unsafe_head` does not match the engine's current unsafe head hash.
     ///
     /// When a conductor is configured, this checks `conductor_leader` before activating,
-    /// matching op-node's `Start()` behavior. If the node is not the leader the call returns
+    /// matching the reference node's `Start()` behavior. If the node is not the leader the call returns
     /// [`SequencerAdminAPIError::NotLeader`] and the sequencer remains inactive.
     pub(super) async fn start_sequencer(
         &mut self,

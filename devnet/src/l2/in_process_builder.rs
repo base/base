@@ -54,7 +54,7 @@ pub struct InProcessBuilderConfig {
 /// An in-process builder node that replaces Docker-based `BuilderContainer`.
 ///
 /// This spawns a real builder node within the current process, binding to dynamic ports.
-/// Docker containers (like op-node) can connect via `host.docker.internal`.
+/// Docker containers (like consensus nodes) can connect via `host.docker.internal`.
 pub struct InProcessBuilder {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,

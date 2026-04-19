@@ -51,7 +51,7 @@ where
     /// is at most `channel_timeout` L1 blocks behind the safe head's L1 origin, then returns
     /// that block's L1 origin and system config.
     ///
-    /// This matches op-node's `initialReset` behavior: using the system config from a
+    /// This matches the reference node's `initialReset` behavior: using the system config from a
     /// potentially older L2 block ensures we see any batcher-address changes that could
     /// affect channels still open within the channel timeout window.
     async fn initial_reset(

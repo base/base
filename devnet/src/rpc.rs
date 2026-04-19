@@ -85,7 +85,7 @@ impl DevnetRpcClient {
         Ok((l1, l2_builder, l2_client))
     }
 
-    /// Get sync status from L2 builder op-node.
+    /// Get sync status from the L2 builder consensus node.
     pub async fn l2_builder_sync_status(&self) -> Result<SyncStatus> {
         self.l2_builder_op_client
             .sync_status()
@@ -93,7 +93,7 @@ impl DevnetRpcClient {
             .wrap_err("Failed to get L2 builder sync status")
     }
 
-    /// Get sync status from L2 client op-node.
+    /// Get sync status from the L2 client consensus node.
     pub async fn l2_client_sync_status(&self) -> Result<SyncStatus> {
         self.l2_client_op_client.sync_status().await.wrap_err("Failed to get L2 client sync status")
     }

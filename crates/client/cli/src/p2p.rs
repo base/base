@@ -162,14 +162,14 @@ pub struct P2PArgs {
     /// The threshold used to ban peers.
     ///
     /// For peers to be banned, the `p2p.ban.peers` flag must be set to `true`.
-    /// By default, peers are banned if their score is below -100. This follows the `op-node` default `<https://github.com/ethereum-optimism/optimism/blob/09a8351a72e43647c8a96f98c16bb60e7b25dc6e/op-node/flags/p2p_flags.go#L123-L130>`.
+    /// By default, peers are banned if their score is below -100. This follows the reference node default `<https://github.com/ethereum-optimism/optimism/blob/09a8351a72e43647c8a96f98c16bb60e7b25dc6e/op-node/flags/p2p_flags.go#L123-L130>`.
     #[arg(long = "p2p.ban.threshold", default_value = "-100", env = "BASE_NODE_P2P_BAN_THRESHOLD")]
     pub ban_threshold: i64,
 
     /// The duration in minutes to ban a peer for.
     ///
     /// For peers to be banned, the `p2p.ban.peers` flag must be set to `true`.
-    /// By default peers are banned for 1 hour. This follows the `op-node` default `<https://github.com/ethereum-optimism/optimism/blob/09a8351a72e43647c8a96f98c16bb60e7b25dc6e/op-node/flags/p2p_flags.go#L131-L138>`.
+    /// By default peers are banned for 1 hour. This follows the reference node default `<https://github.com/ethereum-optimism/optimism/blob/09a8351a72e43647c8a96f98c16bb60e7b25dc6e/op-node/flags/p2p_flags.go#L131-L138>`.
     #[arg(long = "p2p.ban.duration", default_value = "60", env = "BASE_NODE_P2P_BAN_DURATION")]
     pub ban_duration: u64,
 
@@ -207,8 +207,8 @@ pub struct P2PArgs {
     ///
     /// Topic scoring is a mechanism to score peers based on their behavior in the gossip network.
     /// Historically, topic scoring was only enabled for the v1 topic on the Base p2p network
-    /// in the `op-node`. This was a silent bug, and topic scoring is actively being
-    /// [phased out of the `op-node`][out].
+    /// in the reference node. This was a silent bug, and topic scoring is actively being
+    /// [phased out of the reference node][out].
     ///
     /// This flag is only presented for backwards compatibility and debugging purposes.
     ///

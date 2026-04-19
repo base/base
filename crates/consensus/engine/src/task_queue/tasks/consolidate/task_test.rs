@@ -25,7 +25,7 @@ use crate::{
 /// correct parent, so the comparison is invalid.
 ///
 /// After the fix the reconcile path proceeds to `seal_and_canonicalize_block`
-/// directly, matching op-node's behaviour.
+/// directly, matching the reference node's behaviour.
 ///
 /// This test FAILS on unfixed main and PASSES after the fix lands.
 #[tokio::test]

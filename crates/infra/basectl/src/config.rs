@@ -292,12 +292,12 @@ impl ChainConfig {
         let provider = ProviderBuilder::new()
             .connect(op_node_url.as_str())
             .await
-            .with_context(|| format!("Failed to connect to op-node at {op_node_url}"))?;
+            .with_context(|| format!("Failed to connect to consensus node at {op_node_url}"))?;
 
         let config: RollupConfig = provider
             .raw_request("optimism_rollupConfig".into(), ())
             .await
-            .with_context(|| "Failed to fetch rollup config from op-node")?;
+            .with_context(|| "Failed to fetch rollup config from consensus node")?;
 
         Ok(config)
     }
@@ -359,7 +359,7 @@ impl ChainConfig {
         let op_node_url = config.op_node_rpc.as_ref().expect("devnet should have op_node_rpc");
 
         let rollup_config = Self::fetch_rollup_config(op_node_url).await.with_context(
-            || "Failed to fetch rollup config from op-node. Is the devnet running?",
+            || "Failed to fetch rollup config from consensus node. Is the devnet running?",
         )?;
 
         config.system_config = rollup_config.l1_system_config_address;

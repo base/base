@@ -985,7 +985,7 @@ impl LoadRunner {
         let max_fee =
             gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
         let drain_gas_limit = 21_000u128;
-        // L1 data fee on OP Stack can be significant (0.0001-0.001 ETH depending on L1 gas prices).
+        // L1 data fee on Base can be significant (0.0001-0.001 ETH depending on L1 gas prices).
         // Use 0.001 ETH (1e15 wei) buffer to be safe. We may leave dust in accounts.
         let l1_fee_buffer = 1_000_000_000_000_000u128;
         let drain_gas_cost = U256::from(drain_gas_limit * max_fee + l1_fee_buffer);

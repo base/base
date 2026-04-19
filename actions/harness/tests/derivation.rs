@@ -392,7 +392,7 @@ async fn reorg_flip_flop_empty_middle_fork() {
 
     node.act_reset(l2_genesis).await;
     // act_reset sets safe_head and finalized_head to the reset target (l2_genesis).
-    // Per the OP Stack spec, unsafe_head is NOT clamped to safe_head on reset —
+    // Per the Base spec, unsafe_head is NOT clamped to safe_head on reset —
     // it is re-discovered by walking back from the current tip to the first block
     // with a plausible (canonical or ahead-of-L1) L1 origin.  In this node-only
     // context no gossip blocks were received, so unsafe_head was never advanced

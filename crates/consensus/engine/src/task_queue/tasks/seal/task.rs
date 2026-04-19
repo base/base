@@ -279,7 +279,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SealTask<EngineClient_> {
             "Starting new seal job"
         );
 
-        // NOTE: op-node does not compare the current unsafe head against the
+        // NOTE: the reference node does not compare the current unsafe head against the
         // attributes parent before sealing.  The BuildTask already sent an FCU
         // with `attributes.parent` as the head, so the EL is building on the
         // correct parent regardless of where the engine's in-memory unsafe head

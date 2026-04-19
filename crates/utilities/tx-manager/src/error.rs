@@ -239,7 +239,7 @@ pub type TxManagerResult<T> = Result<T, TxManagerError>;
 /// Classifies alloy [`TransportError`]s into structured [`TxManagerError`]
 /// variants.
 ///
-/// This mirrors the Go `op-service/txmgr` `errStringMatch` approach, enabling
+/// This mirrors the Go `txmgr` `errStringMatch` approach, enabling
 /// the send loop to make retry/abort decisions based on error type.
 ///
 /// For server-returned errors ([`RpcError::ErrorResp`]), classification uses

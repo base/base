@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_decode_encode_raw_span_batch() {
-        // Load in the raw span batch from the `op-node` derivation pipeline implementation.
+        // Load in the raw span batch from the reference derivation pipeline implementation.
         let raw_span_batch_hex = include_bytes!("./testdata/raw_batch.hex");
         let raw_span_batch = RawSpanBatch::decode(&mut raw_span_batch_hex.as_slice()).unwrap();
 

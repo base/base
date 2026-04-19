@@ -64,7 +64,7 @@ async fn can_sync() -> eyre::Result<()> {
     let side_chain = side_payload_chain.iter().map(|p| p.block().hash()).collect::<Vec<_>>();
 
     // Creates fork chain by submitting 89b payload.
-    // By returning Valid here, op-node will finally return a finalized hash
+    // By returning Valid here, the consensus node will finally return a finalized hash
     let _ = third_node.submit_payload(side_payload_chain[0].clone()).await;
 
     // It will issue a pipeline reorg to 88a, and then make 89b canonical AND finalized.

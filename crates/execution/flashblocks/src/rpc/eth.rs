@@ -38,7 +38,7 @@ impl<'de> serde::Deserialize<'de> for BlockNumberOrTagExt {
             }
 
             fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                // Remap the OP Stack "unsafe" tag to "latest". Our EL surfaces the unsafe
+                // Remap the Base "unsafe" tag to "latest". Our EL surfaces the unsafe
                 // head as "latest" (the most recently sealed block via engine_forkchoiceUpdated).
                 if v == "unsafe" {
                     return Ok(BlockNumberOrTagExt(BlockNumberOrTag::Latest));
