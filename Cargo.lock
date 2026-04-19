@@ -3642,6 +3642,7 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-primitives",
+ "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-rpc-types-engine",
