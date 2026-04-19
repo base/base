@@ -48,6 +48,33 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     const fn check_new_payload_status(&self, status: &PayloadStatusEnum) -> bool {
         matches!(status, PayloadStatusEnum::Valid | PayloadStatusEnum::Syncing)
     }
+
+    /// Converts pre-Ecotone payloads into the `engine_newPayloadV2` request shape.
+    fn execution_payload_input_v2(
+        payload: BaseExecutionPayload,
+    ) -> Result<(ExecutionPayloadInputV2, BaseBlock), InsertTaskError> {
+        match payload {
+            BaseExecutionPayload::V1(payload) => {
+                let block = BaseExecutionPayload::V1(payload.clone())
+                    .try_into_block()
+                    .map_err(InsertTaskError::FromBlockError)?;
+                let payload_input =
+                    ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
+                Ok((payload_input, block))
+            }
+            BaseExecutionPayload::V2(payload) => {
+                let block = BaseExecutionPayload::V2(payload.clone())
+                    .try_into_block()
+                    .map_err(InsertTaskError::FromBlockError)?;
+                let payload_input = ExecutionPayloadInputV2 {
+                    execution_payload: payload.payload_inner,
+                    withdrawals: Some(payload.withdrawals),
+                };
+                Ok((payload_input, block))
+            }
+            BaseExecutionPayload::V3(_) | BaseExecutionPayload::V4(_) => unreachable!(),
+        }
+    }
 }
 
 #[async_trait]
@@ -64,27 +91,9 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         let parent_beacon_block_root = self.envelope.parent_beacon_block_root.unwrap_or_default();
         let insert_time_start = Instant::now();
         let (response, block): (_, BaseBlock) = match self.envelope.execution_payload.clone() {
-            BaseExecutionPayload::V1(payload) => (
-                self.client.new_payload_v1(payload).await,
-                self.envelope
-                    .execution_payload
-                    .clone()
-                    .try_into_block()
-                    .map_err(InsertTaskError::FromBlockError)?,
-            ),
-            BaseExecutionPayload::V2(payload) => {
-                let payload_input = ExecutionPayloadInputV2 {
-                    execution_payload: payload.payload_inner,
-                    withdrawals: Some(payload.withdrawals),
-                };
-                (
-                    self.client.new_payload_v2(payload_input).await,
-                    self.envelope
-                        .execution_payload
-                        .clone()
-                        .try_into_block()
-                        .map_err(InsertTaskError::FromBlockError)?,
-                )
+            payload @ (BaseExecutionPayload::V1(_) | BaseExecutionPayload::V2(_)) => {
+                let (payload_input, block) = Self::execution_payload_input_v2(payload)?;
+                (self.client.new_payload_v2(payload_input).await, block)
             }
             BaseExecutionPayload::V3(payload) => (
                 self.client.new_payload_v3(payload, parent_beacon_block_root).await,
@@ -151,5 +160,153 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
+    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_protocol::L1BlockInfoBedrock;
+
+    use super::InsertTask;
+    use crate::{
+        EngineTaskExt,
+        test_utils::{TestEngineStateBuilder, test_engine_client_builder},
+    };
+
+    fn valid_payload_status() -> PayloadStatus {
+        PayloadStatus {
+            status: PayloadStatusEnum::Valid,
+            latest_valid_hash: Some(FixedBytes::ZERO),
+        }
+    }
+
+    fn valid_forkchoice_updated() -> ForkchoiceUpdated {
+        ForkchoiceUpdated { payload_status: valid_payload_status(), payload_id: None }
+    }
+
+    fn l1_info_deposit_tx() -> Vec<u8> {
+        BaseTxEnvelope::from(TxDeposit {
+            input: L1BlockInfoBedrock::default().encode_calldata(),
+            ..Default::default()
+        })
+        .encoded_2718()
+    }
+
+    fn bedrock_payload(block_number: u64) -> BaseExecutionPayload {
+        BaseExecutionPayload::V1(alloy_rpc_types_engine::ExecutionPayloadV1 {
+            parent_hash: B256::ZERO,
+            fee_recipient: Address::ZERO,
+            state_root: B256::ZERO,
+            receipts_root: B256::ZERO,
+            logs_bloom: Bloom::ZERO,
+            prev_randao: B256::ZERO,
+            block_number,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 1,
+            extra_data: Default::default(),
+            base_fee_per_gas: U256::ZERO,
+            block_hash: B256::with_last_byte(block_number as u8),
+            transactions: vec![l1_info_deposit_tx().into()],
+        })
+    }
+
+    fn canyon_payload(block_number: u64) -> BaseExecutionPayload {
+        BaseExecutionPayload::V2(alloy_rpc_types_engine::ExecutionPayloadV2 {
+            payload_inner: alloy_rpc_types_engine::ExecutionPayloadV1 {
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::ZERO,
+                prev_randao: B256::ZERO,
+                block_number,
+                gas_limit: 30_000_000,
+                gas_used: 0,
+                timestamp: 1_704_992_401,
+                extra_data: Default::default(),
+                base_fee_per_gas: U256::ZERO,
+                block_hash: B256::with_last_byte(block_number as u8),
+                transactions: vec![l1_info_deposit_tx().into()],
+            },
+            withdrawals: vec![],
+        })
+    }
+
+    fn test_client() -> Arc<crate::test_utils::MockEngineClient> {
+        Arc::new(
+            test_engine_client_builder()
+                .with_new_payload_v2_response(valid_payload_status())
+                .with_fork_choice_updated_v3_response(valid_forkchoice_updated())
+                .build(),
+        )
+    }
+
+    #[tokio::test]
+    async fn bedrock_payload_uses_new_payload_v2_with_no_withdrawals() {
+        let client = test_client();
+        let payload = bedrock_payload(1);
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: payload,
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+
+        InsertTask::new(
+            Arc::clone(&client),
+            Arc::new(base_consensus_genesis::RollupConfig::default()),
+            envelope,
+            false,
+        )
+        .execute(&mut state)
+        .await
+        .expect("bedrock payload should be imported with engine_newPayloadV2");
+
+        let payload_input = client
+            .last_new_payload_v2()
+            .await
+            .expect("new_payload_v2 should record the payload input");
+        assert!(
+            payload_input.withdrawals.is_none(),
+            "bedrock payload must keep withdrawals unset when sent via engine_newPayloadV2"
+        );
+    }
+
+    #[tokio::test]
+    async fn canyon_payload_uses_new_payload_v2_with_withdrawals() {
+        let client = test_client();
+        let payload = canyon_payload(1);
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: payload,
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+
+        InsertTask::new(
+            Arc::clone(&client),
+            Arc::new(base_consensus_genesis::RollupConfig::default()),
+            envelope,
+            false,
+        )
+        .execute(&mut state)
+        .await
+        .expect("canyon payload should be imported with engine_newPayloadV2");
+
+        let payload_input = client
+            .last_new_payload_v2()
+            .await
+            .expect("new_payload_v2 should record the payload input");
+        assert_eq!(
+            payload_input.withdrawals,
+            Some(vec![]),
+            "canyon payload must preserve withdrawals when sent via engine_newPayloadV2"
+        );
     }
 }

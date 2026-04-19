@@ -5,12 +5,11 @@ use std::{future::Future, sync::Arc};
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey};
-use alloy_provider::{EthGetBlock, Provider, RootProvider, RpcWithBlock, ext::EngineApi};
+use alloy_provider::{EthGetBlock, Provider, RootProvider, RpcWithBlock};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
-    ExecutionPayloadV1, ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, JwtSecret,
-    PayloadId, PayloadStatus,
+    ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, JwtSecret, PayloadId, PayloadStatus,
 };
 use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse};
 use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
@@ -73,9 +72,6 @@ pub trait EngineClient: BaseEngineApi<Base, Http<HyperAuthClient>> + Send + Sync
         address: Address,
         keys: Vec<StorageKey>,
     ) -> RpcWithBlock<(Address, Vec<StorageKey>), EIP1186AccountProofResponse>;
-
-    /// Sends the given payload to the execution layer client, as specified for the Paris fork.
-    async fn new_payload_v1(&self, payload: ExecutionPayloadV1) -> TransportResult<PayloadStatus>;
 
     /// Fetches the [`Block<Transaction>`] for the given [`BlockNumberOrTag`].
     async fn l2_block_by_label(
@@ -204,10 +200,6 @@ where
         keys: Vec<StorageKey>,
     ) -> RpcWithBlock<(Address, Vec<StorageKey>), EIP1186AccountProofResponse> {
         self.engine.get_proof(address, keys)
-    }
-
-    async fn new_payload_v1(&self, payload: ExecutionPayloadV1) -> TransportResult<PayloadStatus> {
-        self.engine.new_payload_v1(payload).await
     }
 
     async fn l2_block_by_label(
