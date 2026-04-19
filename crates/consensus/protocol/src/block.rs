@@ -2,8 +2,8 @@
 
 use alloc::vec::Vec;
 
-use alloy_consensus::{Block, Transaction, Typed2718};
-use alloy_eips::{BlockNumHash, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_consensus::{Block, Transaction};
+use alloy_eips::{BlockNumHash, Typed2718, eip2718::Eip2718Error, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
@@ -181,7 +181,7 @@ impl L2BlockInfo {
     }
 
     /// Constructs an [`L2BlockInfo`] from a given OP [`Block`] and [`ChainGenesis`].
-    pub fn from_block_and_genesis<T: Typed2718 + AsRef<BaseTxEnvelope>>(
+    pub fn from_block_and_genesis<T: AsRef<BaseTxEnvelope>>(
         block: &Block<T>,
         genesis: &ChainGenesis,
     ) -> Result<Self, FromBlockError> {
