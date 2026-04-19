@@ -294,10 +294,11 @@ impl ChainConfig {
             .await
             .with_context(|| format!("Failed to connect to consensus node at {op_node_url}"))?;
 
-        let config: RollupConfig = provider
-            .raw_request("optimism_rollupConfig".into(), ())
-            .await
-            .with_context(|| "Failed to fetch rollup config from consensus node")?;
+        let config: RollupConfig =
+            provider
+                .raw_request("optimism_rollupConfig".into(), ())
+                .await
+                .with_context(|| "Failed to fetch rollup config from consensus node")?;
 
         Ok(config)
     }
