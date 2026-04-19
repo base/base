@@ -1,15 +1,17 @@
 //! Subscription types for the `eth_` `PubSub` RPC extension
 
+use alloy_consensus::Eip658Value;
+use alloy_primitives::{Address, Bloom};
 use alloy_rpc_types_eth::{Log, pubsub::SubscriptionKind};
 use base_common_rpc_types::Transaction;
 use derive_more::From;
 use serde::{Deserialize, Serialize};
 
-/// A full transaction object with its associated logs and gas usage.
+/// A full transaction object with its associated logs and receipt-equivalent fields.
 ///
 /// This is returned by `newFlashblockTransactions` subscription when `full = true`
 /// or when a log filter is provided, giving both the transaction details, logs emitted
-/// by its execution, and gas accounting fields.
+/// by its execution, and receipt-derived fields already available from flashblock execution.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionWithLogs {
@@ -20,6 +22,16 @@ pub struct TransactionWithLogs {
     pub logs: Vec<Log>,
     /// Gas consumed by this transaction's execution.
     pub gas_used: Option<u64>,
+    /// Status of the transaction, serialized the same way as transaction receipts.
+    #[serde(flatten, default)]
+    pub status: Option<Eip658Value>,
+    /// Cumulative gas used in the block up to and including this transaction.
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub cumulative_gas_used: Option<u64>,
+    /// Contract address created, if this was a contract creation transaction.
+    pub contract_address: Option<Address>,
+    /// Bloom filter for all logs emitted by this transaction.
+    pub logs_bloom: Option<Bloom>,
 }
 
 /// Extended subscription kind that includes both standard Ethereum subscription types
@@ -151,7 +163,15 @@ mod tests {
             removed: false,
         };
 
-        TransactionWithLogs { transaction: tx, logs: vec![log], gas_used: Some(21_000) }
+        TransactionWithLogs {
+            transaction: tx,
+            logs: vec![log],
+            gas_used: Some(21_000),
+            status: Some(Eip658Value::Eip658(true)),
+            cumulative_gas_used: Some(42_000),
+            contract_address: Some(Address::with_last_byte(0xEF)),
+            logs_bloom: Some([0x11; 256].into()),
+        }
     }
 
     #[test]
@@ -162,6 +182,10 @@ mod tests {
 
         assert!(obj.contains_key("logs"), "missing 'logs' field");
         assert!(obj.contains_key("gasUsed"), "missing 'gasUsed' field");
+        assert!(obj.contains_key("status"), "missing 'status' field");
+        assert!(obj.contains_key("cumulativeGasUsed"), "missing 'cumulativeGasUsed' field");
+        assert!(obj.contains_key("contractAddress"), "missing 'contractAddress' field");
+        assert!(obj.contains_key("logsBloom"), "missing 'logsBloom' field");
         assert!(obj.contains_key("nonce"), "missing flattened tx 'nonce' field");
         assert!(obj.contains_key("gasPrice"), "missing flattened tx 'gasPrice' field");
         assert!(obj.contains_key("hash"), "missing flattened tx 'hash' field");
@@ -171,6 +195,21 @@ mod tests {
         assert!(obj.contains_key("blockNumber"), "missing flattened tx 'blockNumber' field");
 
         assert_eq!(obj["gasUsed"], 21_000u64, "gasUsed should be 21000");
+        assert_eq!(obj["status"], "0x1", "status should use receipt quantity encoding");
+        assert_eq!(
+            obj["cumulativeGasUsed"], "0xa410",
+            "cumulativeGasUsed should use receipt quantity encoding"
+        );
+        assert_eq!(
+            obj["contractAddress"],
+            format!("{:#x}", Address::with_last_byte(0xEF)),
+            "contractAddress should serialize as an address"
+        );
+        assert_eq!(
+            obj["logsBloom"],
+            format!("0x{}", "11".repeat(256)),
+            "logsBloom should serialize as a bloom hex string"
+        );
 
         let logs = obj["logs"].as_array().expect("logs should be an array");
         assert_eq!(logs.len(), 1);
@@ -197,6 +236,13 @@ mod tests {
         let json_str = serde_json::to_string(&twl).expect("serialization should succeed");
 
         assert!(json_str.contains("\"gasUsed\""), "JSON must contain gasUsed key");
+        assert!(json_str.contains("\"status\":\"0x1\""), "JSON must contain status key");
+        assert!(
+            json_str.contains("\"cumulativeGasUsed\":\"0xa410\""),
+            "JSON must contain cumulativeGasUsed key"
+        );
+        assert!(json_str.contains("\"contractAddress\""), "JSON must contain contractAddress key");
+        assert!(json_str.contains("\"logsBloom\""), "JSON must contain logsBloom key");
         assert!(json_str.contains("\"logs\""), "JSON must contain logs key");
         assert!(json_str.contains("\"gasPrice\""), "JSON must contain gasPrice key");
         assert!(json_str.contains("\"nonce\""), "JSON must contain nonce key");
@@ -216,10 +262,30 @@ mod tests {
     fn transaction_with_logs_gas_used_none_serialization() {
         let mut twl = test_transaction_with_logs();
         twl.gas_used = None;
+        twl.status = None;
+        twl.cumulative_gas_used = None;
+        twl.contract_address = None;
+        twl.logs_bloom = None;
         let json = serde_json::to_value(&twl).expect("serialization should succeed");
         let obj = json.as_object().expect("should be a JSON object");
 
         assert!(obj.contains_key("gasUsed"), "gasUsed key should be present even when None");
         assert!(obj["gasUsed"].is_null(), "gasUsed should be null when None");
+        assert!(
+            !obj.contains_key("status"),
+            "status should be omitted when the receipt status is unavailable"
+        );
+        assert!(
+            obj.contains_key("cumulativeGasUsed"),
+            "cumulativeGasUsed key should be present even when None"
+        );
+        assert!(obj["cumulativeGasUsed"].is_null(), "cumulativeGasUsed should be null when None");
+        assert!(
+            obj.contains_key("contractAddress"),
+            "contractAddress key should be present even when None"
+        );
+        assert!(obj["contractAddress"].is_null(), "contractAddress should be null when None");
+        assert!(obj.contains_key("logsBloom"), "logsBloom key should be present even when None");
+        assert!(obj["logsBloom"].is_null(), "logsBloom should be null when None");
     }
 }
