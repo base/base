@@ -124,7 +124,7 @@ impl InProcessBuilder {
 
         let addons: base_node_runner::BaseAddOns<
             _,
-            base_execution_rpc::OpEthApiBuilder,
+            base_execution_rpc::BaseEthApiBuilder,
             base_node_core::BasePayloadValidatorBuilder,
         > = base_node
             .add_ons_builder()

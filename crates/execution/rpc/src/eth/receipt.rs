@@ -21,12 +21,12 @@ use reth_rpc_eth_api::{
 use reth_rpc_eth_types::{EthApiError, receipt::build_receipt};
 use reth_storage_api::BlockReader;
 
-use crate::{OpEthApi, OpEthApiError, eth::RpcNodeCore};
+use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
-impl<N, Rpc> LoadReceipt for OpEthApi<N, Rpc>
+impl<N, Rpc> LoadReceipt for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
 }
 
@@ -50,7 +50,7 @@ where
         BlockReader<Block = N::Block> + ChainSpecProvider<ChainSpec: Upgrades> + Debug + 'static,
 {
     type RpcReceipt = BaseTransactionReceipt;
-    type Error = OpEthApiError;
+    type Error = BaseEthApiError;
 
     fn convert_receipts(
         &self,
@@ -172,21 +172,21 @@ impl ReceiptFieldsBuilder {
         chain_spec: &impl Upgrades,
         tx: &T,
         l1_block_info: &mut base_common_evm::L1BlockInfo,
-    ) -> Result<Self, OpEthApiError> {
+    ) -> Result<Self, BaseEthApiError> {
         let raw_tx = tx.encoded_2718();
         let timestamp = self.block_timestamp;
 
         self.l1_fee = Some(
             l1_block_info
                 .l1_tx_data_fee(chain_spec, timestamp, &raw_tx, tx.is_deposit())
-                .map_err(|_| OpEthApiError::L1BlockFeeError)?
+                .map_err(|_| BaseEthApiError::L1BlockFeeError)?
                 .saturating_to(),
         );
 
         self.l1_data_gas = Some(
             l1_block_info
                 .l1_data_gas(chain_spec, timestamp, &raw_tx)
-                .map_err(|_| OpEthApiError::L1BlockGasError)?
+                .map_err(|_| BaseEthApiError::L1BlockGasError)?
                 .saturating_add(l1_block_info.l1_fee_overhead.unwrap_or_default())
                 .saturating_to(),
         );
@@ -284,7 +284,7 @@ impl BaseReceiptBuilder {
         chain_spec: &impl Upgrades,
         input: ConvertReceiptInput<'_, N>,
         l1_block_info: &mut base_common_evm::L1BlockInfo,
-    ) -> Result<Self, OpEthApiError>
+    ) -> Result<Self, BaseEthApiError>
     where
         N: NodePrimitives<SignedTx: BaseTransaction, Receipt = BaseReceipt>,
     {

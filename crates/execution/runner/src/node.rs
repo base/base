@@ -4,13 +4,13 @@ use base_common_consensus::BasePrimitives;
 use base_engine_tree::BaseEngineValidatorBuilder;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
-use base_execution_rpc::eth::OpEthApiBuilder;
+use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_execution_storage::BaseStorage;
 use base_node_core::{
     BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
-    BaseNodeTypes, BasePayloadValidatorBuilder, OpEngineApiBuilder, OpEngineTypes,
+    BaseNodeTypes, BasePayloadValidatorBuilder, BaseEngineApiBuilder, BaseEngineTypes,
     args::RollupArgs,
-    node::{BasePoolBuilder, OpPayloadBuilder},
+    node::{BasePoolBuilder, BasePayloadBuilder},
 };
 use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,
@@ -75,7 +75,7 @@ impl BaseNode {
             .pool(BasePoolBuilder::default())
             .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
-                OpPayloadBuilder::new(compute_pending_block)
+                BasePayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
@@ -150,7 +150,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         BasePoolBuilder,
-        BasicPayloadServiceBuilder<OpPayloadBuilder>,
+        BasicPayloadServiceBuilder<BasePayloadBuilder>,
         BaseNetworkBuilder,
         BaseExecutorBuilder,
         BaseConsensusBuilder,
@@ -158,9 +158,9 @@ where
 
     type AddOns = BaseAddOns<
         NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
-        OpEthApiBuilder,
+        BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
-        OpEngineApiBuilder<BasePayloadValidatorBuilder>,
+        BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
         BaseEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
@@ -177,5 +177,5 @@ impl NodeTypes for BaseNode {
     type Primitives = BasePrimitives;
     type ChainSpec = BaseChainSpec;
     type Storage = BaseStorage;
-    type Payload = OpEngineTypes;
+    type Payload = BaseEngineTypes;
 }

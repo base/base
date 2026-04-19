@@ -17,7 +17,7 @@ mod tests {
     use reth_primitives_traits::{Account, RecoveredBlock};
     use reth_revm::{database::StateProviderDatabase, test_utils::StateProviderTest};
 
-    use crate::{BaseEvmConfig, OpRethReceiptBuilder};
+    use crate::{BaseEvmConfig, BaseRethReceiptBuilder};
 
     fn create_op_state_provider() -> StateProviderTest {
         let mut db = StateProviderTest::default();
@@ -52,7 +52,7 @@ mod tests {
     }
 
     fn evm_config(chain_spec: Arc<BaseChainSpec>) -> BaseEvmConfig {
-        BaseEvmConfig::new(chain_spec, OpRethReceiptBuilder::default())
+        BaseEvmConfig::new(chain_spec, BaseRethReceiptBuilder::default())
     }
 
     #[test]

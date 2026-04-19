@@ -26,13 +26,13 @@ type BaseComponents = <BaseComponentsBuilder as NodeComponentsBuilder<BaseNodeTy
 pub type BaseNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
 
 /// Convenience alias for the OP Eth API type exposed by the reth RPC add-ons.
-type OpEthApi = <ConcreteBaseAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
+type BaseEthApi = <ConcreteBaseAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
 
 /// Convenience alias for the full Base node handle produced after launch.
 type BaseFullNode = FullNode<BaseNodeAdapter, ConcreteBaseAddOns>;
 
 /// Alias for the RPC context used by Base extensions.
-pub type BaseRpcContext<'a> = RpcContext<'a, BaseNodeAdapter, OpEthApi>;
+pub type BaseRpcContext<'a> = RpcContext<'a, BaseNodeAdapter, BaseEthApi>;
 
 /// Hook type for extending RPC modules.
 type RpcModuleHook = Box<dyn FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static>;

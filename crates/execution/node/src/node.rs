@@ -8,17 +8,17 @@ use base_common_chains::Upgrades;
 use base_common_consensus::BasePrimitives;
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_consensus::OpBeaconConsensus;
-use base_execution_evm::{BaseEvmConfig, OpRethReceiptBuilder};
+use base_execution_consensus::BaseBeaconConsensus;
+use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
-    Attributes, OpBuiltPayload, PayloadPrimitives,
+    Attributes, BaseBuiltPayload, PayloadPrimitives,
     builder::BasePayloadTransactions,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
 };
 use base_execution_rpc::{
     MinerApiExtServer,
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
-    eth::OpEthApiBuilder,
+    eth::BaseEthApiBuilder,
     miner::BaseMinerExtApi,
     witness::BaseDebugWitnessApi,
 };
@@ -64,19 +64,19 @@ use reth_trie_common::KeccakKeyHasher;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    OpEngineApiBuilder, OpEngineTypes,
+    BaseEngineApiBuilder, BaseEngineTypes,
     args::{RollupArgs, TxpoolOrdering},
-    engine::OpEngineValidator,
+    engine::BaseEngineValidator,
 };
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
 pub trait BaseNodeTypes:
-    NodeTypes<Payload = OpEngineTypes, ChainSpec = BaseChainSpec, Primitives = BasePrimitives>
+    NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec, Primitives = BasePrimitives>
 {
 }
 /// Blanket impl for all node types that conform to the Base spec.
 impl<N> BaseNodeTypes for N where
-    N: NodeTypes<Payload = OpEngineTypes, ChainSpec = BaseChainSpec, Primitives = BasePrimitives>
+    N: NodeTypes<Payload = BaseEngineTypes, ChainSpec = BaseChainSpec, Primitives = BasePrimitives>
 {
 }
 
@@ -191,7 +191,7 @@ pub struct BaseNode {
 }
 
 /// A [`ComponentsBuilder`] with its generic arguments set to a stack of Base-specific builders.
-pub type BaseNodeComponentBuilder<Node, Payload = OpPayloadBuilder> = ComponentsBuilder<
+pub type BaseNodeComponentBuilder<Node, Payload = BasePayloadBuilder> = ComponentsBuilder<
     Node,
     BasePoolBuilder,
     BasicPayloadServiceBuilder<Payload>,
@@ -243,7 +243,7 @@ impl BaseNode {
             .executor(BaseExecutorBuilder::default())
             .pool(BasePoolBuilder::default().with_ordering(ordering))
             .payload(BasicPayloadServiceBuilder::new(
-                OpPayloadBuilder::new(compute_pending_block)
+                BasePayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
@@ -308,7 +308,7 @@ where
     type ComponentsBuilder = ComponentsBuilder<
         N,
         BasePoolBuilder,
-        BasicPayloadServiceBuilder<OpPayloadBuilder>,
+        BasicPayloadServiceBuilder<BasePayloadBuilder>,
         BaseNetworkBuilder,
         BaseExecutorBuilder,
         BaseConsensusBuilder,
@@ -316,9 +316,9 @@ where
 
     type AddOns = BaseAddOns<
         NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
-        OpEthApiBuilder,
+        BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
-        OpEngineApiBuilder<BasePayloadValidatorBuilder>,
+        BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
         BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
@@ -352,7 +352,7 @@ impl NodeTypes for BaseNode {
     type Primitives = BasePrimitives;
     type ChainSpec = BaseChainSpec;
     type Storage = BaseStorage;
-    type Payload = OpEngineTypes;
+    type Payload = BaseEngineTypes;
 }
 
 /// Add-ons w.r.t. Base.
@@ -364,7 +364,7 @@ pub struct BaseAddOns<
     N: FullNodeComponents,
     EthB: EthApiBuilder<N>,
     PVB,
-    EB = OpEngineApiBuilder<PVB>,
+    EB = BaseEngineApiBuilder<PVB>,
     EVB = BasicEngineValidatorBuilder<PVB>,
     RpcMiddleware = Identity,
 > {
@@ -409,10 +409,10 @@ where
     }
 }
 
-impl<N> Default for BaseAddOns<N, OpEthApiBuilder, BasePayloadValidatorBuilder>
+impl<N> Default for BaseAddOns<N, BaseEthApiBuilder, BasePayloadValidatorBuilder>
 where
     N: FullNodeComponents<Types: BaseNodeTypes>,
-    OpEthApiBuilder: EthApiBuilder<N>,
+    BaseEthApiBuilder: EthApiBuilder<N>,
 {
     fn default() -> Self {
         Self::builder().build()
@@ -422,14 +422,14 @@ where
 impl<N, NetworkT, RpcMiddleware>
     BaseAddOns<
         N,
-        OpEthApiBuilder<NetworkT>,
+        BaseEthApiBuilder<NetworkT>,
         BasePayloadValidatorBuilder,
-        OpEngineApiBuilder<BasePayloadValidatorBuilder>,
+        BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
         RpcMiddleware,
     >
 where
     N: FullNodeComponents<Types: BaseNodeTypes>,
-    OpEthApiBuilder<NetworkT>: EthApiBuilder<N>,
+    BaseEthApiBuilder<NetworkT>: EthApiBuilder<N>,
 {
     /// Build a [`BaseAddOns`] using [`BaseAddOnsBuilder`].
     pub fn builder() -> BaseAddOnsBuilder<NetworkT> {
@@ -567,7 +567,7 @@ where
         let eth_config =
             BaseEthConfigHandler::new(ctx.node.provider().clone(), ctx.node.evm_config().clone());
 
-        let builder = base_execution_payload_builder::OpPayloadBuilder::new(
+        let builder = base_execution_payload_builder::BasePayloadBuilder::new(
             ctx.node.pool().clone(),
             ctx.node.provider().clone(),
             ctx.node.evm_config().clone(),
@@ -763,10 +763,10 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
     /// Builds an instance of [`BaseAddOns`].
     pub fn build<N, PVB, EB, EVB>(
         self,
-    ) -> BaseAddOns<N, OpEthApiBuilder<NetworkT>, PVB, EB, EVB, RpcMiddleware>
+    ) -> BaseAddOns<N, BaseEthApiBuilder<NetworkT>, PVB, EB, EVB, RpcMiddleware>
     where
         N: FullNodeComponents<Types: NodeTypes>,
-        OpEthApiBuilder<NetworkT>: EthApiBuilder<N>,
+        BaseEthApiBuilder<NetworkT>: EthApiBuilder<N>,
         PVB: PayloadValidatorBuilder<N> + Default,
         EB: Default,
         EVB: Default,
@@ -784,7 +784,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
 
         BaseAddOns::new(
             RpcAddOns::new(
-                OpEthApiBuilder::default()
+                BaseEthApiBuilder::default()
                     .with_sequencer(sequencer_url.clone())
                     .with_sequencer_headers(sequencer_headers.clone())
                     .with_min_suggested_priority_fee(min_suggested_priority_fee),
@@ -818,7 +818,7 @@ where
     >;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        let evm_config = BaseEvmConfig::new(ctx.chain_spec(), OpRethReceiptBuilder::default());
+        let evm_config = BaseEvmConfig::new(ctx.chain_spec(), BaseRethReceiptBuilder::default());
 
         Ok(evm_config)
     }
@@ -931,7 +931,7 @@ where
 
 /// A basic Base payload service builder
 #[derive(Debug, Default, Clone)]
-pub struct OpPayloadBuilder<Txs = ()> {
+pub struct BasePayloadBuilder<Txs = ()> {
     /// By default the pending block equals the latest block
     /// to save resources and not leak txs from the tx-pool,
     /// this flag enables computing of the pending block
@@ -952,7 +952,7 @@ pub struct OpPayloadBuilder<Txs = ()> {
     pub gas_limit_config: GasLimitConfig,
 }
 
-impl OpPayloadBuilder {
+impl BasePayloadBuilder {
     /// Create a new instance with the given `compute_pending_block` flag and data availability
     /// config.
     pub fn new(compute_pending_block: bool) -> Self {
@@ -977,23 +977,23 @@ impl OpPayloadBuilder {
     }
 }
 
-impl<Txs> OpPayloadBuilder<Txs> {
+impl<Txs> BasePayloadBuilder<Txs> {
     /// Configures the type responsible for yielding the transactions that should be included in the
     /// payload.
-    pub fn with_transactions<T>(self, best_transactions: T) -> OpPayloadBuilder<T> {
+    pub fn with_transactions<T>(self, best_transactions: T) -> BasePayloadBuilder<T> {
         let Self { compute_pending_block, da_config, gas_limit_config, .. } = self;
-        OpPayloadBuilder { compute_pending_block, best_transactions, da_config, gas_limit_config }
+        BasePayloadBuilder { compute_pending_block, best_transactions, da_config, gas_limit_config }
     }
 }
 
-impl<Node, Pool, Txs, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for OpPayloadBuilder<Txs>
+impl<Node, Pool, Txs, Evm, Attrs> PayloadBuilderBuilder<Node, Pool, Evm> for BasePayloadBuilder<Txs>
 where
     Node: FullNodeTypes<
             Provider: ChainSpecProvider<ChainSpec: Upgrades>,
             Types: NodeTypes<
                 Primitives: PayloadPrimitives,
                 Payload: PayloadTypes<
-                    BuiltPayload = OpBuiltPayload<PrimitivesTy<Node::Types>>,
+                    BuiltPayload = BaseBuiltPayload<PrimitivesTy<Node::Types>>,
                     PayloadBuilderAttributes = Attrs,
                 >,
             >,
@@ -1011,7 +1011,7 @@ where
     Attrs: Attributes<Transaction = TxTy<Node::Types>>,
 {
     type PayloadBuilder =
-        base_execution_payload_builder::OpPayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;
+        base_execution_payload_builder::BasePayloadBuilder<Pool, Node::Provider, Evm, Txs, Attrs>;
 
     async fn build_payload_builder(
         self,
@@ -1020,7 +1020,7 @@ where
         evm_config: Evm,
     ) -> eyre::Result<Self::PayloadBuilder> {
         let payload_builder =
-            base_execution_payload_builder::OpPayloadBuilder::with_builder_config(
+            base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
                 pool,
                 ctx.provider().clone(),
                 evm_config,
@@ -1140,14 +1140,14 @@ impl<Node> ConsensusBuilder<Node> for BaseConsensusBuilder
 where
     Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
-    type Consensus = Arc<OpBeaconConsensus>;
+    type Consensus = Arc<BaseBeaconConsensus>;
 
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        Ok(Arc::new(OpBeaconConsensus::new(ctx.chain_spec())))
+        Ok(Arc::new(BaseBeaconConsensus::new(ctx.chain_spec())))
     }
 }
 
-/// Builder for [`OpEngineValidator`].
+/// Builder for [`BaseEngineValidator`].
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct BasePayloadValidatorBuilder;
@@ -1158,14 +1158,14 @@ where
         Types: NodeTypes<ChainSpec: Upgrades, Payload: PayloadTypes<ExecutionData = ExecutionData>>,
     >,
 {
-    type Validator = OpEngineValidator<
+    type Validator = BaseEngineValidator<
         Node::Provider,
         <<Node::Types as NodeTypes>::Primitives as NodePrimitives>::SignedTx,
         <Node::Types as NodeTypes>::ChainSpec,
     >;
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
-        Ok(OpEngineValidator::new::<KeccakKeyHasher>(
+        Ok(BaseEngineValidator::new::<KeccakKeyHasher>(
             Arc::clone(&ctx.config.chain),
             ctx.node.provider().clone(),
         ))

@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256, U256};
 use base_bundles::{BundleExtensions, BundleTxs, ParsedBundle, TransactionResult};
 use base_common_evm::L1BlockInfo;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use eyre::{Result as EyreResult, eyre};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_primitives_traits::{Account, SealedHeader};
@@ -286,7 +286,7 @@ where
     let timestamp = bundle.min_timestamp.unwrap_or_else(|| header.timestamp() + BLOCK_TIME);
     // Pending flashblock headers may omit parent_beacon_block_root; prefer the explicit value
     // provided by the caller (e.g., flashblock base payload) to keep EIP-4788 happy.
-    let attributes = OpNextBlockEnvAttributes {
+    let attributes = BaseNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: header.beneficiary(),
         prev_randao: header.mix_hash().unwrap_or_else(B256::random),

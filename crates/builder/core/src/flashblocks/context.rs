@@ -14,8 +14,8 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, L1BlockInfo, OpSpecId};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
-use base_execution_payload_builder::{OpPayloadBuilderAttributes, error::BasePayloadBuilderError};
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+use base_execution_payload_builder::{BasePayloadBuilderAttributes, error::BasePayloadBuilderError};
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };
@@ -273,17 +273,17 @@ impl FlashblocksExtraCtx {
 
 /// Container type that holds all the necessities to build a new payload.
 #[derive(Debug)]
-pub struct OpPayloadBuilderCtx {
+pub struct BasePayloadBuilderCtx {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: BaseEvmConfig,
     /// The chainspec
     pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<OpPayloadBuilderAttributes<BaseTransactionSigned>>,
+    pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTransactionSigned>>,
     /// Evm Settings
     pub evm_env: EvmEnv<OpSpecId>,
     /// Block env attributes for the current block.
-    pub block_env_attributes: OpNextBlockEnvAttributes,
+    pub block_env_attributes: BaseNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
     /// Extra context for the payload builder
@@ -292,7 +292,7 @@ pub struct OpPayloadBuilderCtx {
     pub builder_config: BuilderConfig,
 }
 
-impl OpPayloadBuilderCtx {
+impl BasePayloadBuilderCtx {
     pub(super) fn with_cancel(self, cancel: CancellationToken) -> Self {
         Self { cancel, ..self }
     }
@@ -325,7 +325,7 @@ impl OpPayloadBuilderCtx {
     }
 
     /// Returns the builder attributes.
-    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<BaseTransactionSigned> {
+    pub(super) const fn attributes(&self) -> &BasePayloadBuilderAttributes<BaseTransactionSigned> {
         &self.config.attributes
     }
 
@@ -447,7 +447,7 @@ impl OpPayloadBuilderCtx {
     }
 }
 
-impl OpPayloadBuilderCtx {
+impl BasePayloadBuilderCtx {
     /// Constructs a receipt for the given transaction.
     pub fn build_receipt<E: Evm>(
         &self,
@@ -1041,8 +1041,8 @@ impl OpPayloadBuilderCtx {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-impl OpPayloadBuilderCtx {
-    /// Creates a minimal [`OpPayloadBuilderCtx`] for unit tests.
+impl BasePayloadBuilderCtx {
+    /// Creates a minimal [`BasePayloadBuilderCtx`] for unit tests.
     ///
     /// Derives the EVM environment from the given chain spec and parent header,
     /// using default builder attributes and a no-op cancellation token.
@@ -1050,7 +1050,7 @@ impl OpPayloadBuilderCtx {
         let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
         let timestamp = parent.timestamp + 2;
 
-        let attributes = OpPayloadBuilderAttributes {
+        let attributes = BasePayloadBuilderAttributes {
             payload_attributes: reth_payload_builder::EthPayloadBuilderAttributes {
                 id: PayloadId::new([0; 8]),
                 parent: parent.hash(),
@@ -1062,7 +1062,7 @@ impl OpPayloadBuilderCtx {
             ..Default::default()
         };
 
-        let block_env_attributes = OpNextBlockEnvAttributes {
+        let block_env_attributes = BaseNextBlockEnvAttributes {
             timestamp,
             suggested_fee_recipient: Default::default(),
             prev_randao: Default::default(),

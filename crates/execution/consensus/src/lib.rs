@@ -43,15 +43,15 @@ pub use error::BaseConsensusError;
 ///
 /// Provides basic checks as outlined in the execution specs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpBeaconConsensus {
+pub struct BaseBeaconConsensus {
     /// Configuration
     chain_spec: Arc<BaseChainSpec>,
     /// Maximum allowed extra data size in bytes
     max_extra_data_size: usize,
 }
 
-impl OpBeaconConsensus {
-    /// Create a new instance of [`OpBeaconConsensus`]
+impl BaseBeaconConsensus {
+    /// Create a new instance of [`BaseBeaconConsensus`]
     pub const fn new(chain_spec: Arc<BaseChainSpec>) -> Self {
         Self { chain_spec, max_extra_data_size: MAXIMUM_EXTRA_DATA_SIZE }
     }
@@ -68,7 +68,7 @@ impl OpBeaconConsensus {
     }
 }
 
-impl<N> FullConsensus<N> for OpBeaconConsensus
+impl<N> FullConsensus<N> for BaseBeaconConsensus
 where
     N: NodePrimitives<BlockHeader = Header, Receipt: DepositReceiptExt>,
 {
@@ -82,7 +82,7 @@ where
     }
 }
 
-impl<B> Consensus<B> for OpBeaconConsensus
+impl<B> Consensus<B> for BaseBeaconConsensus
 where
     B: Block<Header = Header>,
 {
@@ -146,7 +146,7 @@ where
     }
 }
 
-impl HeaderValidator<Header> for OpBeaconConsensus {
+impl HeaderValidator<Header> for BaseBeaconConsensus {
     fn validate_header(&self, header: &SealedHeader<Header>) -> Result<(), ConsensusError> {
         let header = header.header();
 
@@ -238,7 +238,7 @@ mod tests {
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use reth_provider::BlockExecutionResult;
 
-    use crate::OpBeaconConsensus;
+    use crate::BaseBeaconConsensus;
 
     fn mock_tx(nonce: u64) -> BaseTransactionSigned {
         let tx = TxEip7702 {
@@ -270,7 +270,7 @@ mod tests {
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let header = Header {
             base_fee_per_gas: Some(1337),
@@ -307,7 +307,7 @@ mod tests {
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let header = Header {
             base_fee_per_gas: Some(1337),
@@ -350,7 +350,7 @@ mod tests {
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
@@ -396,7 +396,7 @@ mod tests {
         let block = RecoveredBlock::new_sealed(block, vec![Address::default()]);
 
         let post_execution =
-            <OpBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
+            <BaseBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
                 &beacon_consensus,
                 &block,
                 &result,
@@ -421,7 +421,7 @@ mod tests {
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
@@ -467,7 +467,7 @@ mod tests {
         let block = RecoveredBlock::new_sealed(block, vec![Address::default()]);
 
         let post_execution =
-            <OpBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
+            <BaseBeaconConsensus as FullConsensus<BasePrimitives>>::validate_block_post_execution(
                 &beacon_consensus,
                 &block,
                 &result,
@@ -495,7 +495,7 @@ mod tests {
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
@@ -566,7 +566,7 @@ mod tests {
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
@@ -643,7 +643,7 @@ mod tests {
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),
@@ -717,7 +717,7 @@ mod tests {
         // create a tx
         let transaction = mock_tx(0);
 
-        let beacon_consensus = OpBeaconConsensus::new(Arc::new(chain_spec));
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
 
         let receipt = BaseReceipt::Eip7702(Receipt::<Log> {
             status: Eip658Value::success(),

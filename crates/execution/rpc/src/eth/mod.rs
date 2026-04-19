@@ -39,7 +39,7 @@ use reth_tasks::{
 };
 
 use crate::{
-    OpEthApiError, SequencerClient,
+    BaseEthApiError, SequencerClient,
     eth::{receipt::BaseReceiptConverter, transaction::BaseTxInfoMapper},
 };
 
@@ -56,32 +56,32 @@ pub type EthApiNodeBackend<N, Rpc> = EthApiInner<N, Rpc>;
 ///
 /// This type implements the [`FullEthApi`](reth_rpc_eth_api::helpers::FullEthApi) by implemented
 /// all the `Eth` helper traits and prerequisite traits.
-pub struct OpEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
+pub struct BaseEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
-    inner: Arc<OpEthApiInner<N, Rpc>>,
+    inner: Arc<BaseEthApiInner<N, Rpc>>,
 }
 
-impl<N: RpcNodeCore, Rpc: RpcConvert> Clone for OpEthApi<N, Rpc> {
+impl<N: RpcNodeCore, Rpc: RpcConvert> Clone for BaseEthApi<N, Rpc> {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
 
-impl<N: RpcNodeCore, Rpc: RpcConvert> OpEthApi<N, Rpc> {
-    /// Creates a new `OpEthApi`.
+impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApi<N, Rpc> {
+    /// Creates a new `BaseEthApi`.
     pub fn new(
         eth_api: EthApiNodeBackend<N, Rpc>,
         sequencer_client: Option<SequencerClient>,
         min_suggested_priority_fee: U256,
     ) -> Self {
         let inner =
-            Arc::new(OpEthApiInner { eth_api, sequencer_client, min_suggested_priority_fee });
+            Arc::new(BaseEthApiInner { eth_api, sequencer_client, min_suggested_priority_fee });
         Self { inner }
     }
 
-    /// Build a [`OpEthApi`] using [`OpEthApiBuilder`].
-    pub const fn builder() -> OpEthApiBuilder<Rpc> {
-        OpEthApiBuilder::new()
+    /// Build a [`BaseEthApi`] using [`BaseEthApiBuilder`].
+    pub const fn builder() -> BaseEthApiBuilder<Rpc> {
+        BaseEthApiBuilder::new()
     }
 
     /// Returns a reference to the [`EthApiNodeBackend`].
@@ -94,12 +94,12 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> OpEthApi<N, Rpc> {
     }
 }
 
-impl<N, Rpc> EthApiTypes for OpEthApi<N, Rpc>
+impl<N, Rpc> EthApiTypes for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
-    type Error = OpEthApiError;
+    type Error = BaseEthApiError;
     type NetworkTypes = Rpc::Network;
     type RpcConvert = Rpc;
 
@@ -108,7 +108,7 @@ where
     }
 }
 
-impl<N, Rpc> RpcNodeCore for OpEthApi<N, Rpc>
+impl<N, Rpc> RpcNodeCore for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     Rpc: RpcConvert<Primitives = N::Primitives>,
@@ -140,7 +140,7 @@ where
     }
 }
 
-impl<N, Rpc> RpcNodeCoreExt for OpEthApi<N, Rpc>
+impl<N, Rpc> RpcNodeCoreExt for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     Rpc: RpcConvert<Primitives = N::Primitives>,
@@ -151,10 +151,10 @@ where
     }
 }
 
-impl<N, Rpc> EthApiSpec for OpEthApi<N, Rpc>
+impl<N, Rpc> EthApiSpec for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
     #[inline]
     fn starting_block(&self) -> U256 {
@@ -162,10 +162,10 @@ where
     }
 }
 
-impl<N, Rpc> SpawnBlocking for OpEthApi<N, Rpc>
+impl<N, Rpc> SpawnBlocking for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
     #[inline]
     fn io_task_spawner(&self) -> impl TaskSpawner {
@@ -188,11 +188,11 @@ where
     }
 }
 
-impl<N, Rpc> LoadFee for OpEthApi<N, Rpc>
+impl<N, Rpc> LoadFee for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
     #[inline]
     fn gas_oracle(&self) -> &GasPriceOracle<Self::Provider> {
@@ -214,7 +214,7 @@ where
     }
 }
 
-impl<N, Rpc> LoadState for OpEthApi<N, Rpc>
+impl<N, Rpc> LoadState for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     Rpc: RpcConvert<Primitives = N::Primitives>,
@@ -222,10 +222,10 @@ where
 {
 }
 
-impl<N, Rpc> EthState for OpEthApi<N, Rpc>
+impl<N, Rpc> EthState for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
     Self: LoadPendingBlock,
 {
     #[inline]
@@ -234,30 +234,30 @@ where
     }
 }
 
-impl<N, Rpc> EthFees for OpEthApi<N, Rpc>
+impl<N, Rpc> EthFees for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
 }
 
-impl<N, Rpc> Trace for OpEthApi<N, Rpc>
+impl<N, Rpc> Trace for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError, Evm = N::Evm>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError, Evm = N::Evm>,
 {
 }
 
-impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for OpEthApi<N, Rpc> {
+impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApi<N, Rpc> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OpEthApi").finish_non_exhaustive()
+        f.debug_struct("BaseEthApi").finish_non_exhaustive()
     }
 }
 
-/// Container type `OpEthApi`
-pub struct OpEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
+/// Container type `BaseEthApi`
+pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
     eth_api: EthApiNodeBackend<N, Rpc>,
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
@@ -269,13 +269,13 @@ pub struct OpEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     min_suggested_priority_fee: U256,
 }
 
-impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for OpEthApiInner<N, Rpc> {
+impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApiInner<N, Rpc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OpEthApiInner").finish()
+        f.debug_struct("BaseEthApiInner").finish()
     }
 }
 
-impl<N: RpcNodeCore, Rpc: RpcConvert> OpEthApiInner<N, Rpc> {
+impl<N: RpcNodeCore, Rpc: RpcConvert> BaseEthApiInner<N, Rpc> {
     /// Returns a reference to the [`EthApiNodeBackend`].
     const fn eth_api(&self) -> &EthApiNodeBackend<N, Rpc> {
         &self.eth_api
@@ -296,9 +296,9 @@ pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
     BaseTxInfoMapper<<N as FullNodeTypes>::Provider>,
 >;
 
-/// Builds [`OpEthApi`] for Base.
+/// Builds [`BaseEthApi`] for Base.
 #[derive(Debug)]
-pub struct OpEthApiBuilder<NetworkT = Base> {
+pub struct BaseEthApiBuilder<NetworkT = Base> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
     /// network.
     sequencer_url: Option<String>,
@@ -310,7 +310,7 @@ pub struct OpEthApiBuilder<NetworkT = Base> {
     _nt: PhantomData<NetworkT>,
 }
 
-impl<NetworkT> Default for OpEthApiBuilder<NetworkT> {
+impl<NetworkT> Default for BaseEthApiBuilder<NetworkT> {
     fn default() -> Self {
         Self {
             sequencer_url: None,
@@ -321,8 +321,8 @@ impl<NetworkT> Default for OpEthApiBuilder<NetworkT> {
     }
 }
 
-impl<NetworkT> OpEthApiBuilder<NetworkT> {
-    /// Creates a [`OpEthApiBuilder`] instance from core components.
+impl<NetworkT> BaseEthApiBuilder<NetworkT> {
+    /// Creates a [`BaseEthApiBuilder`] instance from core components.
     pub const fn new() -> Self {
         Self {
             sequencer_url: None,
@@ -351,7 +351,7 @@ impl<NetworkT> OpEthApiBuilder<NetworkT> {
     }
 }
 
-impl<N, NetworkT> EthApiBuilder<N> for OpEthApiBuilder<NetworkT>
+impl<N, NetworkT> EthApiBuilder<N> for BaseEthApiBuilder<NetworkT>
 where
     N: FullNodeComponents<
             Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>,
@@ -359,10 +359,10 @@ where
         >,
     NetworkT: RpcTypes,
     BaseRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
-    OpEthApi<N, BaseRpcConvert<N, NetworkT>>:
+    BaseEthApi<N, BaseRpcConvert<N, NetworkT>>:
         FullEthApiServer<Provider = N::Provider, Pool = N::Pool>,
 {
-    type EthApi = OpEthApi<N, BaseRpcConvert<N, NetworkT>>;
+    type EthApi = BaseEthApi<N, BaseRpcConvert<N, NetworkT>>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
@@ -382,6 +382,6 @@ where
 
         let eth_api = ctx.eth_api_builder().with_rpc_converter(rpc_converter).build_inner();
 
-        Ok(OpEthApi::new(eth_api, sequencer_client, U256::from(min_suggested_priority_fee)))
+        Ok(BaseEthApi::new(eth_api, sequencer_client, U256::from(min_suggested_priority_fee)))
     }
 }

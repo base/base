@@ -2,7 +2,7 @@
 
 use base_node_core::{
     BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder,
-    node::{BasePoolBuilder, OpPayloadBuilder},
+    node::{BasePoolBuilder, BasePayloadBuilder},
 };
 use reth_node_builder::{
     NodeComponentsBuilder,
@@ -40,7 +40,7 @@ impl PayloadServiceBuilder for DefaultPayloadServiceBuilder {
     type ComponentsBuilder = ComponentsBuilder<
         BaseNodeTypes,
         BasePoolBuilder,
-        BasicPayloadServiceBuilder<OpPayloadBuilder>,
+        BasicPayloadServiceBuilder<BasePayloadBuilder>,
         BaseNetworkBuilder,
         BaseExecutorBuilder,
         BaseConsensusBuilder,

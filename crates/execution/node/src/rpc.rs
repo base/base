@@ -18,7 +18,7 @@
 //! use base_execution_chainspec::BASE_SEPOLIA;
 //! use base_execution_evm::BaseEvmConfig;
 //! use base_node_core::{BaseNetworkPrimitives, BaseExecutorBuilder, BaseNode};
-//! use base_execution_rpc::OpEthApiBuilder;
+//! use base_execution_rpc::BaseEthApiBuilder;
 //! use base_execution_txpool::BasePooledTransaction;
 //! use reth_provider::providers::BlockchainProvider;
 //! use reth_rpc::TraceApi;
@@ -76,7 +76,7 @@
 //!         cache,
 //!         engine_handle: ConsensusEngineHandle::new(tx),
 //!     };
-//!     let eth_api = OpEthApiBuilder::<Base>::default().build_eth_api(ctx).await.unwrap();
+//!     let eth_api = BaseEthApiBuilder::<Base>::default().build_eth_api(ctx).await.unwrap();
 //!
 //!     // build `trace` namespace API
 //!     let trace_api = TraceApi::new(eth_api, BlockingTaskGuard::new(10), EthConfig::default());
@@ -104,11 +104,11 @@ use crate::CLIENT_NAME;
 
 /// Builder for basic [`BaseEngineApi`] implementation.
 #[derive(Debug, Default, Clone)]
-pub struct OpEngineApiBuilder<EV> {
+pub struct BaseEngineApiBuilder<EV> {
     engine_validator_builder: EV,
 }
 
-impl<N, EV> EngineApiBuilder<N> for OpEngineApiBuilder<EV>
+impl<N, EV> EngineApiBuilder<N> for BaseEngineApiBuilder<EV>
 where
     N: FullNodeComponents<
         Types: NodeTypes<

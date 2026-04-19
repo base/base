@@ -18,7 +18,7 @@ use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
 use reth_provider::CanonStateSubscriptions;
 use tracing::info;
 
-use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::OpPayloadBuilder};
+use super::{PayloadHandler, generator::BlockPayloadJobGenerator, payload::BasePayloadBuilder};
 use crate::{
     BuilderConfig,
     traits::{NodeBounds, PoolBounds},
@@ -46,7 +46,7 @@ impl FlashblocksServiceBuilder {
 
         let ws_pub: Arc<WebSocketPublisher> =
             WebSocketPublisher::new(self.0.flashblocks_ws_addr)?.into();
-        let payload_builder = OpPayloadBuilder::new(
+        let payload_builder = BasePayloadBuilder::new(
             BaseEvmConfig::base(ctx.chain_spec()),
             pool,
             ctx.provider().clone(),

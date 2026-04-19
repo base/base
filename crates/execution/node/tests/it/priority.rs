@@ -14,7 +14,7 @@ use base_node_core::{
     args::RollupArgs,
     node::{
         BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
-        BaseNodeTypes, BasePoolBuilder, OpPayloadBuilder,
+        BaseNodeTypes, BasePoolBuilder, BasePayloadBuilder,
     },
     utils::payload_attributes,
 };
@@ -89,7 +89,7 @@ impl BasePayloadTransactions<BasePooledTransaction> for CustomTxPriority {
 /// Builds the node with custom transaction priority service within default payload builder.
 fn build_components<Node>(
     chain_id: ChainId,
-) -> BaseNodeComponentBuilder<Node, OpPayloadBuilder<CustomTxPriority>>
+) -> BaseNodeComponentBuilder<Node, BasePayloadBuilder<CustomTxPriority>>
 where
     Node: FullNodeTypes<Types: BaseNodeTypes>,
 {
@@ -100,7 +100,7 @@ where
         .pool(BasePoolBuilder::default())
         .executor(BaseExecutorBuilder::default())
         .payload(BasicPayloadServiceBuilder::new(
-            OpPayloadBuilder::new(compute_pending_block)
+            BasePayloadBuilder::new(compute_pending_block)
                 .with_transactions(CustomTxPriority { chain_id }),
         ))
         .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))

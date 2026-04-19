@@ -5,20 +5,20 @@ use reth_rpc_eth_api::{
     helpers::{EthBlocks, LoadBlock},
 };
 
-use crate::{OpEthApi, OpEthApiError, eth::RpcNodeCore};
+use crate::{BaseEthApi, BaseEthApiError, eth::RpcNodeCore};
 
-impl<N, Rpc> EthBlocks for OpEthApi<N, Rpc>
+impl<N, Rpc> EthBlocks for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
 }
 
-impl<N, Rpc> LoadBlock for OpEthApi<N, Rpc>
+impl<N, Rpc> LoadBlock for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
 }

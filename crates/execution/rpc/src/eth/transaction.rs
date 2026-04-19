@@ -24,13 +24,13 @@ use reth_transaction_pool::{
 };
 use tracing::{debug, warn};
 
-use crate::{OpEthApi, OpEthApiError, SequencerClient};
+use crate::{BaseEthApi, BaseEthApiError, SequencerClient};
 
-impl<N, Rpc> EthTransactions for OpEthApi<N, Rpc>
+impl<N, Rpc> EthTransactions for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
     fn signers(&self) -> &SignersForRpc<Self::Provider, Self::NetworkTypes> {
         self.inner.eth_api.signers()
@@ -139,11 +139,11 @@ where
     }
 }
 
-impl<N, Rpc> LoadTransaction for OpEthApi<N, Rpc>
+impl<N, Rpc> LoadTransaction for BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
-    OpEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError>,
+    BaseEthApiError: FromEvmError<N::Evm>,
+    Rpc: RpcConvert<Primitives = N::Primitives, Error = BaseEthApiError>,
 {
     async fn transaction_by_hash(
         &self,
@@ -180,7 +180,7 @@ where
     }
 }
 
-impl<N, Rpc> OpEthApi<N, Rpc>
+impl<N, Rpc> BaseEthApi<N, Rpc>
 where
     N: RpcNodeCore,
     Rpc: RpcConvert<Primitives = N::Primitives>,

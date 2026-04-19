@@ -43,7 +43,7 @@ use {
 };
 
 mod config;
-pub use config::OpNextBlockEnvAttributes;
+pub use config::BaseNextBlockEnvAttributes;
 mod execute;
 pub use execute::*;
 pub mod l1;
@@ -86,7 +86,7 @@ fn build_evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -
 /// Builds an [`EvmEnv`] for the next block given a parent header.
 fn build_next_evm_env(
     parent: &Header,
-    attributes: &OpNextBlockEnvAttributes,
+    attributes: &BaseNextBlockEnvAttributes,
     base_fee_per_gas: u64,
     chain_spec: &(impl Upgrades + EthChainSpec),
 ) -> EvmEnv<OpSpecId> {
@@ -120,7 +120,7 @@ fn build_next_evm_env(
 pub struct BaseEvmConfig<
     ChainSpec = BaseChainSpec,
     N: NodePrimitives = BasePrimitives,
-    R = OpRethReceiptBuilder,
+    R = BaseRethReceiptBuilder,
     EvmFactory = BaseEvmFactory,
 > {
     /// Inner [`BaseBlockExecutorFactory`].
@@ -146,7 +146,7 @@ impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
 impl<ChainSpec: Upgrades> BaseEvmConfig<ChainSpec> {
     /// Creates a new [`BaseEvmConfig`] with the given chain spec for Base chains.
     pub fn base(chain_spec: Arc<ChainSpec>) -> Self {
-        Self::new(chain_spec, OpRethReceiptBuilder::default())
+        Self::new(chain_spec, BaseRethReceiptBuilder::default())
     }
 }
 
@@ -201,7 +201,7 @@ where
 {
     type Primitives = N;
     type Error = EIP1559ParamError;
-    type NextBlockEnvCtx = OpNextBlockEnvAttributes;
+    type NextBlockEnvCtx = BaseNextBlockEnvAttributes;
     type BlockExecutorFactory = BaseBlockExecutorFactory<R, Arc<ChainSpec>, EvmF>;
     type BlockAssembler = BaseBlockAssembler<ChainSpec>;
 

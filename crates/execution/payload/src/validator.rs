@@ -12,13 +12,13 @@ use reth_primitives_traits::{Block as _, SealedBlock, SignedTransaction};
 
 /// Execution payload validator.
 #[derive(Clone, Debug, Deref, Constructor)]
-pub struct OpExecutionPayloadValidator<ChainSpec> {
+pub struct BaseExecutionPayloadValidator<ChainSpec> {
     /// Chain spec to validate against.
     #[deref]
     inner: Arc<ChainSpec>,
 }
 
-impl<ChainSpec> OpExecutionPayloadValidator<ChainSpec>
+impl<ChainSpec> BaseExecutionPayloadValidator<ChainSpec>
 where
     ChainSpec: Upgrades,
 {

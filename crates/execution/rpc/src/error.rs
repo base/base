@@ -20,7 +20,7 @@ use revm::context_interface::result::{EVMError, InvalidTransaction};
 
 /// Base-specific errors, that extend [`EthApiError`].
 #[derive(Debug, thiserror::Error)]
-pub enum OpEthApiError {
+pub enum BaseEthApiError {
     /// L1 ethereum error.
     #[error(transparent)]
     Eth(#[from] EthApiError),
@@ -35,13 +35,13 @@ pub enum OpEthApiError {
     L1BlockGasError,
     /// Wrapper for [`revm_primitives::InvalidTransaction`](InvalidTransaction).
     #[error(transparent)]
-    InvalidTransaction(#[from] OpInvalidTransactionError),
+    InvalidTransaction(#[from] BaseInvalidTransactionError),
     /// Sequencer client error.
     #[error(transparent)]
     Sequencer(#[from] SequencerClientError),
 }
 
-impl AsEthApiError for OpEthApiError {
+impl AsEthApiError for BaseEthApiError {
     fn as_err(&self) -> Option<&EthApiError> {
         match self {
             Self::Eth(err) => Some(err),
@@ -50,22 +50,22 @@ impl AsEthApiError for OpEthApiError {
     }
 }
 
-impl From<OpEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
-    fn from(err: OpEthApiError) -> Self {
+impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
+    fn from(err: BaseEthApiError) -> Self {
         match err {
-            OpEthApiError::Eth(err) => err.into(),
-            OpEthApiError::InvalidTransaction(err) => err.into(),
-            OpEthApiError::Evm(_)
-            | OpEthApiError::L1BlockFeeError
-            | OpEthApiError::L1BlockGasError => internal_rpc_err(err.to_string()),
-            OpEthApiError::Sequencer(err) => err.into(),
+            BaseEthApiError::Eth(err) => err.into(),
+            BaseEthApiError::InvalidTransaction(err) => err.into(),
+            BaseEthApiError::Evm(_)
+            | BaseEthApiError::L1BlockFeeError
+            | BaseEthApiError::L1BlockGasError => internal_rpc_err(err.to_string()),
+            BaseEthApiError::Sequencer(err) => err.into(),
         }
     }
 }
 
 /// Base-specific invalid transaction errors
 #[derive(thiserror::Error, Debug)]
-pub enum OpInvalidTransactionError {
+pub enum BaseInvalidTransactionError {
     /// A deposit transaction was submitted as a system transaction post-regolith.
     #[error("no system transactions allowed after regolith")]
     DepositSystemTxPostRegolith,
@@ -77,19 +77,19 @@ pub enum OpInvalidTransactionError {
     MissingEnvelopedTx,
 }
 
-impl From<OpInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
-    fn from(err: OpInvalidTransactionError) -> Self {
+impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
+    fn from(err: BaseInvalidTransactionError) -> Self {
         match err {
-            OpInvalidTransactionError::DepositSystemTxPostRegolith
-            | OpInvalidTransactionError::HaltedDepositPostRegolith
-            | OpInvalidTransactionError::MissingEnvelopedTx => {
+            BaseInvalidTransactionError::DepositSystemTxPostRegolith
+            | BaseInvalidTransactionError::HaltedDepositPostRegolith
+            | BaseInvalidTransactionError::MissingEnvelopedTx => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
         }
     }
 }
 
-impl TryFrom<OpTransactionError> for OpInvalidTransactionError {
+impl TryFrom<OpTransactionError> for BaseInvalidTransactionError {
     type Error = InvalidTransaction;
 
     fn try_from(err: OpTransactionError) -> Result<Self, Self::Error> {
@@ -129,7 +129,7 @@ impl From<SequencerClientError> for jsonrpsee_types::error::ErrorObject<'static>
     }
 }
 
-impl<T> From<EVMError<T, OpTransactionError>> for OpEthApiError
+impl<T> From<EVMError<T, OpTransactionError>> for BaseEthApiError
 where
     T: Into<EthApiError>,
 {
@@ -146,48 +146,48 @@ where
     }
 }
 
-impl FromEvmHalt<OpHaltReason> for OpEthApiError {
+impl FromEvmHalt<OpHaltReason> for BaseEthApiError {
     fn from_evm_halt(halt: OpHaltReason, gas_limit: u64) -> Self {
         match halt {
             OpHaltReason::FailedDeposit => {
-                OpInvalidTransactionError::HaltedDepositPostRegolith.into()
+                BaseInvalidTransactionError::HaltedDepositPostRegolith.into()
             }
             OpHaltReason::Base(halt) => EthApiError::from_evm_halt(halt, gas_limit).into(),
         }
     }
 }
 
-impl FromRevert for OpEthApiError {
+impl FromRevert for BaseEthApiError {
     fn from_revert(output: Bytes) -> Self {
         Self::Eth(EthApiError::from_revert(output))
     }
 }
 
-impl From<TransactionConversionError> for OpEthApiError {
+impl From<TransactionConversionError> for BaseEthApiError {
     fn from(value: TransactionConversionError) -> Self {
         Self::Eth(EthApiError::from(value))
     }
 }
 
-impl From<EthTxEnvError> for OpEthApiError {
+impl From<EthTxEnvError> for BaseEthApiError {
     fn from(value: EthTxEnvError) -> Self {
         Self::Eth(EthApiError::from(value))
     }
 }
 
-impl From<ProviderError> for OpEthApiError {
+impl From<ProviderError> for BaseEthApiError {
     fn from(value: ProviderError) -> Self {
         Self::Eth(EthApiError::from(value))
     }
 }
 
-impl From<BlockError> for OpEthApiError {
+impl From<BlockError> for BaseEthApiError {
     fn from(value: BlockError) -> Self {
         Self::Eth(EthApiError::from(value))
     }
 }
 
-impl From<Infallible> for OpEthApiError {
+impl From<Infallible> for BaseEthApiError {
     fn from(value: Infallible) -> Self {
         match value {}
     }

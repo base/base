@@ -26,9 +26,9 @@ use base_common_evm::{
 };
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::OpRethReceiptBuilder;
+use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::FlashblocksState;
-use base_node_core::OpEngineTypes;
+use base_node_core::BaseEngineTypes;
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, LazyOverlay};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{
@@ -143,7 +143,7 @@ where
     Evm: ConfigureEvm<
             Primitives = BasePrimitives,
             BlockExecutorFactory = BaseBlockExecutorFactory<
-                OpRethReceiptBuilder,
+                BaseRethReceiptBuilder,
                 Arc<BaseChainSpec>,
                 BaseEvmFactory,
             >,
@@ -1485,7 +1485,7 @@ where
             ExecutionData,
             Primitives = BasePrimitives,
             BlockExecutorFactory = BaseBlockExecutorFactory<
-                OpRethReceiptBuilder,
+                BaseRethReceiptBuilder,
                 Arc<BaseChainSpec>,
             >,
         > + 'static,
@@ -1577,14 +1577,14 @@ impl<Node, EV> EngineValidatorBuilder<Node> for BaseEngineValidatorBuilder<EV>
 where
     Node: FullNodeComponents<
             Types: NodeTypes<
-                Payload = OpEngineTypes,
+                Payload = BaseEngineTypes,
                 ChainSpec = BaseChainSpec,
                 Primitives = BasePrimitives,
             >,
             Evm: ConfigureEngineEvm<ExecutionData>
                      + ConfigureEvm<
                 BlockExecutorFactory = BaseBlockExecutorFactory<
-                    OpRethReceiptBuilder,
+                    BaseRethReceiptBuilder,
                     Arc<BaseChainSpec>,
                 >,
             >,

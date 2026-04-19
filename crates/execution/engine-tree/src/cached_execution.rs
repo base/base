@@ -5,7 +5,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, OpTxType};
 use base_common_evm::{BaseBlockExecutor, BaseTxResult, OpHaltReason, OpTransaction};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::OpRethReceiptBuilder;
+use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
 use reth_errors::BlockExecutionError;
 use reth_evm::{
@@ -112,7 +112,7 @@ impl<TxResult> CachedExecutionProvider<TxResult> for NoopCachedExecutionProvider
 /// Executor that fetches cached execution results for transactions.
 #[derive(Debug)]
 pub struct CachedExecutor<E, C> {
-    executor: BaseBlockExecutor<E, OpRethReceiptBuilder, Arc<BaseChainSpec>>,
+    executor: BaseBlockExecutor<E, BaseRethReceiptBuilder, Arc<BaseChainSpec>>,
     cached_execution_provider: C,
     txs: Vec<B256>,
     position_by_hash: HashMap<B256, usize>,
@@ -123,7 +123,7 @@ pub struct CachedExecutor<E, C> {
 impl<E, C> CachedExecutor<E, C> {
     /// Creates a new [`CachedExecutor`].
     pub fn new(
-        executor: BaseBlockExecutor<E, OpRethReceiptBuilder, Arc<BaseChainSpec>>,
+        executor: BaseBlockExecutor<E, BaseRethReceiptBuilder, Arc<BaseChainSpec>>,
         cached_execution_provider: C,
         txs: Vec<B256>,
         parent_block_hash: B256,

@@ -8,9 +8,9 @@ use reth_evm::Evm;
 /// [`BaseReceipt`].
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct OpRethReceiptBuilder;
+pub struct BaseRethReceiptBuilder;
 
-impl BaseReceiptBuilder for OpRethReceiptBuilder {
+impl BaseReceiptBuilder for BaseRethReceiptBuilder {
     type Transaction = BaseTransactionSigned;
     type Receipt = BaseReceipt;
 

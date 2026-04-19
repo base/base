@@ -1,7 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_consensus::OpBeaconConsensus;
+use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::BaseExecutorProvider;
 use base_node_core::BaseNode;
 use eyre::{Result, eyre};
@@ -75,7 +75,7 @@ where
         install_prometheus_recorder();
 
         let components = |spec: Arc<BaseChainSpec>| {
-            (BaseExecutorProvider::base(Arc::clone(&spec)), Arc::new(OpBeaconConsensus::new(spec)))
+            (BaseExecutorProvider::base(Arc::clone(&spec)), Arc::new(BaseBeaconConsensus::new(spec)))
         };
 
         match self.cli.command {

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use base_common_flashblocks::FlashblocksPayloadV1;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_rpc::OpEthApiBuilder;
+use base_execution_rpc::BaseEthApiBuilder;
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{BasePayloadValidatorBuilder, args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
@@ -135,7 +135,7 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let addons: base_node_runner::BaseAddOns<_, OpEthApiBuilder, BasePayloadValidatorBuilder> =
+        let addons: base_node_runner::BaseAddOns<_, BaseEthApiBuilder, BasePayloadValidatorBuilder> =
             base_node
                 .add_ons_builder()
                 .with_da_config(da_config.clone())

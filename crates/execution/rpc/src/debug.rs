@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use base_common_chains::Upgrades;
 use base_execution_payload_builder::{
     Attributes, PayloadPrimitives,
-    builder::{Builder, OpPayloadBuilderCtx},
+    builder::{Builder, BasePayloadBuilderCtx},
 };
 use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
 use base_execution_txpool::BasePooledTransaction;
@@ -207,7 +207,7 @@ where
 
                     let config =
                         PayloadConfig { parent_header: Arc::new(parent_header), attributes };
-                    let ctx = OpPayloadBuilderCtx {
+                    let ctx = BasePayloadBuilderCtx {
                         evm_config: this.evm_config.clone(),
                         chain_spec: this.provider.chain_spec(),
                         config,

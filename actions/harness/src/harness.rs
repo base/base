@@ -255,7 +255,7 @@ impl ActionTestHarness {
     ///
     /// The returned sequencer generates real [`BaseBlock`]s using the production
     /// [`L1OriginSelector`], [`StatefulAttributesBuilder`], and
-    /// [`ActionEngineClient`] (backed by `OpPayloadBuilder`).
+    /// [`ActionEngineClient`] (backed by `BasePayloadBuilder`).
     ///
     /// Call `build_next_block_with_single_transaction().await` once per L2
     /// block to advance the sequencer.

@@ -4,7 +4,7 @@ use alloy_consensus::Header;
 use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{BundleTransaction, OpPooledTx, TimestampedTransaction};
-use base_node_core::OpEngineTypes;
+use base_node_core::BaseEngineTypes;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_payload_util::PayloadTransactions;
 use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
@@ -14,7 +14,7 @@ use reth_transaction_pool::{TransactionPool, TransactionPoolExt};
 pub trait NodeBounds:
     FullNodeTypes<
     Types: NodeTypes<
-        Payload = OpEngineTypes,
+        Payload = BaseEngineTypes,
         ChainSpec = BaseChainSpec,
         Primitives = BasePrimitives,
     >,
@@ -25,7 +25,7 @@ pub trait NodeBounds:
 impl<T> NodeBounds for T where
     T: FullNodeTypes<
         Types: NodeTypes<
-            Payload = OpEngineTypes,
+            Payload = BaseEngineTypes,
             ChainSpec = BaseChainSpec,
             Primitives = BasePrimitives,
         >,

@@ -5,7 +5,7 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chains::Upgrades;
-use base_execution_payload_builder::{Attributes, OpPayloadBuilder, PayloadPrimitives};
+use base_execution_payload_builder::{Attributes, BasePayloadBuilder, PayloadPrimitives};
 use base_execution_txpool::OpPooledTx;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_chainspec::ChainSpecProvider;
@@ -32,7 +32,7 @@ impl<Pool, Provider, EvmConfig, Attrs> BaseDebugWitnessApi<Pool, Provider, EvmCo
     pub fn new(
         provider: Provider,
         task_spawner: Box<dyn TaskSpawner>,
-        builder: OpPayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+        builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(3));
         let inner = BaseDebugWitnessApiInner { provider, builder, task_spawner, semaphore };
@@ -116,7 +116,7 @@ impl<Pool, Provider, EvmConfig, Attrs> Debug
 
 struct BaseDebugWitnessApiInner<Pool, Provider, EvmConfig, Attrs> {
     provider: Provider,
-    builder: OpPayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
+    builder: BasePayloadBuilder<Pool, Provider, EvmConfig, (), Attrs>,
     task_spawner: Box<dyn TaskSpawner>,
     semaphore: Arc<Semaphore>,
 }

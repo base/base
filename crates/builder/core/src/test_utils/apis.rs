@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceState, ForkchoiceUpdated, PayloadStatus};
 use base_common_rpc_types_engine::BaseExecutionPayloadV4;
 use base_execution_rpc::BaseEngineApiClient;
-use base_node_core::OpEngineTypes;
+use base_node_core::BaseEngineTypes;
 use jsonrpsee::{
     core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,
@@ -161,9 +161,9 @@ impl<P: Protocol> EngineApi<P> {
     pub async fn get_payload(
         &self,
         payload_id: PayloadId,
-    ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
+    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
         debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
-        Ok(BaseEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
+        Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v4(&self.client().await, payload_id)
             .await?)
     }
 
@@ -176,7 +176,7 @@ impl<P: Protocol> EngineApi<P> {
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
         debug!(timestamp = %chrono::Utc::now(), "Submitting new payload");
-        Ok(BaseEngineApiClient::<OpEngineTypes>::new_payload_v4(
+        Ok(BaseEngineApiClient::<BaseEngineTypes>::new_payload_v4(
             &self.client().await,
             payload,
             versioned_hashes,
@@ -191,10 +191,10 @@ impl<P: Protocol> EngineApi<P> {
         &self,
         current_head: B256,
         new_head: B256,
-        payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
+        payload_attributes: Option<<BaseEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
         debug!(timestamp = %chrono::Utc::now(), "Updating forkchoice");
-        Ok(BaseEngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
+        Ok(BaseEngineApiClient::<BaseEngineTypes>::fork_choice_updated_v3(
             &self.client().await,
             ForkchoiceState {
                 head_block_hash: new_head,

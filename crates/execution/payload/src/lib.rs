@@ -10,14 +10,14 @@
 extern crate alloc;
 
 pub mod builder;
-pub use builder::OpPayloadBuilder;
+pub use builder::BasePayloadBuilder;
 pub mod config;
 pub mod error;
 pub mod payload;
-pub use payload::{OpBuiltPayload, OpPayloadBuilderAttributes, payload_id};
+pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes, payload_id};
 mod traits;
 pub use traits::*;
 mod types;
 pub use types::BasePayloadTypes;
 pub mod validator;
-pub use validator::OpExecutionPayloadValidator;
+pub use validator::BaseExecutionPayloadValidator;

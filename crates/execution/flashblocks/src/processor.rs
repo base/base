@@ -14,7 +14,7 @@ use arc_swap::ArcSwapOption;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_flashblocks::Flashblock;
-use base_execution_evm::{BaseEvmConfig, OpNextBlockEnvAttributes};
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
@@ -393,7 +393,7 @@ where
             // Extract L1 block info using the AssembledBlock method
             let l1_block_info = assembled.l1_block_info()?;
 
-            let block_env_attributes = OpNextBlockEnvAttributes {
+            let block_env_attributes = BaseNextBlockEnvAttributes {
                 timestamp: assembled.base.timestamp,
                 suggested_fee_recipient: assembled.base.fee_recipient,
                 prev_randao: assembled.base.prev_randao,
