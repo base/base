@@ -194,7 +194,7 @@ mod tests {
         assert!(obj.contains_key("value"), "missing flattened tx 'value' field");
         assert!(obj.contains_key("blockNumber"), "missing flattened tx 'blockNumber' field");
 
-        assert_eq!(obj["gasUsed"], 21_000u64, "gasUsed should be 21000");
+        assert_eq!(obj["gasUsed"], 21_000, "gasUsed should serialize as a JSON number");
         assert_eq!(obj["status"], "0x1", "status should use receipt quantity encoding");
         assert_eq!(
             obj["cumulativeGasUsed"], "0xa410",
@@ -235,7 +235,10 @@ mod tests {
         let twl = test_transaction_with_logs();
         let json_str = serde_json::to_string(&twl).expect("serialization should succeed");
 
-        assert!(json_str.contains("\"gasUsed\""), "JSON must contain gasUsed key");
+        assert!(
+            json_str.contains("\"gasUsed\":21000"),
+            "JSON must contain gasUsed key with numeric encoding"
+        );
         assert!(json_str.contains("\"status\":\"0x1\""), "JSON must contain status key");
         assert!(
             json_str.contains("\"cumulativeGasUsed\":\"0xa410\""),
