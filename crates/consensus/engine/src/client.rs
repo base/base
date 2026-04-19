@@ -1,11 +1,11 @@
 //! An Engine API Client.
 
-use std::{future::Future, sync::Arc};
+use std::{future::Future, io, sync::Arc};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, StorageKey};
-use alloy_provider::{EthGetBlock, Provider, RootProvider, RpcWithBlock};
+use alloy_provider::{EthGetBlock, IpcConnect, Provider, RootProvider, RpcWithBlock};
 use alloy_rpc_client::{ClientBuilder, RpcClient};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
@@ -106,23 +106,37 @@ where
 {
     /// Creates a new RPC client for the given address and JWT secret.
     ///
-    /// Supports both `http://`/`https://` and `ws://`/`wss://` schemes. For WebSocket URLs a
-    /// [`JwtWsConnect`] is used, which mints a fresh JWT on every connect and reconnect attempt.
+    /// Supports `http://`/`https://`, `ws://`/`wss://`, and `file://` schemes. For WebSocket URLs
+    /// a [`JwtWsConnect`] is used, which mints a fresh JWT on every connect and reconnect attempt.
     /// This ensures the `iat` claim is always within the ±60-second window enforced by Reth and
     /// Geth, unlike a static token that would become stale after 60 seconds.
     ///
-    /// Returns an error if the WebSocket handshake fails (e.g. the engine is not yet reachable).
-    /// HTTP/HTTPS URLs are constructed lazily and never fail here.
+    /// For `file://` URLs, the client connects over IPC and the JWT secret is intentionally
+    /// unused because access control is provided by filesystem permissions on the socket path.
+    ///
+    /// Returns an error if the WebSocket handshake fails (e.g. the engine is not yet reachable),
+    /// or if the URL scheme is unsupported. HTTP/HTTPS URLs are constructed lazily and never fail
+    /// here.
     pub async fn rpc_client<N: Network>(
         addr: Url,
         jwt: JwtSecret,
     ) -> TransportResult<RootProvider<N>> {
         match addr.scheme() {
+            "file" => {
+                let path = addr.to_file_path().map_err(|_| {
+                    TransportErrorKind::custom(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "file:// engine URLs must contain an absolute filesystem path",
+                    ))
+                })?;
+                let client = ClientBuilder::default().ipc(IpcConnect::new(path)).await?;
+                Ok(RootProvider::<N>::new(client))
+            }
             "ws" | "wss" => {
                 let client = ClientBuilder::default().pubsub(JwtWsConnect::new(addr, jwt)).await?;
                 Ok(RootProvider::<N>::new(client))
             }
-            _ => {
+            "http" | "https" => {
                 let hyper_client =
                     Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
                 let auth_layer = AuthLayer::new(jwt);
@@ -132,6 +146,12 @@ where
                 let rpc_client = RpcClient::new(http_hyper, false);
                 Ok(RootProvider::<N>::new(rpc_client))
             }
+            scheme => Err(TransportErrorKind::custom(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "unsupported engine URL scheme '{scheme}'; expected http, https, ws, wss, or file"
+                ),
+            ))),
         }
     }
 }
@@ -409,6 +429,21 @@ mod tests {
             BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(addr, jwt)
                 .await
                 .unwrap();
+    }
+
+    /// `rpc_client` with an unsupported URL scheme must fail with a clear validation error.
+    #[tokio::test]
+    async fn rpc_client_invalid_scheme_rejected() {
+        let addr: Url = "htpp://127.0.0.1:8551".parse().unwrap();
+        let jwt = JwtSecret::random();
+        let error =
+            BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(addr, jwt)
+                .await
+                .unwrap_err();
+
+        assert!(error.to_string().contains(
+            "unsupported engine URL scheme 'htpp'; expected http, https, ws, wss, or file"
+        ));
     }
 
     /// `rpc_client` with a `ws://` URL must complete the WebSocket handshake at build time.

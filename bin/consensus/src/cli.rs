@@ -16,6 +16,7 @@ use base_consensus_node::{
 use base_consensus_providers::OnlineBeaconClient;
 use base_consensus_registry::Registry;
 use clap::{Args, Parser, Subcommand};
+use eyre::Context;
 use strum::IntoEnumIterator;
 use tracing::{error, info, warn};
 use url::Url;
@@ -405,10 +406,12 @@ impl Node {
         if let Some(path) = self.safedb_path.clone() {
             builder = builder.with_safedb_path(path);
         }
-        builder.build().start().await.map_err(|e| {
-            error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
-            eyre::eyre!("{e}")
-        })?;
+        builder.build().await.wrap_err("Failed to build rollup node")?.start().await.map_err(
+            |e| {
+                error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
+                eyre::eyre!("{e}")
+            },
+        )?;
 
         Ok(())
     }

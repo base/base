@@ -3,19 +3,13 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use alloy_genesis::ChainConfig;
-use alloy_primitives::Bytes;
 use alloy_provider::RootProvider;
-use alloy_rpc_client::RpcClient;
-use alloy_transport_http::{
-    AuthLayer, Http, HyperClient,
-    hyper_util::{client::legacy::Client, rt::TokioExecutor},
-};
+use alloy_transport::TransportResult;
 use base_common_network::Base;
+use base_consensus_engine::BaseEngineClient;
 use base_consensus_genesis::RollupConfig;
 use base_consensus_providers::OnlineBeaconClient;
 use base_consensus_rpc::RpcBuilder;
-use http_body_util::Full;
-use tower::ServiceBuilder;
 use url::Url;
 
 use crate::{
@@ -88,6 +82,20 @@ pub struct RollupNodeBuilder {
 }
 
 impl RollupNodeBuilder {
+    fn derivation_l2_provider_url(mut url: Url) -> Url {
+        match url.scheme() {
+            "ws" => {
+                let _ = url.set_scheme("http");
+            }
+            "wss" => {
+                let _ = url.set_scheme("https");
+            }
+            _ => {}
+        }
+
+        url
+    }
+
     /// Creates a new [`RollupNodeBuilder`] with the given [`RollupConfig`].
     pub const fn new(
         config: RollupConfig,
@@ -151,17 +159,11 @@ impl RollupNodeBuilder {
 
     /// Assembles the [`RollupNode`] service.
     ///
-    /// ## Panics
-    ///
-    /// Panics if:
-    /// - The L1 provider RPC URL is not set.
-    /// - The L1 beacon API URL is not set.
-    /// - The L2 provider RPC URL is not set.
-    /// - The L2 engine URL is not set.
-    /// - The jwt secret is not set.
-    /// - The P2P config is not set.
-    /// - The rollup boost args are not set.
-    pub fn build(self) -> RollupNode {
+    /// Returns an error if the internal L2 provider transport cannot be constructed. WebSocket
+    /// URLs are normalized to HTTP(S) so the derivation pipeline's request/response L2 provider
+    /// remains lazy during startup. `file://` URLs still connect eagerly because IPC is an
+    /// explicit opt-in transport.
+    pub async fn build(self) -> TransportResult<RollupNode> {
         let mut l1_beacon = OnlineBeaconClient::new_http(self.l1_config_builder.beacon.to_string());
         if let Some(l1_slot_duration) = self.l1_config_builder.slot_duration_override {
             l1_beacon = l1_beacon.with_l1_slot_duration_override(l1_slot_duration);
@@ -180,35 +182,12 @@ impl RollupNodeBuilder {
             verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
         };
 
-        let jwt_secret = self.engine_config.l2_jwt_secret;
-        let hyper_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
-
-        let auth_layer = AuthLayer::new(jwt_secret);
-        let service = ServiceBuilder::new().layer(auth_layer).service(hyper_client);
-
-        // Normalize ws:// -> http:// and wss:// -> https:// so the Hyper HTTP client
-        // can connect regardless of whether the engine URL uses a WebSocket scheme.
-        //
-        // This provider is used exclusively for request/response eth_* calls by the
-        // derivation pipeline (block fetching, receipt fetching, system config). It does
-        // not use subscriptions, so HTTP is sufficient and avoids an async WS handshake
-        // here. `build()` is sync; the engine client (built async in `node.rs`) is the
-        // one that uses the WS transport end-to-end.
-        let mut l2_http_url = self.engine_config.l2_url.clone();
-        match l2_http_url.scheme() {
-            "ws" => {
-                let _ = l2_http_url.set_scheme("http");
-            }
-            "wss" => {
-                let _ = l2_http_url.set_scheme("https");
-            }
-            _ => {}
-        }
-
-        let layer_transport = HyperClient::with_service(service);
-        let http_hyper = Http::with_client(layer_transport, l2_http_url);
-        let rpc_client = RpcClient::new(http_hyper, false);
-        let l2_provider = RootProvider::<Base>::new(rpc_client);
+        let l2_provider_url = Self::derivation_l2_provider_url(self.engine_config.l2_url.clone());
+        let l2_provider = BaseEngineClient::<RootProvider, RootProvider<Base>>::rpc_client::<Base>(
+            l2_provider_url,
+            self.engine_config.l2_jwt_secret,
+        )
+        .await?;
 
         let rollup_config = Arc::new(self.config);
 
@@ -221,7 +200,7 @@ impl RollupNodeBuilder {
             )
         });
 
-        RollupNode {
+        Ok(RollupNode {
             config: rollup_config,
             l1_config,
             l2_provider,
@@ -232,6 +211,88 @@ impl RollupNodeBuilder {
             sequencer_config,
             derivation_delegate_provider,
             safedb_path: self.safedb_path,
-        }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
+
+    use alloy_primitives::Address;
+    use alloy_rpc_types_engine::JwtSecret;
+    use base_consensus_disc::LocalNode;
+    use discv5::enr::k256::ecdsa::SigningKey;
+    use libp2p::Multiaddr;
+
+    use super::*;
+    use crate::NodeMode;
+
+    fn test_builder(l2_url: Url) -> RollupNodeBuilder {
+        let rollup_config = RollupConfig::default();
+        let l1_config_builder = L1ConfigBuilder {
+            chain_config: ChainConfig::default(),
+            trust_rpc: true,
+            beacon: Url::parse("http://127.0.0.1:5052").unwrap(),
+            rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
+            slot_duration_override: None,
+            verifier_l1_confs: 0,
+        };
+        let engine_config = EngineConfig {
+            config: Arc::new(rollup_config.clone()),
+            l2_url,
+            l2_jwt_secret: JwtSecret::random(),
+            l1_url: Url::parse("http://127.0.0.1:8545").unwrap(),
+            mode: NodeMode::Validator,
+        };
+        let discovery_listen = LocalNode::new(
+            SigningKey::from_bytes((&[7_u8; 32]).into()).unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            0,
+            0,
+        );
+        let p2p_config = NetworkConfig::new(
+            rollup_config.clone(),
+            discovery_listen,
+            "/ip4/127.0.0.1/tcp/0".parse::<Multiaddr>().unwrap(),
+            Address::ZERO,
+        );
+
+        RollupNodeBuilder::new(
+            rollup_config,
+            l1_config_builder,
+            true,
+            engine_config,
+            p2p_config,
+            None,
+        )
+    }
+
+    #[test]
+    fn derivation_l2_provider_url_normalizes_websocket_schemes() {
+        let ws_url = RollupNodeBuilder::derivation_l2_provider_url(
+            Url::parse("ws://127.0.0.1:8551/path?query=value").unwrap(),
+        );
+        assert_eq!(ws_url.as_str(), "http://127.0.0.1:8551/path?query=value");
+
+        let wss_url = RollupNodeBuilder::derivation_l2_provider_url(
+            Url::parse("wss://127.0.0.1:8551/path?query=value").unwrap(),
+        );
+        assert_eq!(wss_url.as_str(), "https://127.0.0.1:8551/path?query=value");
+
+        let file_url = Url::parse("file:///tmp/base-engine.ipc").unwrap();
+        let normalized_file_url = RollupNodeBuilder::derivation_l2_provider_url(file_url.clone());
+        assert_eq!(normalized_file_url, file_url);
+    }
+
+    #[tokio::test]
+    async fn build_keeps_ws_startup_lazy_for_derivation_provider() {
+        let rollup_node =
+            test_builder(Url::parse("ws://127.0.0.1:8551").unwrap()).build().await.unwrap();
+
+        assert_eq!(rollup_node.engine_config.l2_url.scheme(), "ws");
     }
 }

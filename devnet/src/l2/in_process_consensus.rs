@@ -185,7 +185,7 @@ impl InProcessConsensus {
             });
         }
 
-        let node = builder.build();
+        let node = builder.build().await.wrap_err("Failed to build consensus node")?;
 
         let mode = config.mode;
         let (startup_tx, startup_rx) = tokio::sync::oneshot::channel();
