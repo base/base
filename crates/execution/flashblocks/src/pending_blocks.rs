@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{Header, Sealed};
+use alloy_consensus::{Header, Sealed, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
     Address, B256, BlockNumber, TxHash, U256,
@@ -229,6 +229,34 @@ pub struct PendingBlocks {
 }
 
 impl PendingBlocks {
+    fn transaction_with_logs(
+        transaction: &Transaction,
+        receipt: Option<&BaseTransactionReceipt>,
+    ) -> TransactionWithLogs {
+        let (logs, gas_used, status, cumulative_gas_used, contract_address, logs_bloom) = receipt
+            .map(|receipt| {
+                (
+                    receipt.inner.logs().to_vec(),
+                    Some(receipt.inner.gas_used),
+                    Some(receipt.inner.inner.status_or_post_state()),
+                    Some(receipt.inner.inner.cumulative_gas_used()),
+                    receipt.inner.contract_address,
+                    Some(receipt.inner.inner.logs_bloom),
+                )
+            })
+            .unwrap_or_default();
+
+        TransactionWithLogs {
+            transaction: transaction.clone(),
+            logs,
+            gas_used,
+            status,
+            cumulative_gas_used,
+            contract_address,
+            logs_bloom,
+        }
+    }
+
     /// Returns the latest block number in the pending state.
     #[inline]
     pub fn latest_block_number(&self) -> BlockNumber {
@@ -426,15 +454,7 @@ impl PendingBlocks {
     pub fn get_pending_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
         self.transactions
             .iter()
-            .map(|tx| {
-                let tx_hash = tx.tx_hash();
-                let (logs, gas_used) = self
-                    .transaction_receipts
-                    .get(&tx_hash)
-                    .map(|receipt| (receipt.inner.logs().to_vec(), Some(receipt.inner.gas_used)))
-                    .unwrap_or_default();
-                TransactionWithLogs { transaction: tx.clone(), logs, gas_used }
-            })
+            .map(|tx| Self::transaction_with_logs(tx, self.transaction_receipts.get(&tx.tx_hash())))
             .collect()
     }
 
@@ -488,15 +508,7 @@ impl PendingBlocks {
         self.transactions
             .iter()
             .skip(prev_count)
-            .map(|tx| {
-                let tx_hash = tx.tx_hash();
-                let (logs, gas_used) = self
-                    .transaction_receipts
-                    .get(&tx_hash)
-                    .map(|receipt| (receipt.inner.logs().to_vec(), Some(receipt.inner.gas_used)))
-                    .unwrap_or_default();
-                TransactionWithLogs { transaction: tx.clone(), logs, gas_used }
-            })
+            .map(|tx| Self::transaction_with_logs(tx, self.transaction_receipts.get(&tx.tx_hash())))
             .collect()
     }
 
@@ -524,11 +536,7 @@ impl PendingBlocks {
                     return None;
                 }
 
-                Some(TransactionWithLogs {
-                    transaction: tx.clone(),
-                    logs: logs.to_vec(),
-                    gas_used: Some(receipt.inner.gas_used),
-                })
+                Some(Self::transaction_with_logs(tx, Some(receipt)))
             })
             .collect()
     }
@@ -782,6 +790,21 @@ mod tests {
             },
             l1_block_info: Default::default(),
         }
+    }
+
+    fn test_receipt_with_subscription_fields(
+        tx_hash: B256,
+        log_address: Address,
+        contract_address: Address,
+        logs_bloom: Bloom,
+    ) -> BaseTransactionReceipt {
+        let mut receipt = test_receipt_with_log(tx_hash, log_address);
+        receipt.inner.inner.receipt.as_receipt_mut().status =
+            alloy_consensus::Eip658Value::Eip658(true);
+        receipt.inner.inner.receipt.as_receipt_mut().cumulative_gas_used = 42_000;
+        receipt.inner.inner.logs_bloom = logs_bloom;
+        receipt.inner.contract_address = Some(contract_address);
+        receipt
     }
 
     fn test_execution_result() -> ExecutionResult<OpHaltReason> {
@@ -1117,6 +1140,38 @@ mod tests {
 
         assert_eq!(txs.len(), 1);
         assert_eq!(txs[0].gas_used, Some(21_000));
+    }
+
+    #[test]
+    fn unfiltered_transactions_populate_receipt_fields() {
+        let tx_hash = B256::with_last_byte(0xAA);
+        let log_address = Address::with_last_byte(0x0A);
+        let contract_address = Address::with_last_byte(0x0B);
+        let logs_bloom: Bloom = [0x22; 256].into();
+
+        let header = Sealed::new_unchecked(Header::default(), B256::ZERO);
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(header);
+        builder.with_transaction(test_transaction_with_hash(tx_hash));
+        builder.with_receipt(
+            tx_hash,
+            test_receipt_with_subscription_fields(
+                tx_hash,
+                log_address,
+                contract_address,
+                logs_bloom,
+            ),
+        );
+        let pending = builder.build().expect("build should succeed");
+
+        let txs = pending.get_latest_flashblock_transactions_with_logs();
+
+        assert_eq!(txs.len(), 1);
+        assert_eq!(txs[0].status, Some(alloy_consensus::Eip658Value::Eip658(true)));
+        assert_eq!(txs[0].cumulative_gas_used, Some(42_000));
+        assert_eq!(txs[0].contract_address, Some(contract_address));
+        assert_eq!(txs[0].logs_bloom, Some(logs_bloom));
     }
 
     #[test]

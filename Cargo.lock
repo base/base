@@ -4042,6 +4042,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
+ "alloy-serde",
  "arc-swap",
  "base-common-chains",
  "base-common-consensus",
