@@ -25,12 +25,12 @@ base-flashblocks.workspace = true
 reth-chain-state.workspace = true
 reth-node-builder.workspace = true
 reth-trie-parallel.workspace = true
+base-common-chains.workspace = true
 base-execution-evm.workspace = true
 reth-engine-tree = { workspace = true }
 reth-primitives-traits.workspace = true
 reth-engine-primitives.workspace = true
 reth-payload-primitives.workspace = true
-base-common-chains.workspace = true
 base-execution-chainspec.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 

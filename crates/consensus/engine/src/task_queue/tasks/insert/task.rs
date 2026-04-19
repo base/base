@@ -48,37 +48,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     const fn check_new_payload_status(&self, status: &PayloadStatusEnum) -> bool {
         matches!(status, PayloadStatusEnum::Valid | PayloadStatusEnum::Syncing)
     }
-
-    /// Converts pre-Ecotone payloads into the `engine_newPayloadV2` request shape.
-    fn execution_payload_input_v2(
-        payload: BaseExecutionPayload,
-    ) -> Result<(ExecutionPayloadInputV2, BaseBlock), InsertTaskError> {
-        match payload {
-            BaseExecutionPayload::V1(payload) => {
-                let payload_input = ExecutionPayloadInputV2 {
-                    execution_payload: payload.clone(),
-                    withdrawals: None,
-                };
-                let block = BaseExecutionPayload::V1(payload)
-                    .try_into_block()
-                    .map_err(InsertTaskError::FromBlockError)?;
-                Ok((payload_input, block))
-            }
-            BaseExecutionPayload::V2(payload) => {
-                let payload_input = ExecutionPayloadInputV2 {
-                    execution_payload: payload.payload_inner.clone(),
-                    withdrawals: Some(payload.withdrawals.clone()),
-                };
-                let block = BaseExecutionPayload::V2(payload)
-                    .try_into_block()
-                    .map_err(InsertTaskError::FromBlockError)?;
-                Ok((payload_input, block))
-            }
-            BaseExecutionPayload::V3(_) | BaseExecutionPayload::V4(_) => {
-                unreachable!("execution_payload_input_v2 is only called for V1/V2 payloads")
-            }
-        }
-    }
 }
 
 #[async_trait]
@@ -95,8 +64,22 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         let parent_beacon_block_root = self.envelope.parent_beacon_block_root.unwrap_or_default();
         let insert_time_start = Instant::now();
         let (response, block): (_, BaseBlock) = match self.envelope.execution_payload.clone() {
-            payload @ (BaseExecutionPayload::V1(_) | BaseExecutionPayload::V2(_)) => {
-                let (payload_input, block) = Self::execution_payload_input_v2(payload)?;
+            BaseExecutionPayload::V1(payload) => {
+                let block = BaseExecutionPayload::V1(payload.clone())
+                    .try_into_block()
+                    .map_err(InsertTaskError::FromBlockError)?;
+                let payload_input =
+                    ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
+                (self.client.new_payload_v2(payload_input).await, block)
+            }
+            BaseExecutionPayload::V2(payload) => {
+                let block = BaseExecutionPayload::V2(payload.clone())
+                    .try_into_block()
+                    .map_err(InsertTaskError::FromBlockError)?;
+                let payload_input = ExecutionPayloadInputV2 {
+                    execution_payload: payload.payload_inner,
+                    withdrawals: Some(payload.withdrawals),
+                };
                 (self.client.new_payload_v2(payload_input).await, block)
             }
             BaseExecutionPayload::V3(payload) => (
