@@ -55,8 +55,10 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     ) -> Result<(ExecutionPayloadInputV2, BaseBlock), InsertTaskError> {
         match payload {
             BaseExecutionPayload::V1(payload) => {
-                let payload_input =
-                    ExecutionPayloadInputV2 { execution_payload: payload.clone(), withdrawals: None };
+                let payload_input = ExecutionPayloadInputV2 {
+                    execution_payload: payload.clone(),
+                    withdrawals: None,
+                };
                 let block = BaseExecutionPayload::V1(payload)
                     .try_into_block()
                     .map_err(InsertTaskError::FromBlockError)?;

@@ -667,13 +667,6 @@ impl EngineClient for ActionEngineClient {
         })
     }
 
-    async fn new_payload_v1(&self, _payload: ExecutionPayloadV1) -> TransportResult<PayloadStatus> {
-        Err(TransportError::from(TransportErrorKind::custom_str(
-            "ActionEngineClient does not support new_payload_v1 \
-             (Base derivation uses new_payload_v2 or later)",
-        )))
-    }
-
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
