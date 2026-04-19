@@ -15,11 +15,8 @@ use alloy_rpc_types_engine::{
 use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse};
 use alloy_transport::{RpcError, TransportErrorKind, TransportResult};
 use alloy_transport_http::{
-    AuthLayer, AuthService, Http, HyperClient,
-    hyper_util::{
-        client::legacy::{Client, connect::HttpConnector},
-        rt::TokioExecutor,
-    },
+    AuthLayer, Http, HyperClient,
+    hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use async_trait::async_trait;
 use base_common_network::Base;
@@ -49,9 +46,6 @@ pub enum EngineClientError {
     #[error("An error occurred while decoding the payload: {0}")]
     BlockInfoDecodeError(#[from] FromBlockError),
 }
-/// A Hyper HTTP client with a JWT authentication layer.
-pub type HyperAuthClient<B = Full<Bytes>> = HyperClient<B, AuthService<Client<HttpConnector, B>>>;
-
 /// Engine API client used to communicate with L1/L2 ELs.
 /// `EngineClient` trait that is very coupled to its only implementation.
 /// The main reason this exists is for mocking/unit testing.
