@@ -453,8 +453,8 @@ impl From<super::BaseReceiptEnvelope> for BaseReceipt {
     }
 }
 
-impl<T> From<ReceiptWithBloom<BaseReceipt<T>>> for BaseReceiptEnvelope<T> {
-    fn from(value: ReceiptWithBloom<BaseReceipt<T>>) -> Self {
+impl From<ReceiptWithBloom<BaseReceipt>> for BaseReceiptEnvelope {
+    fn from(value: ReceiptWithBloom<BaseReceipt>) -> Self {
         let (receipt, logs_bloom) = value.into_components();
         match receipt {
             BaseReceipt::Legacy(receipt) => Self::Legacy(ReceiptWithBloom { receipt, logs_bloom }),

@@ -202,18 +202,17 @@ pub struct L1BlockInfo {
 
 impl Eq for L1BlockInfo {}
 
-impl From<BaseTransactionReceipt> for BaseReceiptEnvelope<alloy_primitives::Log> {
+impl From<BaseTransactionReceipt> for BaseReceiptEnvelope {
     fn from(value: BaseTransactionReceipt) -> Self {
-        let inner_envelope = value.inner.inner.into();
+        let ReceiptWithBloom { logs_bloom, receipt } = value.inner.inner;
 
         /// Helper function to convert the inner logs within a [`ReceiptWithBloom`] from RPC to
         /// consensus types.
         #[inline(always)]
         fn convert_standard_receipt(
-            receipt: ReceiptWithBloom<Receipt<alloy_rpc_types_eth::Log>>,
+            receipt: Receipt<alloy_rpc_types_eth::Log>,
+            logs_bloom: alloy_primitives::Bloom,
         ) -> ReceiptWithBloom<Receipt<alloy_primitives::Log>> {
-            let ReceiptWithBloom { logs_bloom, receipt } = receipt;
-
             let consensus_logs = receipt.logs.into_iter().map(|log| log.inner).collect();
             ReceiptWithBloom {
                 receipt: Receipt {
@@ -225,18 +224,20 @@ impl From<BaseTransactionReceipt> for BaseReceiptEnvelope<alloy_primitives::Log>
             }
         }
 
-        match inner_envelope {
-            BaseReceiptEnvelope::Legacy(receipt) => Self::Legacy(convert_standard_receipt(receipt)),
-            BaseReceiptEnvelope::Eip2930(receipt) => {
-                Self::Eip2930(convert_standard_receipt(receipt))
+        match receipt {
+            BaseReceipt::Legacy(receipt) => {
+                Self::Legacy(convert_standard_receipt(receipt, logs_bloom))
             }
-            BaseReceiptEnvelope::Eip1559(receipt) => {
-                Self::Eip1559(convert_standard_receipt(receipt))
+            BaseReceipt::Eip2930(receipt) => {
+                Self::Eip2930(convert_standard_receipt(receipt, logs_bloom))
             }
-            BaseReceiptEnvelope::Eip7702(receipt) => {
-                Self::Eip7702(convert_standard_receipt(receipt))
+            BaseReceipt::Eip1559(receipt) => {
+                Self::Eip1559(convert_standard_receipt(receipt, logs_bloom))
             }
-            BaseReceiptEnvelope::Deposit(DepositReceiptWithBloom { logs_bloom, receipt }) => {
+            BaseReceipt::Eip7702(receipt) => {
+                Self::Eip7702(convert_standard_receipt(receipt, logs_bloom))
+            }
+            BaseReceipt::Deposit(receipt) => {
                 let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();
                 let consensus_receipt = DepositReceiptWithBloom {
                     receipt: DepositReceipt {
