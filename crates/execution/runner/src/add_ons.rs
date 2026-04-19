@@ -12,7 +12,7 @@ use base_execution_rpc::{
     witness::BaseDebugWitnessApi,
 };
 use base_execution_txpool::OpPooledTx;
-use base_node_core::{BaseNodeTypes, BasePayloadValidatorBuilder, BaseEngineApiBuilder};
+use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{

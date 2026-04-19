@@ -10,7 +10,7 @@ use base_common_rpc_types_engine::{
     BasePayloadAttributes, ExecutionData,
 };
 use base_execution_consensus::isthmus;
-use base_execution_payload_builder::{BasePayloadTypes, BaseExecutionPayloadValidator};
+use base_execution_payload_builder::{BaseExecutionPayloadValidator, BasePayloadTypes};
 use reth_consensus::ConsensusError;
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, NodePrimitives, PayloadValidator,
@@ -354,7 +354,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert!(result.is_ok());
     }
@@ -370,7 +370,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingEip1559ParamsInPayloadAttributes");
     }
@@ -386,7 +386,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "Eip1559ParamsDenominatorZero");
     }
@@ -402,7 +402,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "Eip1559ParamsElasticityZero");
     }
@@ -418,7 +418,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert!(result.is_ok());
     }
@@ -434,7 +434,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert!(result.is_ok());
     }
@@ -454,7 +454,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert!(result.is_ok());
     }
@@ -471,7 +471,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingEip1559ParamsInPayloadAttributes");
     }
@@ -488,7 +488,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MinBaseFeeNotAllowedBeforeJovian");
     }
@@ -509,7 +509,7 @@ mod tests {
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
             BaseEngineTypes,
         >>::ensure_well_formed_attributes(
-            &validator, EngineApiMessageVersion::V3, &attributes,
+            &validator, EngineApiMessageVersion::V3, &attributes
         );
         assert_invalid_params_error!(result, "MissingMinBaseFeeInPayloadAttributes");
     }

@@ -2,7 +2,7 @@
 
 use base_node_core::{
     BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder,
-    node::{BasePoolBuilder, BasePayloadBuilder},
+    node::{BasePayloadBuilder, BasePoolBuilder},
 };
 use reth_node_builder::{
     NodeComponentsBuilder,

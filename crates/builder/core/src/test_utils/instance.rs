@@ -135,12 +135,15 @@ impl LocalInstance {
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let metering_provider = Arc::clone(&builder_config.metering_provider);
 
-        let addons: base_node_runner::BaseAddOns<_, BaseEthApiBuilder, BasePayloadValidatorBuilder> =
-            base_node
-                .add_ons_builder()
-                .with_da_config(da_config.clone())
-                .with_gas_limit_config(gas_limit_config.clone())
-                .build();
+        let addons: base_node_runner::BaseAddOns<
+            _,
+            BaseEthApiBuilder,
+            BasePayloadValidatorBuilder,
+        > = base_node
+            .add_ons_builder()
+            .with_da_config(da_config.clone())
+            .with_gas_limit_config(gas_limit_config.clone())
+            .build();
 
         let node_builder = NodeBuilder::<_, BaseChainSpec>::new(node_config.clone())
             .with_database(create_test_db(node_config.clone()))

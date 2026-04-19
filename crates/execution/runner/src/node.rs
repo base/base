@@ -7,10 +7,10 @@ use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::eth::BaseEthApiBuilder;
 use base_execution_storage::BaseStorage;
 use base_node_core::{
-    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
-    BaseNodeTypes, BasePayloadValidatorBuilder, BaseEngineApiBuilder, BaseEngineTypes,
+    BaseConsensusBuilder, BaseEngineApiBuilder, BaseEngineTypes, BaseExecutorBuilder,
+    BaseNetworkBuilder, BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
     args::RollupArgs,
-    node::{BasePoolBuilder, BasePayloadBuilder},
+    node::{BasePayloadBuilder, BasePoolBuilder},
 };
 use reth_node_builder::{
     Node, NodeAdapter, NodeComponentsBuilder,

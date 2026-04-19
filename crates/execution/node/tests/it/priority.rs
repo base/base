@@ -14,7 +14,7 @@ use base_node_core::{
     args::RollupArgs,
     node::{
         BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
-        BaseNodeTypes, BasePoolBuilder, BasePayloadBuilder,
+        BaseNodeTypes, BasePayloadBuilder, BasePoolBuilder,
     },
     utils::payload_attributes,
 };

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_primitives::{Address, B64, B256};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::{BASE_MAINNET, BaseChainSpecBuilder};
-use base_node_core::{BaseNode, BaseEngineTypes};
+use base_node_core::{BaseEngineTypes, BaseNode};
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,

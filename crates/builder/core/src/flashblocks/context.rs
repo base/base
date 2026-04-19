@@ -15,7 +15,9 @@ use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, 
 use base_common_evm::{BaseReceiptBuilder, L1BlockInfo, OpSpecId};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
-use base_execution_payload_builder::{BasePayloadBuilderAttributes, error::BasePayloadBuilderError};
+use base_execution_payload_builder::{
+    BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
+};
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };
