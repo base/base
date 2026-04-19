@@ -1,6 +1,7 @@
 //! JWT validation utilities.
 
 use alloy_rpc_types_engine::JwtSecret;
+#[cfg(feature = "engine-validation")]
 use tracing::debug;
 
 #[cfg(feature = "engine-validation")]
@@ -75,11 +76,10 @@ impl JwtValidator {
         engine_url: url::Url,
     ) -> Result<JwtSecret, JwtValidationError> {
         use alloy_provider::RootProvider;
-        use alloy_transport_http::Http;
         use backon::{ExponentialBuilder, Retryable};
         use base_common_network::Base;
         use base_common_provider::BaseEngineApi;
-        use base_consensus_engine::{BaseEngineClient, HyperAuthClient};
+        use base_consensus_engine::BaseEngineClient;
         use tracing::{debug, error};
 
         // Convert WebSocket URLs to HTTP for validation.
@@ -95,11 +95,8 @@ impl JwtValidator {
         .map_err(|e| JwtValidationError::CapabilityExchange(e.to_string()))?;
 
         let exchange = || async {
-            match <RootProvider<Base> as BaseEngineApi<
-                Base,
-                Http<HyperAuthClient>,
-            >>::exchange_capabilities(&engine, vec![])
-            .await
+            match <RootProvider<Base> as BaseEngineApi>::exchange_capabilities(&engine, vec![])
+                .await
             {
                 Ok(_) => {
                     debug!("Successfully exchanged capabilities with engine");

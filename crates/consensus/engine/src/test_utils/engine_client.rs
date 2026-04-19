@@ -13,7 +13,6 @@ use alloy_rpc_types_engine::{
 };
 use alloy_rpc_types_eth::{Block, EIP1186AccountProofResponse, Transaction as EthTransaction};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
-use alloy_transport_http::Http;
 use async_trait::async_trait;
 use base_common_network::Base;
 use base_common_provider::BaseEngineApi;
@@ -26,7 +25,7 @@ use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
 use tokio::sync::RwLock;
 
-use crate::{EngineClient, EngineClientError, HyperAuthClient};
+use crate::{EngineClient, EngineClientError};
 
 /// Builder for creating test `MockEngineClient` instances with sensible defaults
 pub fn test_engine_client_builder() -> MockEngineClientBuilder {
@@ -512,7 +511,7 @@ impl EngineClient for MockEngineClient {
 }
 
 #[async_trait]
-impl BaseEngineApi<Base, Http<HyperAuthClient>> for MockEngineClient {
+impl BaseEngineApi for MockEngineClient {
     async fn new_payload_v2(
         &self,
         _payload: ExecutionPayloadInputV2,

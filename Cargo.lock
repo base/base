@@ -3130,12 +3130,12 @@ dependencies = [
 name = "base-common-provider"
 version = "0.0.0"
 dependencies = [
- "alloy-network",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-engine",
  "alloy-transport",
  "async-trait",
+ "base-common-network",
  "base-common-rpc-types-engine",
 ]
 
