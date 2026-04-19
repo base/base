@@ -1,6 +1,6 @@
 use alloy_consensus::{
-    EthereumTxEnvelope, Extended, InMemorySize, Sealable, Sealed, SignableTransaction, Signed,
-    TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
+    Extended, InMemorySize, Sealable, Sealed, SignableTransaction, Signed, TransactionEnvelope,
+    TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
     error::ValueError,
     transaction::{TransactionInfo, TxHashRef},
 };
@@ -174,10 +174,10 @@ impl<Tx> From<BaseTxEnvelope> for Extended<BaseTxEnvelope, Tx> {
     }
 }
 
-impl<T> TryFrom<EthereumTxEnvelope<T>> for BaseTxEnvelope {
-    type Error = EthereumTxEnvelope<T>;
+impl TryFrom<TxEnvelope> for BaseTxEnvelope {
+    type Error = TxEnvelope;
 
-    fn try_from(value: EthereumTxEnvelope<T>) -> Result<Self, Self::Error> {
+    fn try_from(value: TxEnvelope) -> Result<Self, Self::Error> {
         Self::try_from_eth_envelope(value)
     }
 }
@@ -371,15 +371,13 @@ impl BaseTxEnvelope {
     /// Returns the given envelope as error if [`BaseTxEnvelope`] doesn't support the variant
     /// (EIP-4844)
     #[allow(clippy::result_large_err)]
-    pub fn try_from_eth_envelope<T>(
-        tx: EthereumTxEnvelope<T>,
-    ) -> Result<Self, EthereumTxEnvelope<T>> {
+    pub fn try_from_eth_envelope(tx: TxEnvelope) -> Result<Self, TxEnvelope> {
         match tx {
-            EthereumTxEnvelope::Legacy(tx) => Ok(tx.into()),
-            EthereumTxEnvelope::Eip2930(tx) => Ok(tx.into()),
-            EthereumTxEnvelope::Eip1559(tx) => Ok(tx.into()),
-            tx @ EthereumTxEnvelope::<T>::Eip4844(_) => Err(tx),
-            EthereumTxEnvelope::Eip7702(tx) => Ok(tx.into()),
+            TxEnvelope::Legacy(tx) => Ok(tx.into()),
+            TxEnvelope::Eip2930(tx) => Ok(tx.into()),
+            TxEnvelope::Eip1559(tx) => Ok(tx.into()),
+            tx @ TxEnvelope::Eip4844(_) => Err(tx),
+            TxEnvelope::Eip7702(tx) => Ok(tx.into()),
         }
     }
 
