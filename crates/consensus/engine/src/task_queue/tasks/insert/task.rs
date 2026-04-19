@@ -55,24 +55,26 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     ) -> Result<(ExecutionPayloadInputV2, BaseBlock), InsertTaskError> {
         match payload {
             BaseExecutionPayload::V1(payload) => {
-                let block = BaseExecutionPayload::V1(payload.clone())
+                let payload_input =
+                    ExecutionPayloadInputV2 { execution_payload: payload.clone(), withdrawals: None };
+                let block = BaseExecutionPayload::V1(payload)
                     .try_into_block()
                     .map_err(InsertTaskError::FromBlockError)?;
-                let payload_input =
-                    ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
                 Ok((payload_input, block))
             }
             BaseExecutionPayload::V2(payload) => {
-                let block = BaseExecutionPayload::V2(payload.clone())
+                let payload_input = ExecutionPayloadInputV2 {
+                    execution_payload: payload.payload_inner.clone(),
+                    withdrawals: Some(payload.withdrawals.clone()),
+                };
+                let block = BaseExecutionPayload::V2(payload)
                     .try_into_block()
                     .map_err(InsertTaskError::FromBlockError)?;
-                let payload_input = ExecutionPayloadInputV2 {
-                    execution_payload: payload.payload_inner,
-                    withdrawals: Some(payload.withdrawals),
-                };
                 Ok((payload_input, block))
             }
-            BaseExecutionPayload::V3(_) | BaseExecutionPayload::V4(_) => unreachable!(),
+            BaseExecutionPayload::V3(_) | BaseExecutionPayload::V4(_) => {
+                unreachable!("execution_payload_input_v2 is only called for V1/V2 payloads")
+            }
         }
     }
 }
