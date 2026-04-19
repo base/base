@@ -11,7 +11,7 @@ use alloy_evm::{
 use alloy_network::TxSigner;
 use alloy_primitives::{Address, Bytes};
 use alloy_signer::Signature;
-use base_common_consensus::{BaseTransaction, BaseTransactionInfo, BaseTxEnvelope};
+use base_common_consensus::{BaseTransactionInfo, BaseTxEnvelope};
 use base_common_evm::OpTransaction as OpRevm;
 use reth_rpc_convert::{
     SignTxRequestError, SignableTxRequest, TryIntoSimTx, transaction::FromConsensusTx,
@@ -20,12 +20,12 @@ use revm::context::TxEnv;
 
 use crate::{BaseTransactionRequest, Transaction};
 
-impl<T: BaseTransaction + alloy_consensus::Transaction> FromConsensusTx<T> for Transaction<T> {
+impl FromConsensusTx<BaseTxEnvelope> for Transaction {
     type TxInfo = BaseTransactionInfo;
     type Err = Infallible;
 
     fn from_consensus_tx(
-        tx: T,
+        tx: BaseTxEnvelope,
         signer: Address,
         tx_info: BaseTransactionInfo,
     ) -> Result<Self, Infallible> {
