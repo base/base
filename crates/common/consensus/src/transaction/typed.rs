@@ -1,7 +1,6 @@
 use alloy_consensus::{
-    EthereumTypedTransaction, InMemorySize, SignableTransaction, Signed, TxEip1559, TxEip2930,
-    TxEip7702, TxLegacy, Typed2718, TypedTransaction, error::ValueError,
-    transaction::RlpEcdsaEncodableTx,
+    InMemorySize, SignableTransaction, Signed, TxEip1559, TxEip2930, TxEip7702, TxLegacy,
+    Typed2718, TypedTransaction, error::ValueError, transaction::RlpEcdsaEncodableTx,
 };
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, ChainId, Signature, TxHash, bytes::BufMut};
@@ -48,14 +47,6 @@ impl From<BaseTxEnvelope> for BaseTypedTransaction {
             BaseTxEnvelope::Eip7702(tx) => Self::Eip7702(tx.strip_signature()),
             BaseTxEnvelope::Deposit(tx) => Self::Deposit(tx.into_inner()),
         }
-    }
-}
-
-impl<Eip4844> TryFrom<BaseTypedTransaction> for EthereumTypedTransaction<Eip4844> {
-    type Error = ValueError<BaseTypedTransaction>;
-
-    fn try_from(value: BaseTypedTransaction) -> Result<Self, Self::Error> {
-        value.try_into_eth_variant()
     }
 }
 
@@ -159,16 +150,6 @@ impl BaseTypedTransaction {
     /// Returns the typed transaction as error if it is a variant unsupported on ethereum:
     /// [`TxDeposit`]
     pub fn try_into_eth(self) -> Result<TypedTransaction, ValueError<Self>> {
-        self.try_into_eth_variant()
-    }
-
-    /// Attempts to convert the L2 variant into an ethereum [`TypedTransaction`].
-    ///
-    /// Returns the typed transaction as error if it is a variant unsupported on ethereum:
-    /// [`TxDeposit`]
-    pub fn try_into_eth_variant<Eip4844>(
-        self,
-    ) -> Result<EthereumTypedTransaction<Eip4844>, ValueError<Self>> {
         match self {
             Self::Legacy(tx) => Ok(tx.into()),
             Self::Eip2930(tx) => Ok(tx.into()),
