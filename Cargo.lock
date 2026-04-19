@@ -2499,7 +2499,6 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-transport",
- "alloy-transport-http",
  "async-trait",
  "base-batcher-core",
  "base-batcher-encoder",

@@ -20,7 +20,6 @@ use alloy_rpc_types_eth::{
     Block, BlockTransactions, EIP1186AccountProofResponse, Transaction as EthTransaction,
 };
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
-use alloy_transport_http::Http;
 use async_trait::async_trait;
 use base_common_consensus::BasePrimitives;
 use base_common_network::Base;
@@ -31,7 +30,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
     BasePayloadAttributes,
 };
-use base_consensus_engine::{EngineClient, EngineClientError, HyperAuthClient};
+use base_consensus_engine::{EngineClient, EngineClientError};
 use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{EngineClientError as NodeEngineClientError, SequencerEngineClient};
 use base_execution_chainspec::BaseChainSpec;
@@ -739,7 +738,7 @@ impl EngineClient for ActionEngineClient {
 }
 
 #[async_trait]
-impl BaseEngineApi<Base, Http<HyperAuthClient>> for ActionEngineClient {
+impl BaseEngineApi for ActionEngineClient {
     async fn new_payload_v2(
         &self,
         payload: ExecutionPayloadInputV2,
