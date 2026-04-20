@@ -57,11 +57,16 @@ impl NitroProverServer {
     }
 
     /// Create a server with multiple enclave transports for dual-enclave deployments.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `transports` is empty.
     pub fn new_multi(
         config: ProverConfig,
         transports: Vec<Arc<NitroTransport>>,
         proof_request_timeout: Duration,
     ) -> Self {
+        assert!(!transports.is_empty(), "at least one transport is required");
         let enclaves = transports
             .into_iter()
             .map(|transport| {
@@ -142,15 +147,17 @@ struct NitroProverRpc {
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        let service = if let Some(checker) = &self.checker {
-            let signer = checker.select_valid_enclave().await.map_err(|e| {
+        let enclave = if let Some(checker) = &self.checker {
+            let valid = checker.select_valid_enclave().await.map_err(|e| {
                 warn!(error = %e, "rejecting proof request: signer validation failed");
                 jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
             })?;
-            &self.enclaves[signer.index].service
+            &self.enclaves[valid.index]
         } else {
-            &self.enclaves[0].service
+            // Constructor guarantees at least one enclave.
+            &self.enclaves[0]
         };
+        let service = &enclave.service;
 
         let l2_block = request.claimed_l2_block_number;
         let timeout = self.proof_request_timeout;
