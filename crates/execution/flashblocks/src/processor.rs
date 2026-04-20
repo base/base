@@ -158,15 +158,20 @@ where
                         {
                             return;
                         }
-                        info!("waiting for first Flashblock");
                         // we should ignore this error since it doesn't necessarily indicate a problem
                         return;
                     }
                     _ => {}
                 }
 
-                error!(message = "could not process Flashblock", error = %e);
-                Metrics::block_processing_error().increment(1);
+                // skip logging expected caching case
+                if !matches!(
+                    e,
+                    StateProcessorError::Provider(ProviderError::MissingCanonicalHeader { .. })
+                ) {
+                    error!(message = "could not process Flashblock", error = %e);
+                    Metrics::block_processing_error().increment(1);
+                }
             }
         }
     }
