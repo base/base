@@ -121,14 +121,32 @@ impl<P: EngineProtocol> EngineApi<P> {
         P::client(self.jwt_secret, self.address.clone()).await
     }
 
-    /// Get a payload by ID from the Engine API
-    pub async fn get_payload(
+    /// Get a Prague/Isthmus payload by ID from the Engine API.
+    pub async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
         debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
         Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v4(&self.client().await, payload_id)
             .await?)
+    }
+
+    /// Get an Osaka/Azul payload by ID from the Engine API.
+    pub async fn get_payload_v5(
+        &self,
+        payload_id: PayloadId,
+    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV5> {
+        debug!(payload_id = %payload_id, timestamp = %chrono::Utc::now(), "Fetching payload");
+        Ok(BaseEngineApiClient::<BaseEngineTypes>::get_payload_v5(&self.client().await, payload_id)
+            .await?)
+    }
+
+    /// Get a payload by ID from the Engine API.
+    pub async fn get_payload(
+        &self,
+        payload_id: PayloadId,
+    ) -> eyre::Result<<BaseEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
+        self.get_payload_v4(payload_id).await
     }
 
     /// Submit a new payload to the Engine API
