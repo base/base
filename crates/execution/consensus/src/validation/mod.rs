@@ -18,6 +18,10 @@ use tracing::debug;
 
 use crate::proof::calculate_receipt_root;
 
+fn should_trust_precomputed_receipt_root(chain_spec: &impl Upgrades, timestamp: u64) -> bool {
+    chain_spec.is_canyon_active_at_timestamp(timestamp)
+}
+
 /// Ensures the block response data matches the header.
 ///
 /// This ensures the body response items match the header's hashes:
@@ -94,8 +98,12 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     result: &BlockExecutionResult<R>,
     receipt_root_bloom: Option<(B256, Bloom)>,
 ) -> Result<(), ConsensusError> {
+    let timestamp = header.timestamp();
+    let trust_precomputed_receipt_root =
+        should_trust_precomputed_receipt_root(&chain_spec, timestamp);
+
     // Validate that the blob gas used is present and correctly computed if Jovian is active.
-    if chain_spec.is_jovian_active_at_timestamp(header.timestamp()) {
+    if chain_spec.is_jovian_active_at_timestamp(timestamp) {
         let computed_blob_gas_used = result.blob_gas_used;
         let header_blob_gas_used =
             header.blob_gas_used().ok_or(ConsensusError::BlobGasUsedMissing)?;
@@ -115,21 +123,33 @@ pub fn validate_block_post_execution<R: DepositReceiptExt>(
     // transaction This was replaced with is_success flag.
     // See more about EIP here: https://eips.ethereum.org/EIPS/eip-658
     if chain_spec.is_byzantium_active_at_block(header.number()) {
-        let result = if let Some((receipts_root, logs_bloom)) = receipt_root_bloom {
-            compare_receipts_root_and_logs_bloom(
+        let result = match (trust_precomputed_receipt_root, receipt_root_bloom) {
+            (true, Some((receipts_root, logs_bloom))) => compare_receipts_root_and_logs_bloom(
                 receipts_root,
                 logs_bloom,
                 header.receipts_root(),
                 header.logs_bloom(),
-            )
-        } else {
-            verify_receipts(
+            ),
+            (false, Some(_)) => {
+                debug!(
+                    timestamp = timestamp,
+                    "Ignoring precomputed receipt root for pre-Canyon block"
+                );
+                verify_receipts(
+                    header.receipts_root(),
+                    header.logs_bloom(),
+                    receipts,
+                    chain_spec,
+                    timestamp,
+                )
+            }
+            (_, None) => verify_receipts(
                 header.receipts_root(),
                 header.logs_bloom(),
                 receipts,
                 chain_spec,
-                header.timestamp(),
-            )
+                timestamp,
+            ),
         };
 
         if let Err(error) = result {
@@ -207,11 +227,12 @@ fn compare_receipts_root_and_logs_bloom(
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::Header;
-    use alloy_eips::eip7685::Requests;
-    use alloy_primitives::{Bytes, b256, hex};
+    use alloy_consensus::{Header, Receipt, TxReceipt};
+    use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
+    use alloy_primitives::{Bloom, Bytes, b256, hex};
+    use alloy_trie::root::ordered_trie_root_with_encoder;
     use base_common_chains::BaseUpgrade;
-    use base_common_consensus::{BaseReceipt, BaseTxEnvelope};
+    use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt};
     use base_execution_chainspec::{BASE_SEPOLIA, BaseChainSpec};
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 
@@ -221,6 +242,8 @@ mod tests {
     const ISTHMUS_TIMESTAMP: u64 = 1750000000;
     const JOVIAN_TIMESTAMP: u64 = 1800000000;
     const BLOCK_TIME_SECONDS: u64 = 2;
+    const PRE_CANYON_TIMESTAMP: u64 = 1679079600;
+    const CANYON_TIMESTAMP: u64 = 1699981200;
 
     fn holocene_chainspec() -> Arc<BaseChainSpec> {
         let mut chainspec = BASE_SEPOLIA.as_ref().clone();
@@ -238,6 +261,47 @@ mod tests {
         let mut chainspec = BASE_SEPOLIA.as_ref().clone();
         chainspec.set_fork(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
         chainspec
+    }
+
+    fn deposit_receipt() -> BaseReceipt {
+        BaseReceipt::Deposit(DepositReceipt {
+            inner: Receipt { status: true.into(), cumulative_gas_used: 46_913, logs: vec![] },
+            deposit_nonce: Some(4_012_991),
+            deposit_receipt_version: None,
+        })
+    }
+
+    fn plain_precomputed_receipt_root_bloom(receipts: &[BaseReceipt]) -> (B256, Bloom) {
+        let receipts_with_bloom =
+            receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+        let receipts_root =
+            ordered_trie_root_with_encoder(receipts_with_bloom.as_slice(), |r, buf| {
+                r.encode_2718(buf);
+            });
+        let logs_bloom = receipts_with_bloom
+            .iter()
+            .fold(Bloom::ZERO, |bloom, receipt| bloom | receipt.bloom_ref());
+
+        (receipts_root, logs_bloom)
+    }
+
+    fn canonical_header(timestamp: u64, receipts: &[BaseReceipt]) -> Header {
+        let receipts_with_bloom =
+            receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
+        let receipts_root =
+            calculate_receipt_root(&receipts_with_bloom, BASE_SEPOLIA.as_ref(), timestamp);
+        let logs_bloom = receipts_with_bloom
+            .iter()
+            .fold(Bloom::ZERO, |bloom, receipt| bloom | receipt.bloom_ref());
+
+        Header {
+            number: 1,
+            timestamp,
+            receipts_root,
+            logs_bloom,
+            gas_used: receipts.last().map(TxReceipt::cumulative_gas_used).unwrap_or(0),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -569,5 +633,82 @@ mod tests {
             ConsensusError::BlobGasUsedDiff(diff)
                 if diff.got == BLOB_GAS_USED && diff.expected == BLOB_GAS_USED + 1
         ));
+    }
+
+    #[test]
+    fn trusts_precomputed_receipt_root_after_canyon() {
+        assert!(should_trust_precomputed_receipt_root(BASE_SEPOLIA.as_ref(), CANYON_TIMESTAMP));
+    }
+
+    #[test]
+    fn ignores_precomputed_receipt_root_before_canyon() {
+        assert!(!should_trust_precomputed_receipt_root(
+            BASE_SEPOLIA.as_ref(),
+            PRE_CANYON_TIMESTAMP
+        ));
+
+        let receipts = vec![deposit_receipt()];
+        let header = canonical_header(PRE_CANYON_TIMESTAMP, &receipts);
+        let result = BlockExecutionResult::<BaseReceipt> {
+            blob_gas_used: 0,
+            receipts: receipts.clone(),
+            requests: Requests::default(),
+            gas_used: header.gas_used,
+        };
+
+        validate_block_post_execution(
+            &header,
+            BASE_SEPOLIA.as_ref(),
+            &result,
+            Some(plain_precomputed_receipt_root_bloom(&receipts)),
+        )
+        .expect(
+            "Pre-Canyon blocks should recompute receipt roots instead of trusting the fast path",
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_precomputed_receipt_root_after_canyon() {
+        let receipts = vec![deposit_receipt()];
+        let header = canonical_header(CANYON_TIMESTAMP, &receipts);
+        let result = BlockExecutionResult::<BaseReceipt> {
+            blob_gas_used: 0,
+            receipts: receipts.clone(),
+            requests: Requests::default(),
+            gas_used: header.gas_used,
+        };
+        let (invalid_receipts_root, logs_bloom) = plain_precomputed_receipt_root_bloom(&receipts);
+        let invalid_receipts_root = invalid_receipts_root ^ B256::with_last_byte(0x01);
+
+        assert!(matches!(
+            validate_block_post_execution(
+                &header,
+                BASE_SEPOLIA.as_ref(),
+                &result,
+                Some((invalid_receipts_root, logs_bloom)),
+            )
+            .unwrap_err(),
+            ConsensusError::BodyReceiptRootDiff(_)
+        ));
+    }
+
+    #[test]
+    fn accepts_matching_precomputed_receipt_root_after_canyon() {
+        let receipts = vec![deposit_receipt()];
+        let header = canonical_header(CANYON_TIMESTAMP, &receipts);
+        let result = BlockExecutionResult::<BaseReceipt> {
+            blob_gas_used: 0,
+            receipts: receipts.clone(),
+            requests: Requests::default(),
+            gas_used: header.gas_used,
+        };
+
+        validate_block_post_execution(
+            &header,
+            BASE_SEPOLIA.as_ref(),
+            &result,
+            Some(plain_precomputed_receipt_root_bloom(&receipts)),
+        )
+        .expect("Canyon blocks should keep using the precomputed receipt root fast path");
     }
 }

@@ -17,7 +17,6 @@ use alloy_eip7928::BlockAccessList;
 use alloy_eips::eip2718::Decodable2718;
 use alloy_evm::Evm;
 use alloy_primitives::B256;
-use base_common_chains::Upgrades;
 use base_common_consensus::{
     BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType,
 };
@@ -80,10 +79,6 @@ use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 use crate::cached_execution::{
     CachedExecutionProvider, CachedExecutor, FlashblocksCachedExecutionProvider,
 };
-
-fn should_use_precomputed_receipt_root(chain_spec: &BaseChainSpec, timestamp: u64) -> bool {
-    chain_spec.is_canyon_active_at_timestamp(timestamp)
-}
 
 /// A helper type that provides reusable payload validation logic for network-specific validators.
 ///
@@ -1075,7 +1070,6 @@ where
         V: PayloadValidator<T, Block = BaseBlock>,
     {
         let start = Instant::now();
-        let block_timestamp = block.header().timestamp();
 
         trace!(target: "engine::tree::payload_validator", block=?block.num_hash(), "Validating block consensus");
         // validate block consensus rules
@@ -1097,19 +1091,6 @@ where
         let _enter =
             debug_span!(target: "engine::tree::payload_validator", "validate_block_post_execution")
                 .entered();
-        let receipt_root_bloom = if should_use_precomputed_receipt_root(
-            self.provider.chain_spec().as_ref(),
-            block_timestamp,
-        ) {
-            receipt_root_bloom
-        } else {
-            debug!(
-                target: "engine::tree::payload_validator",
-                timestamp = block_timestamp,
-                "Ignoring precomputed receipt root for pre-Canyon block"
-            );
-            None
-        };
         if let Err(err) =
             self.consensus.validate_block_post_execution(block, output, receipt_root_bloom)
         {
@@ -1646,22 +1627,5 @@ where
             changeset_cache,
             ctx.node.task_executor().clone(),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use base_execution_chainspec::BASE_SEPOLIA;
-
-    use super::should_use_precomputed_receipt_root;
-
-    #[test]
-    fn pre_canyon_blocks_recompute_receipt_root() {
-        assert!(!should_use_precomputed_receipt_root(BASE_SEPOLIA.as_ref(), 1_695_768_290));
-    }
-
-    #[test]
-    fn canyon_and_later_blocks_use_precomputed_receipt_root() {
-        assert!(should_use_precomputed_receipt_root(BASE_SEPOLIA.as_ref(), 1_699_981_200));
     }
 }
