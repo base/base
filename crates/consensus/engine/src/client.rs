@@ -3,7 +3,7 @@
 use std::{
     future::Future,
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
