@@ -26,7 +26,9 @@ use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, ExecutableTxIterator};
 use reth_evm::{ConfigureEvm, EvmEnv, TransactionEnv, precompiles::PrecompilesMap};
-use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
+use reth_primitives_traits::{
+    NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, constants::MAX_TX_GAS_LIMIT_OSAKA,
+};
 use revm::context::{BlockEnv, TxEnv};
 #[allow(unused_imports)]
 use {
@@ -56,11 +58,25 @@ pub use build::BaseBlockAssembler;
 mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
+fn build_cfg_env(
+    spec: OpSpecId,
+    timestamp: u64,
+    chain_spec: &(impl Upgrades + EthChainSpec),
+) -> CfgEnv<OpSpecId> {
+    let mut cfg_env =
+        CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
+
+    if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
+        cfg_env.tx_gas_limit_cap = Some(MAX_TX_GAS_LIMIT_OSAKA);
+    }
+
+    cfg_env
+}
+
 /// Builds an [`EvmEnv`] for a given block header using [`base_common_evm`]'s spec resolution.
 fn build_evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -> EvmEnv<OpSpecId> {
     let spec = OpSpecId::from_header(chain_spec, header);
-    let cfg_env =
-        CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
+    let cfg_env = build_cfg_env(spec, header.timestamp, chain_spec);
 
     let blob_excess_gas_and_price = spec
         .into_eth_spec()
@@ -91,8 +107,7 @@ fn build_next_evm_env(
     chain_spec: &(impl Upgrades + EthChainSpec),
 ) -> EvmEnv<OpSpecId> {
     let spec = OpSpecId::from_timestamp(chain_spec, attributes.timestamp);
-    let cfg_env =
-        CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
+    let cfg_env = build_cfg_env(spec, attributes.timestamp, chain_spec);
 
     let blob_excess_gas_and_price = spec
         .into_eth_spec()
@@ -272,10 +287,7 @@ where
         let block_number = payload.payload.block_number();
 
         let spec = OpSpecId::from_timestamp(self.chain_spec(), timestamp);
-
-        let cfg_env = CfgEnv::new()
-            .with_chain_id(self.chain_spec().chain().id())
-            .with_spec_and_mainnet_gas_params(spec);
+        let cfg_env = build_cfg_env(spec, timestamp, self.chain_spec());
 
         let blob_excess_gas_and_price = spec
             .into_eth_spec()
@@ -377,6 +389,7 @@ mod tests {
         let header = Header { timestamp: 0, ..Default::default() };
         let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
         assert_eq!(cfg_env.spec, OpSpecId::AZUL);
+        assert_eq!(cfg_env.tx_gas_limit_cap, Some(MAX_TX_GAS_LIMIT_OSAKA));
     }
 
     #[test]
