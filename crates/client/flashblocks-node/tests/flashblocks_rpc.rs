@@ -618,7 +618,7 @@ async fn test_eth_simulate_v1() -> Result<()> {
         block_state_calls: vec![SimBlock {
             calls: vec![
                 // read count1() from counter contract
-                setup.count1().into(),
+                setup.count1().gas_limit(100_000).into(),
                 // increment() value in contract
                 OpTransactionRequest::default()
                     .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
@@ -628,7 +628,7 @@ async fn test_eth_simulate_v1() -> Result<()> {
                     .input(TransactionInput::new(bytes!("0xd09de08a")))
                     .into(),
                 // read count1() from counter contract
-                setup.count1().into(),
+                setup.count1().gas_limit(100_000).into(),
             ],
             block_overrides: None,
             state_overrides: None,
