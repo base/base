@@ -4326,6 +4326,7 @@ dependencies = [
  "base-alloy-chains",
  "base-alloy-consensus",
  "base-alloy-network",
+ "base-alloy-rpc-types",
  "base-alloy-rpc-types-engine",
  "base-cli-utils",
  "base-engine-tree",

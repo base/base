@@ -58,6 +58,7 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = ["std"]
 base-alloy-chains.workspace = true
 base-alloy-network = { workspace = true, optional = true }
 base-alloy-consensus = { workspace = true, optional = true }
+base-alloy-rpc-types = { workspace = true, optional = true }
 base-alloy-rpc-types-engine = { workspace = true, optional = true }
 
 # tokio
@@ -89,6 +90,7 @@ test-utils = [
 	"dep:alloy-signer",
 	"dep:base-alloy-consensus",
 	"dep:base-alloy-network",
+	"dep:base-alloy-rpc-types",
 	"dep:base-alloy-rpc-types-engine",
 	"dep:base-test-utils",
 	"dep:chrono",

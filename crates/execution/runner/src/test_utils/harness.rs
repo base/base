@@ -10,6 +10,7 @@ use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_alloy_consensus::OpBlock;
 use base_alloy_network::Base;
+use base_alloy_rpc_types::OpGenesisInfo;
 use base_alloy_rpc_types_engine::OpPayloadAttributes;
 use base_execution_chainspec::OpChainSpec;
 use eyre::{Result, eyre};
@@ -182,20 +183,31 @@ impl TestHarness {
 
         sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
-        let payload_envelope = self.engine.get_payload(payload_id).await?;
+        let v1_active = OpGenesisInfo::extract_from(&chain_spec.genesis.config.extra_fields)
+            .and_then(|genesis_info| genesis_info.base.v1)
+            .is_some_and(|activation_time| next_timestamp >= activation_time);
 
-        let execution_requests = if payload_envelope.execution_requests.is_empty() {
+        let (execution_payload, execution_requests): (_, Vec<Bytes>) =
+            if v1_active {
+                let payload_envelope = self.engine.get_payload_v5(payload_id).await?;
+                (payload_envelope.execution_payload, payload_envelope.execution_requests)
+            } else {
+                let payload_envelope = self.engine.get_payload_v4(payload_id).await?;
+                (payload_envelope.execution_payload, payload_envelope.execution_requests)
+            };
+
+        let execution_requests = if execution_requests.is_empty() {
             Requests::default()
         } else {
-            Requests::new(payload_envelope.execution_requests)
+            Requests::new(execution_requests)
         };
 
         let payload_status = self
             .engine
             .new_payload(
-                payload_envelope.execution_payload,
+                execution_payload,
                 vec![],
-                payload_envelope.parent_beacon_block_root,
+                parent_beacon_block_root,
                 execution_requests,
             )
             .await?;
