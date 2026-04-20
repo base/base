@@ -13,7 +13,7 @@ use std::sync::Arc;
 use alloy_consensus::{SignableTransaction, Transaction};
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Bytes, address};
+use alloy_primitives::{Bytes, address, bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::TransactionInput;
 use alloy_signer::SignerSync;
@@ -48,6 +48,10 @@ fn transfer_request_without_gas() -> BaseTransactionRequest {
 
 fn transfer_request_with_data_without_gas() -> BaseTransactionRequest {
     transfer_request_without_gas().input(TransactionInput::new(Bytes::from_static(&[0x00])))
+}
+
+fn transfer_request_with_gas_and_data() -> BaseTransactionRequest {
+    transfer_request_with_data_without_gas().gas_limit(100_000)
 }
 
 #[tokio::test]
@@ -102,6 +106,17 @@ async fn azul_estimate_gas_with_data_accepts_implicit_gas_limit() -> Result<()> 
 }
 
 #[tokio::test]
+async fn azul_estimate_gas_with_explicit_gas_and_data_passes() -> Result<()> {
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
+    let gas = harness.provider().estimate_gas(transfer_request_with_gas_and_data()).await?;
+    assert!(gas > 21_000, "tx with calldata should exceed plain transfer gas");
+    assert!(gas <= 100_000, "estimate should respect the provided gas cap");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn azul_eth_call_without_data_accepts_implicit_gas_limit() -> Result<()> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
@@ -148,6 +163,25 @@ async fn azul_fill_transaction_with_data_accepts_implicit_gas_limit() -> Result<
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let filled =
         harness.provider().fill_transaction(transfer_request_with_data_without_gas()).await?;
+    assert!(!filled.raw.is_empty(), "filled raw transaction should not be empty");
+    assert!(filled.tx.gas_limit() > 21_000, "tx with calldata should exceed plain transfer gas");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn azul_fill_transaction_long_calldata_accepts_implicit_gas_limit() -> Result<()> {
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
+    let request = BaseTransactionRequest::default()
+        .from(address!("1234567890abcdef1234567890abcdef12345678"))
+        .to(address!("abcdef1234567890abcdef1234567890abcdef12"))
+        .transaction_type(2u8)
+        .input(TransactionInput::new(bytes!(
+            "095ea7b3000000000000000000000000fedcba9876543210fedcba9876543210fedcba98000000000000000000000000000000000000000000000000000000000001e240"
+        )));
+
+    let filled = harness.provider().fill_transaction(request).await?;
     assert!(!filled.raw.is_empty(), "filled raw transaction should not be empty");
     assert!(filled.tx.gas_limit() > 21_000, "tx with calldata should exceed plain transfer gas");
 
