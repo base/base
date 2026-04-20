@@ -257,16 +257,19 @@ impl S3EventReaderWriter {
     /// are not met, and 409 Conditional Request Conflict for concurrent writes. In both
     /// cases another writer already succeeded, so the caller can re-read and skip.
     fn is_conditional_write_conflict(err: &SdkError<PutObjectError>) -> bool {
-        if let SdkError::ServiceError(service_err) = err
-            && let Some(code) = service_err.err().meta().code()
-                && (code == "PreconditionFailed" || code == "ConditionalRequestConflict") {
-                    return true;
-                }
-        let s = err.to_string();
-        s.contains("PreconditionFailed")
-            || s.contains("ConditionalRequestConflict")
-            || s.contains("412")
-            || s.contains("409")
+        match err {
+            SdkError::ServiceError(service_err) => {
+                matches!(
+                    service_err.err().meta().code(),
+                    Some("PreconditionFailed" | "ConditionalRequestConflict")
+                )
+            }
+            SdkError::ResponseError(resp) => {
+                let status = resp.raw().status().as_u16();
+                status == 412 || status == 409
+            }
+            _ => false,
+        }
     }
 
     async fn idempotent_write<T, F>(&self, key: &str, mut transform_fn: F) -> Result<()>
@@ -318,9 +321,9 @@ impl S3EventReaderWriter {
                             info!(
                                 s3_key = %key,
                                 attempt = attempt + 1,
-                                "Conditional write conflict, re-reading without backoff"
+                                "Conditional write conflict, another writer succeeded"
                             );
-                            continue;
+                            return Ok(());
                         }
                         Err(e) => {
                             Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
