@@ -31,5 +31,4 @@ jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
 alloy-signer-local.workspace = true
-alloy-node-bindings.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

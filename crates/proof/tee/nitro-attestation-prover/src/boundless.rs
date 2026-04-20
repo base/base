@@ -20,12 +20,12 @@
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
-use alloy_signer_local::PrivateKeySigner;
 use base_proof_tee_nitro_verifier::{VerifierInput, VerifierJournal};
 // `boundless-market` re-exports `alloy` (`pub use alloy`) but does not
 // re-export `DynProvider` directly — access it via the SDK's alloy so
 // the type in our alias matches the one inside `Client`.
 use boundless_market::alloy::providers::DynProvider;
+use boundless_market::alloy::signers::local::PrivateKeySigner;
 use boundless_market::{
     Client, NotProvided,
     contracts::{Predicate, RequestId, RequestStatus},

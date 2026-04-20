@@ -171,6 +171,7 @@ impl PayloadAttributesBuilder<OpPayloadBuilderAttributes<BaseTxEnvelope>>
                     .chain_spec
                     .is_ecotone_active_at_timestamp(timestamp)
                     .then(B256::random),
+                slot_number: None,
             },
             transactions: Some(vec![TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_1.into()]),
             no_tx_pool: None,
@@ -816,6 +817,7 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
                 EB::default(),
                 EVB::default(),
                 rpc_middleware,
+                Identity::new(),
             )
             .with_tokio_runtime(tokio_runtime),
             da_config.unwrap_or_default(),

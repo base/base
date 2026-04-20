@@ -8,8 +8,8 @@ use alloy_evm::{
     Database, Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, OnStateHook, StateChangePostBlockSource, StateChangeSource, StateDB,
-        SystemCaller,
+        ExecutableTx, GasOutput, OnStateHook, StateChangePostBlockSource, StateChangeSource,
+        StateDB, SystemCaller, TxResult as TxResultTrait,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
@@ -227,7 +227,10 @@ where
         })
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(
+        &mut self,
+        output: Self::Result,
+    ) -> Result<GasOutput, BlockExecutionError> {
         let BaseTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             is_deposit,
@@ -245,10 +248,11 @@ where
 
         self.system_caller.on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
 
-        let gas_used = result.gas_used();
+        let tx_gas_used = result.tx_gas_used();
+        let state_gas_used = result.gas().block_state_gas_used();
 
         // append gas used
-        self.gas_used += gas_used;
+        self.gas_used += tx_gas_used;
 
         // Update DA footprint if Jovian is active.
         if self.spec.is_jovian_active_at_timestamp(self.evm.block().timestamp().saturating_to())
@@ -295,7 +299,7 @@ where
 
         self.evm.db_mut().commit(state);
 
-        Ok(gas_used)
+        Ok(GasOutput::with_state_gas(tx_gas_used, state_gas_used))
     }
 
     fn finish(

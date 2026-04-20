@@ -35,6 +35,7 @@ use reth_revm::{
 };
 use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
+use reth_trie_common::ExecutionWitnessMode;
 use revm::context::{Block, BlockEnv};
 use tracing::{debug, trace, warn};
 
@@ -439,9 +440,10 @@ impl<Txs> Builder<'_, Txs> {
             _ = db.load_cache_account(Predeploys::L2_TO_L1_MESSAGE_PASSER)?;
         }
 
+        let mode = ExecutionWitnessMode::default();
         let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number: _ } =
-            ExecutionWitnessRecord::from_executed_state(&db);
-        let state = state_provider.witness(Default::default(), hashed_state)?;
+            ExecutionWitnessRecord::from_executed_state(&db, mode);
+        let state = state_provider.witness(Default::default(), hashed_state, mode)?;
         Ok(ExecutionWitness {
             state: state.into_iter().collect(),
             codes,

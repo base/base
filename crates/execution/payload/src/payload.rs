@@ -49,6 +49,8 @@ pub struct EthPayloadBuilderAttributes {
     pub withdrawals: Withdrawals,
     /// Parent beacon block root.
     pub parent_beacon_block_root: Option<B256>,
+    /// Slot number for the payload.
+    pub slot_number: Option<u64>,
 }
 
 /// Base Payload Builder Attributes
@@ -95,6 +97,7 @@ impl<T> BasePayloadBuilderAttributes<T> {
                     .has_withdrawals
                     .then(|| self.payload_attributes.withdrawals.to_vec()),
                 parent_beacon_block_root: self.payload_attributes.parent_beacon_block_root,
+                slot_number: self.payload_attributes.slot_number,
             },
             transactions: (!self.transactions.is_empty())
                 .then(|| self.transactions.iter().map(|tx| tx.encoded_bytes().clone()).collect()),
@@ -163,6 +166,7 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
             has_withdrawals: attributes.payload_attributes.withdrawals.is_some(),
             withdrawals: attributes.payload_attributes.withdrawals.unwrap_or_default().into(),
             parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
+            slot_number: attributes.payload_attributes.slot_number,
         };
 
         Ok(Self {
@@ -198,6 +202,7 @@ impl<BaseTransactionSigned> From<EthPayloadAttributes>
                 has_withdrawals: value.withdrawals.is_some(),
                 withdrawals: value.withdrawals.unwrap_or_default().into(),
                 parent_beacon_block_root: value.parent_beacon_block_root,
+                slot_number: value.slot_number,
             },
             ..Default::default()
         }
@@ -244,6 +249,10 @@ where
 
     fn parent_beacon_block_root(&self) -> Option<B256> {
         self.payload_attributes.parent_beacon_block_root
+    }
+
+    fn slot_number(&self) -> Option<u64> {
+        self.payload_attributes.slot_number
     }
 }
 

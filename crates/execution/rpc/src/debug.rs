@@ -32,6 +32,7 @@ use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use reth_tasks::Runtime;
+use reth_trie_common::ExecutionWitnessMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 
@@ -270,9 +271,10 @@ where
 
             let mut witness_record = ExecutionWitnessRecord::default();
 
+            let mode = ExecutionWitnessMode::default();
             let _ = block_executor
                 .execute_with_state_closure(&block, |statedb: &State<_>| {
-                    witness_record.record_executed_state(statedb);
+                    witness_record.record_executed_state(statedb, mode);
                 })
                 .map_err(EthApiError::from)?;
 
@@ -280,7 +282,7 @@ where
                 witness_record;
 
             let state = state_provider
-                .witness(Default::default(), hashed_state)
+                .witness(Default::default(), hashed_state, mode)
                 .map_err(EthApiError::from)?;
             let mut exec_witness = ExecutionWitness { state, codes, keys, ..Default::default() };
 

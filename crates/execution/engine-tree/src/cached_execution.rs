@@ -10,7 +10,7 @@ use base_flashblocks::{FlashblocksAPI, FlashblocksState};
 use reth_errors::BlockExecutionError;
 use reth_evm::{
     Evm, RecoveredTx,
-    block::{BlockExecutor, ExecutableTx, InternalBlockExecutionError, TxResult},
+    block::{BlockExecutor, ExecutableTx, GasOutput, InternalBlockExecutionError, TxResult},
 };
 use reth_primitives_traits::Recovered;
 use reth_revm::State;
@@ -218,7 +218,10 @@ where
         self.executor.apply_pre_execution_changes()
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(
+        &mut self,
+        output: Self::Result,
+    ) -> Result<GasOutput, BlockExecutionError> {
         self.executor.commit_transaction(output)
     }
 

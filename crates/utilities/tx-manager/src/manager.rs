@@ -46,7 +46,10 @@ use alloy_consensus::TxEnvelope;
 use alloy_eips::{
     BlockNumberOrTag, Decodable2718, Encodable2718, eip7594::BlobTransactionSidecarEip7594,
 };
-use alloy_network::{Ethereum, EthereumWallet, NetworkWallet, TransactionBuilder};
+use alloy_network::{
+    Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, NetworkWallet,
+    TransactionBuilder, TransactionBuilderError,
+};
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
@@ -745,11 +748,11 @@ where
         // Step 4: Build TransactionRequest.
         let from = self.sender_address();
         let mut tx_request = TransactionRequest::default()
-            .with_input(candidate.tx_data.clone())
             .with_max_fee_per_gas(fee_cap)
             .with_max_priority_fee_per_gas(tip_cap)
             .with_value(candidate.value)
             .with_chain_id(self.chain_id);
+        tx_request.input = Some(candidate.tx_data.clone()).into();
 
         tx_request.set_from(from);
 
@@ -831,9 +834,12 @@ where
         );
 
         // Step 7: Sign and encode.
-        let sign_result =
-            <TransactionRequest as TransactionBuilder<Ethereum>>::build(tx_request, &self.wallet)
-                .await;
+        let sign_result: Result<<Ethereum as Network>::TxEnvelope, TransactionBuilderError<Ethereum>> =
+            <TransactionRequest as NetworkTransactionBuilder<Ethereum>>::build(
+                tx_request,
+                &self.wallet,
+            )
+            .await;
 
         match sign_result {
             Ok(envelope) => {

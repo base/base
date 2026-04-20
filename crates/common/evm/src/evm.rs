@@ -3,21 +3,10 @@ use core::ops::{Deref, DerefMut};
 use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
 use revm::{
-    DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm,
-    InspectSystemCallEvm, Inspector, SystemCallEvm,
-    context::{
-        BlockEnv, ContextError, ContextSetters, Evm as RevmEvm, FrameStack, TxEnv,
-        result::ExecResultAndState,
-    },
-    context_interface::{
-        ContextTr, JournalTr,
-        result::{EVMError, ExecutionResult, ResultAndState},
-    },
-    handler::{
-        EthFrame, EvmTr, FrameInitOrResult, Handler, ItemOrResult, PrecompileProvider,
-        SystemCallTx, evm::FrameTr, instructions::EthInstructions,
-    },
-    inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
+    ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
+    context::{BlockEnv, CfgEnv, TxEnv},
+    context_interface::result::{EVMError, ResultAndState},
+    handler::{PrecompileProvider, instructions::EthInstructions},
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
     state::EvmState,
 };
@@ -369,6 +358,10 @@ where
 
     fn chain_id(&self) -> u64 {
         self.cfg.chain_id
+    }
+
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        &self.cfg
     }
 
     /// Executes `tx`, invoking the [`Inspector`] iff `self.inspect` is `true`.

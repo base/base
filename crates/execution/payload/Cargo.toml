@@ -26,6 +26,7 @@ reth-payload-primitives.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-payload-builder-primitives.workspace = true
 reth-revm = { workspace = true, features = ["witness"] }
+reth-trie-common.workspace = true
 
 # op-reth
 base-common-evm.workspace = true

@@ -45,7 +45,6 @@ serde_json.workspace = true
 async-trait.workspace = true
 alloy-signer.workspace = true
 alloy-json-rpc.workspace = true
-alloy-node-bindings.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }

@@ -11,6 +11,7 @@ use revm::{
     },
     context_interface::{
         Block, Cfg, ContextTr, JournalTr, Transaction,
+        cfg::gas::InitialAndFloorGas,
         context::ContextError,
         result::{EVMError, ExecutionResult, FromStringError, ResultGas},
     },
@@ -102,6 +103,7 @@ where
     fn validate_against_state_and_deduct_caller(
         &self,
         evm: &mut Self::Evm,
+        _initial_and_floor_gas: &mut InitialAndFloorGas,
     ) -> Result<(), Self::Error> {
         let (block, tx, cfg, journal, chain, _) = evm.ctx().all_mut();
         let spec = cfg.spec();
@@ -369,7 +371,7 @@ where
             // clear the journal
             output = Ok(ExecutionResult::Halt {
                 reason: BaseHaltReason::FailedDeposit,
-                gas: ResultGas::new(gas_limit, gas_used, 0, 0, 0),
+                gas: ResultGas::new_with_state_gas(gas_used, 0, 0, 0),
                 logs: Vec::new(),
             })
         }
