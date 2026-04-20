@@ -1,10 +1,6 @@
 //! An Engine API Client.
 
-use std::{
-    future::Future,
-    sync::Arc,
-    time::Instant,
-};
+use std::{future::Future, sync::Arc, time::Instant};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_network::{Ethereum, Network};
