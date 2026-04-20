@@ -545,6 +545,7 @@ thiserror = { version = "2.0", default-features = false }
 either = { version = "1.15.0", default-features = false }
 dotenvy = { version = "0.15.7", default-features = false }
 derive_more = { version = "2.1.0", default-features = false }
+figment = { version = "0.10.19", default-features = false }
 
 # database
 sqlx = { version = "0.8", default-features = false }
