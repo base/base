@@ -123,7 +123,7 @@ async fn azul_eth_call_without_data_accepts_implicit_gas_limit() -> Result<()> {
     let result = harness
         .provider()
         .call(transfer_request_without_gas())
-        .block(BlockNumberOrTag::Pending.into())
+        .block(BlockNumberOrTag::Latest.into())
         .await?;
     assert!(result.is_empty(), "plain eth_call to EOA should return empty bytes");
 
@@ -140,7 +140,7 @@ async fn azul_eth_call_with_data_to_contract_accepts_implicit_gas_limit() -> Res
         .to(address!("0000000000000000000000000000000000000004"))
         .input(TransactionInput::new(calldata.clone()));
 
-    let result = harness.provider().call(request).block(BlockNumberOrTag::Pending.into()).await?;
+    let result = harness.provider().call(request).block(BlockNumberOrTag::Latest.into()).await?;
     assert_eq!(result, calldata);
 
     Ok(())
