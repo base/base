@@ -406,8 +406,8 @@ impl UpgradesView {
     fn start_checks(&mut self, resources: &Resources) {
         let now = now_unix();
         let chain = &self.chains[self.selected_chain];
-        let Some(spec) = target_hardfork(chain)
-            .and_then(|name| chain.specs.iter().find(|s| s.name == name))
+        let Some(spec) =
+            target_hardfork(chain).and_then(|name| chain.specs.iter().find(|s| s.name == name))
         else {
             return;
         };
@@ -472,10 +472,7 @@ impl View for UpgradesView {
         self.checks.poll();
 
         if self.auto_refresh && !self.checks.running {
-            let due = self
-                .checks
-                .last_run_at
-                .is_none_or(|t| t.elapsed() >= AUTO_REFRESH_INTERVAL);
+            let due = self.checks.last_run_at.is_none_or(|t| t.elapsed() >= AUTO_REFRESH_INTERVAL);
             if due {
                 self.start_checks(resources);
             }
