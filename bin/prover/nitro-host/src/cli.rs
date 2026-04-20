@@ -24,7 +24,9 @@ use clap::{Parser, Subcommand};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;
 #[cfg(any(target_os = "linux", feature = "local"))]
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(feature = "local")]
+use tracing::warn;
 
 base_cli_utils::define_log_args!("BASE_PROVER_NITRO_HOST");
 base_cli_utils::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
@@ -114,7 +116,7 @@ struct ServerArgs {
     #[command(flatten)]
     server: ProverServerArgs,
 
-    /// Vsock CID of the enclave.
+    /// Vsock CID(s) of the enclave(s), comma-separated for multi-enclave mode.
     #[arg(long, env = "VSOCK_CID", value_delimiter = ',')]
     vsock_cid: Vec<u32>,
 }
@@ -161,16 +163,19 @@ impl ServerArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
+        if self.vsock_cid.is_empty() {
+            return Err(eyre!("at least one --vsock-cid is required"));
+        }
+        if self.vsock_cid.len() > 1 && self.server.tee_prover_registry_address.is_none() {
+            return Err(eyre!(
+                "multi-CID requires --tee-prover-registry-address for on-chain routing"
+            ));
+        }
         let transports: Vec<Arc<NitroTransport>> = self
             .vsock_cid
             .iter()
             .map(|&cid| Arc::new(NitroTransport::vsock(cid, VSOCK_PORT)))
             .collect();
-        if transports.len() > 1 && self.server.tee_prover_registry_address.is_none() {
-            return Err(eyre!(
-                "multi-CID requires --tee-prover-registry-address for on-chain routing"
-            ));
-        }
         let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
         let mut server = NitroProverServer::new_multi(config, transports, timeout);
         if let Some(reg) = registration_health {
@@ -192,6 +197,7 @@ struct LocalArgs {
     #[command(flatten)]
     server: ProverServerArgs,
 
+    /// Number of local enclave instances to run (minimum 1).
     #[arg(long, env = "LOCAL_ENCLAVE_COUNT", default_value = "1")]
     local_enclave_count: usize,
 }
@@ -219,6 +225,9 @@ impl LocalArgs {
             enable_experimental_witness_endpoint: self.server.enable_experimental_witness_endpoint,
         };
 
+        if self.local_enclave_count == 0 {
+            return Err(eyre!("--local-enclave-count must be at least 1"));
+        }
         let transports: Vec<Arc<NitroTransport>> = (0..self.local_enclave_count)
             .map(|_| {
                 let server = Arc::new(EnclaveServer::new_local()?);
