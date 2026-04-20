@@ -20,7 +20,7 @@ use alloy_signer::SignerSync;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::test_utils::TestHarnessBuilder;
-use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis, build_test_genesis_azul};
+use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis, build_test_genesis_v1};
 use eyre::Result;
 
 const GAS_LIMIT_CAP: u64 = 1 << 24; // 16,777,216
@@ -56,7 +56,7 @@ fn transfer_request_with_gas_and_data() -> BaseTransactionRequest {
 
 #[tokio::test]
 async fn azul_gas_limit_cap() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
 
     // Reject tx above cap
@@ -87,7 +87,7 @@ async fn pre_azul_accepts_tx_above_gas_limit_cap() -> Result<()> {
 
 #[tokio::test]
 async fn azul_estimate_gas_without_data_returns_transfer_gas() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let gas = harness.provider().estimate_gas(transfer_request_without_gas()).await?;
     assert_eq!(gas, 21_000);
@@ -97,7 +97,7 @@ async fn azul_estimate_gas_without_data_returns_transfer_gas() -> Result<()> {
 
 #[tokio::test]
 async fn azul_estimate_gas_with_data_accepts_implicit_gas_limit() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let gas = harness.provider().estimate_gas(transfer_request_with_data_without_gas()).await?;
     assert!(gas > 21_000, "tx with calldata should exceed plain transfer gas");
@@ -107,7 +107,7 @@ async fn azul_estimate_gas_with_data_accepts_implicit_gas_limit() -> Result<()> 
 
 #[tokio::test]
 async fn azul_estimate_gas_with_explicit_gas_and_data_passes() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let gas = harness.provider().estimate_gas(transfer_request_with_gas_and_data()).await?;
     assert!(gas > 21_000, "tx with calldata should exceed plain transfer gas");
@@ -118,7 +118,7 @@ async fn azul_estimate_gas_with_explicit_gas_and_data_passes() -> Result<()> {
 
 #[tokio::test]
 async fn azul_eth_call_without_data_accepts_implicit_gas_limit() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let result = harness
         .provider()
@@ -132,7 +132,7 @@ async fn azul_eth_call_without_data_accepts_implicit_gas_limit() -> Result<()> {
 
 #[tokio::test]
 async fn azul_eth_call_with_data_to_contract_accepts_implicit_gas_limit() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let calldata = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
     let request = BaseTransactionRequest::default()
@@ -148,7 +148,7 @@ async fn azul_eth_call_with_data_to_contract_accepts_implicit_gas_limit() -> Res
 
 #[tokio::test]
 async fn azul_fill_transaction_without_data_uses_transfer_gas() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let filled = harness.provider().fill_transaction(transfer_request_without_gas()).await?;
     assert!(!filled.raw.is_empty(), "filled raw transaction should not be empty");
@@ -159,7 +159,7 @@ async fn azul_fill_transaction_without_data_uses_transfer_gas() -> Result<()> {
 
 #[tokio::test]
 async fn azul_fill_transaction_with_data_accepts_implicit_gas_limit() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let filled =
         harness.provider().fill_transaction(transfer_request_with_data_without_gas()).await?;
@@ -171,7 +171,7 @@ async fn azul_fill_transaction_with_data_accepts_implicit_gas_limit() -> Result<
 
 #[tokio::test]
 async fn azul_fill_transaction_long_calldata_accepts_implicit_gas_limit() -> Result<()> {
-    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_azul()));
+    let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis_v1()));
     let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
     let request = BaseTransactionRequest::default()
         .from(address!("1234567890abcdef1234567890abcdef12345678"))

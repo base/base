@@ -184,7 +184,7 @@ impl TestHarness {
         sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
         let azul_active = GenesisInfo::extract_from(&chain_spec.genesis.config.extra_fields)
-            .and_then(|genesis_info| genesis_info.base.azul)
+            .and_then(|genesis_info| genesis_info.base.v1)
             .is_some_and(|activation_time| next_timestamp >= activation_time);
 
         let (execution_payload, execution_requests): (_, Vec<Bytes>) = if azul_active {

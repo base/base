@@ -66,7 +66,7 @@ fn build_cfg_env(
     let mut cfg_env =
         CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
 
-    if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
+    if chain_spec.is_base_v1_active_at_timestamp(timestamp) {
         cfg_env.tx_gas_limit_cap = Some(MAX_TX_GAS_LIMIT_OSAKA);
     }
 
@@ -377,18 +377,18 @@ mod tests {
     }
 
     #[test]
-    fn test_evm_env_uses_azul_for_genesis_chain_spec() {
+    fn test_evm_env_uses_base_v1_for_genesis_chain_spec() {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::default()
                 .chain(0.into())
                 .genesis(Genesis::default())
-                .azul_activated()
+                .base_v1_activated()
                 .build(),
         );
-        let evm_config = BaseEvmConfig::base(chain_spec);
+        let evm_config = BaseEvmConfig::optimism(chain_spec);
         let header = Header { timestamp: 0, ..Default::default() };
         let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
-        assert_eq!(cfg_env.spec, OpSpecId::AZUL);
+        assert_eq!(cfg_env.spec, OpSpecId::BASE_V1);
         assert_eq!(cfg_env.tx_gas_limit_cap, Some(MAX_TX_GAS_LIMIT_OSAKA));
     }
 
