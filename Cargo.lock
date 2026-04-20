@@ -4344,6 +4344,7 @@ dependencies = [
  "alloy-signer",
  "base-common-consensus",
  "base-common-network",
+ "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-engine-tree",
  "base-execution-chainspec",
