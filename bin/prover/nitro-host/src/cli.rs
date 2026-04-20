@@ -228,18 +228,18 @@ impl LocalArgs {
         if self.local_enclave_count == 0 {
             return Err(eyre!("--local-enclave-count must be at least 1"));
         }
-        let transports: Vec<Arc<NitroTransport>> = (0..self.local_enclave_count)
-            .map(|_| {
-                let server = Arc::new(EnclaveServer::new_local()?);
-                Ok(Arc::new(NitroTransport::local(server)))
-            })
-            .collect::<eyre::Result<Vec<_>>>()?;
         if self.local_enclave_count > 1 && self.server.tee_prover_registry_address.is_none() {
             warn!(
                 count = self.local_enclave_count,
                 "multiple local enclaves without registry; defaulting to index 0 for routing"
             );
         }
+        let transports: Vec<Arc<NitroTransport>> = (0..self.local_enclave_count)
+            .map(|_| {
+                let server = Arc::new(EnclaveServer::new_local()?);
+                Ok(Arc::new(NitroTransport::local(server)))
+            })
+            .collect::<eyre::Result<Vec<_>>>()?;
         let timeout = Duration::from_secs(self.server.proof_request_timeout_secs);
         let mut server = NitroProverServer::new_multi(prover_config, transports, timeout);
         if let Some(reg) = registration_health {
