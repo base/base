@@ -12,7 +12,7 @@ use base_consensus_genesis::RollupConfig;
 use base_consensus_peers::{EnrValidation, PeerMonitoring, PeerUtils};
 use derive_more::Debug;
 use discv5::Enr;
-use futures::{AsyncReadExt, AsyncWriteExt, stream::StreamExt};
+use futures::{AsyncWriteExt, stream::StreamExt};
 use libp2p::{
     Multiaddr, PeerId, Swarm, TransportError,
     gossipsub::{IdentTopic, MessageId},
@@ -155,14 +155,6 @@ where
                 info!(target: "gossip", peer_id = %peer_id, "Received a sync request, spawning a new task to handle it");
 
                 tokio::spawn(async move {
-                    let mut buffer = Vec::new();
-                    let Ok(bytes_received) = inbound_stream.read_to_end(&mut buffer).await else {
-                        error!(target: "gossip", peer_id = %peer_id, "Failed to read the sync request");
-                        return;
-                    };
-
-                    debug!(target: "gossip", bytes_received, peer_id = %peer_id, payload = ?buffer, "Received inbound sync request");
-
                     // We return: not found (1), version (0). `<https://specs.optimism.io/protocol/rollup-node-p2p.html#payload_by_number>`
                     // Response format: <response> = <res><version><payload>
                     // No payload is returned.
