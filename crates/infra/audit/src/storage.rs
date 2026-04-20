@@ -4,13 +4,15 @@ use alloy_primitives::TxHash;
 use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_s3::{
-    Client as S3Client, error::SdkError, operation::get_object::GetObjectError,
+    Client as S3Client,
+    error::SdkError,
+    operation::{get_object::GetObjectError, put_object::PutObjectError},
     primitives::ByteStream,
 };
 use base_bundles::AcceptedBundle;
 use futures::future;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     metrics::Metrics,
@@ -249,6 +251,24 @@ impl S3EventReaderWriter {
         .await
     }
 
+    /// Returns true if the error is a conditional write conflict (412 or 409).
+    ///
+    /// S3 returns 412 Precondition Failed when `If-Match` / `If-None-Match` conditions
+    /// are not met, and 409 Conditional Request Conflict for concurrent writes. In both
+    /// cases another writer already succeeded, so the caller can re-read and skip.
+    fn is_conditional_write_conflict(err: &SdkError<PutObjectError>) -> bool {
+        if let SdkError::ServiceError(service_err) = err
+            && let Some(code) = service_err.err().meta().code()
+                && (code == "PreconditionFailed" || code == "ConditionalRequestConflict") {
+                    return true;
+                }
+        let s = err.to_string();
+        s.contains("PreconditionFailed")
+            || s.contains("ConditionalRequestConflict")
+            || s.contains("412")
+            || s.contains("409")
+    }
+
     async fn idempotent_write<T, F>(&self, key: &str, mut transform_fn: F) -> Result<()>
     where
         T: for<'de> Deserialize<'de> + Serialize + Default + Debug,
@@ -292,17 +312,27 @@ impl S3EventReaderWriter {
                             );
                             return Ok(());
                         }
+                        Err(ref e) if Self::is_conditional_write_conflict(e) => {
+                            Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
+                            Metrics::s3_conditional_conflicts().increment(1);
+                            info!(
+                                s3_key = %key,
+                                attempt = attempt + 1,
+                                "Conditional write conflict, re-reading without backoff"
+                            );
+                            continue;
+                        }
                         Err(e) => {
                             Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
 
                             if attempt < MAX_RETRIES - 1 {
                                 let delay = BASE_DELAY_MS * 2_u64.pow(attempt as u32);
-                                info!(
+                                warn!(
                                     s3_key = %key,
                                     attempt = attempt + 1,
                                     delay_ms = delay,
                                     error = %e,
-                                    "Conflict detected, retrying with backoff"
+                                    "S3 put failed, retrying with backoff"
                                 );
                                 tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
                             } else {
