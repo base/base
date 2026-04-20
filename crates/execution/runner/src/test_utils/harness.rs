@@ -187,14 +187,13 @@ impl TestHarness {
             .and_then(|genesis_info| genesis_info.base.v1)
             .is_some_and(|activation_time| next_timestamp >= activation_time);
 
-        let (execution_payload, execution_requests): (_, Vec<Bytes>) =
-            if v1_active {
-                let payload_envelope = self.engine.get_payload_v5(payload_id).await?;
-                (payload_envelope.execution_payload, payload_envelope.execution_requests)
-            } else {
-                let payload_envelope = self.engine.get_payload_v4(payload_id).await?;
-                (payload_envelope.execution_payload, payload_envelope.execution_requests)
-            };
+        let (execution_payload, execution_requests): (_, Vec<Bytes>) = if v1_active {
+            let payload_envelope = self.engine.get_payload_v5(payload_id).await?;
+            (payload_envelope.execution_payload, payload_envelope.execution_requests)
+        } else {
+            let payload_envelope = self.engine.get_payload_v4(payload_id).await?;
+            (payload_envelope.execution_payload, payload_envelope.execution_requests)
+        };
 
         let execution_requests = if execution_requests.is_empty() {
             Requests::default()
@@ -204,12 +203,7 @@ impl TestHarness {
 
         let payload_status = self
             .engine
-            .new_payload(
-                execution_payload,
-                vec![],
-                parent_beacon_block_root,
-                execution_requests,
-            )
+            .new_payload(execution_payload, vec![], parent_beacon_block_root, execution_requests)
             .await?;
 
         if payload_status.status.is_invalid() {
