@@ -32,7 +32,7 @@ use base_node_runner::{
     BaseNodeExtension, NodeHooks,
     test_utils::{
         Account, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNode,
-        LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis,
+        LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness, build_test_genesis_v1,
         init_silenced_tracing,
     },
 };
@@ -240,7 +240,7 @@ impl FlashblocksLocalNode {
 
     async fn with_options(process_canonical: bool) -> Result<Self> {
         // Build default chain spec programmatically
-        let genesis = build_test_genesis();
+        let genesis = build_test_genesis_v1();
         let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
 
         let extension = FlashblocksTestExtension::new(process_canonical);
@@ -299,7 +299,7 @@ impl FlashblocksHarness {
         init_silenced_tracing();
 
         // Build default chain spec programmatically
-        let genesis = build_test_genesis();
+        let genesis = build_test_genesis_v1();
         let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
 
         // Create the extension and keep a reference to get parts after launch

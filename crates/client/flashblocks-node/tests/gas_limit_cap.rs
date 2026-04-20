@@ -1,16 +1,21 @@
-//! Integration tests for EIP-7825 transaction gas limit cap enforcement.
+//! Integration tests for EIP-7825 transaction gas limit cap enforcement and
+//! omitted-gas RPC behavior on Base V1.
 //!
 //! Base V1 introduces a per-transaction gas limit cap of 2^24 (16,777,216).
-//! These tests verify that `eth_sendRawTransaction` correctly rejects
-//! transactions exceeding this cap when V1 is active.
+//! These tests verify that:
+//! - `eth_sendRawTransaction` correctly rejects transactions exceeding this cap
+//!   when V1 is active.
+//! - RPC methods that estimate or fill gas continue to work when `gas` is
+//!   omitted, both with and without calldata.
 
 use std::sync::Arc;
 
-use alloy_consensus::SignableTransaction;
-use alloy_eips::eip2718::Encodable2718;
+use alloy_consensus::{SignableTransaction, Transaction};
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_network::TransactionBuilder;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, address};
 use alloy_provider::Provider;
+use alloy_rpc_types_eth::TransactionInput;
 use base_alloy_rpc_types::OpTransactionRequest;
 use base_execution_chainspec::OpChainSpec;
 use base_node_runner::test_utils::{
@@ -36,6 +41,14 @@ fn sign_tx_with_gas_limit(from: Account, to: alloy_primitives::Address, gas_limi
     let signature = from.signer().sign_hash_sync(&tx.signature_hash()).expect("sign tx");
     let signed_tx = tx.into_signed(signature);
     signed_tx.encoded_2718().into()
+}
+
+fn transfer_request_without_gas() -> OpTransactionRequest {
+    OpTransactionRequest::default().from(Account::Alice.address()).to(Account::Bob.address())
+}
+
+fn transfer_request_with_data_without_gas() -> OpTransactionRequest {
+    transfer_request_without_gas().input(TransactionInput::new(Bytes::from_static(&[0x00])))
 }
 
 #[tokio::test]
@@ -65,6 +78,79 @@ async fn pre_v1_accepts_tx_above_gas_limit_cap() -> Result<()> {
 
     let result = harness.provider().send_raw_transaction(&raw_tx).await;
     assert!(result.is_ok(), "tx with gas_limit > cap should be accepted when V1 is not active");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_estimate_gas_without_data_returns_transfer_gas() -> Result<()> {
+    let chain_spec = Arc::new(OpChainSpec::from_genesis(build_test_genesis_v1()));
+    let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
+    let gas = harness.provider().estimate_gas(transfer_request_without_gas()).await?;
+    assert_eq!(gas, 21_000);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_estimate_gas_with_data_accepts_implicit_gas_limit() -> Result<()> {
+    let chain_spec = Arc::new(OpChainSpec::from_genesis(build_test_genesis_v1()));
+    let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
+    let gas = harness.provider().estimate_gas(transfer_request_with_data_without_gas()).await?;
+    assert!(gas > 21_000, "tx with calldata should exceed plain transfer gas");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_eth_call_without_data_accepts_implicit_gas_limit() -> Result<()> {
+    let chain_spec = Arc::new(OpChainSpec::from_genesis(build_test_genesis_v1()));
+    let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
+    let result = harness
+        .provider()
+        .call(transfer_request_without_gas())
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    assert!(result.is_empty(), "plain eth_call to EOA should return empty bytes");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_eth_call_with_data_to_contract_accepts_implicit_gas_limit() -> Result<()> {
+    let chain_spec = Arc::new(OpChainSpec::from_genesis(build_test_genesis_v1()));
+    let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
+    let calldata = Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]);
+    let request = OpTransactionRequest::default()
+        .from(Account::Alice.address())
+        .to(address!("0000000000000000000000000000000000000004"))
+        .input(TransactionInput::new(calldata.clone()));
+
+    let result = harness.provider().call(request).block(BlockNumberOrTag::Pending.into()).await?;
+    assert_eq!(result, calldata);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_fill_transaction_without_data_uses_transfer_gas() -> Result<()> {
+    let chain_spec = Arc::new(OpChainSpec::from_genesis(build_test_genesis_v1()));
+    let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
+    let filled = harness.provider().fill_transaction(transfer_request_without_gas()).await?;
+    assert!(!filled.raw.is_empty(), "filled raw transaction should not be empty");
+    assert_eq!(filled.tx.gas_limit(), 21_000);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn v1_fill_transaction_with_data_accepts_implicit_gas_limit() -> Result<()> {
+    let chain_spec = Arc::new(OpChainSpec::from_genesis(build_test_genesis_v1()));
+    let harness = TestHarnessBuilder::new().with_chain_spec(chain_spec).build().await?;
+    let filled =
+        harness.provider().fill_transaction(transfer_request_with_data_without_gas()).await?;
+    assert!(!filled.raw.is_empty(), "filled raw transaction should not be empty");
+    assert!(filled.tx.gas_limit() > 21_000, "tx with calldata should exceed plain transfer gas");
 
     Ok(())
 }
