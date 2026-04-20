@@ -24,10 +24,6 @@ const MAX_USER_DATA_BYTES: usize = 512;
 /// Maximum allowed size for the `nonce` attestation field (NSM limit).
 const MAX_NONCE_BYTES: usize = 512;
 
-fn rpc_err(code: i32, err: impl std::fmt::Display) -> jsonrpsee::types::ErrorObjectOwned {
-    jsonrpsee::types::ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
-}
-
 struct EnclaveService {
     transport: Arc<NitroTransport>,
     service: ProverService<NitroBackend>,
@@ -51,6 +47,10 @@ impl fmt::Debug for NitroProverServer {
 }
 
 impl NitroProverServer {
+    fn rpc_err(code: i32, err: impl std::fmt::Display) -> jsonrpsee::types::ErrorObjectOwned {
+        jsonrpsee::types::ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
+    }
+
     /// Create a server with the given prover config, enclave transport, and proof request timeout.
     pub fn new(
         config: ProverConfig,
@@ -155,7 +155,7 @@ impl ProverApiServer for NitroProverRpc {
             Some(checker) => {
                 let valid = checker.select_valid_enclave().await.map_err(|e| {
                     warn!(error = %e, "rejecting proof request: signer validation failed");
-                    rpc_err(-32001, e)
+                    NitroProverServer::rpc_err(-32001, e)
                 })?;
                 &self.enclaves[valid.index]
             }
@@ -167,10 +167,10 @@ impl ProverApiServer for NitroProverRpc {
         let timeout = self.proof_request_timeout;
 
         match tokio::time::timeout(timeout, enclave.service.prove_block(request)).await {
-            Ok(result) => result.map_err(|e| rpc_err(-32000, e)),
+            Ok(result) => result.map_err(|e| NitroProverServer::rpc_err(-32000, e)),
             Err(_elapsed) => {
                 warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
-                Err(rpc_err(
+                Err(NitroProverServer::rpc_err(
                     -32000,
                     format!(
                         "proof request timed out after {}s for L2 block {l2_block}",
@@ -197,7 +197,12 @@ impl EnclaveApiServer for NitroSignerRpc {
     async fn signer_public_key(&self) -> RpcResult<Vec<Vec<u8>>> {
         let mut keys = Vec::with_capacity(self.transports.len());
         for transport in &self.transports {
-            keys.push(transport.signer_public_key().await.map_err(|e| rpc_err(-32001, e))?);
+            keys.push(
+                transport
+                    .signer_public_key()
+                    .await
+                    .map_err(|e| NitroProverServer::rpc_err(-32001, e))?,
+            );
         }
         Ok(keys)
     }
@@ -211,13 +216,16 @@ impl EnclaveApiServer for NitroSignerRpc {
         // Reject oversized payloads early to avoid allocating and forwarding them
         // through the vsock transport only to be rejected by the enclave.
         if user_data.as_ref().is_some_and(|d| d.len() > MAX_USER_DATA_BYTES) {
-            return Err(rpc_err(
+            return Err(NitroProverServer::rpc_err(
                 -32602,
                 format!("user_data exceeds {MAX_USER_DATA_BYTES}-byte limit"),
             ));
         }
         if nonce.as_ref().is_some_and(|n| n.len() > MAX_NONCE_BYTES) {
-            return Err(rpc_err(-32602, format!("nonce exceeds {MAX_NONCE_BYTES}-byte limit")));
+            return Err(NitroProverServer::rpc_err(
+                -32602,
+                format!("nonce exceeds {MAX_NONCE_BYTES}-byte limit"),
+            ));
         }
 
         let mut attestations = Vec::with_capacity(self.transports.len());
@@ -226,7 +234,7 @@ impl EnclaveApiServer for NitroSignerRpc {
                 transport
                     .signer_attestation(user_data.clone(), nonce.clone())
                     .await
-                    .map_err(|e| rpc_err(-32001, e))?,
+                    .map_err(|e| NitroProverServer::rpc_err(-32001, e))?,
             );
         }
         Ok(attestations)
