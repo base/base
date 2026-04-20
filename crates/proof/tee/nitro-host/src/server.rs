@@ -24,6 +24,10 @@ const MAX_USER_DATA_BYTES: usize = 512;
 /// Maximum allowed size for the `nonce` attestation field (NSM limit).
 const MAX_NONCE_BYTES: usize = 512;
 
+fn rpc_err(code: i32, err: impl std::fmt::Display) -> jsonrpsee::types::ErrorObjectOwned {
+    jsonrpsee::types::ErrorObjectOwned::owned(code, err.to_string(), None::<()>)
+}
+
 struct EnclaveService {
     transport: Arc<NitroTransport>,
     service: ProverService<NitroBackend>,
@@ -147,34 +151,31 @@ struct NitroProverRpc {
 #[async_trait]
 impl ProverApiServer for NitroProverRpc {
     async fn prove(&self, request: ProofRequest) -> RpcResult<ProofResult> {
-        let enclave = if let Some(checker) = &self.checker {
-            let valid = checker.select_valid_enclave().await.map_err(|e| {
-                warn!(error = %e, "rejecting proof request: signer validation failed");
-                jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
-            })?;
-            &self.enclaves[valid.index]
-        } else {
+        let enclave = match &self.checker {
+            Some(checker) => {
+                let valid = checker.select_valid_enclave().await.map_err(|e| {
+                    warn!(error = %e, "rejecting proof request: signer validation failed");
+                    rpc_err(-32001, e)
+                })?;
+                &self.enclaves[valid.index]
+            }
             // Constructor guarantees at least one enclave.
-            &self.enclaves[0]
+            None => &self.enclaves[0],
         };
-        let service = &enclave.service;
 
         let l2_block = request.claimed_l2_block_number;
         let timeout = self.proof_request_timeout;
 
-        match tokio::time::timeout(timeout, service.prove_block(request)).await {
-            Ok(result) => result.map_err(|e| {
-                jsonrpsee::types::ErrorObjectOwned::owned(-32000, e.to_string(), None::<()>)
-            }),
+        match tokio::time::timeout(timeout, enclave.service.prove_block(request)).await {
+            Ok(result) => result.map_err(|e| rpc_err(-32000, e)),
             Err(_elapsed) => {
                 warn!(l2_block, timeout_secs = timeout.as_secs(), "proof request timed out");
-                Err(jsonrpsee::types::ErrorObjectOwned::owned(
+                Err(rpc_err(
                     -32000,
                     format!(
                         "proof request timed out after {}s for L2 block {l2_block}",
                         timeout.as_secs()
                     ),
-                    None::<()>,
                 ))
             }
         }
@@ -196,10 +197,7 @@ impl EnclaveApiServer for NitroSignerRpc {
     async fn signer_public_key(&self) -> RpcResult<Vec<Vec<u8>>> {
         let mut keys = Vec::with_capacity(self.transports.len());
         for transport in &self.transports {
-            let key = transport.signer_public_key().await.map_err(|e| {
-                jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
-            })?;
-            keys.push(key);
+            keys.push(transport.signer_public_key().await.map_err(|e| rpc_err(-32001, e))?);
         }
         Ok(keys)
     }
@@ -213,29 +211,23 @@ impl EnclaveApiServer for NitroSignerRpc {
         // Reject oversized payloads early to avoid allocating and forwarding them
         // through the vsock transport only to be rejected by the enclave.
         if user_data.as_ref().is_some_and(|d| d.len() > MAX_USER_DATA_BYTES) {
-            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
+            return Err(rpc_err(
                 -32602,
                 format!("user_data exceeds {MAX_USER_DATA_BYTES}-byte limit"),
-                None::<()>,
             ));
         }
         if nonce.as_ref().is_some_and(|n| n.len() > MAX_NONCE_BYTES) {
-            return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                -32602,
-                format!("nonce exceeds {MAX_NONCE_BYTES}-byte limit"),
-                None::<()>,
-            ));
+            return Err(rpc_err(-32602, format!("nonce exceeds {MAX_NONCE_BYTES}-byte limit")));
         }
 
         let mut attestations = Vec::with_capacity(self.transports.len());
         for transport in &self.transports {
-            let attestation = transport
-                .signer_attestation(user_data.clone(), nonce.clone())
-                .await
-                .map_err(|e| {
-                    jsonrpsee::types::ErrorObjectOwned::owned(-32001, e.to_string(), None::<()>)
-                })?;
-            attestations.push(attestation);
+            attestations.push(
+                transport
+                    .signer_attestation(user_data.clone(), nonce.clone())
+                    .await
+                    .map_err(|e| rpc_err(-32001, e))?,
+            );
         }
         Ok(attestations)
     }
