@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use alloy_primitives::TxHash;
 use tracing::debug;
@@ -11,17 +11,19 @@ pub struct MetricsCollector {
     transactions: Vec<TransactionMetrics>,
     submitted_count: u64,
     failed_count: u64,
+    failure_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
     flashblocks_rolling: RollingWindow,
 }
 
 impl MetricsCollector {
     /// Creates a new metrics collector.
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             transactions: Vec::new(),
             submitted_count: 0,
             failed_count: 0,
+            failure_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
             flashblocks_rolling: RollingWindow::new(),
         }
@@ -46,9 +48,17 @@ impl MetricsCollector {
         self.transactions.push(metrics);
     }
 
-    /// Records a failed transaction.
-    pub const fn record_failed(&mut self, _tx_hash: TxHash, _reason: &str) {
+    /// Records a failed transaction with a categorized reason.
+    pub fn record_failed(&mut self, _tx_hash: TxHash, reason: &str) {
         self.failed_count += 1;
+        *self.failure_reasons.entry(reason.to_string()).or_insert(0) += 1;
+    }
+
+    /// Records multiple failures with the same reason (e.g. expired txs
+    /// reported in bulk after the confirmer shuts down).
+    pub fn record_failures(&mut self, reason: &str, count: u64) {
+        self.failed_count += count;
+        *self.failure_reasons.entry(reason.to_string()).or_insert(0) += count;
     }
 
     /// Returns the number of confirmed transactions.
@@ -73,7 +83,12 @@ impl MetricsCollector {
     /// confirmation-drain phases.
     pub fn summarize(&self, active_duration: Duration) -> MetricsSummary {
         let aggregator = MetricsAggregator::new(&self.transactions);
-        aggregator.summarize(active_duration, self.submitted_count, self.failed_count)
+        aggregator.summarize(
+            active_duration,
+            self.submitted_count,
+            self.failed_count,
+            &self.failure_reasons,
+        )
     }
 
     /// Resets the collector for reuse.
@@ -81,6 +96,7 @@ impl MetricsCollector {
         self.transactions.clear();
         self.submitted_count = 0;
         self.failed_count = 0;
+        self.failure_reasons.clear();
         self.rolling = RollingWindow::new();
         self.flashblocks_rolling = RollingWindow::new();
     }

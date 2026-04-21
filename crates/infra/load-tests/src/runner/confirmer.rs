@@ -8,13 +8,12 @@ use std::{
 };
 
 use alloy_primitives::{Address, TxHash};
-use futures::future::join_all;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use super::BlockFirstSeen;
-use crate::{metrics::TransactionMetrics, rpc::ReceiptProvider};
+use crate::{metrics::TransactionMetrics, rpc::{BatchRpcClient, ReceiptProvider}};
 
 /// Shared map of transaction hashes to their flashblock inclusion times.
 pub type FlashblockTimes = Arc<RwLock<HashMap<TxHash, Instant>>>;
@@ -23,8 +22,11 @@ pub type FlashblockTimes = Arc<RwLock<HashMap<TxHash, Instant>>>;
 /// Sized for ~2 seconds of throughput at 1000 TPS.
 const PENDING_CHANNEL_BUFFER: usize = 2000;
 
-/// Maximum number of concurrent receipt lookups per poll cycle.
+/// Maximum number of concurrent receipt lookups per poll cycle (fallback path).
 const MAX_RECEIPT_LOOKUPS: usize = 200;
+
+/// Maximum number of new blocks to fetch receipts for in a single poll cycle.
+const MAX_BLOCKS_PER_CYCLE: u64 = 10;
 
 /// Tracks pending transactions and collects confirmation metrics.
 pub struct Confirmer {
@@ -35,19 +37,26 @@ pub struct Confirmer {
     stop_flag: Arc<AtomicBool>,
     poll_interval: Duration,
     max_pending_age: Duration,
-    /// How long to wait before polling receipts for transactions not yet
-    /// detected in a pending block. On L2s (e.g. Base Sepolia)
-    /// `eth_getBlockByNumber("pending")` often returns the latest finalised
-    /// block, so the pending-block fast-path never fires. This age ensures
-    /// receipt lookups start after roughly one block time rather than waiting
-    /// for the full `max_pending_age` timeout.
+    /// How long to wait before the fallback receipt lookup considers a
+    /// transaction that was already detected in a pending block.
     receipt_check_age: Duration,
+    /// How long to wait before the fallback receipt lookup considers a
+    /// transaction that has NOT been seen in a pending block or via block
+    /// receipts. Set longer than `receipt_check_age` so
+    /// `confirm_via_block_receipts` (which is cheaper — one RPC call per
+    /// block) has time to confirm the transaction first.
+    fallback_receipt_age: Duration,
     pending_rx: Option<mpsc::Receiver<PendingTx>>,
     pending_tx: mpsc::Sender<PendingTx>,
     flashblock_times: FlashblockTimes,
     block_first_seen: BlockFirstSeen,
     deferred_block_latencies: Vec<DeferredBlockLatency>,
     block_watcher_enabled: bool,
+    last_checked_block: Option<u64>,
+    batch_rpc: BatchRpcClient,
+    expired_count: Arc<AtomicU64>,
+    fallback_skip_until: Option<Instant>,
+    fallback_backoff_ms: u64,
 }
 
 /// A confirmed tx whose block latency could not be computed yet because
@@ -89,6 +98,7 @@ pub struct ConfirmerHandle {
     pending_tx: mpsc::Sender<PendingTx>,
     in_flight_per_sender: Arc<HashMap<Address, Arc<AtomicU64>>>,
     total_in_flight: Arc<AtomicU64>,
+    expired_count: Arc<AtomicU64>,
 }
 
 impl ConfirmerHandle {
@@ -137,6 +147,11 @@ impl ConfirmerHandle {
     pub fn senders_at_limit(&self, limit: u64) -> usize {
         self.in_flight_per_sender.values().filter(|c| c.load(Ordering::SeqCst) >= limit).count()
     }
+
+    /// Returns the number of transactions that expired without confirmation.
+    pub fn expired_count(&self) -> u64 {
+        self.expired_count.load(Ordering::SeqCst)
+    }
 }
 
 impl Confirmer {
@@ -152,6 +167,7 @@ impl Confirmer {
         flashblock_times: FlashblockTimes,
         block_first_seen: BlockFirstSeen,
         block_watcher_enabled: bool,
+        batch_rpc: BatchRpcClient,
     ) -> Self {
         let mut in_flight_map = HashMap::new();
         for addr in sender_addresses {
@@ -168,13 +184,19 @@ impl Confirmer {
             stop_flag,
             poll_interval: Duration::from_millis(100),
             max_pending_age: Duration::from_secs(60),
-            receipt_check_age: Duration::from_secs(2),
+            receipt_check_age: Duration::from_millis(500),
+            fallback_receipt_age: Duration::from_secs(4),
             pending_rx: Some(pending_rx),
             pending_tx,
             flashblock_times,
             block_first_seen,
             deferred_block_latencies: Vec::new(),
             block_watcher_enabled,
+            last_checked_block: None,
+            batch_rpc,
+            expired_count: Arc::new(AtomicU64::new(0)),
+            fallback_skip_until: None,
+            fallback_backoff_ms: 0,
         }
     }
 
@@ -208,6 +230,7 @@ impl Confirmer {
             pending_tx: self.pending_tx.clone(),
             in_flight_per_sender: Arc::clone(&self.in_flight_per_sender),
             total_in_flight: Arc::clone(&self.total_in_flight),
+            expired_count: Arc::clone(&self.expired_count),
         }
     }
 
@@ -264,7 +287,8 @@ impl Confirmer {
             }
         }
 
-        self.fetch_receipts(client, &mut confirmed).await;
+        self.confirm_via_block_receipts(client, &mut confirmed).await;
+        self.fetch_receipts_fallback(client, &mut confirmed).await;
         self.check_pending_block(client).await;
 
         let confirmed_hashes: HashSet<TxHash> = confirmed.iter().map(|(hash, _)| *hash).collect();
@@ -286,7 +310,8 @@ impl Confirmer {
                 continue;
             }
             if let Some(pending) = self.pending.remove(&tx_hash) {
-                warn!(tx_hash = %tx_hash, from = %pending.from, "transaction expired without confirmation");
+                debug!(tx_hash = %tx_hash, from = %pending.from, "transaction expired without confirmation");
+                self.expired_count.fetch_add(1, Ordering::SeqCst);
                 self.decrement_in_flight(&pending.from);
             }
         }
@@ -313,21 +338,127 @@ impl Confirmer {
         }
     }
 
-    /// Fetches individual receipts for transactions that have been included in a block
-    /// or have been pending long enough to be stragglers.
-    async fn fetch_receipts(
+    async fn confirm_via_block_receipts(
         &mut self,
         client: &impl ReceiptProvider,
         confirmed: &mut Vec<(TxHash, Address)>,
     ) {
+        if self.pending.is_empty() {
+            return;
+        }
+
+        let already_confirmed: HashSet<TxHash> =
+            confirmed.iter().map(|(hash, _)| *hash).collect();
+
+        let latest_block = if let Some(&max_block) =
+            self.block_first_seen.read().keys().next_back()
+        {
+            max_block
+        } else {
+            match client.get_latest_block_number().await {
+                Ok(n) => n,
+                Err(e) => {
+                    debug!(error = %e, "failed to get latest block number");
+                    return;
+                }
+            }
+        };
+
+        let start_block = self.last_checked_block.map_or(latest_block, |b| b + 1);
+        if start_block > latest_block {
+            return;
+        }
+
+        let end_block = latest_block.min(start_block + MAX_BLOCKS_PER_CYCLE - 1);
+
+        for block_number in start_block..=end_block {
+            let receipts = match client.get_block_receipts(block_number).await {
+                Ok(Some(r)) => r,
+                Ok(None) => continue,
+                Err(e) => {
+                    warn!(block = block_number, error = %e, "failed to fetch block receipts");
+                    break;
+                }
+            };
+
+            for receipt in receipts {
+                let tx_hash = receipt.inner.transaction_hash;
+                if already_confirmed.contains(&tx_hash) {
+                    continue;
+                }
+                let Some(pending) = self.pending.get(&tx_hash) else {
+                    continue;
+                };
+
+                let block_num = receipt.inner.block_number;
+                let block_latency =
+                    block_num.and_then(|n| self.get_block_latency(n, pending.submit_time));
+                let flashblocks_latency = self.get_flashblocks_latency(&tx_hash, pending);
+                let metrics = TransactionMetrics::new(
+                    tx_hash,
+                    block_latency,
+                    flashblocks_latency,
+                    receipt.inner.gas_used,
+                    receipt.inner.effective_gas_price,
+                    block_num,
+                );
+
+                if let (None, Some(bn)) = (block_latency, block_num) {
+                    self.deferred_block_latencies.push(DeferredBlockLatency {
+                        metrics,
+                        block_number: bn,
+                        submit_time: pending.submit_time,
+                        submit_timestamp: pending.submit_timestamp,
+                        deferred_at: Instant::now(),
+                    });
+                } else {
+                    debug!(
+                        tx_hash = %tx_hash,
+                        block = block_number,
+                        block_latency_ms = ?block_latency.map(|d| d.as_millis()),
+                        "tx confirmed (block receipts)"
+                    );
+                    if self.metrics_tx.send(metrics).await.is_err() {
+                        debug!(tx_hash = %tx_hash, "metrics channel closed");
+                    }
+                }
+                confirmed.push((tx_hash, pending.from));
+            }
+
+            self.last_checked_block = Some(block_number);
+        }
+    }
+
+    async fn fetch_receipts_fallback(
+        &mut self,
+        _client: &impl ReceiptProvider,
+        confirmed: &mut Vec<(TxHash, Address)>,
+    ) {
         let now = Instant::now();
+
+        if let Some(skip_until) = self.fallback_skip_until {
+            if now < skip_until {
+                return;
+            }
+            self.fallback_skip_until = None;
+        }
+
+        let already_confirmed: HashSet<TxHash> =
+            confirmed.iter().map(|(hash, _)| *hash).collect();
 
         let to_lookup: Vec<TxHash> = self
             .pending
             .iter()
-            .filter(|(_, pending)| {
-                pending.included_at.is_some()
-                    || now.duration_since(pending.submit_time) > self.receipt_check_age
+            .filter(|(hash, pending)| {
+                if already_confirmed.contains(*hash) {
+                    return false;
+                }
+                let age = now.duration_since(pending.submit_time);
+                if pending.included_at.is_some() {
+                    age > self.receipt_check_age
+                } else {
+                    age > self.fallback_receipt_age
+                }
             })
             .take(MAX_RECEIPT_LOOKUPS)
             .map(|(hash, _)| *hash)
@@ -337,59 +468,83 @@ impl Confirmer {
             return;
         }
 
-        let futures = to_lookup.iter().map(|tx_hash| client.get_transaction_receipt(*tx_hash));
-        let results = join_all(futures).await;
+        let results = match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.batch_rpc.batch_get_transaction_receipts(&to_lookup),
+        )
+        .await
+        {
+            Ok(Ok(results)) => results,
+            Ok(Err(e)) => {
+                warn!(error = %e, count = to_lookup.len(), "batch receipt fetch failed");
+                self.escalate_fallback_backoff();
+                return;
+            }
+            Err(_) => {
+                warn!(count = to_lookup.len(), "batch receipt fetch timed out");
+                self.escalate_fallback_backoff();
+                return;
+            }
+        };
 
-        for (tx_hash, result) in to_lookup.into_iter().zip(results) {
+        self.fallback_backoff_ms = 0;
+
+        for (tx_hash, receipt_opt) in to_lookup.into_iter().zip(results) {
             let Some(pending) = self.pending.get(&tx_hash) else {
                 continue;
             };
 
-            match result {
-                Ok(Some(receipt)) => {
-                    let block_num = receipt.inner.block_number;
-                    let block_latency =
-                        block_num.and_then(|n| self.get_block_latency(n, pending.submit_time));
-                    let flashblocks_latency = self.get_flashblocks_latency(&tx_hash, pending);
-                    let metrics = TransactionMetrics::new(
-                        tx_hash,
-                        block_latency,
-                        flashblocks_latency,
-                        receipt.inner.gas_used,
-                        receipt.inner.effective_gas_price,
-                        block_num,
-                    );
-                    // NOTE: deferred txs are removed from `pending` and decrement
-                    // `in_flight`, but metrics aren't sent to the collector until
-                    // the block timestamp arrives (or 5s timeout). During this
-                    // window the live display's confirmed count will lag slightly.
-                    if let (None, Some(bn)) = (block_latency, block_num) {
-                        debug!(tx_hash = %tx_hash, block = bn, "block latency deferred");
-                        self.deferred_block_latencies.push(DeferredBlockLatency {
-                            metrics,
-                            block_number: bn,
-                            submit_time: pending.submit_time,
-                            submit_timestamp: pending.submit_timestamp,
-                            deferred_at: Instant::now(),
-                        });
-                    } else {
-                        debug!(
-                            tx_hash = %tx_hash,
-                            block_latency_ms = ?block_latency.map(|d| d.as_millis()),
-                            "tx confirmed"
-                        );
-                        if self.metrics_tx.send(metrics).await.is_err() {
-                            debug!(tx_hash = %tx_hash, "metrics channel closed");
-                        }
-                    }
-                    confirmed.push((tx_hash, pending.from));
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    warn!(tx_hash = %tx_hash, error = %e, "receipt lookup failed");
+            let Some(receipt) = receipt_opt else {
+                continue;
+            };
+
+            let block_num = receipt.inner.block_number;
+            let block_latency =
+                block_num.and_then(|n| self.get_block_latency(n, pending.submit_time));
+            let flashblocks_latency = self.get_flashblocks_latency(&tx_hash, pending);
+            let metrics = TransactionMetrics::new(
+                tx_hash,
+                block_latency,
+                flashblocks_latency,
+                receipt.inner.gas_used,
+                receipt.inner.effective_gas_price,
+                block_num,
+            );
+
+            if let (None, Some(bn)) = (block_latency, block_num) {
+                debug!(tx_hash = %tx_hash, block = bn, "block latency deferred");
+                self.deferred_block_latencies.push(DeferredBlockLatency {
+                    metrics,
+                    block_number: bn,
+                    submit_time: pending.submit_time,
+                    submit_timestamp: pending.submit_timestamp,
+                    deferred_at: Instant::now(),
+                });
+            } else {
+                debug!(
+                    tx_hash = %tx_hash,
+                    block_latency_ms = ?block_latency.map(|d| d.as_millis()),
+                    "tx confirmed"
+                );
+                if self.metrics_tx.send(metrics).await.is_err() {
+                    debug!(tx_hash = %tx_hash, "metrics channel closed");
                 }
             }
+            confirmed.push((tx_hash, pending.from));
         }
+    }
+
+    fn escalate_fallback_backoff(&mut self) {
+        const INITIAL_MS: u64 = 1000;
+        const MAX_MS: u64 = 30_000;
+        self.fallback_backoff_ms = if self.fallback_backoff_ms == 0 {
+            INITIAL_MS
+        } else {
+            (self.fallback_backoff_ms * 2).min(MAX_MS)
+        };
+        self.fallback_skip_until =
+            Some(Instant::now() + Duration::from_millis(self.fallback_backoff_ms));
+        warn!(backoff_ms = self.fallback_backoff_ms, "backing off fallback receipt lookups");
     }
 
     async fn resolve_deferred_block_latencies(

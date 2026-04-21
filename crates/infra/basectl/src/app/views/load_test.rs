@@ -56,6 +56,8 @@ const EDIT_FIELDS: &[&str] = &[
     "sender_count",
     "in_flight_per_sender",
     "target_gps",
+    "batch_size",
+    "batch_timeout",
     "funding_amount",
     "funder_key",
     "block_watcher_url",
@@ -681,6 +683,10 @@ impl LoadTestView {
             "sender_count" => cfg.sender_count.to_string(),
             "in_flight_per_sender" => cfg.in_flight_per_sender.to_string(),
             "target_gps" => cfg.target_gps.map_or_else(|| "default".into(), |v| v.to_string()),
+            "batch_size" => cfg.batch_size.to_string(),
+            "batch_timeout" => {
+                cfg.batch_timeout.clone().unwrap_or_else(|| "100ms".into())
+            }
             "funding_amount" => format_wei_as_eth(&cfg.funding_amount),
             "block_watcher_url" => {
                 cfg.block_watcher_url.as_ref().map_or_else(String::new, |u| u.to_string())
@@ -733,6 +739,18 @@ impl LoadTestView {
                     cfg.target_gps = None;
                 } else if let Ok(v) = value.parse::<u64>() {
                     cfg.target_gps = Some(v);
+                }
+            }
+            "batch_size" => {
+                if let Ok(v) = value.parse::<u32>()
+                    && v > 0
+                {
+                    cfg.batch_size = v;
+                }
+            }
+            "batch_timeout" => {
+                if !value.is_empty() {
+                    cfg.batch_timeout = Some(value.to_string());
                 }
             }
             "funding_amount" => {
@@ -1188,6 +1206,16 @@ impl LoadTestView {
         ]));
 
         lines.push(Line::from(vec![
+            Span::styled("  Batch Size    ", label_style),
+            Span::styled(cfg.batch_size.to_string(), value_style),
+            Span::styled("  Timeout  ", label_style),
+            Span::styled(
+                cfg.batch_timeout.as_deref().unwrap_or("100ms"),
+                value_style,
+            ),
+        ]));
+
+        lines.push(Line::from(vec![
             Span::styled("  Target GPS    ", label_style),
             Span::styled(
                 cfg.target_gps.map(format_large_number).unwrap_or_else(|| "default".into()),
@@ -1276,16 +1304,19 @@ impl LoadTestView {
         match &self.state {
             RunState::Idle => render_idle_status(frame, inner, self.continuous),
             RunState::Running {
-                start, run_start, run_count, current_snap, current_phase, ..
+                start, run_count, current_snap, current_phase, ..
             } => {
-                let run_duration = self
-                    .effective_config()
-                    .and_then(|c: &TestConfig| c.parse_duration().ok())
-                    .flatten();
-                // Use the actual test start time (after bootstrap/funding) for the
-                // progress bar so that funding time doesn't count against the duration.
-                // Fall back to task spawn time while still in bootstrap/funding phases.
-                let elapsed = run_start.map_or_else(|| start.elapsed(), |t| t.elapsed());
+                let (elapsed, run_duration) = if matches!(current_phase, RunPhase::Running)
+                    && current_snap.elapsed > Duration::ZERO
+                {
+                    (current_snap.elapsed, current_snap.duration)
+                } else {
+                    let dur = self
+                        .effective_config()
+                        .and_then(|c: &TestConfig| c.parse_duration().ok())
+                        .flatten();
+                    (start.elapsed(), dur)
+                };
                 render_running_status(
                     frame,
                     inner,
@@ -1468,12 +1499,19 @@ fn render_live_metrics(frame: &mut Frame<'_>, area: Rect, snap: &DisplaySnapshot
 
     // Latency.
     lines.push(Line::from(Span::styled("  BLOCK LATENCY (rolling 30s)", label)));
-    lines.push(Line::from(vec![
-        Span::styled("    p50  ", label),
-        Span::styled(fmt_dur(snap.p50_latency), value),
-        Span::styled("    p99  ", label),
-        Span::styled(fmt_dur(snap.p99_latency), value),
-    ]));
+    if snap.confirmed == 0 && snap.submitted > 0 {
+        lines.push(Line::from(Span::styled(
+            "    waiting for first confirmation…",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("    p50  ", label),
+            Span::styled(fmt_dur(snap.p50_latency), value),
+            Span::styled("    p99  ", label),
+            Span::styled(fmt_dur(snap.p99_latency), value),
+        ]));
+    }
     if snap.flashblocks_p50_latency > Duration::ZERO
         || snap.flashblocks_p99_latency > Duration::ZERO
     {
@@ -1605,6 +1643,15 @@ fn render_complete_status(
             },
         ),
     ]));
+    if !summary.top_failure_reasons.is_empty() {
+        for (reason, count) in &summary.top_failure_reasons {
+            lines.push(Line::from(vec![
+                Span::styled("      ", label),
+                Span::styled(format!("{count:>5}x  "), Style::default().fg(Color::Red)),
+                Span::styled(reason.as_str(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+    }
     lines.push(Line::from(""));
 
     lines.push(Line::from(vec![

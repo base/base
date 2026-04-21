@@ -2,7 +2,6 @@ use std::{fmt, path::Path, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
-use rand::Rng;
 use revm::precompile::PrecompileId;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -137,12 +136,12 @@ impl Default for TestConfig {
             funding_amount: "10000000000000000".to_string(),
             sender_count: 50,
             sender_offset: 0,
-            in_flight_per_sender: 64,
+            in_flight_per_sender: 256,
             batch_size: 20,
             batch_timeout: Some("100ms".to_string()),
             duration: Some("30s".to_string()),
-            target_gps: Some(10_000_000),
-            seed: rand::rng().random(),
+            target_gps: Some(30_000_000),
+            seed: 12345,
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,

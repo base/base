@@ -182,6 +182,12 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
             fb.min, fb.p50, fb.mean, fb.p99, fb.max, fb.count
         );
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
+        if !summary.top_failure_reasons.is_empty() {
+            println!("Top failures:");
+            for (reason, count) in &summary.top_failure_reasons {
+                println!("  {count:>6}x  {reason}");
+            }
+        }
     }
 
     // Brief cooldown so in-flight load-test transactions can land and

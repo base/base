@@ -8,10 +8,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use alloy_consensus::transaction::SignableTransaction;
+use alloy_eips::Encodable2718;
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, TxHash, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::TransactionRequest;
+use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use futures::{
@@ -41,7 +44,7 @@ use crate::{
     BaselineError, Result,
     config::{OsakaTarget, WorkloadConfig},
     metrics::{MetricsCollector, MetricsSummary, TransactionMetrics},
-    rpc::{RpcClient, WalletProvider, create_wallet_provider},
+    rpc::{BatchRpcClient, BatchSendResult, RpcClient, WalletProvider, create_wallet_provider},
     workload::{
         AccountPool, CalldataPayload, Erc20Payload, OsakaPayload, PrecompilePayload,
         TransferPayload, WorkloadGenerator,
@@ -63,13 +66,22 @@ struct PreparedTx {
 
 enum SubmitEvent {
     Submitted(TxHash),
-    Failed,
+    Failed(String),
+}
+
+struct SignedTx {
+    raw: Bytes,
+    tx_hash: TxHash,
+    from: Address,
+    nonce: u64,
 }
 
 /// Shared context cloned into each `submit_batch` spawned task.
 #[derive(Clone)]
 struct BatchSubmitCtx {
     providers: Arc<HashMap<Address, WalletProvider>>,
+    signers: Arc<HashMap<Address, PrivateKeySigner>>,
+    batch_rpc: BatchRpcClient,
     nonce_managers: Arc<HashMap<Address, NonceManager<NonceProvider>>>,
     confirmer_handle: ConfirmerHandle,
     submit_event_tx: mpsc::Sender<SubmitEvent>,
@@ -94,16 +106,15 @@ pub struct LoadRunner {
     cancel_token: CancellationToken,
     nonce_managers: Arc<HashMap<Address, NonceManager<NonceProvider>>>,
     providers: Arc<HashMap<Address, WalletProvider>>,
+    signers: Arc<HashMap<Address, PrivateKeySigner>>,
+    batch_rpc: BatchRpcClient,
     gas_price: u128,
     display: Option<LoadTestDisplay>,
-    /// Optional watch channel for pushing live display snapshots to a TUI view.
     snapshot_tx: Option<watch::Sender<DisplaySnapshot>>,
     last_total_eth: Option<String>,
     last_min_eth: Option<String>,
     last_funds_low: bool,
-    /// Checksummed address of the funder wallet; set by the caller after `fund_accounts`.
     funder_address: Option<String>,
-    /// Pre-computed checksummed addresses of all sender accounts for snapshot inclusion.
     sender_addresses: Vec<String>,
 }
 
@@ -133,6 +144,8 @@ impl LoadRunner {
         };
 
         let providers = Arc::new(Self::build_providers(&config.rpc_http_url, &accounts));
+        let signers = Arc::new(Self::build_signers(&accounts));
+        let batch_rpc = BatchRpcClient::new(config.rpc_http_url.clone());
         let sender_addresses = accounts.accounts().iter().map(|a| a.address.to_string()).collect();
 
         let workload_config = WorkloadConfig::new("load-test").with_seed(config.seed);
@@ -154,6 +167,8 @@ impl LoadRunner {
             cancel_token: CancellationToken::new(),
             nonce_managers: Arc::new(HashMap::new()),
             providers,
+            signers,
+            batch_rpc,
             gas_price: 0,
             display: None,
             snapshot_tx: None,
@@ -183,6 +198,14 @@ impl LoadRunner {
         }
 
         providers
+    }
+
+    fn build_signers(accounts: &AccountPool) -> HashMap<Address, PrivateKeySigner> {
+        accounts
+            .accounts()
+            .iter()
+            .map(|a| (a.address, a.signer.clone()))
+            .collect()
     }
 
     fn create_generator(
@@ -531,7 +554,8 @@ impl LoadRunner {
             account.nonce = account_nonce;
 
             let provider = NonceProvider::new_http(self.config.rpc_http_url.clone());
-            let nonce_manager = NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT);
+            let nonce_manager =
+                NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT).with_pending_tag();
             Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
 
             debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
@@ -554,7 +578,9 @@ impl LoadRunner {
         for account in self.accounts.accounts() {
             if !self.nonce_managers.contains_key(&account.address) {
                 let provider = NonceProvider::new_http(self.config.rpc_http_url.clone());
-                let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT);
+                let nonce_manager =
+                    NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT)
+                        .with_pending_tag();
                 Arc::make_mut(&mut self.nonce_managers).insert(account.address, nonce_manager);
             }
         }
@@ -621,6 +647,7 @@ impl LoadRunner {
             Arc::clone(&flashblock_times),
             Arc::clone(&block_first_seen),
             block_watcher_enabled,
+            self.batch_rpc.clone(),
         );
         let confirmer_handle = confirmer.handle();
         let confirmer_handle_for_run = confirmer_handle.clone();
@@ -652,12 +679,11 @@ impl LoadRunner {
         );
 
         let mut pending_batch: Vec<PreparedTx> = Vec::with_capacity(batch_size);
-        let mut batch_start = Instant::now();
         let semaphore = Arc::new(Semaphore::new(SUBMIT_BATCH_CONCURRENCY));
         let providers = Arc::clone(&self.providers);
+        let signers = Arc::clone(&self.signers);
         let nonce_managers = Arc::clone(&self.nonce_managers);
-
-        let mut consecutive_at_limit = 0usize;
+        let batch_rpc = self.batch_rpc.clone();
         let mut last_gas_price_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
         let mut last_progress_report = Instant::now();
@@ -673,9 +699,29 @@ impl LoadRunner {
 
         self.check_account_balances().await;
 
+        // Emit an initial snapshot immediately so the TUI renders live
+        // metrics (submitted/in-flight/failed counters) without waiting
+        // for the first confirmation to arrive.
+        if use_live_display || use_snapshot_tx {
+            let snap = self.build_snapshot(
+                start,
+                &confirmer_handle,
+                max_in_flight_per_sender,
+                account_count,
+            );
+            if let Some(ref d) = self.display {
+                d.update(&snap);
+            }
+            if let Some(ref tx) = self.snapshot_tx {
+                let _ = tx.send(snap);
+            }
+        }
+
         while self.config.duration.is_none_or(|d| start.elapsed() < d)
             && !self.stop_flag.load(Ordering::SeqCst)
         {
+            // --- Housekeeping (runs once per batch iteration) ---
+
             if last_gas_price_refresh.elapsed() >= GAS_PRICE_REFRESH_INTERVAL {
                 if let Ok(new_price) = self.client.get_gas_price().await
                     && new_price != self.gas_price
@@ -693,74 +739,6 @@ impl LoadRunner {
                 last_rate_limiter_update = Instant::now();
             }
 
-            let account = &self.accounts.accounts()[current_account_idx];
-            let sender_in_flight = confirmer_handle.in_flight_for(&account.address);
-
-            if sender_in_flight >= max_in_flight_per_sender {
-                debug!(
-                    sender = %account.address,
-                    in_flight = sender_in_flight,
-                    max = max_in_flight_per_sender,
-                    "sender in-flight limit reached, skipping to next"
-                );
-                current_account_idx = (current_account_idx + 1) % account_count;
-                consecutive_at_limit += 1;
-
-                if consecutive_at_limit >= account_count {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    consecutive_at_limit = 0;
-                    rate_limiter.reset_tick();
-                }
-                continue;
-            }
-
-            consecutive_at_limit = 0;
-
-            rate_limiter.tick().await;
-
-            let from = account.address;
-            let to_idx = (current_account_idx + 1) % account_count;
-            let to = self.accounts.accounts()[to_idx].address;
-
-            let tx_request = self.generator.generate_payload(from, to)?;
-
-            let to_addr = tx_request.to.and_then(|kind| kind.to().copied());
-            let value = tx_request.value.unwrap_or(U256::ZERO);
-            let data = tx_request.input.input().cloned().unwrap_or_default();
-            let gas_limit = tx_request.gas.unwrap_or(21_000);
-
-            pending_batch.push(PreparedTx { from, to: to_addr, value, data, gas_limit });
-
-            current_account_idx = (current_account_idx + 1) % account_count;
-
-            let should_flush =
-                pending_batch.len() >= batch_size || batch_start.elapsed() >= batch_timeout;
-
-            if should_flush && !pending_batch.is_empty() {
-                let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
-                batch_start = Instant::now();
-                let permit = Arc::clone(&semaphore)
-                    .acquire_owned()
-                    .await
-                    .expect("submit batch semaphore closed");
-                let ctx = BatchSubmitCtx {
-                    providers: Arc::clone(&providers),
-                    nonce_managers: Arc::clone(&nonce_managers),
-                    confirmer_handle: confirmer_handle.clone(),
-                    submit_event_tx: submit_event_tx.clone(),
-                    gas_price: self.gas_price,
-                    chain_id: self.config.chain_id,
-                    max_gas_price: self.config.max_gas_price,
-                };
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    match AssertUnwindSafe(Self::submit_batch(ctx, batch)).catch_unwind().await {
-                        Ok(submitted) => debug!(submitted, "batch submitted"),
-                        Err(_) => error!("batch submission task panicked"),
-                    }
-                });
-            }
-
             if last_balance_check.elapsed() >= BALANCE_CHECK_INTERVAL {
                 self.check_account_balances().await;
                 last_balance_check = Instant::now();
@@ -775,40 +753,20 @@ impl LoadRunner {
             while let Ok(event) = submit_event_rx.try_recv() {
                 match event {
                     SubmitEvent::Submitted(tx_hash) => self.collector.record_submitted(tx_hash),
-                    SubmitEvent::Failed => {
-                        self.collector.record_failed(TxHash::ZERO, "submission failed");
+                    SubmitEvent::Failed(reason) => {
+                        self.collector.record_failed(TxHash::ZERO, &reason);
                     }
                 }
             }
 
             if use_live_display || use_snapshot_tx {
                 if last_progress_report.elapsed() >= DISPLAY_RENDER_INTERVAL {
-                    let (p50, p99) = self.collector.rolling_p50_p99();
-                    let (flashblocks_p50, flashblocks_p99) =
-                        self.collector.rolling_flashblocks_p50_p99();
-                    let snap = DisplaySnapshot {
-                        elapsed: start.elapsed(),
-                        duration: self.config.duration,
-                        submitted: self.collector.submitted_count(),
-                        confirmed: self.collector.confirmed_count(),
-                        failed: self.collector.failed_count(),
-                        in_flight: confirmer_handle.total_in_flight(),
-                        senders_blocked: confirmer_handle
-                            .senders_at_limit(max_in_flight_per_sender),
-                        total_senders: account_count,
-                        rolling_tps: self.collector.rolling_tps(),
-                        rolling_gps: self.collector.rolling_gps(),
-                        p50_latency: p50,
-                        p99_latency: p99,
-                        flashblocks_p50_latency: flashblocks_p50,
-                        flashblocks_p99_latency: flashblocks_p99,
-                        gas_price_gwei: self.gas_price as f64 / 1e9,
-                        total_eth: self.last_total_eth.clone(),
-                        min_eth: self.last_min_eth.clone(),
-                        funds_low: self.last_funds_low,
-                        funder_address: self.funder_address.clone(),
-                        sender_addresses: self.sender_addresses.clone(),
-                    };
+                    let snap = self.build_snapshot(
+                        start,
+                        &confirmer_handle,
+                        max_in_flight_per_sender,
+                        account_count,
+                    );
                     if let Some(ref d) = self.display {
                         d.update(&snap);
                     }
@@ -843,6 +801,85 @@ impl LoadRunner {
                 );
                 last_progress_report = Instant::now();
             }
+
+            // --- Inner loop: fill batch without sleeping ---
+
+            let batch_start = Instant::now();
+            let mut consecutive_at_limit = 0usize;
+
+            while pending_batch.len() < batch_size && batch_start.elapsed() < batch_timeout {
+                let account = &self.accounts.accounts()[current_account_idx];
+                let sender_in_flight = confirmer_handle.in_flight_for(&account.address);
+
+                if sender_in_flight >= max_in_flight_per_sender {
+                    debug!(
+                        sender = %account.address,
+                        in_flight = sender_in_flight,
+                        max = max_in_flight_per_sender,
+                        "sender in-flight limit reached, skipping to next"
+                    );
+                    current_account_idx = (current_account_idx + 1) % account_count;
+                    consecutive_at_limit += 1;
+
+                    if consecutive_at_limit >= account_count {
+                        // All senders at limit — break out and flush whatever we have.
+                        break;
+                    }
+                    continue;
+                }
+
+                consecutive_at_limit = 0;
+
+                let from = account.address;
+                let to_idx = (current_account_idx + 1) % account_count;
+                let to = self.accounts.accounts()[to_idx].address;
+
+                let tx_request = self.generator.generate_payload(from, to)?;
+
+                let to_addr = tx_request.to.and_then(|kind| kind.to().copied());
+                let value = tx_request.value.unwrap_or(U256::ZERO);
+                let data = tx_request.input.input().cloned().unwrap_or_default();
+                let gas_limit = tx_request.gas.unwrap_or(21_000);
+
+                pending_batch.push(PreparedTx { from, to: to_addr, value, data, gas_limit });
+
+                current_account_idx = (current_account_idx + 1) % account_count;
+            }
+
+            // --- Batch-level rate limiting and submission ---
+
+            if pending_batch.is_empty() {
+                // All senders blocked — backpressure sleep to avoid busy-spin.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                rate_limiter.reset_tick();
+                continue;
+            }
+
+            rate_limiter.tick_batch(pending_batch.len()).await;
+
+            let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
+            let permit = Arc::clone(&semaphore)
+                .acquire_owned()
+                .await
+                .expect("submit batch semaphore closed");
+            let ctx = BatchSubmitCtx {
+                providers: Arc::clone(&providers),
+                signers: Arc::clone(&signers),
+                batch_rpc: batch_rpc.clone(),
+                nonce_managers: Arc::clone(&nonce_managers),
+                confirmer_handle: confirmer_handle.clone(),
+                submit_event_tx: submit_event_tx.clone(),
+                gas_price: self.gas_price,
+                chain_id: self.config.chain_id,
+                max_gas_price: self.config.max_gas_price,
+            };
+            tokio::spawn(async move {
+                let _permit = permit;
+                match AssertUnwindSafe(Self::submit_batch(ctx, batch)).catch_unwind().await {
+                    Ok(submitted) => debug!(submitted, "batch submitted"),
+                    Err(_) => error!("batch submission task panicked"),
+                }
+            });
         }
 
         let active_duration = start.elapsed();
@@ -854,6 +891,8 @@ impl LoadRunner {
                 .expect("submit batch semaphore closed");
             let ctx = BatchSubmitCtx {
                 providers: Arc::clone(&providers),
+                signers: Arc::clone(&signers),
+                batch_rpc: batch_rpc.clone(),
                 nonce_managers: Arc::clone(&nonce_managers),
                 confirmer_handle: confirmer_handle.clone(),
                 submit_event_tx: submit_event_tx.clone(),
@@ -883,8 +922,8 @@ impl LoadRunner {
         while let Ok(event) = submit_event_rx.try_recv() {
             match event {
                 SubmitEvent::Submitted(tx_hash) => self.collector.record_submitted(tx_hash),
-                SubmitEvent::Failed => {
-                    self.collector.record_failed(TxHash::ZERO, "submission failed");
+                SubmitEvent::Failed(reason) => {
+                    self.collector.record_failed(TxHash::ZERO, &reason);
                 }
             }
         }
@@ -957,123 +996,260 @@ impl LoadRunner {
             }
         }
 
+        let expired = confirmer_handle.expired_count();
+        if expired > 0 {
+            self.collector.record_failures("expired without confirmation", expired);
+        }
+
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
         Ok(self.collector.summarize(active_duration))
     }
 
+    fn build_snapshot(
+        &mut self,
+        start: Instant,
+        confirmer_handle: &ConfirmerHandle,
+        max_in_flight_per_sender: u64,
+        account_count: usize,
+    ) -> DisplaySnapshot {
+        let (p50, p99) = self.collector.rolling_p50_p99();
+        let (flashblocks_p50, flashblocks_p99) = self.collector.rolling_flashblocks_p50_p99();
+        DisplaySnapshot {
+            elapsed: start.elapsed(),
+            duration: self.config.duration,
+            submitted: self.collector.submitted_count(),
+            confirmed: self.collector.confirmed_count(),
+            failed: self.collector.failed_count(),
+            in_flight: confirmer_handle.total_in_flight(),
+            senders_blocked: confirmer_handle.senders_at_limit(max_in_flight_per_sender),
+            total_senders: account_count,
+            rolling_tps: self.collector.rolling_tps(),
+            rolling_gps: self.collector.rolling_gps(),
+            p50_latency: p50,
+            p99_latency: p99,
+            flashblocks_p50_latency: flashblocks_p50,
+            flashblocks_p99_latency: flashblocks_p99,
+            gas_price_gwei: self.gas_price as f64 / 1e9,
+            total_eth: self.last_total_eth.clone(),
+            min_eth: self.last_min_eth.clone(),
+            funds_low: self.last_funds_low,
+            funder_address: self.funder_address.clone(),
+            sender_addresses: self.sender_addresses.clone(),
+        }
+    }
+
     async fn submit_batch(ctx: BatchSubmitCtx, batch: Vec<PreparedTx>) -> u64 {
         let max_fee = ctx.gas_price.saturating_mul(2).min(ctx.max_gas_price);
         let priority_fee = (ctx.gas_price / 10).max(1);
         let chain_id = ctx.chain_id;
-        let batch_len = batch.len();
 
-        let futs = batch.into_iter().map(|prepared| {
-            let providers = Arc::clone(&ctx.providers);
-            let nonce_managers = Arc::clone(&ctx.nonce_managers);
-            let confirmer_handle = ctx.confirmer_handle.clone();
-            let submit_tx = ctx.submit_event_tx.clone();
-            async move {
-                let Some(provider) = providers.get(&prepared.from) else {
-                    warn!(from = %prepared.from, "no cached provider for sender");
-                    return 0u64;
-                };
+        // Phase 1: Acquire nonces and sign all transactions locally.
+        let mut signed_txs: Vec<SignedTx> = Vec::with_capacity(batch.len());
 
-                let Some(nonce_manager) = nonce_managers.get(&prepared.from) else {
-                    warn!(from = %prepared.from, "no nonce manager for sender");
-                    return 0;
-                };
+        for prepared in &batch {
+            let Some(signer) = ctx.signers.get(&prepared.from) else {
+                warn!(from = %prepared.from, "no signer for sender");
+                let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("no signer".into())).await;
+                continue;
+            };
 
-                let nonce_guard = match nonce_manager.next_nonce().await {
-                    Ok(guard) => guard,
-                    Err(e) => {
-                        warn!(from = %prepared.from, error = %e, "failed to acquire nonce");
-                        return 0;
-                    }
-                };
-                let nonce = nonce_guard.nonce();
+            let Some(nonce_manager) = ctx.nonce_managers.get(&prepared.from) else {
+                warn!(from = %prepared.from, "no nonce manager for sender");
+                let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("no nonce manager".into())).await;
+                continue;
+            };
 
-                let mut tx = TransactionRequest::default()
-                    .with_from(prepared.from)
-                    .with_value(prepared.value)
-                    .with_input(prepared.data)
-                    .with_nonce(nonce)
-                    .with_chain_id(chain_id)
-                    .with_max_fee_per_gas(max_fee)
-                    .with_max_priority_fee_per_gas(priority_fee)
-                    .with_gas_limit(prepared.gas_limit);
-                if let Some(to) = prepared.to {
-                    tx = tx.with_to(to);
+            let nonce_guard = match nonce_manager.next_nonce().await {
+                Ok(guard) => guard,
+                Err(e) => {
+                    warn!(from = %prepared.from, error = %e, "failed to acquire nonce");
+                    let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("nonce acquisition failed".into())).await;
+                    continue;
                 }
+            };
+            let nonce = nonce_guard.nonce();
 
-                let mut attempts = 0u32;
-                let max_attempts = 3u32;
-                let mut backoff = AdaptiveBackoff::default();
+            let mut tx = TransactionRequest::default()
+                .with_from(prepared.from)
+                .with_value(prepared.value)
+                .with_input(prepared.data.clone())
+                .with_nonce(nonce)
+                .with_chain_id(chain_id)
+                .with_max_fee_per_gas(max_fee)
+                .with_max_priority_fee_per_gas(priority_fee)
+                .with_gas_limit(prepared.gas_limit);
+            if let Some(to) = prepared.to {
+                tx = tx.with_to(to);
+            }
 
-                loop {
-                    match provider.send_transaction(tx.clone()).await {
-                        Ok(pending) => {
-                            let tx_hash = *pending.tx_hash();
-                            confirmer_handle.record_submitted(tx_hash, prepared.from).await;
-                            let _ = submit_tx.send(SubmitEvent::Submitted(tx_hash)).await;
+            let typed_tx = match tx.build_typed_tx() {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!(from = %prepared.from, nonce, error = ?e, "failed to build typed tx");
+                    nonce_guard.rollback();
+                    let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("tx build failed".into())).await;
+                    continue;
+                }
+            };
 
+            let sig_hash = typed_tx.signature_hash();
+            let signature = match signer.sign_hash_sync(&sig_hash) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    warn!(from = %prepared.from, nonce, error = %e, "failed to sign tx");
+                    nonce_guard.rollback();
+                    let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("signing failed".into())).await;
+                    continue;
+                }
+            };
+
+            let signed = typed_tx.into_signed(signature);
+            let tx_hash = *signed.hash();
+            let raw = Bytes::from(signed.encoded_2718());
+
+            // Drop the nonce guard immediately after signing. The guard
+            // holds the NonceManager mutex; keeping it alive until after the
+            // batch RPC send would block concurrent batch tasks that share
+            // the same sender, and cause a deadlock when batch_size >
+            // sender_count (duplicate senders in the same batch).
+            drop(nonce_guard);
+
+            signed_txs.push(SignedTx {
+                raw,
+                tx_hash,
+                from: prepared.from,
+                nonce,
+            });
+        }
+
+        if signed_txs.is_empty() {
+            return 0;
+        }
+
+        // Phase 2: Send all signed transactions in a single JSON-RPC batch.
+        let raw_list: Vec<Bytes> = signed_txs.iter().map(|s| s.raw.clone()).collect();
+        let batch_results = match ctx.batch_rpc.send_raw_transactions(&raw_list).await {
+            Ok(results) => results,
+            Err(e) => {
+                warn!(error = %e, count = signed_txs.len(), "batch RPC failed, falling back to individual sends");
+                return Self::submit_individually(ctx, signed_txs).await;
+            }
+        };
+
+        // Phase 3: Process batch results.
+        let mut submitted = 0u64;
+        let mut retry_txs: Vec<SignedTx> = Vec::new();
+
+        for (signed, result) in signed_txs.into_iter().zip(batch_results) {
+            match result {
+                BatchSendResult::Success(hash) => {
+                    // Server may return a different hash than we computed locally
+                    // (shouldn't happen, but use server's hash for tracking).
+                    let tracked_hash = if hash != signed.tx_hash {
+                        debug!(
+                            local = %signed.tx_hash,
+                            server = %hash,
+                            "tx hash mismatch, using server hash"
+                        );
+                        hash
+                    } else {
+                        signed.tx_hash
+                    };
+                    ctx.confirmer_handle.record_submitted(tracked_hash, signed.from).await;
+                    let _ = ctx.submit_event_tx.send(SubmitEvent::Submitted(tracked_hash)).await;
+                    debug!(tx_hash = %tracked_hash, from = %signed.from, nonce = signed.nonce, "tx submitted (batch)");
+                    submitted += 1;
+                }
+                BatchSendResult::Error(ref msg) => {
+                    let is_txpool_full =
+                        msg.contains("txpool is full") || msg.contains("transaction pool is full");
+
+                    if is_txpool_full {
+                        retry_txs.push(signed);
+                        continue;
+                    }
+
+                    if msg.contains("nonce too low") {
+                        debug!(from = %signed.from, nonce = signed.nonce, "nonce too low, already confirmed on chain");
+                        continue;
+                    }
+
+                    debug!(from = %signed.from, nonce = signed.nonce, error = %msg, "tx rejected in batch");
+                    let _ = ctx.submit_event_tx.send(SubmitEvent::Failed(msg.clone())).await;
+                }
+            }
+        }
+
+        // Phase 4: Retry txpool-full rejections individually with backoff.
+        if !retry_txs.is_empty() {
+            debug!(count = retry_txs.len(), "retrying txpool-full rejections individually");
+            submitted += Self::submit_individually(ctx, retry_txs).await;
+        }
+
+        submitted
+    }
+
+    async fn submit_individually(ctx: BatchSubmitCtx, signed_txs: Vec<SignedTx>) -> u64 {
+        let mut submitted = 0u64;
+
+        for signed in signed_txs {
+            let Some(provider) = ctx.providers.get(&signed.from) else {
+                warn!(from = %signed.from, "no cached provider for sender");
+                let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("no provider".into())).await;
+                continue;
+            };
+
+            let mut attempts = 0u32;
+            let max_attempts = 3u32;
+            let mut backoff = AdaptiveBackoff::default();
+
+            loop {
+                match provider.send_raw_transaction(&signed.raw).await {
+                    Ok(pending) => {
+                        let tx_hash = *pending.tx_hash();
+                        ctx.confirmer_handle.record_submitted(tx_hash, signed.from).await;
+                        let _ = ctx.submit_event_tx.send(SubmitEvent::Submitted(tx_hash)).await;
+                        debug!(tx_hash = %tx_hash, from = %signed.from, nonce = signed.nonce, "tx submitted (individual fallback)");
+                        submitted += 1;
+                        break;
+                    }
+                    Err(e) => {
+                        let error_str = e.to_string();
+                        attempts += 1;
+
+                        let is_txpool_full = error_str.contains("txpool is full")
+                            || error_str.contains("transaction pool is full");
+
+                        if is_txpool_full && attempts < max_attempts {
+                            backoff.record_error();
+                            let delay = backoff.current();
                             debug!(
-                                tx_hash = %tx_hash,
-                                from = %prepared.from,
-                                nonce,
-                                "tx submitted"
+                                attempt = attempts,
+                                backoff_ms = delay.as_millis(),
+                                from = %signed.from,
+                                nonce = signed.nonce,
+                                "txpool full, retrying with backoff"
                             );
-
-                            return 1;
+                            tokio::time::sleep(delay).await;
+                            continue;
                         }
-                        Err(e) => {
-                            let error_str = e.to_string();
-                            attempts += 1;
 
-                            let is_txpool_full = error_str.contains("txpool is full")
-                                || error_str.contains("transaction pool is full");
-
-                            if is_txpool_full && attempts < max_attempts {
-                                backoff.record_error();
-                                let delay = backoff.current();
-                                debug!(
-                                    attempt = attempts,
-                                    backoff_ms = delay.as_millis(),
-                                    from = %prepared.from,
-                                    nonce,
-                                    "txpool full, retrying with adaptive backoff"
-                                );
-                                tokio::time::sleep(delay).await;
-                                continue;
-                            }
-
-                            if error_str.contains("nonce too low") {
-                                debug!(
-                                    from = %prepared.from,
-                                    nonce,
-                                    "nonce too low, already confirmed on chain"
-                                );
-                                return 0;
-                            }
-
-                            debug!(
-                                from = %prepared.from,
-                                nonce,
-                                error = %error_str,
-                                "tx submission failed"
-                            );
-                            let _ = submit_tx.send(SubmitEvent::Failed).await;
-                            nonce_guard.rollback();
-                            return 0;
+                        if error_str.contains("nonce too low") {
+                            debug!(from = %signed.from, nonce = signed.nonce, "nonce too low");
+                            break;
                         }
+
+                        debug!(from = %signed.from, nonce = signed.nonce, error = %error_str, "tx submission failed");
+                        let _ = ctx.submit_event_tx.send(SubmitEvent::Failed(error_str)).await;
+                        break;
                     }
                 }
             }
-        });
+        }
 
-        let results: Vec<u64> = stream::iter(futs).buffer_unordered(batch_len).collect().await;
-        results.into_iter().sum()
+        submitted
     }
 
     /// Drains all test account balances back to the funder address.

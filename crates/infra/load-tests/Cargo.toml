@@ -18,10 +18,13 @@ workspace = true
 
 [dependencies]
 # alloy
+alloy-eips.workspace = true
+alloy-signer.workspace = true
 alloy-network.workspace = true
 alloy-rpc-types.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
+alloy-consensus = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-signer-local = { workspace = true, features = ["mnemonic"] }
 
@@ -50,6 +53,7 @@ tokio-util.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 parking_lot.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["signal"] }
 tokio-tungstenite = { workspace = true, features = ["native-tls"] }
 

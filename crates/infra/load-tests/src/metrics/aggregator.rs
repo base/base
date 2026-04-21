@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,12 +19,24 @@ impl<'a> MetricsAggregator<'a> {
     }
 
     /// Computes summary statistics from the collected metrics.
-    pub fn summarize(&self, duration: Duration, submitted: u64, failed: u64) -> MetricsSummary {
+    pub fn summarize(
+        &self,
+        duration: Duration,
+        submitted: u64,
+        failed: u64,
+        failure_reasons: &HashMap<String, u64>,
+    ) -> MetricsSummary {
+        let mut top_failure_reasons: Vec<(String, u64)> =
+            failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        top_failure_reasons.sort_by(|a, b| b.1.cmp(&a.1));
+        top_failure_reasons.truncate(3);
+
         MetricsSummary {
             block_latency: self.compute_block_latency(),
             flashblocks_latency: self.compute_flashblocks_latency(),
             throughput: self.compute_throughput(duration, submitted, failed),
             gas: self.compute_gas(),
+            top_failure_reasons,
         }
     }
 
@@ -141,6 +153,8 @@ pub struct MetricsSummary {
     pub throughput: ThroughputMetrics,
     /// Gas usage statistics.
     pub gas: GasMetrics,
+    /// Top failure reasons sorted by count descending (max 3).
+    pub top_failure_reasons: Vec<(String, u64)>,
 }
 
 impl MetricsSummary {

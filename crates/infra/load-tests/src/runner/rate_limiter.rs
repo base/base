@@ -3,6 +3,11 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 /// Rate limiter for controlling gas throughput.
+///
+/// Paces transaction submission so total gas consumed per second stays near
+/// `target_gps`. Call [`tick_batch`](Self::tick_batch) once per batch with
+/// the number of transactions in the batch; the limiter will sleep just
+/// long enough to stay on target.
 #[derive(Debug)]
 pub struct RateLimiter {
     target_gps: u64,
@@ -34,16 +39,21 @@ impl RateLimiter {
         }
     }
 
-    /// Waits until the next tick. Returns immediately on first call.
-    pub async fn tick(&mut self) {
+    /// Sleeps to pace a batch of `count` transactions against the gas target.
+    ///
+    /// The required delay is `count * per_tx_interval` minus any time already
+    /// elapsed since the previous call. Returns immediately on first call or
+    /// when the elapsed time already exceeds the budget.
+    pub async fn tick_batch(&mut self, count: usize) {
+        let budget = self.interval.saturating_mul(count as u32);
         match self.last_tick {
             None => {
                 self.last_tick = Some(Instant::now());
             }
             Some(last) => {
                 let elapsed = last.elapsed();
-                if elapsed < self.interval {
-                    sleep(self.interval - elapsed).await;
+                if elapsed < budget {
+                    sleep(budget - elapsed).await;
                 }
                 self.last_tick = Some(Instant::now());
             }

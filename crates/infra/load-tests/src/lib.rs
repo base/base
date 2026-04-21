@@ -14,7 +14,10 @@ mod utils;
 pub use utils::{BaselineError, Result};
 
 mod rpc;
-pub use rpc::{ReceiptProvider, RpcClient, WalletProvider, create_wallet_provider};
+pub use rpc::{
+    BatchRpcClient, BatchSendResult, ReceiptProvider, RpcClient, WalletProvider,
+    create_wallet_provider,
+};
 
 mod metrics;
 pub use metrics::{
