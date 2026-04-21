@@ -91,6 +91,10 @@ pub struct BuilderConfig {
     /// Bounded channel capacity for rejected transaction forwarding.
     /// When the channel is full, new rejected transactions are dropped.
     pub rejected_tx_channel_size: usize,
+
+    /// Maximum number of rejected transactions accumulated per block before
+    /// further rejections are dropped. Prevents unbounded `ExecutionInfo` growth.
+    pub max_rejected_txs_per_block: usize,
 }
 
 impl BuilderConfig {
@@ -127,6 +131,7 @@ impl core::fmt::Debug for BuilderConfig {
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("audit_archiver_url", &self.audit_archiver_url)
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
+            .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
             .finish()
     }
 }
@@ -154,7 +159,8 @@ impl Default for BuilderConfig {
             metering_provider: Arc::new(NoopMeteringProvider),
             rejection_cache: RejectionCache::new(100_000, Duration::from_secs(1800)),
             audit_archiver_url: None,
-            rejected_tx_channel_size: 1000,
+            rejected_tx_channel_size: 500,
+            max_rejected_txs_per_block: 500,
         }
     }
 }

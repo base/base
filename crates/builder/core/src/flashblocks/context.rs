@@ -15,7 +15,6 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
 use base_common_evm::{BaseReceiptBuilder, L1BlockInfo, OpSpecId};
 use base_execution_chainspec::BaseChainSpec;
-use base_bundles::MeterBundleResponse;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
@@ -464,8 +463,8 @@ impl BasePayloadBuilderCtx {
             return;
         }
 
-        // Using `rejected_tx_channel_size` as an upper bound on the `rejected_txs` vec size
-        if info.rejected_txs.len() >= self.builder_config.rejected_tx_channel_size {
+        if info.rejected_txs.len() >= self.builder_config.max_rejected_txs_per_block {
+            BuilderMetrics::rejected_tx_per_block_drops().increment(1);
             return;
         }
 
@@ -837,7 +836,7 @@ impl BasePayloadBuilderCtx {
                                     tx_time_us: *tx_time_us,
                                     limit_us: *limit_us,
                                 },
-                                resource_usage.clone().unwrap_or_default(),
+                                resource_usage.unwrap_or_default(),
                             );
                         }
 

@@ -28,6 +28,7 @@ base-metrics = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
+jsonrpsee-types.workspace = true
 
 [dev-dependencies]
 base-bundles = { workspace = true, features = ["test-utils"] }

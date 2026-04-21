@@ -109,8 +109,12 @@ pub struct Args {
     pub audit_archiver_url: Option<String>,
 
     /// Bounded channel capacity for rejected transaction forwarding (drops on full)
-    #[arg(long = "builder.rejected-tx-channel-size", default_value = "1000")]
+    #[arg(long = "builder.rejected-tx-channel-size", default_value = "500")]
     pub rejected_tx_channel_size: usize,
+
+    /// Maximum rejected transactions accumulated per block before dropping
+    #[arg(long = "builder.max-rejected-txs-per-block", default_value = "500")]
+    pub max_rejected_txs_per_block: usize,
 
     /// Buffer size for tx data store (LRU eviction when full)
     #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
@@ -160,7 +164,8 @@ impl Default for Args {
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
             audit_archiver_url: None,
-            rejected_tx_channel_size: 1000,
+            rejected_tx_channel_size: 500,
+            max_rejected_txs_per_block: 500,
             tx_data_store_buffer_size: 10000,
             rejection_cache_max_capacity: 100_000,
             rejection_cache_ttl_secs: 1800,
@@ -210,6 +215,7 @@ impl Args {
             ),
             audit_archiver_url: self.audit_archiver_url,
             rejected_tx_channel_size: self.rejected_tx_channel_size,
+            max_rejected_txs_per_block: self.max_rejected_txs_per_block,
         })
     }
 }

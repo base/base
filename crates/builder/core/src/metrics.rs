@@ -207,8 +207,14 @@ base_metrics::define_metrics! {
     tx_accounts_modified: histogram,
     #[describe("Number of storage slots modified by a transaction (from EVM post-state)")]
     tx_storage_slots_modified: histogram,
-    #[describe("Rejected transaction forwarding channel drops due to full buffer")]
+    #[describe("Rejected transaction batch drops due to full forwarding channel")]
     rejected_tx_channel_drops: counter,
+    #[describe("Rejected transaction drops due to per-block accumulation limit")]
+    rejected_tx_per_block_drops: counter,
+    #[describe("Rejected txs forwarded to audit-archiver")]
+    rejected_txs_forwarded: counter,
+    #[describe("Number of failed rejected transaction batch forwards to audit-archiver")]
+    rejected_tx_forward_failures: counter,
 }
 
 impl BuilderMetrics {

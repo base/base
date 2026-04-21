@@ -5,10 +5,13 @@
 
 use base_bundles::RejectedTransaction;
 use futures::stream::{self, StreamExt};
-use jsonrpsee::{core::RpcResult, proc_macros::rpc};
+use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::error::ErrorObjectOwned};
+use jsonrpsee_types::error::ErrorCode;
 use tracing::{error, info};
 
 use crate::storage::S3EventReaderWriter;
+
+const MAX_BATCH_SIZE: usize = 500;
 
 /// RPC trait for the audit archiver.
 #[rpc(server, namespace = "base")]
@@ -46,6 +49,14 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         }
 
         let batch_size = batch.len();
+        if batch_size > MAX_BATCH_SIZE {
+            return Err(ErrorObjectOwned::owned(
+                ErrorCode::InvalidParams.code(),
+                format!("Batch size {batch_size} exceeds maximum of {MAX_BATCH_SIZE}"),
+                None::<()>,
+            ));
+        }
+
         let block_number = batch.first().map(|tx| tx.block_number).unwrap_or(0);
 
         info!(batch_size, block_number, "Persisting rejected transaction batch");

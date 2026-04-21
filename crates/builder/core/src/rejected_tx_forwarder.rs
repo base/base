@@ -14,6 +14,8 @@ use jsonrpsee::{
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
+use crate::BuilderMetrics;
+
 /// Forwards rejected transactions to the audit-archiver via RPC.
 ///
 /// Runs as a background task, reading batches of rejected transactions
@@ -51,6 +53,7 @@ impl RejectedTxForwarder {
                 .await
             {
                 Ok(persisted) if persisted as usize == batch_size => {
+                    BuilderMetrics::rejected_txs_forwarded().increment(batch_size as u64);
                     info!(
                         batch_size,
                         block_number = ?block_number,
@@ -58,6 +61,7 @@ impl RejectedTxForwarder {
                     );
                 }
                 Ok(persisted) => {
+                    BuilderMetrics::rejected_txs_forwarded().increment(persisted as u64);
                     warn!(
                         persisted,
                         failed = batch_size.saturating_sub(persisted as usize),
@@ -67,6 +71,7 @@ impl RejectedTxForwarder {
                     );
                 }
                 Err(e) => {
+                    BuilderMetrics::rejected_tx_forward_failures().increment(1);
                     warn!(
                         error = %e,
                         batch_size,

@@ -1861,6 +1861,7 @@ dependencies = [
  "bytes",
  "futures",
  "jsonrpsee",
+ "jsonrpsee-types",
  "metrics",
  "rdkafka",
  "serde",
