@@ -39,6 +39,6 @@ std = [ "alloy-primitives/std", "reth-ethereum-forks?/std", "spin?/std" ]
 serde = [
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
-	"reth-ethereum-forks?/serde",
 	"dep:serde",
+	"reth-ethereum-forks?/serde",
 ]
