@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
 use crate::{
     commands::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
-    config::ChainConfig,
+    config::MonitoringConfig,
     tui::{AppFrame, Toast, restore_terminal, setup_terminal},
 };
 
@@ -29,7 +29,7 @@ struct NetworkPicker {
 
 impl NetworkPicker {
     fn new() -> Self {
-        Self { options: ChainConfig::available_names(), cursor: 0 }
+        Self { options: MonitoringConfig::available_names(), cursor: 0 }
     }
 }
 
@@ -46,7 +46,7 @@ pub struct App {
     /// Network picker overlay; `None` when closed.
     network_picker: Option<NetworkPicker>,
     /// Pending async network-load result. `Some` while a switch is in flight.
-    pending_network: Option<oneshot::Receiver<anyhow::Result<ChainConfig>>>,
+    pending_network: Option<oneshot::Receiver<anyhow::Result<MonitoringConfig>>>,
 }
 
 impl fmt::Debug for App {
@@ -255,7 +255,7 @@ impl App {
         let (tx, rx) = oneshot::channel();
         self.pending_network = Some(rx);
         tokio::spawn(async move {
-            let result = ChainConfig::load(&name).await;
+            let result = MonitoringConfig::load(&name).await;
             let _ = tx.send(result);
         });
     }
@@ -295,7 +295,7 @@ impl App {
 
     fn apply_network_switch<F>(
         &mut self,
-        new_config: ChainConfig,
+        new_config: MonitoringConfig,
         current_view: &mut Box<dyn View>,
         view_factory: &mut F,
     ) where
