@@ -20,7 +20,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use alloy_provider::{Provider, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder};
 use base_bundles::MeterBundleResponse;
 use base_common_network::Base;
 use clap::Args;

@@ -4,6 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_exex::BaseProofsExEx;
+use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
@@ -73,13 +74,14 @@ pub async fn launch_node_with_proof_history(
             })
             .extend_rpc_modules(move |ctx| {
                 let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
-                let debug_ext = DebugApiExt::new(
-                    ctx.node().provider().clone(),
-                    ctx.registry.eth_api().clone(),
-                    storage,
-                    ctx.node().task_executor().clone(),
-                    ctx.node().evm_config().clone(),
-                );
+                let debug_ext: DebugApiExt<_, _, _, _, BasePayloadBuilderAttributes<BaseTxEnvelope>> =
+                    DebugApiExt::new(
+                        ctx.node().provider().clone(),
+                        ctx.registry.eth_api().clone(),
+                        storage,
+                        ctx.node().task_executor().clone(),
+                        ctx.node().evm_config().clone(),
+                    );
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
                 ctx.modules.replace_configured(debug_ext.into_rpc())?;
                 Ok(())

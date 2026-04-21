@@ -66,6 +66,8 @@ std = [
 	"alloy-rlp/std",
 	"alloy-rpc-types-eth?/std",
 	"alloy-serde?/std",
+	"reth-codecs?/std",
+	"reth-primitives-traits?/std",
 	"reth-zstd-compressors?/std",
 	"revm?/std",
 	"serde?/std",

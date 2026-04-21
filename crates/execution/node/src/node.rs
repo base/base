@@ -16,7 +16,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
-    Attributes, BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadPrimitives,
+    Attributes, BaseBuiltPayload, OpPayloadBuilderAttributes, PayloadPrimitives,
     builder::BasePayloadTransactions,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
 };

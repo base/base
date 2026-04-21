@@ -18,9 +18,10 @@ use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, 
 use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
-#[cfg(any(test, feature = "test-utils"))]
-use base_execution_payload_builder::payload::EthPayloadBuilderAttributes;
-use base_execution_payload_builder::{BasePayloadBuilderAttributes, error::BasePayloadBuilderError};
+use base_execution_payload_builder::{
+    BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
+    payload::EthPayloadBuilderAttributes,
+};
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
 };
@@ -282,7 +283,7 @@ pub struct BasePayloadBuilderCtx {
     /// The chainspec
     pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTransactionSigned>>,
+    pub config: PayloadConfig<OpPayloadBuilderAttributes<BaseTransactionSigned>>,
     /// Evm Settings
     pub evm_env: EvmEnv<BaseSpecId>,
     /// Block env attributes for the current block.
@@ -330,7 +331,7 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Returns the builder attributes.
-    pub(super) const fn attributes(&self) -> &BasePayloadBuilderAttributes<BaseTransactionSigned> {
+    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<BaseTransactionSigned> {
         &self.config.attributes
     }
 

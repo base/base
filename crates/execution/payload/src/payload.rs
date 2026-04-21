@@ -71,6 +71,7 @@ pub struct BasePayloadBuilderAttributes<T> {
     pub min_base_fee: Option<u64>,
 }
 
+
 impl<T> Default for BasePayloadBuilderAttributes<T> {
     fn default() -> Self {
         Self {
@@ -137,6 +138,103 @@ impl<T> BasePayloadBuilderAttributes<T> {
     pub fn decode_eip_1559_params(&self) -> Option<(u32, u32)> {
         self.eip_1559_params.map(HoloceneExtraData::decode_params)
     }
+
+    /// Extracts the extra data parameters post-Holocene hardfork.
+    /// In Holocene, those parameters are the EIP-1559 base fee parameters.
+    pub fn get_holocene_extra_data(
+        &self,
+        default_base_fee_params: BaseFeeParams,
+    ) -> Result<Bytes, EIP1559ParamError> {
+        self.eip_1559_params
+            .map(|params| HoloceneExtraData::encode(params, default_base_fee_params))
+            .ok_or(EIP1559ParamError::NoEIP1559Params)?
+    }
+
+    /// Extracts the extra data parameters post-Jovian hardfork.
+    /// Those parameters are the EIP-1559 parameters from Holocene and the minimum base fee.
+    pub fn get_jovian_extra_data(
+        &self,
+        default_base_fee_params: BaseFeeParams,
+    ) -> Result<Bytes, EIP1559ParamError> {
+        let min_base_fee = self.min_base_fee.ok_or(EIP1559ParamError::MinBaseFeeNotSet)?;
+        self.eip_1559_params
+            .map(|params| JovianExtraData::encode(params, default_base_fee_params, min_base_fee))
+            .ok_or(EIP1559ParamError::NoEIP1559Params)?
+    }
+
+    /// Extracts the Holocene EIP-1559 parameters from the encoded form.
+    ///
+    /// Returns (`elasticity`, `denominator`).
+    pub fn decode_eip_1559_params(&self) -> Option<(u32, u32)> {
+        self.eip_1559_params.map(HoloceneExtraData::decode_params)
+    }
+<<<<<<< HEAD
+=======
+
+    fn as_rpc_payload_attributes(&self) -> BasePayloadAttributes {
+        BasePayloadAttributes {
+            payload_attributes: EthPayloadAttributes {
+                timestamp: self.payload_attributes.timestamp,
+                prev_randao: self.payload_attributes.prev_randao,
+                suggested_fee_recipient: self.payload_attributes.suggested_fee_recipient,
+                withdrawals: self
+                    .payload_attributes
+                    .has_withdrawals
+                    .then(|| self.payload_attributes.withdrawals.to_vec()),
+                parent_beacon_block_root: self.payload_attributes.parent_beacon_block_root,
+                slot_number: self.payload_attributes.slot_number,
+            },
+            transactions: (!self.transactions.is_empty())
+                .then(|| self.transactions.iter().map(|tx| tx.encoded_bytes().clone()).collect()),
+            no_tx_pool: Some(self.no_tx_pool),
+            gas_limit: self.gas_limit,
+            eip_1559_params: self.eip_1559_params,
+            min_base_fee: self.min_base_fee,
+        }
+    }
+
+    /// Creates payload builder attributes for the given parent block and RPC payload attributes.
+    pub fn try_new(
+        parent: B256,
+        attributes: BasePayloadAttributes,
+        version: u8,
+    ) -> Result<Self, alloy_rlp::Error>
+    where
+        T: Decodable2718,
+    {
+        let id = payload_id(&parent, &attributes, version);
+
+        let transactions = attributes
+            .transactions
+            .unwrap_or_default()
+            .into_iter()
+            .map(|data| {
+                Decodable2718::decode_2718_exact(data.as_ref()).map(|tx| WithEncoded::new(data, tx))
+            })
+            .collect::<Result<_, _>>()?;
+
+        let payload_attributes = EthPayloadBuilderAttributes {
+            id,
+            parent,
+            timestamp: attributes.payload_attributes.timestamp,
+            suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
+            prev_randao: attributes.payload_attributes.prev_randao,
+            has_withdrawals: attributes.payload_attributes.withdrawals.is_some(),
+            withdrawals: attributes.payload_attributes.withdrawals.unwrap_or_default().into(),
+            parent_beacon_block_root: attributes.payload_attributes.parent_beacon_block_root,
+            slot_number: attributes.payload_attributes.slot_number,
+        };
+
+        Ok(Self {
+            payload_attributes,
+            no_tx_pool: attributes.no_tx_pool.unwrap_or_default(),
+            transactions,
+            gas_limit: attributes.gas_limit,
+            eip_1559_params: attributes.eip_1559_params,
+            min_base_fee: attributes.min_base_fee,
+        })
+    }
+>>>>>>> ca7806190 (fix: resolve post-merge alloy 2.0 test breakage and deprecation warnings)
 }
 
 impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilderAttributes<T> {

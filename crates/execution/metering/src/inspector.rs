@@ -91,7 +91,7 @@ where
         self.inner.call_end(context, inputs, outcome);
         let target = inputs.bytecode_address;
         if self.metered_precompiles.contains(&target) {
-            let gas_used = outcome.result.gas.spent();
+            let gas_used = outcome.result.gas.total_gas_spent();
             let entry = self.precompile_gas.entry(target).or_default();
             entry.count += 1;
             entry.gas_used += gas_used;
