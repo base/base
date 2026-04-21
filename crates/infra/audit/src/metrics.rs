@@ -22,7 +22,7 @@ base_metrics::define_metrics! {
     events_processed: counter,
     #[describe("Total S3 writes skipped due to dedup")]
     s3_writes_skipped: counter,
-    #[describe("Total S3 conditional write conflicts (412/409) resolved by re-read")]
+    #[describe("Total S3 conditional write conflicts (412/409)")]
     s3_conditional_conflicts: counter,
     #[describe("Number of in-flight archive tasks")]
     in_flight_archive_tasks: gauge,
