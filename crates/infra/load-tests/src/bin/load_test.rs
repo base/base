@@ -117,6 +117,7 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
 
     println!("=== Base Load Test Runner ===");
 
+    println!("Set RPCs to internal endpoints to avoid rate limiting");
     println!(
         "Config: {} | RPC: {} | Chain: {}",
         config_path.display(),
@@ -170,15 +171,15 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
             summary.throughput.gps,
             summary.throughput.success_rate()
         );
-        let fb = &summary.flashblocks_latency;
-        println!(
-            "Flashblocks Latency: p50={:.1?}  p90={:.1?}  p99={:.1?}  (n={})",
-            fb.p50, fb.p90, fb.p99, fb.count
-        );
         let bl = &summary.block_latency;
         println!(
             "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
             bl.min, bl.p50, bl.mean, bl.p99, bl.max
+        );
+        let fb = &summary.flashblocks_latency;
+        println!(
+            "FB Latency:    min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}  (n={})",
+            fb.min, fb.p50, fb.mean, fb.p99, fb.max, fb.count
         );
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
     }

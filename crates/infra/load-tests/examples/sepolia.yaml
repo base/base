@@ -2,13 +2,16 @@
 #
 # Requires FUNDER_KEY environment variable with a funded private key
 
-rpc: https://base-sepolia.cbhq.net
+rpc: https://sepolia.base.org/
 
-block_watcher_url: "https://base-sepolia.cbhq.net"
+block_watcher_url: "https://sepolia.base.org/"
 flashblocks_ws_url: "wss://sepolia.flashblocks.base.org/ws"
 
-sender_count: 20
-target_gps: 2100000
+sender_count: 50
+target_gps: 10000000
+in_flight_per_sender: 64
+batch_size: 20
+batch_timeout: "100ms"
 duration: "30s"
 seed: 12345
 
@@ -16,11 +19,6 @@ seed: 12345
 funding_amount: "10000000000000000"
 
 transactions:
-  - weight: 70
+  - weight: 100
     type: transfer
-  - weight: 20
-    type: calldata
-    max_size: 256
-  - weight: 10
-    type: precompile
-    target: sha256
+

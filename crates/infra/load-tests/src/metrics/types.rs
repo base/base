@@ -101,10 +101,18 @@ pub struct GasMetrics {
 pub struct FlashblocksLatencyMetrics {
     /// Transactions with flashblocks data.
     pub count: u64,
+    /// Minimum latency observed.
+    pub min: Duration,
+    /// Maximum latency observed.
+    pub max: Duration,
+    /// Mean latency.
+    pub mean: Duration,
     /// Median latency.
     pub p50: Duration,
     /// 90th percentile latency.
     pub p90: Duration,
+    /// 95th percentile latency.
+    pub p95: Duration,
     /// 99th percentile latency.
     pub p99: Duration,
 }

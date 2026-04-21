@@ -85,7 +85,6 @@ fn workload_deterministic_generation() {
 #[test]
 fn metrics_collector_counts() {
     let mut collector = MetricsCollector::new();
-    collector.start();
 
     collector.record_submitted(TxHash::ZERO);
     collector.record_submitted(TxHash::repeat_byte(1));
@@ -109,10 +108,7 @@ fn metrics_collector_counts() {
 
 #[test]
 fn metrics_summary_latency() {
-    // Duration imported at file top
-
     let mut collector = MetricsCollector::new();
-    collector.start();
 
     let latencies_ms = [100, 200, 300, 400, 500];
     for (i, ms) in latencies_ms.iter().enumerate() {
@@ -126,7 +122,7 @@ fn metrics_summary_latency() {
         ));
     }
 
-    let summary = collector.summarize();
+    let summary = collector.summarize(Duration::from_secs(10));
 
     assert_eq!(summary.throughput.total_confirmed, 5);
 
@@ -142,7 +138,6 @@ fn metrics_summary_latency() {
 #[test]
 fn metrics_summary_gas() {
     let mut collector = MetricsCollector::new();
-    collector.start();
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
@@ -162,7 +157,7 @@ fn metrics_summary_gas() {
         Some(2),
     ));
 
-    let summary = collector.summarize();
+    let summary = collector.summarize(Duration::from_secs(10));
 
     assert_eq!(summary.gas.total_gas, 63000);
     assert_eq!(summary.gas.avg_gas, 31500);
@@ -171,7 +166,6 @@ fn metrics_summary_gas() {
 #[test]
 fn metrics_summary_json_serialization() {
     let mut collector = MetricsCollector::new();
-    collector.start();
 
     collector.record_confirmed(TransactionMetrics::new(
         TxHash::ZERO,
@@ -182,7 +176,7 @@ fn metrics_summary_json_serialization() {
         Some(1),
     ));
 
-    let summary = collector.summarize();
+    let summary = collector.summarize(Duration::from_secs(10));
     let json = summary.to_json().unwrap();
 
     assert!(json.contains("block_latency"));

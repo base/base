@@ -204,7 +204,7 @@ impl LoadTestDisplay {
         });
 
         self.gas_lat.set_message(format!(
-            "gas     {:.2} gwei   latency p50 {}   p99 {}",
+            "gas     {:.2} gwei   block latency p50 {}   p99 {}",
             snap.gas_price_gwei,
             fmt_latency(snap.p50_latency),
             fmt_latency(snap.p99_latency),
@@ -214,12 +214,13 @@ impl LoadTestDisplay {
             || snap.flashblocks_p99_latency > Duration::ZERO
         {
             self.flashblocks_lat.set_message(format!(
-                "flashblocks latency p50 {}   p99 {}",
+                "               fb latency p50 {}   p99 {}",
                 fmt_latency(snap.flashblocks_p50_latency),
                 fmt_latency(snap.flashblocks_p99_latency),
             ));
         } else {
-            self.flashblocks_lat.set_message("flashblocks waiting for data...".to_string());
+            self.flashblocks_lat
+                .set_message("               fb latency waiting for data...".to_string());
         }
     }
 

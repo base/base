@@ -24,7 +24,7 @@ pub type FlashblockTimes = Arc<RwLock<HashMap<TxHash, Instant>>>;
 const PENDING_CHANNEL_BUFFER: usize = 2000;
 
 /// Maximum number of concurrent receipt lookups per poll cycle.
-const MAX_RECEIPT_LOOKUPS: usize = 50;
+const MAX_RECEIPT_LOOKUPS: usize = 200;
 
 /// Tracks pending transactions and collects confirmation metrics.
 pub struct Confirmer {
@@ -35,7 +35,13 @@ pub struct Confirmer {
     stop_flag: Arc<AtomicBool>,
     poll_interval: Duration,
     max_pending_age: Duration,
-    straggler_age: Duration,
+    /// How long to wait before polling receipts for transactions not yet
+    /// detected in a pending block. On L2s (e.g. Base Sepolia)
+    /// `eth_getBlockByNumber("pending")` often returns the latest finalised
+    /// block, so the pending-block fast-path never fires. This age ensures
+    /// receipt lookups start after roughly one block time rather than waiting
+    /// for the full `max_pending_age` timeout.
+    receipt_check_age: Duration,
     pending_rx: Option<mpsc::Receiver<PendingTx>>,
     pending_tx: mpsc::Sender<PendingTx>,
     flashblock_times: FlashblockTimes,
@@ -162,7 +168,7 @@ impl Confirmer {
             stop_flag,
             poll_interval: Duration::from_millis(100),
             max_pending_age: Duration::from_secs(60),
-            straggler_age: Duration::from_secs(10),
+            receipt_check_age: Duration::from_secs(2),
             pending_rx: Some(pending_rx),
             pending_tx,
             flashblock_times,
@@ -258,8 +264,8 @@ impl Confirmer {
             }
         }
 
-        self.check_pending_block(client).await;
         self.fetch_receipts(client, &mut confirmed).await;
+        self.check_pending_block(client).await;
 
         let confirmed_hashes: HashSet<TxHash> = confirmed.iter().map(|(hash, _)| *hash).collect();
 
@@ -321,7 +327,7 @@ impl Confirmer {
             .iter()
             .filter(|(_, pending)| {
                 pending.included_at.is_some()
-                    || now.duration_since(pending.submit_time) > self.straggler_age
+                    || now.duration_since(pending.submit_time) > self.receipt_check_age
             })
             .take(MAX_RECEIPT_LOOKUPS)
             .map(|(hash, _)| *hash)

@@ -14,6 +14,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use futures::stream::{self, StreamExt};
+use revm::precompile::PrecompileId;
 use indicatif::{ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
 use tokio::sync::{mpsc, watch, Semaphore};
@@ -223,11 +224,35 @@ impl LoadRunner {
 
         let mut weighted_gas = 0u64;
         for tx_config in &self.config.transactions {
+            // Estimates actual gas_used (not gas_limit). For precompiles,
+            // execution cost on small inputs is negligible compared to
+            // the 21K intrinsic + calldata overhead, so the estimate is
+            // much lower than the generous gas_limit set on the tx.
             let gas_estimate = match &tx_config.tx_type {
                 TxType::Transfer => 21_000,
                 TxType::Calldata { max_size, .. } => 21_000 + (*max_size as u64 * 16),
                 TxType::Erc20 { .. } => 65_000,
-                TxType::Precompile { iterations, .. } => 50_000 + 100_000 * (*iterations as u64),
+                TxType::Precompile { target, iterations, blake2f_rounds, .. } => {
+                    let per_call = match target {
+                        PrecompileId::Identity => 22_000,
+                        PrecompileId::Sha256 | PrecompileId::Ripemd160 => 23_000,
+                        PrecompileId::EcRec => 25_000,
+                        PrecompileId::ModExp => 30_000,
+                        PrecompileId::Bn254Add => 22_000,
+                        PrecompileId::Bn254Mul => 28_000,
+                        PrecompileId::Bn254Pairing => 45_000,
+                        PrecompileId::Blake2F => {
+                            30_000 + u64::from(blake2f_rounds.unwrap_or(1_000))
+                        }
+                        PrecompileId::KzgPointEvaluation => 55_000,
+                        _ => 25_000,
+                    };
+                    if *iterations > 1 {
+                        50_000 + per_call * (*iterations as u64)
+                    } else {
+                        per_call
+                    }
+                }
                 TxType::Osaka { target } => match target {
                     OsakaTarget::Clz => 80_000,
                     OsakaTarget::P256verifyOsaka | OsakaTarget::ModexpOsaka => 30_000,
@@ -506,7 +531,6 @@ impl LoadRunner {
     #[instrument(skip(self), fields(target_gps = self.config.target_gps, continuous = self.config.duration.is_none(), duration = ?self.config.duration))]
     pub async fn run(&mut self) -> Result<MetricsSummary> {
         self.collector.reset();
-        self.collector.start();
         self.stop_flag.store(false, Ordering::SeqCst);
         self.cancel_token = CancellationToken::new();
 
@@ -535,7 +559,7 @@ impl LoadRunner {
 
         const METRICS_CHANNEL_BUFFER: usize = 2000;
         const SUBMIT_CHANNEL_BUFFER: usize = 2000;
-        const SUBMIT_BATCH_CONCURRENCY: usize = 8;
+        const SUBMIT_BATCH_CONCURRENCY: usize = 32;
         let (metrics_tx, mut metrics_rx) =
             mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
         let (submit_event_tx, mut submit_event_rx) =
@@ -610,10 +634,10 @@ impl LoadRunner {
         let mut last_progress_report = Instant::now();
         let mut last_balance_check = Instant::now();
         const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
-        const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(10);
+        const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
-        const BALANCE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+        const BALANCE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
         let use_snapshot_tx = self.snapshot_tx.is_some();
@@ -799,6 +823,8 @@ impl LoadRunner {
             }
         }
 
+        let active_duration = start.elapsed();
+
         if !pending_batch.is_empty() {
             let permit = semaphore
                 .clone()
@@ -912,7 +938,7 @@ impl LoadRunner {
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
-        Ok(self.collector.summarize())
+        Ok(self.collector.summarize(active_duration))
     }
 
     async fn submit_batch(
@@ -926,115 +952,115 @@ impl LoadRunner {
         batch: Vec<PreparedTx>,
         _permit: tokio::sync::OwnedSemaphorePermit,
     ) -> u64 {
-        let mut submitted_count = 0u64;
-        let mut backoff = AdaptiveBackoff::default();
+        let max_fee = gas_price.saturating_mul(2).min(max_gas_price);
+        let priority_fee = (gas_price / 10).max(1);
+        let batch_len = batch.len();
 
-        for prepared in batch {
-            let Some(provider) = providers.get(&prepared.from) else {
-                warn!(from = %prepared.from, "no cached provider for sender");
-                continue;
-            };
+        let futs = batch.into_iter().map(|prepared| {
+            let providers = Arc::clone(&providers);
+            let nonce_managers = Arc::clone(&nonce_managers);
+            let confirmer_handle = confirmer_handle.clone();
+            let submit_tx = submit_event_tx.clone();
+            async move {
+                let Some(provider) = providers.get(&prepared.from) else {
+                    warn!(from = %prepared.from, "no cached provider for sender");
+                    return 0u64;
+                };
 
-            let Some(nonce_manager) = nonce_managers.get(&prepared.from) else {
-                warn!(from = %prepared.from, "no nonce manager for sender");
-                continue;
-            };
+                let Some(nonce_manager) = nonce_managers.get(&prepared.from) else {
+                    warn!(from = %prepared.from, "no nonce manager for sender");
+                    return 0;
+                };
 
-            let nonce_guard = match nonce_manager.next_nonce().await {
-                Ok(guard) => guard,
-                Err(e) => {
-                    warn!(from = %prepared.from, error = %e, "failed to acquire nonce");
-                    continue;
-                }
-            };
-            let nonce = nonce_guard.nonce();
-
-            let max_fee = gas_price.saturating_mul(2).min(max_gas_price);
-            let mut tx = TransactionRequest::default()
-                .with_from(prepared.from)
-                .with_value(prepared.value)
-                .with_input(prepared.data)
-                .with_nonce(nonce)
-                .with_chain_id(chain_id)
-                .with_max_fee_per_gas(max_fee)
-                .with_max_priority_fee_per_gas((gas_price / 10).max(1))
-                .with_gas_limit(prepared.gas_limit);
-            if let Some(to) = prepared.to {
-                tx = tx.with_to(to);
-            }
-
-            let mut attempts = 0;
-            let max_attempts = 3;
-            let mut should_rollback = false;
-
-            loop {
-                match provider.send_transaction(tx.clone()).await {
-                    Ok(pending) => {
-                        let tx_hash = *pending.tx_hash();
-                        confirmer_handle.record_submitted(tx_hash, prepared.from).await;
-                        let _ = submit_event_tx.send(SubmitEvent::Submitted(tx_hash)).await;
-                        submitted_count += 1;
-                        backoff.record_success();
-
-                        debug!(
-                            tx_hash = %tx_hash,
-                            from = %prepared.from,
-                            nonce,
-                            "tx submitted"
-                        );
-
-                        break;
-                    }
+                let nonce_guard = match nonce_manager.next_nonce().await {
+                    Ok(guard) => guard,
                     Err(e) => {
-                        let error_str = e.to_string();
-                        attempts += 1;
+                        warn!(from = %prepared.from, error = %e, "failed to acquire nonce");
+                        return 0;
+                    }
+                };
+                let nonce = nonce_guard.nonce();
 
-                        let is_txpool_full = error_str.contains("txpool is full")
-                            || error_str.contains("transaction pool is full");
+                let mut tx = TransactionRequest::default()
+                    .with_from(prepared.from)
+                    .with_value(prepared.value)
+                    .with_input(prepared.data)
+                    .with_nonce(nonce)
+                    .with_chain_id(chain_id)
+                    .with_max_fee_per_gas(max_fee)
+                    .with_max_priority_fee_per_gas(priority_fee)
+                    .with_gas_limit(prepared.gas_limit);
+                if let Some(to) = prepared.to {
+                    tx = tx.with_to(to);
+                }
 
-                        if is_txpool_full && attempts < max_attempts {
-                            backoff.record_error();
-                            let delay = backoff.current();
+                let mut attempts = 0u32;
+                let max_attempts = 3u32;
+                let mut backoff = AdaptiveBackoff::default();
+
+                loop {
+                    match provider.send_transaction(tx.clone()).await {
+                        Ok(pending) => {
+                            let tx_hash = *pending.tx_hash();
+                            confirmer_handle.record_submitted(tx_hash, prepared.from).await;
+                            let _ = submit_tx.send(SubmitEvent::Submitted(tx_hash)).await;
+
                             debug!(
-                                attempt = attempts,
-                                backoff_ms = delay.as_millis(),
+                                tx_hash = %tx_hash,
                                 from = %prepared.from,
                                 nonce,
-                                "txpool full, retrying with adaptive backoff"
+                                "tx submitted"
                             );
-                            tokio::time::sleep(delay).await;
-                            continue;
-                        }
 
-                        if error_str.contains("nonce too low") {
+                            return 1;
+                        }
+                        Err(e) => {
+                            let error_str = e.to_string();
+                            attempts += 1;
+
+                            let is_txpool_full = error_str.contains("txpool is full")
+                                || error_str.contains("transaction pool is full");
+
+                            if is_txpool_full && attempts < max_attempts {
+                                backoff.record_error();
+                                let delay = backoff.current();
+                                debug!(
+                                    attempt = attempts,
+                                    backoff_ms = delay.as_millis(),
+                                    from = %prepared.from,
+                                    nonce,
+                                    "txpool full, retrying with adaptive backoff"
+                                );
+                                tokio::time::sleep(delay).await;
+                                continue;
+                            }
+
+                            if error_str.contains("nonce too low") {
+                                debug!(
+                                    from = %prepared.from,
+                                    nonce,
+                                    "nonce too low, already confirmed on chain"
+                                );
+                                return 0;
+                            }
+
                             debug!(
                                 from = %prepared.from,
                                 nonce,
-                                "nonce too low, already confirmed on chain"
+                                error = %error_str,
+                                "tx submission failed"
                             );
-                            break;
+                            let _ = submit_tx.send(SubmitEvent::Failed).await;
+                            nonce_guard.rollback();
+                            return 0;
                         }
-
-                        debug!(
-                            from = %prepared.from,
-                            nonce,
-                            error = %error_str,
-                            "tx submission failed"
-                        );
-                        let _ = submit_event_tx.send(SubmitEvent::Failed).await;
-                        backoff.record_error();
-                        should_rollback = true;
-                        break;
                     }
                 }
             }
+        });
 
-            if should_rollback {
-                nonce_guard.rollback();
-            }
-        }
-
-        submitted_count
+        let results: Vec<u64> = stream::iter(futs).buffer_unordered(batch_len).collect().await;
+        results.into_iter().sum()
     }
 
     /// Drains all test account balances back to the funder address.

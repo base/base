@@ -62,10 +62,18 @@ impl<'a> MetricsAggregator<'a> {
 
         latencies.sort();
 
+        let len = latencies.len();
+        let sum: Duration = latencies.iter().sum();
+        let mean = Duration::from_nanos((sum.as_nanos() / len as u128) as u64);
+
         FlashblocksLatencyMetrics {
-            count: latencies.len() as u64,
+            count: len as u64,
+            min: latencies[0],
+            max: latencies[len - 1],
+            mean,
             p50: Self::percentile(&latencies, 50),
             p90: Self::percentile(&latencies, 90),
+            p95: Self::percentile(&latencies, 95),
             p99: Self::percentile(&latencies, 99),
         }
     }
