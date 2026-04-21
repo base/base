@@ -80,7 +80,7 @@ pub struct ConductorNodeConfig {
 
 /// Monitoring configuration for a chain watched by basectl.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChainConfig {
+pub struct MonitoringConfig {
     /// Human-readable chain name (e.g. "mainnet", "sepolia").
     pub name: String,
     /// L2 JSON-RPC endpoint URL.
@@ -115,7 +115,7 @@ pub struct ChainConfig {
     pub proofs: Option<ProofsConfig>,
 }
 
-impl ChainConfig {
+impl MonitoringConfig {
     /// Returns the block explorer base URL for this chain, if known.
     pub fn explorer_base_url(&self) -> Option<&'static str> {
         match self.name.as_str() {
@@ -140,7 +140,7 @@ const fn default_blob_target() -> u64 {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-struct ChainConfigOverride {
+struct MonitoringConfigOverride {
     name: Option<String>,
     rpc: Option<Url>,
     flashblocks_ws: Option<Url>,
@@ -156,7 +156,7 @@ struct ChainConfigOverride {
     proofs: Option<ProofsConfig>,
 }
 
-impl ChainConfig {
+impl MonitoringConfig {
     /// Returns a sorted list of all available network names: the three built-ins
     /// followed by any `*.yaml`/`*.yml` files found in `~/.config/base/networks/`
     /// that are not already covered by the built-ins.
@@ -383,7 +383,7 @@ impl ChainConfig {
         let contents = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config file: {}", path.display()))?;
 
-        let overrides: ChainConfigOverride = serde_yaml::from_str(&contents)
+        let overrides: MonitoringConfigOverride = serde_yaml::from_str(&contents)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
 
         Ok(Self {
@@ -412,11 +412,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_builtin_configs() {
-        let mainnet = ChainConfig::load("mainnet").await.unwrap();
+        let mainnet = MonitoringConfig::load("mainnet").await.unwrap();
         assert_eq!(mainnet.name, "mainnet");
         assert!(mainnet.rpc.as_str().contains("mainnet"));
 
-        let sepolia = ChainConfig::load("sepolia").await.unwrap();
+        let sepolia = MonitoringConfig::load("sepolia").await.unwrap();
         assert_eq!(sepolia.name, "sepolia");
         assert!(sepolia.rpc.as_str().contains("sepolia"));
     }
@@ -424,7 +424,7 @@ mod tests {
     #[test]
     fn test_devnet_base_config() {
         // Test the base devnet config structure (without RPC call)
-        let devnet = ChainConfig::devnet_base();
+        let devnet = MonitoringConfig::devnet_base();
         assert_eq!(devnet.name, "devnet");
         assert!(devnet.rpc.as_str().contains("localhost"));
         assert_eq!(devnet.rpc.as_str(), "http://localhost:7545/");
@@ -436,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unknown_config() {
-        let result = ChainConfig::load("nonexistent").await;
+        let result = MonitoringConfig::load("nonexistent").await;
         assert!(result.is_err());
     }
 }

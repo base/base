@@ -21,7 +21,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 alloy-hardforks.workspace = true
 alloy-primitives.workspace = true
 
+# reth
+reth-ethereum-forks = { workspace = true, optional = true }
+
 # misc
+spin = { workspace = true, optional = true }
 auto_impl.workspace = true
 serde = { workspace = true, optional = true }
 
@@ -29,4 +33,12 @@ serde = { workspace = true, optional = true }
 alloy-chains.workspace = true
 
 [features]
-serde = [ "alloy-hardforks/serde", "alloy-primitives/serde", "dep:serde" ]
+default = [ "chain-hardforks" ]
+chain-hardforks = [ "dep:reth-ethereum-forks", "dep:spin" ]
+std = [ "alloy-primitives/std", "reth-ethereum-forks?/std", "spin?/std" ]
+serde = [
+	"alloy-hardforks/serde",
+	"alloy-primitives/serde",
+	"dep:serde",
+	"reth-ethereum-forks?/serde",
+]

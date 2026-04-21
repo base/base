@@ -21,7 +21,7 @@ pub use commands::{
 };
 
 mod config;
-pub use config::{ChainConfig, ConductorNodeConfig, ProofsConfig, ValidatorNodeConfig};
+pub use config::{ConductorNodeConfig, MonitoringConfig, ProofsConfig, ValidatorNodeConfig};
 
 mod l1_client;
 pub use l1_client::fetch_full_system_config;

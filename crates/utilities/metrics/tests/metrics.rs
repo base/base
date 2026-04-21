@@ -583,6 +583,111 @@ fn zero_initializes_unlabeled_and_labeled_metrics() {
     });
 }
 
+base_metrics::define_metrics! {
+    no_zero_test,
+    struct = NoZeroMetrics,
+
+    #[describe("Unlabeled gauge that should not be zeroed")]
+    #[no_zero]
+    state_gauge: gauge,
+
+    #[describe("Unlabeled counter that should not be zeroed")]
+    #[no_zero]
+    skipped_counter: counter,
+
+    #[describe("Labeled gauge with defaults that should not be zeroed")]
+    #[no_zero]
+    #[label(name = "kind", default = ["one", "two"])]
+    labeled_state_gauge: gauge,
+
+    #[describe("Sibling gauge that should still be zeroed")]
+    sibling_gauge: gauge,
+}
+
+#[test]
+fn no_zero_skips_zero_initialization() {
+    with_recorder(|snap| {
+        NoZeroMetrics::zero();
+
+        let snapshot = snap.snapshot().into_vec();
+
+        // The opted-out metrics should not appear in the snapshot at all.
+        assert_eq!(find_metric(&snapshot, MetricKind::Gauge, "no_zero_test.state_gauge"), None,);
+        assert_eq!(
+            find_metric(&snapshot, MetricKind::Counter, "no_zero_test.skipped_counter"),
+            None,
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Gauge,
+                "no_zero_test.labeled_state_gauge",
+                &[("kind", "one")]
+            ),
+            None,
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Gauge,
+                "no_zero_test.labeled_state_gauge",
+                &[("kind", "two")]
+            ),
+            None,
+        );
+
+        // The sibling without `#[no_zero]` should still be zeroed.
+        assert_eq!(
+            find_metric(&snapshot, MetricKind::Gauge, "no_zero_test.sibling_gauge"),
+            Some(&DebugValue::Gauge(OrderedFloat(0.0))),
+        );
+    });
+}
+
+#[test]
+fn no_zero_metrics_can_still_be_set_explicitly() {
+    with_recorder(|snap| {
+        NoZeroMetrics::zero();
+        NoZeroMetrics::state_gauge().set(42.0);
+        NoZeroMetrics::skipped_counter().increment(5);
+        NoZeroMetrics::labeled_state_gauge("one").set(7.0);
+
+        let snapshot = snap.snapshot().into_vec();
+        assert_eq!(
+            find_metric(&snapshot, MetricKind::Gauge, "no_zero_test.state_gauge"),
+            Some(&DebugValue::Gauge(OrderedFloat(42.0))),
+        );
+        assert_eq!(
+            find_metric(&snapshot, MetricKind::Counter, "no_zero_test.skipped_counter"),
+            Some(&DebugValue::Counter(5)),
+        );
+        assert_eq!(
+            find_metric_labeled(
+                &snapshot,
+                MetricKind::Gauge,
+                "no_zero_test.labeled_state_gauge",
+                &[("kind", "one")]
+            ),
+            Some(&DebugValue::Gauge(OrderedFloat(7.0))),
+        );
+    });
+}
+
+#[test]
+fn no_zero_metrics_are_still_described_by_init() {
+    with_recorder(|snap| {
+        NoZeroMetrics::init();
+        // Touch the metric so it appears in the snapshot alongside its description.
+        NoZeroMetrics::state_gauge().set(1.0);
+
+        let snapshot = snap.snapshot().into_vec();
+        assert_eq!(
+            find_description(&snapshot, MetricKind::Gauge, "no_zero_test.state_gauge").as_deref(),
+            Some("Unlabeled gauge that should not be zeroed"),
+        );
+    });
+}
+
 #[test]
 fn init_describes_and_zeroes_metrics() {
     with_recorder(|snap| {
