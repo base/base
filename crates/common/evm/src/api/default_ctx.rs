@@ -34,7 +34,7 @@ mod tests {
     use crate::Builder;
 
     #[test]
-    fn default_run_op() {
+    fn default_run_base() {
         let ctx = Context::base();
         let mut evm = ctx.build_with_inspector(NoOpInspector {});
         // execute without inspector

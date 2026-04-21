@@ -35,10 +35,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_serialize_json_op_halt_reason() {
+    fn test_serialize_json_base_halt_reason() {
         let response = r#"{"Base":{"OutOfGas":"Basic"}}"#;
 
-        let op_halt_reason: BaseHaltReason = serde_json::from_str(response).unwrap();
-        assert_eq!(op_halt_reason, HaltReason::OutOfGas(OutOfGasError::Basic).into());
+        let base_halt_reason: BaseHaltReason = serde_json::from_str(response).unwrap();
+        assert_eq!(base_halt_reason, HaltReason::OutOfGas(OutOfGasError::Basic).into());
     }
 }

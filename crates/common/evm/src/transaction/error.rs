@@ -124,7 +124,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_display_op_errors() {
+    fn test_display_base_errors() {
         assert_eq!(
             BaseTransactionError::Base(InvalidTransaction::NonceTooHigh { tx: 2, state: 1 })
                 .to_string(),
@@ -146,10 +146,10 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn test_serialize_json_op_transaction_error() {
+    fn test_serialize_json_base_transaction_error() {
         let response = r#""DepositSystemTxPostRegolith""#;
 
-        let op_transaction_error: BaseTransactionError = serde_json::from_str(response).unwrap();
-        assert_eq!(op_transaction_error, BaseTransactionError::DepositSystemTxPostRegolith);
+        let base_transaction_error: BaseTransactionError = serde_json::from_str(response).unwrap();
+        assert_eq!(base_transaction_error, BaseTransactionError::DepositSystemTxPostRegolith);
     }
 }
