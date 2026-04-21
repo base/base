@@ -1950,11 +1950,8 @@ fn format_wei_as_eth(wei_str: &str) -> String {
 
 fn parse_eth_to_wei(input: &str) -> Option<u128> {
     let s = input.trim().trim_end_matches("ETH").trim_end_matches("eth").trim();
-    let eth: f64 = s.parse().ok()?;
-    if eth < 0.0 {
-        return None;
-    }
-    Some((eth * 1e18) as u128)
+    let wei = alloy_primitives::utils::parse_ether(s).ok()?;
+    wei.try_into().ok()
 }
 
 fn format_tx_type(tx_type: &TxTypeConfig) -> String {

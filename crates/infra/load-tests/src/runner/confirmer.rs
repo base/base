@@ -47,7 +47,7 @@ pub struct Confirmer {
     flashblock_times: FlashblockTimes,
     block_first_seen: BlockFirstSeen,
     deferred_block_latencies: Vec<DeferredBlockLatency>,
-    block_ws_enabled: bool,
+    block_watcher_enabled: bool,
 }
 
 /// A confirmed tx whose block latency could not be computed yet because
@@ -142,16 +142,16 @@ impl ConfirmerHandle {
 impl Confirmer {
     /// Creates a confirmer with shared timing data.
     ///
-    /// Set `block_ws_enabled` to `true` when the `BlockWatcher` is running (WebSocket
-    /// available). When `false`, block latency is calculated from block timestamps
-    /// fetched via RPC.
+    /// Set `block_watcher_enabled` to `true` when a `BlockWatcher` is running.
+    /// When `false`, block latency is calculated from block timestamps fetched
+    /// via RPC.
     pub fn new(
         sender_addresses: &[Address],
         metrics_tx: mpsc::Sender<TransactionMetrics>,
         stop_flag: Arc<AtomicBool>,
         flashblock_times: FlashblockTimes,
         block_first_seen: BlockFirstSeen,
-        block_ws_enabled: bool,
+        block_watcher_enabled: bool,
     ) -> Self {
         let mut in_flight_map = HashMap::new();
         for addr in sender_addresses {
@@ -174,7 +174,7 @@ impl Confirmer {
             flashblock_times,
             block_first_seen,
             deferred_block_latencies: Vec::new(),
-            block_ws_enabled,
+            block_watcher_enabled,
         }
     }
 
@@ -406,7 +406,7 @@ impl Confirmer {
         let mut to_send = Vec::new();
 
         for mut deferred in self.deferred_block_latencies.drain(..) {
-            if self.block_ws_enabled {
+            if self.block_watcher_enabled {
                 let block_latency = self
                     .block_first_seen
                     .read()
