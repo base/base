@@ -66,10 +66,7 @@ async fn main() -> anyhow::Result<()> {
     let providers = Providers {
         mempool: RootProvider::<Base>::new_http(config.mempool_url),
         simulation: RootProvider::<Base>::new_http(config.simulation_rpc),
-        raw_tx_forward: config
-            .raw_tx_forward_rpc
-            .clone()
-            .map(|url| RootProvider::<Base>::new_http(url)),
+        raw_tx_forward: config.raw_tx_forward_rpc.clone().map(RootProvider::<Base>::new_http),
     };
 
     let ingress_client_config =

@@ -30,5 +30,6 @@ thiserror = { workspace = true, features = ["std"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
 [dev-dependencies]
+alloy-node-bindings.workspace = true
 alloy-signer-local.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

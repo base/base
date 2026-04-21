@@ -11,6 +11,12 @@
 extern crate alloc;
 
 #[cfg(feature = "reth")]
+use revm as _;
+
+#[cfg(feature = "alloy-compat")]
+mod alloy_compat;
+
+#[cfg(feature = "reth")]
 mod reth_compat;
 #[cfg(feature = "reth")]
 pub use reth_compat::{BaseBlockBody, BasePrimitives, CompactTxDeposit, DepositReceiptExt};

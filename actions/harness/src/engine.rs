@@ -497,6 +497,7 @@ impl ActionEngineClient {
                 suggested_fee_recipient: payload.fee_recipient,
                 withdrawals: Some(vec![]),
                 parent_beacon_block_root: None,
+                slot_number: None,
             },
             transactions: Some(payload.transactions.clone()),
             no_tx_pool: Some(true),

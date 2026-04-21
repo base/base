@@ -1,6 +1,5 @@
 use alloc::vec::Vec;
 
-use crate::Transaction;
 use alloy_consensus::{
     Sealed, SignableTransaction, Signed, TxEip1559, TxEip4844, TypedTransaction,
 };
@@ -12,6 +11,8 @@ use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
 use serde::{Deserialize, Serialize};
+
+use crate::Transaction;
 
 /// Builder for [`BaseTypedTransaction`].
 #[derive(
@@ -224,7 +225,7 @@ impl From<BaseTxEnvelope> for BaseTransactionRequest {
 impl From<Transaction> for BaseTransactionRequest {
     fn from(value: Transaction) -> Self {
         let (tx, signer) = value.inner.inner.into_parts();
-        let mut request: BaseTransactionRequest = tx.into();
+        let mut request: Self = tx.into();
         request.as_mut().from = Some(signer);
         request
     }

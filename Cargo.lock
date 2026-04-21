@@ -3238,6 +3238,7 @@ name = "base-balance-monitor"
 version = "0.0.0"
 dependencies = [
  "alloy-network 2.0.4",
+ "alloy-node-bindings 2.0.4",
  "alloy-primitives",
  "alloy-provider 2.0.4",
  "tokio",
@@ -3867,6 +3868,7 @@ dependencies = [
  "alloy-consensus 2.0.4",
  "alloy-eips 2.0.4",
  "alloy-network 2.0.4",
+ "alloy-node-bindings 2.0.4",
  "alloy-primitives",
  "alloy-rpc-types-eth 2.0.4",
  "alloy-signer 2.0.4",
@@ -6044,6 +6046,7 @@ dependencies = [
  "alloy-eips 2.0.4",
  "alloy-json-rpc 2.0.4",
  "alloy-network 2.0.4",
+ "alloy-node-bindings 2.0.4",
  "alloy-primitives",
  "alloy-provider 2.0.4",
  "alloy-rpc-types-eth 2.0.4",

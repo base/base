@@ -709,6 +709,7 @@ mod tests {
                 ),
                 block_hash: None,
                 block_number: Some(1),
+                block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },
@@ -739,6 +740,7 @@ mod tests {
                 inner: recovered,
                 block_hash: Some(B256::ZERO),
                 block_number: Some(1),
+                block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },
@@ -766,6 +768,7 @@ mod tests {
                 ),
                 block_hash: None,
                 block_number: Some(1),
+                block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(0),
             },
@@ -861,7 +864,10 @@ mod tests {
     fn test_execution_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
-            gas: revm::context::result::ResultGas::new(21_000, 21_000, 0, 0, 0),
+            gas: revm::context::result::ResultGas::default()
+                .with_total_gas_spent(21_000)
+                .with_refunded(0)
+                .with_floor_gas(0),
             logs: vec![],
             output: revm::context::result::Output::Call(Bytes::new()),
         }
@@ -908,7 +914,7 @@ mod tests {
         assert_eq!(result.inner.tx_type, OpTxType::Legacy);
         assert!(!result.is_deposit);
         assert_eq!(result.sender, test_sender());
-        assert_eq!(result.inner.result.result.gas_used(), 21000);
+        assert_eq!(result.inner.result.result.tx_gas_used(), 21000);
     }
 
     #[test]
@@ -921,7 +927,7 @@ mod tests {
         assert_eq!(result.inner.tx_type, OpTxType::Deposit);
         assert!(result.is_deposit);
         assert_eq!(result.sender, test_sender());
-        assert_eq!(result.inner.result.result.gas_used(), 21000);
+        assert_eq!(result.inner.result.result.tx_gas_used(), 21000);
     }
 
     #[test]

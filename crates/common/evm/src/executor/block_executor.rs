@@ -627,13 +627,13 @@ mod tests {
         let gas_used_tx = executor.execute_transaction(&tx).expect("failed to execute transaction");
 
         // The gas used when executing the transaction should be the legacy value...
-        assert!(gas_used_tx < expected_da_footprint);
+        assert!(gas_used_tx.tx_gas_used() < expected_da_footprint);
 
         // The gas used when finishing the executor should be the DA footprint since this is higher
         // than the legacy gas used and jovian is active...
         let (_, result) = executor.finish().expect("failed to finish executor");
         assert_eq!(result.blob_gas_used, expected_da_footprint);
-        assert_eq!(result.gas_used, gas_used_tx);
+        assert_eq!(result.gas_used, gas_used_tx.tx_gas_used());
         assert!(result.blob_gas_used > result.gas_used);
     }
 }

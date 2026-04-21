@@ -25,9 +25,9 @@ use base_proof_tee_nitro_verifier::{VerifierInput, VerifierJournal};
 // re-export `DynProvider` directly — access it via the SDK's alloy so
 // the type in our alias matches the one inside `Client`.
 use boundless_market::alloy::providers::DynProvider;
-use boundless_market::alloy::signers::local::PrivateKeySigner;
 use boundless_market::{
     Client, NotProvided,
+    alloy::signers::local::PrivateKeySigner,
     contracts::{Predicate, RequestId, RequestStatus},
     request_builder::{RequestParams, RequirementParams, StandardRequestBuilder},
 };

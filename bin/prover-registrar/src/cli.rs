@@ -17,7 +17,6 @@ use base_health::HealthServer;
 use base_proof_tee_nitro_attestation_prover::{
     AttestationProofProvider, BoundlessProver, DirectProver,
 };
-use boundless_market::alloy::signers::local::PrivateKeySigner;
 use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CrlConfig,
     DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
@@ -27,6 +26,7 @@ use base_proof_tee_registrar::{
     RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
+use boundless_market::alloy::signers::local::PrivateKeySigner;
 use clap::{Args, Parser, ValueEnum};
 use eyre::WrapErr;
 use tokio_util::sync::CancellationToken;

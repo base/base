@@ -345,6 +345,7 @@ mod tests {
                     ),
                     block_hash: None,
                     block_number: Some(100),
+                    block_timestamp: None,
                     transaction_index: Some(entry.index),
                     effective_gas_price: Some(entry.effective_gas_price),
                 },
@@ -414,7 +415,10 @@ mod tests {
                 entry.tx_hash,
                 ExecutionResult::Success {
                     reason: revm::context::result::SuccessReason::Stop,
-                    gas: revm::context::result::ResultGas::new(21_000, 21_000, 0, 0, 0),
+                    gas: revm::context::result::ResultGas::default()
+                        .with_total_gas_spent(21_000)
+                        .with_refunded(0)
+                        .with_floor_gas(0),
                     logs: vec![],
                     output: revm::context::result::Output::Call(Bytes::new()),
                 },

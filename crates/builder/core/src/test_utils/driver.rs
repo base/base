@@ -178,6 +178,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                     timestamp: block_timestamp,
                     parent_beacon_block_root: Some(B256::ZERO),
                     withdrawals: Some(vec![]),
+                    slot_number: None,
                     ..Default::default()
                 },
                 transactions: Some(vec![block_info_tx].into_iter().chain(txs).collect()),

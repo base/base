@@ -1,5 +1,5 @@
 use alloy_consensus::TxType;
-use alloy_network::{BuildResult, NetworkTransactionBuilder, TransactionBuilder, TransactionBuilderError};
+use alloy_network::{BuildResult, NetworkTransactionBuilder, TransactionBuilderError};
 use base_common_consensus::{BaseTypedTransaction, OpTxType};
 use base_common_rpc_types::BaseTransactionRequest;
 
@@ -69,8 +69,8 @@ impl NetworkTransactionBuilder<Base> for BaseTransactionRequest {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::B256;
-    use alloy_primitives::TxKind;
+    use alloy_network::TransactionBuilder;
+    use alloy_primitives::{B256, TxKind};
     use rstest::rstest;
 
     use super::*;

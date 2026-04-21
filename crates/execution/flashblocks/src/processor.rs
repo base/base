@@ -35,6 +35,7 @@ use crate::{
 };
 
 /// Messages consumed by the state processor.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum StateUpdate {
     /// New canonical block to reconcile against pending state.

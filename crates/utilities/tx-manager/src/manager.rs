@@ -834,12 +834,14 @@ where
         );
 
         // Step 7: Sign and encode.
-        let sign_result: Result<<Ethereum as Network>::TxEnvelope, TransactionBuilderError<Ethereum>> =
-            <TransactionRequest as NetworkTransactionBuilder<Ethereum>>::build(
-                tx_request,
-                &self.wallet,
-            )
-            .await;
+        let sign_result: Result<
+            <Ethereum as Network>::TxEnvelope,
+            TransactionBuilderError<Ethereum>,
+        > = <TransactionRequest as NetworkTransactionBuilder<Ethereum>>::build(
+            tx_request,
+            &self.wallet,
+        )
+        .await;
 
         match sign_result {
             Ok(envelope) => {
