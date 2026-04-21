@@ -1,7 +1,6 @@
 //! Genesis types.
 
 use alloy_eips::eip1898::BlockNumHash;
-use base_common_chains::ChainConfig;
 
 use crate::SystemConfig;
 
@@ -18,30 +17,6 @@ pub struct ChainGenesis {
     pub l2_time: u64,
     /// Optional System configuration
     pub system_config: Option<SystemConfig>,
-}
-
-impl From<&ChainConfig> for ChainGenesis {
-    fn from(cfg: &ChainConfig) -> Self {
-        Self {
-            l1: BlockNumHash { hash: cfg.genesis_l1_hash, number: cfg.genesis_l1_number },
-            l2: BlockNumHash { hash: cfg.genesis_l2_hash, number: cfg.genesis_l2_number },
-            l2_time: cfg.genesis_l2_time,
-            system_config: Some(SystemConfig {
-                batcher_address: cfg.genesis_batcher_address,
-                overhead: cfg.genesis_overhead,
-                scalar: cfg.genesis_scalar,
-                gas_limit: cfg.genesis_gas_limit,
-                base_fee_scalar: None,
-                blob_base_fee_scalar: None,
-                eip1559_denominator: None,
-                eip1559_elasticity: None,
-                operator_fee_scalar: None,
-                operator_fee_constant: None,
-                min_base_fee: None,
-                da_footprint_gas_scalar: None,
-            }),
-        }
-    }
 }
 
 #[cfg(feature = "arbitrary")]

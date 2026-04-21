@@ -208,6 +208,7 @@ min-debug-logs = [ "tracing/release_max_level_debug" ]
 min-trace-logs = [ "tracing/release_max_level_trace" ]
 test-utils = [
 	"base-bundles/test-utils",
+	"base-common-chains/test-utils",
 	"base-execution-rpc/client",
 	"base-node-core/test-utils",
 	"base-node-runner/test-utils",

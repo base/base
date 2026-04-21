@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
+use base_common_chains::Registry;
 use base_consensus_genesis::RollupConfig;
-use base_consensus_registry::Registry;
 use serde::{Deserialize, Serialize};
 use url::Url;
 

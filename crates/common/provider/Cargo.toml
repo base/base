@@ -31,10 +31,12 @@ async-trait.workspace = true
 std = [
 	"alloy-primitives/std",
 	"alloy-rpc-types-engine/std",
+	"base-common-network/std",
 	"base-common-rpc-types-engine/std",
 ]
 serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
+	"base-common-network/serde",
 	"base-common-rpc-types-engine/serde",
 ]

@@ -21,7 +21,6 @@ alloy-sol-types.workspace = true
 alloy-consensus.workspace = true
 alloy-hardforks.workspace = true
 alloy-primitives.workspace = true
-base-common-chains.workspace = true
 
 # Misc
 tracing.workspace = true
@@ -71,6 +70,5 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
-	"base-common-chains/serde",
 	"dep:serde",
 ]

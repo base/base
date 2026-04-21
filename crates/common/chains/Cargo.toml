@@ -18,27 +18,48 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # alloy
+alloy-eips.workspace = true
+alloy-chains.workspace = true
 alloy-hardforks.workspace = true
-alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["map"] }
 
 # reth
 reth-ethereum-forks = { workspace = true, optional = true }
 
+# base
+base-consensus-genesis.workspace = true
+
 # misc
-spin = { workspace = true, optional = true }
+spin.workspace = true
 auto_impl.workspace = true
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 alloy-chains.workspace = true
 
+[[test]]
+name = "hardfork_consistency"
+required-features = ["test-utils"]
+
 [features]
 default = [ "chain-hardforks" ]
-chain-hardforks = [ "dep:reth-ethereum-forks", "dep:spin" ]
-std = [ "alloy-primitives/std", "reth-ethereum-forks?/std", "spin?/std" ]
+chain-hardforks = [ "dep:reth-ethereum-forks" ]
+std = [
+	"alloy-chains/std",
+	"alloy-eips/std",
+	"alloy-primitives/std",
+	"base-consensus-genesis/std",
+	"reth-ethereum-forks?/std",
+	"serde?/std",
+	"spin/std",
+]
 serde = [
+	"alloy-chains/serde",
+	"alloy-eips/serde",
 	"alloy-hardforks/serde",
 	"alloy-primitives/serde",
+	"base-consensus-genesis/serde",
 	"dep:serde",
 	"reth-ethereum-forks?/serde",
 ]
+test-utils = []

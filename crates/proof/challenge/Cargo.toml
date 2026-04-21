@@ -89,4 +89,9 @@ base-challenger = { path = ".", features = ["test-utils"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
-test-utils = [ "alloy-consensus", "base-protocol/test-utils", "serde_json" ]
+test-utils = [
+	"alloy-consensus",
+	"base-protocol/test-utils",
+	"base-runtime/test-utils",
+	"serde_json",
+]

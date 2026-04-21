@@ -1,7 +1,6 @@
 //! Module containing fee parameters.
 
 use alloy_eips::eip1559::BaseFeeParams;
-use base_common_chains::ChainConfig;
 
 /// Base Fee Config.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -28,26 +27,18 @@ pub struct FeeConfig {
     pub eip1559_denominator_canyon: u64,
 }
 
-impl From<&ChainConfig> for FeeConfig {
-    fn from(cfg: &ChainConfig) -> Self {
-        Self {
-            eip1559_elasticity: cfg.eip1559_elasticity,
-            eip1559_denominator: cfg.eip1559_denominator,
-            eip1559_denominator_canyon: cfg.eip1559_denominator_canyon,
-        }
-    }
-}
-
 impl FeeConfig {
-    /// Returns the [`FeeConfig`] for the given chain id.
-    pub fn from_chain_id(chain_id: u64) -> Self {
-        let cfg = ChainConfig::by_chain_id(chain_id).unwrap_or(ChainConfig::mainnet());
-        Self::from(cfg)
-    }
+    /// The Base Mainnet EIP-1559 fee parameters.
+    ///
+    /// These values match `base_common_chains::ChainConfig::mainnet().fee_config()`. Kept here as
+    /// hardcoded constants so this crate need not depend on `base-common-chains` (which would
+    /// invert the dependency direction). Drift is guarded by `mainnet_fee_config_matches_constant`.
+    pub const BASE_MAINNET: Self =
+        Self { eip1559_elasticity: 6, eip1559_denominator: 50, eip1559_denominator_canyon: 250 };
 
     /// Returns the Base Mainnet base fee config (used as serde default).
-    pub fn base_mainnet() -> Self {
-        Self::from_chain_id(ChainConfig::mainnet().chain_id)
+    pub const fn base_mainnet() -> Self {
+        Self::BASE_MAINNET
     }
 
     /// Returns the [`BaseFeeParams`] before Canyon hardfork.
@@ -72,55 +63,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_base_fee_params_from_chain_id() {
-        let mainnet = FeeConfig::from_chain_id(ChainConfig::mainnet().chain_id);
-        let sepolia = FeeConfig::from_chain_id(ChainConfig::sepolia().chain_id);
-
-        assert_eq!(
-            FeeConfig::from_chain_id(ChainConfig::mainnet().chain_id).pre_canyon_params(),
-            mainnet.pre_canyon_params()
-        );
-        assert_eq!(
-            FeeConfig::from_chain_id(ChainConfig::sepolia().chain_id).pre_canyon_params(),
-            sepolia.pre_canyon_params()
-        );
-        // Unknown chain IDs fall back to Base Mainnet params
-        assert_eq!(FeeConfig::from_chain_id(0).pre_canyon_params(), mainnet.pre_canyon_params());
+    fn base_mainnet_pre_canyon_params() {
+        let params = FeeConfig::base_mainnet().pre_canyon_params();
+        assert_eq!(params.max_change_denominator, 50);
+        assert_eq!(params.elasticity_multiplier, 6);
     }
 
     #[test]
-    fn test_base_fee_params_canyon_from_chain_id() {
-        let mainnet = FeeConfig::from_chain_id(ChainConfig::mainnet().chain_id);
-        let sepolia = FeeConfig::from_chain_id(ChainConfig::sepolia().chain_id);
-
-        assert_eq!(
-            FeeConfig::from_chain_id(ChainConfig::mainnet().chain_id).post_canyon_params(),
-            mainnet.post_canyon_params()
-        );
-        assert_eq!(
-            FeeConfig::from_chain_id(ChainConfig::sepolia().chain_id).post_canyon_params(),
-            sepolia.post_canyon_params()
-        );
-        assert_eq!(FeeConfig::from_chain_id(0).post_canyon_params(), mainnet.post_canyon_params());
+    fn base_mainnet_post_canyon_params() {
+        let params = FeeConfig::base_mainnet().post_canyon_params();
+        assert_eq!(params.max_change_denominator, 250);
+        assert_eq!(params.elasticity_multiplier, 6);
     }
 
     #[test]
     #[cfg(feature = "serde")]
-    fn test_base_fee_config_ser() {
-        let config = FeeConfig::from_chain_id(ChainConfig::mainnet().chain_id);
-        let raw_str = serde_json::to_string(&config).unwrap();
-        assert_eq!(
-            raw_str,
-            r#"{"eip1559Elasticity":6,"eip1559Denominator":50,"eip1559DenominatorCanyon":250}"#
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "serde")]
-    fn test_base_fee_config_deser() {
-        let raw_str: &'static str =
+    fn base_fee_config_serde_roundtrip() {
+        let raw =
             r#"{"eip1559Elasticity":6,"eip1559Denominator":50,"eip1559DenominatorCanyon":250}"#;
-        let config: FeeConfig = serde_json::from_str(raw_str).unwrap();
-        assert_eq!(config, FeeConfig::from_chain_id(ChainConfig::mainnet().chain_id));
+        let config: FeeConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(config, FeeConfig::base_mainnet());
+        assert_eq!(serde_json::to_string(&config).unwrap(), raw);
     }
 }

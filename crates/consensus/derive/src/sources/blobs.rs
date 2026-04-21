@@ -237,7 +237,7 @@ pub(super) mod tests {
 
     use alloy_consensus::{Blob, Signed, TxEip4844, TxEip4844Variant};
     use alloy_primitives::Signature;
-    use base_consensus_registry::Registry;
+    use base_common_chains::Registry;
 
     use super::*;
     use crate::{

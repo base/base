@@ -17,6 +17,7 @@ base-proof-mpt.workspace = true
 base-proof-driver.workspace = true
 base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
+base-common-chains.workspace = true
 base-consensus-derive.workspace = true
 base-consensus-registry.workspace = true
 base-consensus-genesis = { workspace = true, features = ["serde"] }
@@ -68,11 +69,13 @@ std = [
 	"alloy-eips/kzg",
 	"alloy-eips/std",
 	"alloy-evm/std",
+	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-trie/std",
 	"ark-bls12-381/std",
 	"ark-ff/std",
+	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-evm/std",
 	"base-common-rpc-types-engine/std",

@@ -102,4 +102,5 @@ metrics = [
 	"base-metrics/metrics",
 	"dep:metrics",
 	"libp2p/metrics",
+	"tower-http/metrics",
 ]

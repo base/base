@@ -38,7 +38,14 @@ std = [
 	"serde?/std",
 	"thiserror/std",
 ]
-serde = [ "alloy-primitives/serde", "base-proof-preimage/serde", "dep:serde" ]
+serde = [
+	"alloy-chains/serde",
+	"alloy-eips/serde",
+	"alloy-primitives/serde",
+	"base-consensus-genesis/serde",
+	"base-proof-preimage/serde",
+	"dep:serde",
+]
 rpc-server = [
 	"dep:jsonrpsee",
 	"jsonrpsee/macros",

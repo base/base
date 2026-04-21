@@ -14,26 +14,15 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
-base-consensus-genesis = { workspace = true, features = ["serde"] }
-
 # Alloy
 alloy-eips.workspace = true
 alloy-chains.workspace = true
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
-base-common-chains.workspace = true
 alloy-primitives = { workspace = true, features = ["map"] }
 
 # misc
 spin.workspace = true
-derive_more = { workspace = true, features = ["from", "deref"] }
-
-[dev-dependencies]
-
-[[test]]
-name = "hardfork_consistency"
-required-features = ["test-utils"]
 
 [features]
 default = []
@@ -42,8 +31,5 @@ std = [
 	"alloy-eips/std",
 	"alloy-genesis/std",
 	"alloy-primitives/std",
-	"base-consensus-genesis/std",
-	"derive_more/std",
 	"spin/std",
 ]
-test-utils = []

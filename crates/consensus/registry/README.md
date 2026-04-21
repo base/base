@@ -5,36 +5,24 @@
 
 ## Overview
 
-`base-consensus-registry` exports chain configurations for Base networks as `RollupConfig`
-instances. Configurations are stored as TOML files in the `configs/` directory and parsed at
-init time. Provides `Registry` with a `rollup_config(chain_id)` lookup for Base Mainnet (8453)
-and Base Sepolia (84532). `no_std` compatible when default features are disabled.
+`base-consensus-registry` exports L1 chain configurations for known Ethereum networks
+(Mainnet, Sepolia, Holesky, Hoodi) as `alloy_genesis::ChainConfig` instances. `no_std`
+compatible when default features are disabled.
+
+Base L2 rollup configs live in [`base-common-chains`][base-common-chains], derived from the
+canonical [`ChainConfig`][chain-config] table.
 
 ## Usage
 
-Add the following to your `Cargo.toml`.
-
-```toml
-[dependencies]
-base-consensus-registry = "0.1.0"
-```
-
-To make `base-consensus-registry` `no_std`, toggle `default-features` off like so.
-
-```toml
-[dependencies]
-base-consensus-registry = { version = "0.1.0", default-features = false }
-```
-
-Below demonstrates getting the `RollupConfig` for Base Mainnet (Chain ID `8453`).
-
 ```rust
-use base_consensus_registry::Registry;
+use base_consensus_registry::l1_config;
 
-let base_chain_id = 8453;
-let base_rollup_config = Registry::rollup_config(base_chain_id);
-println!("Base Mainnet Rollup Config: {:?}", base_rollup_config);
+let l1_chain_id = 1; // Ethereum mainnet
+let cfg = l1_config(l1_chain_id);
 ```
+
+[base-common-chains]: ../../common/chains
+[chain-config]: ../../common/chains/src/config.rs
 
 ## Feature Flags
 

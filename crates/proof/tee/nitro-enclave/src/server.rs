@@ -254,7 +254,7 @@ impl Server {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::b256;
-    use base_consensus_registry::Registry;
+    use base_common_chains::Registry;
 
     use super::*;
 

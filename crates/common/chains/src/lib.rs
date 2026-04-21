@@ -17,6 +17,14 @@ pub use upgrades::Upgrades;
 mod chain;
 pub use chain::ChainUpgrades;
 
+mod derived;
+
+mod registry;
+pub use registry::Registry;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 #[cfg(feature = "chain-hardforks")]
 mod hardforks;
 #[cfg(feature = "chain-hardforks")]
