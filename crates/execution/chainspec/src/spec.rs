@@ -6,7 +6,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
-use base_alloy_chains::{BaseUpgrade, BaseUpgrades};
+use base_alloy_chains::{BaseChainConfig, BaseUpgrade, BaseUpgrades};
 use base_execution_forks::BASE_MAINNET_HARDFORKS;
 use base_protocol::Predeploys;
 use derive_more::{Constructor, Deref, Into};
@@ -15,7 +15,7 @@ use reth_chainspec::{
     EthereumHardforks, ForkFilter, ForkId, Hardforks, Head,
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
-use reth_network_peers::NodeRecord;
+use reth_network_peers::{NodeRecord, parse_nodes};
 use reth_primitives_traits::SealedHeader;
 
 use crate::{
@@ -169,7 +169,16 @@ impl EthChainSpec for OpChainSpec {
     }
 
     fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
-        self.inner.bootnodes()
+        let config = match self.chain().id() {
+            8453 => BaseChainConfig::mainnet(),
+            84532 => BaseChainConfig::sepolia(),
+            11763072 => BaseChainConfig::alpha(),
+            763360 => BaseChainConfig::zeronet(),
+            _ => return None,
+        };
+        let enodes: Vec<&str> =
+            config.bootnodes.iter().filter(|s| !s.starts_with("enr:")).copied().collect();
+        Some(parse_nodes(&enodes))
     }
 
     fn is_optimism(&self) -> bool {
