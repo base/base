@@ -2768,7 +2768,6 @@ dependencies = [
  "base-execution-rpc",
  "base-execution-trie",
  "base-execution-txpool",
- "base-execution-upgrades",
  "base-metrics",
  "base-node-core",
  "base-node-runner",
@@ -3041,7 +3040,9 @@ dependencies = [
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "auto_impl",
+ "reth-ethereum-forks",
  "serde",
+ "spin 0.10.0",
 ]
 
 [[package]]
@@ -3698,7 +3699,6 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-rpc-types",
- "base-execution-upgrades",
  "derive_more",
  "reth-chainspec",
  "reth-ethereum-forks",
@@ -3749,7 +3749,6 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-execution-chainspec",
- "base-execution-upgrades",
  "base-node-core",
  "reth-chainspec",
  "reth-consensus",
@@ -4017,16 +4016,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "base-execution-upgrades"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-chains",
- "reth-ethereum-forks",
- "spin 0.10.0",
 ]
 
 [[package]]

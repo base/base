@@ -51,7 +51,6 @@ reth-payload-builder.workspace = true
 base-execution-txpool.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
-base-execution-upgrades.workspace = true
 reth-payload-primitives.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true

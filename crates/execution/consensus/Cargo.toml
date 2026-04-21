@@ -47,8 +47,6 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 
 alloy-chains.workspace = true
 
-base-execution-upgrades.workspace = true
-
 [features]
 default = [ "std" ]
 std = [

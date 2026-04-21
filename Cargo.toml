@@ -202,7 +202,6 @@ base-engine-tree = { path = "crates/execution/engine-tree" }
 base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-execution-storage = { path = "crates/execution/storage" }
-base-execution-upgrades = { path = "crates/execution/upgrades" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
