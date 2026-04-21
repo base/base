@@ -36,6 +36,8 @@ base_metrics::define_metrics! {
     upstream_connection_failures: counter,
     #[describe("Total bytes broadcasted to clients")]
     bytes_broadcasted: counter,
+    #[describe("Total brotli-compressed bytes sent upstream (pre-broadcast, counted once per message)")]
+    bytes_compressed: counter,
     #[describe("Count of clients disconnected due to pong timeout")]
     client_pong_disconnects: counter,
     #[describe("Number of ping attempts sent to upstream")]
