@@ -10,7 +10,7 @@ use tokio::{
     sync::{Mutex, mpsc},
     time::sleep,
 };
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     metrics::Metrics,
@@ -81,10 +81,8 @@ where
                     match event {
                         Some(event) => {
                             let archive_start = Instant::now();
-                            // tmp: only use this to clear kafka consumer offset
-                            // TODO: use debug! later
                             if noop_archive {
-                                info!(
+                                debug!(
                                     worker_id,
                                     bundle_id = %event.event.bundle_id(),
                                     tx_ids = ?event.event.transaction_ids(),
@@ -96,7 +94,7 @@ where
                                 continue;
                             }
                             if let Err(e) = writer.archive_event(event).await {
-                                error!(worker_id, error = %e, "Failed to write event");
+                                warn!(worker_id, error = %e, "Failed to write event");
                             } else {
                                 Metrics::archive_event_duration()
                                     .record(archive_start.elapsed().as_secs_f64());
