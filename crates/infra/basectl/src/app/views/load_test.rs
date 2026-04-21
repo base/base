@@ -408,7 +408,7 @@ impl LoadTestView {
             (
                 "sepolia",
                 "https://sepolia.base.org",
-                "wss://sepolia.base.org",
+                "https://sepolia.base.org",
                 "wss://sepolia.flashblocks.base.org/ws",
             ),
             (
@@ -1590,25 +1590,27 @@ fn render_complete_status(
     lines.push(Line::from(""));
 
     lines.push(Line::from(vec![
-        Span::styled("    Latency p50  ", label),
+        Span::styled("    Block Latency  ", label),
+        Span::styled("p50 ", label),
         Span::styled(fmt_dur(summary.block_latency.p50), value),
-        Span::styled("  p95  ", label),
+        Span::styled("  p95 ", label),
         Span::styled(fmt_dur(summary.block_latency.p95), value),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled("    Latency p99  ", label),
+        Span::styled("  p99 ", label),
         Span::styled(fmt_dur(summary.block_latency.p99), value),
-        Span::styled("  max  ", label),
+        Span::styled("  max ", label),
         Span::styled(fmt_dur(summary.block_latency.max), value),
     ]));
     if summary.flashblocks_latency.count > 0 {
         lines.push(Line::from(vec![
-            Span::styled("    FB p50     ", label),
+            Span::styled("    FB Latency     ", label),
+            Span::styled("p50 ", label),
             Span::styled(fmt_dur(summary.flashblocks_latency.p50), value),
-            Span::styled("  p90  ", label),
-            Span::styled(fmt_dur(summary.flashblocks_latency.p90), value),
-            Span::styled("  p99  ", label),
+            Span::styled("  p95 ", label),
+            Span::styled(fmt_dur(summary.flashblocks_latency.p95), value),
+            Span::styled("  p99 ", label),
             Span::styled(fmt_dur(summary.flashblocks_latency.p99), value),
+            Span::styled("  max ", label),
+            Span::styled(fmt_dur(summary.flashblocks_latency.max), value),
         ]));
     }
     lines.push(Line::from(""));

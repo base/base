@@ -96,6 +96,12 @@ pub struct TestConfig {
     /// Maximum in-flight transactions per sender.
     pub in_flight_per_sender: u32,
 
+    /// Number of transactions to batch together before submitting to the RPC.
+    pub batch_size: u32,
+
+    /// Maximum time to wait for a batch to fill before flushing (e.g., "50ms", "200ms").
+    pub batch_timeout: Option<String>,
+
     /// Test duration (e.g., "30s", "5m", "1h").
     pub duration: Option<String>,
 
@@ -129,11 +135,13 @@ impl Default for TestConfig {
             rpc: Url::parse("http://localhost:8545").expect("valid URL"),
             mnemonic: None,
             funding_amount: "10000000000000000".to_string(),
-            sender_count: 10,
+            sender_count: 50,
             sender_offset: 0,
-            in_flight_per_sender: 16,
+            in_flight_per_sender: 64,
+            batch_size: 20,
+            batch_timeout: Some("100ms".to_string()),
             duration: Some("30s".to_string()),
-            target_gps: Some(2_100_000),
+            target_gps: Some(10_000_000),
             seed: rand::rng().random(),
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
@@ -357,6 +365,16 @@ impl TestConfig {
             self.transactions.iter().map(|t| self.convert_tx_type(t)).collect::<Result<Vec<_>>>()?
         };
 
+        let batch_timeout = self
+            .batch_timeout
+            .as_ref()
+            .map(|d| {
+                humantime::parse_duration(d.trim())
+                    .map_err(|e| BaselineError::Config(format!("invalid batch_timeout '{d}': {e}")))
+            })
+            .transpose()?
+            .unwrap_or(Duration::from_millis(100));
+
         Ok(crate::runner::LoadConfig {
             rpc_http_url,
             chain_id: resolved_chain_id,
@@ -368,8 +386,8 @@ impl TestConfig {
             target_gps: self.target_gps.unwrap_or(2_100_000),
             duration,
             max_in_flight_per_sender: self.in_flight_per_sender as u64,
-            batch_size: 5,
-            batch_timeout: Duration::from_millis(50),
+            batch_size: self.batch_size.max(1) as usize,
+            batch_timeout,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             block_watcher_url: self.block_watcher_url.clone(),
             flashblocks_ws_url: self.flashblocks_ws_url.clone(),
@@ -430,7 +448,7 @@ rpc: http://localhost:8545
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.rpc.host_str(), Some("localhost"));
-        assert_eq!(config.sender_count, 10);
+        assert_eq!(config.sender_count, 50);
         assert!(config.mnemonic.is_none());
     }
 
