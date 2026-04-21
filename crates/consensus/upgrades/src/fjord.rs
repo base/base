@@ -6,7 +6,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_common_consensus::{Deployers, Predeploys, SystemAddresses, TxDeposit};
 
-use crate::{Hardfork, UpgradeCalldata};
+use crate::{Upgrade, UpgradeCalldata};
 
 /// The Fjord network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -98,7 +98,7 @@ impl Fjord {
     }
 }
 
-impl Hardfork for Fjord {
+impl Upgrade for Fjord {
     /// Constructs the Fjord network upgrade transactions.
     fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
         Self::deposits().map(|tx| {

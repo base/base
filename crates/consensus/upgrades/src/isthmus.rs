@@ -10,7 +10,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_common_consensus::{Deployers, Predeploys, SystemAddresses, TxDeposit};
 
-use crate::{Hardfork, UpgradeCalldata};
+use crate::{Upgrade, UpgradeCalldata};
 
 /// The Isthmus network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -212,7 +212,7 @@ impl Isthmus {
     }
 }
 
-impl Hardfork for Isthmus {
+impl Upgrade for Isthmus {
     /// Constructs the network upgrade transactions.
     fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
         Self::deposits().map(|tx| {
