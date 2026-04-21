@@ -26,6 +26,13 @@ impl RollingWindow {
         self.prune();
     }
 
+    /// Records a gas-only event (no latency tracking).
+    pub fn push_gas(&mut self, gas_used: u64) {
+        let now = Instant::now();
+        self.gas_events.push_back((now, gas_used));
+        self.prune();
+    }
+
     /// Records a latency-only event (no gas tracking).
     pub fn push_latency(&mut self, latency: Duration) {
         let now = Instant::now();

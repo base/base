@@ -51,12 +51,15 @@ const KEYBINDINGS_RUNNING: &[Keybinding] = &[
 // ---------------------------------------------------------------------------
 
 const EDIT_FIELDS: &[&str] = &[
+    "rpc",
     "duration",
     "sender_count",
     "in_flight_per_sender",
     "target_gps",
     "funding_amount",
     "funder_key",
+    "block_watcher_url",
+    "flashblocks_ws_url",
 ];
 
 // ---------------------------------------------------------------------------
@@ -398,10 +401,22 @@ impl LoadTestView {
 
         // Canonical list: active network first (using its actual RPC from resources),
         // then the other two known networks. Any on-disk YAML overrides the defaults.
-        let known: &[(&str, &str)] = &[
-            ("devnet", "http://localhost:7545"),
-            ("sepolia", "https://sepolia.base.org"),
-            ("mainnet", "https://mainnet.base.org"),
+        // Each entry carries HTTP RPC, WebSocket RPC, and flashblocks WS URLs so that
+        // synthesised configs work out-of-the-box without requiring a YAML file on disk.
+        let known: &[(&str, &str, &str, &str)] = &[
+            ("devnet", "http://localhost:7545", "ws://localhost:8546", "ws://localhost:7111"),
+            (
+                "sepolia",
+                "https://sepolia.base.org",
+                "wss://sepolia.base.org",
+                "wss://sepolia.flashblocks.base.org/ws",
+            ),
+            (
+                "mainnet",
+                "https://mainnet.base.org",
+                "wss://mainnet.base.org",
+                "wss://mainnet.flashblocks.base.org/ws",
+            ),
         ];
 
         let mut configs: Vec<(String, TestConfig)> = Vec::new();
@@ -412,11 +427,19 @@ impl LoadTestView {
             .iter()
             .find(|(n, _)| n == &active_name)
             .map(|(_, c)| c.clone())
-            .unwrap_or_else(|| TestConfig { rpc: active_rpc, ..TestConfig::default() });
+            .unwrap_or_else(|| {
+                let mut cfg = TestConfig { rpc: active_rpc, ..TestConfig::default() };
+                if let Some(&(_, _, ws, fb)) = known.iter().find(|&&(n, _, _, _)| n == active_name)
+                {
+                    cfg.block_watcher_url = Url::parse(ws).expect("hardcoded WS URL is valid");
+                    cfg.flashblocks_ws_url = Url::parse(fb).expect("hardcoded FB URL is valid");
+                }
+                cfg
+            });
         configs.push((active_name.clone(), active_cfg));
 
         // Add the remaining known networks, skipping the already-added active one.
-        for &(name, rpc_str) in known {
+        for &(name, rpc_str, ws_str, fb_str) in known {
             if name == active_name {
                 continue;
             }
@@ -425,7 +448,12 @@ impl LoadTestView {
                 .iter()
                 .find(|(n, _)| n == name)
                 .map(|(_, c)| c.clone())
-                .unwrap_or_else(|| TestConfig { rpc, ..TestConfig::default() });
+                .unwrap_or_else(|| {
+                    let block_watcher_url = Url::parse(ws_str).expect("hardcoded WS URL is valid");
+                    let flashblocks_ws_url =
+                        Url::parse(fb_str).expect("hardcoded FB URL is valid");
+                    TestConfig { rpc, block_watcher_url, flashblocks_ws_url, ..TestConfig::default() }
+                });
             configs.push((name.to_string(), cfg));
         }
 
@@ -641,11 +669,14 @@ impl LoadTestView {
         }
         let Some(cfg) = self.effective_config() else { return String::new() };
         match field {
+            "rpc" => cfg.rpc.to_string(),
             "duration" => cfg.duration.clone().unwrap_or_else(|| "∞".into()),
             "sender_count" => cfg.sender_count.to_string(),
             "in_flight_per_sender" => cfg.in_flight_per_sender.to_string(),
             "target_gps" => cfg.target_gps.map_or_else(|| "default".into(), |v| v.to_string()),
-            "funding_amount" => cfg.funding_amount.clone(),
+            "funding_amount" => format_wei_as_eth(&cfg.funding_amount),
+            "block_watcher_url" => cfg.block_watcher_url.to_string(),
+            "flashblocks_ws_url" => cfg.flashblocks_ws_url.to_string(),
             _ => String::new(),
         }
     }
@@ -662,6 +693,11 @@ impl LoadTestView {
         }
         let Some(cfg) = self.effective_config_mut() else { return };
         match field {
+            "rpc" => {
+                if let Ok(url) = Url::parse(value) {
+                    cfg.rpc = url;
+                }
+            }
             "duration" => {
                 if value == "∞" || value.is_empty() {
                     cfg.duration = None;
@@ -689,7 +725,19 @@ impl LoadTestView {
                 }
             }
             "funding_amount" => {
-                cfg.funding_amount = value.to_string();
+                if let Some(wei) = parse_eth_to_wei(value) {
+                    cfg.funding_amount = wei.to_string();
+                }
+            }
+            "block_watcher_url" => {
+                if let Ok(url) = Url::parse(value) {
+                    cfg.block_watcher_url = url;
+                }
+            }
+            "flashblocks_ws_url" => {
+                if let Ok(url) = Url::parse(value) {
+                    cfg.flashblocks_ws_url = url;
+                }
             }
             _ => {}
         }
@@ -937,31 +985,25 @@ impl View for LoadTestView {
         }
 
         match key.code {
-            // Network selection — only while idle.
+            // Network selection — only while not running.
             KeyCode::Left | KeyCode::Char('h')
-                if matches!(
-                    self.state,
-                    RunState::Idle | RunState::Complete { .. } | RunState::Error(_)
-                ) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 let n = self.configs.len();
                 self.selected = (self.selected + n - 1) % n;
             }
             KeyCode::Right | KeyCode::Char('l')
-                if matches!(
-                    self.state,
-                    RunState::Idle | RunState::Complete { .. } | RunState::Error(_)
-                ) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 self.selected = (self.selected + 1) % self.configs.len();
             }
 
             // Begin single run.
             KeyCode::Char('b')
-                if matches!(
-                    self.state,
-                    RunState::Idle | RunState::Complete { .. } | RunState::Error(_)
-                ) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 self.continuous = false;
                 self.state = RunState::Idle;
@@ -970,10 +1012,8 @@ impl View for LoadTestView {
 
             // Begin continuous run.
             KeyCode::Char('c')
-                if matches!(
-                    self.state,
-                    RunState::Idle | RunState::Complete { .. } | RunState::Error(_)
-                ) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 self.continuous = true;
                 self.state = RunState::Idle;
@@ -989,7 +1029,7 @@ impl View for LoadTestView {
 
             // Open strategy multiselect modal.
             KeyCode::Char('t')
-                if matches!(self.state, RunState::Idle | RunState::Complete { .. })
+                if !matches!(self.state, RunState::Running { .. })
                     && !self.configs.is_empty() =>
             {
                 let txs =
@@ -999,7 +1039,7 @@ impl View for LoadTestView {
 
             // Open edit modal.
             KeyCode::Char('e')
-                if matches!(self.state, RunState::Idle | RunState::Complete { .. })
+                if !matches!(self.state, RunState::Running { .. })
                     && !self.configs.is_empty() =>
             {
                 self.edit = Some(EditModal::default());
@@ -1089,12 +1129,23 @@ impl LoadTestView {
 
         let mut lines: Vec<Line<'_>> = Vec::new();
 
-        // RPC endpoint (truncated).
-        let rpc = cfg.rpc.to_string();
-        let rpc_display = if rpc.len() > 40 { format!("{}…", &rpc[..39]) } else { rpc };
+        let truncate = |s: String| -> String {
+            if s.len() > 40 { format!("{}…", &s[..39]) } else { s }
+        };
+
         lines.push(Line::from(vec![
             Span::styled("  RPC           ", label_style),
-            Span::styled(rpc_display, value_style),
+            Span::styled(truncate(cfg.rpc.to_string()), value_style),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("  Block Watch   ", label_style),
+            Span::styled(truncate(cfg.block_watcher_url.to_string()), dim_style),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("  Flashblocks   ", label_style),
+            Span::styled(truncate(cfg.flashblocks_ws_url.to_string()), dim_style),
         ]));
 
         lines.push(Line::from(""));
@@ -1875,6 +1926,15 @@ fn format_wei_as_eth(wei_str: &str) -> String {
             if eth >= 1.0 { format!("{eth:.4} ETH") } else { format!("{eth:.6} ETH") }
         },
     )
+}
+
+fn parse_eth_to_wei(input: &str) -> Option<u128> {
+    let s = input.trim().trim_end_matches("ETH").trim_end_matches("eth").trim();
+    let eth: f64 = s.parse().ok()?;
+    if eth < 0.0 {
+        return None;
+    }
+    Some((eth * 1e18) as u128)
 }
 
 fn format_tx_type(tx_type: &TxTypeConfig) -> String {

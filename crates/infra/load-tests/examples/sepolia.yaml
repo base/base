@@ -2,16 +2,12 @@
 #
 # Requires FUNDER_KEY environment variable with a funded private key
 
-rpc: https://sepolia.base.org
+rpc: https://base-sepolia.cbhq.net
 
-# Block latency is tracked via block timestamps (no WebSocket required).
-# For more precise timing via WebSocket subscription, configure rpc_ws_url with a
-# provider that supports WebSocket (the public sepolia.base.org does not).
-#
-# rpc_ws_url: "wss://your-provider.example/ws"
+block_watcher_url: "https://base-sepolia.cbhq.net"
 flashblocks_ws_url: "wss://sepolia.flashblocks.base.org/ws"
 
-sender_count: 10
+sender_count: 20
 target_gps: 2100000
 duration: "30s"
 seed: 12345

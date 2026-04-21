@@ -1,4 +1,7 @@
-//! Block subscription and first-seen timestamp tracking via `newHeads` WebSocket.
+//! Block subscription and first-seen timestamp tracking.
+//!
+//! Supports both WebSocket (`ws://` / `wss://`) via `newHeads` subscription
+//! and HTTP (`http://` / `https://`) via polling `eth_blockNumber`.
 
 use std::{
     collections::BTreeMap,
@@ -19,10 +22,12 @@ pub type BlockFirstSeen = Arc<RwLock<BTreeMap<u64, Instant>>>;
 /// Maximum blocks retained (~17 minutes at 1 block/s).
 const MAX_BLOCK_CACHE_SIZE: usize = 1000;
 
-/// Subscribes to newHeads and tracks when each block is first seen.
+const HTTP_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Tracks when each block is first seen, via WebSocket subscription or HTTP polling.
 #[derive(Debug)]
 pub struct BlockWatcher {
-    ws_url: Url,
+    url: Url,
     block_first_seen: BlockFirstSeen,
     cancel_token: CancellationToken,
 }
@@ -30,11 +35,11 @@ pub struct BlockWatcher {
 impl BlockWatcher {
     /// Creates a new [`BlockWatcher`].
     pub const fn new(
-        ws_url: Url,
+        url: Url,
         block_first_seen: BlockFirstSeen,
         cancel_token: CancellationToken,
     ) -> Self {
-        Self { ws_url, block_first_seen, cancel_token }
+        Self { url, block_first_seen, cancel_token }
     }
 
     /// Spawns the watcher as a background task.
@@ -44,14 +49,26 @@ impl BlockWatcher {
         })
     }
 
+    fn is_http(&self) -> bool {
+        matches!(self.url.scheme(), "http" | "https")
+    }
+
     async fn run(&self) {
-        info!(url = %self.ws_url, "starting block watcher");
+        if self.is_http() {
+            self.run_http_poll().await;
+        } else {
+            self.run_ws_subscribe().await;
+        }
+    }
+
+    async fn run_ws_subscribe(&self) {
+        info!(url = %self.url, "starting block watcher (websocket)");
 
         let mut backoff = Duration::from_millis(100);
         let max_backoff = Duration::from_secs(5);
 
         while !self.cancel_token.is_cancelled() {
-            let ws = WsConnect::new(self.ws_url.as_str());
+            let ws = WsConnect::new(self.url.as_str());
             match ProviderBuilder::new().connect_ws(ws).await {
                 Ok(provider) => {
                     info!("block watcher websocket connected");
@@ -71,18 +88,7 @@ impl BlockWatcher {
                                     header = stream.next() => {
                                         match header {
                                             Some(header) => {
-                                                let now = Instant::now();
-                                                let block_number = header.number;
-                                                trace!(block = block_number, "received new block");
-
-                                                let mut blocks = self.block_first_seen.write();
-                                                blocks.entry(block_number).or_insert(now);
-
-                                                while blocks.len() > MAX_BLOCK_CACHE_SIZE {
-                                                    if blocks.pop_first().is_none() {
-                                                        break;
-                                                    }
-                                                }
+                                                self.record_block(header.number);
                                             }
                                             None => {
                                                 info!("block watcher subscription stream ended");
@@ -117,5 +123,50 @@ impl BlockWatcher {
         }
 
         debug!("block watcher stopped");
+    }
+
+    async fn run_http_poll(&self) {
+        info!(url = %self.url, "starting block watcher (http polling)");
+
+        let provider = ProviderBuilder::new().connect_http(self.url.clone());
+        let mut last_block: Option<u64> = None;
+
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = self.cancel_token.cancelled() => {
+                    debug!("block watcher stopping");
+                    return;
+                }
+                _ = tokio::time::sleep(HTTP_POLL_INTERVAL) => {}
+            }
+
+            match provider.get_block_number().await {
+                Ok(block_number) => {
+                    if last_block.is_none_or(|last| block_number > last) {
+                        self.record_block(block_number);
+                        last_block = Some(block_number);
+                    }
+                }
+                Err(e) => {
+                    debug!(error = %e, "failed to poll block number");
+                }
+            }
+        }
+    }
+
+    fn record_block(&self, block_number: u64) {
+        let now = Instant::now();
+        trace!(block = block_number, "received new block");
+
+        let mut blocks = self.block_first_seen.write();
+        blocks.entry(block_number).or_insert(now);
+
+        while blocks.len() > MAX_BLOCK_CACHE_SIZE {
+            if blocks.pop_first().is_none() {
+                break;
+            }
+        }
     }
 }

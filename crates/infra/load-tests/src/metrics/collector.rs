@@ -45,6 +45,8 @@ impl MetricsCollector {
         debug!(tx_hash = %metrics.tx_hash, block_latency_ms = ?metrics.block_latency.map(|d| d.as_millis()), "tx confirmed");
         if let Some(latency) = metrics.block_latency {
             self.rolling.push(metrics.gas_used, latency);
+        } else {
+            self.rolling.push_gas(metrics.gas_used);
         }
         if let Some(flashblocks_latency) = metrics.flashblocks_latency {
             self.flashblocks_rolling.push_latency(flashblocks_latency);

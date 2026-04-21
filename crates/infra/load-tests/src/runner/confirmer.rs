@@ -55,7 +55,7 @@ struct DeferredBlockLatency {
 }
 
 /// Max wait for a block to appear before sending metrics without block latency.
-const BLOCK_LATENCY_DEFER_TIMEOUT: Duration = Duration::from_secs(5);
+const BLOCK_LATENCY_DEFER_TIMEOUT: Duration = Duration::from_secs(1);
 
 impl std::fmt::Debug for Confirmer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
