@@ -440,10 +440,7 @@ mod tests {
         )
         .await;
         let enrs = discovery.disc.table_entries_enr();
-        assert!(
-            enrs.len() >= 2,
-            "Discovery table should have at least 2 ENRs"
-        );
+        assert!(enrs.len() >= 2, "Discovery table should have at least 2 ENRs");
 
         // Filter out testnet ENRs that are not valid.
         let testnet = BootNodes::testnet();
