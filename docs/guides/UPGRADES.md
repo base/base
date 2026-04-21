@@ -359,7 +359,7 @@ pub fn spec_id(&self, timestamp: u64) -> base_revm::OpSpecId {
 
 ### 12. Update the reth `ChainHardforks` builder
 
-**File:** [`crates/execution/upgrades/src/chain.rs`](https://github.com/base/base/blob/main/crates/execution/upgrades/src/chain.rs)
+**File:** [`crates/common/chains/src/chain.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/chain.rs)
 
 Append the new upgrade in `to_chain_hardforks()`. If it pairs with a new Ethereum upgrade (like Canyon→Shanghai), push both; if not, push only the Base upgrade entry:
 
