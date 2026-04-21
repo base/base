@@ -123,30 +123,7 @@ impl BundleEvent {
         }
     }
 
-    /// Returns the full S3 key for this event: `bundles/{bundle_hash}/{event_key}`.
-    pub fn s3_event_key(&self) -> String {
-        match self {
-            Self::Received { bundle, .. } => {
-                let hash = bundle.bundle_hash();
-                format!("bundles/{hash}/received-{hash}")
-            }
-            Self::BlockIncluded { bundle_id, block_hash, .. } => {
-                format!("bundles/{bundle_id}/block-included-{bundle_id}-{block_hash}")
-            }
-            _ => {
-                let id = self.bundle_id();
-                let event_type = match self {
-                    Self::Cancelled { .. } => "cancelled",
-                    Self::BuilderIncluded { .. } => "builder-included",
-                    Self::Dropped { .. } => "dropped",
-                    _ => unreachable!(),
-                };
-                format!("bundles/{id}/{event_type}-{id}")
-            }
-        }
-    }
-
-    /// Generates the Kafka message key for this event.
+    /// Generates the event key used as both the Kafka message key and S3 object name.
     ///
     /// For `Received` events, derived from `bundle_hash` so that the same
     /// bundle on different ingress pods produces the same key.
@@ -170,5 +147,14 @@ impl BundleEvent {
                 format!("{event_type}-{id}")
             }
         }
+    }
+
+    /// Returns the full S3 key for this event: `bundles/{prefix}/{event_key}`.
+    pub fn s3_event_key(&self) -> String {
+        let prefix = match self {
+            Self::Received { bundle, .. } => format!("{}", bundle.bundle_hash()),
+            _ => format!("{}", self.bundle_id()),
+        };
+        format!("bundles/{prefix}/{}", self.generate_event_key())
     }
 }

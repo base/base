@@ -1,12 +1,15 @@
 use std::{fmt, fmt::Debug, time::Instant};
 
-use alloy_primitives::{B256, TxHash};
+use alloy_primitives::TxHash;
 use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_s3::{
     Client as S3Client,
     error::SdkError,
-    operation::{get_object::GetObjectError, put_object::PutObjectError},
+    operation::{
+        get_object::GetObjectError, list_objects_v2::ListObjectsV2Output,
+        put_object::PutObjectError,
+    },
     primitives::ByteStream,
 };
 use base_bundles::{AcceptedBundle, BundleExtensions};
@@ -38,8 +41,11 @@ impl fmt::Display for S3Key {
 /// Metadata for a transaction, tracking which bundles it belongs to.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TransactionMetadata {
-    /// Content-derived bundle hashes that contain this transaction.
-    pub bundle_ids: Vec<B256>,
+    /// Bundle identifiers that contain this transaction.
+    ///
+    /// Stored as strings for backwards compatibility — old S3 objects contain
+    /// UUIDs, new objects contain `B256` hex hashes.
+    pub bundle_ids: Vec<String>,
 }
 
 /// History event for a bundle.
@@ -154,15 +160,15 @@ fn to_history_event(event: &Event) -> BundleHistoryEvent {
 
 fn update_transaction_metadata_transform(
     transaction_metadata: TransactionMetadata,
-    bundle_hash: B256,
+    bundle_key: String,
 ) -> Option<TransactionMetadata> {
     let mut bundle_ids = transaction_metadata.bundle_ids;
 
-    if bundle_ids.contains(&bundle_hash) {
+    if bundle_ids.contains(&bundle_key) {
         return None;
     }
 
-    bundle_ids.push(bundle_hash);
+    bundle_ids.push(bundle_key);
     Some(TransactionMetadata { bundle_ids })
 }
 
@@ -228,6 +234,7 @@ impl S3EventReaderWriter {
                 Ok(())
             }
             Err(e) => {
+                // TODO: retry with exponential backoff
                 Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
                 Err(anyhow::anyhow!("failed to write event to S3: {e}"))
             }
@@ -237,13 +244,13 @@ impl S3EventReaderWriter {
     async fn update_transaction_by_hash_index(
         &self,
         tx_id: &TransactionId,
-        bundle_hash: B256,
+        bundle_key: String,
     ) -> Result<()> {
         let s3_key = S3Key::TransactionByHash(tx_id.hash);
         let key = s3_key.to_string();
 
         self.idempotent_write::<TransactionMetadata, _>(&key, |current_metadata| {
-            update_transaction_metadata_transform(current_metadata, bundle_hash)
+            update_transaction_metadata_transform(current_metadata, bundle_key.clone())
         })
         .await
     }
@@ -345,10 +352,7 @@ impl S3EventReaderWriter {
                 }
                 None => {
                     Metrics::s3_writes_skipped().increment(1);
-                    info!(
-                        s3_key = %key,
-                        "Transform function returned None, no write required"
-                    );
+                    info!(s3_key = %key, "transform returned None, no write required");
                     return Ok(());
                 }
             }
@@ -392,8 +396,9 @@ impl S3EventReaderWriter {
 #[async_trait]
 impl EventWriter for S3EventReaderWriter {
     async fn archive_event(&self, event: Event) -> Result<()> {
-        let bundle_hash = match &event.event {
-            BundleEvent::Received { bundle, .. } => bundle.bundle_hash(),
+        let bundle_key = match &event.event {
+            BundleEvent::Received { bundle, .. } => format!("{}", bundle.bundle_hash()),
+            // TODO: support other event types using bundle hash
             _ => anyhow::bail!("archive_event only supports Received events"),
         };
         let transaction_ids = event.event.transaction_ids();
@@ -402,13 +407,13 @@ impl EventWriter for S3EventReaderWriter {
         let event_future = self.write_event(&event);
 
         let tx_start = Instant::now();
-        let tx_futures: Vec<_> =
-            transaction_ids
-                .into_iter()
-                .map(|tx_id| async move {
-                    self.update_transaction_by_hash_index(&tx_id, bundle_hash).await
-                })
-                .collect();
+        let tx_futures: Vec<_> = transaction_ids
+            .into_iter()
+            .map(|tx_id| {
+                let bk = bundle_key.clone();
+                async move { self.update_transaction_by_hash_index(&tx_id, bk).await }
+            })
+            .collect();
 
         tokio::try_join!(event_future, future::try_join_all(tx_futures))?;
 
@@ -422,8 +427,6 @@ impl EventWriter for S3EventReaderWriter {
 #[async_trait]
 impl BundleEventS3Reader for S3EventReaderWriter {
     async fn get_bundle_history(&self, bundle_key: &str) -> Result<Option<BundleHistory>> {
-        use aws_sdk_s3::operation::list_objects_v2::ListObjectsV2Output;
-
         let prefix = format!("bundles/{bundle_key}/");
         let list_output: ListObjectsV2Output =
             self.s3_client.list_objects_v2().bucket(&self.bucket).prefix(&prefix).send().await?;
@@ -459,7 +462,7 @@ impl BundleEventS3Reader for S3EventReaderWriter {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, TxHash};
+    use alloy_primitives::TxHash;
     use base_bundles::{BundleExtensions, test_utils::create_bundle_from_txn_data};
     use uuid::Uuid;
 
@@ -531,35 +534,35 @@ mod tests {
     fn test_update_transaction_metadata_transform_adds_new_bundle() {
         let metadata = TransactionMetadata { bundle_ids: vec![] };
         let bundle = create_bundle_from_txn_data();
-        let hash = bundle.bundle_hash();
+        let key = format!("{}", bundle.bundle_hash());
 
-        let result = update_transaction_metadata_transform(metadata, hash);
+        let result = update_transaction_metadata_transform(metadata, key.clone());
 
         assert!(result.is_some());
         let metadata = result.unwrap();
         assert_eq!(metadata.bundle_ids.len(), 1);
-        assert_eq!(metadata.bundle_ids[0], hash);
+        assert_eq!(metadata.bundle_ids[0], key);
     }
 
     #[test]
     fn test_update_transaction_metadata_transform_skips_existing_bundle() {
         let bundle = create_bundle_from_txn_data();
-        let hash = bundle.bundle_hash();
-        let metadata = TransactionMetadata { bundle_ids: vec![hash] };
+        let key = format!("{}", bundle.bundle_hash());
+        let metadata = TransactionMetadata { bundle_ids: vec![key.clone()] };
 
-        let result = update_transaction_metadata_transform(metadata, hash);
+        let result = update_transaction_metadata_transform(metadata, key);
 
         assert!(result.is_none());
     }
 
     #[test]
     fn test_update_transaction_metadata_transform_adds_to_existing_bundles() {
-        let existing = B256::with_last_byte(1);
-        let new = B256::with_last_byte(2);
+        let existing = "0xaaaa".to_string();
+        let new = "0xbbbb".to_string();
 
-        let metadata = TransactionMetadata { bundle_ids: vec![existing] };
+        let metadata = TransactionMetadata { bundle_ids: vec![existing.clone()] };
 
-        let result = update_transaction_metadata_transform(metadata, new);
+        let result = update_transaction_metadata_transform(metadata, new.clone());
 
         assert!(result.is_some());
         let metadata = result.unwrap();

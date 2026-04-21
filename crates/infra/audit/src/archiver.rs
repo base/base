@@ -10,7 +10,7 @@ use tokio::{
     sync::{Mutex, mpsc},
     time::sleep,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     metrics::Metrics,
@@ -94,7 +94,7 @@ where
                                 continue;
                             }
                             if let Err(e) = writer.archive_event(event).await {
-                                error!(worker_id, error = %e, "Failed to write event");
+                                warn!(worker_id, error = %e, "Failed to write event");
                             } else {
                                 Metrics::archive_event_duration()
                                     .record(archive_start.elapsed().as_secs_f64());

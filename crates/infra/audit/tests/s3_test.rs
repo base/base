@@ -44,10 +44,8 @@ async fn system_test_event_write_and_read() -> anyhow::Result<()> {
     assert!(metadata.is_some(), "transaction metadata should exist");
 
     if let Some(metadata) = metadata {
-        assert!(
-            metadata.bundle_ids.contains(&bundle_hash),
-            "metadata should contain the bundle hash"
-        );
+        let hash_str = format!("{bundle_hash}");
+        assert!(metadata.bundle_ids.contains(&hash_str), "metadata should contain the bundle hash");
     }
 
     Ok(())
