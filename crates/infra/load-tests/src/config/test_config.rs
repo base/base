@@ -96,12 +96,6 @@ pub struct TestConfig {
     /// Maximum in-flight transactions per sender.
     pub in_flight_per_sender: u32,
 
-    /// Number of transactions to batch together before submitting to the RPC.
-    pub batch_size: u32,
-
-    /// Maximum time to wait for a batch to fill before flushing (e.g., "50ms", "200ms").
-    pub batch_timeout: Option<String>,
-
     /// Test duration (e.g., "30s", "5m", "1h").
     pub duration: Option<String>,
 
@@ -122,11 +116,11 @@ pub struct TestConfig {
     pub looper_contract: Option<String>,
 
     /// JSON-RPC endpoint for block tracking (WebSocket subscription or HTTP polling).
-    #[serde(default, alias = "rpc_ws_url", alias = "ws_url")]
-    pub block_watcher_url: Option<Url>,
+    #[serde(default = "default_block_watcher_url", alias = "rpc_ws_url", alias = "ws_url")]
+    pub block_watcher_url: Url,
     /// WebSocket URL for flashblocks subscription.
-    #[serde(default, alias = "flashblocks_url")]
-    pub flashblocks_ws_url: Option<Url>,
+    #[serde(default = "default_flashblocks_ws_url", alias = "flashblocks_url")]
+    pub flashblocks_ws_url: Url,
 }
 
 impl Default for TestConfig {
@@ -135,19 +129,17 @@ impl Default for TestConfig {
             rpc: Url::parse("http://localhost:8545").expect("valid URL"),
             mnemonic: None,
             funding_amount: "10000000000000000".to_string(),
-            sender_count: 50,
+            sender_count: 10,
             sender_offset: 0,
-            in_flight_per_sender: 64,
-            batch_size: 20,
-            batch_timeout: Some("100ms".to_string()),
+            in_flight_per_sender: 16,
             duration: Some("30s".to_string()),
-            target_gps: Some(10_000_000),
+            target_gps: Some(2_100_000),
             seed: rand::rng().random(),
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,
-            block_watcher_url: None,
-            flashblocks_ws_url: None,
+            block_watcher_url: default_block_watcher_url(),
+            flashblocks_ws_url: default_flashblocks_ws_url(),
         }
     }
 }
@@ -249,6 +241,14 @@ const fn default_iterations() -> u32 {
     1
 }
 
+fn default_block_watcher_url() -> Url {
+    Url::parse("ws://localhost:8546").expect("valid default block_watcher_url")
+}
+
+fn default_flashblocks_ws_url() -> Url {
+    Url::parse("ws://localhost:7111").expect("valid default flashblocks_ws_url")
+}
+
 impl TestConfig {
     /// Loads configuration from a YAML file.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -273,9 +273,7 @@ impl TestConfig {
             return Err(BaselineError::Config("sender_count must be > 0".into()));
         }
 
-        if let Some(url) = &self.flashblocks_ws_url {
-            Self::validate_ws_url(url, "flashblocks_ws_url")?;
-        }
+        Self::validate_ws_url(&self.flashblocks_ws_url, "flashblocks_ws_url")?;
 
         Ok(())
     }
@@ -359,16 +357,6 @@ impl TestConfig {
             self.transactions.iter().map(|t| self.convert_tx_type(t)).collect::<Result<Vec<_>>>()?
         };
 
-        let batch_timeout = self
-            .batch_timeout
-            .as_ref()
-            .map(|d| {
-                humantime::parse_duration(d.trim())
-                    .map_err(|e| BaselineError::Config(format!("invalid batch_timeout '{d}': {e}")))
-            })
-            .transpose()?
-            .unwrap_or(Duration::from_millis(100));
-
         Ok(crate::runner::LoadConfig {
             rpc_http_url,
             chain_id: resolved_chain_id,
@@ -380,8 +368,8 @@ impl TestConfig {
             target_gps: self.target_gps.unwrap_or(2_100_000),
             duration,
             max_in_flight_per_sender: self.in_flight_per_sender as u64,
-            batch_size: self.batch_size.max(1) as usize,
-            batch_timeout,
+            batch_size: 5,
+            batch_timeout: Duration::from_millis(50),
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             block_watcher_url: self.block_watcher_url.clone(),
             flashblocks_ws_url: self.flashblocks_ws_url.clone(),
@@ -442,7 +430,7 @@ rpc: http://localhost:8545
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.rpc.host_str(), Some("localhost"));
-        assert_eq!(config.sender_count, 50);
+        assert_eq!(config.sender_count, 10);
         assert!(config.mnemonic.is_none());
     }
 
@@ -594,7 +582,7 @@ rpc: http://localhost:8545
 block_watcher_url: http://localhost:8546
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "http");
+        assert_eq!(config.block_watcher_url.scheme(), "http");
     }
 
     #[test]
@@ -605,8 +593,8 @@ block_watcher_url: wss://localhost:8546
 flashblocks_ws_url: wss://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "wss");
-        assert_eq!(config.flashblocks_ws_url.as_ref().unwrap().scheme(), "wss");
+        assert_eq!(config.block_watcher_url.scheme(), "wss");
+        assert_eq!(config.flashblocks_ws_url.scheme(), "wss");
     }
 
     #[test]
@@ -616,16 +604,16 @@ rpc: http://localhost:8545
 rpc_ws_url: ws://localhost:8546
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "ws");
+        assert_eq!(config.block_watcher_url.scheme(), "ws");
     }
 
     #[test]
-    fn omitted_urls_are_none() {
+    fn omitted_urls_use_defaults() {
         let yaml = r#"
 rpc: http://localhost:8545
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert!(config.block_watcher_url.is_none());
-        assert!(config.flashblocks_ws_url.is_none());
+        assert_eq!(config.block_watcher_url.as_str(), "ws://localhost:8546/");
+        assert_eq!(config.flashblocks_ws_url.as_str(), "ws://localhost:7111/");
     }
 }

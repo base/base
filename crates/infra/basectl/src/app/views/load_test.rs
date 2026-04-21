@@ -408,7 +408,7 @@ impl LoadTestView {
             (
                 "sepolia",
                 "https://sepolia.base.org",
-                "https://sepolia.base.org",
+                "wss://sepolia.base.org",
                 "wss://sepolia.flashblocks.base.org/ws",
             ),
             (
@@ -431,10 +431,8 @@ impl LoadTestView {
                 let mut cfg = TestConfig { rpc: active_rpc, ..TestConfig::default() };
                 if let Some(&(_, _, ws, fb)) = known.iter().find(|&&(n, _, _, _)| n == active_name)
                 {
-                    cfg.block_watcher_url =
-                        Some(Url::parse(ws).expect("hardcoded WS URL is valid"));
-                    cfg.flashblocks_ws_url =
-                        Some(Url::parse(fb).expect("hardcoded FB URL is valid"));
+                    cfg.block_watcher_url = Url::parse(ws).expect("hardcoded WS URL is valid");
+                    cfg.flashblocks_ws_url = Url::parse(fb).expect("hardcoded FB URL is valid");
                 }
                 cfg
             });
@@ -446,21 +444,16 @@ impl LoadTestView {
                 continue;
             }
             let rpc = Url::parse(rpc_str).expect("hardcoded URL is valid");
-            let cfg =
-                dir_configs.iter().find(|(n, _)| n == name).map(|(_, c)| c.clone()).unwrap_or_else(
-                    || {
-                        let block_watcher_url =
-                            Some(Url::parse(ws_str).expect("hardcoded WS URL is valid"));
-                        let flashblocks_ws_url =
-                            Some(Url::parse(fb_str).expect("hardcoded FB URL is valid"));
-                        TestConfig {
-                            rpc,
-                            block_watcher_url,
-                            flashblocks_ws_url,
-                            ..TestConfig::default()
-                        }
-                    },
-                );
+            let cfg = dir_configs
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, c)| c.clone())
+                .unwrap_or_else(|| {
+                    let block_watcher_url = Url::parse(ws_str).expect("hardcoded WS URL is valid");
+                    let flashblocks_ws_url =
+                        Url::parse(fb_str).expect("hardcoded FB URL is valid");
+                    TestConfig { rpc, block_watcher_url, flashblocks_ws_url, ..TestConfig::default() }
+                });
             configs.push((name.to_string(), cfg));
         }
 
@@ -682,12 +675,8 @@ impl LoadTestView {
             "in_flight_per_sender" => cfg.in_flight_per_sender.to_string(),
             "target_gps" => cfg.target_gps.map_or_else(|| "default".into(), |v| v.to_string()),
             "funding_amount" => format_wei_as_eth(&cfg.funding_amount),
-            "block_watcher_url" => {
-                cfg.block_watcher_url.as_ref().map_or_else(String::new, |u| u.to_string())
-            }
-            "flashblocks_ws_url" => {
-                cfg.flashblocks_ws_url.as_ref().map_or_else(String::new, |u| u.to_string())
-            }
+            "block_watcher_url" => cfg.block_watcher_url.to_string(),
+            "flashblocks_ws_url" => cfg.flashblocks_ws_url.to_string(),
             _ => String::new(),
         }
     }
@@ -741,17 +730,13 @@ impl LoadTestView {
                 }
             }
             "block_watcher_url" => {
-                if value.is_empty() {
-                    cfg.block_watcher_url = None;
-                } else if let Ok(url) = Url::parse(value) {
-                    cfg.block_watcher_url = Some(url);
+                if let Ok(url) = Url::parse(value) {
+                    cfg.block_watcher_url = url;
                 }
             }
             "flashblocks_ws_url" => {
-                if value.is_empty() {
-                    cfg.flashblocks_ws_url = None;
-                } else if let Ok(url) = Url::parse(value) {
-                    cfg.flashblocks_ws_url = Some(url);
+                if let Ok(url) = Url::parse(value) {
+                    cfg.flashblocks_ws_url = url;
                 }
             }
             _ => {}
@@ -1002,20 +987,23 @@ impl View for LoadTestView {
         match key.code {
             // Network selection — only while not running.
             KeyCode::Left | KeyCode::Char('h')
-                if !matches!(self.state, RunState::Running { .. }) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 let n = self.configs.len();
                 self.selected = (self.selected + n - 1) % n;
             }
             KeyCode::Right | KeyCode::Char('l')
-                if !matches!(self.state, RunState::Running { .. }) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 self.selected = (self.selected + 1) % self.configs.len();
             }
 
             // Begin single run.
             KeyCode::Char('b')
-                if !matches!(self.state, RunState::Running { .. }) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 self.continuous = false;
                 self.state = RunState::Idle;
@@ -1024,7 +1012,8 @@ impl View for LoadTestView {
 
             // Begin continuous run.
             KeyCode::Char('c')
-                if !matches!(self.state, RunState::Running { .. }) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 self.continuous = true;
                 self.state = RunState::Idle;
@@ -1040,7 +1029,8 @@ impl View for LoadTestView {
 
             // Open strategy multiselect modal.
             KeyCode::Char('t')
-                if !matches!(self.state, RunState::Running { .. }) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 let txs =
                     self.effective_config().map(|c| c.transactions.clone()).unwrap_or_default();
@@ -1049,7 +1039,8 @@ impl View for LoadTestView {
 
             // Open edit modal.
             KeyCode::Char('e')
-                if !matches!(self.state, RunState::Running { .. }) && !self.configs.is_empty() =>
+                if !matches!(self.state, RunState::Running { .. })
+                    && !self.configs.is_empty() =>
             {
                 self.edit = Some(EditModal::default());
             }
@@ -1138,8 +1129,9 @@ impl LoadTestView {
 
         let mut lines: Vec<Line<'_>> = Vec::new();
 
-        let truncate =
-            |s: String| -> String { if s.len() > 40 { format!("{}…", &s[..39]) } else { s } };
+        let truncate = |s: String| -> String {
+            if s.len() > 40 { format!("{}…", &s[..39]) } else { s }
+        };
 
         lines.push(Line::from(vec![
             Span::styled("  RPC           ", label_style),
@@ -1148,22 +1140,12 @@ impl LoadTestView {
 
         lines.push(Line::from(vec![
             Span::styled("  Block Watch   ", label_style),
-            Span::styled(
-                cfg.block_watcher_url
-                    .as_ref()
-                    .map_or_else(|| "—".into(), |u| truncate(u.to_string())),
-                dim_style,
-            ),
+            Span::styled(truncate(cfg.block_watcher_url.to_string()), dim_style),
         ]));
 
         lines.push(Line::from(vec![
             Span::styled("  Flashblocks   ", label_style),
-            Span::styled(
-                cfg.flashblocks_ws_url
-                    .as_ref()
-                    .map_or_else(|| "—".into(), |u| truncate(u.to_string())),
-                dim_style,
-            ),
+            Span::styled(truncate(cfg.flashblocks_ws_url.to_string()), dim_style),
         ]));
 
         lines.push(Line::from(""));
@@ -1608,27 +1590,25 @@ fn render_complete_status(
     lines.push(Line::from(""));
 
     lines.push(Line::from(vec![
-        Span::styled("    Block Latency  ", label),
-        Span::styled("p50 ", label),
+        Span::styled("    Latency p50  ", label),
         Span::styled(fmt_dur(summary.block_latency.p50), value),
-        Span::styled("  p95 ", label),
+        Span::styled("  p95  ", label),
         Span::styled(fmt_dur(summary.block_latency.p95), value),
-        Span::styled("  p99 ", label),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Latency p99  ", label),
         Span::styled(fmt_dur(summary.block_latency.p99), value),
-        Span::styled("  max ", label),
+        Span::styled("  max  ", label),
         Span::styled(fmt_dur(summary.block_latency.max), value),
     ]));
     if summary.flashblocks_latency.count > 0 {
         lines.push(Line::from(vec![
-            Span::styled("    FB Latency     ", label),
-            Span::styled("p50 ", label),
+            Span::styled("    FB p50     ", label),
             Span::styled(fmt_dur(summary.flashblocks_latency.p50), value),
-            Span::styled("  p95 ", label),
-            Span::styled(fmt_dur(summary.flashblocks_latency.p95), value),
-            Span::styled("  p99 ", label),
+            Span::styled("  p90  ", label),
+            Span::styled(fmt_dur(summary.flashblocks_latency.p90), value),
+            Span::styled("  p99  ", label),
             Span::styled(fmt_dur(summary.flashblocks_latency.p99), value),
-            Span::styled("  max ", label),
-            Span::styled(fmt_dur(summary.flashblocks_latency.max), value),
         ]));
     }
     lines.push(Line::from(""));
@@ -1950,8 +1930,11 @@ fn format_wei_as_eth(wei_str: &str) -> String {
 
 fn parse_eth_to_wei(input: &str) -> Option<u128> {
     let s = input.trim().trim_end_matches("ETH").trim_end_matches("eth").trim();
-    let wei = alloy_primitives::utils::parse_ether(s).ok()?;
-    wei.try_into().ok()
+    let eth: f64 = s.parse().ok()?;
+    if eth < 0.0 {
+        return None;
+    }
+    Some((eth * 1e18) as u128)
 }
 
 fn format_tx_type(tx_type: &TxTypeConfig) -> String {
