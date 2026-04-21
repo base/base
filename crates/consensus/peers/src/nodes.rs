@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn test_validate_bootnode_lens() {
         assert_eq!(ChainConfig::mainnet().bootnodes.len(), 10);
-        assert_eq!(ChainConfig::sepolia().bootnodes.len(), 2);
+        assert_eq!(ChainConfig::sepolia().bootnodes.len(), 4);
     }
 
     #[test]
