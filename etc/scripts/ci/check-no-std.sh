@@ -15,7 +15,6 @@ no_std_packages=(
   # consensus protocol crates
   base-metrics
   base-consensus-genesis
-  base-consensus-upgrades
   base-consensus-registry
   base-consensus-derive
   base-protocol
