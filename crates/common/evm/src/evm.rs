@@ -37,7 +37,7 @@ type InnerEvm<DB, I, P> = RevmEvm<
     EthFrame<EthInterpreter>,
 >;
 
-/// The Base EVM, wrapping [`RevmEvm`] with an [`BaseContext`] and an optional [`Inspector`].
+/// The Base EVM, wrapping [`RevmEvm`] with a [`BaseContext`] and an optional [`Inspector`].
 ///
 /// Parameterized over a database [`DB`], inspector [`I`], and precompile set [`P`]
 /// (defaulting to [`BasePrecompiles`]). All Base-specific context configuration —
@@ -58,8 +58,8 @@ pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
 impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     /// Constructs a [`BaseEvm`] from a pre-built [`RevmEvm`] and an inspect flag.
     ///
-    /// Prefer [`crate::Builder::build_op`] or [`crate::Builder::build_with_inspector`]
-    /// to construct from an [`BaseContext`] directly.
+    /// Prefer [`crate::Builder::build_base`] or [`crate::Builder::build_with_inspector`]
+    /// to construct from a [`BaseContext`] directly.
     pub const fn new(inner: InnerEvm<DB, I, P>, inspect: bool) -> Self {
         Self { inner, inspect }
     }

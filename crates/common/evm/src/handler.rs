@@ -411,7 +411,7 @@ mod tests {
         instruction_result: InstructionResult,
         gas: Gas,
     ) -> Gas {
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
 
         let mut exec_result = FrameResult::Call(CallOutcome::new(
             InterpreterResult { result: instruction_result, output: Bytes::new(), gas },
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_revert_gas() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK));
 
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_consume_gas() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::REGOLITH));
 
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_consume_gas_with_refund() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(
                 BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100))
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_consume_gas_deposit_tx() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(
                 BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100))
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_consume_gas_sys_deposit_tx() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(
                 BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100))
@@ -517,7 +517,7 @@ mod tests {
             AccountInfo { balance: U256::from(1000), ..Default::default() },
         );
 
-        let mut ctx = Context::op()
+        let mut ctx = Context::base()
             .with_db(db)
             .with_chain(L1BlockInfo {
                 l1_base_fee: U256::from(1_000),
@@ -531,7 +531,7 @@ mod tests {
             tx.deposit.mint = Some(10);
         });
 
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
 
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -553,7 +553,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_db(db)
             .with_chain(L1BlockInfo {
                 l1_base_fee: U256::from(1_000),
@@ -572,7 +572,7 @@ mod tests {
                     .unwrap(),
             );
 
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
 
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
@@ -615,7 +615,7 @@ mod tests {
             AccountInfo { balance: U256::from(1000), ..Default::default() },
         );
 
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_db(db)
             .with_chain(L1BlockInfo {
                 l2_block: Some(BLOCK_NUM + U256::from(1)), // ahead by one block
@@ -624,7 +624,7 @@ mod tests {
             .with_block(BlockEnv { number: BLOCK_NUM, ..Default::default() })
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::ISTHMUS));
 
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
 
         assert_ne!(evm.ctx().chain().l2_block, Some(BLOCK_NUM));
 
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_azul_tx_gas_limit_cap_rejected() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(
                 BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(16_777_217))
@@ -660,7 +660,7 @@ mod tests {
                     .build_fill(),
             )
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         let result = handler.validate_env(&mut evm);
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn test_azul_tx_gas_limit_at_cap_ok() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(
                 BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(16_777_216))
@@ -677,7 +677,7 @@ mod tests {
                     .build_fill(),
             )
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         let result = handler.validate_env(&mut evm);
@@ -686,7 +686,7 @@ mod tests {
 
     #[test]
     fn test_jovian_no_tx_gas_limit_cap() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(
                 BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(16_777_217))
@@ -694,7 +694,7 @@ mod tests {
                     .build_fill(),
             )
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::JOVIAN));
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         let result = handler.validate_env(&mut evm);
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn test_azul_deposit_skips_gas_limit_cap() {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_tx(
                 BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(16_777_217))
@@ -711,7 +711,7 @@ mod tests {
                     .build_fill(),
             )
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
         let handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         let result = handler.validate_env(&mut evm);
@@ -742,7 +742,7 @@ mod tests {
             AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
         );
 
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_db(db)
             .with_tx(
                 BaseTransaction::builder()
@@ -757,7 +757,7 @@ mod tests {
                 operator_fee_constant: Some(U256::ZERO),
                 ..Default::default()
             });
-        let mut evm = ctx.build_op();
+        let mut evm = ctx.build_base();
 
         let mut handler =
             BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();

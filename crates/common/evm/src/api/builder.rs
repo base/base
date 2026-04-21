@@ -1,4 +1,4 @@
-//! [`Builder`] trait for constructing a [`BaseEvm`] directly from an [`BaseContext`].
+//! [`Builder`] trait for constructing a [`BaseEvm`] directly from a [`BaseContext`].
 use alloy_evm::Database;
 use revm::{
     context::FrameStack,
@@ -8,7 +8,7 @@ use revm::{
 
 use crate::{BaseContext, BaseEvm, BasePrecompiles, OpSpecId};
 
-/// Trait that allows constructing a [`BaseEvm`] from an [`BaseContext`].
+/// Trait that allows constructing a [`BaseEvm`] from a [`BaseContext`].
 ///
 /// Implemented for [`BaseContext<DB>`] of any database. The resulting [`BaseEvm`]
 /// uses [`BasePrecompiles`] for the active [`OpSpecId`]; call
@@ -20,7 +20,7 @@ pub trait Builder: Sized {
     /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
     /// so [`Inspector`][revm::Inspector] callbacks are never invoked via
     /// [`alloy_evm::Evm::transact`].
-    fn build_op(self) -> BaseEvm<Self::Db, ()>;
+    fn build_base(self) -> BaseEvm<Self::Db, ()>;
 
     /// Builds a [`BaseEvm`] with the given inspector. The inspect flag is `true`,
     /// so [`Inspector`][revm::Inspector] callbacks are invoked on every
@@ -31,7 +31,7 @@ pub trait Builder: Sized {
 impl<DB: Database> Builder for BaseContext<DB> {
     type Db = DB;
 
-    fn build_op(self) -> BaseEvm<DB, ()> {
+    fn build_base(self) -> BaseEvm<DB, ()> {
         let spec: OpSpecId = self.cfg.spec;
         BaseEvm::new(
             revm::context::Evm {

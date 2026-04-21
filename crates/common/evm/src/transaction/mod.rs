@@ -54,7 +54,7 @@ mod tests {
         let native_val = base_common_flz::flz_compress_len(&input);
 
         let mut evm =
-            Context::op().with_db(BenchmarkDB::new_bytecode(contract_bytecode)).build_op();
+            Context::base().with_db(BenchmarkDB::new_bytecode(contract_bytecode)).build_base();
 
         let tx = BaseTransaction::builder()
             .base(

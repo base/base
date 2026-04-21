@@ -1,4 +1,4 @@
-//! L2 contract deployment via op-deployer.
+//! L2 contract deployment via base-deployer.
 
 pub mod artifacts;
 pub mod base_deployer;

@@ -7,18 +7,18 @@ use revm::{
 
 use crate::{BaseTransaction, L1BlockInfo, OpSpecId};
 
-/// Type alias for the default context type of the `OpEvm`.
+/// Type alias for the default context type of the `BaseEvm`.
 pub type BaseContext<DB> =
     Context<BlockEnv, BaseTransaction<TxEnv>, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
 
 /// Trait that allows for a default context to be created.
 pub trait DefaultBase {
     /// Create a default context.
-    fn op() -> BaseContext<EmptyDB>;
+    fn base() -> BaseContext<EmptyDB>;
 }
 
 impl DefaultBase for BaseContext<EmptyDB> {
-    fn op() -> Self {
+    fn base() -> Self {
         Context::mainnet()
             .with_tx(BaseTransaction::builder().build_fill())
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK))
@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn default_run_op() {
-        let ctx = Context::op();
+        let ctx = Context::base();
         let mut evm = ctx.build_with_inspector(NoOpInspector {});
         // execute without inspector
         let _ = evm.transact(BaseTransaction::builder().build_fill());

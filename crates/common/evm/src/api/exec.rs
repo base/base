@@ -64,8 +64,8 @@ mod tests {
         let state =
             State::builder().with_database(InMemoryDB::default()).with_bundle_update().build();
 
-        let ctx = BaseContext::op().with_db(state);
-        let mut evm = ctx.build_op();
+        let ctx = BaseContext::base().with_db(state);
+        let mut evm = ctx.build_base();
 
         // Execute a system call. This internally calls `load_account_with_code_mut(caller)`,
         // causing the State DB to load and cache the caller's account in `State.cache.accounts`.
