@@ -177,8 +177,9 @@ where
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
-        Txs:
-            PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx>,
+        Txs: PayloadTransactions<
+            Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
+        >,
     {
         let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
 
@@ -330,8 +331,9 @@ impl<Txs> Builder<'_, Txs> {
             >,
         ChainSpec: EthChainSpec + Upgrades,
         N: PayloadPrimitives,
-        Txs:
-            PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx>,
+        Txs: PayloadTransactions<
+            Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
+        >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let Self { best } = self;

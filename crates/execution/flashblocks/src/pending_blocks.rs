@@ -12,7 +12,7 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_common_consensus::OpTxType;
-use base_common_evm::{BaseTxResult, BaseHaltReason};
+use base_common_evm::{BaseHaltReason, BaseTxResult};
 use base_common_flashblocks::Flashblock;
 use base_common_network::Base;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
@@ -336,7 +336,10 @@ impl PendingBlocks {
     }
 
     /// Returns the execution result for a transaction.
-    pub fn get_transaction_result(&self, tx_hash: &B256) -> Option<&ExecutionResult<BaseHaltReason>> {
+    pub fn get_transaction_result(
+        &self,
+        tx_hash: &B256,
+    ) -> Option<&ExecutionResult<BaseHaltReason>> {
         self.transaction_results.get(tx_hash)
     }
 

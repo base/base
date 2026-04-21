@@ -7,8 +7,8 @@ use revm::{
 };
 
 use crate::{
-    BaseEvm, BasePrecompiles, Builder, DefaultBase, BaseContext, BaseHaltReason, OpSpecId, BaseTransaction,
-    BaseTransactionError,
+    BaseContext, BaseEvm, BaseHaltReason, BasePrecompiles, BaseTransaction, BaseTransactionError,
+    Builder, DefaultBase, OpSpecId,
 };
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].

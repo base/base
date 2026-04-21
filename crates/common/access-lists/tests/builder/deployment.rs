@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use super::{
-    AccountInfo, B256, Bytecode, ContractFactory, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
-    BaseTransaction, SimpleStorage, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
+    AccountInfo, B256, BaseTransaction, Bytecode, ContractFactory, DEVNET_CHAIN_ID, IntoAddress,
+    ONE_ETHER, SimpleStorage, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
 #[test]

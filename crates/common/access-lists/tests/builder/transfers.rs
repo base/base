@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{
-    AccountInfo, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER, BaseTransaction, TxEnv, TxKind, U256,
+    AccountInfo, BaseTransaction, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER, TxEnv, TxKind, U256,
     execute_txns_build_access_list,
 };
 

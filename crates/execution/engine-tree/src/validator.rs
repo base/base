@@ -21,8 +21,8 @@ use base_common_consensus::{
     BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType,
 };
 use base_common_evm::{
-    BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseTxResult,
-    BaseHaltReason,
+    BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseHaltReason,
+    BaseTxResult,
 };
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;

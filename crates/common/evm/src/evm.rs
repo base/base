@@ -23,7 +23,7 @@ use revm::{
 };
 
 use crate::{
-    BasePrecompiles, BaseContext, BaseHaltReason, OpSpecId, BaseTransaction, BaseTransactionError,
+    BaseContext, BaseHaltReason, BasePrecompiles, BaseTransaction, BaseTransactionError, OpSpecId,
     handler::BaseHandler,
 };
 

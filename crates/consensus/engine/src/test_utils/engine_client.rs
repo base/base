@@ -305,7 +305,11 @@ impl MockEngineClient {
     }
 
     /// Sets a block response for a specific tag.
-    pub async fn set_l2_block_by_label(&self, tag: BlockNumberOrTag, block: Block<BaseTransaction>) {
+    pub async fn set_l2_block_by_label(
+        &self,
+        tag: BlockNumberOrTag,
+        block: Block<BaseTransaction>,
+    ) {
         self.storage.write().await.l2_blocks_by_label.insert(tag, block);
     }
 

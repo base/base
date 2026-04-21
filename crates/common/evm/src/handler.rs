@@ -26,8 +26,8 @@ use revm::{
 };
 
 use crate::{
-    L1BlockInfo, BaseContextTr, BaseHaltReason, OpSpecId,
-    transaction::{DEPOSIT_TRANSACTION_TYPE, BaseTransactionError, BaseTxTr},
+    BaseContextTr, BaseHaltReason, L1BlockInfo, OpSpecId,
+    transaction::{BaseTransactionError, BaseTxTr, DEPOSIT_TRANSACTION_TYPE},
 };
 
 /// Base handler extends the [`Handler`] with Base-specific logic.
@@ -403,7 +403,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{Builder, DefaultBase, L1BlockInfo, BaseContext, OpSpecId, BaseTransaction};
+    use crate::{BaseContext, BaseTransaction, Builder, DefaultBase, L1BlockInfo, OpSpecId};
 
     /// Creates frame result.
     fn call_last_frame_return(

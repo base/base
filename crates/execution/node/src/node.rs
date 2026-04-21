@@ -24,8 +24,8 @@ use base_execution_rpc::{
 };
 use base_execution_storage::BaseStorage;
 use base_execution_txpool::{
-    BaseOrdering, BasePooledTransaction, BaseTransactionPool, BasePooledTx, BaseTransactionValidator,
-    TimestampedTransaction,
+    BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
+    BaseTransactionValidator, TimestampedTransaction,
 };
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_evm::ConfigureEvm;
@@ -1006,7 +1006,8 @@ where
                 <Node::Types as NodeTypes>::ChainSpec,
             >,
         > + 'static,
-    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
+    Pool:
+        TransactionPool<Transaction: BasePooledTx<Consensus = TxTy<Node::Types>>> + Unpin + 'static,
     Txs: BasePayloadTransactions<Pool::Transaction>,
     Attrs: Attributes<Transaction = TxTy<Node::Types>>,
 {

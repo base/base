@@ -12,9 +12,9 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator};
 
 mod transaction;
 pub use transaction::{
-    BLOCK_TIME_SECS, BasePooledTransaction, BundleTransaction, MAX_BUNDLE_ADVANCE_BLOCKS,
-    MAX_BUNDLE_ADVANCE_MILLIS, MAX_BUNDLE_ADVANCE_SECS, BasePooledTx, TimestampedTransaction,
-    unix_time_millis,
+    BLOCK_TIME_SECS, BasePooledTransaction, BasePooledTx, BundleTransaction,
+    MAX_BUNDLE_ADVANCE_BLOCKS, MAX_BUNDLE_ADVANCE_MILLIS, MAX_BUNDLE_ADVANCE_SECS,
+    TimestampedTransaction, unix_time_millis,
 };
 
 mod ordering;

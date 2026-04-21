@@ -16,12 +16,12 @@ pub use l1block::L1BlockInfo;
 
 mod transaction;
 pub use transaction::{
-    BaseTransactionBuilder, BuildError, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
-    BaseTransaction, BaseTransactionError, BaseTxTr,
+    BaseTransaction, BaseTransactionBuilder, BaseTransactionError, BaseTxTr, BuildError,
+    DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
 };
 
 mod handler;
-pub use handler::{IsTxError, BaseHandler};
+pub use handler::{BaseHandler, IsTxError};
 
 mod precompiles;
 pub use precompiles::{
@@ -34,7 +34,7 @@ pub use precompiles::{
 };
 
 mod api;
-pub use api::{BaseError, Builder, DefaultBase, BaseContext, BaseContextTr};
+pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};
 
 mod evm;
 pub use evm::BaseEvm;

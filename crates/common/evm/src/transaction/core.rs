@@ -12,7 +12,7 @@ use revm::{
     primitives::{Address, B256, Bytes, TxKind, U256},
 };
 
-use crate::{BaseTransactionBuilder, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts, BaseTxTr};
+use crate::{BaseTransactionBuilder, BaseTxTr, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
 
 /// Base transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]

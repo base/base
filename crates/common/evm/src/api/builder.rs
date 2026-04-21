@@ -6,7 +6,7 @@ use revm::{
     interpreter::interpreter::EthInterpreter,
 };
 
-use crate::{BaseEvm, BasePrecompiles, BaseContext, OpSpecId};
+use crate::{BaseContext, BaseEvm, BasePrecompiles, OpSpecId};
 
 /// Trait that allows constructing a [`BaseEvm`] from an [`BaseContext`].
 ///

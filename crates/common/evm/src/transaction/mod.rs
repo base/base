@@ -13,7 +13,7 @@ mod deposit;
 pub use deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
 
 mod error;
-pub use error::{BuildError, BaseTransactionError};
+pub use error::{BaseTransactionError, BuildError};
 
 #[cfg(test)]
 mod tests {
@@ -26,7 +26,7 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::{Builder, DefaultBase, BaseTransaction};
+    use crate::{BaseTransaction, Builder, DefaultBase};
 
     #[rstest]
     #[case::short_hex(bytes!("FACADE"))]

@@ -2,8 +2,8 @@
 
 use alloy_evm::{Database, EvmEnv, EvmFactory};
 use base_common_evm::{
-    BaseEvm, Builder, DefaultBase, BaseContext, BaseHaltReason, OpSpecId, BaseTransaction,
-    BaseTransactionError,
+    BaseContext, BaseEvm, BaseHaltReason, BaseTransaction, BaseTransactionError, Builder,
+    DefaultBase, OpSpecId,
 };
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
 use revm::{

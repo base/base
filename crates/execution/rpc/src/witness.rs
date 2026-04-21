@@ -63,7 +63,9 @@ impl<Pool, Provider, EvmConfig, Attrs> DebugExecutionWitnessApiServer<Attrs::Rpc
     for BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs>
 where
     Pool: TransactionPool<
-            Transaction: BasePooledTx<Consensus = <Provider::Primitives as NodePrimitives>::SignedTx>,
+            Transaction: BasePooledTx<
+                Consensus = <Provider::Primitives as NodePrimitives>::SignedTx,
+            >,
         > + 'static,
     Provider: BlockReaderIdExt<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>
         + NodePrimitivesProvider<Primitives: PayloadPrimitives>

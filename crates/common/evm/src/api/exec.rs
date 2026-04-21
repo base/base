@@ -4,7 +4,7 @@ use revm::{
     state::EvmState,
 };
 
-use crate::{L1BlockInfo, OpSpecId, BaseTransactionError, transaction::BaseTxTr};
+use crate::{BaseTransactionError, L1BlockInfo, OpSpecId, transaction::BaseTxTr};
 
 /// Trait alias for the context type required by [`BaseEvm`][crate::BaseEvm].
 ///
@@ -42,7 +42,7 @@ mod tests {
         database::{InMemoryDB, State},
     };
 
-    use crate::{Builder, DefaultBase, BaseContext};
+    use crate::{BaseContext, Builder, DefaultBase};
 
     /// Verifies that the system call caller is loaded into the EVM state cache so it appears in the
     /// execution witness.

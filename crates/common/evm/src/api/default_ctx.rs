@@ -5,7 +5,7 @@ use revm::{
     database_interface::EmptyDB,
 };
 
-use crate::{L1BlockInfo, OpSpecId, BaseTransaction};
+use crate::{BaseTransaction, L1BlockInfo, OpSpecId};
 
 /// Type alias for the default context type of the `OpEvm`.
 pub type BaseContext<DB> =

@@ -3,7 +3,7 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, OpTxType};
-use base_common_evm::{BaseBlockExecutor, BaseTxResult, BaseHaltReason, BaseTransaction};
+use base_common_evm::{BaseBlockExecutor, BaseHaltReason, BaseTransaction, BaseTxResult};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};

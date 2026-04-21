@@ -14,7 +14,7 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
-use base_common_evm::{L1BlockInfo, BaseHaltReason, ensure_create2_deployer};
+use base_common_evm::{BaseHaltReason, L1BlockInfo, ensure_create2_deployer};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_execution_rpc::BaseReceiptBuilder as OpRpcReceiptBuilder;

@@ -3,8 +3,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use super::{
-    AccessListContract, AccountInfo, Bytecode, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
-    BaseTransaction, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
+    AccessListContract, AccountInfo, BaseTransaction, Bytecode, DEVNET_CHAIN_ID, IntoAddress,
+    ONE_ETHER, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
 #[test]
