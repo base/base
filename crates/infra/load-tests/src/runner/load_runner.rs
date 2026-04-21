@@ -14,10 +14,10 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
 use futures::stream::{self, StreamExt};
-use revm::precompile::PrecompileId;
 use indicatif::{ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
-use tokio::sync::{mpsc, watch, Semaphore};
+use revm::precompile::PrecompileId;
+use tokio::sync::{Semaphore, mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -60,6 +60,18 @@ struct PreparedTx {
 enum SubmitEvent {
     Submitted(TxHash),
     Failed,
+}
+
+/// Shared context cloned into each `submit_batch` spawned task.
+#[derive(Clone)]
+struct BatchSubmitCtx {
+    providers: Arc<HashMap<Address, WalletProvider>>,
+    nonce_managers: Arc<HashMap<Address, NonceManager<NonceProvider>>>,
+    confirmer_handle: ConfirmerHandle,
+    submit_event_tx: mpsc::Sender<SubmitEvent>,
+    gas_price: u128,
+    chain_id: u64,
+    max_gas_price: u128,
 }
 
 const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
@@ -234,12 +246,10 @@ impl LoadRunner {
                 TxType::Erc20 { .. } => 65_000,
                 TxType::Precompile { target, iterations, blake2f_rounds, .. } => {
                     let per_call = match target {
-                        PrecompileId::Identity => 22_000,
+                        PrecompileId::Identity | PrecompileId::Bn254Add => 22_000,
                         PrecompileId::Sha256 | PrecompileId::Ripemd160 => 23_000,
-                        PrecompileId::EcRec => 25_000,
-                        PrecompileId::ModExp => 30_000,
-                        PrecompileId::Bn254Add => 22_000,
                         PrecompileId::Bn254Mul => 28_000,
+                        PrecompileId::ModExp => 30_000,
                         PrecompileId::Bn254Pairing => 45_000,
                         PrecompileId::Blake2F => {
                             30_000 + u64::from(blake2f_rounds.unwrap_or(1_000))
@@ -568,21 +578,36 @@ impl LoadRunner {
         let flashblock_times: FlashblockTimes = Arc::new(RwLock::new(HashMap::new()));
         let block_first_seen: BlockFirstSeen = Arc::new(RwLock::new(BTreeMap::new()));
 
-        info!(url = %self.config.flashblocks_ws_url, "starting flashblock tracker");
-        let flashblock_tracker_task = FlashblockTracker::new(
-            self.config.flashblocks_ws_url.clone(),
-            Arc::clone(&flashblock_times),
-            self.cancel_token.clone(),
-        )
-        .start();
+        let flashblock_tracker_task = if let Some(url) = &self.config.flashblocks_ws_url {
+            info!(url = %url, "starting flashblock tracker");
+            Some(
+                FlashblockTracker::new(
+                    url.clone(),
+                    Arc::clone(&flashblock_times),
+                    self.cancel_token.clone(),
+                )
+                .start(),
+            )
+        } else {
+            info!("flashblocks_ws_url not configured, flashblock latency tracking disabled");
+            None
+        };
 
-        info!(url = %self.config.block_watcher_url, "starting block watcher");
-        let block_watcher_task = BlockWatcher::new(
-            self.config.block_watcher_url.clone(),
-            Arc::clone(&block_first_seen),
-            self.cancel_token.clone(),
-        )
-        .start();
+        let block_ws_enabled = self.config.block_watcher_url.is_some();
+        let block_watcher_task = if let Some(url) = &self.config.block_watcher_url {
+            info!(url = %url, "starting block watcher");
+            Some(
+                BlockWatcher::new(
+                    url.clone(),
+                    Arc::clone(&block_first_seen),
+                    self.cancel_token.clone(),
+                )
+                .start(),
+            )
+        } else {
+            info!("block_watcher_url not configured, using block timestamps for latency");
+            None
+        };
 
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
         let mut confirmer = Confirmer::new(
@@ -591,7 +616,7 @@ impl LoadRunner {
             Arc::clone(&self.stop_flag),
             Arc::clone(&flashblock_times),
             Arc::clone(&block_first_seen),
-            true,
+            block_ws_enabled,
         );
         let confirmer_handle = confirmer.handle();
         let confirmer_handle_for_run = confirmer_handle.clone();
@@ -710,31 +735,21 @@ impl LoadRunner {
             if should_flush && !pending_batch.is_empty() {
                 let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
                 batch_start = Instant::now();
-                let permit = semaphore
-                    .clone()
+                let permit = Arc::clone(&semaphore)
                     .acquire_owned()
                     .await
                     .expect("submit batch semaphore closed");
-                let batch_confirmer = confirmer_handle.clone();
-                let submit_tx = submit_event_tx.clone();
-                let providers = Arc::clone(&providers);
-                let nonce_managers = Arc::clone(&nonce_managers);
-                let gas_price = self.gas_price;
-                let chain_id = self.config.chain_id;
-                let max_gas_price = self.config.max_gas_price;
+                let ctx = BatchSubmitCtx {
+                    providers: Arc::clone(&providers),
+                    nonce_managers: Arc::clone(&nonce_managers),
+                    confirmer_handle: confirmer_handle.clone(),
+                    submit_event_tx: submit_event_tx.clone(),
+                    gas_price: self.gas_price,
+                    chain_id: self.config.chain_id,
+                    max_gas_price: self.config.max_gas_price,
+                };
                 tokio::spawn(async move {
-                    let submitted = Self::submit_batch(
-                        providers,
-                        nonce_managers,
-                        batch_confirmer,
-                        submit_tx,
-                        gas_price,
-                        chain_id,
-                        max_gas_price,
-                        batch,
-                        permit,
-                    )
-                    .await;
+                    let submitted = Self::submit_batch(ctx, batch, permit).await;
                     debug!(submitted, "batch submitted");
                 });
             }
@@ -826,37 +841,26 @@ impl LoadRunner {
         let active_duration = start.elapsed();
 
         if !pending_batch.is_empty() {
-            let permit = semaphore
-                .clone()
+            let permit = Arc::clone(&semaphore)
                 .acquire_owned()
                 .await
                 .expect("submit batch semaphore closed");
-            let batch_confirmer = confirmer_handle.clone();
-            let submit_tx = submit_event_tx.clone();
-            let providers = Arc::clone(&providers);
-            let nonce_managers = Arc::clone(&nonce_managers);
-            let gas_price = self.gas_price;
-            let chain_id = self.config.chain_id;
-            let max_gas_price = self.config.max_gas_price;
+            let ctx = BatchSubmitCtx {
+                providers: Arc::clone(&providers),
+                nonce_managers: Arc::clone(&nonce_managers),
+                confirmer_handle: confirmer_handle.clone(),
+                submit_event_tx: submit_event_tx.clone(),
+                gas_price: self.gas_price,
+                chain_id: self.config.chain_id,
+                max_gas_price: self.config.max_gas_price,
+            };
             tokio::spawn(async move {
-                let submitted = Self::submit_batch(
-                    providers,
-                    nonce_managers,
-                    batch_confirmer,
-                    submit_tx,
-                    gas_price,
-                    chain_id,
-                    max_gas_price,
-                    pending_batch,
-                    permit,
-                )
-                .await;
+                let submitted = Self::submit_batch(ctx, pending_batch, permit).await;
                 debug!(submitted, "final batch submitted");
             });
         }
 
-        let all_permits = semaphore
-            .clone()
+        let all_permits = Arc::clone(&semaphore)
             .acquire_many_owned(SUBMIT_BATCH_CONCURRENCY as u32)
             .await
             .expect("submit batch semaphore closed");
@@ -926,13 +930,17 @@ impl LoadRunner {
         // Now safe to stop WebSocket tasks — confirmer is done.
         self.cancel_token.cancel();
 
-        match tokio::time::timeout(Duration::from_secs(2), flashblock_tracker_task).await {
-            Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock tracker panicked"),
-            _ => {}
+        if let Some(task) = flashblock_tracker_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "flashblock tracker panicked"),
+                _ => {}
+            }
         }
-        match tokio::time::timeout(Duration::from_secs(2), block_watcher_task).await {
-            Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
-            _ => {}
+        if let Some(task) = block_watcher_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
+                _ => {}
+            }
         }
 
         let confirmed = self.collector.confirmed_count();
@@ -942,25 +950,20 @@ impl LoadRunner {
     }
 
     async fn submit_batch(
-        providers: Arc<HashMap<Address, WalletProvider>>,
-        nonce_managers: Arc<HashMap<Address, NonceManager<NonceProvider>>>,
-        confirmer_handle: ConfirmerHandle,
-        submit_event_tx: mpsc::Sender<SubmitEvent>,
-        gas_price: u128,
-        chain_id: u64,
-        max_gas_price: u128,
+        ctx: BatchSubmitCtx,
         batch: Vec<PreparedTx>,
         _permit: tokio::sync::OwnedSemaphorePermit,
     ) -> u64 {
-        let max_fee = gas_price.saturating_mul(2).min(max_gas_price);
-        let priority_fee = (gas_price / 10).max(1);
+        let max_fee = ctx.gas_price.saturating_mul(2).min(ctx.max_gas_price);
+        let priority_fee = (ctx.gas_price / 10).max(1);
+        let chain_id = ctx.chain_id;
         let batch_len = batch.len();
 
         let futs = batch.into_iter().map(|prepared| {
-            let providers = Arc::clone(&providers);
-            let nonce_managers = Arc::clone(&nonce_managers);
-            let confirmer_handle = confirmer_handle.clone();
-            let submit_tx = submit_event_tx.clone();
+            let providers = Arc::clone(&ctx.providers);
+            let nonce_managers = Arc::clone(&ctx.nonce_managers);
+            let confirmer_handle = ctx.confirmer_handle.clone();
+            let submit_tx = ctx.submit_event_tx.clone();
             async move {
                 let Some(provider) = providers.get(&prepared.from) else {
                     warn!(from = %prepared.from, "no cached provider for sender");

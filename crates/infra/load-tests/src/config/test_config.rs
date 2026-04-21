@@ -122,11 +122,11 @@ pub struct TestConfig {
     pub looper_contract: Option<String>,
 
     /// JSON-RPC endpoint for block tracking (WebSocket subscription or HTTP polling).
-    #[serde(default = "default_block_watcher_url", alias = "rpc_ws_url", alias = "ws_url")]
-    pub block_watcher_url: Url,
+    #[serde(default, alias = "rpc_ws_url", alias = "ws_url")]
+    pub block_watcher_url: Option<Url>,
     /// WebSocket URL for flashblocks subscription.
-    #[serde(default = "default_flashblocks_ws_url", alias = "flashblocks_url")]
-    pub flashblocks_ws_url: Url,
+    #[serde(default, alias = "flashblocks_url")]
+    pub flashblocks_ws_url: Option<Url>,
 }
 
 impl Default for TestConfig {
@@ -146,8 +146,8 @@ impl Default for TestConfig {
             chain_id: None,
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,
-            block_watcher_url: default_block_watcher_url(),
-            flashblocks_ws_url: default_flashblocks_ws_url(),
+            block_watcher_url: None,
+            flashblocks_ws_url: None,
         }
     }
 }
@@ -249,14 +249,6 @@ const fn default_iterations() -> u32 {
     1
 }
 
-fn default_block_watcher_url() -> Url {
-    Url::parse("ws://localhost:8546").expect("valid default block_watcher_url")
-}
-
-fn default_flashblocks_ws_url() -> Url {
-    Url::parse("ws://localhost:7111").expect("valid default flashblocks_ws_url")
-}
-
 impl TestConfig {
     /// Loads configuration from a YAML file.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -281,7 +273,9 @@ impl TestConfig {
             return Err(BaselineError::Config("sender_count must be > 0".into()));
         }
 
-        Self::validate_ws_url(&self.flashblocks_ws_url, "flashblocks_ws_url")?;
+        if let Some(url) = &self.flashblocks_ws_url {
+            Self::validate_ws_url(url, "flashblocks_ws_url")?;
+        }
 
         Ok(())
     }
@@ -600,7 +594,7 @@ rpc: http://localhost:8545
 block_watcher_url: http://localhost:8546
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.scheme(), "http");
+        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "http");
     }
 
     #[test]
@@ -611,8 +605,8 @@ block_watcher_url: wss://localhost:8546
 flashblocks_ws_url: wss://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.scheme(), "wss");
-        assert_eq!(config.flashblocks_ws_url.scheme(), "wss");
+        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "wss");
+        assert_eq!(config.flashblocks_ws_url.as_ref().unwrap().scheme(), "wss");
     }
 
     #[test]
@@ -622,16 +616,16 @@ rpc: http://localhost:8545
 rpc_ws_url: ws://localhost:8546
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.scheme(), "ws");
+        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "ws");
     }
 
     #[test]
-    fn omitted_urls_use_defaults() {
+    fn omitted_urls_are_none() {
         let yaml = r#"
 rpc: http://localhost:8545
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.as_str(), "ws://localhost:8546/");
-        assert_eq!(config.flashblocks_ws_url.as_str(), "ws://localhost:7111/");
+        assert!(config.block_watcher_url.is_none());
+        assert!(config.flashblocks_ws_url.is_none());
     }
 }
