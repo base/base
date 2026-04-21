@@ -6,9 +6,11 @@ base_metrics::define_metrics! {
     up: gauge,
 
     #[describe("Proposer account balance in wei")]
+    #[no_zero]
     account_balance_wei: gauge,
 
     #[describe("Most recently proposed L2 block number")]
+    #[no_zero]
     last_proposed_block: gauge,
 
     #[describe("Proof tasks currently in flight")]
@@ -21,6 +23,7 @@ base_metrics::define_metrics! {
     pipeline_retries: gauge,
 
     #[describe("Latest safe (or finalized) L2 block number")]
+    #[no_zero]
     safe_head: gauge,
 
     #[describe("Total number of L2 output proposals submitted")]
