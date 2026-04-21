@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    panic::AssertUnwindSafe,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -13,7 +14,10 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_tx_manager::NonceManager;
-use futures::stream::{self, StreamExt};
+use futures::{
+    FutureExt as _,
+    stream::{self, StreamExt},
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
 use revm::precompile::PrecompileId;
@@ -593,7 +597,7 @@ impl LoadRunner {
             None
         };
 
-        let block_ws_enabled = self.config.block_watcher_url.is_some();
+        let block_watcher_enabled = self.config.block_watcher_url.is_some();
         let block_watcher_task = if let Some(url) = &self.config.block_watcher_url {
             info!(url = %url, "starting block watcher");
             Some(
@@ -616,7 +620,7 @@ impl LoadRunner {
             Arc::clone(&self.stop_flag),
             Arc::clone(&flashblock_times),
             Arc::clone(&block_first_seen),
-            block_ws_enabled,
+            block_watcher_enabled,
         );
         let confirmer_handle = confirmer.handle();
         let confirmer_handle_for_run = confirmer_handle.clone();
@@ -749,8 +753,11 @@ impl LoadRunner {
                     max_gas_price: self.config.max_gas_price,
                 };
                 tokio::spawn(async move {
-                    let submitted = Self::submit_batch(ctx, batch, permit).await;
-                    debug!(submitted, "batch submitted");
+                    let _permit = permit;
+                    match AssertUnwindSafe(Self::submit_batch(ctx, batch)).catch_unwind().await {
+                        Ok(submitted) => debug!(submitted, "batch submitted"),
+                        Err(_) => error!("batch submission task panicked"),
+                    }
                 });
             }
 
@@ -855,8 +862,12 @@ impl LoadRunner {
                 max_gas_price: self.config.max_gas_price,
             };
             tokio::spawn(async move {
-                let submitted = Self::submit_batch(ctx, pending_batch, permit).await;
-                debug!(submitted, "final batch submitted");
+                let _permit = permit;
+                match AssertUnwindSafe(Self::submit_batch(ctx, pending_batch)).catch_unwind().await
+                {
+                    Ok(submitted) => debug!(submitted, "final batch submitted"),
+                    Err(_) => error!("final batch submission task panicked"),
+                }
             });
         }
 
@@ -865,6 +876,9 @@ impl LoadRunner {
             .await
             .expect("submit batch semaphore closed");
         drop(all_permits);
+
+        // Close the channel so the drain below cannot miss late events.
+        drop(submit_event_tx);
 
         while let Ok(event) = submit_event_rx.try_recv() {
             match event {
@@ -949,11 +963,7 @@ impl LoadRunner {
         Ok(self.collector.summarize(active_duration))
     }
 
-    async fn submit_batch(
-        ctx: BatchSubmitCtx,
-        batch: Vec<PreparedTx>,
-        _permit: tokio::sync::OwnedSemaphorePermit,
-    ) -> u64 {
+    async fn submit_batch(ctx: BatchSubmitCtx, batch: Vec<PreparedTx>) -> u64 {
         let max_fee = ctx.gas_price.saturating_mul(2).min(ctx.max_gas_price);
         let priority_fee = (ctx.gas_price / 10).max(1);
         let chain_id = ctx.chain_id;
