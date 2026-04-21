@@ -12,7 +12,7 @@ use aws_sdk_s3::{
 use base_bundles::{AcceptedBundle, BundleExtensions};
 use futures::future;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     metrics::Metrics,
@@ -218,13 +218,13 @@ impl S3EventReaderWriter {
         match put_request.send().await {
             Ok(_) => {
                 Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
-                info!(s3_key = %s3_key, "wrote event to S3");
+                debug!(s3_key = %s3_key, "wrote event to S3");
                 Ok(())
             }
             Err(ref e) if Self::is_conditional_write_conflict(e) => {
                 Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
                 Metrics::s3_conditional_conflicts().increment(1);
-                info!(s3_key = %s3_key, "event already exists in S3, skipping");
+                debug!(s3_key = %s3_key, "event already exists in S3, skipping");
                 Ok(())
             }
             Err(e) => {
@@ -305,7 +305,7 @@ impl S3EventReaderWriter {
                     match put_request.send().await {
                         Ok(_) => {
                             Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
-                            info!(
+                            debug!(
                                 s3_key = %key,
                                 attempt = attempt + 1,
                                 "Successfully wrote object with idempotent write"
@@ -315,7 +315,7 @@ impl S3EventReaderWriter {
                         Err(ref e) if Self::is_conditional_write_conflict(e) => {
                             Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
                             Metrics::s3_conditional_conflicts().increment(1);
-                            info!(
+                            debug!(
                                 s3_key = %key,
                                 attempt = attempt + 1,
                                 "Conditional write conflict, another writer succeeded"
