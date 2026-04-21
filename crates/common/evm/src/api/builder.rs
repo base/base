@@ -1,4 +1,4 @@
-//! [`Builder`] trait for constructing a [`BaseEvm`] directly from an [`OpContext`].
+//! [`Builder`] trait for constructing a [`BaseEvm`] directly from an [`BaseContext`].
 use alloy_evm::Database;
 use revm::{
     context::FrameStack,
@@ -6,11 +6,11 @@ use revm::{
     interpreter::interpreter::EthInterpreter,
 };
 
-use crate::{BaseEvm, BasePrecompiles, OpContext, OpSpecId};
+use crate::{BaseEvm, BasePrecompiles, BaseContext, OpSpecId};
 
-/// Trait that allows constructing a [`BaseEvm`] from an [`OpContext`].
+/// Trait that allows constructing a [`BaseEvm`] from an [`BaseContext`].
 ///
-/// Implemented for [`OpContext<DB>`] of any database. The resulting [`BaseEvm`]
+/// Implemented for [`BaseContext<DB>`] of any database. The resulting [`BaseEvm`]
 /// uses [`BasePrecompiles`] for the active [`OpSpecId`]; call
 /// [`BaseEvm::with_precompiles`] afterwards to substitute a custom precompile set.
 pub trait Builder: Sized {
@@ -28,7 +28,7 @@ pub trait Builder: Sized {
     fn build_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<Self::Db, INSP>;
 }
 
-impl<DB: Database> Builder for OpContext<DB> {
+impl<DB: Database> Builder for BaseContext<DB> {
     type Db = DB;
 
     fn build_op(self) -> BaseEvm<DB, ()> {

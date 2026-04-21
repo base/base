@@ -6,7 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{FixedBytes, b256};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block as RpcBlock;
-use base_common_rpc_types::Transaction as OpTransaction;
+use base_common_rpc_types::Transaction as BaseTransaction;
 use base_consensus_genesis::RollupConfig;
 
 use crate::{
@@ -47,7 +47,7 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
     // Build a block at height 35 that does NOT match the attributes.
     // The key mismatch: parent_hash differs from attributes.parent.block_info.hash.
     // This makes `is_consistent_with_block` return false → triggers reconcile path.
-    let mut mismatched_block = RpcBlock::<OpTransaction>::default();
+    let mut mismatched_block = RpcBlock::<BaseTransaction>::default();
     mismatched_block.header.inner.number = 35;
     mismatched_block.header.inner.timestamp = 2000;
     mismatched_block.header.inner.parent_hash =

@@ -26,26 +26,26 @@ use revm::{
 };
 
 use crate::{
-    L1BlockInfo, OpContextTr, OpHaltReason, OpSpecId,
-    transaction::{DEPOSIT_TRANSACTION_TYPE, OpTransactionError, OpTxTr},
+    L1BlockInfo, BaseContextTr, BaseHaltReason, OpSpecId,
+    transaction::{DEPOSIT_TRANSACTION_TYPE, BaseTransactionError, BaseTxTr},
 };
 
 /// Base handler extends the [`Handler`] with Base-specific logic.
 #[derive(Debug, Clone)]
-pub struct OpHandler<EVM, ERROR, FRAME> {
+pub struct BaseHandler<EVM, ERROR, FRAME> {
     /// Mainnet handler allows us to use functions from the mainnet handler inside the Base handler.
     /// So we dont duplicate the logic
     pub mainnet: MainnetHandler<EVM, ERROR, FRAME>,
 }
 
-impl<EVM, ERROR, FRAME> OpHandler<EVM, ERROR, FRAME> {
+impl<EVM, ERROR, FRAME> BaseHandler<EVM, ERROR, FRAME> {
     /// Create a new Base handler.
     pub fn new() -> Self {
         Self { mainnet: MainnetHandler::default() }
     }
 }
 
-impl<EVM, ERROR, FRAME> Default for OpHandler<EVM, ERROR, FRAME> {
+impl<EVM, ERROR, FRAME> Default for BaseHandler<EVM, ERROR, FRAME> {
     fn default() -> Self {
         Self::new()
     }
@@ -65,15 +65,15 @@ impl<DB, TX> IsTxError for EVMError<DB, TX> {
     }
 }
 
-impl<EVM, ERROR, FRAME> Handler for OpHandler<EVM, ERROR, FRAME>
+impl<EVM, ERROR, FRAME> Handler for BaseHandler<EVM, ERROR, FRAME>
 where
-    EVM: EvmTr<Context: OpContextTr, Frame = FRAME>,
-    ERROR: EvmTrError<EVM> + From<OpTransactionError> + FromStringError + IsTxError,
+    EVM: EvmTr<Context: BaseContextTr, Frame = FRAME>,
+    ERROR: EvmTrError<EVM> + From<BaseTransactionError> + FromStringError + IsTxError,
     FRAME: FrameTr<FrameResult = FrameResult, FrameInit = FrameInit>,
 {
     type Evm = EVM;
     type Error = ERROR;
-    type HaltReason = OpHaltReason;
+    type HaltReason = BaseHaltReason;
 
     fn validate_env(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
         // Do not perform any extra validation for deposit transactions, they are pre-verified on L1.
@@ -85,14 +85,14 @@ where
             if tx.is_system_transaction()
                 && evm.ctx().cfg().spec().is_enabled_in(OpSpecId::REGOLITH)
             {
-                return Err(OpTransactionError::DepositSystemTxPostRegolith.into());
+                return Err(BaseTransactionError::DepositSystemTxPostRegolith.into());
             }
             return Ok(());
         }
 
         // Check that non-deposit transactions have enveloped_tx set
         if tx.enveloped_tx().is_none() {
-            return Err(OpTransactionError::MissingEnvelopedTx.into());
+            return Err(BaseTransactionError::MissingEnvelopedTx.into());
         }
 
         self.mainnet.validate_env(evm)
@@ -310,12 +310,12 @@ where
         }
 
         let exec_result =
-            post_execution::output(evm.ctx(), frame_result).map_haltreason(OpHaltReason::Base);
+            post_execution::output(evm.ctx(), frame_result).map_haltreason(BaseHaltReason::Base);
 
         if exec_result.is_halt() {
             let is_deposit = evm.ctx().tx().tx_type() == DEPOSIT_TRANSACTION_TYPE;
             if is_deposit && evm.ctx().cfg().spec().is_enabled_in(OpSpecId::REGOLITH) {
-                return Err(ERROR::from(OpTransactionError::HaltedDepositPostRegolith));
+                return Err(ERROR::from(BaseTransactionError::HaltedDepositPostRegolith));
             }
         }
         evm.ctx().journal_mut().commit_tx();
@@ -362,7 +362,7 @@ where
             let gas_used =
                 if spec.is_enabled_in(OpSpecId::REGOLITH) || !is_system_tx { gas_limit } else { 0 };
             // clear the journal
-            output = Ok(ExecutionResult::Halt { reason: OpHaltReason::FailedDeposit, gas_used })
+            output = Ok(ExecutionResult::Halt { reason: BaseHaltReason::FailedDeposit, gas_used })
         }
 
         // do the cleanup
@@ -374,14 +374,14 @@ where
     }
 }
 
-impl<EVM, ERROR> InspectorHandler for OpHandler<EVM, ERROR, EthFrame<EthInterpreter>>
+impl<EVM, ERROR> InspectorHandler for BaseHandler<EVM, ERROR, EthFrame<EthInterpreter>>
 where
     EVM: InspectorEvmTr<
-            Context: OpContextTr,
+            Context: BaseContextTr,
             Frame = EthFrame<EthInterpreter>,
             Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context, EthInterpreter>,
         >,
-    ERROR: EvmTrError<EVM> + From<OpTransactionError> + FromStringError + IsTxError,
+    ERROR: EvmTrError<EVM> + From<BaseTransactionError> + FromStringError + IsTxError,
 {
     type IT = EthInterpreter;
 }
@@ -403,11 +403,11 @@ mod tests {
     };
 
     use super::*;
-    use crate::{Builder, DefaultOp, L1BlockInfo, OpContext, OpSpecId, OpTransaction};
+    use crate::{Builder, DefaultBase, L1BlockInfo, BaseContext, OpSpecId, BaseTransaction};
 
     /// Creates frame result.
     fn call_last_frame_return(
-        ctx: OpContext<EmptyDB>,
+        ctx: BaseContext<EmptyDB>,
         instruction_result: InstructionResult,
         gas: Gas,
     ) -> Gas {
@@ -419,7 +419,7 @@ mod tests {
         ));
 
         let mut handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
 
         handler.last_frame_result(&mut evm, &mut exec_result).unwrap();
         handler.refund(&mut evm, &mut exec_result, 0);
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn test_revert_gas() {
         let ctx = Context::op()
-            .with_tx(OpTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
+            .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK));
 
         let gas = call_last_frame_return(ctx, InstructionResult::Revert, Gas::new(90));
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn test_consume_gas() {
         let ctx = Context::op()
-            .with_tx(OpTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
+            .with_tx(BaseTransaction::builder().base(TxEnv::builder().gas_limit(100)).build_fill())
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::REGOLITH));
 
         let gas = call_last_frame_return(ctx, InstructionResult::Stop, Gas::new(90));
@@ -454,7 +454,7 @@ mod tests {
     fn test_consume_gas_with_refund() {
         let ctx = Context::op()
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100))
                     .source_hash(B256::from([1u8; 32]))
                     .build_fill(),
@@ -479,7 +479,7 @@ mod tests {
     fn test_consume_gas_deposit_tx() {
         let ctx = Context::op()
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100))
                     .source_hash(B256::from([1u8; 32]))
                     .build_fill(),
@@ -495,7 +495,7 @@ mod tests {
     fn test_consume_gas_sys_deposit_tx() {
         let ctx = Context::op()
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100))
                     .source_hash(B256::from([1u8; 32]))
                     .is_system_transaction()
@@ -534,7 +534,7 @@ mod tests {
         let mut evm = ctx.build_op();
 
         let handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
 
         // Check the account balance is updated.
@@ -564,7 +564,7 @@ mod tests {
             })
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::REGOLITH))
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100))
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .source_hash(B256::ZERO)
@@ -575,7 +575,7 @@ mod tests {
         let mut evm = ctx.build_op();
 
         let handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
 
         // Check the account balance is updated.
@@ -629,7 +629,7 @@ mod tests {
         assert_ne!(evm.ctx().chain().l2_block, Some(BLOCK_NUM));
 
         let handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         handler.validate_against_state_and_deduct_caller(&mut evm).unwrap();
 
         assert_eq!(
@@ -654,7 +654,7 @@ mod tests {
     fn test_azul_tx_gas_limit_cap_rejected() {
         let ctx = Context::op()
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(16_777_217))
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
@@ -662,7 +662,7 @@ mod tests {
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
         let mut evm = ctx.build_op();
         let handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_err(), "gas_limit above cap should be rejected");
     }
@@ -671,7 +671,7 @@ mod tests {
     fn test_azul_tx_gas_limit_at_cap_ok() {
         let ctx = Context::op()
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(16_777_216))
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
@@ -679,7 +679,7 @@ mod tests {
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
         let mut evm = ctx.build_op();
         let handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "gas_limit at cap should be accepted");
     }
@@ -688,7 +688,7 @@ mod tests {
     fn test_jovian_no_tx_gas_limit_cap() {
         let ctx = Context::op()
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(16_777_217))
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
@@ -696,7 +696,7 @@ mod tests {
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::JOVIAN));
         let mut evm = ctx.build_op();
         let handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "Jovian should not enforce gas limit cap");
     }
@@ -705,7 +705,7 @@ mod tests {
     fn test_azul_deposit_skips_gas_limit_cap() {
         let ctx = Context::op()
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(16_777_217))
                     .source_hash(B256::from([1u8; 32]))
                     .build_fill(),
@@ -713,7 +713,7 @@ mod tests {
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::AZUL));
         let mut evm = ctx.build_op();
         let handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "deposit txs should skip gas limit cap");
     }
@@ -727,7 +727,7 @@ mod tests {
     /// against the given spec and returns the execution result.
     fn run_clz_bytecode(
         spec: OpSpecId,
-    ) -> revm::context_interface::result::ExecutionResult<OpHaltReason> {
+    ) -> revm::context_interface::result::ExecutionResult<BaseHaltReason> {
         let contract = Address::from([0x42; 20]);
         let mut db = InMemoryDB::default();
         db.insert_account_info(
@@ -745,7 +745,7 @@ mod tests {
         let ctx = Context::op()
             .with_db(db)
             .with_tx(
-                OpTransaction::builder()
+                BaseTransaction::builder()
                     .base(TxEnv::builder().gas_limit(100_000).kind(TxKind::Call(contract)))
                     .enveloped_tx(Some(bytes!("FACADE")))
                     .build_fill(),
@@ -760,7 +760,7 @@ mod tests {
         let mut evm = ctx.build_op();
 
         let mut handler =
-            OpHandler::<_, EVMError<_, OpTransactionError>, EthFrame<EthInterpreter>>::new();
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
         handler.run(&mut evm).unwrap()
     }
 

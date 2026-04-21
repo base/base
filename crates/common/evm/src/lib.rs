@@ -9,7 +9,7 @@ mod spec;
 pub use spec::OpSpecId;
 
 mod result;
-pub use result::OpHaltReason;
+pub use result::BaseHaltReason;
 
 mod l1block;
 pub use l1block::L1BlockInfo;
@@ -17,11 +17,11 @@ pub use l1block::L1BlockInfo;
 mod transaction;
 pub use transaction::{
     BaseTransactionBuilder, BuildError, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
-    OpTransaction, OpTransactionError, OpTxTr,
+    BaseTransaction, BaseTransactionError, BaseTxTr,
 };
 
 mod handler;
-pub use handler::{IsTxError, OpHandler};
+pub use handler::{IsTxError, BaseHandler};
 
 mod precompiles;
 pub use precompiles::{
@@ -34,7 +34,7 @@ pub use precompiles::{
 };
 
 mod api;
-pub use api::{BaseError, Builder, DefaultOp, OpContext, OpContextTr};
+pub use api::{BaseError, Builder, DefaultBase, BaseContext, BaseContextTr};
 
 mod evm;
 pub use evm::BaseEvm;

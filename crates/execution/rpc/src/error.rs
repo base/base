@@ -6,7 +6,7 @@ use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::{BlockError, error::EthRpcErrorCode};
 use alloy_transport::{RpcError, TransportErrorKind};
-use base_common_evm::{OpHaltReason, OpTransactionError};
+use base_common_evm::{BaseHaltReason, BaseTransactionError};
 use base_execution_evm::BaseBlockExecutionError;
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_evm::execute::ProviderError;
@@ -89,17 +89,17 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
     }
 }
 
-impl TryFrom<OpTransactionError> for BaseInvalidTransactionError {
+impl TryFrom<BaseTransactionError> for BaseInvalidTransactionError {
     type Error = InvalidTransaction;
 
-    fn try_from(err: OpTransactionError) -> Result<Self, Self::Error> {
+    fn try_from(err: BaseTransactionError) -> Result<Self, Self::Error> {
         match err {
-            OpTransactionError::DepositSystemTxPostRegolith => {
+            BaseTransactionError::DepositSystemTxPostRegolith => {
                 Ok(Self::DepositSystemTxPostRegolith)
             }
-            OpTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
-            OpTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
-            OpTransactionError::Base(err) => Err(err),
+            BaseTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
+            BaseTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
+            BaseTransactionError::Base(err) => Err(err),
         }
     }
 }
@@ -129,11 +129,11 @@ impl From<SequencerClientError> for jsonrpsee_types::error::ErrorObject<'static>
     }
 }
 
-impl<T> From<EVMError<T, OpTransactionError>> for BaseEthApiError
+impl<T> From<EVMError<T, BaseTransactionError>> for BaseEthApiError
 where
     T: Into<EthApiError>,
 {
-    fn from(error: EVMError<T, OpTransactionError>) -> Self {
+    fn from(error: EVMError<T, BaseTransactionError>) -> Self {
         match error {
             EVMError::Transaction(err) => match err.try_into() {
                 Ok(err) => Self::InvalidTransaction(err),
@@ -146,13 +146,13 @@ where
     }
 }
 
-impl FromEvmHalt<OpHaltReason> for BaseEthApiError {
-    fn from_evm_halt(halt: OpHaltReason, gas_limit: u64) -> Self {
+impl FromEvmHalt<BaseHaltReason> for BaseEthApiError {
+    fn from_evm_halt(halt: BaseHaltReason, gas_limit: u64) -> Self {
         match halt {
-            OpHaltReason::FailedDeposit => {
+            BaseHaltReason::FailedDeposit => {
                 BaseInvalidTransactionError::HaltedDepositPostRegolith.into()
             }
-            OpHaltReason::Base(halt) => EthApiError::from_evm_halt(halt, gas_limit).into(),
+            BaseHaltReason::Base(halt) => EthApiError::from_evm_halt(halt, gas_limit).into(),
         }
     }
 }

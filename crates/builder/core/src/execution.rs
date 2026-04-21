@@ -9,7 +9,7 @@ use ExecutionMeteringLimitExceeded::{
 };
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
-use base_common_evm::OpTransactionError;
+use base_common_evm::BaseTransactionError;
 use derive_more::Display;
 use thiserror::Error;
 
@@ -161,7 +161,7 @@ pub enum TxnExecutionError {
 
     /// Internal EVM error during transaction execution.
     #[error("internal error: {0}")]
-    InternalError(OpTransactionError),
+    InternalError(BaseTransactionError),
 
     /// EVM execution error.
     #[error("EVM error")]

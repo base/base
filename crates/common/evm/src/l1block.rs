@@ -8,7 +8,7 @@ use revm::{
     primitives::{U256, uint},
 };
 
-use crate::{OpSpecId, transaction::OpTxTr};
+use crate::{OpSpecId, transaction::BaseTxTr};
 
 /// L1 block info
 ///
@@ -296,10 +296,10 @@ impl L1BlockInfo {
         self.tx_l1_cost = None;
     }
 
-    /// Calculate additional transaction cost with `OpTxTr`.
+    /// Calculate additional transaction cost with `BaseTxTr`.
     ///
     /// Internally calls [`L1BlockInfo::tx_cost`].
-    pub fn tx_cost_with_tx(&mut self, tx: impl OpTxTr, spec: OpSpecId) -> Option<U256> {
+    pub fn tx_cost_with_tx(&mut self, tx: impl BaseTxTr, spec: OpSpecId) -> Option<U256> {
         // account for additional cost of l1 fee and operator fee
         let enveloped_tx = tx.enveloped_tx()?;
         let gas_limit = U256::from(tx.gas_limit());

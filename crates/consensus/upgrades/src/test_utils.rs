@@ -3,7 +3,7 @@
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, keccak256};
 use base_common_consensus::{OpTxType, TxDeposit};
-use base_common_evm::{DefaultOp, DepositTransactionParts, OpSpecId};
+use base_common_evm::{DefaultBase, DepositTransactionParts, OpSpecId};
 use revm::{
     Context, ExecuteCommitEvm, MainBuilder,
     context::{

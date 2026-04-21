@@ -8,12 +8,12 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod validator;
-pub use validator::{BaseL1BlockInfo, OpTransactionValidator};
+pub use validator::{BaseL1BlockInfo, BaseTransactionValidator};
 
 mod transaction;
 pub use transaction::{
     BLOCK_TIME_SECS, BasePooledTransaction, BundleTransaction, MAX_BUNDLE_ADVANCE_BLOCKS,
-    MAX_BUNDLE_ADVANCE_MILLIS, MAX_BUNDLE_ADVANCE_SECS, OpPooledTx, TimestampedTransaction,
+    MAX_BUNDLE_ADVANCE_MILLIS, MAX_BUNDLE_ADVANCE_SECS, BasePooledTx, TimestampedTransaction,
     unix_time_millis,
 };
 
@@ -43,4 +43,4 @@ use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor};
 
 /// Type alias for default Base transaction pool
 pub type BaseTransactionPool<Client, S, Evm, T = BasePooledTransaction, O = BaseOrdering<T>> =
-    Pool<TransactionValidationTaskExecutor<OpTransactionValidator<Client, T, Evm>>, O, S>;
+    Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>, O, S>;

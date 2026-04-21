@@ -2,8 +2,8 @@
 
 use alloy_evm::{Database, EvmEnv, EvmFactory};
 use base_common_evm::{
-    BaseEvm, Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction,
-    OpTransactionError,
+    BaseEvm, Builder, DefaultBase, BaseContext, BaseHaltReason, OpSpecId, BaseTransaction,
+    BaseTransactionError,
 };
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
 use revm::{
@@ -55,12 +55,12 @@ where
     H: HintWriterClient + Clone + Send + Sync + 'static,
     O: PreimageOracleClient + Clone + Send + Sync + 'static,
 {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = BaseEvm<DB, I, FpvmPrecompiles<H, O>>;
-    type Context<DB: Database> = OpContext<DB>;
-    type Tx = OpTransaction<TxEnv>;
+    type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, FpvmPrecompiles<H, O>>;
+    type Context<DB: Database> = BaseContext<DB>;
+    type Tx = BaseTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
-        EVMError<DBError, OpTransactionError>;
-    type HaltReason = OpHaltReason;
+        EVMError<DBError, BaseTransactionError>;
+    type HaltReason = BaseHaltReason;
     type Spec = OpSpecId;
     type BlockEnv = BlockEnv;
     type Precompiles = FpvmPrecompiles<H, O>;

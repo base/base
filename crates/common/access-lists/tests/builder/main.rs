@@ -6,7 +6,7 @@ use alloy_consensus::Header;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_sol_types::SolCall;
 use base_access_lists::{FBALBuilderDb, FlashblockAccessList};
-use base_common_evm::OpTransaction;
+use base_common_evm::BaseTransaction;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_test_utils::{
@@ -40,7 +40,7 @@ fn load_chain_spec() -> Arc<BaseChainSpec> {
 /// Uses a single `FBALBuilderDb` instance that wraps the underlying `InMemoryDB`,
 /// calling `set_index()` before each transaction to track which txn caused which change.
 pub fn execute_txns_build_access_list(
-    txs: Vec<OpTransaction<TxEnv>>,
+    txs: Vec<BaseTransaction<TxEnv>>,
     acc_overrides: Option<HashMap<Address, AccountInfo>>,
     storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
 ) -> Result<FlashblockAccessList> {

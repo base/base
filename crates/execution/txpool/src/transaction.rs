@@ -321,12 +321,12 @@ where
 
 /// Helper trait to provide payload builder with access to encoded bytes of
 /// transaction.
-pub trait OpPooledTx: PoolTransaction + DataAvailabilitySized {
+pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Returns the EIP-2718 encoded bytes of the transaction.
     fn encoded_2718(&self) -> Cow<'_, Bytes>;
 }
 
-impl<Cons, Pooled> OpPooledTx for BasePooledTransaction<Cons, Pooled>
+impl<Cons, Pooled> BasePooledTx for BasePooledTransaction<Cons, Pooled>
 where
     Cons: SignedTransaction + From<Pooled>,
     Pooled: SignedTransaction + TryFrom<Cons>,
@@ -434,7 +434,7 @@ mod tests {
         validate::EthTransactionValidatorBuilder,
     };
 
-    use crate::{BasePooledTransaction, OpTransactionValidator};
+    use crate::{BasePooledTransaction, BaseTransactionValidator};
     #[tokio::test]
     async fn validate_base_transaction() {
         let client = MockEthProvider::<BasePrimitives>::new()
@@ -445,7 +445,7 @@ mod tests {
             .no_shanghai()
             .no_cancun()
             .build(InMemoryBlobStore::default());
-        let validator = OpTransactionValidator::new(validator);
+        let validator = BaseTransactionValidator::new(validator);
 
         let origin = TransactionOrigin::External;
         let signer = Default::default();

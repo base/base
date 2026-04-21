@@ -353,7 +353,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, Builder, DefaultOp,
+        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, Builder, DefaultBase,
         L1BlockInfo, OpSpecId,
     };
 

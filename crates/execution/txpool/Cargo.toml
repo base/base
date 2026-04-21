@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "OP-Reth Transaction Pool"
+description = "Base Transaction Pool"
 
 [lints]
 workspace = true

@@ -653,7 +653,7 @@ mod tests {
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use alloy_rpc_types_eth::Block as RpcBlock;
-    use base_common_rpc_types::Transaction as OpTransaction;
+    use base_common_rpc_types::Transaction as BaseTransaction;
     use base_consensus_engine::{
         Engine, EngineState,
         test_utils::{test_block_info, test_engine_client_builder},
@@ -671,8 +671,8 @@ mod tests {
     ///
     /// Use the returned hash as `genesis.l2.hash` in the test rollup config so that
     /// [`L2BlockInfo::from_block_and_genesis`] accepts the block via the genesis path.
-    fn make_genesis_block() -> (RpcBlock<OpTransaction>, B256) {
-        let block = RpcBlock::<OpTransaction>::default();
+    fn make_genesis_block() -> (RpcBlock<BaseTransaction>, B256) {
+        let block = RpcBlock::<BaseTransaction>::default();
         let hash = block.clone().into_consensus().hash_slow();
         (block, hash)
     }

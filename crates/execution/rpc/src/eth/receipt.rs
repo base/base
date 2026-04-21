@@ -393,7 +393,7 @@ mod tests {
         };
 
     #[test]
-    fn op_receipt_fields_from_block_and_tx() {
+    fn base_receipt_fields_from_block_and_tx() {
         // rig
         let tx_0 = BaseTransactionSigned::decode_2718(
             &mut TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_124665056.as_slice(),
@@ -482,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn op_non_zero_operator_fee_params_included_in_receipt() {
+    fn base_non_zero_operator_fee_params_included_in_receipt() {
         let tx_1 =
             BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
@@ -506,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn op_zero_operator_fee_params_not_included_in_receipt() {
+    fn base_zero_operator_fee_params_not_included_in_receipt() {
         let tx_1 =
             BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();

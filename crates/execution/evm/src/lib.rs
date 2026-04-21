@@ -19,7 +19,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder, BaseTxEnv,
-    OpSpecId, OpTransaction,
+    OpSpecId, BaseTransaction,
 };
 use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthChainSpec;
@@ -201,7 +201,7 @@ where
             BlockBody = alloy_consensus::BlockBody<R::Transaction>,
             Block = alloy_consensus::Block<R::Transaction>,
         >,
-    OpTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
+    BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
     R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction>,
     EvmF: EvmFactory<
             Tx: FromRecoveredTx<R::Transaction>
@@ -278,7 +278,7 @@ where
             BlockBody = alloy_consensus::BlockBody<R::Transaction>,
             Block = alloy_consensus::Block<R::Transaction>,
         >,
-    OpTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
+    BaseTransaction<TxEnv>: FromRecoveredTx<N::SignedTx> + FromTxWithEncoded<N::SignedTx>,
     R: BaseReceiptBuilder<Receipt: DepositReceiptExt, Transaction: SignedTransaction>,
     Self: Send + Sync + Unpin + Clone + 'static,
 {

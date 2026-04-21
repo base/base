@@ -10,7 +10,7 @@ use crate::DEPOSIT_TRANSACTION_TYPE;
 
 /// Base Transaction trait.
 #[auto_impl(&, &mut, Box, Arc)]
-pub trait OpTxTr: Transaction {
+pub trait BaseTxTr: Transaction {
     /// Enveloped transaction bytes.
     fn enveloped_tx(&self) -> Option<&Bytes>;
 

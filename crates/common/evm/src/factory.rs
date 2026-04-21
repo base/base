@@ -7,8 +7,8 @@ use revm::{
 };
 
 use crate::{
-    BaseEvm, BasePrecompiles, Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction,
-    OpTransactionError,
+    BaseEvm, BasePrecompiles, Builder, DefaultBase, BaseContext, BaseHaltReason, OpSpecId, BaseTransaction,
+    BaseTransactionError,
 };
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
@@ -21,12 +21,12 @@ use crate::{
 pub struct BaseEvmFactory;
 
 impl EvmFactory for BaseEvmFactory {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = BaseEvm<DB, I, PrecompilesMap>;
-    type Context<DB: Database> = OpContext<DB>;
-    type Tx = OpTransaction<TxEnv>;
+    type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, PrecompilesMap>;
+    type Context<DB: Database> = BaseContext<DB>;
+    type Tx = BaseTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
-        EVMError<DBError, OpTransactionError>;
-    type HaltReason = OpHaltReason;
+        EVMError<DBError, BaseTransactionError>;
+    type HaltReason = BaseHaltReason;
     type Spec = OpSpecId;
     type BlockEnv = BlockEnv;
     type Precompiles = PrecompilesMap;
