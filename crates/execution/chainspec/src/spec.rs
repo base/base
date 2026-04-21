@@ -169,16 +169,11 @@ impl EthChainSpec for OpChainSpec {
     }
 
     fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
-        let config = match self.chain().id() {
-            8453 => BaseChainConfig::mainnet(),
-            84532 => BaseChainConfig::sepolia(),
-            11763072 => BaseChainConfig::alpha(),
-            763360 => BaseChainConfig::zeronet(),
-            _ => return None,
-        };
-        let enodes: Vec<&str> =
-            config.bootnodes.iter().filter(|s| !s.starts_with("enr:")).copied().collect();
-        Some(parse_nodes(&enodes))
+        BaseChainConfig::by_chain_id(self.chain().id()).map(|cfg| {
+            let enodes: Vec<&str> =
+                cfg.bootnodes.iter().filter(|s| !s.starts_with("enr:")).copied().collect();
+            parse_nodes(&enodes)
+        })
     }
 
     fn is_optimism(&self) -> bool {
