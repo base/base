@@ -2463,6 +2463,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-common-chains",
+ "clap",
+ "eyre",
+ "figment",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "base-access-lists"
 version = "0.0.0"
 dependencies = [
@@ -2679,19 +2692,6 @@ dependencies = [
  "futures",
  "thiserror 2.0.18",
  "tokio",
- "tracing",
-]
-
-[[package]]
-name = "base-bin"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "base-common-chains",
- "clap",
- "eyre",
- "figment",
- "serde",
  "tracing",
 ]
 
