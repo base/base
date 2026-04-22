@@ -5,6 +5,7 @@
 #   just load-test devnet --continuous                   - Load test devnet indefinitely (Ctrl-C to stop)
 #   just load-test devnet-continuous (jldc)              - Alias: devnet continuous mode
 #   FUNDER_KEY=0x... just load-test sepolia              - Load test sepolia
+#   FUNDER_KEY=0x... just load-test recover sepolia      - Recover funds from sepolia test accounts
 
 set positional-arguments := true
 set working-directory := '../../..'
@@ -24,3 +25,8 @@ devnet-continuous:
 # Run load test against sepolia network (requires FUNDER_KEY env var)
 sepolia *args:
     cargo run -p base-load-tests --bin base-load-test -- crates/infra/load-tests/examples/sepolia.yaml {{args}}
+
+# Recover/drain funds from load test accounts back to funder (requires FUNDER_KEY env var)
+# Usage: just load-test recover <network>  (e.g., just load-test recover sepolia)
+recover network:
+    cargo run -p base-load-tests --bin base-load-test -- crates/infra/load-tests/examples/{{network}}.yaml --drain-only

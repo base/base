@@ -882,8 +882,6 @@ impl LoadRunner {
             });
         }
 
-        let active_duration = start.elapsed();
-
         if !pending_batch.is_empty() {
             let permit = Arc::clone(&semaphore)
                 .acquire_owned()
@@ -945,9 +943,10 @@ impl LoadRunner {
             "load test complete, draining confirmations"
         );
 
-        let drain_timeout = Duration::from_secs(60);
+        let drain_timeout = Duration::from_secs(20);
         let drain_start = Instant::now();
         let confirmer_poll_interval_ms = 600; // Slightly longer than confirmer's 500ms poll
+        let mut last_confirmed_at = start.elapsed();
 
         while drain_start.elapsed() < drain_timeout {
             match tokio::time::timeout(
@@ -958,11 +957,13 @@ impl LoadRunner {
             {
                 Ok(Some(metrics)) => {
                     self.collector.record_confirmed(metrics);
+                    last_confirmed_at = start.elapsed();
                 }
                 Ok(None) => break,
                 Err(_) if confirmer_task.is_finished() => {
                     while let Ok(metrics) = metrics_rx.try_recv() {
                         self.collector.record_confirmed(metrics);
+                        last_confirmed_at = start.elapsed();
                     }
                     break;
                 }
@@ -978,6 +979,7 @@ impl LoadRunner {
 
         while let Ok(metrics) = metrics_rx.try_recv() {
             self.collector.record_confirmed(metrics);
+            last_confirmed_at = start.elapsed();
         }
 
         // Now safe to stop WebSocket tasks — confirmer is done.
@@ -1004,7 +1006,7 @@ impl LoadRunner {
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
-        Ok(self.collector.summarize(active_duration))
+        Ok(self.collector.summarize(last_confirmed_at))
     }
 
     fn build_snapshot(

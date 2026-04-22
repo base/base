@@ -23,7 +23,7 @@ pub type FlashblockTimes = Arc<RwLock<HashMap<TxHash, Instant>>>;
 const PENDING_CHANNEL_BUFFER: usize = 2000;
 
 /// Maximum number of receipt lookups per poll cycle.
-const MAX_RECEIPT_LOOKUPS: usize = 500;
+const MAX_RECEIPT_LOOKUPS: usize = 1000;
 
 /// Tracks pending transactions and collects confirmation metrics.
 pub struct Confirmer {
@@ -166,7 +166,7 @@ impl Confirmer {
             in_flight_per_sender: Arc::new(in_flight_map),
             total_in_flight: Arc::new(AtomicU64::new(0)),
             stop_flag,
-            poll_interval: Duration::from_millis(500),
+            poll_interval: Duration::from_millis(200),
             max_pending_age: Duration::from_secs(60),
             pending_rx: Some(pending_rx),
             pending_tx,
@@ -332,7 +332,7 @@ impl Confirmer {
             let block_latency =
                 block_num.and_then(|n| self.get_block_latency(n, pending.submit_time));
             let flashblocks_latency = self.get_flashblocks_latency(&tx_hash, pending);
-            let metrics = TransactionMetrics::new(
+            let mut metrics = TransactionMetrics::new(
                 tx_hash,
                 block_latency,
                 flashblocks_latency,
@@ -340,6 +340,7 @@ impl Confirmer {
                 receipt.inner.effective_gas_price,
                 block_num,
             );
+            metrics.confirmed_at = Some(Instant::now());
 
             if let (None, Some(bn)) = (block_latency, block_num) {
                 self.deferred_block_latencies.push(DeferredBlockLatency {

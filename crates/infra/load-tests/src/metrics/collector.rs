@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, time::{Duration, Instant}};
 
 use alloy_primitives::TxHash;
 use tracing::debug;
@@ -37,13 +37,14 @@ impl MetricsCollector {
     /// Records a confirmed transaction with metrics.
     pub fn record_confirmed(&mut self, metrics: TransactionMetrics) {
         debug!(tx_hash = %metrics.tx_hash, block_latency_ms = ?metrics.block_latency.map(|d| d.as_millis()), "tx confirmed");
+        let at = metrics.confirmed_at.unwrap_or_else(Instant::now);
         if let Some(latency) = metrics.block_latency {
-            self.rolling.push(metrics.gas_used, latency);
+            self.rolling.push(metrics.gas_used, latency, at);
         } else {
-            self.rolling.push_gas(metrics.gas_used);
+            self.rolling.push_gas(metrics.gas_used, at);
         }
         if let Some(flashblocks_latency) = metrics.flashblocks_latency {
-            self.flashblocks_rolling.push_latency(flashblocks_latency);
+            self.flashblocks_rolling.push_latency(flashblocks_latency, at);
         }
         self.transactions.push(metrics);
     }
@@ -78,13 +79,12 @@ impl MetricsCollector {
 
     /// Generates a summary of collected metrics.
     ///
-    /// `active_duration` should cover only the active submission window
-    /// (first tx submitted → last tx submitted), excluding setup and
-    /// confirmation-drain phases.
-    pub fn summarize(&self, active_duration: Duration) -> MetricsSummary {
+    /// `duration` should span from first submission to last confirmation
+    /// so that the reported TPS reflects end-to-end throughput.
+    pub fn summarize(&self, duration: Duration) -> MetricsSummary {
         let aggregator = MetricsAggregator::new(&self.transactions);
         aggregator.summarize(
-            active_duration,
+            duration,
             self.submitted_count,
             self.failed_count,
             &self.failure_reasons,

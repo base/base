@@ -19,24 +19,21 @@ impl RollingWindow {
     }
 
     /// Records a confirmed transaction with its gas used and latency.
-    pub fn push(&mut self, gas_used: u64, latency: Duration) {
-        let now = Instant::now();
-        self.gas_events.push_back((now, gas_used));
-        self.latency_events.push_back((now, latency));
+    pub fn push(&mut self, gas_used: u64, latency: Duration, at: Instant) {
+        self.gas_events.push_back((at, gas_used));
+        self.latency_events.push_back((at, latency));
         self.prune();
     }
 
     /// Records a gas-only event (no latency tracking).
-    pub fn push_gas(&mut self, gas_used: u64) {
-        let now = Instant::now();
-        self.gas_events.push_back((now, gas_used));
+    pub fn push_gas(&mut self, gas_used: u64, at: Instant) {
+        self.gas_events.push_back((at, gas_used));
         self.prune();
     }
 
     /// Records a latency-only event (no gas tracking).
-    pub fn push_latency(&mut self, latency: Duration) {
-        let now = Instant::now();
-        self.latency_events.push_back((now, latency));
+    pub fn push_latency(&mut self, latency: Duration, at: Instant) {
+        self.latency_events.push_back((at, latency));
         self.prune();
     }
 

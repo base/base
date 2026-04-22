@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::TxHash;
 use serde::{Deserialize, Serialize};
@@ -18,11 +18,14 @@ pub struct TransactionMetrics {
     pub gas_price: u128,
     /// Block number where transaction was included.
     pub block_number: Option<u64>,
+    /// When the confirmer discovered the receipt (used by the rolling window).
+    #[serde(skip)]
+    pub confirmed_at: Option<Instant>,
 }
 
 impl TransactionMetrics {
     /// Creates new transaction metrics.
-    pub const fn new(
+    pub fn new(
         tx_hash: TxHash,
         block_latency: Option<Duration>,
         flashblocks_latency: Option<Duration>,
@@ -30,7 +33,15 @@ impl TransactionMetrics {
         gas_price: u128,
         block_number: Option<u64>,
     ) -> Self {
-        Self { tx_hash, block_latency, flashblocks_latency, gas_used, gas_price, block_number }
+        Self {
+            tx_hash,
+            block_latency,
+            flashblocks_latency,
+            gas_used,
+            gas_price,
+            block_number,
+            confirmed_at: None,
+        }
     }
 
     /// Returns the transaction cost in wei.

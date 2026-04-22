@@ -106,7 +106,7 @@ impl LoadConfig {
             transactions: vec![TxConfig { weight: 100, tx_type: TxType::Transfer }],
             target_gps: 2_100_000,
             duration: Some(Duration::from_secs(30)),
-            max_in_flight_per_sender: 50,
+            max_in_flight_per_sender: 128,
             batch_size: 5,
             batch_timeout: Duration::from_millis(50),
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
