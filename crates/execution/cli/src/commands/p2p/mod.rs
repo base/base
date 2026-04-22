@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockHashOrNumber;
-use backon::{ConstantBuilder, Retryable};
+use backon::Retryable;
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
 use reth_cli_commands::{
@@ -109,7 +109,7 @@ impl Command {
     /// Header and Body delegate chain parsing internally to [`DownloadArgs`] whose `chain`
     /// field is private, so we return `None` for those. Only the log-directory path suffix
     /// uses this value, so the impact is cosmetic.
-    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
+    pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         None
     }
 }
@@ -132,7 +132,7 @@ enum Subcommands {
         #[arg(value_parser = hash_or_num_value_parser)]
         id: BlockHashOrNumber,
     },
-    /// RLPx utilities.
+    /// `RLPx` utilities.
     Rlpx(rlpx::Command),
     /// Start a discovery-only bootnode.
     Bootnode(bootnode::Command),
