@@ -145,22 +145,22 @@ impl<P: Provider> NonceManager<P> {
                 self.provider.get_transaction_count(self.address)
             };
             let fetched = tokio::time::timeout(self.rpc_timeout, count_fut)
-            .await
-            .map_err(|_| {
-                warn!(
-                    address = %self.address,
-                    timeout = ?self.rpc_timeout,
-                    "nonce fetch timed out",
-                );
-                TxManagerError::Rpc("nonce fetch timed out".into())
-            })?
-            .map_err(|e| {
-                warn!(
-                    error = %e, address = %self.address,
-                    "failed to fetch nonce from chain",
-                );
-                TxManagerError::Rpc(e.to_string())
-            })?;
+                .await
+                .map_err(|_| {
+                    warn!(
+                        address = %self.address,
+                        timeout = ?self.rpc_timeout,
+                        "nonce fetch timed out",
+                    );
+                    TxManagerError::Rpc("nonce fetch timed out".into())
+                })?
+                .map_err(|e| {
+                    warn!(
+                        error = %e, address = %self.address,
+                        "failed to fetch nonce from chain",
+                    );
+                    TxManagerError::Rpc(e.to_string())
+                })?;
 
             // Phase 3: re-acquire the lock and populate only if still
             // unset AND the generation has not changed. If reset()

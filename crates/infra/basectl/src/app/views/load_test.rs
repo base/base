@@ -684,9 +684,7 @@ impl LoadTestView {
             "in_flight_per_sender" => cfg.in_flight_per_sender.to_string(),
             "target_gps" => cfg.target_gps.map_or_else(|| "default".into(), |v| v.to_string()),
             "batch_size" => cfg.batch_size.to_string(),
-            "batch_timeout" => {
-                cfg.batch_timeout.clone().unwrap_or_else(|| "100ms".into())
-            }
+            "batch_timeout" => cfg.batch_timeout.clone().unwrap_or_else(|| "100ms".into()),
             "funding_amount" => format_wei_as_eth(&cfg.funding_amount),
             "block_watcher_url" => {
                 cfg.block_watcher_url.as_ref().map_or_else(String::new, |u| u.to_string())
@@ -1209,10 +1207,7 @@ impl LoadTestView {
             Span::styled("  Batch Size    ", label_style),
             Span::styled(cfg.batch_size.to_string(), value_style),
             Span::styled("  Timeout  ", label_style),
-            Span::styled(
-                cfg.batch_timeout.as_deref().unwrap_or("100ms"),
-                value_style,
-            ),
+            Span::styled(cfg.batch_timeout.as_deref().unwrap_or("100ms"), value_style),
         ]));
 
         lines.push(Line::from(vec![
@@ -1303,9 +1298,7 @@ impl LoadTestView {
 
         match &self.state {
             RunState::Idle => render_idle_status(frame, inner, self.continuous),
-            RunState::Running {
-                start, run_count, current_snap, current_phase, ..
-            } => {
+            RunState::Running { start, run_count, current_snap, current_phase, .. } => {
                 let (elapsed, run_duration) = if matches!(current_phase, RunPhase::Running)
                     && current_snap.elapsed > Duration::ZERO
                 {

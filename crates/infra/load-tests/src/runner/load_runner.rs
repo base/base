@@ -92,9 +92,6 @@ struct BatchSubmitCtx {
 
 const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Warn when any account drops below 0.001 ETH.
-const LOW_BALANCE_THRESHOLD: u128 = 1_000_000_000_000_000;
-
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
     config: LoadConfig,
@@ -201,11 +198,7 @@ impl LoadRunner {
     }
 
     fn build_signers(accounts: &AccountPool) -> HashMap<Address, PrivateKeySigner> {
-        accounts
-            .accounts()
-            .iter()
-            .map(|a| (a.address, a.signer.clone()))
-            .collect()
+        accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect()
     }
 
     fn create_generator(
@@ -578,9 +571,8 @@ impl LoadRunner {
         for account in self.accounts.accounts() {
             if !self.nonce_managers.contains_key(&account.address) {
                 let provider = NonceProvider::new_http(self.config.rpc_http_url.clone());
-                let nonce_manager =
-                    NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT)
-                        .with_pending_tag();
+                let nonce_manager = NonceManager::new(provider, account.address, NONCE_RPC_TIMEOUT)
+                    .with_pending_tag();
                 Arc::make_mut(&mut self.nonce_managers).insert(account.address, nonce_manager);
             }
         }
@@ -687,17 +679,13 @@ impl LoadRunner {
         let mut last_gas_price_refresh = Instant::now();
         let mut last_rate_limiter_update = Instant::now();
         let mut last_progress_report = Instant::now();
-        let mut last_balance_check = Instant::now();
         const GAS_PRICE_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
-        const BALANCE_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
         let use_snapshot_tx = self.snapshot_tx.is_some();
-
-        self.check_account_balances().await;
 
         // Emit an initial snapshot immediately so the TUI renders live
         // metrics (submitted/in-flight/failed counters) without waiting
@@ -737,11 +725,6 @@ impl LoadRunner {
                     rate_limiter.update_avg_gas(avg_gas);
                 }
                 last_rate_limiter_update = Instant::now();
-            }
-
-            if last_balance_check.elapsed() >= BALANCE_CHECK_INTERVAL {
-                self.check_account_balances().await;
-                last_balance_check = Instant::now();
             }
 
             // Drain confirmed metrics non-blocking so the rolling window stays
@@ -1061,7 +1044,8 @@ impl LoadRunner {
 
             let Some(nonce_manager) = ctx.nonce_managers.get(&prepared.from) else {
                 warn!(from = %prepared.from, "no nonce manager for sender");
-                let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("no nonce manager".into())).await;
+                let _ =
+                    ctx.submit_event_tx.send(SubmitEvent::Failed("no nonce manager".into())).await;
                 continue;
             };
 
@@ -1069,7 +1053,10 @@ impl LoadRunner {
                 Ok(guard) => guard,
                 Err(e) => {
                     warn!(from = %prepared.from, error = %e, "failed to acquire nonce");
-                    let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("nonce acquisition failed".into())).await;
+                    let _ = ctx
+                        .submit_event_tx
+                        .send(SubmitEvent::Failed("nonce acquisition failed".into()))
+                        .await;
                     continue;
                 }
             };
@@ -1093,7 +1080,10 @@ impl LoadRunner {
                 Err(e) => {
                     warn!(from = %prepared.from, nonce, error = ?e, "failed to build typed tx");
                     nonce_guard.rollback();
-                    let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("tx build failed".into())).await;
+                    let _ = ctx
+                        .submit_event_tx
+                        .send(SubmitEvent::Failed("tx build failed".into()))
+                        .await;
                     continue;
                 }
             };
@@ -1104,7 +1094,10 @@ impl LoadRunner {
                 Err(e) => {
                     warn!(from = %prepared.from, nonce, error = %e, "failed to sign tx");
                     nonce_guard.rollback();
-                    let _ = ctx.submit_event_tx.send(SubmitEvent::Failed("signing failed".into())).await;
+                    let _ = ctx
+                        .submit_event_tx
+                        .send(SubmitEvent::Failed("signing failed".into()))
+                        .await;
                     continue;
                 }
             };
@@ -1120,12 +1113,7 @@ impl LoadRunner {
             // sender_count (duplicate senders in the same batch).
             drop(nonce_guard);
 
-            signed_txs.push(SignedTx {
-                raw,
-                tx_hash,
-                from: prepared.from,
-                nonce,
-            });
+            signed_txs.push(SignedTx { raw, tx_hash, from: prepared.from, nonce });
         }
 
         if signed_txs.is_empty() {
@@ -1363,7 +1351,9 @@ impl LoadRunner {
         let pb_confirm = self.progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
-        if let Err(e) = Self::await_confirmations(&self.batch_rpc, &mut pending_txs, &pb_confirm).await {
+        if let Err(e) =
+            Self::await_confirmations(&self.batch_rpc, &mut pending_txs, &pb_confirm).await
+        {
             warn!(error = %e, "some drain txs did not confirm within timeout");
         }
         pb_confirm.finish_and_clear();
@@ -1408,8 +1398,7 @@ impl LoadRunner {
             };
 
             let mut still_pending = Vec::new();
-            for ((tx_hash, address), receipt_opt) in
-                pending_txs.drain(..).zip(results.into_iter())
+            for ((tx_hash, address), receipt_opt) in pending_txs.drain(..).zip(results.into_iter())
             {
                 if receipt_opt.is_some() {
                     debug!(tx_hash = %tx_hash, address = %address, "tx confirmed");
@@ -1429,60 +1418,6 @@ impl LoadRunner {
         }
 
         Ok(())
-    }
-
-    /// Checks account balances, stores the results for the live display, and
-    /// logs a warning when any account is running low.
-    async fn check_account_balances(&mut self) {
-        let addresses: Vec<Address> = self.accounts.accounts().iter().map(|a| a.address).collect();
-
-        let results =
-            futures::future::join_all(addresses.iter().map(|&addr| self.client.get_balance(addr)))
-                .await;
-
-        let mut total = U256::ZERO;
-        let mut min = U256::MAX;
-        let mut below_threshold = 0usize;
-
-        for (&address, result) in addresses.iter().zip(results) {
-            match result {
-                Ok(balance) => {
-                    total = total.saturating_add(balance);
-                    if balance < min {
-                        min = balance;
-                    }
-                    if balance < U256::from(LOW_BALANCE_THRESHOLD) {
-                        below_threshold += 1;
-                    }
-                }
-                Err(e) => {
-                    warn!(address = %address, error = %e, "failed to check account balance");
-                }
-            }
-        }
-
-        if min == U256::MAX {
-            return;
-        }
-
-        self.last_total_eth = Some(format_ether(total));
-        self.last_min_eth = Some(format_ether(min));
-        self.last_funds_low = below_threshold > 0;
-
-        if below_threshold > 0 {
-            warn!(
-                total_eth = %format_ether(total),
-                min_eth = %format_ether(min),
-                accounts_low = below_threshold,
-                "account funds running low"
-            );
-        } else {
-            info!(
-                total_eth = %format_ether(total),
-                min_eth = %format_ether(min),
-                "account balances"
-            );
-        }
     }
 
     /// Signals the load test to stop gracefully.

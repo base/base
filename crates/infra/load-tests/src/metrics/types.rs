@@ -25,7 +25,7 @@ pub struct TransactionMetrics {
 
 impl TransactionMetrics {
     /// Creates new transaction metrics.
-    pub fn new(
+    pub const fn new(
         tx_hash: TxHash,
         block_latency: Option<Duration>,
         flashblocks_latency: Option<Duration>,

@@ -17,15 +17,24 @@ use crate::utils::{BaselineError, Result};
 
 type BlockTimestampCache = Arc<RwLock<std::collections::HashMap<u64, u64>>>;
 
-/// Provider trait for block timestamp lookups needed by the confirmer.
+/// Provider trait for block-level queries needed by the confirmer.
 ///
-/// Abstracts the RPC call so tests can supply a mock.
+/// Abstracts the RPC calls so tests can supply a mock.
 pub trait ReceiptProvider: Send + Sync {
     /// Fetches the block timestamp (unix seconds) for a given block number.
     fn get_block_timestamp(
         &self,
         block_number: u64,
     ) -> impl Future<Output = Result<Option<u64>>> + Send;
+
+    /// Fetches the latest block number.
+    fn get_latest_block_number(&self) -> impl Future<Output = Result<u64>> + Send;
+
+    /// Fetches all transaction receipts for a block via `eth_getBlockReceipts`.
+    fn get_block_receipts(
+        &self,
+        block_number: u64,
+    ) -> impl Future<Output = Result<Option<Vec<BaseTransactionReceipt>>>> + Send;
 }
 
 /// Provider type with wallet signing capability for sending transactions.
@@ -162,9 +171,7 @@ impl RpcClient {
         block_number: u64,
     ) -> Result<Option<Vec<BaseTransactionReceipt>>> {
         self.provider
-            .get_block_receipts(alloy_eips::BlockId::Number(BlockNumberOrTag::Number(
-                block_number,
-            )))
+            .get_block_receipts(alloy_eips::BlockId::Number(BlockNumberOrTag::Number(block_number)))
             .await
             .map_err(|e| BaselineError::Rpc(e.to_string()))
     }
@@ -185,6 +192,17 @@ impl std::fmt::Debug for RpcClient {
 impl ReceiptProvider for RpcClient {
     async fn get_block_timestamp(&self, block_number: u64) -> Result<Option<u64>> {
         self.get_block_timestamp(block_number).await
+    }
+
+    async fn get_latest_block_number(&self) -> Result<u64> {
+        self.get_latest_block_number().await
+    }
+
+    async fn get_block_receipts(
+        &self,
+        block_number: u64,
+    ) -> Result<Option<Vec<BaseTransactionReceipt>>> {
+        self.get_block_receipts(block_number).await
     }
 }
 
@@ -247,7 +265,8 @@ impl BatchRpcClient {
 
         let chunk_results = futures::future::join_all(chunk_futures).await;
 
-        let mut all_results: Vec<Option<BaseTransactionReceipt>> = Vec::with_capacity(tx_hashes.len());
+        let mut all_results: Vec<Option<BaseTransactionReceipt>> =
+            Vec::with_capacity(tx_hashes.len());
         for result in chunk_results {
             all_results.extend(result?);
         }
@@ -279,9 +298,7 @@ impl BatchRpcClient {
             .json(&batch)
             .send()
             .await
-            .map_err(|e| {
-                BaselineError::Rpc(format!("batch receipt request failed: {e}"))
-            })?;
+            .map_err(|e| BaselineError::Rpc(format!("batch receipt request failed: {e}")))?;
 
         let status = response.status();
         let body_text = response.text().await.map_err(|e| {
@@ -295,13 +312,12 @@ impl BatchRpcClient {
             )));
         }
 
-        let body: Vec<serde_json::Value> =
-            serde_json::from_str(&body_text).map_err(|e| {
-                let preview = truncate_for_log(&body_text);
-                BaselineError::Rpc(format!(
-                    "batch receipt response is not a JSON array: {e} (body: {preview})"
-                ))
-            })?;
+        let body: Vec<serde_json::Value> = serde_json::from_str(&body_text).map_err(|e| {
+            let preview = truncate_for_log(&body_text);
+            BaselineError::Rpc(format!(
+                "batch receipt response is not a JSON array: {e} (body: {preview})"
+            ))
+        })?;
 
         let mut results: Vec<Option<BaseTransactionReceipt>> = vec![None; chunk.len()];
 
@@ -311,13 +327,13 @@ impl BatchRpcClient {
                 continue;
             }
 
-            if let Some(result) = item.get("result") {
-                if !result.is_null() {
-                    match serde_json::from_value::<BaseTransactionReceipt>(result.clone()) {
-                        Ok(receipt) => results[id] = Some(receipt),
-                        Err(e) => {
-                            debug!(id, error = %e, "failed to parse receipt in batch response");
-                        }
+            if let Some(result) = item.get("result")
+                && !result.is_null()
+            {
+                match serde_json::from_value::<BaseTransactionReceipt>(result.clone()) {
+                    Ok(receipt) => results[id] = Some(receipt),
+                    Err(e) => {
+                        debug!(id, error = %e, "failed to parse receipt in batch response");
                     }
                 }
             }
@@ -331,10 +347,7 @@ impl BatchRpcClient {
     ///
     /// Each element in `raw_txs` must be the EIP-2718 encoded signed
     /// transaction bytes (as produced by `Encodable2718::encoded_2718`).
-    pub async fn send_raw_transactions(
-        &self,
-        raw_txs: &[Bytes],
-    ) -> Result<Vec<BatchSendResult>> {
+    pub async fn send_raw_transactions(&self, raw_txs: &[Bytes]) -> Result<Vec<BatchSendResult>> {
         if raw_txs.is_empty() {
             return Ok(Vec::new());
         }
@@ -383,10 +396,7 @@ impl BatchRpcClient {
                     }
                 }
             } else if let Some(error) = item.get("error") {
-                let msg = error
-                    .get("message")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("unknown error");
+                let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
                 results[id] = BatchSendResult::Error(msg.to_string());
             }
         }
@@ -398,9 +408,5 @@ impl BatchRpcClient {
 
 fn truncate_for_log(s: &str) -> &str {
     let max = 256;
-    if s.len() <= max {
-        s
-    } else {
-        &s[..s.floor_char_boundary(max)]
-    }
+    if s.len() <= max { s } else { &s[..s.floor_char_boundary(max)] }
 }
