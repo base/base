@@ -441,7 +441,7 @@ rpc: http://localhost:8545
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.rpc.host_str(), Some("localhost"));
-        assert_eq!(config.sender_count, 50);
+        assert_eq!(config.sender_count, 100);
         assert!(config.mnemonic.is_none());
     }
 
