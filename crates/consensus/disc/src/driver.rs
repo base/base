@@ -501,9 +501,9 @@ mod tests {
             })
             .collect();
 
-        // There should be 10 valid boot nodes for the mainnet:
-        // 5 Base Mainnet ENRs + 5 Base enodes.
-        assert_eq!(mainnet.len(), 10);
+        // There should be 15 valid boot nodes for the mainnet:
+        // 5 Base Mainnet ENRs + 10 Base enodes (each enode listed on ports 30301 and 9200).
+        assert_eq!(mainnet.len(), 15);
 
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
