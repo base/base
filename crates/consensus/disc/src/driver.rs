@@ -461,8 +461,9 @@ mod tests {
             })
             .collect();
 
-        // There should be 4 valid boot nodes for the testnet (all enodes).
-        assert_eq!(testnet.len(), 4);
+        // There should be 6 valid boot nodes for the testnet:
+        // 2 ENRs + 4 enodes (each enode listed on ports 30301 and 9200).
+        assert_eq!(testnet.len(), 6);
 
         // Those ENRs should be in the testnet bootnodes.
         for enr in &enrs {
