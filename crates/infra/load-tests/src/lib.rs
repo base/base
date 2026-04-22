@@ -22,7 +22,7 @@ pub use rpc::{
 mod metrics;
 pub use metrics::{
     FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics, MetricsAggregator, MetricsCollector,
-    MetricsSummary, RollingWindow, ThroughputMetrics, TransactionMetrics,
+    MetricsSummary, RollingWindow, ThroughputMetrics, ThroughputPercentiles, TransactionMetrics,
 };
 
 mod workload;

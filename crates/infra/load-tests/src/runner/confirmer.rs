@@ -23,7 +23,7 @@ pub type FlashblockTimes = Arc<RwLock<HashMap<TxHash, Instant>>>;
 const PENDING_CHANNEL_BUFFER: usize = 2000;
 
 /// Maximum number of receipt lookups per poll cycle.
-const MAX_RECEIPT_LOOKUPS: usize = 1000;
+const MAX_RECEIPT_LOOKUPS: usize = 3000;
 
 /// Tracks pending transactions and collects confirmation metrics.
 pub struct Confirmer {

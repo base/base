@@ -171,6 +171,15 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
             summary.throughput.gps,
             summary.throughput.success_rate()
         );
+        let tp = &summary.throughput_percentiles;
+        println!(
+            "TPS Rolling:   p50={:.0}  p90={:.0}  p99={:.0}  max={:.0}",
+            tp.tps_p50, tp.tps_p90, tp.tps_p99, tp.tps_max
+        );
+        println!(
+            "GPS Rolling:   p50={:.0}  p90={:.0}  p99={:.0}  max={:.0}",
+            tp.gps_p50, tp.gps_p90, tp.gps_p99, tp.gps_max
+        );
         let bl = &summary.block_latency;
         println!(
             "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",

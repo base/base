@@ -14,6 +14,8 @@ pub struct MetricsCollector {
     failure_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
     flashblocks_rolling: RollingWindow,
+    tps_samples: Vec<f64>,
+    gps_samples: Vec<f64>,
 }
 
 impl MetricsCollector {
@@ -26,6 +28,8 @@ impl MetricsCollector {
             failure_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
             flashblocks_rolling: RollingWindow::new(),
+            tps_samples: Vec::new(),
+            gps_samples: Vec::new(),
         }
     }
 
@@ -88,6 +92,8 @@ impl MetricsCollector {
             self.submitted_count,
             self.failed_count,
             &self.failure_reasons,
+            &self.tps_samples,
+            &self.gps_samples,
         )
     }
 
@@ -99,6 +105,18 @@ impl MetricsCollector {
         self.failure_reasons.clear();
         self.rolling = RollingWindow::new();
         self.flashblocks_rolling = RollingWindow::new();
+        self.tps_samples.clear();
+        self.gps_samples.clear();
+    }
+
+    /// Snapshots the current rolling TPS and GPS for percentile computation.
+    pub fn sample_throughput(&mut self) {
+        let tps = self.rolling.tps();
+        let gps = self.rolling.gps();
+        if tps > 0.0 {
+            self.tps_samples.push(tps);
+            self.gps_samples.push(gps);
+        }
     }
 
     /// Returns the rolling 30s TPS.

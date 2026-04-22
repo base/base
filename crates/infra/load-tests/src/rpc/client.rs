@@ -193,7 +193,7 @@ impl ReceiptProvider for RpcClient {
 /// Public RPC endpoints (e.g. Sepolia) often reject or return non-JSON error
 /// responses for very large batches. Keeping batches small avoids rate-limit
 /// and gateway errors.
-const MAX_BATCH_RPC_SIZE: usize = 50;
+const MAX_BATCH_RPC_SIZE: usize = 100;
 
 /// Client for JSON-RPC batch requests.
 ///

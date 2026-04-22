@@ -3,7 +3,8 @@ use std::{collections::HashMap, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics, TransactionMetrics,
+    FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics,
+    ThroughputPercentiles, TransactionMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -25,6 +26,8 @@ impl<'a> MetricsAggregator<'a> {
         submitted: u64,
         failed: u64,
         failure_reasons: &HashMap<String, u64>,
+        tps_samples: &[f64],
+        gps_samples: &[f64],
     ) -> MetricsSummary {
         let mut top_failure_reasons: Vec<(String, u64)> =
             failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
@@ -35,6 +38,7 @@ impl<'a> MetricsAggregator<'a> {
             block_latency: self.compute_block_latency(),
             flashblocks_latency: self.compute_flashblocks_latency(),
             throughput: self.compute_throughput(duration, submitted, failed),
+            throughput_percentiles: Self::compute_throughput_percentiles(tps_samples, gps_samples),
             gas: self.compute_gas(),
             top_failure_reasons,
         }
@@ -134,8 +138,38 @@ impl<'a> MetricsAggregator<'a> {
         }
     }
 
+    fn compute_throughput_percentiles(
+        tps_samples: &[f64],
+        gps_samples: &[f64],
+    ) -> ThroughputPercentiles {
+        if tps_samples.is_empty() {
+            return ThroughputPercentiles::default();
+        }
+
+        let mut tps = tps_samples.to_vec();
+        let mut gps = gps_samples.to_vec();
+        tps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        gps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        ThroughputPercentiles {
+            tps_p50: Self::f64_percentile(&tps, 50),
+            tps_p90: Self::f64_percentile(&tps, 90),
+            tps_p99: Self::f64_percentile(&tps, 99),
+            tps_max: tps.last().copied().unwrap_or(0.0),
+            gps_p50: Self::f64_percentile(&gps, 50),
+            gps_p90: Self::f64_percentile(&gps, 90),
+            gps_p99: Self::f64_percentile(&gps, 99),
+            gps_max: gps.last().copied().unwrap_or(0.0),
+        }
+    }
+
     fn percentile(sorted: &[Duration], pct: usize) -> Duration {
-        // Use ceiling division to get 1-indexed rank, then convert to 0-indexed
+        let rank = (sorted.len() * pct).div_ceil(100);
+        let idx = rank.saturating_sub(1).min(sorted.len() - 1);
+        sorted[idx]
+    }
+
+    fn f64_percentile(sorted: &[f64], pct: usize) -> f64 {
         let rank = (sorted.len() * pct).div_ceil(100);
         let idx = rank.saturating_sub(1).min(sorted.len() - 1);
         sorted[idx]
@@ -151,6 +185,8 @@ pub struct MetricsSummary {
     pub flashblocks_latency: FlashblocksLatencyMetrics,
     /// Throughput statistics.
     pub throughput: ThroughputMetrics,
+    /// Rolling-window throughput percentiles (TPS and GPS).
+    pub throughput_percentiles: ThroughputPercentiles,
     /// Gas usage statistics.
     pub gas: GasMetrics,
     /// Top failure reasons sorted by count descending (max 3).

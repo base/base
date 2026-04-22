@@ -94,6 +94,27 @@ impl ThroughputMetrics {
     }
 }
 
+/// Rolling-window throughput percentiles sampled during the run.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThroughputPercentiles {
+    /// Median rolling TPS.
+    pub tps_p50: f64,
+    /// 90th percentile rolling TPS.
+    pub tps_p90: f64,
+    /// 99th percentile rolling TPS.
+    pub tps_p99: f64,
+    /// Peak rolling TPS observed.
+    pub tps_max: f64,
+    /// Median rolling GPS.
+    pub gps_p50: f64,
+    /// 90th percentile rolling GPS.
+    pub gps_p90: f64,
+    /// 99th percentile rolling GPS.
+    pub gps_p99: f64,
+    /// Peak rolling GPS observed.
+    pub gps_max: f64,
+}
+
 /// Aggregated gas metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GasMetrics {

@@ -761,6 +761,7 @@ impl LoadRunner {
 
             if use_live_display || use_snapshot_tx {
                 if last_progress_report.elapsed() >= DISPLAY_RENDER_INTERVAL {
+                    self.collector.sample_throughput();
                     let snap = self.build_snapshot(
                         start,
                         &confirmer_handle,
@@ -776,6 +777,7 @@ impl LoadRunner {
                     last_progress_report = Instant::now();
                 }
             } else if last_progress_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
+                self.collector.sample_throughput();
                 let elapsed_secs = start.elapsed().as_secs();
                 let submitted = self.collector.submitted_count();
                 let confirmed = self.collector.confirmed_count();
