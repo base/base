@@ -135,7 +135,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
         start_block_number: 15,
         number_of_blocks_to_prove: 5,
         sequence_window: None,
-        proof_type: ProofType::GenericZkvmClusterSnarkGroth16.into(),
+        proof_type: ProofType::SnarkGroth16.into(),
         session_id: Some(session_id),
         prover_address: Some(format!("{:#x}", addr(0))),
         l1_head: Some(format!("{DEFAULT_L1_HEAD:#x}")),

@@ -14,6 +14,7 @@ members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
+  "bin/prover/zk",
   "crates/client/*",
   "crates/consensus/*",
   "crates/proof/mpt",
@@ -33,6 +34,9 @@ members = [
   "crates/proof/tee/nitro-verifier",
   "crates/proof/tee/nitro-attestation-prover",
   "crates/proof/zk/client",
+  "crates/proof/zk/db",
+  "crates/proof/zk/outbox",
+  "crates/proof/zk/service",
   "crates/proof/contracts",
   "crates/proof/rpc",
   "crates/proof/proposer",
@@ -62,6 +66,7 @@ default-members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
+  "bin/prover/zk",
   "bin/prover-registrar",
 ]
 
@@ -224,6 +229,9 @@ mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
 base-zk-client = { path = "crates/proof/zk/client" }
+base-zk-db = { path = "crates/proof/zk/db" }
+base-zk-outbox = { path = "crates/proof/zk/outbox" }
+base-zk-service = { path = "crates/proof/zk/service" }
 base-challenger = { path = "crates/proof/challenge" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
@@ -412,8 +420,10 @@ async-trait = "0.1.83"
 # grpc
 prost = "0.14"
 tonic = "0.14"
+tonic-web = "0.14"
 tonic-prost = "0.14"
 tonic-prost-build = "0.14"
+tonic-reflection = "0.14"
 
 # rpc
 jsonrpsee = "0.26.0"
