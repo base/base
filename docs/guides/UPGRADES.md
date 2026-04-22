@@ -98,7 +98,7 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
 
 ### 3. Add the config field and nested struct
 
-**File:** [`crates/consensus/genesis/src/chain/hardfork.rs`](https://github.com/base/base/blob/main/crates/consensus/genesis/src/chain/hardfork.rs)
+**File:** [`crates/common/genesis/src/chain/hardfork.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/chain/hardfork.rs)
 
 For standard upgrades (flat timestamp field), add directly to `HardForkConfig`:
 
@@ -134,7 +134,7 @@ Also update `HardForkConfig::iter()` to include the new entry, and re-export any
 
 ### 4. Add activation methods to `RollupConfig`
 
-**File:** [`crates/consensus/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/consensus/genesis/src/rollup.rs)
+**File:** [`crates/common/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/rollup.rs)
 
 Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods.
 
@@ -341,7 +341,7 @@ pub fn spec_by_timestamp_after_bedrock(chain_spec: impl BaseUpgrades, timestamp:
 }
 ```
 
-**File:** [`crates/consensus/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/consensus/genesis/src/rollup.rs)
+**File:** [`crates/common/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/rollup.rs)
 
 Same pattern in the `#[cfg(feature = "revm")] impl RollupConfig` block:
 
