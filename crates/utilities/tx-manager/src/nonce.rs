@@ -62,10 +62,6 @@ pub struct NonceManager<P> {
     /// When `true`, the initial nonce fetch uses the `pending` block tag
     /// (counting both confirmed and mempool transactions). When `false`
     /// (the default), `latest` is used (confirmed transactions only).
-    ///
-    /// Use `pending` in scenarios where stale mempool transactions from
-    /// a previous run may still occupy nonce slots, such as load testing
-    /// with rapid re-runs.
     use_pending_tag: bool,
 }
 
@@ -88,8 +84,7 @@ impl<P: Provider> NonceManager<P> {
     }
 
     /// Configures the nonce manager to use the `pending` block tag when
-    /// fetching the initial nonce from chain, counting both confirmed and
-    /// mempool transactions.
+    /// fetching the initial nonce from chain.
     pub fn with_pending_tag(mut self) -> Self {
         self.use_pending_tag = true;
         self

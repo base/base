@@ -17,38 +17,15 @@ use crate::utils::{BaselineError, Result};
 
 type BlockTimestampCache = Arc<RwLock<std::collections::HashMap<u64, u64>>>;
 
-/// Provider trait for fetching transaction receipts and block data.
+/// Provider trait for block timestamp lookups needed by the confirmer.
 ///
-/// This trait abstracts the RPC calls needed by the confirmer, enabling
-/// mock implementations for testing.
+/// Abstracts the RPC call so tests can supply a mock.
 pub trait ReceiptProvider: Send + Sync {
-    /// Fetches transaction hashes from the pending block.
-    fn get_pending_block_tx_hashes(&self) -> impl Future<Output = Result<Vec<TxHash>>> + Send;
-
-    /// Fetches the transaction receipt for a given hash.
-    fn get_transaction_receipt(
-        &self,
-        tx_hash: TxHash,
-    ) -> impl Future<Output = Result<Option<BaseTransactionReceipt>>> + Send;
-
     /// Fetches the block timestamp (unix seconds) for a given block number.
     fn get_block_timestamp(
         &self,
         block_number: u64,
     ) -> impl Future<Output = Result<Option<u64>>> + Send;
-
-    /// Fetches all transaction receipts for a given block number.
-    ///
-    /// Returns `None` if the block does not exist. Significantly more efficient
-    /// than individual receipt lookups when confirming many transactions, since
-    /// one RPC call retrieves all receipts in the block at once.
-    fn get_block_receipts(
-        &self,
-        block_number: u64,
-    ) -> impl Future<Output = Result<Option<Vec<BaseTransactionReceipt>>>> + Send;
-
-    /// Fetches the latest block number.
-    fn get_latest_block_number(&self) -> impl Future<Output = Result<u64>> + Send;
 }
 
 /// Provider type with wallet signing capability for sending transactions.
@@ -140,19 +117,6 @@ impl RpcClient {
         self.provider.get_gas_price().await.map_err(|e| BaselineError::Rpc(e.to_string()))
     }
 
-    /// Fetches transaction hashes from the pending block via `eth_getBlockByNumber("pending")`.
-    #[instrument(skip(self))]
-    pub async fn get_pending_block_tx_hashes(&self) -> Result<Vec<TxHash>> {
-        let block = self
-            .provider
-            .get_block_by_number(BlockNumberOrTag::Pending)
-            .hashes()
-            .await
-            .map_err(|e| BaselineError::Rpc(e.to_string()))?;
-
-        Ok(block.map(|b| b.transactions.hashes().collect()).unwrap_or_default())
-    }
-
     /// Fetches the block timestamp (unix seconds) for a given block number, with caching.
     #[instrument(skip(self))]
     pub async fn get_block_timestamp(&self, block_number: u64) -> Result<Option<u64>> {
@@ -175,6 +139,20 @@ impl RpcClient {
         self.block_timestamp_cache.write().insert(block_number, timestamp);
 
         Ok(Some(timestamp))
+    }
+
+    /// Fetches the transaction hashes contained in a block via
+    /// `eth_getBlockByNumber` with `full_transactions=false`.
+    #[instrument(skip(self))]
+    pub async fn get_block_tx_hashes(&self, block_number: u64) -> Result<Option<Vec<TxHash>>> {
+        let block = self
+            .provider
+            .get_block_by_number(BlockNumberOrTag::Number(block_number))
+            .hashes()
+            .await
+            .map_err(|e| BaselineError::Rpc(e.to_string()))?;
+
+        Ok(block.map(|b| b.transactions.hashes().collect()))
     }
 
     /// Fetches all transaction receipts for a block via `eth_getBlockReceipts`.
@@ -205,32 +183,17 @@ impl std::fmt::Debug for RpcClient {
 }
 
 impl ReceiptProvider for RpcClient {
-    async fn get_pending_block_tx_hashes(&self) -> Result<Vec<TxHash>> {
-        self.get_pending_block_tx_hashes().await
-    }
-
-    async fn get_transaction_receipt(
-        &self,
-        tx_hash: TxHash,
-    ) -> Result<Option<BaseTransactionReceipt>> {
-        self.get_transaction_receipt(tx_hash).await
-    }
-
     async fn get_block_timestamp(&self, block_number: u64) -> Result<Option<u64>> {
         self.get_block_timestamp(block_number).await
     }
-
-    async fn get_block_receipts(
-        &self,
-        block_number: u64,
-    ) -> Result<Option<Vec<BaseTransactionReceipt>>> {
-        self.get_block_receipts(block_number).await
-    }
-
-    async fn get_latest_block_number(&self) -> Result<u64> {
-        self.get_latest_block_number().await
-    }
 }
+
+/// Maximum number of JSON-RPC calls per batch HTTP request.
+///
+/// Public RPC endpoints (e.g. Sepolia) often reject or return non-JSON error
+/// responses for very large batches. Keeping batches small avoids rate-limit
+/// and gateway errors.
+const MAX_BATCH_RPC_SIZE: usize = 50;
 
 /// Client for JSON-RPC batch requests.
 ///
@@ -262,10 +225,13 @@ impl BatchRpcClient {
         Self { client, url }
     }
 
-    /// Fetches transaction receipts for multiple hashes in a single JSON-RPC
-    /// batch request. Returns one `Option<BaseTransactionReceipt>` per input,
+    /// Fetches transaction receipts for multiple hashes via JSON-RPC batch
+    /// requests. Returns one `Option<BaseTransactionReceipt>` per input,
     /// preserving order. `None` means the receipt was not found (tx pending
     /// or unknown).
+    ///
+    /// Large requests are automatically split into sub-batches of
+    /// [`MAX_BATCH_RPC_SIZE`] and sent concurrently.
     pub async fn batch_get_transaction_receipts(
         &self,
         tx_hashes: &[TxHash],
@@ -274,7 +240,27 @@ impl BatchRpcClient {
             return Ok(Vec::new());
         }
 
-        let batch: Vec<serde_json::Value> = tx_hashes
+        let chunk_futures: Vec<_> = tx_hashes
+            .chunks(MAX_BATCH_RPC_SIZE)
+            .map(|chunk| self.fetch_receipt_chunk(chunk))
+            .collect();
+
+        let chunk_results = futures::future::join_all(chunk_futures).await;
+
+        let mut all_results: Vec<Option<BaseTransactionReceipt>> = Vec::with_capacity(tx_hashes.len());
+        for result in chunk_results {
+            all_results.extend(result?);
+        }
+
+        debug!(count = tx_hashes.len(), "batch receipt fetch complete");
+        Ok(all_results)
+    }
+
+    async fn fetch_receipt_chunk(
+        &self,
+        chunk: &[TxHash],
+    ) -> Result<Vec<Option<BaseTransactionReceipt>>> {
+        let batch: Vec<serde_json::Value> = chunk
             .iter()
             .enumerate()
             .map(|(i, hash)| {
@@ -297,14 +283,27 @@ impl BatchRpcClient {
                 BaselineError::Rpc(format!("batch receipt request failed: {e}"))
             })?;
 
-        let body: Vec<serde_json::Value> = response
-            .json()
-            .await
-            .map_err(|e| {
-                BaselineError::Rpc(format!("batch receipt response parse failed: {e}"))
+        let status = response.status();
+        let body_text = response.text().await.map_err(|e| {
+            BaselineError::Rpc(format!("failed to read batch receipt response body: {e}"))
+        })?;
+
+        if !status.is_success() {
+            let preview = truncate_for_log(&body_text);
+            return Err(BaselineError::Rpc(format!(
+                "batch receipt request returned HTTP {status}: {preview}"
+            )));
+        }
+
+        let body: Vec<serde_json::Value> =
+            serde_json::from_str(&body_text).map_err(|e| {
+                let preview = truncate_for_log(&body_text);
+                BaselineError::Rpc(format!(
+                    "batch receipt response is not a JSON array: {e} (body: {preview})"
+                ))
             })?;
 
-        let mut results: Vec<Option<BaseTransactionReceipt>> = vec![None; tx_hashes.len()];
+        let mut results: Vec<Option<BaseTransactionReceipt>> = vec![None; chunk.len()];
 
         for item in body {
             let id = item["id"].as_u64().unwrap_or(u64::MAX) as usize;
@@ -324,7 +323,6 @@ impl BatchRpcClient {
             }
         }
 
-        debug!(count = tx_hashes.len(), "batch receipt fetch complete");
         Ok(results)
     }
 
@@ -395,5 +393,14 @@ impl BatchRpcClient {
 
         debug!(count = raw_txs.len(), "batch send complete");
         Ok(results)
+    }
+}
+
+fn truncate_for_log(s: &str) -> &str {
+    let max = 256;
+    if s.len() <= max {
+        s
+    } else {
+        &s[..s.floor_char_boundary(max)]
     }
 }

@@ -22,11 +22,8 @@ pub type FlashblockTimes = Arc<RwLock<HashMap<TxHash, Instant>>>;
 /// Sized for ~2 seconds of throughput at 1000 TPS.
 const PENDING_CHANNEL_BUFFER: usize = 2000;
 
-/// Maximum number of concurrent receipt lookups per poll cycle (fallback path).
-const MAX_RECEIPT_LOOKUPS: usize = 200;
-
-/// Maximum number of new blocks to fetch receipts for in a single poll cycle.
-const MAX_BLOCKS_PER_CYCLE: u64 = 10;
+/// Maximum number of receipt lookups per poll cycle.
+const MAX_RECEIPT_LOOKUPS: usize = 500;
 
 /// Tracks pending transactions and collects confirmation metrics.
 pub struct Confirmer {
@@ -37,26 +34,15 @@ pub struct Confirmer {
     stop_flag: Arc<AtomicBool>,
     poll_interval: Duration,
     max_pending_age: Duration,
-    /// How long to wait before the fallback receipt lookup considers a
-    /// transaction that was already detected in a pending block.
-    receipt_check_age: Duration,
-    /// How long to wait before the fallback receipt lookup considers a
-    /// transaction that has NOT been seen in a pending block or via block
-    /// receipts. Set longer than `receipt_check_age` so
-    /// `confirm_via_block_receipts` (which is cheaper — one RPC call per
-    /// block) has time to confirm the transaction first.
-    fallback_receipt_age: Duration,
+
     pending_rx: Option<mpsc::Receiver<PendingTx>>,
     pending_tx: mpsc::Sender<PendingTx>,
     flashblock_times: FlashblockTimes,
     block_first_seen: BlockFirstSeen,
     deferred_block_latencies: Vec<DeferredBlockLatency>,
     block_watcher_enabled: bool,
-    last_checked_block: Option<u64>,
     batch_rpc: BatchRpcClient,
     expired_count: Arc<AtomicU64>,
-    fallback_skip_until: Option<Instant>,
-    fallback_backoff_ms: u64,
 }
 
 /// A confirmed tx whose block latency could not be computed yet because
@@ -89,7 +75,6 @@ struct PendingTx {
     from: Address,
     submit_time: Instant,
     submit_timestamp: u64,
-    included_at: Option<Instant>,
 }
 
 /// Handle for submitting transactions to the confirmer.
@@ -119,7 +104,6 @@ impl ConfirmerHandle {
             from,
             submit_time: Instant::now(),
             submit_timestamp,
-            included_at: None,
         };
 
         if self.pending_tx.send(pending).await.is_err() {
@@ -182,25 +166,19 @@ impl Confirmer {
             in_flight_per_sender: Arc::new(in_flight_map),
             total_in_flight: Arc::new(AtomicU64::new(0)),
             stop_flag,
-            poll_interval: Duration::from_millis(100),
+            poll_interval: Duration::from_millis(500),
             max_pending_age: Duration::from_secs(60),
-            receipt_check_age: Duration::from_millis(500),
-            fallback_receipt_age: Duration::from_secs(4),
             pending_rx: Some(pending_rx),
             pending_tx,
             flashblock_times,
             block_first_seen,
             deferred_block_latencies: Vec::new(),
             block_watcher_enabled,
-            last_checked_block: None,
             batch_rpc,
             expired_count: Arc::new(AtomicU64::new(0)),
-            fallback_skip_until: None,
-            fallback_backoff_ms: 0,
         }
     }
 
-    /// Returns `None` if the receipt arrived before the flashblock WS message.
     fn get_flashblocks_latency(&self, tx_hash: &TxHash, pending: &PendingTx) -> Option<Duration> {
         self.flashblock_times
             .read()
@@ -278,7 +256,6 @@ impl Confirmer {
         }
 
         let now = Instant::now();
-        let mut confirmed = Vec::new();
         let mut expired = Vec::new();
 
         for (tx_hash, pending) in &self.pending {
@@ -287,11 +264,9 @@ impl Confirmer {
             }
         }
 
-        self.confirm_via_block_receipts(client, &mut confirmed).await;
-        self.fetch_receipts_fallback(client, &mut confirmed).await;
-        self.check_pending_block(client).await;
-
-        let confirmed_hashes: HashSet<TxHash> = confirmed.iter().map(|(hash, _)| *hash).collect();
+        let confirmed = self.poll_receipts().await;
+        let confirmed_set: HashSet<TxHash> =
+            confirmed.iter().map(|(hash, _)| *hash).collect();
 
         if !confirmed.is_empty() {
             let mut fb_times = self.flashblock_times.write();
@@ -306,7 +281,7 @@ impl Confirmer {
         }
 
         for tx_hash in expired {
-            if confirmed_hashes.contains(&tx_hash) {
+            if confirmed_set.contains(&tx_hash) {
                 continue;
             }
             if let Some(pending) = self.pending.remove(&tx_hash) {
@@ -317,159 +292,16 @@ impl Confirmer {
         }
     }
 
-    /// Polls `eth_getBlock("pending")` and marks matching transactions with an inclusion timestamp.
-    async fn check_pending_block(&mut self, client: &impl ReceiptProvider) {
-        let tx_hashes = match client.get_pending_block_tx_hashes().await {
-            Ok(hashes) => hashes,
-            Err(e) => {
-                warn!(error = %e, "failed to get pending block");
-                return;
-            }
-        };
-
-        let now = Instant::now();
-        for tx_hash in &tx_hashes {
-            if let Some(pending) = self.pending.get_mut(tx_hash)
-                && pending.included_at.is_none()
-            {
-                pending.included_at = Some(now);
-                debug!(tx_hash = %tx_hash, "tx detected in pending block");
-            }
-        }
-    }
-
-    async fn confirm_via_block_receipts(
-        &mut self,
-        client: &impl ReceiptProvider,
-        confirmed: &mut Vec<(TxHash, Address)>,
-    ) {
-        if self.pending.is_empty() {
-            return;
-        }
-
-        let already_confirmed: HashSet<TxHash> =
-            confirmed.iter().map(|(hash, _)| *hash).collect();
-
-        let latest_block = if let Some(&max_block) =
-            self.block_first_seen.read().keys().next_back()
-        {
-            max_block
-        } else {
-            match client.get_latest_block_number().await {
-                Ok(n) => n,
-                Err(e) => {
-                    debug!(error = %e, "failed to get latest block number");
-                    return;
-                }
-            }
-        };
-
-        let start_block = self.last_checked_block.map_or(latest_block, |b| b + 1);
-        if start_block > latest_block {
-            return;
-        }
-
-        let end_block = latest_block.min(start_block + MAX_BLOCKS_PER_CYCLE - 1);
-
-        for block_number in start_block..=end_block {
-            let receipts = match client.get_block_receipts(block_number).await {
-                Ok(Some(r)) => r,
-                Ok(None) => continue,
-                Err(e) => {
-                    warn!(block = block_number, error = %e, "failed to fetch block receipts");
-                    break;
-                }
-            };
-
-            for receipt in receipts {
-                let tx_hash = receipt.inner.transaction_hash;
-                if already_confirmed.contains(&tx_hash) {
-                    continue;
-                }
-                let Some(pending) = self.pending.get(&tx_hash) else {
-                    continue;
-                };
-
-                let block_num = receipt.inner.block_number;
-                let block_latency =
-                    block_num.and_then(|n| self.get_block_latency(n, pending.submit_time));
-                let flashblocks_latency = self.get_flashblocks_latency(&tx_hash, pending);
-                let metrics = TransactionMetrics::new(
-                    tx_hash,
-                    block_latency,
-                    flashblocks_latency,
-                    receipt.inner.gas_used,
-                    receipt.inner.effective_gas_price,
-                    block_num,
-                );
-
-                if let (None, Some(bn)) = (block_latency, block_num) {
-                    self.deferred_block_latencies.push(DeferredBlockLatency {
-                        metrics,
-                        block_number: bn,
-                        submit_time: pending.submit_time,
-                        submit_timestamp: pending.submit_timestamp,
-                        deferred_at: Instant::now(),
-                    });
-                } else {
-                    debug!(
-                        tx_hash = %tx_hash,
-                        block = block_number,
-                        block_latency_ms = ?block_latency.map(|d| d.as_millis()),
-                        "tx confirmed (block receipts)"
-                    );
-                    if self.metrics_tx.send(metrics).await.is_err() {
-                        debug!(tx_hash = %tx_hash, "metrics channel closed");
-                    }
-                }
-                confirmed.push((tx_hash, pending.from));
-            }
-
-            self.last_checked_block = Some(block_number);
-        }
-    }
-
-    async fn fetch_receipts_fallback(
-        &mut self,
-        _client: &impl ReceiptProvider,
-        confirmed: &mut Vec<(TxHash, Address)>,
-    ) {
-        let now = Instant::now();
-
-        if let Some(skip_until) = self.fallback_skip_until {
-            if now < skip_until {
-                return;
-            }
-            self.fallback_skip_until = None;
-        }
-
-        let already_confirmed: HashSet<TxHash> =
-            confirmed.iter().map(|(hash, _)| *hash).collect();
-
-        let to_lookup: Vec<TxHash> = self
-            .pending
-            .iter()
-            .filter(|(hash, pending)| {
-                if already_confirmed.contains(*hash) {
-                    return false;
-                }
-                let age = now.duration_since(pending.submit_time);
-                if pending.included_at.is_some() {
-                    age > self.receipt_check_age
-                } else {
-                    age > self.fallback_receipt_age
-                }
-            })
-            .take(MAX_RECEIPT_LOOKUPS)
-            .map(|(hash, _)| *hash)
-            .collect();
+    async fn poll_receipts(&mut self) -> Vec<(TxHash, Address)> {
+        let to_lookup: Vec<TxHash> =
+            self.pending.keys().copied().take(MAX_RECEIPT_LOOKUPS).collect();
 
         if to_lookup.is_empty() {
-            return;
+            return Vec::new();
         }
 
         let results = match tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(15),
             self.batch_rpc.batch_get_transaction_receipts(&to_lookup),
         )
         .await
@@ -477,17 +309,15 @@ impl Confirmer {
             Ok(Ok(results)) => results,
             Ok(Err(e)) => {
                 warn!(error = %e, count = to_lookup.len(), "batch receipt fetch failed");
-                self.escalate_fallback_backoff();
-                return;
+                return Vec::new();
             }
             Err(_) => {
                 warn!(count = to_lookup.len(), "batch receipt fetch timed out");
-                self.escalate_fallback_backoff();
-                return;
+                return Vec::new();
             }
         };
 
-        self.fallback_backoff_ms = 0;
+        let mut confirmed = Vec::new();
 
         for (tx_hash, receipt_opt) in to_lookup.into_iter().zip(results) {
             let Some(pending) = self.pending.get(&tx_hash) else {
@@ -512,7 +342,6 @@ impl Confirmer {
             );
 
             if let (None, Some(bn)) = (block_latency, block_num) {
-                debug!(tx_hash = %tx_hash, block = bn, "block latency deferred");
                 self.deferred_block_latencies.push(DeferredBlockLatency {
                     metrics,
                     block_number: bn,
@@ -523,6 +352,7 @@ impl Confirmer {
             } else {
                 debug!(
                     tx_hash = %tx_hash,
+                    block = ?block_num,
                     block_latency_ms = ?block_latency.map(|d| d.as_millis()),
                     "tx confirmed"
                 );
@@ -532,19 +362,8 @@ impl Confirmer {
             }
             confirmed.push((tx_hash, pending.from));
         }
-    }
 
-    fn escalate_fallback_backoff(&mut self) {
-        const INITIAL_MS: u64 = 1000;
-        const MAX_MS: u64 = 30_000;
-        self.fallback_backoff_ms = if self.fallback_backoff_ms == 0 {
-            INITIAL_MS
-        } else {
-            (self.fallback_backoff_ms * 2).min(MAX_MS)
-        };
-        self.fallback_skip_until =
-            Some(Instant::now() + Duration::from_millis(self.fallback_backoff_ms));
-        warn!(backoff_ms = self.fallback_backoff_ms, "backing off fallback receipt lookups");
+        confirmed
     }
 
     async fn resolve_deferred_block_latencies(

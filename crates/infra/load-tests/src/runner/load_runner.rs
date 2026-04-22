@@ -515,7 +515,7 @@ impl LoadRunner {
                 }
             }
 
-            Self::await_confirmations(&client, &mut batch_pending, &pb_fund).await?;
+            Self::await_confirmations(&self.batch_rpc, &mut batch_pending, &pb_fund).await?;
         }
         pb_fund.finish_and_clear();
 
@@ -1359,7 +1359,7 @@ impl LoadRunner {
         let pb_confirm = self.progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
-        if let Err(e) = Self::await_confirmations(&client, &mut pending_txs, &pb_confirm).await {
+        if let Err(e) = Self::await_confirmations(&self.batch_rpc, &mut pending_txs, &pb_confirm).await {
             warn!(error = %e, "some drain txs did not confirm within timeout");
         }
         pb_confirm.finish_and_clear();
@@ -1383,7 +1383,7 @@ impl LoadRunner {
     }
 
     async fn await_confirmations(
-        client: &RpcClient,
+        batch_rpc: &BatchRpcClient,
         pending_txs: &mut Vec<(TxHash, Address)>,
         pb: &ProgressBar,
     ) -> Result<()> {
@@ -1394,33 +1394,24 @@ impl LoadRunner {
         while !pending_txs.is_empty() && start.elapsed() < timeout {
             tokio::time::sleep(poll_interval).await;
 
-            let receipt_futs: Vec<_> = pending_txs
-                .iter()
-                .map(|&(tx_hash, address)| {
-                    let client = client.clone();
-                    async move {
-                        let receipt = client.get_transaction_receipt(tx_hash).await;
-                        (tx_hash, address, receipt)
-                    }
-                })
-                .collect();
-
-            let receipts: Vec<_> = futures::future::join_all(receipt_futs).await;
+            let hashes: Vec<TxHash> = pending_txs.iter().map(|(h, _)| *h).collect();
+            let results = match batch_rpc.batch_get_transaction_receipts(&hashes).await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = %e, "batch receipt fetch failed during confirmation wait");
+                    continue;
+                }
+            };
 
             let mut still_pending = Vec::new();
-            for (tx_hash, address, receipt) in receipts {
-                match receipt {
-                    Ok(Some(_)) => {
-                        debug!(tx_hash = %tx_hash, address = %address, "tx confirmed");
-                        pb.inc(1);
-                    }
-                    Ok(None) => {
-                        still_pending.push((tx_hash, address));
-                    }
-                    Err(e) => {
-                        warn!(tx_hash = %tx_hash, error = %e, "failed to get receipt");
-                        still_pending.push((tx_hash, address));
-                    }
+            for ((tx_hash, address), receipt_opt) in
+                pending_txs.drain(..).zip(results.into_iter())
+            {
+                if receipt_opt.is_some() {
+                    debug!(tx_hash = %tx_hash, address = %address, "tx confirmed");
+                    pb.inc(1);
+                } else {
+                    still_pending.push((tx_hash, address));
                 }
             }
             *pending_txs = still_pending;

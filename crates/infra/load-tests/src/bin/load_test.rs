@@ -18,8 +18,8 @@ use alloy_provider::Provider;
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_load_tests::{
-    AccountPool, BaselineError, FundedAccount, LoadRunner, LoadTestDisplay, Result as LoadResult,
-    RpcClient, TestConfig, create_wallet_provider,
+    AccountPool, BaselineError, BatchRpcClient, FundedAccount, LoadRunner, LoadTestDisplay,
+    Result as LoadResult, RpcClient, TestConfig, create_wallet_provider,
 };
 use eyre::{Result, bail};
 use futures::stream::{self, StreamExt};
@@ -390,7 +390,8 @@ async fn run_rescue(raw_args: Vec<String>) -> Result<()> {
             AccountPool::with_offset(args.seed, batch_count, batch_offset)?
         };
 
-        let (rescued, drained) = rescue_batch(&client, &accounts, &params, &pb).await?;
+        let batch_rpc = BatchRpcClient::new(args.rpc_url.clone());
+        let (rescued, drained) = rescue_batch(&client, &batch_rpc, &accounts, &params, &pb).await?;
 
         total_rescued = total_rescued.saturating_add(rescued);
         total_accounts_drained += drained;
@@ -413,6 +414,7 @@ async fn run_rescue(raw_args: Vec<String>) -> Result<()> {
 
 async fn rescue_batch(
     client: &RpcClient,
+    batch_rpc: &BatchRpcClient,
     accounts: &AccountPool,
     params: &DrainParams,
     pb: &ProgressBar,
@@ -523,14 +525,14 @@ async fn rescue_batch(
     }
 
     if !pending_txs.is_empty() {
-        rescue_await_confirmations(client, &mut pending_txs).await?;
+        rescue_await_confirmations(batch_rpc, &mut pending_txs).await?;
     }
 
     Ok((total_drained, drain_count))
 }
 
 async fn rescue_await_confirmations(
-    client: &RpcClient,
+    batch_rpc: &BatchRpcClient,
     pending_txs: &mut Vec<(TxHash, Address)>,
 ) -> LoadResult<()> {
     let timeout = Duration::from_secs(60);
@@ -540,34 +542,26 @@ async fn rescue_await_confirmations(
     while !pending_txs.is_empty() && start.elapsed() < timeout {
         tokio::time::sleep(poll_interval).await;
 
-        let receipt_futs: Vec<_> = pending_txs
-            .iter()
-            .map(|&(tx_hash, address)| {
-                let client = client.clone();
-                async move {
-                    let receipt = client.get_transaction_receipt(tx_hash).await;
-                    (tx_hash, address, receipt)
-                }
-            })
-            .collect();
-
-        let receipts: Vec<_> = futures::future::join_all(receipt_futs).await;
+        let hashes: Vec<TxHash> = pending_txs.iter().map(|(h, _)| *h).collect();
+        let results = match batch_rpc.batch_get_transaction_receipts(&hashes).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "batch receipt fetch failed during rescue confirmation");
+                continue;
+            }
+        };
 
         let mut still_pending = Vec::new();
-        for (tx_hash, address, receipt) in receipts {
-            match receipt {
-                Ok(Some(receipt)) => {
+        for ((tx_hash, address), receipt_opt) in pending_txs.drain(..).zip(results.into_iter()) {
+            match receipt_opt {
+                Some(receipt) => {
                     if receipt.status() {
                         debug!(tx_hash = %tx_hash, address = %address, "rescue tx confirmed");
                     } else {
                         warn!(tx_hash = %tx_hash, address = %address, "rescue tx reverted");
                     }
                 }
-                Ok(None) => {
-                    still_pending.push((tx_hash, address));
-                }
-                Err(e) => {
-                    warn!(tx_hash = %tx_hash, error = %e, "failed to get receipt");
+                None => {
                     still_pending.push((tx_hash, address));
                 }
             }
