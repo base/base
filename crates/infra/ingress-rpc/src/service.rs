@@ -167,7 +167,10 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
             self.bundle_cache.insert(*bundle_hash, ()).await;
             Metrics::bundles_parsed().increment(1);
 
-            let meter_bundle_response = match self.meter_bundle(&bundle, bundle_hash).await {
+            let meter_bundle_response: Option<MeterBundleResponse> = match self
+                .meter_bundle(&bundle, bundle_hash)
+                .await
+            {
                 Ok(response) => {
                     info!(message = "Metering succeeded for raw transaction", bundle_hash = %bundle_hash, response = ?response);
                     Some(response)

@@ -1,50 +1,50 @@
-//! Contains all hardforks represented in the [`crate::Hardfork`] type.
+//! Contains all upgrades represented in the [`crate::Upgrade`] type.
 
 use crate::{Ecotone, Fjord, Isthmus, Jovian};
 
-/// Base Hardforks
+/// Base Upgrades
 ///
-/// This type is used to encapsulate hardfork transactions.
-/// It exposes methods that return hardfork upgrade transactions
+/// This type is used to encapsulate upgrade transactions.
+/// It exposes methods that return upgrade transactions
 /// as [`alloy_primitives::Bytes`].
 ///
 /// # Example
 ///
-/// Build ecotone hardfork upgrade transaction:
+/// Build ecotone upgrade transaction:
 /// ```rust
-/// use base_consensus_upgrades::{Hardfork, Hardforks};
-/// let ecotone_upgrade_tx = Hardforks::ECOTONE.txs();
+/// use base_consensus_upgrades::{Upgrade, Upgrades};
+/// let ecotone_upgrade_tx = Upgrades::ECOTONE.txs();
 /// assert_eq!(ecotone_upgrade_tx.collect::<Vec<_>>().len(), 6);
 /// ```
 ///
-/// Build fjord hardfork upgrade transactions:
+/// Build fjord upgrade transactions:
 /// ```rust
-/// use base_consensus_upgrades::{Hardfork, Hardforks};
-/// let fjord_upgrade_txs = Hardforks::FJORD.txs();
+/// use base_consensus_upgrades::{Upgrade, Upgrades};
+/// let fjord_upgrade_txs = Upgrades::FJORD.txs();
 /// assert_eq!(fjord_upgrade_txs.collect::<Vec<_>>().len(), 3);
 /// ```
 ///
-/// Build isthmus hardfork upgrade transaction:
+/// Build isthmus upgrade transaction:
 /// ```rust
-/// use base_consensus_upgrades::{Hardfork, Hardforks};
-/// let isthmus_upgrade_tx = Hardforks::ISTHMUS.txs();
+/// use base_consensus_upgrades::{Upgrade, Upgrades};
+/// let isthmus_upgrade_tx = Upgrades::ISTHMUS.txs();
 /// assert_eq!(isthmus_upgrade_tx.collect::<Vec<_>>().len(), 8);
 /// ```
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct Hardforks;
+pub struct Upgrades;
 
-impl Hardforks {
-    /// The Ecotone hardfork upgrade transactions.
+impl Upgrades {
+    /// The Ecotone upgrade transactions.
     pub const ECOTONE: Ecotone = Ecotone;
 
-    /// The Fjord hardfork upgrade transactions.
+    /// The Fjord upgrade transactions.
     pub const FJORD: Fjord = Fjord;
 
-    /// The Isthmus hardfork upgrade transactions.
+    /// The Isthmus upgrade transactions.
     pub const ISTHMUS: Isthmus = Isthmus;
 
-    /// The Jovian hardfork upgrade transactions.
+    /// The Jovian upgrade transactions.
     pub const JOVIAN: Jovian = Jovian;
 }
 
@@ -53,20 +53,20 @@ mod tests {
     use alloc::vec::Vec;
 
     use super::*;
-    use crate::Hardfork;
+    use crate::Upgrade;
 
     #[test]
-    fn test_hardforks() {
-        let ecotone_upgrade_tx = Hardforks::ECOTONE.txs();
+    fn test_upgrades() {
+        let ecotone_upgrade_tx = Upgrades::ECOTONE.txs();
         assert_eq!(ecotone_upgrade_tx.collect::<Vec<_>>().len(), 6);
 
-        let fjord_upgrade_txs = Hardforks::FJORD.txs();
+        let fjord_upgrade_txs = Upgrades::FJORD.txs();
         assert_eq!(fjord_upgrade_txs.collect::<Vec<_>>().len(), 3);
 
-        let isthmus_upgrade_tx = Hardforks::ISTHMUS.txs();
+        let isthmus_upgrade_tx = Upgrades::ISTHMUS.txs();
         assert_eq!(isthmus_upgrade_tx.collect::<Vec<_>>().len(), 8);
 
-        let jovian_upgrade_tx = Hardforks::JOVIAN.txs();
+        let jovian_upgrade_tx = Upgrades::JOVIAN.txs();
         assert_eq!(jovian_upgrade_tx.collect::<Vec<_>>().len(), 5);
     }
 }

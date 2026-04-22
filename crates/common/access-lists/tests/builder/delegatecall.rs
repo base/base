@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{
-    AccountInfo, Bytecode, DEVNET_CHAIN_ID, IntoAddress, Logic, Logic2, ONE_ETHER, OpTransaction,
+    AccountInfo, BaseTransaction, Bytecode, DEVNET_CHAIN_ID, IntoAddress, Logic, Logic2, ONE_ETHER,
     Proxy, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
@@ -32,7 +32,7 @@ fn test_delegatecall_storage_tracked_on_caller() {
     );
 
     // Call setValue(42) through the proxy
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -93,7 +93,7 @@ fn test_delegatecall_read_tracked_on_caller() {
     );
 
     // First set a value, then read it
-    let set_tx = OpTransaction::builder()
+    let set_tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -108,7 +108,7 @@ fn test_delegatecall_read_tracked_on_caller() {
         )
         .build_fill();
 
-    let get_tx = OpTransaction::builder()
+    let get_tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -191,7 +191,7 @@ fn test_delegatecall_chain() {
 
     // Call chainedDelegatecall with setValue(99) encoded
     let inner_call = Logic::setValueCall { v: U256::from(99) }.abi_encode();
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)

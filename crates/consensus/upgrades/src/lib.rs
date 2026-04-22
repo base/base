@@ -36,10 +36,10 @@ macro_rules! bytecode_from_hex {
 }
 
 mod traits;
-pub use traits::Hardfork;
+pub use traits::Upgrade;
 
 mod forks;
-pub use forks::Hardforks;
+pub use forks::Upgrades;
 
 mod fjord;
 pub use fjord::Fjord;

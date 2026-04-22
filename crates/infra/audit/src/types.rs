@@ -1,6 +1,6 @@
 use alloy_consensus::transaction::{SignerRecoverable, Transaction as ConsensusTransaction};
 use alloy_primitives::{Address, TxHash, U256};
-use base_bundles::AcceptedBundle;
+use base_bundles::{AcceptedBundle, BundleExtensions};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -115,19 +115,46 @@ impl BundleEvent {
         }
     }
 
-    /// Generates a unique event key for this event.
+    /// Returns the `bundle_hash` for events that carry bundle data.
+    pub fn bundle_hash(&self) -> Option<alloy_primitives::B256> {
+        match self {
+            Self::Received { bundle, .. } => Some(bundle.bundle_hash()),
+            _ => None,
+        }
+    }
+
+    /// Generates the event key used as both the Kafka message key and S3 object name.
+    ///
+    /// For `Received` events, derived from `bundle_hash` so that the same
+    /// bundle on different ingress pods produces the same key.
     pub fn generate_event_key(&self) -> String {
         match self {
+            Self::Received { bundle, .. } => {
+                let hash = bundle.bundle_hash();
+                format!("received-{hash}")
+            }
             Self::BlockIncluded { bundle_id, block_hash, .. } => {
-                format!("{bundle_id}-{block_hash}")
+                format!("block-included-{bundle_id}-{block_hash}")
             }
             _ => {
-                format!(
-                    "{}-{}",
-                    self.bundle_id(),
-                    Uuid::new_v5(&Uuid::NAMESPACE_OID, self.bundle_id().as_bytes())
-                )
+                let id = self.bundle_id();
+                let event_type = match self {
+                    Self::Cancelled { .. } => "cancelled",
+                    Self::BuilderIncluded { .. } => "builder-included",
+                    Self::Dropped { .. } => "dropped",
+                    _ => unreachable!(),
+                };
+                format!("{event_type}-{id}")
             }
         }
+    }
+
+    /// Returns the full S3 key for this event: `bundles/{prefix}/{event_key}`.
+    pub fn s3_event_key(&self) -> String {
+        let prefix = match self {
+            Self::Received { bundle, .. } => format!("{}", bundle.bundle_hash()),
+            _ => format!("{}", self.bundle_id()),
+        };
+        format!("bundles/{prefix}/{}", self.generate_event_key())
     }
 }

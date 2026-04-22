@@ -4,8 +4,7 @@ use alloc::sync::Arc;
 
 use alloy_chains::Chain;
 use alloy_primitives::U256;
-use base_common_chains::ChainConfig;
-use base_execution_upgrades::DEV_UPGRADES;
+use base_common_chains::{ChainConfig, DEV_UPGRADES};
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec};
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};
 

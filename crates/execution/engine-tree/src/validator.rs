@@ -21,8 +21,8 @@ use base_common_consensus::{
     BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType,
 };
 use base_common_evm::{
-    BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseTxResult,
-    OpHaltReason,
+    BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseHaltReason,
+    BaseTxResult,
 };
 use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
@@ -148,7 +148,7 @@ where
                 BaseEvmFactory,
             >,
         > + 'static,
-    C: CachedExecutionProvider<BaseTxResult<OpHaltReason, OpTxType>> + Clone,
+    C: CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>> + Clone,
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
@@ -1493,7 +1493,7 @@ where
             BuiltPayload: BuiltPayload<Primitives = BasePrimitives>,
             ExecutionData = ExecutionData,
         >,
-    C: CachedExecutionProvider<BaseTxResult<OpHaltReason, OpTxType>>
+    C: CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>>
         + Clone
         + Send
         + Sync

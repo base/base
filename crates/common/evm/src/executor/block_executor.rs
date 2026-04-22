@@ -353,8 +353,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, Builder, DefaultOp,
-        L1BlockInfo, OpSpecId,
+        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, Builder,
+        DefaultBase, L1BlockInfo, OpSpecId,
     };
 
     #[test]
@@ -437,7 +437,7 @@ mod tests {
         &'a AlloyReceiptBuilder,
         &'a ChainUpgrades,
     > {
-        let ctx = Context::op()
+        let ctx = Context::base()
             .with_db(db)
             .with_chain(L1BlockInfo {
                 operator_fee_scalar: Some(U256::from(2)),

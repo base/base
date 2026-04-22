@@ -3,7 +3,7 @@
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, keccak256};
 use base_common_consensus::{OpTxType, TxDeposit};
-use base_common_evm::{DefaultOp, DepositTransactionParts, OpSpecId};
+use base_common_evm::{DefaultBase, DepositTransactionParts, OpSpecId};
 use revm::{
     Context, ExecuteCommitEvm, MainBuilder,
     context::{
@@ -21,7 +21,7 @@ pub fn check_deployment_code(
     expected_address: Address,
     expected_code_hash: B256,
 ) {
-    let ctx = Context::op()
+    let ctx = Context::base()
         .with_cfg(CfgEnv::new_with_spec(OpSpecId::JOVIAN))
         .modify_tx_chained(|tx| {
             // Deposit + OP meta

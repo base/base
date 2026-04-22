@@ -3,7 +3,7 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, OpTxType};
-use base_common_evm::{BaseBlockExecutor, BaseTxResult, OpHaltReason, OpTransaction};
+use base_common_evm::{BaseBlockExecutor, BaseHaltReason, BaseTransaction, BaseTxResult};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::{FlashblocksAPI, FlashblocksState};
@@ -34,7 +34,7 @@ impl<P> FlashblocksCachedExecutionProvider<P> {
     }
 }
 
-impl<P> CachedExecutionProvider<BaseTxResult<OpHaltReason, OpTxType>>
+impl<P> CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>>
     for FlashblocksCachedExecutionProvider<P>
 where
     P: BlockNumReader,
@@ -45,7 +45,7 @@ where
         parent_block_hash: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<BaseTxResult<OpHaltReason, OpTxType>> {
+    ) -> Option<BaseTxResult<BaseHaltReason, OpTxType>> {
         let flashblocks_state = self.flashblocks_state.as_ref()?;
 
         // if block_number is not found, we can't use cached execution
@@ -144,7 +144,7 @@ impl<E, C> CachedExecutor<E, C> {
 impl<'a, DB, E, C> BlockExecutor for CachedExecutor<E, C>
 where
     DB: Database + alloy_evm::Database + 'a,
-    E: Evm<DB = &'a mut State<DB>, Tx = OpTransaction<TxEnv>>,
+    E: Evm<DB = &'a mut State<DB>, Tx = BaseTransaction<TxEnv>>,
     C: CachedExecutionProvider<BaseTxResult<E::HaltReason, OpTxType>>,
 {
     type Transaction = BaseTxEnvelope;

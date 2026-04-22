@@ -54,6 +54,7 @@ std = [
 	"alloy-evm/std",
 	"alloy-genesis/std",
 	"alloy-primitives/std",
+	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-evm/std",
 	"base-common-rpc-types-engine/std",

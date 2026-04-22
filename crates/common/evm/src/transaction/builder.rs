@@ -8,12 +8,12 @@ use revm::{
 };
 
 use super::{
-    core::OpTransaction,
+    core::BaseTransaction,
     deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts},
     error::BuildError,
 };
 
-/// Builder for constructing [`OpTransaction`] instances
+/// Builder for constructing [`BaseTransaction`] instances
 #[derive(Default, Debug)]
 pub struct BaseTransactionBuilder {
     base: TxEnvBuilder,
@@ -73,16 +73,16 @@ impl BaseTransactionBuilder {
         self
     }
 
-    /// Build the [`OpTransaction`] with default values for missing fields.
+    /// Build the [`BaseTransaction`] with default values for missing fields.
     ///
     /// This is useful for testing and debugging where it is not necessary to
-    /// have full [`OpTransaction`] instance.
+    /// have full [`BaseTransaction`] instance.
     ///
     /// If the transaction is a deposit (either `tx_type == DEPOSIT_TRANSACTION_TYPE` or
     /// `source_hash != B256::ZERO`), set the transaction type accordingly and ensure the
     /// `enveloped_tx` is removed (`None`). For non-deposit transactions, ensure
     /// `enveloped_tx` is set.
-    pub fn build_fill(mut self) -> OpTransaction<TxEnv> {
+    pub fn build_fill(mut self) -> BaseTransaction<TxEnv> {
         let tx_type = self.base.get_tx_type();
         if tx_type.is_some() {
             if tx_type == Some(DEPOSIT_TRANSACTION_TYPE) {
@@ -108,12 +108,12 @@ impl BaseTransactionBuilder {
 
         let base = self.base.build_fill();
 
-        OpTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit }
+        BaseTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit }
     }
 
-    /// Build the [`OpTransaction`] instance, return error if the transaction is not valid.
+    /// Build the [`BaseTransaction`] instance, return error if the transaction is not valid.
     ///
-    pub fn build(mut self) -> Result<OpTransaction<TxEnv>, BuildError> {
+    pub fn build(mut self) -> Result<BaseTransaction<TxEnv>, BuildError> {
         let tx_type = self.base.get_tx_type();
         if tx_type.is_some() {
             if Some(DEPOSIT_TRANSACTION_TYPE) == tx_type {
@@ -135,6 +135,6 @@ impl BaseTransactionBuilder {
 
         let base = self.base.build()?;
 
-        Ok(OpTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit })
+        Ok(BaseTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit })
     }
 }

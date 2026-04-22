@@ -51,13 +51,23 @@ std = [
 	"alloy-eips/std",
 	"alloy-evm/std",
 	"alloy-primitives/std",
+	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-flz/std",
 	"revm/std",
 	"serde?/std",
+	"strum/std",
 	"thiserror/std",
 ]
-serde = [ "alloy-primitives/serde", "dep:serde", "revm/serde" ]
+serde = [
+	"alloy-consensus/serde",
+	"alloy-eips/serde",
+	"alloy-primitives/serde",
+	"base-common-chains/serde",
+	"base-common-consensus/serde",
+	"dep:serde",
+	"revm/serde",
+]
 reth = [ "dep:reth-evm", "std" ]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]

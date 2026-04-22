@@ -23,25 +23,25 @@ use revm::{
 };
 
 use crate::{
-    BasePrecompiles, OpContext, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
-    handler::OpHandler,
+    BaseContext, BaseHaltReason, BasePrecompiles, BaseTransaction, BaseTransactionError, OpSpecId,
+    handler::BaseHandler,
 };
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
 /// [`EthInstructions`] / [`EthFrame`], keeping [`BaseEvm`] field and constructor signatures tidy.
 type InnerEvm<DB, I, P> = RevmEvm<
-    OpContext<DB>,
+    BaseContext<DB>,
     I,
-    EthInstructions<EthInterpreter, OpContext<DB>>,
+    EthInstructions<EthInterpreter, BaseContext<DB>>,
     P,
     EthFrame<EthInterpreter>,
 >;
 
-/// The Base EVM, wrapping [`RevmEvm`] with an [`OpContext`] and an optional [`Inspector`].
+/// The Base EVM, wrapping [`RevmEvm`] with a [`BaseContext`] and an optional [`Inspector`].
 ///
 /// Parameterized over a database [`DB`], inspector [`I`], and precompile set [`P`]
 /// (defaulting to [`BasePrecompiles`]). All Base-specific context configuration —
-/// [`OpSpecId`], [`OpTransaction`], and [`crate::L1BlockInfo`] — is fixed by [`OpContext`].
+/// [`OpSpecId`], [`BaseTransaction`], and [`crate::L1BlockInfo`] — is fixed by [`BaseContext`].
 ///
 /// The `inspect` flag controls whether [`Inspector`] callbacks are invoked during
 /// [`Evm::transact`]. When `false`, the inspector is present in the type but silent,
@@ -58,24 +58,24 @@ pub struct BaseEvm<DB: Database, I, P = BasePrecompiles> {
 impl<DB: Database, I, P> BaseEvm<DB, I, P> {
     /// Constructs a [`BaseEvm`] from a pre-built [`RevmEvm`] and an inspect flag.
     ///
-    /// Prefer [`crate::Builder::build_op`] or [`crate::Builder::build_with_inspector`]
-    /// to construct from an [`OpContext`] directly.
+    /// Prefer [`crate::Builder::build_base`] or [`crate::Builder::build_with_inspector`]
+    /// to construct from a [`BaseContext`] directly.
     pub const fn new(inner: InnerEvm<DB, I, P>, inspect: bool) -> Self {
         Self { inner, inspect }
     }
 
-    /// Returns a reference to the underlying [`OpContext`].
-    pub const fn ctx(&self) -> &OpContext<DB> {
+    /// Returns a reference to the underlying [`BaseContext`].
+    pub const fn ctx(&self) -> &BaseContext<DB> {
         &self.inner.ctx
     }
 
-    /// Returns a mutable reference to the underlying [`OpContext`].
-    pub const fn ctx_mut(&mut self) -> &mut OpContext<DB> {
+    /// Returns a mutable reference to the underlying [`BaseContext`].
+    pub const fn ctx_mut(&mut self) -> &mut BaseContext<DB> {
         &mut self.inner.ctx
     }
 
-    /// Consumes `self` and returns the underlying [`OpContext`].
-    pub fn into_context(self) -> OpContext<DB> {
+    /// Consumes `self` and returns the underlying [`BaseContext`].
+    pub fn into_context(self) -> BaseContext<DB> {
         self.inner.ctx
     }
 
@@ -99,7 +99,7 @@ impl<DB: Database, I, P> BaseEvm<DB, I, P> {
 }
 
 impl<DB: Database, I, P> Deref for BaseEvm<DB, I, P> {
-    type Target = OpContext<DB>;
+    type Target = BaseContext<DB>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -117,10 +117,10 @@ impl<DB: Database, I, P> DerefMut for BaseEvm<DB, I, P> {
 impl<DB, I, P> EvmTr for BaseEvm<DB, I, P>
 where
     DB: Database,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
-    type Context = OpContext<DB>;
-    type Instructions = EthInstructions<EthInterpreter, OpContext<DB>>;
+    type Context = BaseContext<DB>;
+    type Instructions = EthInstructions<EthInterpreter, BaseContext<DB>>;
     type Precompiles = P;
     type Frame = EthFrame<EthInterpreter>;
 
@@ -168,9 +168,9 @@ where
 impl<DB, I, P> InspectorEvmTr for BaseEvm<DB, I, P>
 where
     DB: Database,
-    OpContext<DB>: ContextTr<Journal: JournalExt> + ContextSetters,
-    I: Inspector<OpContext<DB>>,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+    BaseContext<DB>: ContextTr<Journal: JournalExt> + ContextSetters,
+    I: Inspector<BaseContext<DB>>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Inspector = I;
 
@@ -204,16 +204,16 @@ where
 impl<DB, I, P> ExecuteEvm for BaseEvm<DB, I, P>
 where
     DB: Database,
-    OpContext<DB>: crate::OpContextTr
+    BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
-        + ContextTr<Db = DB, Tx = OpTransaction<TxEnv>, Block = BlockEnv>,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
-    type Tx = OpTransaction<TxEnv>;
+    type Tx = BaseTransaction<TxEnv>;
     type Block = BlockEnv;
     type State = EvmState;
-    type Error = EVMError<DB::Error, OpTransactionError>;
-    type ExecutionResult = ExecutionResult<OpHaltReason>;
+    type Error = EVMError<DB::Error, BaseTransactionError>;
+    type ExecutionResult = ExecutionResult<BaseHaltReason>;
 
     fn set_block(&mut self, block: Self::Block) {
         self.inner.ctx.set_block(block);
@@ -221,7 +221,7 @@ where
 
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
         self.inner.ctx.set_tx(tx);
-        let mut h = OpHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
         h.run(self)
     }
 
@@ -232,7 +232,7 @@ where
     fn replay(
         &mut self,
     ) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
-        let mut h = OpHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
         h.run(self).map(|result| {
             let state = self.finalize();
             ExecResultAndState::new(result, state)
@@ -243,10 +243,10 @@ where
 impl<DB, I, P> ExecuteCommitEvm for BaseEvm<DB, I, P>
 where
     DB: Database + DatabaseCommit,
-    OpContext<DB>: crate::OpContextTr
+    BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
-        + ContextTr<Db = DB, Tx = OpTransaction<TxEnv>, Block = BlockEnv>,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     fn commit(&mut self, state: Self::State) {
         self.inner.ctx.db_mut().commit(state);
@@ -256,11 +256,11 @@ where
 impl<DB, I, P> InspectEvm for BaseEvm<DB, I, P>
 where
     DB: Database,
-    OpContext<DB>: crate::OpContextTr<Journal: JournalExt>
+    BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
         + ContextSetters
-        + ContextTr<Db = DB, Tx = OpTransaction<TxEnv>, Block = BlockEnv>,
-    I: Inspector<OpContext<DB>>,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    I: Inspector<BaseContext<DB>>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Inspector = I;
 
@@ -270,7 +270,7 @@ where
 
     fn inspect_one_tx(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {
         self.inner.ctx.set_tx(tx);
-        let mut h = OpHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
         h.inspect_run(self)
     }
 }
@@ -278,21 +278,21 @@ where
 impl<DB, I, P> InspectCommitEvm for BaseEvm<DB, I, P>
 where
     DB: Database + DatabaseCommit,
-    OpContext<DB>: crate::OpContextTr<Journal: JournalExt>
+    BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt>
         + ContextSetters
-        + ContextTr<Db = DB, Tx = OpTransaction<TxEnv>, Block = BlockEnv>,
-    I: Inspector<OpContext<DB>>,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    I: Inspector<BaseContext<DB>>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
 }
 
 impl<DB, I, P> SystemCallEvm for BaseEvm<DB, I, P>
 where
     DB: Database,
-    OpContext<DB>: crate::OpContextTr<Tx: SystemCallTx>
+    BaseContext<DB>: crate::BaseContextTr<Tx: SystemCallTx>
         + ContextSetters
-        + ContextTr<Db = DB, Tx = OpTransaction<TxEnv>, Block = BlockEnv>,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     fn system_call_one_with_caller(
         &mut self,
@@ -300,12 +300,12 @@ where
         system_contract_address: Address,
         data: Bytes,
     ) -> Result<Self::ExecutionResult, Self::Error> {
-        self.inner.ctx.set_tx(<OpContext<DB> as ContextTr>::Tx::new_system_tx_with_caller(
+        self.inner.ctx.set_tx(<BaseContext<DB> as ContextTr>::Tx::new_system_tx_with_caller(
             caller,
             system_contract_address,
             data,
         ));
-        let mut h = OpHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
 
         // load caller account into the journal (necessary for Geth proofs compatibility)
         // remove once https://github.com/bluealloy/revm/issues/3484 is fixed
@@ -318,11 +318,11 @@ where
 impl<DB, I, P> InspectSystemCallEvm for BaseEvm<DB, I, P>
 where
     DB: Database,
-    OpContext<DB>: crate::OpContextTr<Journal: JournalExt, Tx: SystemCallTx>
+    BaseContext<DB>: crate::BaseContextTr<Journal: JournalExt, Tx: SystemCallTx>
         + ContextSetters
-        + ContextTr<Db = DB, Tx = OpTransaction<TxEnv>, Block = BlockEnv>,
-    I: Inspector<OpContext<DB>>,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
+        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
+    I: Inspector<BaseContext<DB>>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     fn inspect_one_system_call_with_caller(
         &mut self,
@@ -330,12 +330,12 @@ where
         system_contract_address: Address,
         data: Bytes,
     ) -> Result<Self::ExecutionResult, Self::Error> {
-        self.inner.ctx.set_tx(<OpContext<DB> as ContextTr>::Tx::new_system_tx_with_caller(
+        self.inner.ctx.set_tx(<BaseContext<DB> as ContextTr>::Tx::new_system_tx_with_caller(
             caller,
             system_contract_address,
             data,
         ));
-        let mut h = OpHandler::<_, _, EthFrame<EthInterpreter>>::new();
+        let mut h = BaseHandler::<_, _, EthFrame<EthInterpreter>>::new();
 
         // load caller account into the journal (necessary for Geth proofs compatibility)
         // remove once https://github.com/bluealloy/revm/issues/3484 is fixed
@@ -348,16 +348,16 @@ where
 impl<DB, I, P> Evm for BaseEvm<DB, I, P>
 where
     DB: Database,
-    I: Inspector<OpContext<DB>>,
-    P: PrecompileProvider<OpContext<DB>, Output = InterpreterResult>,
-    OpContext<DB>: crate::OpContextTr
+    I: Inspector<BaseContext<DB>>,
+    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
+    BaseContext<DB>: crate::BaseContextTr
         + ContextSetters
-        + ContextTr<Db = DB, Tx = OpTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
+        + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv, Journal: JournalExt>,
 {
     type DB = DB;
-    type Tx = OpTransaction<TxEnv>;
-    type Error = EVMError<DB::Error, OpTransactionError>;
-    type HaltReason = OpHaltReason;
+    type Tx = BaseTransaction<TxEnv>;
+    type Error = EVMError<DB::Error, BaseTransactionError>;
+    type HaltReason = BaseHaltReason;
     type Spec = OpSpecId;
     type BlockEnv = BlockEnv;
     type Precompiles = P;

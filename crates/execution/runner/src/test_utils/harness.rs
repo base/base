@@ -10,6 +10,7 @@ use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_common_consensus::BaseBlock;
 use base_common_network::Base;
+use base_common_rpc_types::GenesisInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
 use base_test_utils::build_test_genesis;
@@ -182,22 +183,27 @@ impl TestHarness {
 
         sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
-        let payload_envelope = self.engine.get_payload(payload_id).await?;
+        let azul_active = GenesisInfo::extract_from(&chain_spec.genesis.config.extra_fields)
+            .and_then(|genesis_info| genesis_info.base.azul)
+            .is_some_and(|activation_time| next_timestamp >= activation_time);
 
-        let execution_requests = if payload_envelope.execution_requests.is_empty() {
+        let (execution_payload, execution_requests): (_, Vec<Bytes>) = if azul_active {
+            let payload_envelope = self.engine.get_payload_v5(payload_id).await?;
+            (payload_envelope.execution_payload, payload_envelope.execution_requests)
+        } else {
+            let payload_envelope = self.engine.get_payload_v4(payload_id).await?;
+            (payload_envelope.execution_payload, payload_envelope.execution_requests)
+        };
+
+        let execution_requests = if execution_requests.is_empty() {
             Requests::default()
         } else {
-            Requests::new(payload_envelope.execution_requests)
+            Requests::new(execution_requests)
         };
 
         let payload_status = self
             .engine
-            .new_payload(
-                payload_envelope.execution_payload,
-                vec![],
-                payload_envelope.parent_beacon_block_root,
-                execution_requests,
-            )
+            .new_payload(execution_payload, vec![], parent_beacon_block_root, execution_requests)
             .await?;
 
         if payload_status.status.is_invalid() {

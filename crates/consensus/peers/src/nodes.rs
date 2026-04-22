@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn test_validate_bootnode_lens() {
         assert_eq!(ChainConfig::mainnet().bootnodes.len(), 10);
-        assert_eq!(ChainConfig::sepolia().bootnodes.len(), 2);
+        assert_eq!(ChainConfig::sepolia().bootnodes.len(), 4);
     }
 
     #[test]
@@ -82,7 +82,7 @@ mod tests {
         assert_eq!(mainnet.len(), 10);
 
         let testnet = BootNodes::from_chain_id(ChainConfig::sepolia().chain_id);
-        assert_eq!(testnet.len(), 2);
+        assert_eq!(testnet.len(), 4);
 
         let unknown = BootNodes::from_chain_id(0);
         assert!(unknown.is_empty());
@@ -94,7 +94,7 @@ mod tests {
         assert_eq!(bootnodes.len(), 10);
 
         let bootnodes = BootNodes::testnet();
-        assert_eq!(bootnodes.len(), 2);
+        assert_eq!(bootnodes.len(), 4);
     }
 
     #[test]

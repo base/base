@@ -6,7 +6,7 @@ use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{B256, b256};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block as RpcBlock;
-use base_common_rpc_types::Transaction as OpTransaction;
+use base_common_rpc_types::Transaction as BaseTransaction;
 use base_consensus_genesis::{ChainGenesis, RollupConfig};
 
 use crate::{
@@ -30,8 +30,8 @@ const BASE_MAINNET_GENESIS_HASH: B256 =
 /// [`L2BlockInfo::from_block_and_genesis`] accepts the block via the genesis path.
 ///
 /// [`L2BlockInfo::from_block_and_genesis`]: base_protocol::L2BlockInfo::from_block_and_genesis
-fn make_genesis_block() -> (RpcBlock<OpTransaction>, B256) {
-    let block = RpcBlock::<OpTransaction>::default();
+fn make_genesis_block() -> (RpcBlock<BaseTransaction>, B256) {
+    let block = RpcBlock::<BaseTransaction>::default();
     let hash = block.clone().into_consensus().hash_slow();
     (block, hash)
 }

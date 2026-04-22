@@ -4,7 +4,7 @@ mod builder;
 pub use builder::Builder;
 
 mod default_ctx;
-pub use default_ctx::{DefaultOp, OpContext};
+pub use default_ctx::{BaseContext, DefaultBase};
 
 mod exec;
-pub use exec::{BaseError, OpContextTr};
+pub use exec::{BaseContextTr, BaseError};

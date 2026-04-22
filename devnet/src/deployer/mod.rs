@@ -1,7 +1,7 @@
-//! L2 contract deployment via op-deployer.
+//! L2 contract deployment via base-deployer.
 
 pub mod artifacts;
-pub mod op_deployer;
+pub mod base_deployer;
 
 pub use artifacts::DeploymentArtifacts;
-pub use op_deployer::{DeployerContainer, RoleAddresses};
+pub use base_deployer::{DeployerContainer, RoleAddresses};

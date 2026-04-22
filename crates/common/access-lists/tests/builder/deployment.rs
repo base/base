@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use super::{
-    AccountInfo, B256, Bytecode, ContractFactory, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER,
-    OpTransaction, SimpleStorage, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
+    AccountInfo, B256, BaseTransaction, Bytecode, ContractFactory, DEVNET_CHAIN_ID, IntoAddress,
+    ONE_ETHER, SimpleStorage, SolCall, TxEnv, TxKind, U256, execute_txns_build_access_list,
 };
 
 #[test]
@@ -26,7 +26,7 @@ fn test_create_deployment_tracked() {
     );
 
     // Deploy SimpleStorage via CREATE
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -92,7 +92,7 @@ fn test_create2_deployment_tracked() {
     );
 
     // Deploy SimpleStorage via CREATE2
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -156,7 +156,7 @@ fn test_create_and_immediate_call() {
     // Deploy SimpleStorage and immediately call setValue(42)
     let set_value_calldata = SimpleStorage::setValueCall { v: U256::from(42) }.abi_encode();
 
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)

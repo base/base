@@ -130,7 +130,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, Log, LogData, TxKind, address};
     use base_common_consensus::TxDeposit;
-    use base_common_evm::OpHaltReason;
+    use base_common_evm::BaseHaltReason;
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_evm::BaseEvmConfig;
     use reth_evm::ConfigureEvm;
@@ -172,7 +172,7 @@ mod tests {
         Recovered::new_unchecked(envelope, address!("0x1234567890123456789012345678901234567890"))
     }
 
-    fn create_success_result() -> ExecutionResult<OpHaltReason> {
+    fn create_success_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
             gas_used: 21000,
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_receipt_from_success_result() {
-        let result: ExecutionResult<OpHaltReason> = create_success_result();
+        let result: ExecutionResult<BaseHaltReason> = create_success_result();
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
             cumulative_gas_used: 21000,
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_receipt_from_revert_result() {
-        let result: ExecutionResult<OpHaltReason> =
+        let result: ExecutionResult<BaseHaltReason> =
             ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
         let receipt = Receipt {
             status: Eip658Value::Eip658(result.is_success()),
@@ -247,7 +247,7 @@ mod tests {
     fn create_test_evm(
         chain_spec: Arc<base_execution_chainspec::BaseChainSpec>,
         db: &mut InMemoryDB,
-    ) -> impl Evm<HaltReason = OpHaltReason, DB = &mut InMemoryDB> + '_ {
+    ) -> impl Evm<HaltReason = BaseHaltReason, DB = &mut InMemoryDB> + '_ {
         let evm_config = BaseEvmConfig::base(chain_spec);
         let header = Header::default();
         let evm_env = evm_config.evm_env(&header).expect("failed to create evm env");
@@ -326,7 +326,7 @@ mod tests {
 
         let builder = UnifiedReceiptBuilder::new(chain_spec);
         let tx = create_legacy_tx();
-        let result: ExecutionResult<OpHaltReason> =
+        let result: ExecutionResult<BaseHaltReason> =
             ExecutionResult::Revert { gas_used: 10000, output: alloy_primitives::Bytes::new() };
 
         let receipt =

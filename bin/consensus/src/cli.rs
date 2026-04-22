@@ -9,12 +9,12 @@ use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
 use base_client_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
+use base_common_chains::Registry;
 use base_consensus_node::{
     DelegateL2Client, EngineConfig, FollowNode, L1Config, L1ConfigBuilder, NodeMode,
     RollupNodeBuilder,
 };
 use base_consensus_providers::OnlineBeaconClient;
-use base_consensus_registry::Registry;
 use clap::{Args, Parser, Subcommand};
 use eyre::Context;
 use strum::IntoEnumIterator;

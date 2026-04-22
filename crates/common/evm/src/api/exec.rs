@@ -1,29 +1,29 @@
-//! Base-specific [`OpContextTr`] trait alias and [`BaseError`] type alias.
+//! Base-specific [`BaseContextTr`] trait alias and [`BaseError`] type alias.
 use revm::{
     context_interface::{Cfg, ContextTr, Database, JournalTr, result::EVMError},
     state::EvmState,
 };
 
-use crate::{L1BlockInfo, OpSpecId, OpTransactionError, transaction::OpTxTr};
+use crate::{BaseTransactionError, L1BlockInfo, OpSpecId, transaction::BaseTxTr};
 
 /// Trait alias for the context type required by [`BaseEvm`][crate::BaseEvm].
 ///
-/// Satisfied by [`crate::OpContext`] for any database, binding the transaction type to
-/// [`OpTxTr`], the spec to [`OpSpecId`], and the chain extension to [`L1BlockInfo`].
-pub trait OpContextTr:
+/// Satisfied by [`crate::BaseContext`] for any database, binding the transaction type to
+/// [`BaseTxTr`], the spec to [`OpSpecId`], and the chain extension to [`L1BlockInfo`].
+pub trait BaseContextTr:
     ContextTr<
         Journal: JournalTr<State = EvmState>,
-        Tx: OpTxTr,
+        Tx: BaseTxTr,
         Cfg: Cfg<Spec = OpSpecId>,
         Chain = L1BlockInfo,
     >
 {
 }
 
-impl<T> OpContextTr for T where
+impl<T> BaseContextTr for T where
     T: ContextTr<
             Journal: JournalTr<State = EvmState>,
-            Tx: OpTxTr,
+            Tx: BaseTxTr,
             Cfg: Cfg<Spec = OpSpecId>,
             Chain = L1BlockInfo,
         >
@@ -32,7 +32,7 @@ impl<T> OpContextTr for T where
 
 /// Error type for [`BaseEvm`][crate::BaseEvm] execution, parameterized over the database
 /// error type [`DB`].
-pub type BaseError<DB> = EVMError<<DB as Database>::Error, OpTransactionError>;
+pub type BaseError<DB> = EVMError<<DB as Database>::Error, BaseTransactionError>;
 
 #[cfg(test)]
 mod tests {
@@ -42,7 +42,7 @@ mod tests {
         database::{InMemoryDB, State},
     };
 
-    use crate::{Builder, DefaultOp, OpContext};
+    use crate::{BaseContext, Builder, DefaultBase};
 
     /// Verifies that the system call caller is loaded into the EVM state cache so it appears in the
     /// execution witness.
@@ -64,8 +64,8 @@ mod tests {
         let state =
             State::builder().with_database(InMemoryDB::default()).with_bundle_update().build();
 
-        let ctx = OpContext::op().with_db(state);
-        let mut evm = ctx.build_op();
+        let ctx = BaseContext::base().with_db(state);
+        let mut evm = ctx.build_base();
 
         // Execute a system call. This internally calls `load_account_with_code_mut(caller)`,
         // causing the State DB to load and cache the caller's account in `State.cache.accounts`.

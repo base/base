@@ -34,7 +34,7 @@ use base_node_runner::{
         NODE_STARTUP_DELAY_MS, TestHarness, init_silenced_tracing,
     },
 };
-use base_test_utils::{Account, build_test_genesis};
+use base_test_utils::{Account, build_test_genesis_azul};
 use derive_more::Deref;
 use eyre::Result;
 use reth_chain_state::CanonStateSubscriptions;
@@ -239,7 +239,7 @@ impl FlashblocksLocalNode {
 
     async fn with_options(process_canonical: bool) -> Result<Self> {
         // Build default chain spec programmatically
-        let genesis = build_test_genesis();
+        let genesis = build_test_genesis_azul();
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
 
         let extension = FlashblocksTestExtension::new(process_canonical);
@@ -298,7 +298,7 @@ impl FlashblocksHarness {
         init_silenced_tracing();
 
         // Build default chain spec programmatically
-        let genesis = build_test_genesis();
+        let genesis = build_test_genesis_azul();
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
 
         // Create the extension and keep a reference to get parts after launch

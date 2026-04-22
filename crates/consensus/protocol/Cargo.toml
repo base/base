@@ -67,6 +67,7 @@ test-utils = [ "dep:spin", "dep:tracing-subscriber" ]
 std = [
 	"alloy-consensus/std",
 	"alloy-eips/std",
+	"alloy-genesis/std",
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"alloy-rpc-types-engine/std",

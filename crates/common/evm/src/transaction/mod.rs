@@ -1,10 +1,10 @@
-//! Contains the `[OpTransaction]` type and its implementation.
+//! Contains the `[BaseTransaction]` type and its implementation.
 
 mod traits;
-pub use traits::OpTxTr;
+pub use traits::BaseTxTr;
 
 mod core;
-pub use core::OpTransaction;
+pub use core::BaseTransaction;
 
 mod builder;
 pub use builder::BaseTransactionBuilder;
@@ -13,7 +13,7 @@ mod deposit;
 pub use deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
 
 mod error;
-pub use error::{BuildError, OpTransactionError};
+pub use error::{BaseTransactionError, BuildError};
 
 #[cfg(test)]
 mod tests {
@@ -26,7 +26,7 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::{Builder, DefaultOp, OpTransaction};
+    use crate::{BaseTransaction, Builder, DefaultBase};
 
     #[rstest]
     #[case::short_hex(bytes!("FACADE"))]
@@ -54,9 +54,9 @@ mod tests {
         let native_val = base_common_flz::flz_compress_len(&input);
 
         let mut evm =
-            Context::op().with_db(BenchmarkDB::new_bytecode(contract_bytecode)).build_op();
+            Context::base().with_db(BenchmarkDB::new_bytecode(contract_bytecode)).build_base();
 
-        let tx = OpTransaction::builder()
+        let tx = BaseTransaction::builder()
             .base(
                 TxEnv::builder()
                     .caller(EEADDRESS)

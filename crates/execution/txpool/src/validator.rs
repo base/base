@@ -20,7 +20,7 @@ use reth_transaction_pool::{
     TransactionValidator,
 };
 
-use crate::OpPooledTx;
+use crate::BasePooledTx;
 
 /// Tracks additional infos for the current block.
 #[derive(Debug, Default)]
@@ -40,7 +40,7 @@ impl BaseL1BlockInfo {
 
 /// Validator for Base transactions.
 #[derive(Debug, Clone)]
-pub struct OpTransactionValidator<Client, Tx, Evm> {
+pub struct BaseTransactionValidator<Client, Tx, Evm> {
     /// The type that performs the actual validation.
     inner: Arc<EthTransactionValidator<Client, Tx, Evm>>,
     /// Additional block info required for validation.
@@ -51,7 +51,7 @@ pub struct OpTransactionValidator<Client, Tx, Evm> {
     require_l1_data_gas_fee: bool,
 }
 
-impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm> {
+impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm> {
     /// Returns the configured chain spec
     pub fn chain_spec(&self) -> Arc<Client::ChainSpec>
     where
@@ -83,13 +83,13 @@ impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm> {
     }
 }
 
-impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm>
+impl<Client, Tx, Evm> BaseTransactionValidator<Client, Tx, Evm>
 where
     Client: ChainSpecProvider<ChainSpec: Upgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
-    Tx: EthPoolTransaction + OpPooledTx,
+    Tx: EthPoolTransaction + BasePooledTx,
     Evm: ConfigureEvm,
 {
-    /// Create a new [`OpTransactionValidator`].
+    /// Create a new [`BaseTransactionValidator`].
     pub fn new(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
         let this = Self::with_block_info(inner, BaseL1BlockInfo::default());
         if let Ok(Some(block)) =
@@ -107,7 +107,7 @@ where
         this
     }
 
-    /// Create a new [`OpTransactionValidator`] with the given [`BaseL1BlockInfo`].
+    /// Create a new [`BaseTransactionValidator`] with the given [`BaseL1BlockInfo`].
     pub fn with_block_info(
         inner: EthTransactionValidator<Client, Tx, Evm>,
         block_info: BaseL1BlockInfo,
@@ -138,7 +138,7 @@ where
     ///
     /// See also [`TransactionValidator::validate_transaction`]
     ///
-    /// This behaves the same as [`OpTransactionValidator::validate_one_with_state`], but creates
+    /// This behaves the same as [`BaseTransactionValidator::validate_one_with_state`], but creates
     /// a new state provider internally.
     pub async fn validate_one(
         &self,
@@ -236,10 +236,10 @@ where
     }
 }
 
-impl<Client, Tx, Evm> TransactionValidator for OpTransactionValidator<Client, Tx, Evm>
+impl<Client, Tx, Evm> TransactionValidator for BaseTransactionValidator<Client, Tx, Evm>
 where
     Client: ChainSpecProvider<ChainSpec: Upgrades> + StateProviderFactory + BlockReaderIdExt + Sync,
-    Tx: EthPoolTransaction + OpPooledTx,
+    Tx: EthPoolTransaction + BasePooledTx,
     Evm: ConfigureEvm,
 {
     type Transaction = Tx;

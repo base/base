@@ -2,8 +2,8 @@
 
 use alloy_evm::{Database, EvmEnv, EvmFactory};
 use base_common_evm::{
-    BaseEvm, Builder, DefaultOp, OpContext, OpHaltReason, OpSpecId, OpTransaction,
-    OpTransactionError,
+    BaseContext, BaseEvm, BaseHaltReason, BaseTransaction, BaseTransactionError, Builder,
+    DefaultBase, OpSpecId,
 };
 use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
 use revm::{
@@ -55,12 +55,12 @@ where
     H: HintWriterClient + Clone + Send + Sync + 'static,
     O: PreimageOracleClient + Clone + Send + Sync + 'static,
 {
-    type Evm<DB: Database, I: Inspector<OpContext<DB>>> = BaseEvm<DB, I, FpvmPrecompiles<H, O>>;
-    type Context<DB: Database> = OpContext<DB>;
-    type Tx = OpTransaction<TxEnv>;
+    type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, FpvmPrecompiles<H, O>>;
+    type Context<DB: Database> = BaseContext<DB>;
+    type Tx = BaseTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
-        EVMError<DBError, OpTransactionError>;
-    type HaltReason = OpHaltReason;
+        EVMError<DBError, BaseTransactionError>;
+    type HaltReason = BaseHaltReason;
     type Spec = OpSpecId;
     type BlockEnv = BlockEnv;
     type Precompiles = FpvmPrecompiles<H, O>;
@@ -71,11 +71,11 @@ where
         input: EvmEnv<OpSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
-        Context::op()
+        Context::base()
             .with_db(db)
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
-            .build_op()
+            .build_base()
             .with_inspector(NoOpInspector {})
             .with_precompiles(FpvmPrecompiles::new_with_spec(
                 spec_id,
@@ -91,7 +91,7 @@ where
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
-        Context::op()
+        Context::base()
             .with_db(db)
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)

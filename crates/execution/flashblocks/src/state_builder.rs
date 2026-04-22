@@ -14,7 +14,7 @@ use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_eth::state::StateOverride;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predeploys};
-use base_common_evm::{L1BlockInfo, OpHaltReason, ensure_create2_deployer};
+use base_common_evm::{BaseHaltReason, L1BlockInfo, ensure_create2_deployer};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
 use base_execution_rpc::BaseReceiptBuilder as OpRpcReceiptBuilder;
@@ -41,7 +41,7 @@ pub struct ExecutedPendingTransaction {
     /// The updated EVM state.
     pub state: EvmState,
     /// The execution result of the transaction.
-    pub result: ExecutionResult<OpHaltReason>,
+    pub result: ExecutionResult<BaseHaltReason>,
     /// Per-transaction EVM execution time, if known.
     pub execution_time_us: Option<u128>,
 }
@@ -50,7 +50,7 @@ pub struct ExecutedPendingTransaction {
 struct CachedTransactionExecution {
     receipt: BaseTransactionReceipt,
     state: EvmState,
-    result: ExecutionResult<OpHaltReason>,
+    result: ExecutionResult<BaseHaltReason>,
     execution_time_us: Option<u128>,
 }
 
@@ -72,7 +72,7 @@ pub struct PendingStateBuilder<E, ChainSpec> {
 
 impl<E, ChainSpec, DB> PendingStateBuilder<E, ChainSpec>
 where
-    E: Evm<DB = DB, HaltReason = OpHaltReason>,
+    E: Evm<DB = DB, HaltReason = BaseHaltReason>,
     DB: Database + DatabaseCommit,
     E::Tx: FromRecoveredTx<BaseTxEnvelope>,
     ChainSpec: Upgrades + Clone,

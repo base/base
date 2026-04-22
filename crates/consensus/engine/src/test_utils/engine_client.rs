@@ -15,7 +15,7 @@ use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_network::Base;
 use base_common_provider::BaseEngineApi;
-use base_common_rpc_types::Transaction as OpTransaction;
+use base_common_rpc_types::Transaction as BaseTransaction;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
@@ -38,7 +38,7 @@ pub fn test_engine_client_builder() -> MockEngineClientBuilder {
 #[derive(Debug, Clone, Default)]
 pub struct MockEngineStorage {
     /// Storage for block responses by tag.
-    pub l2_blocks_by_label: HashMap<BlockNumberOrTag, Block<OpTransaction>>,
+    pub l2_blocks_by_label: HashMap<BlockNumberOrTag, Block<BaseTransaction>>,
     /// Storage for block info responses by tag.
     pub block_info_by_tag: HashMap<BlockNumberOrTag, L2BlockInfo>,
 
@@ -86,7 +86,7 @@ pub struct MockEngineStorage {
     pub l1_blocks_by_id: HashMap<String, Block<EthTransaction>>,
     /// Storage for L2 blocks by stringified `BlockId`.
     /// L2 blocks use Base transactions.
-    pub l2_blocks_by_id: HashMap<String, Block<OpTransaction>>,
+    pub l2_blocks_by_id: HashMap<String, Block<BaseTransaction>>,
     /// Storage for proofs by (address, stringified `BlockId`) key.
     pub proofs_by_address: HashMap<(Address, String), EIP1186AccountProofResponse>,
 }
@@ -135,7 +135,7 @@ impl MockEngineClientBuilder {
     pub fn with_l2_block_by_label(
         mut self,
         tag: BlockNumberOrTag,
-        block: Block<OpTransaction>,
+        block: Block<BaseTransaction>,
     ) -> Self {
         self.storage.l2_blocks_by_label.insert(tag, block);
         self
@@ -239,7 +239,7 @@ impl MockEngineClientBuilder {
     }
 
     /// Sets an L2 block response for a specific `BlockId`.
-    pub fn with_l2_block(mut self, block_id: BlockId, block: Block<OpTransaction>) -> Self {
+    pub fn with_l2_block(mut self, block_id: BlockId, block: Block<BaseTransaction>) -> Self {
         let key = block_id_to_key(&block_id);
         self.storage.l2_blocks_by_id.insert(key, block);
         self
@@ -305,7 +305,11 @@ impl MockEngineClient {
     }
 
     /// Sets a block response for a specific tag.
-    pub async fn set_l2_block_by_label(&self, tag: BlockNumberOrTag, block: Block<OpTransaction>) {
+    pub async fn set_l2_block_by_label(
+        &self,
+        tag: BlockNumberOrTag,
+        block: Block<BaseTransaction>,
+    ) {
         self.storage.write().await.l2_blocks_by_label.insert(tag, block);
     }
 
@@ -391,7 +395,7 @@ impl MockEngineClient {
     }
 
     /// Sets an L2 block response for a specific `BlockId`.
-    pub async fn set_l2_block(&self, block_id: BlockId, block: Block<OpTransaction>) {
+    pub async fn set_l2_block(&self, block_id: BlockId, block: Block<BaseTransaction>) {
         let key = block_id_to_key(&block_id);
         self.storage.write().await.l2_blocks_by_id.insert(key, block);
     }
@@ -479,7 +483,7 @@ impl EngineClient for MockEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<Block<OpTransaction>>, EngineClientError> {
+    ) -> Result<Option<Block<BaseTransaction>>, EngineClientError> {
         let storage = self.storage.read().await;
         Ok(storage.l2_blocks_by_label.get(&numtag).cloned())
     }

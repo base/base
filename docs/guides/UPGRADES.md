@@ -212,7 +212,7 @@ fn is_base_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
 **Files:**
 - [`crates/common/chains/src/upgrade.rs`](../../crates/common/chains/src/upgrade.rs) (mainnet, sepolia, devnet constants)
 - [`crates/common/chains/src/lib.rs`](../../crates/common/chains/src/lib.rs)
-- [`crates/consensus/registry/src/test_utils/mod.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod.rs)
+- [`crates/common/chains/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/test_utils.rs)
 
 Add named constants once an activation timestamp is confirmed:
 
@@ -244,7 +244,7 @@ Until an activation timestamp is confirmed, leave `base: None` and the chain arr
 
 ### 7. Update the default rollup config
 
-**File:** [`crates/consensus/registry/src/test_utils/mod.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/src/test_utils/mod.rs)
+**File:** [`crates/common/chains/src/test_utils.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/test_utils.rs)
 
 The `default_rollup_config()` function sets all upgrades active at genesis for dev use. Add the new upgrade:
 
@@ -260,7 +260,7 @@ hardforks: HardForkConfig {
 
 ### 8. Verify the upgrade consistency tests
 
-**File:** [`crates/consensus/registry/tests/hardfork_consistency.rs`](https://github.com/base/base/blob/main/crates/consensus/registry/tests/hardfork_consistency.rs)
+**File:** [`crates/common/chains/tests/hardfork_consistency.rs`](https://github.com/base/base/blob/main/crates/common/chains/tests/hardfork_consistency.rs)
 
 These tests assert that `BaseChainConfig::mainnet().upgrade_activation(fork)` matches `BaseChainUpgrades::mainnet().upgrade_activation(fork)` for every `BaseUpgrade` variant. They should pass without changes as long as both sides consistently return `ForkCondition::Never` for an unscheduled upgrade or the same timestamp once scheduled.
 
@@ -359,7 +359,7 @@ pub fn spec_id(&self, timestamp: u64) -> base_revm::OpSpecId {
 
 ### 12. Update the reth `ChainHardforks` builder
 
-**File:** [`crates/execution/upgrades/src/chain.rs`](https://github.com/base/base/blob/main/crates/execution/upgrades/src/chain.rs)
+**File:** [`crates/common/chains/src/chain.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/chain.rs)
 
 Append the new upgrade in `to_chain_hardforks()`. If it pairs with a new Ethereum upgrade (like Canyon→Shanghai), push both; if not, push only the Base upgrade entry:
 
@@ -391,4 +391,4 @@ forks.push((BaseUpgrade::Azul.boxed(), self[BaseUpgrade::Azul]));  // <-- add
 - [ ] Precompile match arm updated (or new precompile set added)
 - [ ] `spec_by_timestamp_after_bedrock` updated (`common/evm/src/spec.rs`)
 - [ ] `RollupConfig::spec_id` updated (`consensus/genesis/src/rollup.rs`)
-- [ ] `to_chain_hardforks` updated (`execution/upgrades/src/chain.rs`)
+- [ ] `to_chain_hardforks` updated (`common/chains/src/hardforks.rs`)

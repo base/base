@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chains::Upgrades;
 use base_execution_payload_builder::{Attributes, BasePayloadBuilder, PayloadPrimitives};
-use base_execution_txpool::OpPooledTx;
+use base_execution_txpool::BasePooledTx;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
@@ -63,7 +63,9 @@ impl<Pool, Provider, EvmConfig, Attrs> DebugExecutionWitnessApiServer<Attrs::Rpc
     for BaseDebugWitnessApi<Pool, Provider, EvmConfig, Attrs>
 where
     Pool: TransactionPool<
-            Transaction: OpPooledTx<Consensus = <Provider::Primitives as NodePrimitives>::SignedTx>,
+            Transaction: BasePooledTx<
+                Consensus = <Provider::Primitives as NodePrimitives>::SignedTx,
+            >,
         > + 'static,
     Provider: BlockReaderIdExt<Header = <Provider::Primitives as NodePrimitives>::BlockHeader>
         + NodePrimitivesProvider<Primitives: PayloadPrimitives>

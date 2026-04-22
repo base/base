@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::{
-    AccountInfo, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER, OpTransaction, TxEnv, TxKind, U256,
+    AccountInfo, BaseTransaction, DEVNET_CHAIN_ID, IntoAddress, ONE_ETHER, TxEnv, TxKind, U256,
     execute_txns_build_access_list,
 };
 
@@ -11,7 +11,7 @@ use super::{
 /// Tests that the system precompiles get included in the access list
 fn test_precompiles() {
     let base_tx = TxEnv::builder().chain_id(Some(DEVNET_CHAIN_ID)).gas_limit(50_000).gas_price(0);
-    let tx = OpTransaction::builder().base(base_tx).build_fill();
+    let tx = BaseTransaction::builder().base(base_tx).build_fill();
     let access_list = execute_txns_build_access_list(vec![tx], None, None)
         .expect("access list build should succeed");
 
@@ -27,7 +27,7 @@ fn test_single_transfer() {
     let mut overrides = HashMap::new();
     overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
 
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -68,7 +68,7 @@ fn test_gas_included_in_balance_change() {
     let mut overrides = HashMap::new();
     overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
 
-    let tx = OpTransaction::builder()
+    let tx = BaseTransaction::builder()
         .base(
             TxEnv::builder()
                 .caller(sender)
@@ -113,7 +113,7 @@ fn test_multiple_transfers() {
 
     let mut txs = Vec::new();
     for i in 0..10 {
-        let tx = OpTransaction::builder()
+        let tx = BaseTransaction::builder()
             .base(
                 TxEnv::builder()
                     .caller(sender)

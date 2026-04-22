@@ -1,4 +1,4 @@
-//! Utilities for creating hardforks.
+//! Utilities for creating upgrades.
 
 use alloy_primitives::{Address, Bytes, hex};
 

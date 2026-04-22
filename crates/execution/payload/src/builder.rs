@@ -9,7 +9,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, Predeploys};
 use base_common_evm::L1BlockInfo;
-use base_execution_txpool::{OpPooledTx, estimated_da_size::DataAvailabilitySized};
+use base_execution_txpool::{BasePooledTx, estimated_da_size::DataAvailabilitySized};
 use reth_basic_payload_builder::{
     BuildArguments, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig, is_better_payload,
@@ -154,7 +154,7 @@ impl<Pool, Client, Evm, Txs, Attrs> BasePayloadBuilder<Pool, Client, Evm, Txs, A
 
 impl<Pool, Client, Evm, N, T, Attrs> BasePayloadBuilder<Pool, Client, Evm, T, Attrs>
 where
-    Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades>,
     N: PayloadPrimitives,
     Evm: ConfigureEvm<
@@ -177,8 +177,9 @@ where
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<BaseBuiltPayload<N>>, PayloadBuilderError>
     where
-        Txs:
-            PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + OpPooledTx>,
+        Txs: PayloadTransactions<
+            Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
+        >,
     {
         let BuildArguments { mut cached_reads, config, cancel, best_payload } = args;
 
@@ -240,7 +241,7 @@ impl<Pool, Client, Evm, N, Txs, Attrs> PayloadBuilder
 where
     N: PayloadPrimitives,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: Upgrades> + Clone,
-    Pool: TransactionPool<Transaction: OpPooledTx<Consensus = N::SignedTx>>,
+    Pool: TransactionPool<Transaction: BasePooledTx<Consensus = N::SignedTx>>,
     Evm: ConfigureEvm<
             Primitives = N,
             NextBlockEnvCtx: BuildNextEnv<Attrs, N::BlockHeader, Client::ChainSpec>,
@@ -330,8 +331,9 @@ impl<Txs> Builder<'_, Txs> {
             >,
         ChainSpec: EthChainSpec + Upgrades,
         N: PayloadPrimitives,
-        Txs:
-            PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx> + OpPooledTx>,
+        Txs: PayloadTransactions<
+            Transaction: PoolTransaction<Consensus = N::SignedTx> + BasePooledTx,
+        >,
         Attrs: Attributes<Transaction = N::SignedTx>,
     {
         let Self { best } = self;
@@ -671,7 +673,7 @@ where
         info: &mut ExecutionInfo,
         builder: &mut Builder,
         mut best_txs: impl PayloadTransactions<
-            Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + OpPooledTx,
+            Transaction: PoolTransaction<Consensus = TxTy<Evm::Primitives>> + BasePooledTx,
         >,
     ) -> Result<Option<()>, PayloadBuilderError>
     where

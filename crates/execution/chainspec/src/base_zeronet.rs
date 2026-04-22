@@ -4,8 +4,7 @@ use alloc::{sync::Arc, vec};
 
 use alloy_chains::Chain;
 use alloy_primitives::{U256, b256};
-use base_common_chains::{BaseUpgrade, ChainConfig};
-use base_execution_upgrades::BASE_ZERONET_UPGRADES;
+use base_common_chains::{BASE_ZERONET_UPGRADES, BaseUpgrade, ChainConfig};
 use reth_chainspec::{BaseFeeParams, BaseFeeParamsKind, ChainSpec, Hardfork};
 use reth_ethereum_forks::EthereumHardfork;
 use reth_primitives_traits::{SealedHeader, sync::LazyLock};

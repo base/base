@@ -3,7 +3,7 @@
 use alloy_consensus::Header;
 use base_common_consensus::{BasePrimitives, BaseTransactionSigned};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{BundleTransaction, OpPooledTx, TimestampedTransaction};
+use base_execution_txpool::{BasePooledTx, BundleTransaction, TimestampedTransaction};
 use base_node_core::BaseEngineTypes;
 use reth_node_api::{FullNodeTypes, NodeTypes};
 use reth_payload_util::PayloadTransactions;
@@ -36,27 +36,29 @@ impl<T> NodeBounds for T where
 /// Composite trait bound for a transaction pool compatible with the Base builder.
 pub trait PoolBounds:
     TransactionPool<
-        Transaction: OpPooledTx<Consensus = BaseTransactionSigned>
+        Transaction: BasePooledTx<Consensus = BaseTransactionSigned>
                          + BundleTransaction
                          + TimestampedTransaction,
     > + TransactionPoolExt
     + Unpin
     + 'static
 where
-    <Self as TransactionPool>::Transaction: OpPooledTx + BundleTransaction + TimestampedTransaction,
+    <Self as TransactionPool>::Transaction:
+        BasePooledTx + BundleTransaction + TimestampedTransaction,
 {
 }
 
 impl<T> PoolBounds for T
 where
     T: TransactionPool<
-            Transaction: OpPooledTx<Consensus = BaseTransactionSigned>
+            Transaction: BasePooledTx<Consensus = BaseTransactionSigned>
                              + BundleTransaction
                              + TimestampedTransaction,
         > + TransactionPoolExt
         + Unpin
         + 'static,
-    <Self as TransactionPool>::Transaction: OpPooledTx + BundleTransaction + TimestampedTransaction,
+    <Self as TransactionPool>::Transaction:
+        BasePooledTx + BundleTransaction + TimestampedTransaction,
 {
 }
 
@@ -80,7 +82,7 @@ impl<T> ClientBounds for T where
 /// Composite trait bound for payload transaction iterators used by the Base builder.
 pub trait PayloadTxsBounds:
     PayloadTransactions<
-    Transaction: OpPooledTx<Consensus = BaseTransactionSigned>
+    Transaction: BasePooledTx<Consensus = BaseTransactionSigned>
                      + BundleTransaction
                      + TimestampedTransaction,
 >
@@ -89,7 +91,7 @@ pub trait PayloadTxsBounds:
 
 impl<T> PayloadTxsBounds for T where
     T: PayloadTransactions<
-        Transaction: OpPooledTx<Consensus = BaseTransactionSigned>
+        Transaction: BasePooledTx<Consensus = BaseTransactionSigned>
                          + BundleTransaction
                          + TimestampedTransaction,
     >

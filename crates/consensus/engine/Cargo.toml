@@ -56,7 +56,7 @@ metrics = { workspace = true, optional = true }
 rstest.workspace = true
 arbitrary.workspace = true
 tokio-tungstenite.workspace = true
-base-consensus-registry.workspace = true
+base-common-chains.workspace = true
 metrics-exporter-prometheus.workspace = true
 rand = {workspace = true, features = ["thread_rng"]}
 base-common-rpc-types = {workspace = true, features = ["arbitrary", "k256"]}

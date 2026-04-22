@@ -401,9 +401,9 @@ mod tests {
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use alloy_rpc_types_eth::BlockTransactions;
     use arbitrary::{Arbitrary, Unstructured};
+    use base_common_chains::Registry;
     use base_common_consensus::HoloceneExtraData;
     use base_common_rpc_types_engine::BasePayloadAttributes;
-    use base_consensus_registry::Registry;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
     use super::*;

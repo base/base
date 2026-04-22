@@ -47,8 +47,6 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 
 alloy-chains.workspace = true
 
-base-execution-upgrades.workspace = true
-
 [features]
 default = [ "std" ]
 std = [
@@ -57,6 +55,7 @@ std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
 	"alloy-trie/std",
+	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-execution-chainspec/std",
 	"reth-consensus-common/std",

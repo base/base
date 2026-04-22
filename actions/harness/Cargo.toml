@@ -57,9 +57,9 @@ base-batcher-source.workspace = true
 base-batcher-encoder.workspace = true
 base-consensus-safedb.workspace = true
 base-consensus-gossip.workspace = true
+base-common-chains.workspace = true
 base-consensus-engine.workspace = true
 base-execution-txpool.workspace = true
-base-consensus-registry.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-payload-builder.workspace = true
 base-protocol = { workspace = true, features = ["std"] }

@@ -55,6 +55,7 @@ alloy-rpc-types-engine = { workspace = true, optional = true, features = [
 ] }
 
 # base-alloy
+base-common-rpc-types = { workspace = true, optional = true }
 base-common-network = { workspace = true, optional = true }
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, optional = true }
@@ -86,6 +87,7 @@ test-utils = [
 	"dep:alloy-rpc-types",
 	"dep:alloy-rpc-types-engine",
 	"dep:base-common-network",
+	"dep:base-common-rpc-types",
 	"dep:base-common-rpc-types-engine",
 	"dep:base-test-utils",
 	"dep:chrono",

@@ -37,6 +37,5 @@ base-common-consensus = { workspace = true, features = ["k256"] }
 base-protocol = { workspace = true, features = ["serde", "std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 alloy-consensus = { workspace = true, features = ["std", "k256"] }
-base-consensus-registry = { workspace = true, features = ["std"] }
 base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }

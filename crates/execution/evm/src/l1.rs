@@ -300,8 +300,8 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
 }
 
 /// Returns the [`OpSpecId`] at the given timestamp using the [`Upgrades`] trait from
-/// `base-execution-upgrades`.
-fn op_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> OpSpecId {
+/// `base-common-chains`.
+fn base_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> OpSpecId {
     if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
         OpSpecId::AZUL
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
@@ -369,7 +369,7 @@ impl RethL1BlockInfo for L1BlockInfo {
             return Ok(U256::ZERO);
         }
 
-        let spec_id = op_spec_id(&chain_spec, timestamp);
+        let spec_id = base_spec_id(&chain_spec, timestamp);
         Ok(self.calculate_tx_l1_cost(input, spec_id))
     }
 
@@ -379,7 +379,7 @@ impl RethL1BlockInfo for L1BlockInfo {
         timestamp: u64,
         input: &[u8],
     ) -> Result<U256, BlockExecutionError> {
-        let spec_id = op_spec_id(&chain_spec, timestamp);
+        let spec_id = base_spec_id(&chain_spec, timestamp);
         Ok(self.data_gas(input, spec_id))
     }
 }

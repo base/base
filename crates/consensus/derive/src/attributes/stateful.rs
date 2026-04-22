@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use base_common_consensus::Predeploys;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_genesis::RollupConfig;
-use base_consensus_upgrades::{Hardfork, Hardforks};
+use base_consensus_upgrades::{Upgrade, Upgrades};
 use base_protocol::{Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
 
@@ -146,22 +146,22 @@ where
         if self.rollup_cfg.is_ecotone_active(next_l2_time)
             && !self.rollup_cfg.is_ecotone_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions = Hardforks::ECOTONE.txs().collect();
+            upgrade_transactions = Upgrades::ECOTONE.txs().collect();
         }
         if self.rollup_cfg.is_fjord_active(next_l2_time)
             && !self.rollup_cfg.is_fjord_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Hardforks::FJORD.txs().collect());
+            upgrade_transactions.append(&mut Upgrades::FJORD.txs().collect());
         }
         if self.rollup_cfg.is_isthmus_active(next_l2_time)
             && !self.rollup_cfg.is_isthmus_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Hardforks::ISTHMUS.txs().collect());
+            upgrade_transactions.append(&mut Upgrades::ISTHMUS.txs().collect());
         }
         if self.rollup_cfg.is_jovian_active(next_l2_time)
             && !self.rollup_cfg.is_jovian_active(l2_parent.block_info.timestamp)
         {
-            upgrade_transactions.append(&mut Hardforks::JOVIAN.txs().collect());
+            upgrade_transactions.append(&mut Upgrades::JOVIAN.txs().collect());
         }
 
         // Build and encode the L1 info transaction for the current payload.

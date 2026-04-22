@@ -6,7 +6,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, hex};
 use base_common_consensus::{Deployers, Predeploys, SystemAddresses, TxDeposit};
 
-use crate::{Hardfork, UpgradeCalldata};
+use crate::{Upgrade, UpgradeCalldata};
 
 /// The Ecotone network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -171,7 +171,7 @@ impl Ecotone {
     }
 }
 
-impl Hardfork for Ecotone {
+impl Upgrade for Ecotone {
     /// Constructs the Ecotone network upgrade transactions.
     fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
         Self::deposits().map(|tx| {

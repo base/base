@@ -3,7 +3,6 @@
 use alloy_chains::Chain;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::Address;
-use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
 
 use crate::{ChainGenesis, FeeConfig, HardForkConfig};
 
@@ -68,12 +67,6 @@ pub struct RollupConfig {
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        use base_common_chains::ChainConfig;
-        let chain_op_config = match u32::arbitrary(u)? % 2 {
-            0 => FeeConfig::from(ChainConfig::mainnet()),
-            _ => FeeConfig::from(ChainConfig::sepolia()),
-        };
-
         Ok(Self {
             genesis: ChainGenesis::arbitrary(u)?,
             block_time: u.arbitrary()?,
@@ -89,7 +82,7 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             l1_system_config_address: Address::arbitrary(u)?,
             protocol_versions_address: Address::arbitrary(u)?,
             blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
-            chain_op_config,
+            chain_op_config: FeeConfig::base_mainnet(),
         })
     }
 }
@@ -112,7 +105,56 @@ impl Default for RollupConfig {
             l1_system_config_address: Address::ZERO,
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: FeeConfig::from_chain_id(0),
+            chain_op_config: FeeConfig::base_mainnet(),
+        }
+    }
+}
+
+impl EthereumHardforks for RollupConfig {
+    fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
+        // Helper: cascade through the Base upgrade chain, returning the first set timestamp.
+        let cascade = |starting: &[Option<u64>]| -> ForkCondition {
+            if let Some(ts) = starting.iter().flatten().next() {
+                return ForkCondition::Timestamp(*ts);
+            }
+            ForkCondition::Never
+        };
+
+        if fork <= EthereumHardfork::Berlin {
+            // Pre-Bedrock Ethereum forks all activate at block 0 on Base chains.
+            ForkCondition::Block(0)
+        } else if fork <= EthereumHardfork::Paris {
+            // Bedrock activates everything from London through Paris at block 0.
+            ForkCondition::Block(0)
+        } else if fork <= EthereumHardfork::Shanghai {
+            // Canyon activates Shanghai; cascade through later Base upgrades if unset.
+            cascade(&[
+                self.hardforks.canyon_time,
+                self.hardforks.ecotone_time,
+                self.hardforks.fjord_time,
+                self.hardforks.granite_time,
+                self.hardforks.holocene_time,
+                self.hardforks.isthmus_time,
+                self.hardforks.jovian_time,
+            ])
+        } else if fork <= EthereumHardfork::Cancun {
+            // Ecotone activates Cancun; cascade through later Base upgrades if unset.
+            cascade(&[
+                self.hardforks.ecotone_time,
+                self.hardforks.fjord_time,
+                self.hardforks.granite_time,
+                self.hardforks.holocene_time,
+                self.hardforks.isthmus_time,
+                self.hardforks.jovian_time,
+            ])
+        } else if fork <= EthereumHardfork::Prague {
+            // Isthmus activates Prague; cascade through later Base upgrades if unset.
+            cascade(&[self.hardforks.isthmus_time, self.hardforks.jovian_time])
+        } else if fork <= EthereumHardfork::Osaka {
+            // Azul activates Osaka. Standalone — no cascade.
+            self.hardforks.base.azul.map(ForkCondition::Timestamp).unwrap_or(ForkCondition::Never)
+        } else {
+            ForkCondition::Never
         }
     }
 }
@@ -306,89 +348,6 @@ impl RollupConfig {
     }
 }
 
-impl EthereumHardforks for RollupConfig {
-    fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        if fork <= EthereumHardfork::Berlin {
-            // We assume that Base chains were launched with all forks before Berlin activated.
-            ForkCondition::Block(0)
-        } else if fork <= EthereumHardfork::Paris {
-            // Bedrock activates all hardforks up to Paris.
-            self.upgrade_activation(BaseUpgrade::Bedrock)
-        } else if fork <= EthereumHardfork::Shanghai {
-            // Canyon activates Shanghai hardfork.
-            self.upgrade_activation(BaseUpgrade::Canyon)
-        } else if fork <= EthereumHardfork::Cancun {
-            // Ecotone activates Cancun hardfork.
-            self.upgrade_activation(BaseUpgrade::Ecotone)
-        } else if fork <= EthereumHardfork::Prague {
-            // Isthmus activates Prague hardfork.
-            self.upgrade_activation(BaseUpgrade::Isthmus)
-        } else if fork <= EthereumHardfork::Osaka {
-            // Azul activates Osaka hardfork.
-            self.upgrade_activation(BaseUpgrade::Azul)
-        } else {
-            ForkCondition::Never
-        }
-    }
-}
-
-impl Upgrades for RollupConfig {
-    fn upgrade_activation(&self, fork: BaseUpgrade) -> ForkCondition {
-        match fork {
-            BaseUpgrade::Bedrock => ForkCondition::Block(0),
-            BaseUpgrade::Regolith => self
-                .hardforks
-                .regolith_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Canyon)),
-            BaseUpgrade::Canyon => self
-                .hardforks
-                .canyon_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Ecotone)),
-            BaseUpgrade::Ecotone => self
-                .hardforks
-                .ecotone_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Fjord)),
-            BaseUpgrade::Fjord => self
-                .hardforks
-                .fjord_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Granite)),
-            BaseUpgrade::Granite => self
-                .hardforks
-                .granite_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Holocene)),
-            BaseUpgrade::Holocene => self
-                .hardforks
-                .holocene_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Isthmus)),
-            BaseUpgrade::Isthmus => self
-                .hardforks
-                .isthmus_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or_else(|| self.upgrade_activation(BaseUpgrade::Jovian)),
-            BaseUpgrade::Jovian => self
-                .hardforks
-                .jovian_time
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            // Azul is standalone: not part of the Base upgrade cascade chain. It only activates
-            // when explicitly configured and never implies (or is implied by) Jovian being active.
-            BaseUpgrade::Azul => self
-                .hardforks
-                .base
-                .azul
-                .map(ForkCondition::Timestamp)
-                .unwrap_or(ForkCondition::Never),
-            _ => ForkCondition::Never,
-        }
-    }
-}
-
 impl RollupConfig {
     /// The max rlp bytes per channel for the Bedrock hardfork.
     pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
@@ -434,28 +393,6 @@ impl RollupConfig {
     }
 }
 
-impl From<&ChainConfig> for RollupConfig {
-    fn from(cfg: &ChainConfig) -> Self {
-        Self {
-            genesis: ChainGenesis::from(cfg),
-            block_time: cfg.block_time,
-            max_sequencer_drift: cfg.max_sequencer_drift,
-            seq_window_size: cfg.seq_window_size,
-            channel_timeout: cfg.channel_timeout,
-            granite_channel_timeout: Self::GRANITE_CHANNEL_TIMEOUT,
-            l1_chain_id: cfg.l1_chain_id,
-            l2_chain_id: Chain::from_id(cfg.chain_id),
-            hardforks: HardForkConfig::from(cfg),
-            batch_inbox_address: cfg.batch_inbox_address,
-            deposit_contract_address: cfg.deposit_contract_address,
-            l1_system_config_address: cfg.system_config_address,
-            protocol_versions_address: cfg.protocol_versions_address,
-            blobs_enabled_l1_timestamp: None,
-            chain_op_config: FeeConfig::from(cfg),
-        }
-    }
-}
-
 /// Serializes a [`Chain`] as its numeric chain ID.
 ///
 /// `alloy_chains::Chain` serializes named chains (e.g. Base Sepolia) as a string like
@@ -489,221 +426,12 @@ mod tests {
     #[cfg(feature = "serde")]
     use crate::SystemConfig;
 
-    type ActivationCheck = fn(&RollupConfig, u64) -> bool;
-    type ActivationSetup = fn(&mut RollupConfig, u64);
-
     #[test]
     #[cfg(feature = "arbitrary")]
     fn test_arbitrary_rollup_config() {
         let mut bytes = [0u8; 1024];
         rand::rng().fill(bytes.as_mut_slice());
         RollupConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
-    }
-
-    #[test]
-    fn test_hardfork_activation_matrix() {
-        const ACTIVATION_TIMESTAMP: u64 = 10;
-        const PRE_ACTIVATION_TIMESTAMP: u64 = ACTIVATION_TIMESTAMP - 1;
-
-        let cascade_checks = [
-            ("regolith", RollupConfig::is_regolith_active as ActivationCheck),
-            ("canyon", RollupConfig::is_canyon_active as ActivationCheck),
-            ("delta", RollupConfig::is_delta_active as ActivationCheck),
-            ("ecotone", RollupConfig::is_ecotone_active as ActivationCheck),
-            ("fjord", RollupConfig::is_fjord_active as ActivationCheck),
-            ("granite", RollupConfig::is_granite_active as ActivationCheck),
-            ("holocene", RollupConfig::is_holocene_active as ActivationCheck),
-            ("isthmus", RollupConfig::is_isthmus_active as ActivationCheck),
-            ("jovian", RollupConfig::is_jovian_active as ActivationCheck),
-        ];
-        let independent_checks = [
-            (
-                "pectra blob schedule",
-                RollupConfig::is_pectra_blob_schedule_active as ActivationCheck,
-            ),
-            ("base azul", RollupConfig::is_base_azul_active as ActivationCheck),
-        ];
-        let cascade_cases = [
-            (
-                "regolith",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.regolith_time = Some(timestamp);
-                }) as ActivationSetup,
-                None,
-            ),
-            (
-                "canyon",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.canyon_time = Some(timestamp);
-                }) as ActivationSetup,
-                Some(EthereumHardfork::Shanghai),
-            ),
-            (
-                "delta",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.delta_time = Some(timestamp);
-                }) as ActivationSetup,
-                None,
-            ),
-            (
-                "ecotone",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.ecotone_time = Some(timestamp);
-                }) as ActivationSetup,
-                Some(EthereumHardfork::Cancun),
-            ),
-            (
-                "fjord",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.fjord_time = Some(timestamp);
-                }) as ActivationSetup,
-                None,
-            ),
-            (
-                "granite",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.granite_time = Some(timestamp);
-                }) as ActivationSetup,
-                None,
-            ),
-            (
-                "holocene",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.holocene_time = Some(timestamp);
-                }) as ActivationSetup,
-                None,
-            ),
-            (
-                "isthmus",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.isthmus_time = Some(timestamp);
-                }) as ActivationSetup,
-                Some(EthereumHardfork::Prague),
-            ),
-            (
-                "jovian",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.jovian_time = Some(timestamp);
-                }) as ActivationSetup,
-                None,
-            ),
-        ];
-        let independent_cases = [
-            (
-                "pectra blob schedule",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.pectra_blob_schedule_time = Some(timestamp);
-                }) as ActivationSetup,
-                None,
-            ),
-            (
-                "base azul",
-                (|config: &mut RollupConfig, timestamp| {
-                    config.hardforks.base = HardforkConfig { azul: Some(timestamp) };
-                }) as ActivationSetup,
-                Some(EthereumHardfork::Osaka),
-            ),
-        ];
-
-        for (case_index, (case_name, setup, ethereum_fork)) in cascade_cases.into_iter().enumerate()
-        {
-            let mut config = RollupConfig::default();
-
-            if let Some(fork) = ethereum_fork {
-                assert_eq!(config.ethereum_fork_activation(fork), ForkCondition::Never);
-            }
-
-            setup(&mut config, ACTIVATION_TIMESTAMP);
-
-            for (check_index, (check_name, check)) in cascade_checks.iter().enumerate() {
-                assert_eq!(
-                    check(&config, ACTIVATION_TIMESTAMP),
-                    check_index <= case_index,
-                    "expected {check_name} activation to match {case_name} cascade",
-                );
-                assert!(
-                    !check(&config, PRE_ACTIVATION_TIMESTAMP),
-                    "expected {check_name} to be inactive before {case_name}",
-                );
-            }
-
-            for (check_name, check) in independent_checks {
-                assert!(
-                    !check(&config, ACTIVATION_TIMESTAMP),
-                    "expected {check_name} to remain inactive when {case_name} activates",
-                );
-                assert!(
-                    !check(&config, PRE_ACTIVATION_TIMESTAMP),
-                    "expected {check_name} to be inactive before {case_name}",
-                );
-            }
-
-            if let Some(fork) = ethereum_fork {
-                assert_eq!(
-                    config.ethereum_fork_activation(fork),
-                    ForkCondition::Timestamp(ACTIVATION_TIMESTAMP)
-                );
-                assert!(
-                    config.ethereum_fork_activation(fork).active_at_timestamp(ACTIVATION_TIMESTAMP)
-                );
-                assert!(
-                    !config
-                        .ethereum_fork_activation(fork)
-                        .active_at_timestamp(PRE_ACTIVATION_TIMESTAMP)
-                );
-            }
-        }
-
-        for (case_index, (case_name, setup, ethereum_fork)) in
-            independent_cases.into_iter().enumerate()
-        {
-            let mut config = RollupConfig::default();
-
-            if let Some(fork) = ethereum_fork {
-                assert_eq!(config.ethereum_fork_activation(fork), ForkCondition::Never);
-            }
-
-            setup(&mut config, ACTIVATION_TIMESTAMP);
-
-            for (check_name, check) in cascade_checks {
-                assert!(
-                    !check(&config, ACTIVATION_TIMESTAMP),
-                    "expected {check_name} to remain inactive when {case_name} activates",
-                );
-                assert!(
-                    !check(&config, PRE_ACTIVATION_TIMESTAMP),
-                    "expected {check_name} to be inactive before {case_name}",
-                );
-            }
-
-            for (check_index, (check_name, check)) in independent_checks.into_iter().enumerate() {
-                let expected = check_index == case_index;
-                assert_eq!(
-                    check(&config, ACTIVATION_TIMESTAMP),
-                    expected,
-                    "expected {check_name} activation to match {case_name}",
-                );
-                assert!(
-                    !check(&config, PRE_ACTIVATION_TIMESTAMP),
-                    "expected {check_name} to be inactive before {case_name}",
-                );
-            }
-
-            if let Some(fork) = ethereum_fork {
-                assert_eq!(
-                    config.ethereum_fork_activation(fork),
-                    ForkCondition::Timestamp(ACTIVATION_TIMESTAMP)
-                );
-                assert!(
-                    config.ethereum_fork_activation(fork).active_at_timestamp(ACTIVATION_TIMESTAMP)
-                );
-                assert!(
-                    !config
-                        .ethereum_fork_activation(fork)
-                        .active_at_timestamp(PRE_ACTIVATION_TIMESTAMP)
-                );
-            }
-        }
     }
 
     #[test]
@@ -903,7 +631,7 @@ mod tests {
             l1_system_config_address: address!("94ee52a9d8edd72a85dea7fae3ba6d75e4bf1710"),
             protocol_versions_address: Address::ZERO,
             blobs_enabled_l1_timestamp: None,
-            chain_op_config: FeeConfig::from_chain_id(0),
+            chain_op_config: FeeConfig::base_mainnet(),
         };
 
         let deserialized: RollupConfig = serde_json::from_str(raw).unwrap();
@@ -977,6 +705,88 @@ mod tests {
         // Round-trip: deserializing from a numeric l2_chain_id must also work.
         let round_tripped: RollupConfig = serde_json::from_value(json).unwrap();
         assert_eq!(round_tripped.l2_chain_id.id(), 84532);
+    }
+
+    #[test]
+    fn test_ethereum_fork_activation() {
+        use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
+
+        // Pre-Bedrock Ethereum forks always activate at block 0 on Base chains.
+        let cfg = RollupConfig::default();
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Berlin), ForkCondition::Block(0));
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Paris), ForkCondition::Block(0));
+
+        // With no timestamps set everything from Shanghai onward is Never.
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Shanghai), ForkCondition::Never);
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Cancun), ForkCondition::Never);
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Prague), ForkCondition::Never);
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
+
+        // Shanghai↔Canyon: canyon_time drives Shanghai activation.
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.canyon_time = Some(100);
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Shanghai),
+            ForkCondition::Timestamp(100)
+        );
+
+        // Delta alone does NOT activate Shanghai (Delta only covers Span Batches, not L1 EIPs).
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.delta_time = Some(150);
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Shanghai), ForkCondition::Never);
+
+        // Canyon unset → Shanghai cascades to ecotone_time (skipping delta_time).
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.ecotone_time = Some(200);
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Shanghai),
+            ForkCondition::Timestamp(200)
+        );
+
+        // Cancun↔Ecotone: ecotone_time drives Cancun activation.
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.ecotone_time = Some(300);
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Cancun),
+            ForkCondition::Timestamp(300)
+        );
+
+        // Ecotone unset → Cancun cascades to jovian_time.
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.jovian_time = Some(400);
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Cancun),
+            ForkCondition::Timestamp(400)
+        );
+
+        // Prague↔Isthmus: isthmus_time drives Prague activation.
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.isthmus_time = Some(500);
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Prague),
+            ForkCondition::Timestamp(500)
+        );
+
+        // Isthmus unset → Prague cascades to jovian_time.
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.jovian_time = Some(600);
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Prague),
+            ForkCondition::Timestamp(600)
+        );
+
+        // Osaka↔Azul: azul drives Osaka activation; standalone (not cascaded from Jovian).
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.base = HardforkConfig { azul: Some(700) };
+        assert_eq!(
+            cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
+            ForkCondition::Timestamp(700)
+        );
+
+        // Jovian set but Azul unset → Osaka is Never (Azul does not cascade from Jovian).
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.jovian_time = Some(800);
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
     }
 
     #[test]

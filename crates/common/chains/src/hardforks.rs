@@ -1,9 +1,10 @@
-use alloc::vec;
+use alloc::{boxed::Box, vec};
 
 use alloy_primitives::U256;
-use base_common_chains::{BaseUpgrade, ChainUpgrades};
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
 use spin::Lazy;
+
+use crate::{BaseUpgrade, ChainUpgrades};
 
 /// Extension trait to convert alloy's [`ChainUpgrades`] into reth's [`ChainHardforks`].
 pub trait ChainUpgradesExt {

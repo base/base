@@ -12,7 +12,7 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_common_consensus::OpTxType;
-use base_common_evm::{BaseTxResult, OpHaltReason};
+use base_common_evm::{BaseHaltReason, BaseTxResult};
 use base_common_flashblocks::Flashblock;
 use base_common_network::Base;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
@@ -43,7 +43,7 @@ pub struct PendingBlocksBuilder {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
-    transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
+    transaction_results: HashMap<B256, ExecutionResult<BaseHaltReason>>,
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
 
@@ -156,7 +156,7 @@ impl PendingBlocksBuilder {
     pub fn with_transaction_result(
         &mut self,
         hash: B256,
-        result: ExecutionResult<OpHaltReason>,
+        result: ExecutionResult<BaseHaltReason>,
     ) -> &Self {
         self.transaction_results.insert(hash, result);
         self
@@ -221,7 +221,7 @@ pub struct PendingBlocks {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
-    transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
+    transaction_results: HashMap<B256, ExecutionResult<BaseHaltReason>>,
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
 
@@ -336,7 +336,10 @@ impl PendingBlocks {
     }
 
     /// Returns the execution result for a transaction.
-    pub fn get_transaction_result(&self, tx_hash: &B256) -> Option<&ExecutionResult<OpHaltReason>> {
+    pub fn get_transaction_result(
+        &self,
+        tx_hash: &B256,
+    ) -> Option<&ExecutionResult<BaseHaltReason>> {
         self.transaction_results.get(tx_hash)
     }
 
@@ -351,7 +354,7 @@ impl PendingBlocks {
     }
 
     /// Returns the receipt and state for a transaction.
-    pub fn get_tx_result(&self, tx_hash: &B256) -> Option<BaseTxResult<OpHaltReason, OpTxType>> {
+    pub fn get_tx_result(&self, tx_hash: &B256) -> Option<BaseTxResult<BaseHaltReason, OpTxType>> {
         let (((result, state), tx), sender) = self
             .get_transaction_result(tx_hash)
             .zip(self.get_transaction_state(tx_hash))
@@ -784,7 +787,7 @@ mod tests {
         }
     }
 
-    fn test_execution_result() -> ExecutionResult<OpHaltReason> {
+    fn test_execution_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
             gas_used: 21000,
