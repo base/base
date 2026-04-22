@@ -3,6 +3,8 @@
 //! Exposes the `base_persistRejectedTransactionBatch` method for receiving batches
 //! of rejected transactions from the builder and persisting them to S3.
 
+use std::sync::Arc;
+
 use base_bundles::RejectedTransaction;
 use futures::stream::{self, StreamExt};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::error::ErrorObjectOwned};
@@ -28,12 +30,12 @@ pub trait AuditArchiverApi {
 /// RPC handler for audit archiver requests.
 #[derive(Debug)]
 pub struct AuditArchiverRpc {
-    storage: S3EventReaderWriter,
+    storage: Arc<S3EventReaderWriter>,
 }
 
 impl AuditArchiverRpc {
     /// Creates a new `AuditArchiverRpc`.
-    pub const fn new(storage: S3EventReaderWriter) -> Self {
+    pub const fn new(storage: Arc<S3EventReaderWriter>) -> Self {
         Self { storage }
     }
 }
@@ -61,13 +63,20 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
 
         info!(batch_size, block_number, "Persisting rejected transaction batch");
 
-        // Peform the S3 operations in parallel on the batch. Up to 10 concurrent operations at a time.
+        // Clone the Arc to release the borrow on `&self` so the jsonrpsee server can dispatch
+        // additional concurrent batch RPC calls while this batch's S3 writes are in flight.
+        let storage = Arc::clone(&self.storage);
+
+        // Peform the S3 operations in parallel on the batch. Up to 5 concurrent operations at a time.
         let persisted = stream::iter(batch)
-            .map(|tx| async {
-                let result = self.storage.store_rejected_transaction(&tx).await;
-                (tx, result)
+            .map(move |tx| {
+                let storage = Arc::clone(&storage);
+                async move {
+                    let result = storage.store_rejected_transaction(&tx).await;
+                    (tx, result)
+                }
             })
-            .buffer_unordered(10)
+            .buffer_unordered(5)
             .fold(0u32, |persisted, (tx, result)| async move {
                 if let Err(e) = result {
                     error!(

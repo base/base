@@ -1,6 +1,6 @@
 //! Audit archiver binary entry point.
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use audit_archiver_lib::{
@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
     let writer = S3EventReaderWriter::new(s3_client, s3_bucket);
 
     let rpc_addr = SocketAddr::from(([0, 0, 0, 0], args.rpc_port));
-    let rpc_module = AuditArchiverRpc::new(writer.clone());
+    let rpc_module = AuditArchiverRpc::new(Arc::new(writer.clone()));
     let rpc_server = ServerBuilder::default()
         .build(rpc_addr)
         .await
