@@ -6,8 +6,10 @@ use alloy_eips::BlockHashOrNumber;
 use backon::{ConstantBuilder, Retryable};
 use base_execution_chainspec::BaseChainSpec;
 use clap::{Parser, Subcommand};
-use reth_cli_commands::common::CliNodeTypes;
-use reth_cli_commands::p2p::{DownloadArgs, enode, rlpx};
+use reth_cli_commands::{
+    common::CliNodeTypes,
+    p2p::{DownloadArgs, enode, rlpx},
+};
 use reth_cli_util::hash_or_num_value_parser;
 use reth_network::{BlockDownloaderProvider, NetworkHandle};
 use reth_network_p2p::bodies::client::BodiesClient;
