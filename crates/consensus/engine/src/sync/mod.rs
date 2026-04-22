@@ -1,6 +1,6 @@
 //! Sync start algorithm for the Base rollup node.
 
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
 
 mod forkchoice;
@@ -123,8 +123,8 @@ mod tests {
     use alloy_primitives::{B256, b256};
     use alloy_provider::Network;
     use alloy_rpc_types_eth::Block;
+    use base_common_genesis::ChainGenesis;
     use base_common_network::Base;
-    use base_consensus_genesis::ChainGenesis;
     use base_protocol::L2BlockInfo;
 
     const BASE_SEPOLIA_GENESIS_HASH: B256 =

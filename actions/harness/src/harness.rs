@@ -3,8 +3,8 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_genesis::RollupConfig;
 use base_consensus_derive::{DataAvailabilityProvider, PipelineBuilder, StatefulAttributesBuilder};
-use base_consensus_genesis::RollupConfig;
 use base_consensus_node::L1OriginSelector;
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 

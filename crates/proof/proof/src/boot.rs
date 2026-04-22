@@ -4,7 +4,7 @@
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256, uint};
 use base_common_chains::Registry;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
 use serde::{Deserialize, Serialize};
 
@@ -258,7 +258,7 @@ impl BootInfo {
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
         let l1_config = if let Some(config) =
-            base_consensus_registry::l1_config(rollup_config.l1_chain_id)
+            base_common_chains::l1_config(rollup_config.l1_chain_id)
         {
             config.clone()
         } else {

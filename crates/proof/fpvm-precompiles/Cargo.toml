@@ -17,7 +17,7 @@ base-proof.workspace = true
 base-common-evm.workspace = true
 alloy-primitives.workspace = true
 base-proof-preimage.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 
 [dev-dependencies]
 sha2.workspace = true
@@ -31,7 +31,7 @@ std = [
 	"alloy-evm/std",
 	"alloy-primitives/std",
 	"base-common-evm/std",
-	"base-consensus-genesis/std",
+	"base-common-genesis/std",
 	"base-proof-preimage/std",
 	"base-proof/std",
 	"revm/std",

@@ -1,21 +1,11 @@
-#![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
-    html_favicon_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
-    issue_tracker_base_url = "https://github.com/base/base/issues/"
-)]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-#![cfg_attr(not(feature = "std"), no_std)]
-
-extern crate alloc;
+//! Lookup table for known L1 chain configurations.
 
 use alloy_chains::NamedChain;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_primitives::map::HashMap;
 use spin::Lazy;
 
-mod ethereum;
-pub use ethereum::{Holesky, Hoodi, Mainnet, Sepolia};
+use crate::{Holesky, Hoodi, Mainnet, Sepolia};
 
 /// L1 chain configurations built from known L1 genesis data.
 static L1_CONFIGS: Lazy<HashMap<u64, GenesisChainConfig>> = Lazy::new(|| {
@@ -27,7 +17,7 @@ static L1_CONFIGS: Lazy<HashMap<u64, GenesisChainConfig>> = Lazy::new(|| {
     map
 });
 
-/// Returns a [`GenesisChainConfig`] for the given L1 chain ID, if known.
+/// Returns the [`GenesisChainConfig`] for the given L1 chain ID, if known.
 pub fn l1_config(chain_id: u64) -> Option<&'static GenesisChainConfig> {
     L1_CONFIGS.get(&chain_id)
 }
@@ -52,12 +42,12 @@ mod tests {
 
     #[test]
     fn bpo_timestamps() {
-        let sepolia_config = l1_config(11155111).unwrap();
-        assert_eq!(sepolia_config.bpo1_time, Some(SEPOLIA_BPO1_TIMESTAMP));
-        assert_eq!(sepolia_config.bpo2_time, Some(SEPOLIA_BPO2_TIMESTAMP));
+        let sepolia = l1_config(11155111).unwrap();
+        assert_eq!(sepolia.bpo1_time, Some(SEPOLIA_BPO1_TIMESTAMP));
+        assert_eq!(sepolia.bpo2_time, Some(SEPOLIA_BPO2_TIMESTAMP));
 
-        let holesky_config = l1_config(17000).unwrap();
-        assert_eq!(holesky_config.bpo1_time, Some(HOLESKY_BPO1_TIMESTAMP));
-        assert_eq!(holesky_config.bpo2_time, Some(HOLESKY_BPO2_TIMESTAMP));
+        let holesky = l1_config(17000).unwrap();
+        assert_eq!(holesky.bpo1_time, Some(HOLESKY_BPO1_TIMESTAMP));
+        assert_eq!(holesky.bpo2_time, Some(HOLESKY_BPO2_TIMESTAMP));
     }
 }

@@ -5,7 +5,7 @@ use alloc::{boxed::Box, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Address;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::BlockInfo;
 
 use crate::{

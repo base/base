@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use core::iter::Iterator;
 
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 
 use crate::{OriginProvider, PipelineErrorKind, StepResult};

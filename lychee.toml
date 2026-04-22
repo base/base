@@ -33,6 +33,8 @@ exclude = [
 
     # Moved/deleted source files (links in docs that predate refactors)
     'https://github\.com/base/base/blob/main/crates/execution/upgrades/src/chain\.rs',
+    'https://github\.com/base/base/blob/main/crates/common/genesis/src/rollup\.rs',
+    'https://github\.com/base/base/blob/main/crates/common/genesis/src/chain/hardfork\.rs',
 
     # Internal / staging sites not meant for link checking
     'https://rustup\.rs/',

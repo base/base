@@ -6,8 +6,8 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block as RpcBlock;
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction as BaseTransaction;
-use base_consensus_genesis::RollupConfig;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::{

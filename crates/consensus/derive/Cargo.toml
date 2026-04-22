@@ -14,7 +14,7 @@ workspace = true
 # Protocol
 base-metrics.workspace = true
 base-protocol.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 base-consensus-upgrades.workspace = true
 
 # Alloy
@@ -47,7 +47,6 @@ spin.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 base-common-chains.workspace = true
-base-consensus-registry.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["std"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
@@ -62,8 +61,8 @@ serde = [
 	"alloy-primitives/serde",
 	"alloy-rpc-types-engine/serde",
 	"base-common-consensus/serde",
+	"base-common-genesis/serde",
 	"base-common-rpc-types-engine/serde",
-	"base-consensus-genesis/serde",
 	"base-protocol/serde",
 	"dep:serde",
 	"tracing-subscriber?/serde",

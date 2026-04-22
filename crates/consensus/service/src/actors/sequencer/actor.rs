@@ -7,8 +7,8 @@ use std::{
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
+use base_common_genesis::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
-use base_consensus_genesis::RollupConfig;
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::L2BlockInfo;
 use tokio::{

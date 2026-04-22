@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 
 # alloy
 alloy-rlp.workspace = true
@@ -52,8 +52,8 @@ spin.workspace = true
 rstest.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
+base-common-chains.workspace = true
 base-common-rpc-types.workspace = true
-base-consensus-registry.workspace = true
 brotli = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["full"] }
 arbitrary = { workspace = true, features = ["derive"] }
@@ -73,8 +73,8 @@ std = [
 	"alloy-rpc-types-engine/std",
 	"alloy-rpc-types-eth/std",
 	"base-common-consensus/std",
+	"base-common-genesis/std",
 	"base-common-rpc-types-engine/std",
-	"base-consensus-genesis/std",
 	"brotli/std",
 	"derive_more/std",
 	"miniz_oxide/std",
@@ -91,8 +91,8 @@ serde = [
 	"alloy-rpc-types-engine/serde",
 	"alloy-rpc-types-eth/serde",
 	"base-common-consensus/serde",
+	"base-common-genesis/serde",
 	"base-common-rpc-types-engine/serde",
-	"base-consensus-genesis/serde",
 	"dep:serde",
 	"miniz_oxide/serde",
 	"tracing-subscriber?/serde",
@@ -105,8 +105,8 @@ arbitrary = [
 	"alloy-rpc-types-engine/arbitrary",
 	"alloy-rpc-types-eth/arbitrary",
 	"base-common-consensus/arbitrary",
+	"base-common-genesis/arbitrary",
 	"base-common-rpc-types-engine/arbitrary",
-	"base-consensus-genesis/arbitrary",
 	"dep:arbitrary",
 	"std",
 ]

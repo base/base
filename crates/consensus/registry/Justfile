@@ -1,5 +1,0 @@
-set positional-arguments
-
-# default recipe to display help information
-default:
-  @just --list

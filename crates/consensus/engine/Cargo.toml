@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 # workspace
 base-metrics.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 
 # alloy

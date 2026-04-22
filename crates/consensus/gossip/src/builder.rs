@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_consensus_peers::{PeerMonitoring, PeerScoreLevel};
 use libp2p::{
     Multiaddr, StreamProtocol, SwarmBuilder, gossipsub::Config, identity::Keypair,

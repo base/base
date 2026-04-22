@@ -9,10 +9,10 @@ use std::{
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_genesis::RollupConfig;
 use base_comp::{
     BatchComposer, ChannelOut, CompressionAlgo, CompressorType, Config, ShadowCompressor,
 };
-use base_consensus_genesis::RollupConfig;
 use base_protocol::{Batch, BatchType, ChannelId, Frame, SingleBatch, SpanBatch};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, warn};

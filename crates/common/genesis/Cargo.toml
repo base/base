@@ -1,5 +1,5 @@
 [package]
-name = "base-consensus-genesis"
+name = "base-common-genesis"
 version.workspace = true
 description = "Base genesis types"
 

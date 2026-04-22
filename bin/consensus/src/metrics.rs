@@ -1,7 +1,7 @@
 //! CLI Options Metrics
 
 use base_client_cli::P2PArgs;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 
 /// Metrics to record various CLI options.
 #[derive(Debug, Clone, PartialEq, Eq)]

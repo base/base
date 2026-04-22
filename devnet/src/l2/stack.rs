@@ -9,7 +9,7 @@
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_consensus_node::NodeMode;
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};

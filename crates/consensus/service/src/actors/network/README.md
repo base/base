@@ -15,7 +15,7 @@ The network actor is responsible for handling interactions with the p2p layer of
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use alloy_primitives::address;
 use tokio_util::sync::CancellationToken;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_service::{NetworkActor};
 use libp2p::Multiaddr;

@@ -15,7 +15,7 @@ workspace = true
 base-protocol.workspace = true
 base-proof-executor.workspace = true
 base-consensus-derive.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 
 # Alloy
 alloy-rlp.workspace = true
@@ -40,8 +40,8 @@ std = [
 	"alloy-primitives/std",
 	"alloy-rlp/std",
 	"base-common-consensus/std",
+	"base-common-genesis/std",
 	"base-common-rpc-types-engine/std",
-	"base-consensus-genesis/std",
 	"base-proof-executor/std",
 	"base-protocol/std",
 	"spin/std",

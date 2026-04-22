@@ -562,7 +562,7 @@ async fn l1_deposit_included_in_derived_l2_block() {
 ///   L1 block 5:    batcher B submits  → DERIVED (1 derived)
 ///
 ///
-/// [`SystemConfig`]: base_consensus_genesis::SystemConfig
+/// [`SystemConfig`]: base_common_genesis::SystemConfig
 #[tokio::test]
 async fn batcher_key_rotation_accepts_new_batcher() {
     // Use a dedicated L1 system config address so the pipeline's log filter

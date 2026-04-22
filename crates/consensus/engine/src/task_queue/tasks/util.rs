@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
 
 use super::{BuildTask, BuildTaskError, EngineTaskExt, SealTask, SealTaskError};

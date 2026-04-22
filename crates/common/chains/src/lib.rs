@@ -22,13 +22,11 @@ mod derived;
 mod registry;
 pub use registry::Registry;
 
+mod ethereum;
+pub use ethereum::{Holesky, Hoodi, Mainnet, Sepolia};
+
+mod l1_registry;
+pub use l1_registry::l1_config;
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-
-#[cfg(feature = "chain-hardforks")]
-mod hardforks;
-#[cfg(feature = "chain-hardforks")]
-pub use hardforks::{
-    BASE_DEVNET_0_SEPOLIA_DEV_0_UPGRADES, BASE_MAINNET_UPGRADES, BASE_SEPOLIA_UPGRADES,
-    BASE_ZERONET_UPGRADES, ChainUpgradesExt, DEV_UPGRADES,
-};

@@ -31,5 +31,11 @@ pub use builder::BaseChainSpecBuilder;
 mod dev;
 pub use dev::BASE_DEV;
 
+mod hardforks;
+pub use hardforks::{
+    BASE_DEVNET_0_SEPOLIA_DEV_0_UPGRADES, BASE_MAINNET_UPGRADES, BASE_SEPOLIA_UPGRADES,
+    BASE_ZERONET_UPGRADES, ChainUpgradesExt, DEV_UPGRADES,
+};
+
 mod spec;
 pub use spec::{BaseChainSpec, GenesisInfo, SUPPORTED_CHAINS};

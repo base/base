@@ -17,7 +17,7 @@ base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
 base-consensus-safedb.workspace = true
 base-protocol = { workspace = true, features = ["serde", "std"] }
-base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
+base-common-genesis = { workspace = true, features = ["serde", "std"] }
 
 # Base Alloy
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }

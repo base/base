@@ -17,7 +17,7 @@ workspace = true
 base-metrics.workspace = true
 base-protocol.workspace = true
 base-consensus-derive.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 
 # Alloy
 alloy-genesis.workspace = true

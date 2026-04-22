@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use alloy_primitives::{Address, B256};
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::NetworkPayloadEnvelope;
-use base_consensus_genesis::RollupConfig;
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
 

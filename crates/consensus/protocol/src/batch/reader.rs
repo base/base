@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::Bytes;
 use alloy_rlp::Decodable;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use miniz_oxide::inflate::{TINFLStatus, decompress_to_vec_zlib_with_limit};
 
 use crate::{Batch, Brotli, BrotliDecompressionError};
@@ -148,7 +148,7 @@ impl BatchReader {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::{HardForkConfig, RollupConfig};
+    use base_common_genesis::{HardForkConfig, RollupConfig};
     use miniz_oxide::{
         deflate::{CompressionLevel, compress_to_vec_zlib},
         inflate::decompress_to_vec_zlib,

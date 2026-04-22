@@ -181,7 +181,7 @@ impl ChannelCompressor for BrotliCompressor {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::hex;
-    use base_consensus_genesis::RollupConfig;
+    use base_common_genesis::RollupConfig;
     use base_protocol::Brotli;
 
     use super::*;

@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
 use derive_more::Constructor;
 use tokio::sync::mpsc;

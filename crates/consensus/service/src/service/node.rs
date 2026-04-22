@@ -10,10 +10,10 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_provider::RootProvider;
 use base_common_chains::ChainConfig;
+use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};
 use base_consensus_engine::{Engine, EngineClient, EngineState};
-use base_consensus_genesis::RollupConfig;
 use base_consensus_providers::{
     AlloyChainProvider, AlloyL2ChainProvider, OnlineBeaconClient, OnlineBlobProvider,
     OnlinePipeline,

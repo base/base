@@ -8,7 +8,7 @@ use std::{fs::File, path::PathBuf};
 use alloy_chains::Chain;
 use alloy_genesis::ChainConfig;
 use base_common_chains::Registry;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use serde_json::from_reader;
 use tracing::debug;
 
@@ -62,7 +62,7 @@ impl L1ConfigFile {
             }
             None => {
                 debug!("Loading l1 config from known chains");
-                base_consensus_registry::l1_config(l1_chain_id)
+                base_common_chains::l1_config(l1_chain_id)
                     .cloned()
                     .ok_or(ConfigError::NotFound(l1_chain_id))
             }

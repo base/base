@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::{BlockInfo, Frame};
 
 use crate::{
@@ -191,7 +191,7 @@ where
     async fn reset(
         &mut self,
         l1_origin: alloy_eips::BlockNumHash,
-        system_config: base_consensus_genesis::SystemConfig,
+        system_config: base_common_genesis::SystemConfig,
     ) -> PipelineResult<()> {
         self.prev.reset(l1_origin, system_config).await?;
         self.queue = VecDeque::default();
@@ -216,7 +216,7 @@ pub(super) mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::{HardForkConfig, SystemConfig};
+    use base_common_genesis::{HardForkConfig, SystemConfig};
 
     use super::*;
     use crate::test_utils::TestFrameQueueProvider;

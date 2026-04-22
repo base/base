@@ -6,7 +6,7 @@ use alloy_consensus::{Transaction, TxType, Typed2718};
 use alloy_primitives::{B256, U256};
 use alloy_rlp::{Buf, Header};
 use base_common_consensus::{BaseBlock, HoloceneExtraData, JovianExtraData};
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 
 use crate::{
     BaseBlockConversionError, L1BlockInfoBedrockOnlyFields as _, L1BlockInfoEcotoneBaseFields as _,
@@ -145,7 +145,7 @@ mod tests {
 
     use alloy_eips::eip1898::BlockNumHash;
     use alloy_primitives::{U256, address, bytes, uint};
-    use base_consensus_genesis::{ChainGenesis, HardForkConfig};
+    use base_common_genesis::{ChainGenesis, HardForkConfig};
 
     use super::*;
     use crate::{

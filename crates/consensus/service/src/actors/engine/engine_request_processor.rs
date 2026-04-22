@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumberOrTag;
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
@@ -8,7 +9,6 @@ use base_consensus_engine::{
     DelegatedForkchoiceUpdate, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
     EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask, SealTask,
 };
-use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
 use tokio::{
     sync::{mpsc, watch},
@@ -653,12 +653,12 @@ mod tests {
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use alloy_rpc_types_eth::Block as RpcBlock;
+    use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
     use base_common_rpc_types::Transaction as BaseTransaction;
     use base_consensus_engine::{
         Engine, EngineState,
         test_utils::{test_block_info, test_engine_client_builder},
     };
-    use base_consensus_genesis::{ChainGenesis, RollupConfig, SystemConfig};
     use base_protocol::{BlockInfo, L2BlockInfo};
     use tokio::sync::{mpsc, watch};
 

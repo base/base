@@ -6,7 +6,7 @@ use base_action_harness::{
     SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_consensus_genesis::{HardForkConfig, RollupConfig};
+use base_common_genesis::{HardForkConfig, RollupConfig};
 use base_protocol::BatchType;
 use tracing_subscriber::EnvFilter;
 

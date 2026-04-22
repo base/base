@@ -1,6 +1,6 @@
 //! Test-only module providing rollup configs derived from [`ChainConfig`].
 
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use spin::Lazy;
 
 use crate::ChainConfig;

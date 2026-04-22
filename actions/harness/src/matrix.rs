@@ -4,7 +4,7 @@ use std::{
     panic::{self, AssertUnwindSafe},
 };
 
-use base_consensus_genesis::HardForkConfig;
+use base_common_genesis::HardForkConfig;
 
 /// A function that activates a single hardfork on a [`HardForkConfig`].
 pub type ForkSetter = fn(&mut HardForkConfig);
@@ -146,7 +146,7 @@ impl ForkMatrix {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::RollupConfig;
+    use base_common_genesis::RollupConfig;
 
     use super::*;
 

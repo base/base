@@ -10,8 +10,8 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::PayloadAttributes;
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_consensus_genesis::RollupConfig;
 use base_consensus_upgrades::{Upgrade, Upgrades};
 use base_protocol::{Deposits, L1BlockInfoTx, L2BlockInfo};
 use tracing::warn;
@@ -261,8 +261,8 @@ mod tests {
 
     use alloy_consensus::Header;
     use alloy_primitives::{B256, Log, LogData, U64, U256, address};
-    use base_consensus_genesis::{HardForkConfig, SystemConfig, SystemConfigUpdate};
-    use base_consensus_registry::Sepolia;
+    use base_common_chains::Sepolia;
+    use base_common_genesis::{HardForkConfig, SystemConfig, SystemConfigUpdate};
     use base_protocol::{BlockInfo, DepositDecodeError};
 
     use super::*;

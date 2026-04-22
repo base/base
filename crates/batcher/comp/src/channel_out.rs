@@ -3,7 +3,7 @@
 use alloc::{sync::Arc, vec, vec::Vec};
 
 use alloy_rlp::Encodable;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::{Batch, ChannelId, Frame};
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
 

@@ -22,6 +22,7 @@ use alloy_rpc_types_eth::{
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_consensus::BasePrimitives;
+use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_provider::BaseEngineApi;
 use base_common_rpc_types::Transaction as BaseTransaction;
@@ -31,7 +32,6 @@ use base_common_rpc_types_engine::{
     BasePayloadAttributes,
 };
 use base_consensus_engine::{EngineClient, EngineClientError};
-use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{EngineClientError as NodeEngineClientError, SequencerEngineClient};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;

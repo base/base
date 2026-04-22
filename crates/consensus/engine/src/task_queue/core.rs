@@ -2,7 +2,7 @@
 
 use std::{collections::BinaryHeap, sync::Arc};
 
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::{BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
 use tokio::sync::watch::Sender;
@@ -207,7 +207,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
-    use base_consensus_genesis::RollupConfig;
+    use base_common_genesis::RollupConfig;
     use tokio::sync::watch;
 
     use crate::{

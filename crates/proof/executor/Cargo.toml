@@ -17,7 +17,7 @@ normal = ["getrandom"]
 # Workspace
 base-protocol.workspace = true
 base-proof-mpt.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 
 # Alloy
 alloy-rlp.workspace = true
@@ -71,8 +71,8 @@ std = [
 	"base-common-chains?/std",
 	"base-common-consensus/std",
 	"base-common-evm/std",
+	"base-common-genesis/std",
 	"base-common-rpc-types-engine/std",
-	"base-consensus-genesis/std",
 	"base-proof-mpt/std",
 	"base-protocol/std",
 	"getrandom/std",

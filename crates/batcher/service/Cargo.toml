@@ -33,7 +33,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 base-consensus-rpc = { workspace = true, features = ["client"] }
-base-consensus-genesis = { workspace = true, features = ["std"] }
+base-common-genesis = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 

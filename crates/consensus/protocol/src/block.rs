@@ -8,10 +8,10 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{CancunPayloadFields, PraguePayloadFields};
 use alloy_rpc_types_eth::Block as RpcBlock;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_genesis::ChainGenesis;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar, BasePayloadError,
 };
-use base_consensus_genesis::ChainGenesis;
 use derive_more::Display;
 
 use crate::{DecodeError, L1BlockInfoTx};

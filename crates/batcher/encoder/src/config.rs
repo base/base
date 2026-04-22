@@ -1,6 +1,6 @@
 //! Encoder configuration and its validation error type.
 
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::BatchType;
 
 use crate::DaType;
@@ -225,7 +225,7 @@ pub enum EncoderConfigError {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::HardForkConfig;
+    use base_common_genesis::HardForkConfig;
     use rstest::rstest;
 
     use super::*;
