@@ -18,9 +18,18 @@
 mod proto {
     tonic::include_proto!("prover");
 }
+#[cfg(feature = "server")]
+pub use proto::prover_service_server;
+
+/// Serialized protobuf `FileDescriptorSet` for the prover service, used by `tonic-reflection`.
+#[cfg(feature = "server")]
+pub const PROVER_FILE_DESCRIPTOR_SET: &[u8] =
+    tonic::include_file_descriptor_set!("prover_descriptor");
+
 pub use proto::{
     GetProofRequest, GetProofResponse, ProofType, ProveBlockRequest, ProveBlockResponse,
-    ReceiptType, get_proof_response::Status as ProofJobStatus,
+    ReceiptType, get_proof_response, get_proof_response::Status as ProofJobStatus,
+    prover_service_client,
 };
 
 mod client;
