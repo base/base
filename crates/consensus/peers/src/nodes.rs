@@ -63,6 +63,7 @@ mod tests {
     fn test_validate_bootnode_lens() {
         assert_eq!(ChainConfig::mainnet().bootnodes.len(), 10);
         assert_eq!(ChainConfig::sepolia().bootnodes.len(), 4);
+        assert_eq!(ChainConfig::zeronet().bootnodes.len(), 4);
     }
 
     #[test]
@@ -74,6 +75,10 @@ mod tests {
         for raw in ChainConfig::sepolia().bootnodes {
             BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse");
         }
+
+        for raw in ChainConfig::zeronet().bootnodes {
+            BootNode::parse_bootnode(raw).expect("hardcoded bootnode should parse");
+        }
     }
 
     #[test]
@@ -83,6 +88,9 @@ mod tests {
 
         let testnet = BootNodes::from_chain_id(ChainConfig::sepolia().chain_id);
         assert_eq!(testnet.len(), 4);
+
+        let zeronet = BootNodes::from_chain_id(ChainConfig::zeronet().chain_id);
+        assert_eq!(zeronet.len(), 4);
 
         let unknown = BootNodes::from_chain_id(0);
         assert!(unknown.is_empty());
