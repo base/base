@@ -329,10 +329,13 @@ reth-tasks = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-codecs = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
+reth-discv4 = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
+reth-discv5 = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-trie-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-rpc-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-network = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
+reth-net-nat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
@@ -347,6 +350,7 @@ reth-cli-runner = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3"
 reth-tokio-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
+reth-network-p2p = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", tag = "v1.11.3" }

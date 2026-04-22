@@ -3700,6 +3700,8 @@ dependencies = [
 name = "base-execution-cli"
 version = "0.8.0"
 dependencies = [
+ "alloy-eips",
+ "backon",
  "base-common-consensus",
  "base-execution-chainspec",
  "base-execution-consensus",
@@ -3714,14 +3716,24 @@ dependencies = [
  "reth-cli",
  "reth-cli-commands",
  "reth-cli-runner",
+ "reth-cli-util",
  "reth-db",
+ "reth-discv4",
+ "reth-discv5",
+ "reth-net-nat",
+ "reth-network",
+ "reth-network-p2p",
+ "reth-network-peers",
  "reth-node-builder",
  "reth-node-core",
  "reth-node-metrics",
  "reth-provider",
  "reth-rpc-server-types",
  "reth-tracing",
+ "secp256k1 0.30.0",
  "tempfile",
+ "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
