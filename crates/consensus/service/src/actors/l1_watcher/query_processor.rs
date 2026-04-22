@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::BlockId;
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_consensus_rpc::{L1State, L1WatcherQueries};
 use base_protocol::BlockInfo;
 use futures::StreamExt;

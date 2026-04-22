@@ -98,7 +98,7 @@ impl Index<BaseUpgrade> for BaseChainUpgrades {
 
 ### 3. Add the config field and nested struct
 
-**File:** [`crates/consensus/genesis/src/chain/hardfork.rs`](https://github.com/base/base/blob/main/crates/consensus/genesis/src/chain/hardfork.rs)
+**File:** [`crates/common/genesis/src/chain/hardfork.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/chain/hardfork.rs)
 
 For standard upgrades (flat timestamp field), add directly to `HardForkConfig`:
 
@@ -128,13 +128,13 @@ pub struct HardForkConfig {
 }
 ```
 
-Also update `HardForkConfig::iter()` to include the new entry, and re-export any new public types from `crates/consensus/genesis/src/chain/mod.rs` and `crates/consensus/genesis/src/lib.rs`.
+Also update `HardForkConfig::iter()` to include the new entry, and re-export any new public types from `crates/common/genesis/src/chain/mod.rs` and `crates/common/genesis/src/lib.rs`.
 
 ---
 
 ### 4. Add activation methods to `RollupConfig`
 
-**File:** [`crates/consensus/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/consensus/genesis/src/rollup.rs)
+**File:** [`crates/common/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/rollup.rs)
 
 Add `is_X_active` and `is_first_X_block` after the previous upgrade's methods.
 
@@ -341,7 +341,7 @@ pub fn spec_by_timestamp_after_bedrock(chain_spec: impl BaseUpgrades, timestamp:
 }
 ```
 
-**File:** [`crates/consensus/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/consensus/genesis/src/rollup.rs)
+**File:** [`crates/common/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/rollup.rs)
 
 Same pattern in the `#[cfg(feature = "revm")] impl RollupConfig` block:
 
@@ -390,5 +390,5 @@ forks.push((BaseUpgrade::Azul.boxed(), self[BaseUpgrade::Azul]));  // <-- add
 - [ ] `OpSpecId` variant added with `into_eth_spec` mapping and `#[strum(serialize = "...")]` attribute
 - [ ] Precompile match arm updated (or new precompile set added)
 - [ ] `spec_by_timestamp_after_bedrock` updated (`common/evm/src/spec.rs`)
-- [ ] `RollupConfig::spec_id` updated (`consensus/genesis/src/rollup.rs`)
-- [ ] `to_chain_hardforks` updated (`common/chains/src/hardforks.rs`)
+- [ ] `RollupConfig::spec_id` updated (`common/genesis/src/rollup.rs`)
+- [ ] `to_chain_hardforks` updated (`execution/chainspec/src/hardforks.rs`)

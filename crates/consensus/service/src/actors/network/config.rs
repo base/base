@@ -1,8 +1,8 @@
 //! Configuration for the `Network`.
 
 use alloy_primitives::Address;
+use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
-use base_consensus_genesis::RollupConfig;
 use base_consensus_gossip::GaterConfig;
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_sources::BlockSigner;

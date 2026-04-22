@@ -5,7 +5,7 @@ use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, U256};
 use base_batcher_encoder::FrameEncoder;
 use base_blobs::BlobEncoder;
-use base_consensus_genesis::SystemConfigUpdate;
+use base_common_genesis::SystemConfigUpdate;
 use base_protocol::{BlockInfo, Deposits, Frame};
 use tracing::info;
 
@@ -106,7 +106,7 @@ pub struct L1Block {
     /// In the real chain every transaction produces a receipt; here we bundle
     /// all test-emitted logs into a single receipt for simplicity.
     ///
-    /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
+    /// [`SystemConfig`]: base_common_genesis::SystemConfig
     pub receipts: Vec<Receipt>,
     /// EIP-4844 blob sidecars attached to this block.
     ///
@@ -246,7 +246,7 @@ impl L1Miner {
     /// pipeline reads this from L1 receipts and updates its internal
     /// [`SystemConfig`] for subsequent L2 blocks.
     ///
-    /// [`SystemConfig`]: base_consensus_genesis::SystemConfig
+    /// [`SystemConfig`]: base_common_genesis::SystemConfig
     pub fn enqueue_batcher_update(&mut self, l1_sys_cfg_addr: Address, new_batcher: Address) {
         let mut data = [0u8; 96];
         data[31] = 0x20; // pointer → offset 32

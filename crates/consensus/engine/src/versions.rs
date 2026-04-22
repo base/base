@@ -13,7 +13,7 @@
 //!
 //! Adapted from the [reference node version providers](https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/types.go#L546).
 
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 
 /// Engine API version for `engine_forkchoiceUpdated` method calls.
 ///
@@ -110,7 +110,7 @@ impl EngineGetPayloadVersion {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_genesis::{HardForkConfig, HardforkConfig};
+    use base_common_genesis::{HardForkConfig, HardforkConfig};
 
     use super::*;
 

@@ -22,7 +22,7 @@ base-proof = { workspace = true, features = ["std"] }
 base-proof-client = { workspace = true, features = ["std"] }
 base-proof-preimage = { workspace = true, features = ["std"] }
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
-base-consensus-genesis = { workspace = true, features = ["serde", "std"] }
+base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
 
 # alloy

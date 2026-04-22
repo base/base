@@ -16,8 +16,8 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
 use base_builder_core::test_utils::get_available_port;
+use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
-use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
 };

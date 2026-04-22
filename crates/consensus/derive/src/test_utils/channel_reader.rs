@@ -7,7 +7,7 @@ use alloc::{boxed::Box, vec::Vec};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_consensus_genesis::SystemConfig;
+use base_common_genesis::SystemConfig;
 use base_protocol::BlockInfo;
 
 use crate::{

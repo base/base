@@ -73,7 +73,7 @@ alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["test-util"] }
-base-consensus-genesis = { workspace = true, features = ["serde"] }
+base-common-genesis = { workspace = true, features = ["serde"] }
 
 [features]
 metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]

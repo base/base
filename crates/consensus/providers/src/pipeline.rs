@@ -5,12 +5,12 @@ use std::sync::Arc;
 
 use alloy_genesis::ChainConfig;
 use async_trait::async_trait;
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{
     DerivationPipeline, EthereumDataSource, OriginProvider, Pipeline, PipelineBuilder,
     PipelineErrorKind, PipelineResult, PolledAttributesQueueStage, ResetSignal, Signal,
     SignalReceiver, StatefulAttributesBuilder, StepResult,
 };
-use base_consensus_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{

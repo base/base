@@ -7,7 +7,7 @@
 use alloy_chains::Chain;
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_hardforks::ForkCondition;
-use base_consensus_genesis::{
+use base_common_genesis::{
     ChainGenesis, FeeConfig, HardForkConfig, HardforkConfig, RollupConfig, SystemConfig,
 };
 

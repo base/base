@@ -5,7 +5,7 @@ use base_action_harness::{
     TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_consensus_genesis::HardForkConfig;
+use base_common_genesis::HardForkConfig;
 use base_protocol::L1BlockInfoTx;
 
 // ---------------------------------------------------------------------------

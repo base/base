@@ -5,9 +5,9 @@ use std::{
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::RootProvider;
+use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::{Engine, EngineClient, EngineState};
-use base_consensus_genesis::RollupConfig;
 use base_consensus_rpc::RpcBuilder;
 use base_consensus_safedb::{DisabledSafeDB, SafeDBReader};
 use tokio::sync::{mpsc, watch};

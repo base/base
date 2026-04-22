@@ -10,9 +10,9 @@ use std::{
 use alloy_primitives::{B256, b256};
 use alloy_provider::Provider;
 use alloy_signer_local::PrivateKeySigner;
+use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
-use base_consensus_genesis::RollupConfig;
 use base_consensus_gossip::GaterConfig;
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
@@ -555,7 +555,7 @@ impl P2PArgs {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, b256};
-    use base_consensus_genesis::RollupConfig;
+    use base_common_genesis::RollupConfig;
     use base_consensus_peers::NodeRecord;
     use clap::Parser;
 

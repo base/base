@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::{BlockNumberOrTag, TransactionTrait};
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::{Batch, BatchReader, BlockInfo, Channel, ChannelId, Frame};
 use futures::StreamExt;
 use tracing::{debug, info};
@@ -178,7 +178,7 @@ mod tests {
     use alloy_eips::eip1898::BlockNumHash;
     use alloy_primitives::B256;
     use alloy_rlp::Encodable;
-    use base_consensus_genesis::{ChainGenesis, RollupConfig};
+    use base_common_genesis::{ChainGenesis, RollupConfig};
     use base_protocol::{Batch, BlockInfo, Channel, ChannelId, Frame, SingleBatch};
 
     use super::RecentTxScanner;

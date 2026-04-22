@@ -22,7 +22,7 @@ base-protocol = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 rand = { workspace = true, features = ["std", "small_rng"] }
 base-common-consensus = { workspace = true, features = ["std"] }
-base-consensus-genesis = { workspace = true, features = ["std"] }
+base-common-genesis = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]

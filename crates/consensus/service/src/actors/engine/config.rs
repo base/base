@@ -3,9 +3,9 @@ use std::sync::Arc;
 use alloy_provider::RootProvider;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_transport::TransportResult;
+use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_engine::{BaseEngineClient, EngineClientBuilder};
-use base_consensus_genesis::RollupConfig;
 use url::Url;
 
 use crate::NodeMode;

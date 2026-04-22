@@ -19,8 +19,7 @@ base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
 base-common-chains.workspace = true
 base-consensus-derive.workspace = true
-base-consensus-registry.workspace = true
-base-consensus-genesis = { workspace = true, features = ["serde"] }
+base-common-genesis = { workspace = true, features = ["serde"] }
 
 # Alloy
 alloy-rlp.workspace = true
@@ -78,9 +77,8 @@ std = [
 	"base-common-chains/std",
 	"base-common-consensus/std",
 	"base-common-evm/std",
+	"base-common-genesis/std",
 	"base-common-rpc-types-engine/std",
-	"base-consensus-genesis/std",
-	"base-consensus-registry/std",
 	"base-proof-driver/std",
 	"base-proof-executor/std",
 	"base-proof-mpt/std",

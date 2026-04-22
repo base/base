@@ -4,8 +4,8 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Bytes;
 use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_consensus_genesis::RollupConfig;
 
 use crate::{Eip1559ValidationError, ExecutorError, ExecutorResult};
 
@@ -102,8 +102,8 @@ mod test {
     use alloy_consensus::Header;
     use alloy_primitives::{B64, b64, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
+    use base_common_genesis::{FeeConfig, RollupConfig};
     use base_common_rpc_types_engine::BasePayloadAttributes;
-    use base_consensus_genesis::{FeeConfig, RollupConfig};
 
     use super::decode_holocene_eip_1559_params_block_header;
     use crate::util::{

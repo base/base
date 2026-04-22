@@ -156,6 +156,7 @@ base-common-rpc-types = { path = "crates/common/rpc-types" }
 base-common-flashblocks = { path = "crates/common/flashblocks" }
 base-common-evm = { path = "crates/common/evm", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
+base-common-genesis = { path = "crates/common/genesis", default-features = false }
 base-common-consensus = { path = "crates/common/consensus", default-features = false }
 base-common-rpc-types-engine = { path = "crates/common/rpc-types-engine", default-features = false }
 
@@ -184,8 +185,6 @@ base-consensus-derive = { path = "crates/consensus/derive", default-features = f
 base-consensus-engine = { path = "crates/consensus/engine", default-features = false }
 base-consensus-gossip = { path = "crates/consensus/gossip", default-features = false }
 base-consensus-sources = { path = "crates/consensus/sources", default-features = false }
-base-consensus-genesis = { path = "crates/consensus/genesis", default-features = false }
-base-consensus-registry = { path = "crates/consensus/registry", default-features = false }
 base-consensus-upgrades = { path = "crates/consensus/upgrades", default-features = false }
 base-consensus-providers = { path = "crates/consensus/providers", default-features = false }
 

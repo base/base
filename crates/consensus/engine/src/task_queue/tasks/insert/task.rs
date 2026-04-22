@@ -8,10 +8,10 @@ use alloy_rpc_types_engine::{
 };
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
 };
-use base_consensus_genesis::RollupConfig;
 use base_protocol::L2BlockInfo;
 
 use crate::{
@@ -248,7 +248,7 @@ mod tests {
 
         InsertTask::new(
             Arc::clone(&client),
-            Arc::new(base_consensus_genesis::RollupConfig::default()),
+            Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
             false,
         )
@@ -278,7 +278,7 @@ mod tests {
 
         InsertTask::new(
             Arc::clone(&client),
-            Arc::new(base_consensus_genesis::RollupConfig::default()),
+            Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
             false,
         )

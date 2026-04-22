@@ -18,7 +18,7 @@ alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-preimage = { workspace = true }
-base-consensus-genesis = { workspace = true }
+base-common-genesis = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 
@@ -33,7 +33,7 @@ std = [
 	"alloy-chains/std",
 	"alloy-eips/std",
 	"alloy-primitives/std",
-	"base-consensus-genesis/std",
+	"base-common-genesis/std",
 	"base-proof-preimage/std",
 	"serde?/std",
 	"thiserror/std",
@@ -42,7 +42,7 @@ serde = [
 	"alloy-chains/serde",
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
-	"base-consensus-genesis/serde",
+	"base-common-genesis/serde",
 	"base-proof-preimage/serde",
 	"dep:serde",
 ]

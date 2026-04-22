@@ -7,10 +7,10 @@ use alloy_rpc_types_engine::{
     BlobsBundleV2, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1,
     ExecutionPayloadV2, ExecutionPayloadV3, PayloadId,
 };
+use base_common_genesis::{HardForkConfig, HardforkConfig, RollupConfig};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelopeV5, BaseExecutionPayloadV4,
 };
-use base_consensus_genesis::{HardForkConfig, HardforkConfig, RollupConfig};
 use rstest::rstest;
 use tokio::sync::mpsc;
 

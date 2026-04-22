@@ -4,7 +4,7 @@ use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
 use base_common_chains::Registry;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -97,7 +97,7 @@ pub struct MonitoringConfig {
     /// L1 batcher address for blob attribution.
     ///
     /// This is the current live batcher address, not necessarily the genesis
-    /// batcher. It may differ from the value in `base-consensus-registry` if
+    /// batcher. It may differ from the value in `base-common-chains` if
     /// the batcher was updated via a `SystemConfig` transaction after genesis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batcher_address: Option<Address>,

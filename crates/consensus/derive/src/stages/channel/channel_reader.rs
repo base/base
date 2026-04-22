@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::Bytes;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{Batch, BatchReader, BlockInfo};
 use tracing::{debug, warn};
 
@@ -196,7 +196,7 @@ mod tests {
     use alloc::vec;
 
     use alloy_eips::BlockNumHash;
-    use base_consensus_genesis::{HardForkConfig, SystemConfig};
+    use base_common_genesis::{HardForkConfig, SystemConfig};
 
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChannelReaderProvider};

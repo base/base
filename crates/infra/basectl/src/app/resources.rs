@@ -4,7 +4,7 @@ use std::{
 };
 
 use base_common_flashblocks::Flashblock;
-use base_consensus_genesis::SystemConfig;
+use base_common_genesis::SystemConfig;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,

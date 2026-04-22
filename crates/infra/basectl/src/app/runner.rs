@@ -2,7 +2,7 @@ use std::io::Write;
 
 use anyhow::Result;
 use base_common_flashblocks::Flashblock;
-use base_consensus_genesis::SystemConfig;
+use base_common_genesis::SystemConfig;
 use tokio::sync::{mpsc, watch};
 
 use super::{App, Resources, ViewId, views::create_view};

@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header, TransactionReceipt};
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 
 use super::{
     error::RpcResult,

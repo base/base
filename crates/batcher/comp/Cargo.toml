@@ -18,7 +18,7 @@ alloy-eips.workspace = true
 miniz_oxide.workspace = true
 base-protocol.workspace = true
 base-common-consensus.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 rand = { workspace = true, features = ["small_rng"] }
 derive_more = { workspace = true, features = ["debug"] }
 
@@ -43,7 +43,7 @@ std = [
 	"alloy-primitives?/std",
 	"alloy-rlp/std",
 	"base-common-consensus/std",
-	"base-consensus-genesis/std",
+	"base-common-genesis/std",
 	"base-protocol/std",
 	"brotli?/std",
 	"dep:brotli",
@@ -57,7 +57,7 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives?/serde",
 	"base-common-consensus/serde",
-	"base-consensus-genesis/serde",
+	"base-common-genesis/serde",
 	"base-protocol/serde",
 	"miniz_oxide/serde",
 	"rand/serde",
@@ -66,6 +66,6 @@ arbitrary = [
 	"alloy-eips/arbitrary",
 	"alloy-primitives?/arbitrary",
 	"base-common-consensus/arbitrary",
-	"base-consensus-genesis/arbitrary",
+	"base-common-genesis/arbitrary",
 	"base-protocol/arbitrary",
 ]

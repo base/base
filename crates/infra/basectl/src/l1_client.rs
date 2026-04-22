@@ -4,7 +4,7 @@ use alloy_primitives::Address;
 use alloy_provider::{ProviderBuilder, layers::CallBatchLayer};
 use alloy_sol_types::sol;
 use anyhow::Result;
-use base_consensus_genesis::SystemConfig;
+use base_common_genesis::SystemConfig;
 
 sol! {
     #[sol(rpc)]

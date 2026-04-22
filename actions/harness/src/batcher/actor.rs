@@ -7,7 +7,7 @@ use base_batcher_core::{
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
 use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use base_protocol::{BatchType, L2BlockInfo};
 use base_runtime::TokioRuntime;
 use tokio_util::sync::CancellationToken;

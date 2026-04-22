@@ -19,8 +19,8 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_rpc_types_eth::{Block, Filter, Log};
 use async_trait::async_trait;
+use base_common_genesis::RollupConfig;
 use base_consensus_derive::{ChainProvider, PipelineErrorKind};
-use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{
     DerivationClientResult, L1BlockFetcher, L1WatcherActor, L1WatcherDerivationClient, NodeActor,
 };

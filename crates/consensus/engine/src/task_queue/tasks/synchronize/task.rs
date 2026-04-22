@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadStatusEnum};
 use async_trait::async_trait;
-use base_consensus_genesis::RollupConfig;
+use base_common_genesis::RollupConfig;
 use derive_more::Constructor;
 use tokio::time::Instant;
 

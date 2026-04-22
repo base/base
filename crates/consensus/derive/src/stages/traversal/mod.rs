@@ -10,7 +10,7 @@
 
 use alloy_consensus::Receipt;
 use alloy_primitives::Address;
-use base_consensus_genesis::SystemConfig;
+use base_common_genesis::SystemConfig;
 
 use crate::Metrics;
 

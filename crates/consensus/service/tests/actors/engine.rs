@@ -6,12 +6,12 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block as RpcBlock;
 use async_trait::async_trait;
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction as BaseTransaction;
 use base_consensus_engine::{
     DelegatedForkchoiceUpdate, Engine,
     test_utils::{TestEngineStateBuilder, test_block_info, test_engine_client_builder},
 };
-use base_consensus_genesis::RollupConfig;
 use base_consensus_node::{
     EngineDerivationClient, EngineError, EngineProcessingRequest, EngineProcessor,
     EngineRequestReceiver,

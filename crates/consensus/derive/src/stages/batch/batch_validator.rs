@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{Batch, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch};
 
 use super::NextBatchProvider;
@@ -326,7 +326,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::B256;
-    use base_consensus_genesis::{HardForkConfig, RollupConfig, SystemConfig};
+    use base_common_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;

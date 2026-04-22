@@ -5,7 +5,7 @@ use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use base_consensus_genesis::{RollupConfig, SystemConfig};
+use base_common_genesis::{RollupConfig, SystemConfig};
 use base_protocol::{
     Batch, BatchValidity, BatchWithInclusionBlock, BlockInfo, L2BlockInfo, SingleBatch,
 };
@@ -480,7 +480,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256};
     use alloy_rlp::{BytesMut, Encodable};
     use base_common_consensus::{BaseBlock, BaseTxEnvelope, OpTxType, TxDeposit};
-    use base_consensus_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
+    use base_common_genesis::{ChainGenesis, HardForkConfig, RollupConfig, SystemConfig};
     use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;

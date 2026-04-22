@@ -27,7 +27,7 @@ base-common-network.workspace = true
 base-common-rpc-types.workspace = true
 
 # Consensus
-base-consensus-genesis = { workspace = true, features = ["serde"] }
+base-common-genesis = { workspace = true, features = ["serde"] }
 
 # Async
 async-trait.workspace = true

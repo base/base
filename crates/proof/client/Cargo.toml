@@ -25,7 +25,7 @@ base-proof-executor.workspace = true
 base-proof-preimage.workspace = true
 base-common-consensus.workspace = true
 base-consensus-derive.workspace = true
-base-consensus-genesis.workspace = true
+base-common-genesis.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
@@ -38,7 +38,7 @@ std = [
 	"alloy-primitives/std",
 	"base-common-consensus/std",
 	"base-common-evm/std",
-	"base-consensus-genesis/std",
+	"base-common-genesis/std",
 	"base-proof-driver/std",
 	"base-proof-executor/std",
 	"base-proof-preimage/std",
