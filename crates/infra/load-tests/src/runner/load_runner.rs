@@ -738,6 +738,7 @@ impl LoadRunner {
 
             if should_flush && !pending_batch.is_empty() {
                 let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
+                let batch_len = batch.len();
                 batch_start = Instant::now();
                 let permit = Arc::clone(&semaphore)
                     .acquire_owned()
@@ -754,9 +755,19 @@ impl LoadRunner {
                 };
                 tokio::spawn(async move {
                     let _permit = permit;
-                    match AssertUnwindSafe(Self::submit_batch(ctx, batch)).catch_unwind().await {
+                    match AssertUnwindSafe(Self::submit_batch(ctx.clone(), batch))
+                        .catch_unwind()
+                        .await
+                    {
                         Ok(submitted) => debug!(submitted, "batch submitted"),
-                        Err(_) => error!("batch submission task panicked"),
+                        Err(_) => {
+                            error!(batch_len, "batch submission task panicked");
+                            // Send Failed events for accounting consistency so counters
+                            // don't leak when a panic prevents normal completion.
+                            for _ in 0..batch_len {
+                                let _ = ctx.submit_event_tx.send(SubmitEvent::Failed).await;
+                            }
+                        }
                     }
                 });
             }
@@ -845,9 +856,8 @@ impl LoadRunner {
             }
         }
 
-        let active_duration = start.elapsed();
-
         if !pending_batch.is_empty() {
+            let batch_len = pending_batch.len();
             let permit = Arc::clone(&semaphore)
                 .acquire_owned()
                 .await
@@ -863,10 +873,17 @@ impl LoadRunner {
             };
             tokio::spawn(async move {
                 let _permit = permit;
-                match AssertUnwindSafe(Self::submit_batch(ctx, pending_batch)).catch_unwind().await
+                match AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch))
+                    .catch_unwind()
+                    .await
                 {
                     Ok(submitted) => debug!(submitted, "final batch submitted"),
-                    Err(_) => error!("final batch submission task panicked"),
+                    Err(_) => {
+                        error!(batch_len, "final batch submission task panicked");
+                        for _ in 0..batch_len {
+                            let _ = ctx.submit_event_tx.send(SubmitEvent::Failed).await;
+                        }
+                    }
                 }
             });
         }
@@ -879,6 +896,10 @@ impl LoadRunner {
 
         // Close the channel so the drain below cannot miss late events.
         drop(submit_event_tx);
+
+        // Capture active_duration after all batches complete but before draining events,
+        // so throughput calculation (submitted/duration) uses consistent values.
+        let active_duration = start.elapsed();
 
         while let Ok(event) = submit_event_rx.try_recv() {
             match event {
