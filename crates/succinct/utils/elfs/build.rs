@@ -12,14 +12,13 @@
 //! constants are actually dereferenced by executed code.
 
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process,
 };
 
-use sha2::{Digest, Sha256};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -50,11 +49,8 @@ fn main() {
 
     for entry in &manifest.elfs {
         let env_name = elf_env_var(&entry.name);
-        let resolved = if stub {
-            write_stub(&out_dir, &entry.name)
-        } else {
-            resolve_elf(&cache_dir, entry)
-        };
+        let resolved =
+            if stub { write_stub(&out_dir, &entry.name) } else { resolve_elf(&cache_dir, entry) };
         println!("cargo:rerun-if-changed={}", resolved.display());
         println!("cargo:rustc-env={}={}", env_name, resolved.display());
     }
