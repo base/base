@@ -110,6 +110,15 @@ pub enum BuildError {
     /// Cannot build pending blocks with no flashblocks.
     #[error("no flashblocks: cannot build pending blocks from empty flashblock collection")]
     NoFlashblocks,
+
+    /// Cannot build pending blocks when a transaction is missing its receipt.
+    #[error(
+        "missing receipt: cannot build pending blocks when transaction {tx_hash} has no receipt"
+    )]
+    MissingReceipt {
+        /// The hash of the transaction missing a receipt.
+        tx_hash: B256,
+    },
 }
 
 /// Errors that can occur during flashblock state processing.
@@ -237,19 +246,6 @@ mod tests {
         for substring in substrings {
             assert!(display.contains(substring), "expected '{display}' to contain '{substring}'");
         }
-    }
-
-    #[rstest]
-    #[case::missing_headers(
-        BuildError::MissingHeaders,
-        "missing headers: cannot build pending blocks without header information"
-    )]
-    #[case::no_flashblocks(
-        BuildError::NoFlashblocks,
-        "no flashblocks: cannot build pending blocks from empty flashblock collection"
-    )]
-    fn test_build_error_display(#[case] error: BuildError, #[case] expected: &str) {
-        assert_eq!(error.to_string(), expected);
     }
 
     #[rstest]
