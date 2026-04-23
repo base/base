@@ -795,7 +795,6 @@ mod tests {
         }
     }
 
-    fn test_execution_result() -> ExecutionResult<BaseHaltReason> {
     fn test_receipt_with_subscription_fields(
         tx_hash: B256,
         log_address: Address,
@@ -811,7 +810,6 @@ mod tests {
         receipt
     }
 
-    fn test_execution_result() -> ExecutionResult<OpHaltReason> {
     fn test_execution_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
