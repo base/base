@@ -1,7 +1,7 @@
 //! Subscription types for the `eth_` `PubSub` RPC extension
 
 use alloy_consensus::Eip658Value;
-use alloy_primitives::{Address, Bloom};
+use alloy_primitives::{Address, B256, Bloom};
 use alloy_rpc_types_eth::{Log, pubsub::SubscriptionKind};
 use base_common_rpc_types::Transaction;
 use derive_more::From;
@@ -21,9 +21,10 @@ pub struct TransactionWithLogs {
     /// Logs emitted by this transaction.
     pub logs: Vec<Log>,
     /// Gas consumed by this transaction's execution.
+    #[serde(default, with = "alloy_serde::quantity::opt")]
     pub gas_used: Option<u64>,
     /// Status of the transaction, serialized the same way as transaction receipts.
-    #[serde(flatten, default)]
+    #[serde(flatten, default, with = "transaction_status_serde")]
     pub status: Option<Eip658Value>,
     /// Cumulative gas used in the block up to and including this transaction.
     #[serde(default, with = "alloy_serde::quantity::opt")]
@@ -88,6 +89,52 @@ pub enum BaseSubscriptionKind {
     ///   where at least one log matches the filter. All logs are included in the response, not
     ///   just the matching ones.
     NewFlashblockTransactions,
+}
+
+mod transaction_status_serde {
+    use super::*;
+
+    #[derive(Deserialize, Serialize)]
+    #[serde(untagged)]
+    enum TransactionStatusSerde {
+        PostState {
+            root: B256,
+        },
+        Eip658 {
+            #[serde(default, with = "alloy_serde::quantity::opt")]
+            status: Option<bool>,
+        },
+    }
+
+    pub(super) fn serialize<S>(
+        status: &Option<Eip658Value>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match status {
+            Some(Eip658Value::Eip658(status)) => {
+                TransactionStatusSerde::Eip658 { status: Some(*status) }.serialize(serializer)
+            }
+            Some(Eip658Value::PostState(root)) => {
+                TransactionStatusSerde::PostState { root: *root }.serialize(serializer)
+            }
+            None => TransactionStatusSerde::Eip658 { status: None }.serialize(serializer),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Eip658Value>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let status = TransactionStatusSerde::deserialize(deserializer)?;
+
+        Ok(match status {
+            TransactionStatusSerde::Eip658 { status } => status.map(Eip658Value::Eip658),
+            TransactionStatusSerde::PostState { root } => Some(Eip658Value::PostState(root)),
+        })
+    }
 }
 
 impl ExtendedSubscriptionKind {
@@ -194,7 +241,7 @@ mod tests {
         assert!(obj.contains_key("value"), "missing flattened tx 'value' field");
         assert!(obj.contains_key("blockNumber"), "missing flattened tx 'blockNumber' field");
 
-        assert_eq!(obj["gasUsed"], 21_000, "gasUsed should serialize as a JSON number");
+        assert_eq!(obj["gasUsed"], "0x5208", "gasUsed should use receipt quantity encoding");
         assert_eq!(obj["status"], "0x1", "status should use receipt quantity encoding");
         assert_eq!(
             obj["cumulativeGasUsed"], "0xa410",
@@ -236,8 +283,8 @@ mod tests {
         let json_str = serde_json::to_string(&twl).expect("serialization should succeed");
 
         assert!(
-            json_str.contains("\"gasUsed\":21000"),
-            "JSON must contain gasUsed key with numeric encoding"
+            json_str.contains("\"gasUsed\":\"0x5208\""),
+            "JSON must contain gasUsed key with quantity encoding"
         );
         assert!(json_str.contains("\"status\":\"0x1\""), "JSON must contain status key");
         assert!(
@@ -262,6 +309,25 @@ mod tests {
     }
 
     #[test]
+    fn transaction_with_logs_post_state_json_roundtrip() {
+        let mut original = test_transaction_with_logs();
+        original.status = Some(Eip658Value::PostState(B256::with_last_byte(0xAB)));
+
+        let json = serde_json::to_value(&original).expect("serialization should succeed");
+        let obj = json.as_object().expect("should be a JSON object");
+        assert_eq!(
+            obj.get("root"),
+            Some(&serde_json::Value::String(format!("{:#x}", B256::with_last_byte(0xAB)))),
+            "post-state receipts should serialize with a root field"
+        );
+
+        let deserialized: TransactionWithLogs =
+            serde_json::from_value(json).expect("deserialization should succeed");
+
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
     fn transaction_with_logs_gas_used_none_serialization() {
         let mut twl = test_transaction_with_logs();
         twl.gas_used = None;
@@ -275,9 +341,10 @@ mod tests {
         assert!(obj.contains_key("gasUsed"), "gasUsed key should be present even when None");
         assert!(obj["gasUsed"].is_null(), "gasUsed should be null when None");
         assert!(
-            !obj.contains_key("status"),
-            "status should be omitted when the receipt status is unavailable"
+            obj.contains_key("status"),
+            "status key should be present even when the receipt status is unavailable"
         );
+        assert!(obj["status"].is_null(), "status should be null when None");
         assert!(
             obj.contains_key("cumulativeGasUsed"),
             "cumulativeGasUsed key should be present even when None"
