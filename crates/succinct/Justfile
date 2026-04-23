@@ -6,6 +6,43 @@ _repo_root := justfile_directory() + "/../.."
 default:
     @just --justfile {{ source_file() }} --list
 
+# Ensure the ELF cache matches `elf/manifest.toml`. No-op on hit; rebuilds on miss.
+# Prepend this to any recipe that compiles `base-succinct-elfs` so local and CI
+# builds pick up the ELFs just like `just build::contracts` handles contracts.
+ensure-elfs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    here="$(cd "$(dirname "{{ source_file() }}")" && pwd)"
+    repo="$(cd "$here/../.." && pwd)"
+    script="$repo/etc/scripts/local/check-elf-manifest.py"
+    manifest="$here/elf/manifest.toml"
+    cache_dir="$here/elf"
+    status=$(python3 "$script" "$manifest" "$cache_dir" || true)
+    case "$status" in
+        match) echo "ELF cache up to date (manifest matches)";;
+        *)
+            echo "ELF cache stale or missing ($status); rebuilding..."
+            just --justfile "{{ source_file() }}" build-elfs
+            result=$(python3 "$script" "$manifest" "$cache_dir")
+            if [ "$result" != "match" ]; then
+                echo "error: freshly built ELFs do not match manifest.toml ($result)." >&2
+                echo "       If this is a legitimate change, run 'just succinct write-manifest' and commit." >&2
+                exit 1
+            fi
+            ;;
+    esac
+
+# Overwrite manifest.toml's sha256 fields from the current ELF cache. Run after
+# intentionally changing the SP1 programs.
+write-manifest:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    here="$(cd "$(dirname "{{ source_file() }}")" && pwd)"
+    repo="$(cd "$here/../.." && pwd)"
+    python3 "$repo/etc/scripts/local/check-elf-manifest.py" \
+        --write "$here/elf/manifest.toml" "$here/elf"
+    echo "Updated manifest.toml. Commit the change."
+
 # Build all SP1 ELF files (range + aggregation)
 build-elfs: build-range-elf build-agg-elf
 

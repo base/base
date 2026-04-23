@@ -25,8 +25,18 @@ RUN curl -L https://sp1.succinct.xyz | bash && \
     ~/.sp1/bin/sp1up -v 6.1.0 && \
     ~/.sp1/bin/cargo-prove prove --version
 
-# Copy only what's needed for the build
+# Copy only what's needed for the build.
+#
+# NOTE: SP1 ELFs are not tracked in git; run `just succinct ensure-elfs` on the
+# host before `docker build` so crates/succinct/elf/* is populated in the build
+# context. The RUN below fails fast with a clear message otherwise.
 COPY . .
+
+RUN test -s crates/succinct/elf/range-elf-embedded \
+         -a -s crates/succinct/elf/aggregation-elf \
+    || (echo "error: SP1 ELFs missing from build context." \
+           "Run 'just succinct ensure-elfs' on the host before docker build." \
+        >&2 && exit 1)
 
 # Build the server
 RUN --mount=type=ssh \

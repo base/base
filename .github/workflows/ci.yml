@@ -51,6 +51,8 @@ jobs:
           native-deps: "true"
           mold: "true"
           foundry: "true"
+          sp1: "true"
+          elf-cache: "true"
           rust-cache-shared-key: "stable"
           rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
       - run: just build-ci
@@ -77,6 +79,8 @@ jobs:
           native-deps: "true"
           mold: "true"
           foundry: "true"
+          sp1: "true"
+          elf-cache: "true"
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
       - name: Run tests
@@ -293,6 +297,8 @@ jobs:
           native-deps: "true"
           mold: "true"
           foundry: "true"
+          sp1: "true"
+          elf-cache: "true"
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
       - name: Set up Docker Buildx

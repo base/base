@@ -3,6 +3,7 @@
 # (cargo build), not for type-checking (cargo check/clippy). CI builds run
 # on Linux where CPU kernels compile without issue.
 _skip_kernels := if os() == "macos" { "RISC0_SKIP_BUILD_KERNELS=1" } else { "" }
+_elf_stub := "BASE_SUCCINCT_ELF_STUB=1"
 
 set positional-arguments := true
 
@@ -117,11 +118,11 @@ install-nextest:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest --locked
 
 # Runs tests across workspace with all features enabled (excludes devnet)
-test: install-nextest build-contracts
+test: install-nextest build-contracts build-elfs
     cargo nextest run --workspace --all-features --exclude devnet --no-fail-fast
 
 # Runs tests only for crates affected by changes vs main (excludes devnet)
-test-affected base="main": install-nextest build-contracts
+test-affected base="main": install-nextest build-contracts build-elfs
     #!/usr/bin/env bash
     set -euo pipefail
     affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
@@ -183,7 +184,7 @@ check-format:
 
 # Fixes any formatting issues
 format-fix:
-    {{_skip_kernels}} cargo fix --allow-dirty --allow-staged --workspace
+    {{_skip_kernels}} {{_elf_stub}} cargo fix --allow-dirty --allow-staged --workspace
     cargo +nightly fmt --all
 
 # Checks clippy
@@ -192,22 +193,22 @@ check-clippy: build-contracts
 
 # Checks clippy with ci profile for minimal disk usage
 check-clippy-ci: build-contracts
-    {{_skip_kernels}} cargo clippy --locked --workspace --all-targets --profile ci -- -D warnings
+    {{_skip_kernels}} {{_elf_stub}} cargo clippy --locked --workspace --all-targets --profile ci -- -D warnings
 
 # Fixes any clippy issues
 clippy-fix:
-    {{_skip_kernels}} cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+    {{_skip_kernels}} {{_elf_stub}} cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
 
 # Builds the workspace with release
 build:
     cargo build --workspace --release
 
 # Builds all targets in debug mode
-build-all-targets: build-contracts
+build-all-targets: build-contracts build-elfs
     cargo build --workspace --all-targets
 
 # Builds all targets with ci profile (minimal disk usage for CI)
-build-ci: build-contracts
+build-ci: build-contracts build-elfs
     cargo build --locked --workspace --all-targets --profile ci
 
 # Builds the workspace with maxperf
@@ -222,6 +223,9 @@ build-node:
 build-contracts:
     cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
 
+build-elfs:
+    just succinct ensure-elfs
+
 # Cleans the workspace
 clean:
     cargo clean
@@ -229,7 +233,7 @@ clean:
 # Checks if there are any unused dependencies
 check-udeps: build-contracts
     @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
-    {{_skip_kernels}} cargo +nightly udeps --locked --workspace --all-features --all-targets
+    {{_skip_kernels}} {{_elf_stub}} cargo +nightly udeps --locked --workspace --all-features --all-targets
 
 # Checks crate dependency boundary rules
 check-crate-deps:

@@ -14,6 +14,15 @@ inputs:
   foundry:
     description: Install Foundry
     default: "false"
+  sp1:
+    description: Install the SP1 toolchain (cargo-prove) for building ELFs
+    default: "false"
+  sp1-version:
+    description: SP1 release tag used when sp1 is enabled (matches crates/succinct/Justfile)
+    default: "v6.1.0"
+  elf-cache:
+    description: Restore/save the ELF cache keyed on crates/succinct/elf/manifest.toml
+    default: "false"
   mold:
     description: Install mold linker
     default: "false"
@@ -110,6 +119,29 @@ runs:
       uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
       with:
         version: stable
+
+    - name: Restore ELF cache
+      if: inputs.elf-cache == 'true'
+      uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+      with:
+        path: |
+          crates/succinct/elf/range-elf-embedded
+          crates/succinct/elf/aggregation-elf
+        key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/succinct/elf/manifest.toml') }}
+
+    - name: Install SP1 toolchain
+      if: inputs.sp1 == 'true'
+      shell: bash
+      env:
+        SP1_VERSION: ${{ inputs.sp1-version }}
+      run: |
+        if [ -x "$HOME/.sp1/bin/cargo-prove" ]; then
+          echo "cargo-prove already installed"
+        else
+          curl -L https://sp1up.succinct.xyz | bash
+          "$HOME/.sp1/bin/sp1up" --version "$SP1_VERSION"
+        fi
+        echo "$HOME/.sp1/bin" >> "$GITHUB_PATH"
 
     - name: Set LIBCLANG_PATH
       if: inputs.native-deps == 'true'

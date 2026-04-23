@@ -10,3 +10,7 @@ docs/specs/.vocs/
 *.log
 .vscode/
 *.env
+# SP1 ELF binaries are built on demand and not committed.
+crates/succinct/elf/range-elf-embedded
+crates/succinct/elf/aggregation-elf
+crates/succinct/elf/*.bin
