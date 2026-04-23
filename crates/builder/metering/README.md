@@ -25,7 +25,7 @@ Create a store and wire it into the builder config:
 use std::sync::Arc;
 use base_builder_metering::{MeteringStore, MeteringStoreExt};
 
-let store = Arc::new(MeteringStore::new(true, 10_000));
+let store = Arc::new(MeteringStore::new(true, 10_000, None));
 // Pass `store.clone()` as `SharedMeteringProvider` into `BuilderConfig`
 // Pass `store` into `MeteringStoreExt::new()` for the RPC extension
 ```
