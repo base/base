@@ -51,7 +51,7 @@ performing the following actions. For each transaction:
 Once this dataset is generated, a linear regression can be calculated using the `bestEstimateSize` as
 the dependent variable and `fastlzSize` as the independent variable.
 
-We generated a dataset from two weeks of post-Ecotone transactions on Optimism Mainnet, as we found that was
+We generated a dataset from two weeks of post-Ecotone transactions on Base Mainnet, as we found that was
 the most representative of performance across multiple chains and time periods. More details on the linear regression
 and datasets used can be found in this [repository](https://github.com/roberto-bayardo/compression-analysis/tree/main).
 
