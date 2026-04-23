@@ -99,11 +99,16 @@ skip = [
     "pairing",
     "pasta_curves",
     "pkcs8",
-    "primeorder",
     "rfc6979",
     "sec1",
     "spki",
-
+    "block-buffer",
+    "const-oid",
+    "crypto-common",
+    "digest",
+    "hmac",
+    "sha2",
+    "wit-bindgen",
     # arkworks crates - version differences from boundless/risc0 crypto stack
     "ark-ff",
     "ark-ff-asm",
@@ -114,8 +119,8 @@ skip = [
     # System/platform crates
     "socket2",
     "bitflags",
-    "redox_syscall",
     "redox_users",
+    "redox_syscall",
 
     # Network crates
     "tungstenite",
@@ -238,7 +243,6 @@ skip = [
     "proc-macro-crate",
     "rustc-hash",
     "sysinfo",
-    "unicode-width",
 ]
 
 [sources]
