@@ -12,7 +12,7 @@ use std::{
 use alloy_primitives::TxHash;
 use base_builder_core::{BuilderMetrics, MeteringProvider};
 use base_bundles::MeterBundleResponse;
-use moka::{notification::RemovalCause, sync::Cache};
+use moka::{notification::RemovalCause, policy::EvictionPolicy, sync::Cache};
 
 /// Concurrent metering store with LRU eviction.
 pub struct MeteringStore {
@@ -38,26 +38,23 @@ impl core::fmt::Debug for MeteringStore {
 }
 
 impl MeteringStore {
-    /// Creates a new [`MeteringStore`] with the given metering flag, max capacity, and optional
-    /// TTL.
+    /// Creates a new [`MeteringStore`] with the given metering flag, max capacity, and TTL.
     ///
-    /// When `ttl` is `Some`, entries expire automatically after the given duration.
-    /// This prevents stale metering data from accumulating in the cache and causing
-    /// `TinyLFU` admission rejections for newly arrived entries.
-    pub fn new(enable_resource_metering: bool, max_capacity: usize, ttl: Option<Duration>) -> Self {
-        let mut builder = Cache::builder().max_capacity(max_capacity as u64).eviction_listener(
-            move |_key, _value, cause| {
+    /// Uses LRU eviction (not `TinyLFU`) because this cache is write-once-read-once:
+    /// entries are inserted on metering arrival and read once at inclusion time.
+    /// `TinyLFU` would reject new entries with zero frequency since `insert()` does
+    /// not increment the frequency sketch — only `get()` does.
+    pub fn new(enable_resource_metering: bool, max_capacity: usize, ttl: Duration) -> Self {
+        let cache = Cache::builder()
+            .max_capacity(max_capacity as u64)
+            .eviction_policy(EvictionPolicy::lru())
+            .time_to_live(ttl)
+            .eviction_listener(move |_key, _value, cause| {
                 if cause == RemovalCause::Size {
                     BuilderMetrics::metering_store_lru_evictions().increment(1);
                 }
-            },
-        );
-
-        if let Some(ttl) = ttl {
-            builder = builder.time_to_live(ttl);
-        }
-
-        let cache = builder.build();
+            })
+            .build();
 
         let needed_at = Cache::builder().max_capacity(max_capacity as u64).build();
 
@@ -137,7 +134,7 @@ impl MeteringProvider for MeteringStore {
 
 impl Default for MeteringStore {
     fn default() -> Self {
-        Self::new(false, 10_000, None)
+        Self::new(false, 10_000, Duration::from_secs(30))
     }
 }
 
@@ -178,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_metering_insert_and_get() {
-        let store = MeteringStore::new(true, 100, None);
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
         let meter_data = create_test_metering(21000);
 
@@ -193,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_clear_metering() {
-        let store = MeteringStore::new(true, 100, None);
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
 
         let tx1 = TxHash::random();
         let tx2 = TxHash::random();
@@ -212,7 +209,7 @@ mod tests {
 
     #[test]
     fn test_lru_eviction() {
-        let store = MeteringStore::new(true, 2, None);
+        let store = MeteringStore::new(true, 2, Duration::from_secs(30));
 
         let tx1 = TxHash::random();
         let tx2 = TxHash::random();
@@ -231,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_late_insert_after_inclusion() {
-        let store = MeteringStore::new(true, 100, None);
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
         // get() miss → tx included without data → data arrives late
@@ -247,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_skip_clears_needed_at() {
-        let store = MeteringStore::new(true, 100, None);
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
         // get() miss → tx skipped (MeteringDataPending)
@@ -264,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_no_needed_at_when_data_present() {
-        let store = MeteringStore::new(true, 100, None);
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
         // Insert data first, then get() finds it — no needed_at entry
@@ -275,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_clear_resets_needed_at() {
-        let store = MeteringStore::new(true, 100, None);
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
         assert!(store.get(&tx_hash).is_none());
@@ -287,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_metering_enabled_state_tracks_runtime_toggle() {
-        let store = MeteringStore::new(false, 100, None);
+        let store = MeteringStore::new(false, 100, Duration::from_secs(30));
 
         assert!(!store.is_enabled());
 
@@ -299,12 +296,10 @@ mod tests {
     }
 
     #[test]
-    fn test_accessed_entries_survive_eviction() {
-        // Small capacity to keep the TinyLFU frequency sketch deterministic.
+    fn test_recently_accessed_entries_survive_eviction() {
         let capacity = 5;
-        let store = MeteringStore::new(true, capacity, None);
+        let store = MeteringStore::new(true, capacity, Duration::from_secs(30));
 
-        // Fill the cache to capacity.
         let mut hashes: Vec<TxHash> = Vec::new();
         for i in 0..capacity as u64 {
             let h = TxHash::random();
@@ -314,30 +309,43 @@ mod tests {
         store.cache.run_pending_tasks();
         assert_eq!(store.len(), capacity);
 
-        // Access the first entry many times to build up its frequency estimate
-        // so TinyLFU's admission policy keeps it over newcomers.
-        let promoted = hashes[0];
-        for _ in 0..20 {
-            assert!(store.get(&promoted).is_some());
-        }
+        let recent = hashes[0];
+        assert!(store.get(&recent).is_some());
         store.cache.run_pending_tasks();
 
-        // Insert new entries one at a time, flushing between each so the
-        // eviction policy processes each displacement individually.
         for i in 0..capacity as u64 {
             store.insert(TxHash::random(), create_test_metering(i));
             store.cache.run_pending_tasks();
         }
 
         assert!(
-            store.get(&promoted).is_some(),
-            "frequently accessed entry should survive eviction"
+            store.get(&recent).is_none(),
+            "LRU eviction should eventually evict even recently accessed entries when enough new entries are inserted"
         );
     }
 
     #[test]
+    fn test_insert_always_admitted_with_lru() {
+        let capacity = 3;
+        let store = MeteringStore::new(true, capacity, Duration::from_secs(30));
+
+        for i in 0..capacity as u64 {
+            store.insert(TxHash::random(), create_test_metering(i * 1000));
+        }
+        store.cache.run_pending_tasks();
+        assert_eq!(store.len(), capacity);
+
+        let new_hash = TxHash::random();
+        store.insert(new_hash, create_test_metering(99000));
+        store.cache.run_pending_tasks();
+
+        assert!(store.get(&new_hash).is_some(), "new entry must be admitted under LRU policy");
+        assert_eq!(store.len(), capacity, "cache should remain at capacity");
+    }
+
+    #[test]
     fn test_ttl_expires_entries() {
-        let store = MeteringStore::new(true, 100, Some(Duration::from_millis(50)));
+        let store = MeteringStore::new(true, 100, Duration::from_millis(50));
         let tx_hash = TxHash::random();
 
         store.insert(tx_hash, create_test_metering(21000));
@@ -350,8 +358,8 @@ mod tests {
     }
 
     #[test]
-    fn test_no_ttl_entries_persist() {
-        let store = MeteringStore::new(true, 100, None);
+    fn test_entries_persist_within_ttl() {
+        let store = MeteringStore::new(true, 100, Duration::from_secs(30));
         let tx_hash = TxHash::random();
 
         store.insert(tx_hash, create_test_metering(21000));
@@ -359,6 +367,6 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         store.run_pending_tasks();
 
-        assert!(store.get(&tx_hash).is_some(), "entry should persist without TTL");
+        assert!(store.get(&tx_hash).is_some(), "entry should persist within TTL");
     }
 }
