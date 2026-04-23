@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use revm::precompile::PrecompileId;
 use url::Url;
 
@@ -52,6 +52,36 @@ pub enum TxType {
     Osaka {
         /// Target Osaka feature.
         target: OsakaTarget,
+    },
+    /// Uniswap V3 style swap.
+    UniswapV3 {
+        /// Router contract address.
+        router: Address,
+        /// Input token address.
+        token_in: Address,
+        /// Output token address.
+        token_out: Address,
+        /// Fee tier.
+        fee: u32,
+        /// Minimum swap amount.
+        min_amount: U256,
+        /// Maximum swap amount.
+        max_amount: U256,
+    },
+    /// Aerodrome Slipstream (concentrated liquidity) swap.
+    AerodromeCl {
+        /// CL Router contract address.
+        router: Address,
+        /// Input token address.
+        token_in: Address,
+        /// Output token address.
+        token_out: Address,
+        /// Tick spacing.
+        tick_spacing: i32,
+        /// Minimum swap amount.
+        min_amount: U256,
+        /// Maximum swap amount.
+        max_amount: U256,
     },
 }
 

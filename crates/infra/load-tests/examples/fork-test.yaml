@@ -1,0 +1,64 @@
+# Load Test Configuration - Base Mainnet Fork (Swap Validation)
+#
+# Validates the full swap pipeline on a local Anvil fork of Base mainnet.
+# All DEX contracts are already deployed on the fork — only test tokens
+# need to be created via DeployTestTokenPair.s.sol + SeedDexPools.s.sol.
+#
+# Usage:
+#   1. anvil --fork-url https://mainnet.base.org --chain-id 8453 --port 8545
+#   2. Deploy test tokens and seed pools (see Phase 5 in rollout plan)
+#   3. Replace TOKEN_A / TOKEN_B placeholders below with deployed addresses
+#   4. FUNDER_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+#        cargo run -p base-load-tests --bin base-load-test -- \
+#        crates/infra/load-tests/examples/fork-test.yaml
+
+rpc: http://localhost:8545
+
+# Anvil serves WS on the same port as HTTP
+rpc_ws_url: "ws://localhost:8545"
+
+# No flashblocks on a local fork — tracker will log a warning and continue
+flashblocks_ws_url: "ws://localhost:7111"
+
+sender_count: 400
+target_gps: 600000000     # ~100 swaps/s × 200K gas
+duration: "30s"
+seed: 12345
+
+# 0.1 ETH per sender (gas only — swap value is in test tokens)
+funding_amount: "100000000000000000"
+
+# 1000 tokens of each swap token per sender
+swap_token_amount: "1000000000000000000000"
+
+transactions:
+  # Uniswap V2 (Base mainnet addresses, valid on fork)
+  - weight: 25
+    type: uniswap_v2
+    router: "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24"
+    token_in: "0x55138b5b44193B0cdc7E2824881E8d63643C049c"
+    token_out: "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"
+
+  # Uniswap V3 (Base mainnet addresses, valid on fork)
+  - weight: 25
+    type: uniswap_v3
+    router: "0x2626664c2603336E57B271c5C0b26F421741e481"
+    token_in: "0x55138b5b44193B0cdc7E2824881E8d63643C049c"
+    token_out: "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"
+    fee: 3000
+
+  # Aerodrome V2 (Base mainnet addresses, valid on fork)
+  - weight: 25
+    type: aerodrome_v2
+    router: "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43"
+    token_in: "0x55138b5b44193B0cdc7E2824881E8d63643C049c"
+    token_out: "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"
+    factory: "0x420DD381b31aEf6683db6B902084cB0FFECe40Da"
+
+  # Aerodrome Slipstream CL (Base mainnet addresses, valid on fork)
+  - weight: 25
+    type: aerodrome_cl
+    router: "0x698Cb2b6dd822994581fEa6eA4Fc755d1363A92F"
+    token_in: "0x55138b5b44193B0cdc7E2824881E8d63643C049c"
+    token_out: "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"
+    tick_spacing: 100
