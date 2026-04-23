@@ -138,11 +138,11 @@ test-affected base="main": install-nextest build-contracts build-elfs
     cargo nextest run --all-features $pkg_args
 
 # Runs tests with ci profile for minimal disk usage
-test-ci: install-nextest build-contracts
+test-ci: install-nextest build-contracts build-elfs
     cargo nextest run --locked --workspace --all-features --exclude devnet --cargo-profile ci
 
 # Runs tests only for affected crates with ci profile (for PRs)
-test-affected-ci base="main": install-nextest build-contracts
+test-affected-ci base="main": install-nextest build-contracts build-elfs
     #!/usr/bin/env bash
     set -euo pipefail
     affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
