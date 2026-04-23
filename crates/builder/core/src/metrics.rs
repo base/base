@@ -98,6 +98,8 @@ base_metrics::define_metrics! {
     metering_unknown_transaction: counter,
     #[describe("Number of LRU evictions from MeteringStore")]
     metering_store_lru_evictions: counter,
+    #[describe("Number of entries in the metering store that expired due to TTL")]
+    metering_store_ttl_expirations: counter,
     #[describe("Size of MeteringStore")]
     metering_store_size: gauge,
     #[describe("Transactions inserted into the rejection cache")]
