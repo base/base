@@ -91,6 +91,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             Arc::clone(&config),
             EngineSyncStateUpdate {
                 unsafe_head: Some(start.un_safe),
+                local_safe_head: Some(start.safe),
                 safe_head: Some(start.safe),
                 finalized_head: Some(start.finalized),
             },

@@ -8,6 +8,7 @@ use crate::{EngineState, EngineSyncStateUpdate};
 #[derive(Debug)]
 pub struct TestEngineStateBuilder {
     unsafe_head: L2BlockInfo,
+    local_safe_head: Option<L2BlockInfo>,
     safe_head: Option<L2BlockInfo>,
     finalized_head: Option<L2BlockInfo>,
     el_sync_finished: bool,
@@ -28,7 +29,13 @@ impl TestEngineStateBuilder {
             seq_num: 0,
         };
 
-        Self { unsafe_head: genesis, safe_head: None, finalized_head: None, el_sync_finished: true }
+        Self {
+            unsafe_head: genesis,
+            local_safe_head: None,
+            safe_head: None,
+            finalized_head: None,
+            el_sync_finished: true,
+        }
     }
 
     /// Sets the unsafe head
@@ -62,6 +69,7 @@ impl TestEngineStateBuilder {
 
         state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
             unsafe_head: Some(self.unsafe_head),
+            local_safe_head: Some(self.local_safe_head.unwrap_or(self.unsafe_head)),
             safe_head: Some(self.safe_head.unwrap_or(self.unsafe_head)),
             finalized_head: Some(self.finalized_head.unwrap_or(self.unsafe_head)),
         });

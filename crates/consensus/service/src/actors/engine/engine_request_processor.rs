@@ -413,6 +413,7 @@ where
 
             let probe_update = EngineSyncStateUpdate {
                 unsafe_head: Some(head),
+                local_safe_head: Some(safe),
                 safe_head: Some(safe),
                 finalized_head: Some(finalized),
             };

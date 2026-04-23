@@ -56,6 +56,8 @@ base_metrics::define_metrics! {
 impl Metrics {
     /// Unsafe block label.
     pub const UNSAFE_BLOCK_LABEL: &str = "unsafe";
+    /// Local-safe block label.
+    pub const LOCAL_SAFE_BLOCK_LABEL: &str = "local-safe";
     /// Safe block label.
     pub const SAFE_BLOCK_LABEL: &str = "safe";
     /// Finalized block label.

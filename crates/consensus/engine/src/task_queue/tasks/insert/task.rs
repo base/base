@@ -128,6 +128,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
             Arc::clone(&self.rollup_config),
             EngineSyncStateUpdate {
                 unsafe_head: Some(new_unsafe_ref),
+                local_safe_head: self.is_payload_safe.then_some(new_unsafe_ref),
                 safe_head: self.is_payload_safe.then_some(new_unsafe_ref),
                 ..Default::default()
             },
