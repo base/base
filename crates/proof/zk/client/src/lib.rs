@@ -18,8 +18,6 @@
 mod proto {
     tonic::include_proto!("prover");
 }
-#[cfg(feature = "server")]
-pub use proto::prover_service_server;
 pub use proto::{
     GetProofRequest, GetProofResponse, ProofType, ProveBlockRequest, ProveBlockResponse,
     ReceiptType, get_proof_response::Status as ProofJobStatus,

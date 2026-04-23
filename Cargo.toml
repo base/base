@@ -14,7 +14,6 @@ members = [
   "bin/*",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
-  "bin/prover/zk",
   "crates/client/*",
   "crates/consensus/*",
   "crates/proof/mpt",
@@ -34,9 +33,6 @@ members = [
   "crates/proof/tee/nitro-verifier",
   "crates/proof/tee/nitro-attestation-prover",
   "crates/proof/zk/client",
-  "crates/proof/zk/db",
-  "crates/proof/zk/outbox",
-  "crates/proof/zk/service",
   "crates/proof/contracts",
   "crates/proof/rpc",
   "crates/proof/proposer",
@@ -64,7 +60,6 @@ default-members = [
   "bin/proposer",
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
-  "bin/prover/zk",
   "bin/prover-registrar",
 ]
 
@@ -226,13 +221,10 @@ websocket-proxy = { path = "crates/infra/websocket-proxy" }
 mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Proof
-base-zk-db = { path = "crates/proof/zk/db" }
 base-proof-rpc = { path = "crates/proof/rpc" }
 base-proposer = { path = "crates/proof/proposer" }
 base-zk-client = { path = "crates/proof/zk/client" }
-base-zk-outbox = { path = "crates/proof/zk/outbox" }
 base-challenger = { path = "crates/proof/challenge" }
-base-zk-service = { path = "crates/proof/zk/service" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host" }
 base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave" }
