@@ -346,8 +346,11 @@ impl BatchRpcClient {
         Ok(results)
     }
 
-    /// Sends multiple pre-signed raw transactions in a single JSON-RPC batch
-    /// request. Returns one [`BatchSendResult`] per input, preserving order.
+    /// Sends multiple pre-signed raw transactions via JSON-RPC batch requests.
+    /// Returns one [`BatchSendResult`] per input, preserving order.
+    ///
+    /// Large requests are automatically split into sub-batches of
+    /// [`MAX_BATCH_RPC_SIZE`] and sent concurrently.
     ///
     /// Each element in `raw_txs` must be the EIP-2718 encoded signed
     /// transaction bytes (as produced by `Encodable2718::encoded_2718`).
@@ -356,7 +359,22 @@ impl BatchRpcClient {
             return Ok(Vec::new());
         }
 
-        let batch: Vec<serde_json::Value> = raw_txs
+        let chunk_futures: Vec<_> =
+            raw_txs.chunks(MAX_BATCH_RPC_SIZE).map(|chunk| self.send_raw_chunk(chunk)).collect();
+
+        let chunk_results = futures::future::join_all(chunk_futures).await;
+
+        let mut all_results: Vec<BatchSendResult> = Vec::with_capacity(raw_txs.len());
+        for result in chunk_results {
+            all_results.extend(result?);
+        }
+
+        debug!(count = raw_txs.len(), "batch send complete");
+        Ok(all_results)
+    }
+
+    async fn send_raw_chunk(&self, chunk: &[Bytes]) -> Result<Vec<BatchSendResult>> {
+        let batch: Vec<serde_json::Value> = chunk
             .iter()
             .enumerate()
             .map(|(i, raw)| {
@@ -397,7 +415,7 @@ impl BatchRpcClient {
         })?;
 
         let mut results: Vec<BatchSendResult> =
-            (0..raw_txs.len()).map(|_| BatchSendResult::Error("missing response".into())).collect();
+            (0..chunk.len()).map(|_| BatchSendResult::Error("missing response".into())).collect();
 
         for item in body {
             let id = item["id"].as_u64().unwrap_or(u64::MAX) as usize;
@@ -419,7 +437,6 @@ impl BatchRpcClient {
             }
         }
 
-        debug!(count = raw_txs.len(), "batch send complete");
         Ok(results)
     }
 }

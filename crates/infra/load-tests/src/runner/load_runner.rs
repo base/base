@@ -951,7 +951,7 @@ impl LoadRunner {
 
         let drain_timeout = Duration::from_secs(20);
         let drain_start = Instant::now();
-        let confirmer_poll_interval_ms = 600; // Slightly longer than confirmer's 500ms poll
+        let confirmer_poll_interval_ms = 600; // Slightly longer than confirmer's 200ms poll
         let mut last_confirmed_at = start.elapsed();
 
         while drain_start.elapsed() < drain_timeout {
@@ -1186,6 +1186,10 @@ impl LoadRunner {
 
                     if msg.contains("nonce too low") {
                         debug!(from = %signed.from, nonce = signed.nonce, "nonce too low, already confirmed on chain");
+                        let _ = ctx
+                            .submit_event_tx
+                            .send(SubmitEvent::Failed("nonce too low".into()))
+                            .await;
                         continue;
                     }
 
@@ -1251,6 +1255,10 @@ impl LoadRunner {
 
                         if error_str.contains("nonce too low") {
                             debug!(from = %signed.from, nonce = signed.nonce, "nonce too low");
+                            let _ = ctx
+                                .submit_event_tx
+                                .send(SubmitEvent::Failed("nonce too low".into()))
+                                .await;
                             break;
                         }
 
