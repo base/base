@@ -1,7 +1,6 @@
 //! Subscription types for the `eth_` `PubSub` RPC extension
 
-use alloy_consensus::Eip658Value;
-use alloy_primitives::{Address, B256, Bloom};
+use alloy_primitives::{Address, Bloom};
 use alloy_rpc_types_eth::{Log, pubsub::SubscriptionKind};
 use base_common_rpc_types::Transaction;
 use derive_more::From;
@@ -21,18 +20,18 @@ pub struct TransactionWithLogs {
     /// Logs emitted by this transaction.
     pub logs: Vec<Log>,
     /// Gas consumed by this transaction's execution.
-    #[serde(default, with = "alloy_serde::quantity::opt")]
-    pub gas_used: Option<u64>,
-    /// Status of the transaction, serialized the same way as transaction receipts.
-    #[serde(flatten, default, with = "transaction_status_serde")]
-    pub status: Option<Eip658Value>,
+    #[serde(with = "alloy_serde::quantity")]
+    pub gas_used: u64,
+    /// Status of the transaction, encoded as a receipt-style quantity.
+    #[serde(with = "alloy_serde::quantity")]
+    pub status: bool,
     /// Cumulative gas used in the block up to and including this transaction.
-    #[serde(default, with = "alloy_serde::quantity::opt")]
-    pub cumulative_gas_used: Option<u64>,
+    #[serde(with = "alloy_serde::quantity")]
+    pub cumulative_gas_used: u64,
     /// Contract address created, if this was a contract creation transaction.
     pub contract_address: Option<Address>,
     /// Bloom filter for all logs emitted by this transaction.
-    pub logs_bloom: Option<Bloom>,
+    pub logs_bloom: Bloom,
 }
 
 /// Extended subscription kind that includes both standard Ethereum subscription types
@@ -89,52 +88,6 @@ pub enum BaseSubscriptionKind {
     ///   where at least one log matches the filter. All logs are included in the response, not
     ///   just the matching ones.
     NewFlashblockTransactions,
-}
-
-mod transaction_status_serde {
-    use super::*;
-
-    #[derive(Deserialize, Serialize)]
-    #[serde(untagged)]
-    enum TransactionStatusSerde {
-        Eip658 {
-            #[serde(default, with = "alloy_serde::quantity::opt")]
-            status: Option<bool>,
-        },
-        PostState {
-            root: B256,
-        },
-    }
-
-    pub(super) fn serialize<S>(
-        status: &Option<Eip658Value>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match status {
-            Some(Eip658Value::Eip658(status)) => {
-                TransactionStatusSerde::Eip658 { status: Some(*status) }.serialize(serializer)
-            }
-            Some(Eip658Value::PostState(root)) => {
-                TransactionStatusSerde::PostState { root: *root }.serialize(serializer)
-            }
-            None => TransactionStatusSerde::Eip658 { status: None }.serialize(serializer),
-        }
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Eip658Value>, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let status = TransactionStatusSerde::deserialize(deserializer)?;
-
-        Ok(match status {
-            TransactionStatusSerde::Eip658 { status } => status.map(Eip658Value::Eip658),
-            TransactionStatusSerde::PostState { root } => Some(Eip658Value::PostState(root)),
-        })
-    }
 }
 
 impl ExtendedSubscriptionKind {
@@ -213,11 +166,11 @@ mod tests {
         TransactionWithLogs {
             transaction: tx,
             logs: vec![log],
-            gas_used: Some(21_000),
-            status: Some(Eip658Value::Eip658(true)),
-            cumulative_gas_used: Some(42_000),
+            gas_used: 21_000,
+            status: true,
+            cumulative_gas_used: 42_000,
             contract_address: Some(Address::with_last_byte(0xEF)),
-            logs_bloom: Some([0x11; 256].into()),
+            logs_bloom: [0x11; 256].into(),
         }
     }
 
@@ -241,10 +194,7 @@ mod tests {
         assert!(obj.contains_key("value"), "missing flattened tx 'value' field");
         assert!(obj.contains_key("blockNumber"), "missing flattened tx 'blockNumber' field");
 
-        assert_eq!(
-            obj["gasUsed"], "0x5208",
-            "gasUsed should use receipt quantity encoding"
-        );
+        assert_eq!(obj["gasUsed"], "0x5208", "gasUsed should use receipt quantity encoding");
         assert_eq!(obj["status"], "0x1", "status should use receipt quantity encoding");
         assert_eq!(
             obj["cumulativeGasUsed"], "0xa410",
@@ -312,34 +262,27 @@ mod tests {
     }
 
     #[test]
-    fn transaction_with_logs_gas_used_none_serialization() {
+    fn transaction_with_logs_contract_address_none_serialization() {
         let mut twl = test_transaction_with_logs();
-        twl.gas_used = None;
-        twl.status = None;
-        twl.cumulative_gas_used = None;
         twl.contract_address = None;
-        twl.logs_bloom = None;
         let json = serde_json::to_value(&twl).expect("serialization should succeed");
         let obj = json.as_object().expect("should be a JSON object");
 
-        assert!(obj.contains_key("gasUsed"), "gasUsed key should be present even when None");
-        assert!(obj["gasUsed"].is_null(), "gasUsed should be null when None");
-        assert!(
-            obj.contains_key("status"),
-            "status key should be present even when the receipt status is unavailable"
-        );
-        assert!(obj["status"].is_null(), "status should be null when None");
-        assert!(
-            obj.contains_key("cumulativeGasUsed"),
-            "cumulativeGasUsed key should be present even when None"
-        );
-        assert!(obj["cumulativeGasUsed"].is_null(), "cumulativeGasUsed should be null when None");
         assert!(
             obj.contains_key("contractAddress"),
             "contractAddress key should be present even when None"
         );
         assert!(obj["contractAddress"].is_null(), "contractAddress should be null when None");
-        assert!(obj.contains_key("logsBloom"), "logsBloom key should be present even when None");
-        assert!(obj["logsBloom"].is_null(), "logsBloom should be null when None");
+        assert_eq!(obj["gasUsed"], "0x5208", "gasUsed should remain a required quantity field");
+        assert_eq!(obj["status"], "0x1", "status should remain a required receipt field");
+        assert_eq!(
+            obj["cumulativeGasUsed"], "0xa410",
+            "cumulativeGasUsed should remain a required quantity field"
+        );
+        assert_eq!(
+            obj["logsBloom"],
+            format!("0x{}", "11".repeat(256)),
+            "logsBloom should remain a required bloom field"
+        );
     }
 }

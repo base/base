@@ -12,7 +12,7 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use base_common_consensus::OpTxType;
-use base_common_evm::{BaseTxResult, OpHaltReason};
+use base_common_evm::{BaseHaltReason, BaseTxResult};
 use base_common_flashblocks::Flashblock;
 use base_common_network::Base;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
@@ -43,7 +43,7 @@ pub struct PendingBlocksBuilder {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
-    transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
+    transaction_results: HashMap<B256, ExecutionResult<BaseHaltReason>>,
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
 
@@ -156,7 +156,7 @@ impl PendingBlocksBuilder {
     pub fn with_transaction_result(
         &mut self,
         hash: B256,
-        result: ExecutionResult<OpHaltReason>,
+        result: ExecutionResult<BaseHaltReason>,
     ) -> &Self {
         self.transaction_results.insert(hash, result);
         self
@@ -183,6 +183,13 @@ impl PendingBlocksBuilder {
 
         let latest_flashblock_index =
             self.flashblocks.last().map(|fb| fb.index).ok_or(BuildError::NoFlashblocks)?;
+
+        for transaction in &self.transactions {
+            let tx_hash = transaction.tx_hash();
+            if !self.transaction_receipts.contains_key(&tx_hash) {
+                return Err(BuildError::MissingReceipt { tx_hash }.into());
+            }
+        }
 
         Ok(PendingBlocks {
             earliest_header,
@@ -221,7 +228,7 @@ pub struct PendingBlocks {
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
-    transaction_results: HashMap<B256, ExecutionResult<OpHaltReason>>,
+    transaction_results: HashMap<B256, ExecutionResult<BaseHaltReason>>,
     execution_times: HashMap<B256, u128>,
     state_root_times: HashMap<B256, u128>,
 
@@ -231,29 +238,16 @@ pub struct PendingBlocks {
 impl PendingBlocks {
     fn transaction_with_logs(
         transaction: &Transaction,
-        receipt: Option<&BaseTransactionReceipt>,
+        receipt: &BaseTransactionReceipt,
     ) -> TransactionWithLogs {
-        let (logs, gas_used, status, cumulative_gas_used, contract_address, logs_bloom) = receipt
-            .map(|receipt| {
-                (
-                    receipt.inner.logs().to_vec(),
-                    Some(receipt.inner.gas_used),
-                    Some(receipt.inner.inner.status_or_post_state()),
-                    Some(receipt.inner.inner.cumulative_gas_used()),
-                    receipt.inner.contract_address,
-                    Some(receipt.inner.inner.logs_bloom),
-                )
-            })
-            .unwrap_or_default();
-
         TransactionWithLogs {
             transaction: transaction.clone(),
-            logs,
-            gas_used,
-            status,
-            cumulative_gas_used,
-            contract_address,
-            logs_bloom,
+            logs: receipt.inner.logs().to_vec(),
+            gas_used: receipt.inner.gas_used,
+            status: receipt.inner.inner.status(),
+            cumulative_gas_used: receipt.inner.inner.cumulative_gas_used(),
+            contract_address: receipt.inner.contract_address,
+            logs_bloom: receipt.inner.inner.logs_bloom,
         }
     }
 
@@ -364,7 +358,10 @@ impl PendingBlocks {
     }
 
     /// Returns the execution result for a transaction.
-    pub fn get_transaction_result(&self, tx_hash: &B256) -> Option<&ExecutionResult<OpHaltReason>> {
+    pub fn get_transaction_result(
+        &self,
+        tx_hash: &B256,
+    ) -> Option<&ExecutionResult<BaseHaltReason>> {
         self.transaction_results.get(tx_hash)
     }
 
@@ -379,7 +376,7 @@ impl PendingBlocks {
     }
 
     /// Returns the receipt and state for a transaction.
-    pub fn get_op_tx_result(&self, tx_hash: &B256) -> Option<BaseTxResult<OpHaltReason, OpTxType>> {
+    pub fn get_tx_result(&self, tx_hash: &B256) -> Option<BaseTxResult<BaseHaltReason, OpTxType>> {
         let (((result, state), tx), sender) = self
             .get_transaction_result(tx_hash)
             .zip(self.get_transaction_state(tx_hash))
@@ -454,7 +451,11 @@ impl PendingBlocks {
     pub fn get_pending_transactions_with_logs(&self) -> Vec<TransactionWithLogs> {
         self.transactions
             .iter()
-            .map(|tx| Self::transaction_with_logs(tx, self.transaction_receipts.get(&tx.tx_hash())))
+            .filter_map(|tx| {
+                self.transaction_receipts
+                    .get(&tx.tx_hash())
+                    .map(|receipt| Self::transaction_with_logs(tx, receipt))
+            })
             .collect()
     }
 
@@ -508,7 +509,11 @@ impl PendingBlocks {
         self.transactions
             .iter()
             .skip(prev_count)
-            .map(|tx| Self::transaction_with_logs(tx, self.transaction_receipts.get(&tx.tx_hash())))
+            .filter_map(|tx| {
+                self.transaction_receipts
+                    .get(&tx.tx_hash())
+                    .map(|receipt| Self::transaction_with_logs(tx, receipt))
+            })
             .collect()
     }
 
@@ -527,8 +532,7 @@ impl PendingBlocks {
             .iter()
             .skip(prev_count)
             .filter_map(|tx| {
-                let tx_hash = tx.tx_hash();
-                let receipt = self.transaction_receipts.get(&tx_hash)?;
+                let receipt = self.transaction_receipts.get(&tx.tx_hash())?;
                 let logs = receipt.inner.logs();
 
                 let has_match = logs.iter().any(|log| filter.matches(&log.inner));
@@ -536,7 +540,7 @@ impl PendingBlocks {
                     return None;
                 }
 
-                Some(Self::transaction_with_logs(tx, Some(receipt)))
+                Some(Self::transaction_with_logs(tx, receipt))
             })
             .collect()
     }
@@ -807,7 +811,7 @@ mod tests {
         receipt
     }
 
-    fn test_execution_result() -> ExecutionResult<OpHaltReason> {
+    fn test_execution_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
             gas_used: 21000,
@@ -847,12 +851,12 @@ mod tests {
     }
 
     #[test]
-    fn get_op_tx_result_reconstructs_all_fields_for_legacy_tx() {
+    fn get_tx_result_reconstructs_all_fields_for_legacy_tx() {
         let da_footprint = 42_000u64;
         let (tx_hash, pending_blocks) =
             build_pending_blocks(test_legacy_transaction(), Some(da_footprint));
 
-        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+        let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, da_footprint);
         assert_eq!(result.inner.tx_type, OpTxType::Legacy);
@@ -862,10 +866,10 @@ mod tests {
     }
 
     #[test]
-    fn get_op_tx_result_reconstructs_all_fields_for_deposit_tx() {
+    fn get_tx_result_reconstructs_all_fields_for_deposit_tx() {
         let (tx_hash, pending_blocks) = build_pending_blocks(test_deposit_transaction(), Some(0));
 
-        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+        let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, 0);
         assert_eq!(result.inner.tx_type, OpTxType::Deposit);
@@ -875,16 +879,16 @@ mod tests {
     }
 
     #[test]
-    fn get_op_tx_result_defaults_blob_gas_to_zero_when_receipt_field_is_none() {
+    fn get_tx_result_defaults_blob_gas_to_zero_when_receipt_field_is_none() {
         let (tx_hash, pending_blocks) = build_pending_blocks(test_legacy_transaction(), None);
 
-        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
+        let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, 0);
     }
 
     #[test]
-    fn get_op_tx_result_defaults_blob_gas_to_zero_without_receipt() {
+    fn get_tx_result_defaults_blob_gas_to_zero_without_receipt() {
         let tx = test_legacy_transaction();
         let tx_hash = tx.tx_hash();
         let mut builder = PendingBlocksBuilder::default();
@@ -894,12 +898,10 @@ mod tests {
         builder.with_transaction_sender(tx_hash, test_sender());
         builder.with_transaction_state(tx_hash, Default::default());
         builder.with_transaction_result(tx_hash, test_execution_result());
-        // Intentionally skip with_receipt to test the no-receipt fallback path
-        let pending_blocks = builder.build().expect("should build pending blocks");
+        // Intentionally skip with_receipt to verify pending blocks reject incomplete transactions.
+        let err = builder.build().expect_err("build should fail without a receipt");
 
-        let result = pending_blocks.get_op_tx_result(&tx_hash).expect("should return tx result");
-
-        assert_eq!(result.inner.blob_gas_used, 0);
+        assert_eq!(err, StateProcessorError::Build(BuildError::MissingReceipt { tx_hash }));
     }
 
     fn test_receipt_with_log_and_topic(
@@ -1126,7 +1128,7 @@ mod tests {
         let txs = pending.get_latest_flashblock_transactions_with_logs_filtered(&filter);
 
         assert_eq!(txs.len(), 1);
-        assert_eq!(txs[0].gas_used, Some(21_000));
+        assert_eq!(txs[0].gas_used, 21_000);
     }
 
     #[test]
@@ -1139,7 +1141,7 @@ mod tests {
         let txs = pending.get_latest_flashblock_transactions_with_logs();
 
         assert_eq!(txs.len(), 1);
-        assert_eq!(txs[0].gas_used, Some(21_000));
+        assert_eq!(txs[0].gas_used, 21_000);
     }
 
     #[test]
@@ -1168,10 +1170,10 @@ mod tests {
         let txs = pending.get_latest_flashblock_transactions_with_logs();
 
         assert_eq!(txs.len(), 1);
-        assert_eq!(txs[0].status, Some(alloy_consensus::Eip658Value::Eip658(true)));
-        assert_eq!(txs[0].cumulative_gas_used, Some(42_000));
+        assert!(txs[0].status);
+        assert_eq!(txs[0].cumulative_gas_used, 42_000);
         assert_eq!(txs[0].contract_address, Some(contract_address));
-        assert_eq!(txs[0].logs_bloom, Some(logs_bloom));
+        assert_eq!(txs[0].logs_bloom, logs_bloom);
     }
 
     #[test]
