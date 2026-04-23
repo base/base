@@ -35,6 +35,7 @@ revm.workspace = true
 revm-database.workspace = true
 
 # alloy
+alloy-serde.workspace = true
 alloy-network.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true

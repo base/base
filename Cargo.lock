@@ -4298,6 +4298,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
+ "alloy-serde",
  "arc-swap",
  "base-common-chains",
  "base-common-consensus",
@@ -5229,24 +5230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-prover-zk"
-version = "0.8.0"
-dependencies = [
- "base-cli-utils",
- "base-zk-client",
- "base-zk-db",
- "base-zk-outbox",
- "base-zk-service",
- "clap",
- "eyre",
- "futures",
- "serde",
- "tokio",
- "tonic 0.14.5",
- "tracing",
-]
-
-[[package]]
 name = "base-reth-cli"
 version = "0.8.0"
 dependencies = [
@@ -5726,56 +5709,6 @@ dependencies = [
  "tonic-prost-build",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "base-zk-db"
-version = "0.8.0"
-dependencies = [
- "anyhow",
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.18",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "base-zk-outbox"
-version = "0.8.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base-zk-db",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "base-zk-service"
-version = "0.8.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum 0.8.9",
- "base-zk-client",
- "base-zk-db",
- "base-zk-outbox",
- "governor",
- "nonzero_ext",
- "reqwest 0.13.2",
- "serde",
- "serde_json",
- "tokio",
- "tonic 0.14.5",
- "tower 0.5.3",
- "tower-http",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -9621,27 +9554,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "governor"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0746aa765db78b521451ef74221663b57ba595bf83f75d0ce23cc09447c8139f"
-dependencies = [
- "cfg-if",
- "dashmap",
- "futures-sink",
- "futures-timer",
- "futures-util",
- "no-std-compat",
- "nonzero_ext",
- "parking_lot",
- "portable-atomic",
- "quanta",
- "rand 0.8.6",
- "smallvec",
- "spinning_top",
-]
-
-[[package]]
 name = "group"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12740,12 +12652,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "no-std-compat"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b93853da6d84c2e3c7d730d6473e8817692dd89be387eb01b94d7f108ecb5b8c"
-
-[[package]]
 name = "no_std_io2"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12775,12 +12681,6 @@ dependencies = [
  "memchr",
  "minimal-lexical",
 ]
-
-[[package]]
-name = "nonzero_ext"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 
 [[package]]
 name = "notify"
@@ -21561,15 +21461,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spinning_top"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
-dependencies = [
- "lock_api",
-]
-
-[[package]]
 name = "spki"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -21637,7 +21528,6 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -21719,7 +21609,6 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
- "uuid",
  "whoami",
 ]
 
@@ -21760,7 +21649,6 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.18",
  "tracing",
- "uuid",
  "whoami",
 ]
 
@@ -21787,7 +21675,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]

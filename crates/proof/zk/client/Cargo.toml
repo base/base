@@ -30,8 +30,5 @@ tonic-prost-build.workspace = true
 rstest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
-[features]
-server = []
-
 [lints]
 workspace = true
