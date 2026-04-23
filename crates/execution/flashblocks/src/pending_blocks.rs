@@ -244,7 +244,7 @@ impl PendingBlocks {
             transaction: transaction.clone(),
             logs: receipt.inner.logs().to_vec(),
             gas_used: receipt.inner.gas_used,
-            status: receipt.inner.inner.status(),
+            status: receipt.inner.inner.status_or_post_state(),
             cumulative_gas_used: receipt.inner.inner.cumulative_gas_used(),
             contract_address: receipt.inner.contract_address,
             logs_bloom: receipt.inner.inner.logs_bloom,
@@ -1170,7 +1170,7 @@ mod tests {
         let txs = pending.get_latest_flashblock_transactions_with_logs();
 
         assert_eq!(txs.len(), 1);
-        assert!(txs[0].status);
+        assert_eq!(txs[0].status, alloy_consensus::Eip658Value::Eip658(true));
         assert_eq!(txs[0].cumulative_gas_used, 42_000);
         assert_eq!(txs[0].contract_address, Some(contract_address));
         assert_eq!(txs[0].logs_bloom, logs_bloom);

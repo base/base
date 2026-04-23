@@ -1,5 +1,6 @@
 //! Subscription types for the `eth_` `PubSub` RPC extension
 
+use alloy_consensus::Eip658Value;
 use alloy_primitives::{Address, Bloom};
 use alloy_rpc_types_eth::{Log, pubsub::SubscriptionKind};
 use base_common_rpc_types::Transaction;
@@ -22,9 +23,9 @@ pub struct TransactionWithLogs {
     /// Gas consumed by this transaction's execution.
     #[serde(with = "alloy_serde::quantity")]
     pub gas_used: u64,
-    /// Status of the transaction, encoded as a receipt-style quantity.
-    #[serde(with = "alloy_serde::quantity")]
-    pub status: bool,
+    /// Status of the transaction, serialized the same way as `eth_getTransactionReceipt`.
+    #[serde(flatten)]
+    pub status: Eip658Value,
     /// Cumulative gas used in the block up to and including this transaction.
     #[serde(with = "alloy_serde::quantity")]
     pub cumulative_gas_used: u64,
@@ -167,7 +168,7 @@ mod tests {
             transaction: tx,
             logs: vec![log],
             gas_used: 21_000,
-            status: true,
+            status: Eip658Value::Eip658(true),
             cumulative_gas_used: 42_000,
             contract_address: Some(Address::with_last_byte(0xEF)),
             logs_bloom: [0x11; 256].into(),
