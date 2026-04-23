@@ -108,6 +108,10 @@ pub struct TestConfig {
     pub target_gps: Option<u64>,
 
     /// Seed for deterministic account generation (used if mnemonic not provided).
+    ///
+    /// Defaults to `12345` for reproducible single-run testing and fund recovery. Concurrent runs
+    /// against the same chain without overriding this will derive identical
+    /// accounts and collide on nonces.
     pub seed: u64,
 
     /// Chain ID (if not provided, fetched from RPC).

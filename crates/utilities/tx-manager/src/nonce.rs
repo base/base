@@ -85,7 +85,7 @@ impl<P: Provider> NonceManager<P> {
 
     /// Configures the nonce manager to use the `pending` block tag when
     /// fetching the initial nonce from chain.
-    pub fn with_pending_tag(mut self) -> Self {
+    pub const fn with_pending_tag(mut self) -> Self {
         self.use_pending_tag = true;
         self
     }

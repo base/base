@@ -860,9 +860,19 @@ impl LoadRunner {
             };
             tokio::spawn(async move {
                 let _permit = permit;
-                match AssertUnwindSafe(Self::submit_batch(ctx, batch)).catch_unwind().await {
+                let batch_len = batch.len();
+                match AssertUnwindSafe(Self::submit_batch(ctx.clone(), batch)).catch_unwind().await
+                {
                     Ok(submitted) => debug!(submitted, "batch submitted"),
-                    Err(_) => error!("batch submission task panicked"),
+                    Err(_) => {
+                        error!(batch_len, "batch submission task panicked");
+                        for _ in 0..batch_len {
+                            let _ = ctx
+                                .submit_event_tx
+                                .send(SubmitEvent::Failed("task panicked".into()))
+                                .await;
+                        }
+                    }
                 }
             });
         }
@@ -885,10 +895,21 @@ impl LoadRunner {
             };
             tokio::spawn(async move {
                 let _permit = permit;
-                match AssertUnwindSafe(Self::submit_batch(ctx, pending_batch)).catch_unwind().await
+                let batch_len = pending_batch.len();
+                match AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch))
+                    .catch_unwind()
+                    .await
                 {
                     Ok(submitted) => debug!(submitted, "final batch submitted"),
-                    Err(_) => error!("final batch submission task panicked"),
+                    Err(_) => {
+                        error!(batch_len, "final batch submission task panicked");
+                        for _ in 0..batch_len {
+                            let _ = ctx
+                                .submit_event_tx
+                                .send(SubmitEvent::Failed("task panicked".into()))
+                                .await;
+                        }
+                    }
                 }
             });
         }

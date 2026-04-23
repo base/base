@@ -249,7 +249,11 @@ impl BatchRpcClient {
     /// or unknown).
     ///
     /// Large requests are automatically split into sub-batches of
-    /// [`MAX_BATCH_RPC_SIZE`] and sent concurrently.
+    /// [`MAX_BATCH_RPC_SIZE`] and sent concurrently with no concurrency cap.
+    /// At `MAX_RECEIPT_LOOKUPS=3000` this means up to 30 parallel HTTP
+    /// requests per poll cycle, which is intentional for dedicated/private
+    /// RPC endpoints used in load testing. Shared or public endpoints may
+    /// need an external concurrency limit.
     pub async fn batch_get_transaction_receipts(
         &self,
         tx_hashes: &[TxHash],
@@ -373,10 +377,24 @@ impl BatchRpcClient {
             .await
             .map_err(|e| BaselineError::Rpc(format!("batch send request failed: {e}")))?;
 
-        let body: Vec<serde_json::Value> = response
-            .json()
-            .await
-            .map_err(|e| BaselineError::Rpc(format!("batch send response parse failed: {e}")))?;
+        let status = response.status();
+        let body_text = response.text().await.map_err(|e| {
+            BaselineError::Rpc(format!("failed to read batch send response body: {e}"))
+        })?;
+
+        if !status.is_success() {
+            let preview = truncate_for_log(&body_text);
+            return Err(BaselineError::Rpc(format!(
+                "batch send request returned HTTP {status}: {preview}"
+            )));
+        }
+
+        let body: Vec<serde_json::Value> = serde_json::from_str(&body_text).map_err(|e| {
+            let preview = truncate_for_log(&body_text);
+            BaselineError::Rpc(format!(
+                "batch send response is not a JSON array: {e} (body: {preview})"
+            ))
+        })?;
 
         let mut results: Vec<BatchSendResult> =
             (0..raw_txs.len()).map(|_| BatchSendResult::Error("missing response".into())).collect();

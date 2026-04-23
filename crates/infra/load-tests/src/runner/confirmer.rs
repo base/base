@@ -347,8 +347,14 @@ impl Confirmer {
     }
 
     async fn poll_receipts(&mut self) -> Vec<(TxHash, Address)> {
+        // Sort by submit_time (oldest first) to ensure fair coverage when
+        // pending count exceeds MAX_RECEIPT_LOOKUPS. Without ordering,
+        // HashMap's non-deterministic iteration could repeatedly skip the
+        // same transactions across polls until they expire.
+        let mut pending_sorted: Vec<_> = self.pending.iter().collect();
+        pending_sorted.sort_unstable_by_key(|(_, p)| p.submit_time);
         let to_lookup: Vec<TxHash> =
-            self.pending.keys().copied().take(MAX_RECEIPT_LOOKUPS).collect();
+            pending_sorted.into_iter().take(MAX_RECEIPT_LOOKUPS).map(|(hash, _)| *hash).collect();
 
         if to_lookup.is_empty() {
             return Vec::new();
