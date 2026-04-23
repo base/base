@@ -251,6 +251,7 @@ mod tests {
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
         let update = EngineSyncStateUpdate {
             unsafe_head: Some(head),
+            local_safe_head: Some(safe),
             safe_head: Some(safe),
             finalized_head: Some(finalized),
         };
