@@ -1172,7 +1172,11 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
     assert!(tx["hash"].is_string(), "Expected full tx with hash field");
     assert!(tx["blockNumber"].is_string(), "Expected full tx with blockNumber field");
     assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
-    assert!(tx["gasUsed"].is_number(), "Expected numeric gasUsed field");
+    let gas_used = tx["gasUsed"].as_str().expect("expected gasUsed hex string");
+    assert!(
+        gas_used.starts_with("0x"),
+        "Expected receipt-style gasUsed field, got: {gas_used}"
+    );
     assert_eq!(tx["status"], "0x1", "Expected receipt-style status field");
     assert!(
         tx["cumulativeGasUsed"].is_string(),
@@ -1196,7 +1200,11 @@ async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<(
         let tx = &notif["params"]["result"];
         assert!(tx["hash"].is_string() && tx["blockNumber"].is_string());
         assert!(tx["logs"].is_array(), "Expected logs array in full transaction");
-        assert!(tx["gasUsed"].is_number(), "Expected numeric gasUsed field");
+        let gas_used = tx["gasUsed"].as_str().expect("expected gasUsed hex string");
+        assert!(
+            gas_used.starts_with("0x"),
+            "Expected receipt-style gasUsed field, got: {gas_used}"
+        );
         assert_eq!(tx["status"], "0x1", "Expected receipt-style status field");
         assert!(
             tx["cumulativeGasUsed"].is_string(),
