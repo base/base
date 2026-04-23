@@ -1,6 +1,5 @@
-//! Build script that compiles `proto/zk_prover.proto` into Rust types via
-//! tonic/prost. By default only client code is generated; enabling the
-//! `server` Cargo feature also generates the server trait and helpers.
+//! Build script that compiles `proto/zk_prover.proto` into Rust client
+//! types via tonic/prost.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
