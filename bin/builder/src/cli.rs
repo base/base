@@ -348,7 +348,11 @@ mod tests {
         use base_builder_core::MeteringProvider;
         use base_bundles::MeterBundleResponse;
 
-        let args = Args { metering_store_ttl_secs: 60, ..Default::default() };
+        let args = Args {
+            metering_store_ttl_secs: 60,
+            enable_resource_metering: true,
+            ..Default::default()
+        };
         let store = args.build_metering_store();
         let tx_hash = TxHash::random();
         store.insert(

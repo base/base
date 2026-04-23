@@ -53,10 +53,17 @@ impl MeteringStore {
                 if cause == RemovalCause::Size {
                     BuilderMetrics::metering_store_lru_evictions().increment(1);
                 }
+                if cause == RemovalCause::Expired {
+                    BuilderMetrics::metering_store_ttl_expirations().increment(1);
+                }
             })
             .build();
 
-        let needed_at = Cache::builder().max_capacity(max_capacity as u64).build();
+        let needed_at = Cache::builder()
+            .max_capacity(max_capacity as u64)
+            .eviction_policy(EvictionPolicy::lru())
+            .time_to_live(ttl)
+            .build();
 
         Self { cache, needed_at, metering_enabled: AtomicBool::new(enable_resource_metering) }
     }
