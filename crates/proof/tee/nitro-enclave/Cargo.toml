@@ -44,13 +44,13 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "io-util"] }
 
 # misc
-eyre.workspace = true
 tracing.workspace = true
 rand_08.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+eyre.workspace = true
 tokio-vsock.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 

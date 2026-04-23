@@ -468,9 +468,11 @@ sp1-lib = { version = "=6.1.0" }
 sp1-zkvm = { version = "=6.1.0" }
 sp1-build = "=6.1.0"
 sp1-prover-types = "=6.1.0"
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.4" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.4" }
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.4" }
+# Pinned to a commit on top of v2.1.4 (includes fix for sp1_cluster_utils)
+# TODO: Pin to version that merges sp1-cluster#80 (https://github.com/succinctlabs/sp1-cluster/pull/80)
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", rev = "843ce58d15da0609a98f6ae37579389f14f5af03" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", rev = "843ce58d15da0609a98f6ae37579389f14f5af03" }
+sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", rev = "843ce58d15da0609a98f6ae37579389f14f5af03" }
 
 # crypto
 sha3 = "0.10"
