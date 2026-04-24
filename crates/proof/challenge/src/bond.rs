@@ -699,6 +699,14 @@ impl<C: Clock> BondManager<C> {
                     );
                     ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
                         .increment(1);
+                    // Re-read and cache the now-immutable status so that
+                    // try_anchor_update (called later this tick) can use
+                    // it without a redundant RPC call.
+                    if let Ok(resolved_status) = verifier_client.status(game_address).await
+                        && let Some(g) = self.tracked.get_mut(&game_address)
+                    {
+                        g.cached_status = Some(resolved_status);
+                    }
                 }
                 Err(e) => {
                     warn!(
