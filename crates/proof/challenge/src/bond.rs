@@ -586,7 +586,13 @@ impl<C: Clock> BondManager<C> {
 
         for game_address in addresses {
             match self.advance_game(game_address, verifier_client, submitter).await {
-                Ok(Some(reason)) => removed.push((game_address, reason)),
+                Ok(Some(reason)) => {
+                    // Last-chance anchor update before the game is removed.
+                    // If the airgap delay hasn't elapsed yet the call reverts
+                    // harmlessly, but in the common case it succeeds.
+                    self.try_anchor_update(game_address, verifier_client, submitter).await;
+                    removed.push((game_address, reason));
+                }
                 Ok(None) => {
                     self.try_anchor_update(game_address, verifier_client, submitter).await;
                 }
@@ -699,6 +705,12 @@ impl<C: Clock> BondManager<C> {
             ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
                 .increment(1);
             info!(game = %game_address, status, "game already resolved");
+            // Status is immutable after resolution — cache it so that
+            // try_anchor_update (called later this tick) can skip the
+            // redundant RPC round-trip.
+            if let Some(g) = self.tracked.get_mut(&game_address) {
+                g.cached_status = Some(status);
+            }
         }
 
         // Re-read the onchain bondRecipient — resolve may have changed it
