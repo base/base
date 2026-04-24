@@ -55,67 +55,15 @@ jobs:
           BASE_SUCCINCT_ELF_STUB=1 cargo +nightly udeps --locked --workspace --all-features --all-targets --output json >"$UDEPS_JSON" 2>"$UDEPS_STDERR"
           status=$?
           set -e
-          export UDEPS_STATUS="$status"
-
-          python3 - <<'PY'
-          import json
-          import os
-          import sys
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          json_path = Path(os.environ["UDEPS_JSON"])
-          stderr_path = Path(os.environ["UDEPS_STDERR"])
-          issue_body_path = Path(os.environ["ISSUE_BODY"])
-          status = int(os.environ["UDEPS_STATUS"])
-          output_path = Path(os.environ["GITHUB_OUTPUT"])
-
-          stdout = json_path.read_text() if json_path.exists() else ""
-          if not stdout.strip():
-              sys.stderr.write(stderr_path.read_text())
-              raise SystemExit(status or 1)
-
-          try:
-              payload = json.loads(stdout)
-          except json.JSONDecodeError:
-              sys.stderr.write(stderr_path.read_text())
-              raise
-
-          unused = payload.get("unused_deps", {})
-          has_findings = bool(unused)
-
-          lines = [
-              "## Summary",
-              "",
-              "`cargo +nightly udeps --locked --workspace --all-features --all-targets --output json` reported unused dependencies.",
-              "",
-              f"- Updated at: {datetime.now(timezone.utc).isoformat()}",
-              f"- Workflow run: {os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
-              "",
-              "## Findings",
-              "",
-          ]
-
-          for package, details in sorted(unused.items()):
-              package_name = package.split(" ", 1)[0]
-              lines.append(f"### `{package_name}`")
-              normal = details.get("normal", [])
-              development = details.get("development", [])
-              build = details.get("build", [])
-              if normal:
-                  lines.append(f"- `dependencies`: {', '.join(f'`{dep}`' for dep in normal)}")
-              if development:
-                  lines.append(f"- `dev-dependencies`: {', '.join(f'`{dep}`' for dep in development)}")
-              if build:
-                  lines.append(f"- `build-dependencies`: {', '.join(f'`{dep}`' for dep in build)}")
-              lines.append("")
-
-          issue_body_path.write_text("\n".join(lines))
-
-          with output_path.open("a", encoding="utf-8") as fh:
-              fh.write(f"has_findings={'true' if has_findings else 'false'}\n")
-              fh.write(f"finding_count={len(unused)}\n")
-          PY
+          python3 etc/scripts/ci/udeps-report.py render \
+            --json-path "$UDEPS_JSON" \
+            --stderr-path "$UDEPS_STDERR" \
+            --issue-body-path "$ISSUE_BODY" \
+            --github-output "$GITHUB_OUTPUT" \
+            --status "$status" \
+            --server-url "$GITHUB_SERVER_URL" \
+            --repository "$GITHUB_REPOSITORY" \
+            --run-id "$GITHUB_RUN_ID"
 
       - name: Create or update issue
         id: issue
@@ -129,7 +77,7 @@ jobs:
             --state open \
             --search "\"$ISSUE_TITLE\" in:title" \
             --json number,title \
-            --limit 20 | python3 -c 'import json, os, sys; title = os.environ["ISSUE_TITLE"]; issues = json.load(sys.stdin); print(next((issue["number"] for issue in issues if issue["title"] == title), ""))')"
+            --limit 20 | python3 etc/scripts/ci/udeps-report.py find-open-issue --title "$ISSUE_TITLE")"
 
           if [[ -n "$issue_number" ]]; then
             gh issue edit "$issue_number" \
