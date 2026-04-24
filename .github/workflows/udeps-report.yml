@@ -39,7 +39,7 @@ jobs:
           mold: "true"
           foundry: "true"
           tools: cargo-udeps
-          rust-cache-shared-key: "nightly-udeps-fixes"
+          rust-cache-shared-key: "nightly-udeps-report"
           rust-cache-save: "true"
 
       - name: Build test contracts
