@@ -991,7 +991,9 @@ impl<C: Clock> BondManager<C> {
             None => return,
         };
 
-        if game.anchor_update_complete || matches!(game.phase, BondPhase::NeedsResolve) {
+        if game.anchor_update_complete
+            || (game.cached_status.is_none() && matches!(game.phase, BondPhase::NeedsResolve))
+        {
             return;
         }
 
