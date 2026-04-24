@@ -231,8 +231,7 @@ pub trait AggregateVerifierClient: Send + Sync {
     async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError>;
 
     /// Returns the address of the `AnchorStateRegistry` contract for this game.
-    async fn anchor_state_registry(&self, game_address: Address)
-        -> Result<Address, ContractError>;
+    async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -545,10 +544,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .map_err(|e| ContractError::Call { context: "DELAYED_WETH failed".into(), source: e })
     }
 
-    async fn anchor_state_registry(
-        &self,
-        game_address: Address,
-    ) -> Result<Address, ContractError> {
+    async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
 
