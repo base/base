@@ -23,14 +23,15 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Optional
 
 DEFAULT_MAX_PASSES = 5
 UDEPS_ENV = {
-    "RISC0_SKIP_BUILD_KERNELS": "1",
     "BASE_SUCCINCT_ELF_STUB": "1",
 }
+DEPENDENCY_SECTION_NAMES = {"dependencies", "dev-dependencies", "build-dependencies"}
 
 
 class CommandError(RuntimeError):
@@ -62,7 +63,7 @@ class UdepsFixes:
         self._ensure_clean_tree()
 
         package_passes = 0
-        while package_passes < self.args.max_passes:
+        while package_passes < DEFAULT_MAX_PASSES:
             findings = self._run_udeps()
             removed_any = self._fix_package_findings(findings)
             package_passes += 1
@@ -70,7 +71,7 @@ class UdepsFixes:
                 break
         else:
             print(
-                f"Reached max passes ({self.args.max_passes}) while fixing package dependencies.",
+                f"Reached max passes ({DEFAULT_MAX_PASSES}) while fixing package dependencies.",
                 file=sys.stderr,
             )
 
@@ -79,6 +80,15 @@ class UdepsFixes:
         if final_findings:
             print("cargo-udeps still reports unused dependencies after fixes:", file=sys.stderr)
             print(json.dumps(final_findings, indent=2, sort_keys=True), file=sys.stderr)
+            if root_removed:
+                print(
+                    "Removed unused workspace dependencies: "
+                    + ", ".join(root_removed),
+                    file=sys.stderr,
+                )
+            if self._worktree_has_changes():
+                print("Dependency changes were produced.", file=sys.stderr)
+            return 1
 
         if not self._worktree_has_changes():
             print("No dependency changes were produced.")
@@ -186,45 +196,54 @@ class UdepsFixes:
 
     def _read_workspace_dependency_names(self) -> set[str]:
         """Return dependency names declared in `[workspace.dependencies]`."""
-        lines = self.root_manifest.read_text().splitlines()
-        in_workspace_deps = False
-        names: set[str] = set()
-        for line in lines:
-            stripped = line.strip()
-            if stripped == "[workspace.dependencies]":
-                in_workspace_deps = True
-                continue
-            if in_workspace_deps and stripped.startswith("[") and stripped != "[workspace.dependencies]":
-                break
-            if not in_workspace_deps or not stripped or stripped.startswith("#"):
-                continue
-            match = re.match(r"^([A-Za-z0-9_-]+)\s*=", line)
-            if match:
-                names.add(match.group(1))
-        return names
+        manifest = self._load_toml(self.root_manifest)
+        workspace = manifest.get("workspace", {})
+        if not isinstance(workspace, dict):
+            return set()
+
+        dependencies = workspace.get("dependencies", {})
+        if not isinstance(dependencies, dict):
+            return set()
+
+        return set(dependencies.keys())
 
     def _collect_workspace_dependency_references(self) -> set[str]:
         """Return dependency names referenced with `workspace = true`."""
         referenced: set[str] = set()
         for manifest_path in self.workspace_manifests:
-            text = manifest_path.read_text()
-            referenced |= self._collect_workspace_refs_from_text(text)
+            referenced |= self._collect_workspace_refs_from_manifest(manifest_path)
         return referenced
 
-    def _collect_workspace_refs_from_text(self, text: str) -> set[str]:
+    def _collect_workspace_refs_from_manifest(self, manifest_path: Path) -> set[str]:
         """Collect dependency names referenced with `workspace = true` in a manifest."""
+        manifest = self._load_toml(manifest_path)
+        return self._collect_workspace_refs_from_table(manifest)
+
+    def _collect_workspace_refs_from_table(self, table: object) -> set[str]:
+        """Recursively collect dependency names referenced with `workspace = true`."""
         referenced: set[str] = set()
-        for line in text.splitlines():
-            dotted = re.match(r"^\s*([A-Za-z0-9_-]+)\.workspace\s*=\s*true\b", line)
-            if dotted:
-                referenced.add(dotted.group(1))
+        if not isinstance(table, dict):
+            return referenced
+
+        for key, value in table.items():
+            if key in DEPENDENCY_SECTION_NAMES and isinstance(value, dict):
+                referenced |= self._collect_workspace_refs_from_dependency_section(value)
                 continue
-            inline = re.match(
-                r"^\s*([A-Za-z0-9_-]+)\s*=\s*\{.*\bworkspace\s*=\s*true\b.*\}",
-                line,
-            )
-            if inline:
-                referenced.add(inline.group(1))
+
+            if isinstance(value, dict):
+                referenced |= self._collect_workspace_refs_from_table(value)
+
+        return referenced
+
+    def _collect_workspace_refs_from_dependency_section(
+        self,
+        section: dict[str, object],
+    ) -> set[str]:
+        """Collect workspace-backed dependencies from a single dependency section."""
+        referenced: set[str] = set()
+        for dep_name, spec in section.items():
+            if isinstance(spec, dict) and spec.get("workspace") is True:
+                referenced.add(dep_name)
         return referenced
 
     def _remove_workspace_dependency_entry(self, dep_name: str) -> None:
@@ -276,6 +295,13 @@ class UdepsFixes:
             capture_output=True,
         ).stdout.strip()
         return bool(result)
+
+    def _load_toml(self, manifest_path: Path) -> dict:
+        """Load a TOML manifest from disk."""
+        try:
+            return tomllib.loads(manifest_path.read_text())
+        except tomllib.TOMLDecodeError as exc:
+            raise CommandError(f"Failed to parse TOML: {manifest_path}") from exc
 
     def _run_json(
         self,
