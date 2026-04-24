@@ -12,7 +12,7 @@ use alloy_consensus::{
 use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::Database;
 use alloy_primitives::{Address, B256, Bloom, U256, logs_bloom, map::foldhash::HashMap};
-use base_access_lists::{FlashblockAccessList, FlashblockAccessListBuilder};
+use base_access_lists::FlashblockAccessList;
 use base_builder_publish::WebSocketPublisher;
 use base_bundles::RejectedTransaction;
 use base_common_chains::Upgrades;
@@ -71,19 +71,6 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
             >,
     >,
 >;
-
-/// Execution information specific to flashblocks.
-///
-/// Tracks the last consumed flashblock index and manages the
-/// flashblock-level access list builder for progressive block construction.
-#[derive(Debug, Default, Clone)]
-pub struct FlashblocksExecutionInfo {
-    /// Index of the last consumed flashblock
-    pub(crate) last_flashblock_index: usize,
-
-    /// Flashblock-level access list builder
-    pub(crate) access_list_builder: FlashblockAccessListBuilder,
-}
 
 /// Base payload builder
 #[derive(Debug, Clone)]
