@@ -1,4 +1,4 @@
-name: Udeps Fixes
+name: Udeps Report
 
 on:
   schedule:
@@ -10,13 +10,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BASE_BRANCH: main
-  FIX_BRANCH: automation/udeps-fix
-  PR_TITLE: "chore(ci): apply cargo-udeps fixes"
+  ISSUE_TITLE: "ci: cargo-udeps findings"
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+  issues: write
 
 jobs:
   udeps-fixes:
@@ -43,90 +41,128 @@ jobs:
           rust-cache-shared-key: "nightly-udeps-fixes"
           rust-cache-save: "true"
 
-      - name: Prepare automation branch
-        run: |
-          git fetch origin "$BASE_BRANCH"
-          git checkout -B "$FIX_BRANCH" "origin/$BASE_BRANCH"
-
       - name: Build test contracts
         run: just build::contracts
 
-      - name: Apply udeps fixes
-        run: python3 etc/scripts/ci/udeps-fixes.py
-
-      - name: Check for changes
-        id: diff
+      - name: Run cargo udeps
+        id: udeps
+        env:
+          UDEPS_JSON: ${{ runner.temp }}/udeps.json
+          UDEPS_STDERR: ${{ runner.temp }}/udeps.stderr
+          ISSUE_BODY: ${{ runner.temp }}/udeps-issue.md
         run: |
-          if [[ -n "$(git status --short)" ]]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          set +e
+          BASE_SUCCINCT_ELF_STUB=1 cargo +nightly udeps --locked --workspace --all-features --all-targets --output json >"$UDEPS_JSON" 2>"$UDEPS_STDERR"
+          status=$?
+          set -e
+          export UDEPS_STATUS="$status"
+
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          json_path = Path(os.environ["UDEPS_JSON"])
+          stderr_path = Path(os.environ["UDEPS_STDERR"])
+          issue_body_path = Path(os.environ["ISSUE_BODY"])
+          status = int(os.environ["UDEPS_STATUS"])
+          output_path = Path(os.environ["GITHUB_OUTPUT"])
+
+          stdout = json_path.read_text() if json_path.exists() else ""
+          if not stdout.strip():
+              sys.stderr.write(stderr_path.read_text())
+              raise SystemExit(status or 1)
+
+          try:
+              payload = json.loads(stdout)
+          except json.JSONDecodeError:
+              sys.stderr.write(stderr_path.read_text())
+              raise
+
+          unused = payload.get("unused_deps", {})
+          has_findings = bool(unused)
+
+          lines = [
+              "## Summary",
+              "",
+              "`cargo +nightly udeps --locked --workspace --all-features --all-targets --output json` reported unused dependencies.",
+              "",
+              f"- Updated at: {datetime.now(timezone.utc).isoformat()}",
+              f"- Workflow run: {os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              "",
+              "## Findings",
+              "",
+          ]
+
+          for package, details in sorted(unused.items()):
+              package_name = package.split(" ", 1)[0]
+              lines.append(f"### `{package_name}`")
+              normal = details.get("normal", [])
+              development = details.get("development", [])
+              build = details.get("build", [])
+              if normal:
+                  lines.append(f"- `dependencies`: {', '.join(f'`{dep}`' for dep in normal)}")
+              if development:
+                  lines.append(f"- `dev-dependencies`: {', '.join(f'`{dep}`' for dep in development)}")
+              if build:
+                  lines.append(f"- `build-dependencies`: {', '.join(f'`{dep}`' for dep in build)}")
+              lines.append("")
+
+          issue_body_path.write_text("\n".join(lines))
+
+          with output_path.open("a", encoding="utf-8") as fh:
+              fh.write(f"has_findings={'true' if has_findings else 'false'}\n")
+              fh.write(f"finding_count={len(unused)}\n")
+          PY
+
+      - name: Create or update issue
+        id: issue
+        if: steps.udeps.outputs.has_findings == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_BODY: ${{ runner.temp }}/udeps-issue.md
+        run: |
+          issue_number="$(gh issue list \
+            --repo "$GITHUB_REPOSITORY" \
+            --state open \
+            --search "\"$ISSUE_TITLE\" in:title" \
+            --json number,title \
+            --limit 20 | python3 -c 'import json, os, sys; title = os.environ["ISSUE_TITLE"]; issues = json.load(sys.stdin); print(next((issue["number"] for issue in issues if issue["title"] == title), ""))')"
+
+          if [[ -n "$issue_number" ]]; then
+            gh issue edit "$issue_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file "$ISSUE_BODY"
           else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            issue_url="$(gh issue create \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$ISSUE_TITLE" \
+              --body-file "$ISSUE_BODY")"
+            issue_number="${issue_url##*/}"
           fi
 
-      - name: Find existing PR
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          pr_number="$(gh pr list --head "$FIX_BRANCH" --state open --json number --jq '.[0].number // ""')"
-          pr_url="$(gh pr list --head "$FIX_BRANCH" --state open --json url --jq '.[0].url // ""')"
-          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
-          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
-
-      - name: Configure git
-        if: steps.diff.outputs.changed == 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Commit fixes
-        if: steps.diff.outputs.changed == 'true'
-        run: |
-          git add -u
-          git -c commit.gpgsign=false commit -m "chore(ci): apply cargo-udeps fixes"
-
-      - name: Push automation branch
-        if: steps.diff.outputs.changed == 'true'
-        run: git push --force-with-lease -u origin "$FIX_BRANCH"
-
-      - name: Create PR
-        if: steps.diff.outputs.changed == 'true' && steps.pr.outputs.number == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          body=$'## Summary\n\n- remove unused per-package dependencies reported by `cargo udeps`\n- remove now-unreferenced root `workspace.dependencies` entries\n- update the long-lived automation branch instead of creating one-off fix branches\n\n## Validation\n\n- `cargo +nightly udeps --locked --workspace --all-features --all-targets --output json`'
-          gh pr create \
-            --base "$BASE_BRANCH" \
-            --head "$FIX_BRANCH" \
-            --title "$PR_TITLE" \
-            --body "$body"
-
-      - name: Close stale PR when no fixes remain
-        if: steps.diff.outputs.changed == 'false' && steps.pr.outputs.number != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr close "${{ steps.pr.outputs.number }}" \
-            --comment "Closing because the latest scheduled cargo-udeps run produced no changes."
-
-      - name: Refresh PR state
-        id: final_pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          pr_number="$(gh pr list --head "$FIX_BRANCH" --state open --json number --jq '.[0].number // ""')"
-          pr_url="$(gh pr list --head "$FIX_BRANCH" --state open --json url --jq '.[0].url // ""')"
-          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
-          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+          issue_url="$(gh issue view "$issue_number" --repo "$GITHUB_REPOSITORY" --json url --jq '.url')"
+          echo "number=$issue_number" >> "$GITHUB_OUTPUT"
+          echo "url=$issue_url" >> "$GITHUB_OUTPUT"
 
       - name: Summary
+        env:
+          FINDINGS: ${{ steps.udeps.outputs.has_findings }}
+          FINDING_COUNT: ${{ steps.udeps.outputs.finding_count }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+          ISSUE_URL: ${{ steps.issue.outputs.url }}
         run: |
-          echo "## Udeps Fixes" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Udeps Report" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Changes produced: \`${{ steps.diff.outputs.changed }}\`" >> "$GITHUB_STEP_SUMMARY"
-          if [[ -n "${{ steps.final_pr.outputs.number }}" ]]; then
-            echo "- Open PR: #${{ steps.final_pr.outputs.number }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Findings detected: \`${FINDINGS}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$FINDING_COUNT" ]]; then
+            echo "- Packages with findings: \`${FINDING_COUNT}\`" >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [[ -n "${{ steps.final_pr.outputs.url }}" ]]; then
-            echo "- PR URL: ${{ steps.final_pr.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$ISSUE_NUMBER" ]]; then
+            echo "- Open issue: #${ISSUE_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -n "$ISSUE_URL" ]]; then
+            echo "- Issue URL: $ISSUE_URL" >> "$GITHUB_STEP_SUMMARY"
           fi
