@@ -104,6 +104,7 @@ skip = [
     "socket2",
     "bitflags",
     "redox_users",
+    "redox_syscall",
     "windows",
     "windows-core",
     "windows-implement",
