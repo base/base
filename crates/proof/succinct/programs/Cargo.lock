@@ -26,7 +26,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-sol-types",
- "base-succinct-client-utils",
+ "base-proof-succinct-client-utils",
  "bincode",
  "serde_cbor",
  "sha2",
@@ -1024,32 +1024,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-protocol"
-version = "0.0.0"
-dependencies = [
- "alloc-no-stdlib",
- "alloy-consensus",
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "ambassador",
- "async-trait",
- "base-common-consensus",
- "base-common-genesis",
- "base-common-rpc-types-engine",
- "brotli",
- "derive_more",
- "miniz_oxide",
- "thiserror",
- "tracing",
- "unsigned-varint",
-]
-
-[[package]]
-name = "base-succinct-client-utils"
+name = "base-proof-succinct-client-utils"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
@@ -1084,7 +1059,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-succinct-ethereum-client-utils"
+name = "base-proof-succinct-ethereum-client-utils"
 version = "0.0.0"
 dependencies = [
  "alloy-genesis",
@@ -1096,21 +1071,46 @@ dependencies = [
  "base-proof-driver",
  "base-proof-executor",
  "base-proof-preimage",
- "base-succinct-client-utils",
+ "base-proof-succinct-client-utils",
  "spin 0.10.0",
 ]
 
 [[package]]
-name = "base-succinct-range-utils"
+name = "base-proof-succinct-range-utils"
 version = "0.0.0"
 dependencies = [
  "anyhow",
  "base-proof",
- "base-succinct-client-utils",
+ "base-proof-succinct-client-utils",
  "rkyv",
  "sp1-zkvm",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "base-protocol"
+version = "0.0.0"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "ambassador",
+ "async-trait",
+ "base-common-consensus",
+ "base-common-genesis",
+ "base-common-rpc-types-engine",
+ "brotli",
+ "derive_more",
+ "miniz_oxide",
+ "thiserror",
+ "tracing",
+ "unsigned-varint",
 ]
 
 [[package]]
@@ -3334,9 +3334,9 @@ name = "range"
 version = "0.0.0"
 dependencies = [
  "base-proof",
- "base-succinct-client-utils",
- "base-succinct-ethereum-client-utils",
- "base-succinct-range-utils",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-ethereum-client-utils",
+ "base-proof-succinct-range-utils",
  "rkyv",
  "sp1-zkvm",
  "tracing-subscriber",
