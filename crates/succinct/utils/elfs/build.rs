@@ -43,6 +43,13 @@ fn main() {
     let manifest = load_manifest(&manifest_path);
     let force_stub = env::var("BASE_SUCCINCT_ELF_STUB").as_deref() == Ok("1");
     let require_real = env::var("BASE_SUCCINCT_ELF_REQUIRE").as_deref() == Ok("1");
+    if force_stub && require_real {
+        fail(
+            "BASE_SUCCINCT_ELF_STUB=1 and BASE_SUCCINCT_ELF_REQUIRE=1 are mutually \
+             exclusive: the former forces stub ELFs while the latter forbids them. \
+             Unset one of the two before retrying.",
+        );
+    }
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
 
     for entry in &manifest.elfs {
@@ -54,11 +61,11 @@ fn main() {
                 Ok(path) => path,
                 Err(err) => {
                     if require_real {
-                        fail(err);
+                        fail(&err);
                     }
                     // Default: warn loudly and fall back to a stub so
                     // `cargo check` / rust-analyzer work without a local SP1 toolchain.
-                    warn(format!(
+                    warn(&format!(
                         "{err}\n\
                          \n\
                          Falling back to an empty stub ELF. Runtime \
@@ -77,10 +84,10 @@ fn main() {
 
 fn load_manifest(path: &Path) -> Manifest {
     let contents = fs::read_to_string(path).unwrap_or_else(|err| {
-        fail(format!("failed to read ELF manifest at {}: {err}", path.display()))
+        fail(&format!("failed to read ELF manifest at {}: {err}", path.display()))
     });
     toml::from_str(&contents)
-        .unwrap_or_else(|err| fail(format!("failed to parse {}: {err}", path.display())))
+        .unwrap_or_else(|err| fail(&format!("failed to parse {}: {err}", path.display())))
 }
 
 fn try_resolve_elf(cache_dir: &Path, entry: &ElfEntry) -> Result<PathBuf, String> {
@@ -109,7 +116,7 @@ fn try_resolve_elf(cache_dir: &Path, entry: &ElfEntry) -> Result<PathBuf, String
 fn write_stub(out_dir: &Path, name: &str) -> PathBuf {
     let stub = out_dir.join(name);
     fs::write(&stub, b"")
-        .unwrap_or_else(|err| fail(format!("failed to write stub {}: {err}", stub.display())));
+        .unwrap_or_else(|err| fail(&format!("failed to write stub {}: {err}", stub.display())));
     stub
 }
 
@@ -136,14 +143,14 @@ fn hex_sha256(bytes: &[u8]) -> String {
     out
 }
 
-fn warn(msg: String) {
+fn warn(msg: &str) {
     for line in msg.lines() {
         println!("cargo:warning={line}");
     }
 }
 
-fn fail(msg: String) -> ! {
-    warn(msg.clone());
+fn fail(msg: &str) -> ! {
+    warn(msg);
     eprintln!("{msg}");
     process::exit(1);
 }
