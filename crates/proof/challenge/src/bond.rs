@@ -428,7 +428,12 @@ impl<C: Clock> BondManager<C> {
             );
             self.tracked.insert(
                 game_address,
-                TrackedGame { phase, bond_recipient, anchor_update_complete: false, cached_status: None },
+                TrackedGame {
+                    phase,
+                    bond_recipient,
+                    anchor_update_complete: false,
+                    cached_status: None,
+                },
             );
         }
 
@@ -541,7 +546,12 @@ impl<C: Clock> BondManager<C> {
             );
             self.tracked.insert(
                 game_address,
-                TrackedGame { phase, bond_recipient, anchor_update_complete: false, cached_status: None },
+                TrackedGame {
+                    phase,
+                    bond_recipient,
+                    anchor_update_complete: false,
+                    cached_status: None,
+                },
             );
             discovered += 1;
         }
@@ -1013,10 +1023,8 @@ impl<C: Clock> BondManager<C> {
             if let Some(g) = self.tracked.get_mut(&game_address) {
                 g.anchor_update_complete = true;
             }
-            ChallengerMetrics::anchor_update_tx_outcome_total(
-                ChallengerMetrics::STATUS_SKIPPED,
-            )
-            .increment(1);
+            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
+                .increment(1);
             return;
         }
 
@@ -1042,10 +1050,8 @@ impl<C: Clock> BondManager<C> {
                     error = %e,
                     "anchor state update failed, will retry"
                 );
-                ChallengerMetrics::anchor_update_tx_outcome_total(
-                    ChallengerMetrics::STATUS_ERROR,
-                )
-                .increment(1);
+                ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                    .increment(1);
             }
         }
     }
@@ -1759,9 +1765,7 @@ mod tests {
 
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
-        let verifier = Arc::new(MockAggregateVerifier::new(
-            [(game, state)].into_iter().collect(),
-        ));
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         // Submitter should not be called at all.
         let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
@@ -1783,9 +1787,7 @@ mod tests {
 
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
-        let verifier = Arc::new(MockAggregateVerifier::new(
-            [(game, state)].into_iter().collect(),
-        ));
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
         mgr.try_anchor_update(game, &*verifier, &submitter).await;
@@ -1807,9 +1809,7 @@ mod tests {
         // Status 1 = CHALLENGER_WINS — not eligible for anchor update.
         let mut state = mock_state(1, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
-        let verifier = Arc::new(MockAggregateVerifier::new(
-            [(game, state)].into_iter().collect(),
-        ));
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
         mgr.try_anchor_update(game, &*verifier, &submitter).await;
@@ -1832,9 +1832,7 @@ mod tests {
         // Status 2 = DEFENDER_WINS — eligible.
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
-        let verifier = Arc::new(MockAggregateVerifier::new(
-            [(game, state)].into_iter().collect(),
-        ));
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         let tx_hash = B256::repeat_byte(0xDD);
         let submitter = MockBondTransactionSubmitter::success(tx_hash);
@@ -1855,20 +1853,16 @@ mod tests {
 
         let mut mgr = make_manager_with_asr(vec![claim_addr], asr);
         mgr.track_game(game, claim_addr);
-        mgr.set_phase(game, BondPhase::AwaitingDelay {
-            unlocked_at: Duration::from_secs(0),
-        });
+        mgr.set_phase(game, BondPhase::AwaitingDelay { unlocked_at: Duration::from_secs(0) });
 
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
-        let verifier = Arc::new(MockAggregateVerifier::new(
-            [(game, state)].into_iter().collect(),
-        ));
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         // First attempt fails (e.g. airgap not elapsed → tx reverted).
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![
-            Err(crate::ChallengeSubmitError::TxReverted { tx_hash: B256::ZERO }),
-        ]);
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![Err(
+            crate::ChallengeSubmitError::TxReverted { tx_hash: B256::ZERO },
+        )]);
         mgr.try_anchor_update(game, &*verifier, &submitter).await;
 
         // Should NOT be marked complete — will retry next tick.
@@ -1887,9 +1881,7 @@ mod tests {
 
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
-        let verifier = Arc::new(MockAggregateVerifier::new(
-            [(game, state)].into_iter().collect(),
-        ));
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         // First call succeeds.
         let tx_hash = B256::repeat_byte(0xDD);
