@@ -1743,7 +1743,7 @@ mod tests {
 
     // ---- anchor state update tests ----
 
-    /// Helper that builds a BondManager with an ASR address configured.
+    /// Helper that builds a `BondManager` with an ASR address configured.
     fn make_manager_with_asr(
         addresses: Vec<Address>,
         asr_address: Address,
