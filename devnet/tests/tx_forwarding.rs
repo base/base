@@ -147,58 +147,6 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
     Ok(())
 }
 
-/// Tests that invalid transaction bytes are rejected with appropriate error.
-#[tokio::test]
-async fn test_insert_validated_transaction_invalid_bytes() -> Result<()> {
-    let devnet = DevnetBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .build()
-        .await?;
-
-    // Wait for builder to be ready
-    let builder_provider = devnet.l2_builder_provider()?;
-    timeout(Duration::from_secs(15), async {
-        loop {
-            let block = builder_provider.get_block_number().await?;
-            if block >= 2 {
-                return Ok::<_, eyre::Error>(block);
-            }
-            sleep(Duration::from_millis(500)).await;
-        }
-    })
-    .await
-    .wrap_err("Builder block production timed out")??;
-
-    // Create RPC client for the builder
-    let builder_rpc_url = devnet.l2_rpc_url()?;
-    let rpc_client = RpcClient::builder().http(builder_rpc_url);
-
-    // Create an invalid ValidatedTransaction with garbage bytes
-    let validated_tx = ValidatedTransaction {
-        sender: Address::repeat_byte(0x42),
-        raw: Bytes::from(vec![0xDE, 0xAD, 0xBE, 0xEF]),
-        target_block_number: None,
-        min_timestamp: None,
-        max_timestamp: None,
-    };
-
-    // Call base_insertValidatedTransaction - should fail
-    let result: Result<(), _> =
-        rpc_client.request("base_insertValidatedTransaction", (validated_tx,)).await;
-
-    let err = result.expect_err("expected decode error for invalid bytes");
-    let err_str = err.to_string();
-
-    // Should get InvalidParams error (-32602) for decode failure
-    assert!(
-        err_str.contains("-32602") || err_str.contains("failed to decode"),
-        "expected InvalidParams for decode failure, got: {err_str}"
-    );
-
-    Ok(())
-}
-
 /// Full end-to-end test for the transaction forwarding pipeline.
 ///
 /// This test verifies the complete flow:

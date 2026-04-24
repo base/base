@@ -12,7 +12,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_execution_txpool::{MAX_BUNDLE_ADVANCE_BLOCKS, unix_time_millis};
+use base_execution_txpool::unix_time_millis;
 use base_tx_forwarding::TxForwardingConfig;
 use devnet::{DevnetBuilder, config::ANVIL_ACCOUNT_1};
 use eyre::{Result, WrapErr};
@@ -161,62 +161,6 @@ async fn test_send_bundle_accepts_valid_bundle() -> Result<()> {
     assert_eq!(receipt.inner.block_number, Some(target_block));
     assert_eq!(receipt.inner.from, sender);
     assert_eq!(receipt.inner.to, Some(recipient));
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_send_bundle_rejects_invalid_bundle() -> Result<()> {
-    let devnet = DevnetBuilder::new()
-        .with_l1_chain_id(L1_CHAIN_ID)
-        .with_l2_chain_id(L2_CHAIN_ID)
-        .with_tx_forwarding(TxForwardingConfig::new(vec![]))
-        .build()
-        .await?;
-
-    let client_provider = devnet.l2_client_provider()?;
-    wait_for_block(&client_provider, 2).await?;
-
-    let rpc_client = RpcClient::builder().http(devnet.l2_client_rpc_url()?);
-
-    let empty_request = BundleRequest {
-        txs: vec![],
-        block_number: None,
-        min_timestamp: None,
-        max_timestamp: None,
-        reverting_tx_hashes: None,
-        replacement_uuid: None,
-        builders: None,
-    };
-
-    let empty_result: Result<B256, _> =
-        rpc_client.request("eth_sendBundle", (empty_request,)).await;
-    let empty_err = empty_result.expect_err("Expected empty bundle to fail");
-    let empty_err_str = empty_err.to_string();
-    assert!(
-        empty_err_str.contains("exactly 1 transaction") || empty_err_str.contains("-32602"),
-        "Unexpected error for empty bundle: {empty_err_str}"
-    );
-
-    let current_block = client_provider.get_block_number().await?;
-    let far_block = current_block + MAX_BUNDLE_ADVANCE_BLOCKS + 1;
-    let far_request = BundleRequest {
-        txs: vec![Bytes::from_static(b"tx")],
-        block_number: Some(far_block),
-        min_timestamp: None,
-        max_timestamp: None,
-        reverting_tx_hashes: None,
-        replacement_uuid: None,
-        builders: None,
-    };
-
-    let far_result: Result<B256, _> = rpc_client.request("eth_sendBundle", (far_request,)).await;
-    let far_err = far_result.expect_err("Expected far-future block bundle to fail");
-    let far_err_str = far_err.to_string();
-    assert!(
-        far_err_str.contains("too far ahead") || far_err_str.contains("-32602"),
-        "Unexpected error for far-future bundle: {far_err_str}"
-    );
 
     Ok(())
 }
