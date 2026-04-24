@@ -6,6 +6,29 @@
 //! present, its absolute path is exported as a `cargo:rustc-env=*_ELF_PATH` so
 //! that `src/lib.rs` can `include_bytes!(env!(...))` it.
 //!
+//! # Environment variables
+//!
+//! Three env vars control resolution. They operate in three modes:
+//!
+//! - **Default (neither set):** try to resolve the real ELF from the cache
+//!   directory and verify its sha256. On any failure (missing file, hash
+//!   mismatch), emit a loud `cargo:warning` and fall back to an empty stub
+//!   written into `OUT_DIR`. Runtime dereferences of a stub ELF will panic,
+//!   but `cargo check` / `rust-analyzer` work on a fresh clone without
+//!   requiring the SP1 toolchain.
+//! - **`BASE_SUCCINCT_ELF_REQUIRE=1`:** fail the build with a non-zero exit
+//!   code instead of falling back to a stub. Use this in release pipelines
+//!   and any CI job that must produce real, runnable binaries.
+//! - **`BASE_SUCCINCT_ELF_STUB=1`:** skip resolution entirely and always
+//!   emit a stub. Useful for docs/lint jobs that never execute the ELFs.
+//!   Mutually exclusive with `BASE_SUCCINCT_ELF_REQUIRE=1`; setting both is
+//!   a hard error.
+//!
+//! `BASE_SUCCINCT_ELF_CACHE_DIR` overrides the default cache directory
+//! (`crates/succinct/elf`). The script always declares a
+//! `cargo:rerun-if-changed` dependency on the expected real ELF path, so
+//! populating the cache (e.g. via `just succinct build-elfs`) after a
+//! stub-backed build triggers a rebuild.
 
 use std::{
     env, fs,
@@ -54,6 +77,12 @@ fn main() {
 
     for entry in &manifest.elfs {
         let env_name = elf_env_var(&entry.name);
+        // Always track the expected real ELF path so that populating the
+        // cache after a stub-backed build (e.g. `just succinct build-elfs`)
+        // invalidates this crate and triggers a rebuild.
+        let expected_path = cache_dir.join(&entry.name);
+        println!("cargo:rerun-if-changed={}", expected_path.display());
+
         let resolved = if force_stub {
             write_stub(&out_dir, &entry.name)
         } else {
@@ -77,7 +106,6 @@ fn main() {
                 }
             }
         };
-        println!("cargo:rerun-if-changed={}", resolved.display());
         println!("cargo:rustc-env={}={}", env_name, resolved.display());
     }
 }
