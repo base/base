@@ -180,17 +180,24 @@ where
                     debug!("flush signal received, force-closed channel");
                 }
                 DriverEvent::Reorg(head) => {
-                    let safe_head = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
-                    let catchup_from = safe_head + 1;
-                    warn!(
-                        reorg_head = %head.block_info.number,
-                        safe_head = %safe_head,
-                        catchup_from = %catchup_from,
-                        "L2 reorg detected, resetting pipeline and catching up from safe head"
-                    );
                     self.submissions.discard();
                     self.pipeline.reset();
-                    self.source.reset_catchup(catchup_from);
+                    if let Some(rx) = self.safe_head_rx.as_ref() {
+                        let safe_head = *rx.borrow();
+                        let catchup_from = safe_head + 1;
+                        warn!(
+                            reorg_head = %head.block_info.number,
+                            safe_head = %safe_head,
+                            catchup_from = %catchup_from,
+                            "L2 reorg detected, resetting pipeline and catching up from safe head"
+                        );
+                        self.source.reset_catchup(catchup_from);
+                    } else {
+                        warn!(
+                            reorg_head = %head.block_info.number,
+                            "L2 reorg detected but safe-head receiver is unavailable; resetting pipeline without catchup"
+                        );
+                    }
                 }
                 DriverEvent::Receipt(ids, o) => {
                     self.submissions.handle_outcome(&mut self.pipeline, ids, o);
@@ -253,18 +260,26 @@ where
                 debug!(block = %number, "added unsafe block to pipeline");
             }
             Err((e, _block)) => {
-                let safe_head = self.safe_head_rx.as_ref().map(|rx| *rx.borrow()).unwrap_or(0);
-                let catchup_from = safe_head + 1;
-                warn!(
-                    block = %number,
-                    safe_head = %safe_head,
-                    catchup_from = %catchup_from,
-                    error = %e,
-                    "reorg detected during block ingestion, resetting pipeline and catching up from safe head"
-                );
                 self.submissions.discard();
                 self.pipeline.reset();
-                self.source.reset_catchup(catchup_from);
+                if let Some(rx) = self.safe_head_rx.as_ref() {
+                    let safe_head = *rx.borrow();
+                    let catchup_from = safe_head + 1;
+                    warn!(
+                        block = %number,
+                        safe_head = %safe_head,
+                        catchup_from = %catchup_from,
+                        error = %e,
+                        "reorg detected during block ingestion, resetting pipeline and catching up from safe head"
+                    );
+                    self.source.reset_catchup(catchup_from);
+                } else {
+                    warn!(
+                        block = %number,
+                        error = %e,
+                        "reorg detected during block ingestion but safe-head receiver is unavailable; resetting pipeline without catchup"
+                    );
+                }
             }
         }
     }
