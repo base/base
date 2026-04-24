@@ -1070,6 +1070,7 @@ impl<C: Clock> BondManager<C> {
             Ok(tx_hash) => {
                 info!(
                     game = %game_address,
+                    asr = %asr_address,
                     tx_hash = %tx_hash,
                     "anchor state registry updated"
                 );
@@ -1084,6 +1085,7 @@ impl<C: Clock> BondManager<C> {
             Err(e) => {
                 debug!(
                     game = %game_address,
+                    asr = %asr_address,
                     error = %e,
                     "anchor state update failed, will retry"
                 );
