@@ -135,6 +135,17 @@ impl TryFrom<&str> for SessionType {
     }
 }
 
+/// Outcome of attempting to retry or fail a stuck proof request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryOutcome {
+    /// Request was reset to CREATED with incremented `retry_count`.
+    Retried,
+    /// Request was permanently marked FAILED (max retries exceeded).
+    PermanentlyFailed,
+    /// Request was no longer in PENDING state (already claimed or transitioned).
+    Skipped,
+}
+
 /// Type of proof that determines success criteria
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR")]
@@ -232,6 +243,8 @@ pub struct ProofRequest {
     pub updated_at: DateTime<Utc>,
     /// Timestamp when the proof completed (success or failure).
     pub completed_at: Option<DateTime<Utc>>,
+    /// Number of times this request has been retried after getting stuck.
+    pub retry_count: i32,
 }
 
 /// A proof session record tracking a specific backend job (STARK or SNARK)

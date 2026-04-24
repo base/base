@@ -177,6 +177,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             completed_at: Some(now),
+            retry_count: 0,
         }
     }
 

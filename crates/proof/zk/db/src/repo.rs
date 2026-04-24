@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     CreateOutboxEntry, CreateProofRequest, CreateProofSession, MarkOutboxError,
     MarkOutboxProcessed, OutboxEntry, ProofRequest, ProofSession, ProofStatus, ProofType,
-    SessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
+    RetryOutcome, SessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
 };
 
 /// Repository for proof request database operations
@@ -68,17 +68,27 @@ impl ProofRequestRepo {
     pub async fn create_with_outbox(&self, req: CreateProofRequest) -> Result<Uuid> {
         let id = req.session_id.unwrap_or_else(Uuid::new_v4);
 
-        // Serialize request params as JSON for outbox
-        let request_params = serde_json::json!({
-            "start_block_number": req.start_block_number,
-            "number_of_blocks_to_prove": req.number_of_blocks_to_prove,
-            "sequence_window": req.sequence_window,
-            "proof_type": req.proof_type.as_str(),
-            "prover_address": req.prover_address,
-            "l1_head": req.l1_head,
-        });
+        let start_block_number = i64::try_from(req.start_block_number)
+            .map_err(|_| sqlx::Error::Protocol("block number exceeds i64 range".into()))?;
+        let number_of_blocks_to_prove = i64::try_from(req.number_of_blocks_to_prove)
+            .map_err(|_| sqlx::Error::Protocol("blocks to prove exceeds i64 range".into()))?;
+        let sequence_window = req
+            .sequence_window
+            .map(|w| {
+                i64::try_from(w)
+                    .map_err(|_| sqlx::Error::Protocol("sequence window exceeds i64 range".into()))
+            })
+            .transpose()?;
 
-        // Start transaction
+        let request_params = build_outbox_params(
+            start_block_number,
+            number_of_blocks_to_prove,
+            sequence_window,
+            req.proof_type.as_str(),
+            req.prover_address.as_deref(),
+            req.l1_head.as_deref(),
+        );
+
         let mut tx = self.pool.begin().await?;
 
         let result = sqlx::query(
@@ -92,23 +102,9 @@ impl ProofRequestRepo {
             "#,
         )
         .bind(id)
-        .bind(
-            i64::try_from(req.start_block_number)
-                .map_err(|_| sqlx::Error::Protocol("block number exceeds i64 range".into()))?,
-        )
-        .bind(
-            i64::try_from(req.number_of_blocks_to_prove)
-                .map_err(|_| sqlx::Error::Protocol("blocks to prove exceeds i64 range".into()))?,
-        )
-        .bind(
-            req.sequence_window
-                .map(|w| {
-                    i64::try_from(w).map_err(|_| {
-                        sqlx::Error::Protocol("sequence window exceeds i64 range".into())
-                    })
-                })
-                .transpose()?,
-        )
+        .bind(start_block_number)
+        .bind(number_of_blocks_to_prove)
+        .bind(sequence_window)
         .bind(req.proof_type.as_str())
         .bind(ProofStatus::Created.as_str())
         .bind(&req.prover_address)
@@ -148,7 +144,7 @@ impl ProofRequestRepo {
                 stark_receipt, snark_receipt,
                 status, error_message,
                 prover_address, l1_head,
-                created_at, updated_at, completed_at
+                created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE id = $1
             "#,
@@ -160,108 +156,34 @@ impl ProofRequestRepo {
         row.map(|r| row_to_proof_request(&r)).transpose()
     }
 
-    /// Update a proof request with receipt
-    pub async fn update_receipt(&self, update: UpdateReceipt) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET
-                stark_receipt = COALESCE($1, stark_receipt),
-                snark_receipt = COALESCE($2, snark_receipt),
-                status = $3,
-                error_message = $4,
-                completed_at = CASE WHEN $3 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE id = $5
-            "#,
-        )
-        .bind(&update.stark_receipt)
-        .bind(&update.snark_receipt)
-        .bind(update.status.as_str())
-        .bind(&update.error_message)
-        .bind(update.id)
-        .execute(&self.pool)
-        .await?;
+    /// Update receipt fields while the request is still RUNNING.
+    /// Status is kept as RUNNING — this method cannot be used for state transitions.
+    /// Returns true if update succeeded, false otherwise.
+    pub async fn update_receipt_if_running(&self, update: UpdateReceipt) -> Result<bool> {
+        debug_assert_eq!(
+            update.status,
+            ProofStatus::Running,
+            "update_receipt_if_running is for intermediate receipt updates only; \
+             use transition_running_to_succeeded or fail_session_and_request for state transitions",
+        );
 
-        Ok(())
-    }
-
-    /// Update status and error message
-    pub async fn update_status(
-        &self,
-        id: Uuid,
-        status: ProofStatus,
-        error_message: Option<String>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET
-                status = $1,
-                error_message = $2,
-                completed_at = CASE WHEN $1 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE id = $3
-            "#,
-        )
-        .bind(status.as_str())
-        .bind(&error_message)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Update receipt only if current status is non-terminal (PENDING/RUNNING).
-    /// Returns true if update succeeded, false if already terminal.
-    pub async fn update_receipt_if_non_terminal(&self, update: UpdateReceipt) -> Result<bool> {
         let result = sqlx::query(
             r#"
             UPDATE proof_requests
             SET
                 stark_receipt = COALESCE($1, stark_receipt),
                 snark_receipt = COALESCE($2, snark_receipt),
-                status = $3,
-                error_message = $4,
-                completed_at = CASE WHEN $3 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE id = $5
-              AND status NOT IN ('SUCCEEDED', 'FAILED')
+                status = 'RUNNING',
+                error_message = $3,
+                completed_at = NULL
+            WHERE id = $4
+              AND status = 'RUNNING'
             "#,
         )
         .bind(&update.stark_receipt)
         .bind(&update.snark_receipt)
-        .bind(update.status.as_str())
         .bind(&update.error_message)
         .bind(update.id)
-        .execute(&self.pool)
-        .await?;
-
-        let updated = result.rows_affected() > 0;
-
-        Ok(updated)
-    }
-
-    /// Update status only if current status is non-terminal.
-    /// Returns true if update succeeded, false if already terminal.
-    pub async fn update_status_if_non_terminal(
-        &self,
-        id: Uuid,
-        status: ProofStatus,
-        error_message: Option<String>,
-    ) -> Result<bool> {
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET
-                status = $1,
-                error_message = $2,
-                completed_at = CASE WHEN $1 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE id = $3
-              AND status NOT IN ('SUCCEEDED', 'FAILED')
-            "#,
-        )
-        .bind(status.as_str())
-        .bind(&error_message)
-        .bind(id)
         .execute(&self.pool)
         .await?;
 
@@ -290,6 +212,258 @@ impl ProofRequestRepo {
         let claimed = result.rows_affected() > 0;
 
         Ok(claimed)
+    }
+
+    /// Atomically create a proof session and transition proof request PENDING → RUNNING.
+    /// Returns `Ok(Some(session_id))` if the request was in PENDING state.
+    /// Returns `Ok(None)` if the request was NOT in PENDING state (race lost).
+    pub async fn transition_pending_to_running(
+        &self,
+        session: CreateProofSession,
+    ) -> Result<Option<i64>> {
+        let mut tx = self.pool.begin().await?;
+
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_requests
+            SET status = $1
+            WHERE id = $2 AND status = $3
+            "#,
+        )
+        .bind(ProofStatus::Running.as_str())
+        .bind(session.proof_request_id)
+        .bind(ProofStatus::Pending.as_str())
+        .execute(&mut *tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+
+        let row = sqlx::query(
+            r#"
+            INSERT INTO proof_sessions (
+                proof_request_id, session_type, backend_session_id, status, metadata
+            )
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
+            "#,
+        )
+        .bind(session.proof_request_id)
+        .bind(session.session_type.as_str())
+        .bind(&session.backend_session_id)
+        .bind(SessionStatus::Running.as_str())
+        .bind(&session.metadata)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let session_id: i64 = row.get("id");
+        tx.commit().await?;
+
+        Ok(Some(session_id))
+    }
+
+    /// Transition proof request PENDING → FAILED with error message.
+    /// Returns true if the transition succeeded (was PENDING).
+    pub async fn transition_pending_to_failed(
+        &self,
+        id: Uuid,
+        error_message: String,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_requests
+            SET status = $1,
+                error_message = $2,
+                completed_at = NOW()
+            WHERE id = $3 AND status = $4
+            "#,
+        )
+        .bind(ProofStatus::Failed.as_str())
+        .bind(&error_message)
+        .bind(id)
+        .bind(ProofStatus::Pending.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Transition proof request RUNNING → FAILED with optional error message.
+    /// Returns true if the transition succeeded (was RUNNING).
+    pub async fn transition_running_to_failed(
+        &self,
+        id: Uuid,
+        error_message: Option<String>,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_requests
+            SET status = $1,
+                error_message = $2,
+                completed_at = NOW()
+            WHERE id = $3 AND status = $4
+            "#,
+        )
+        .bind(ProofStatus::Failed.as_str())
+        .bind(&error_message)
+        .bind(id)
+        .bind(ProofStatus::Running.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Transition proof request RUNNING → SUCCEEDED with receipt data.
+    /// Returns true if the transition succeeded (was RUNNING).
+    pub async fn transition_running_to_succeeded(&self, update: UpdateReceipt) -> Result<bool> {
+        debug_assert_eq!(
+            update.status,
+            ProofStatus::Succeeded,
+            "transition_running_to_succeeded called with status {:?}; the status field is ignored \
+             — this method always writes SUCCEEDED",
+            update.status,
+        );
+
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_requests
+            SET stark_receipt = COALESCE($1, stark_receipt),
+                snark_receipt = COALESCE($2, snark_receipt),
+                status = $3,
+                error_message = $4,
+                completed_at = NOW()
+            WHERE id = $5 AND status = $6
+            "#,
+        )
+        .bind(&update.stark_receipt)
+        .bind(&update.snark_receipt)
+        .bind(ProofStatus::Succeeded.as_str())
+        .bind(&update.error_message)
+        .bind(update.id)
+        .bind(ProofStatus::Running.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Retry a stuck PENDING request if under the retry limit, otherwise fail it permanently.
+    ///
+    /// If `retry_count < max_retries`: atomically resets to CREATED, increments `retry_count`,
+    /// and creates a new outbox entry so a worker picks it up again.
+    /// If `retry_count >= max_retries`: transitions to FAILED.
+    pub async fn retry_or_fail_stuck_request(
+        &self,
+        id: Uuid,
+        max_retries: i32,
+        error_message: &str,
+    ) -> Result<RetryOutcome> {
+        let mut tx = self.pool.begin().await?;
+
+        let maybe_row = sqlx::query(
+            r#"
+            SELECT retry_count, status, start_block_number, number_of_blocks_to_prove,
+                   sequence_window, proof_type, prover_address, l1_head
+            FROM proof_requests
+            WHERE id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some(row) = maybe_row else {
+            tx.rollback().await?;
+            return Ok(RetryOutcome::Skipped);
+        };
+
+        let status_str: &str = row.get("status");
+        if status_str != ProofStatus::Pending.as_str() {
+            tx.rollback().await?;
+            return Ok(RetryOutcome::Skipped);
+        }
+
+        let retry_count: i32 = row.get("retry_count");
+
+        if retry_count >= max_retries {
+            sqlx::query(
+                r#"
+                UPDATE proof_requests
+                SET status = $1,
+                    error_message = $2,
+                    completed_at = NOW()
+                WHERE id = $3
+                "#,
+            )
+            .bind(ProofStatus::Failed.as_str())
+            .bind(format!("{error_message} (max retries exceeded after {retry_count} attempts)"))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            return Ok(RetryOutcome::PermanentlyFailed);
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE proof_requests
+            SET status = $1,
+                retry_count = retry_count + 1,
+                error_message = NULL
+            WHERE id = $2
+            "#,
+        )
+        .bind(ProofStatus::Created.as_str())
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+        // Copy the most recent outbox entry for this request. If the outbox was
+        // already cleaned up (0 rows), reconstruct request_params from the
+        // proof_request row we hold under FOR UPDATE.
+        let outbox_copy = sqlx::query(
+            r#"
+            INSERT INTO proof_request_outbox (proof_request_id, request_params)
+            SELECT proof_request_id, request_params
+            FROM proof_request_outbox
+            WHERE proof_request_id = $1
+            ORDER BY sequence_id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+        if outbox_copy.rows_affected() == 0 {
+            let request_params = build_outbox_params(
+                row.get::<i64, _>("start_block_number"),
+                row.get::<i64, _>("number_of_blocks_to_prove"),
+                row.get::<Option<i64>, _>("sequence_window"),
+                row.get::<&str, _>("proof_type"),
+                row.get::<Option<&str>, _>("prover_address"),
+                row.get::<Option<&str>, _>("l1_head"),
+            );
+
+            sqlx::query(
+                r#"
+                INSERT INTO proof_request_outbox (proof_request_id, request_params)
+                VALUES ($1, $2)
+                "#,
+            )
+            .bind(id)
+            .bind(&request_params)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(RetryOutcome::Retried)
     }
 
     // ========== Proof Session Methods ==========
@@ -383,7 +557,7 @@ impl ProofRequestRepo {
             SELECT id, start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, stark_receipt, snark_receipt,
                    status, error_message, prover_address, l1_head,
-                   created_at, updated_at, completed_at
+                   created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE status = $1
             ORDER BY created_at ASC
@@ -396,8 +570,10 @@ impl ProofRequestRepo {
         rows.iter().map(row_to_proof_request).collect()
     }
 
-    /// Get proof requests that are stuck in PENDING without any sessions.
+    /// Get proof requests that are stuck in PENDING without a running session.
     /// These are likely orphaned due to crashes before session creation.
+    /// Only checks for active (RUNNING) sessions so that retried requests
+    /// with old COMPLETED/FAILED sessions are still detected as stuck.
     pub async fn get_stuck_requests(&self, stuck_timeout_mins: i32) -> Result<Vec<ProofRequest>> {
         let rows = sqlx::query(
             r#"
@@ -405,13 +581,14 @@ impl ProofRequestRepo {
                 pr.id, pr.start_block_number, pr.number_of_blocks_to_prove,
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
-                pr.created_at, pr.updated_at, pr.completed_at
+                pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
             WHERE pr.status = 'PENDING'
               AND pr.updated_at < NOW() - INTERVAL '1 minute' * $1
               AND NOT EXISTS (
                   SELECT 1 FROM proof_sessions ps
                   WHERE ps.proof_request_id = pr.id
+                    AND ps.status = 'RUNNING'
               )
             ORDER BY pr.created_at ASC
             "#,
@@ -473,53 +650,16 @@ impl ProofRequestRepo {
         Ok(updated)
     }
 
-    /// Atomically create a proof session and update proof request to RUNNING
-    pub async fn create_session_and_update_status(
-        &self,
-        session: CreateProofSession,
-        status: ProofStatus,
-    ) -> Result<i64> {
-        let mut tx = self.pool.begin().await?;
-
-        // Insert proof session
-        let row = sqlx::query(
-            r#"
-            INSERT INTO proof_sessions (
-                proof_request_id, session_type, backend_session_id, status, metadata
-            )
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id
-            "#,
-        )
-        .bind(session.proof_request_id)
-        .bind(session.session_type.as_str())
-        .bind(&session.backend_session_id)
-        .bind(SessionStatus::Running.as_str())
-        .bind(&session.metadata)
-        .fetch_one(&mut *tx)
-        .await?;
-
-        let session_id: i64 = row.get("id");
-
-        // Update proof request status
-        sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET status = $1
-            WHERE id = $2
-            "#,
-        )
-        .bind(status.as_str())
-        .bind(session.proof_request_id)
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-
-        Ok(session_id)
-    }
-
-    /// Atomically update proof session to FAILED and proof request to FAILED
+    /// Atomically update proof session to FAILED and proof request RUNNING → FAILED.
+    ///
+    /// The request update is guarded on `status = 'RUNNING'` so that a
+    /// concurrent stuck-detector marking PENDING → FAILED cannot be
+    /// overwritten. If the guard fails the entire transaction is rolled back
+    /// so the session is not left in an inconsistent `FAILED` state while the
+    /// request remains unchanged.
+    ///
+    /// Returns `true` if both updates were applied, `false` if the request was
+    /// not in RUNNING state (transaction rolled back, no changes persisted).
     pub async fn fail_session_and_request(
         &self,
         backend_session_id: &str,
@@ -528,7 +668,27 @@ impl ProofRequestRepo {
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
 
-        // Update proof session to FAILED
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_requests
+            SET status = $1,
+                error_message = $2,
+                completed_at = NOW()
+            WHERE id = $3
+              AND status = 'RUNNING'
+            "#,
+        )
+        .bind(ProofStatus::Failed.as_str())
+        .bind(&error_message)
+        .bind(proof_request_id)
+        .execute(&mut *tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
         sqlx::query(
             r#"
             UPDATE proof_sessions
@@ -544,31 +704,21 @@ impl ProofRequestRepo {
         .execute(&mut *tx)
         .await?;
 
-        // Update proof request to FAILED (only if not already terminal)
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET status = $1,
-                error_message = $2,
-                completed_at = NOW()
-            WHERE id = $3
-              AND status NOT IN ('SUCCEEDED', 'FAILED')
-            "#,
-        )
-        .bind(ProofStatus::Failed.as_str())
-        .bind(&error_message)
-        .bind(proof_request_id)
-        .execute(&mut *tx)
-        .await?;
-
-        let updated = result.rows_affected() > 0;
-
         tx.commit().await?;
 
-        Ok(updated)
+        Ok(true)
     }
 
-    /// Atomically update proof session to COMPLETED and update proof request with receipt
+    /// Atomically update proof session to COMPLETED and update proof request
+    /// with the receipt.
+    ///
+    /// The request update is guarded on `status = 'RUNNING'`. If the guard
+    /// fails the entire transaction is rolled back so the session is not left
+    /// in an inconsistent `COMPLETED` state while the request remains
+    /// unchanged.
+    ///
+    /// Returns `true` if both updates were applied, `false` if the request was
+    /// not in RUNNING state (transaction rolled back, no changes persisted).
     pub async fn complete_session_and_update_receipt(
         &self,
         backend_session_id: &str,
@@ -576,7 +726,32 @@ impl ProofRequestRepo {
     ) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
 
-        // Update proof session to COMPLETED
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_requests
+            SET
+                stark_receipt = COALESCE($1, stark_receipt),
+                snark_receipt = COALESCE($2, snark_receipt),
+                status = $3,
+                error_message = $4,
+                completed_at = CASE WHEN $3 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
+            WHERE id = $5
+              AND status = 'RUNNING'
+            "#,
+        )
+        .bind(&update_receipt.stark_receipt)
+        .bind(&update_receipt.snark_receipt)
+        .bind(update_receipt.status.as_str())
+        .bind(&update_receipt.error_message)
+        .bind(update_receipt.id)
+        .execute(&mut *tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
         sqlx::query(
             r#"
             UPDATE proof_sessions
@@ -590,33 +765,9 @@ impl ProofRequestRepo {
         .execute(&mut *tx)
         .await?;
 
-        // Update proof request with receipt (only if not already terminal)
-        let result = sqlx::query(
-            r#"
-            UPDATE proof_requests
-            SET
-                stark_receipt = COALESCE($1, stark_receipt),
-                snark_receipt = COALESCE($2, snark_receipt),
-                status = $3,
-                error_message = $4,
-                completed_at = CASE WHEN $3 IN ('SUCCEEDED', 'FAILED') THEN NOW() ELSE completed_at END
-            WHERE id = $5
-              AND status NOT IN ('SUCCEEDED', 'FAILED')
-            "#,
-        )
-        .bind(&update_receipt.stark_receipt)
-        .bind(&update_receipt.snark_receipt)
-        .bind(update_receipt.status.as_str())
-        .bind(&update_receipt.error_message)
-        .bind(update_receipt.id)
-        .execute(&mut *tx)
-        .await?;
-
-        let updated = result.rows_affected() > 0;
-
         tx.commit().await?;
 
-        Ok(updated)
+        Ok(true)
     }
 
     /// List all proof requests with optional status filter
@@ -634,7 +785,7 @@ impl ProofRequestRepo {
                     stark_receipt, snark_receipt,
                     status, error_message,
                     prover_address, l1_head,
-                    created_at, updated_at, completed_at
+                    created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 WHERE status = $1
                 ORDER BY created_at DESC
@@ -654,7 +805,7 @@ impl ProofRequestRepo {
                     stark_receipt, snark_receipt,
                     status, error_message,
                     prover_address, l1_head,
-                    created_at, updated_at, completed_at
+                    created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 ORDER BY created_at DESC
                 LIMIT $1
@@ -798,6 +949,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
+        retry_count: row.get("retry_count"),
     })
 }
 
@@ -823,6 +975,29 @@ fn row_to_proof_session(row: &sqlx::postgres::PgRow) -> Result<ProofSession> {
         metadata: row.get("metadata"),
         created_at: row.get("created_at"),
         completed_at: row.get("completed_at"),
+    })
+}
+
+/// Build the canonical JSON payload for outbox entries.
+///
+/// Both [`ProofRequestRepo::create_with_outbox`] and
+/// [`ProofRequestRepo::retry_or_fail_stuck_request`] must produce the same
+/// shape so the downstream worker can parse either identically.
+fn build_outbox_params(
+    start_block_number: i64,
+    number_of_blocks_to_prove: i64,
+    sequence_window: Option<i64>,
+    proof_type: &str,
+    prover_address: Option<&str>,
+    l1_head: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "start_block_number": start_block_number,
+        "number_of_blocks_to_prove": number_of_blocks_to_prove,
+        "sequence_window": sequence_window,
+        "proof_type": proof_type,
+        "prover_address": prover_address,
+        "l1_head": l1_head,
     })
 }
 
