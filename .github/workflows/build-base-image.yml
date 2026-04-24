@@ -64,33 +64,27 @@ jobs:
           curl -L https://sp1up.succinct.xyz | bash
           "$HOME/.sp1/bin/sp1up" --version "$SP1_VERSION"
 
-      - name: Pin tools into /usr/local/bin
+      - name: Persist CI environment
         shell: bash
         run: |
           set -euo pipefail
 
-          tools=(
-            cargo
-            rustc
-            rustup
-            cargo-clippy
-            cargo-fmt
-            rustfmt
-            mold
-            sccache
-            just
-            cargo-nextest
-            forge
-            cast
-            anvil
-            chisel
-            cargo-prove
-            sp1up
-          )
+          cargo_bin="${HOME}/.cargo/bin"
+          foundry_bin="${HOME}/.foundry/bin"
+          sp1_bin="${HOME}/.sp1/bin"
+          llvm_bin="$(command -v llvm-config || ls /usr/bin/llvm-config-* 2>/dev/null | sort -V | tail -1)"
+          llvm_libdir="$("$llvm_bin" --libdir)"
+          path_prefix="${cargo_bin}:${foundry_bin}:${sp1_bin}"
 
-          for tool in "${tools[@]}"; do
-            sudo ln -sf "$(command -v "$tool")" "/usr/local/bin/$tool"
-          done
+          cat <<EOF | sudo tee /etc/profile.d/base-rust-ci.sh >/dev/null
+          export PATH="${path_prefix}:\$PATH"
+          export LIBCLANG_PATH="${llvm_libdir}"
+          EOF
+
+          cat <<EOF | sudo tee /etc/environment >/dev/null
+          PATH="${path_prefix}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          LIBCLANG_PATH="${llvm_libdir}"
+          EOF
 
       - name: Verify installed tools
         run: |
