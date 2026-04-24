@@ -136,4 +136,16 @@ pub struct ChallengerArgs {
         value_delimiter = ','
     )]
     pub bond_claim_addresses: Vec<Address>,
+
+    /// Address of the `AnchorStateRegistry` contract on L1 (optional).
+    ///
+    /// When set, the challenger will call `setAnchorState()` on resolved
+    /// `DEFENDER_WINS` games to advance the anchor root. Requires
+    /// `--bond-claim-addresses` to be configured (anchor updates are
+    /// performed as part of the bond lifecycle).
+    #[arg(
+        long = "anchor-state-registry-address",
+        env = cli_env!("ANCHOR_STATE_REGISTRY_ADDRESS")
+    )]
+    pub anchor_state_registry_address: Option<Address>,
 }

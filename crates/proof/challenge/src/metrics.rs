@@ -103,6 +103,10 @@ base_metrics::define_metrics! {
     #[label(name = "error_type", default = ["game_fetch", "bond_read", "phase_read"])]
     bond_evaluation_errors_total: counter,
 
+    #[describe("Total anchor state update transaction outcomes")]
+    #[label(name = "status", default = ["success", "error", "skipped"])]
+    anchor_update_tx_outcome_total: counter,
+
     #[describe("Challenger account balance in wei")]
     account_balance_wei: gauge,
 }
@@ -120,6 +124,9 @@ impl ChallengerMetrics {
     /// Label value when a resolve was skipped because the game was already
     /// resolved on-chain (e.g. by another actor).
     pub const STATUS_ALREADY_RESOLVED: &str = "already_resolved";
+
+    /// Label value when an anchor update was skipped (game not eligible).
+    pub const STATUS_SKIPPED: &str = "skipped";
 
     /// Label value for a game fetch failure during bond evaluation.
     pub const EVAL_ERROR_GAME_FETCH: &str = "game_fetch";

@@ -1185,6 +1185,7 @@ fn default_bond_manager(claim_addr: Address) -> BondManager<TokioRuntime> {
         empty_factory(),
         1000,
         TEST_DISCOVERY_INTERVAL,
+        None,
         TokioRuntime::new(),
     );
     mgr.set_weth_delay(Duration::from_secs(0));
