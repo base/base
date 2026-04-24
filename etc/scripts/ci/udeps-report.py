@@ -65,10 +65,19 @@ def render_report(args: argparse.Namespace) -> int:
         "",
         f"- Updated at: {datetime.now(timezone.utc).isoformat()}",
         f"- Workflow run: {args.server_url}/{args.repository}/actions/runs/{args.run_id}",
+        f"- cargo-udeps exit status: `{args.status}`",
         "",
         "## Findings",
         "",
     ]
+
+    if args.status != 0:
+        lines.extend(
+            [
+                "> Warning: `cargo udeps` exited non-zero after emitting JSON output. Treat the findings below as incomplete until the workflow failure is investigated.",
+                "",
+            ]
+        )
 
     for package, details in sorted(unused.items()):
         package_name = package.split(" ", 1)[0]
@@ -89,6 +98,8 @@ def render_report(args: argparse.Namespace) -> int:
     with args.github_output.open("a", encoding="utf-8") as fh:
         fh.write(f"has_findings={'true' if has_findings else 'false'}\n")
         fh.write(f"finding_count={len(unused)}\n")
+        fh.write(f"command_failed={'true' if args.status != 0 else 'false'}\n")
+        fh.write(f"command_status={args.status}\n")
 
     return 0
 

@@ -100,12 +100,18 @@ jobs:
         env:
           FINDINGS: ${{ steps.udeps.outputs.has_findings }}
           FINDING_COUNT: ${{ steps.udeps.outputs.finding_count }}
+          COMMAND_FAILED: ${{ steps.udeps.outputs.command_failed }}
+          COMMAND_STATUS: ${{ steps.udeps.outputs.command_status }}
           ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
           ISSUE_URL: ${{ steps.issue.outputs.url }}
         run: |
           echo "## Udeps Report" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Findings detected: \`${FINDINGS}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- cargo-udeps command failed: \`${COMMAND_FAILED}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$COMMAND_STATUS" ]]; then
+            echo "- cargo-udeps exit status: \`${COMMAND_STATUS}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [[ -n "$FINDING_COUNT" ]]; then
             echo "- Packages with findings: \`${FINDING_COUNT}\`" >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -115,3 +121,9 @@ jobs:
           if [[ -n "$ISSUE_URL" ]]; then
             echo "- Issue URL: $ISSUE_URL" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Fail on cargo udeps command error
+        if: steps.udeps.outputs.command_failed == 'true'
+        run: |
+          echo "cargo udeps exited with status ${{ steps.udeps.outputs.command_status }}" >&2
+          exit 1
