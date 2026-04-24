@@ -85,6 +85,11 @@ pub struct TrackedGame {
     /// `setAnchorState()` call or when the game is not eligible
     /// (e.g. `CHALLENGER_WINS`).
     pub anchor_update_complete: bool,
+    /// Cached on-chain game status (`0` = in progress, `1` = challenger
+    /// wins, `2` = defender wins). Populated on the first successful
+    /// `status()` RPC read; subsequent ticks reuse the cached value
+    /// because the status is immutable after resolution.
+    pub cached_status: Option<u8>,
 }
 
 /// Manages the bond claim lifecycle for dispute games.
@@ -219,6 +224,7 @@ impl<C: Clock> BondManager<C> {
                 phase: BondPhase::NeedsResolve,
                 bond_recipient,
                 anchor_update_complete: false,
+                cached_status: None,
             },
         );
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
@@ -422,7 +428,7 @@ impl<C: Clock> BondManager<C> {
             );
             self.tracked.insert(
                 game_address,
-                TrackedGame { phase, bond_recipient, anchor_update_complete: false },
+                TrackedGame { phase, bond_recipient, anchor_update_complete: false, cached_status: None },
             );
         }
 
@@ -535,7 +541,7 @@ impl<C: Clock> BondManager<C> {
             );
             self.tracked.insert(
                 game_address,
-                TrackedGame { phase, bond_recipient, anchor_update_complete: false },
+                TrackedGame { phase, bond_recipient, anchor_update_complete: false, cached_status: None },
             );
             discovered += 1;
         }
@@ -968,15 +974,26 @@ impl<C: Clock> BondManager<C> {
         }
 
         // Only DEFENDER_WINS games can update the anchor state.
-        let status = match verifier_client.status(game_address).await {
-            Ok(s) => s,
-            Err(e) => {
-                debug!(
-                    game = %game_address,
-                    error = %e,
-                    "failed to read status for anchor update"
-                );
-                return;
+        // The status is immutable after resolution, so we cache it
+        // after the first successful RPC read to avoid redundant calls.
+        let status = if let Some(cached) = game.cached_status {
+            cached
+        } else {
+            match verifier_client.status(game_address).await {
+                Ok(s) => {
+                    if let Some(g) = self.tracked.get_mut(&game_address) {
+                        g.cached_status = Some(s);
+                    }
+                    s
+                }
+                Err(e) => {
+                    debug!(
+                        game = %game_address,
+                        error = %e,
+                        "failed to read status for anchor update"
+                    );
+                    return;
+                }
             }
         };
 
@@ -1165,6 +1182,7 @@ mod tests {
                 phase: BondPhase::AwaitingDelay { unlocked_at },
                 bond_recipient: addr,
                 anchor_update_complete: false,
+                cached_status: None,
             },
         );
 
@@ -1198,6 +1216,7 @@ mod tests {
                 phase: BondPhase::AwaitingDelay { unlocked_at },
                 bond_recipient: addr,
                 anchor_update_complete: false,
+                cached_status: None,
             },
         );
 
