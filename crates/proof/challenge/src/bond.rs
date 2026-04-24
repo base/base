@@ -699,10 +699,19 @@ impl<C: Clock> BondManager<C> {
                     // Re-read and cache the now-immutable status so that
                     // try_anchor_update (called later this tick) can use
                     // it without a redundant RPC call.
-                    if let Ok(resolved_status) = verifier_client.status(game_address).await
-                        && let Some(g) = self.tracked.get_mut(&game_address)
-                    {
-                        g.cached_status = Some(resolved_status);
+                    match verifier_client.status(game_address).await {
+                        Ok(resolved_status) => {
+                            if let Some(g) = self.tracked.get_mut(&game_address) {
+                                g.cached_status = Some(resolved_status);
+                            }
+                        }
+                        Err(e) => {
+                            debug!(
+                                game = %game_address,
+                                error = %e,
+                                "failed to cache status after resolve, will re-read later"
+                            );
+                        }
                     }
                 }
                 Err(e) => {
