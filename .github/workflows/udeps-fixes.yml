@@ -1,0 +1,132 @@
+name: Udeps Fixes
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  BASE_BRANCH: main
+  FIX_BRANCH: automation/udeps-fix
+  PR_TITLE: "chore(ci): apply cargo-udeps fixes"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  udeps-fixes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup
+        with:
+          free-disk: "true"
+          toolchain: nightly
+          native-deps: "true"
+          mold: "true"
+          foundry: "true"
+          tools: cargo-udeps
+          rust-cache-shared-key: "nightly-udeps-fixes"
+          rust-cache-save: "true"
+
+      - name: Prepare automation branch
+        run: |
+          git fetch origin "$BASE_BRANCH"
+          git checkout -B "$FIX_BRANCH" "origin/$BASE_BRANCH"
+
+      - name: Build test contracts
+        run: just build::contracts
+
+      - name: Apply udeps fixes
+        run: python3 etc/scripts/ci/udeps-fixes.py
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if [[ -n "$(git status --short)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Find existing PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr_number="$(gh pr list --head "$FIX_BRANCH" --state open --json number --jq '.[0].number // ""')"
+          pr_url="$(gh pr list --head "$FIX_BRANCH" --state open --json url --jq '.[0].url // ""')"
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Configure git
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit fixes
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git add -u
+          git -c commit.gpgsign=false commit -m "chore(ci): apply cargo-udeps fixes"
+
+      - name: Push automation branch
+        if: steps.diff.outputs.changed == 'true'
+        run: git push --force-with-lease -u origin "$FIX_BRANCH"
+
+      - name: Create PR
+        if: steps.diff.outputs.changed == 'true' && steps.pr.outputs.number == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body=$'## Summary\n\n- remove unused per-package dependencies reported by `cargo udeps`\n- remove now-unreferenced root `workspace.dependencies` entries\n- update the long-lived automation branch instead of creating one-off fix branches\n\n## Validation\n\n- `cargo +nightly udeps --locked --workspace --all-features --all-targets --output json`'
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$FIX_BRANCH" \
+            --title "$PR_TITLE" \
+            --body "$body"
+
+      - name: Close stale PR when no fixes remain
+        if: steps.diff.outputs.changed == 'false' && steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr close "${{ steps.pr.outputs.number }}" \
+            --comment "Closing because the latest scheduled cargo-udeps run produced no changes."
+
+      - name: Refresh PR state
+        id: final_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr_number="$(gh pr list --head "$FIX_BRANCH" --state open --json number --jq '.[0].number // ""')"
+          pr_url="$(gh pr list --head "$FIX_BRANCH" --state open --json url --jq '.[0].url // ""')"
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "## Udeps Fixes" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Changes produced: \`${{ steps.diff.outputs.changed }}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "${{ steps.final_pr.outputs.number }}" ]]; then
+            echo "- Open PR: #${{ steps.final_pr.outputs.number }}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -n "${{ steps.final_pr.outputs.url }}" ]]; then
+            echo "- PR URL: ${{ steps.final_pr.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          fi
