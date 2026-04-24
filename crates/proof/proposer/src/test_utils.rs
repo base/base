@@ -310,6 +310,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn delayed_weth(&self, _: Address) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
     }
+    async fn anchor_state_registry(&self, _: Address) -> Result<Address, ContractError> {
+        Ok(Address::ZERO)
+    }
 }
 
 /// Creates a test [`L1BlockRef`] with the given block number.
