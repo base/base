@@ -1,0 +1,103 @@
+name: Build Base Image
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  build-base-image:
+    runs-on:
+      group: BaseImageRunnerGroup
+    snapshot: base-perf-ci
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        with:
+          egress-policy: audit
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            libclang-dev \
+            libsqlite3-dev \
+            llvm \
+            llvm-dev \
+            pkg-config \
+            protobuf-compiler
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7
+        with:
+          toolchain: 1.93.1
+          components: clippy,rustfmt
+
+      - name: Install mold
+        uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+      - name: Install just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
+        with:
+          tool: cargo-nextest
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@50d5a8956f2e319df19e6b57539d7e2acb9f8c1e # v1.5.0
+        with:
+          version: stable
+
+      - name: Install SP1 toolchain
+        env:
+          SP1_VERSION: v6.1.0
+        run: |
+          curl -L https://sp1up.succinct.xyz | bash
+          "$HOME/.sp1/bin/sp1up" --version "$SP1_VERSION"
+
+      - name: Pin tools into /usr/local/bin
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tools=(
+            cargo
+            rustc
+            rustup
+            cargo-clippy
+            cargo-fmt
+            rustfmt
+            mold
+            sccache
+            just
+            cargo-nextest
+            forge
+            cast
+            anvil
+            chisel
+            cargo-prove
+            sp1up
+          )
+
+          for tool in "${tools[@]}"; do
+            sudo ln -sf "$(command -v "$tool")" "/usr/local/bin/$tool"
+          done
+
+      - name: Verify installed tools
+        run: |
+          rustc --version
+          cargo-nextest --version
+          just --version
+          mold --version
+          sccache --version
+          forge --version
+          cargo-prove prove --version
