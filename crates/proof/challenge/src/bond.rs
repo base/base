@@ -90,6 +90,9 @@ pub struct TrackedGame {
     /// `status()` RPC read; subsequent ticks reuse the cached value
     /// because the status is immutable after resolution.
     pub cached_status: Option<u8>,
+    /// Cached `AnchorStateRegistry` address for this game. Read from the
+    /// game contract on first use and reused thereafter (immutable per game).
+    pub cached_asr_address: Option<Address>,
 }
 
 /// Manages the bond claim lifecycle for dispute games.
@@ -132,10 +135,6 @@ pub struct BondManager<C: Clock> {
     /// How often a full rescan of the lookback window is performed to catch
     /// state transitions (games challenged or resolved by other actors).
     discovery_interval: Duration,
-    /// Address of the `AnchorStateRegistry` contract on L1. When set,
-    /// the bond manager will attempt to call `setAnchorState()` on
-    /// resolved `DEFENDER_WINS` games to advance the anchor.
-    anchor_state_registry_address: Option<Address>,
 }
 
 impl<C: Clock> BondManager<C> {
@@ -154,15 +153,11 @@ impl<C: Clock> BondManager<C> {
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         lookback: u64,
         discovery_interval: Duration,
-        anchor_state_registry_address: Option<Address>,
         clock: C,
     ) -> Self {
         let last_full_scan = clock.now();
         let set: HashSet<Address> = claim_addresses.into_iter().collect();
         info!(count = set.len(), "bond manager initialized with claim addresses");
-        if let Some(asr) = anchor_state_registry_address {
-            info!(address = %asr, "anchor state updates enabled");
-        }
         Self {
             tracked: HashMap::new(),
             claim_addresses: set,
@@ -174,7 +169,6 @@ impl<C: Clock> BondManager<C> {
             last_full_scan,
             lookback,
             discovery_interval,
-            anchor_state_registry_address,
         }
     }
 
@@ -225,6 +219,7 @@ impl<C: Clock> BondManager<C> {
                 bond_recipient,
                 anchor_update_complete: false,
                 cached_status: None,
+                cached_asr_address: None,
             },
         );
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
@@ -433,6 +428,7 @@ impl<C: Clock> BondManager<C> {
                     bond_recipient,
                     anchor_update_complete: false,
                     cached_status: None,
+                    cached_asr_address: None,
                 },
             );
         }
@@ -551,6 +547,7 @@ impl<C: Clock> BondManager<C> {
                     bond_recipient,
                     anchor_update_complete: false,
                     cached_status: None,
+                    cached_asr_address: None,
                 },
             );
             discovered += 1;
@@ -974,9 +971,11 @@ impl<C: Clock> BondManager<C> {
     /// resolved game.
     ///
     /// Only attempts the update when:
-    /// - An `anchor_state_registry_address` is configured.
     /// - The game is past the `NeedsResolve` phase (already resolved).
     /// - The game has not already had a successful anchor update.
+    ///
+    /// The ASR address is read from the game contract on first use and
+    /// cached on [`TrackedGame`] (it is immutable per game).
     ///
     /// The `setAnchorState()` call is permissionless and self-validating:
     /// the contract checks that the game is finalized (resolved + airgap
@@ -989,11 +988,6 @@ impl<C: Clock> BondManager<C> {
         verifier_client: &dyn AggregateVerifierClient,
         submitter: &dyn BondTransactionSubmitter,
     ) {
-        let asr_address = match self.anchor_state_registry_address {
-            Some(addr) => addr,
-            None => return,
-        };
-
         let game = match self.tracked.get(&game_address) {
             Some(g) => g,
             None => return,
@@ -1037,6 +1031,30 @@ impl<C: Clock> BondManager<C> {
                 .increment(1);
             return;
         }
+
+        // Resolve the ASR address from the game contract (cached after first read).
+        let asr_address = if let Some(cached) =
+            self.tracked.get(&game_address).and_then(|g| g.cached_asr_address)
+        {
+            cached
+        } else {
+            match verifier_client.anchor_state_registry(game_address).await {
+                Ok(addr) => {
+                    if let Some(g) = self.tracked.get_mut(&game_address) {
+                        g.cached_asr_address = Some(addr);
+                    }
+                    addr
+                }
+                Err(e) => {
+                    debug!(
+                        game = %game_address,
+                        error = %e,
+                        "failed to read anchorStateRegistry for anchor update"
+                    );
+                    return;
+                }
+            }
+        };
 
         let calldata = encode_set_anchor_state_calldata(game_address);
         match submitter.send_bond_tx(asr_address, calldata).await {
@@ -1155,7 +1173,6 @@ mod tests {
             empty_factory(),
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1197,7 +1214,6 @@ mod tests {
             empty_factory(),
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1211,6 +1227,7 @@ mod tests {
                 bond_recipient: addr,
                 anchor_update_complete: false,
                 cached_status: None,
+                cached_asr_address: None,
             },
         );
 
@@ -1231,7 +1248,6 @@ mod tests {
             empty_factory(),
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(3600));
@@ -1245,6 +1261,7 @@ mod tests {
                 bond_recipient: addr,
                 anchor_update_complete: false,
                 cached_status: None,
+                cached_asr_address: None,
             },
         );
 
@@ -1297,7 +1314,6 @@ mod tests {
             empty_factory(),
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         assert!(!mgr.is_enabled());
@@ -1312,7 +1328,6 @@ mod tests {
             empty_factory(),
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         assert!(mgr.is_enabled());
@@ -1352,7 +1367,6 @@ mod tests {
             factory,
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1378,7 +1392,6 @@ mod tests {
             factory,
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1399,7 +1412,6 @@ mod tests {
             factory,
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1435,7 +1447,6 @@ mod tests {
             factory,
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1456,7 +1467,6 @@ mod tests {
             factory,
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1480,7 +1490,6 @@ mod tests {
             factory,
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1505,7 +1514,6 @@ mod tests {
             factory,
             5, // lookback = 5
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1535,7 +1543,6 @@ mod tests {
             empty_factory(),
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
 
@@ -1557,7 +1564,6 @@ mod tests {
             factory,
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1612,7 +1618,6 @@ mod tests {
             empty_factory(),
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1644,7 +1649,6 @@ mod tests {
             empty_factory(),
             1000,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
 
@@ -1670,7 +1674,6 @@ mod tests {
             factory,
             lookback,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1700,7 +1703,6 @@ mod tests {
             factory,
             lookback,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1730,7 +1732,6 @@ mod tests {
             factory,
             lookback,
             TEST_DISCOVERY_INTERVAL,
-            None,
             clock,
         );
         mgr.set_weth_delay(Duration::from_secs(60));
@@ -1743,60 +1744,19 @@ mod tests {
 
     // ---- anchor state update tests ----
 
-    /// Helper that builds a `BondManager` with an ASR address configured.
-    fn make_manager_with_asr(
-        addresses: Vec<Address>,
-        asr_address: Address,
-    ) -> BondManager<FixedClock> {
-        let clock = fixed_clock(0);
-        let mut mgr = BondManager::new(
-            addresses,
-            test_l1_rpc_url(),
-            empty_factory(),
-            1000,
-            TEST_DISCOVERY_INTERVAL,
-            Some(asr_address),
-            clock,
-        );
-        mgr.set_weth_delay(Duration::from_secs(60));
-        mgr
-    }
-
-    #[tokio::test]
-    async fn anchor_update_skipped_when_no_asr_configured() {
-        let claim_addr = Address::repeat_byte(0xCC);
-        let game = addr(0);
-
-        // No ASR configured (None).
-        let mut mgr = make_manager(vec![claim_addr]);
-        mgr.track_game(game, claim_addr);
-        // Advance past NeedsResolve manually.
-        mgr.set_phase(game, BondPhase::NeedsUnlock);
-
-        let mut state = mock_state(2, Address::ZERO, 100);
-        state.bond_recipient = claim_addr;
-        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
-
-        // Submitter should not be called at all.
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        mgr.try_anchor_update(game, &*verifier, &submitter).await;
-
-        assert!(submitter.recorded_calls().is_empty());
-        assert!(!mgr.tracked.get(&game).unwrap().anchor_update_complete);
-    }
-
     #[tokio::test]
     async fn anchor_update_skipped_for_needs_resolve_phase() {
         let claim_addr = Address::repeat_byte(0xCC);
         let asr = Address::repeat_byte(0xAA);
         let game = addr(0);
 
-        let mut mgr = make_manager_with_asr(vec![claim_addr], asr);
+        let mut mgr = make_manager(vec![claim_addr]);
         mgr.track_game(game, claim_addr);
         // Game is still in NeedsResolve — should not attempt anchor update.
 
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
@@ -1812,13 +1772,14 @@ mod tests {
         let asr = Address::repeat_byte(0xAA);
         let game = addr(0);
 
-        let mut mgr = make_manager_with_asr(vec![claim_addr], asr);
+        let mut mgr = make_manager(vec![claim_addr]);
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::NeedsUnlock);
 
         // Status 1 = CHALLENGER_WINS — not eligible for anchor update.
         let mut state = mock_state(1, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
@@ -1835,13 +1796,14 @@ mod tests {
         let asr = Address::repeat_byte(0xAA);
         let game = addr(0);
 
-        let mut mgr = make_manager_with_asr(vec![claim_addr], asr);
+        let mut mgr = make_manager(vec![claim_addr]);
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::NeedsUnlock);
 
         // Status 2 = DEFENDER_WINS — eligible.
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         let tx_hash = B256::repeat_byte(0xDD);
@@ -1861,12 +1823,13 @@ mod tests {
         let asr = Address::repeat_byte(0xAA);
         let game = addr(0);
 
-        let mut mgr = make_manager_with_asr(vec![claim_addr], asr);
+        let mut mgr = make_manager(vec![claim_addr]);
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::AwaitingDelay { unlocked_at: Duration::from_secs(0) });
 
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         // First attempt fails (e.g. airgap not elapsed → tx reverted).
@@ -1885,12 +1848,13 @@ mod tests {
         let asr = Address::repeat_byte(0xAA);
         let game = addr(0);
 
-        let mut mgr = make_manager_with_asr(vec![claim_addr], asr);
+        let mut mgr = make_manager(vec![claim_addr]);
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::NeedsUnlock);
 
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         // First call succeeds.

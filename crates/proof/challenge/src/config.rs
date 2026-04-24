@@ -111,8 +111,6 @@ pub struct ChallengerConfig {
     pub bond_discovery_interval: Duration,
     /// Addresses to claim bonds on behalf of.
     pub bond_claim_addresses: Vec<Address>,
-    /// Address of the `AnchorStateRegistry` contract on L1 (optional).
-    pub anchor_state_registry_address: Option<Address>,
     /// Health server socket address.
     pub health_addr: SocketAddr,
     /// Logging configuration (from base-cli-utils).
@@ -218,7 +216,6 @@ impl ChallengerConfig {
             lookback_games: cli.challenger.lookback_games,
             bond_discovery_interval: cli.challenger.bond_discovery_interval,
             bond_claim_addresses: cli.challenger.bond_claim_addresses,
-            anchor_state_registry_address: cli.challenger.anchor_state_registry_address,
             health_addr,
             log: LogConfig::from(cli.logging),
             metrics: cli.metrics.into(),

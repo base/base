@@ -161,7 +161,6 @@ impl ChallengerService {
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
                 config.lookback_games,
                 config.bond_discovery_interval,
-                config.anchor_state_registry_address,
                 TokioRuntime::new(),
             );
             info!("starting bond recovery scan");
@@ -176,12 +175,6 @@ impl ChallengerService {
             info!(tracked = bm.tracked_count(), "bond manager ready");
             Some(bm)
         } else {
-            if config.anchor_state_registry_address.is_some() {
-                warn!(
-                    "anchor-state-registry-address is set but bond-claim-addresses is empty; \
-                     anchor state updates require the bond manager and will be skipped"
-                );
-            }
             info!("bond claiming disabled (no --bond-claim-addresses)");
             None
         };
