@@ -23,8 +23,8 @@ base-zk-service.workspace = true
 base-zk-client = { workspace = true, features = ["server"] }
 
 # Workspace – Succinct / SP1
-base-succinct-host-utils.workspace = true
-base-succinct-proof-utils.workspace = true
+base-proof-succinct-host-utils.workspace = true
+base-proof-succinct-proof-utils.workspace = true
 sp1-cluster-common.workspace = true
 sp1-cluster-artifact.workspace = true
 sp1-sdk.workspace = true

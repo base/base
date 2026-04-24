@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-exclude = ["bin/prover", "crates/succinct/programs"]
+exclude = ["bin/prover", "crates/proof/succinct/programs"]
 members = [
   "bin/*",
   "bin/prover/nitro-host",
@@ -41,16 +41,16 @@ members = [
   "crates/proof/rpc",
   "crates/proof/proposer",
   "crates/proof/challenge",
-  "crates/succinct/utils/client",
-  "crates/succinct/utils/host",
-  "crates/succinct/utils/build",
-  "crates/succinct/utils/proof",
-  "crates/succinct/utils/signer",
-  "crates/succinct/utils/elfs",
-  "crates/succinct/utils/ethereum/client",
-  "crates/succinct/utils/ethereum/host",
-  "crates/succinct/scripts/*",
-  "crates/succinct/validity",
+  "crates/proof/succinct/utils/client",
+  "crates/proof/succinct/utils/host",
+  "crates/proof/succinct/utils/build",
+  "crates/proof/succinct/utils/proof",
+  "crates/proof/succinct/utils/signer",
+  "crates/proof/succinct/utils/elfs",
+  "crates/proof/succinct/utils/ethereum/client",
+  "crates/proof/succinct/utils/ethereum/host",
+  "crates/proof/succinct/scripts/*",
+  "crates/proof/succinct/validity",
 
   "crates/utilities/*",
   "crates/batcher/*",
@@ -252,17 +252,17 @@ base-proof-tee-nitro-attestation-prover = { path = "crates/proof/tee/nitro-attes
 base-proof-fpvm-precompiles = { path = "crates/proof/fpvm-precompiles", default-features = false }
 
 # Succinct (OP Succinct / SP1 proving)
-base-succinct-elfs = { path = "crates/succinct/utils/elfs" }
-base-succinct-prove = { path = "crates/succinct/scripts/prove" }
-base-succinct-scripts = { path = "crates/succinct/scripts/utils" }
-base-succinct-validity = { path = "crates/succinct/validity" }
-base-succinct-host-utils = { path = "crates/succinct/utils/host" }
-base-succinct-build-utils = { path = "crates/succinct/utils/build" }
-base-succinct-proof-utils = { path = "crates/succinct/utils/proof" }
-base-succinct-client-utils = { path = "crates/succinct/utils/client" }
-base-succinct-signer-utils = { path = "crates/succinct/utils/signer" }
-base-succinct-ethereum-host-utils = { path = "crates/succinct/utils/ethereum/host" }
-base-succinct-ethereum-client-utils = { path = "crates/succinct/utils/ethereum/client" }
+base-proof-succinct-elfs = { path = "crates/proof/succinct/utils/elfs" }
+base-proof-succinct-prove = { path = "crates/proof/succinct/scripts/prove" }
+base-proof-succinct-scripts = { path = "crates/proof/succinct/scripts/utils" }
+base-proof-succinct-validity = { path = "crates/proof/succinct/validity" }
+base-proof-succinct-host-utils = { path = "crates/proof/succinct/utils/host" }
+base-proof-succinct-build-utils = { path = "crates/proof/succinct/utils/build" }
+base-proof-succinct-proof-utils = { path = "crates/proof/succinct/utils/proof" }
+base-proof-succinct-client-utils = { path = "crates/proof/succinct/utils/client" }
+base-proof-succinct-signer-utils = { path = "crates/proof/succinct/utils/signer" }
+base-proof-succinct-ethereum-host-utils = { path = "crates/proof/succinct/utils/ethereum/host" }
+base-proof-succinct-ethereum-client-utils = { path = "crates/proof/succinct/utils/ethereum/client" }
 
 # Actions
 base-action-harness = { path = "actions/harness" }
@@ -461,17 +461,15 @@ boundless-market = "1.1"
 risc0-ethereum-contracts = "3.0.1"
 risc0-zkvm = { version = "^3.0", default-features = false }
 
-# SP1 v6.1.0 (Hypercube) — used by crates/succinct
+# SP1 v6.1.0 (Hypercube) — used by crates/proof/succinct
 sp1-sdk = { version = "=6.1.0" }
 sp1-lib = { version = "=6.1.0" }
 sp1-zkvm = { version = "=6.1.0" }
 sp1-build = "=6.1.0"
 sp1-prover-types = "=6.1.0"
-# Pinned to a commit on top of v2.1.4 (includes fix for sp1_cluster_utils)
-# TODO: Pin to version that merges sp1-cluster#80 (https://github.com/succinctlabs/sp1-cluster/pull/80)
-sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", rev = "843ce58d15da0609a98f6ae37579389f14f5af03" }
-sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", rev = "843ce58d15da0609a98f6ae37579389f14f5af03" }
-sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", rev = "843ce58d15da0609a98f6ae37579389f14f5af03" }
+sp1-cluster-artifact = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.5" }
+sp1-cluster-common = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.5" }
+sp1-cluster-utils = { git = "https://github.com/succinctlabs/sp1-cluster", tag = "v2.1.5" }
 
 # crypto
 sha3 = "0.10"

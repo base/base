@@ -17,7 +17,7 @@ mod check 'etc/just/check.just'
 # Cargo build targets and contract compilation
 mod build 'etc/just/build.just'
 # SP1 / succinct ELF builds and proving helpers
-mod succinct 'crates/succinct'
+mod succinct 'etc/just/succinct.just'
 
 alias t := test
 alias f := fix

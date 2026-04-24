@@ -281,7 +281,7 @@ impl SnarkE2e {
         // -- 5. Compute aggregation verifying key ---------------------------------
         info!("computing aggregation verifying key (LightProver — VK only)");
         let t = std::time::Instant::now();
-        let (_range_vk, agg_vk) = base_succinct_proof_utils::cluster_setup_vkeys()
+        let (_range_vk, agg_vk) = base_proof_succinct_proof_utils::cluster_setup_vkeys()
             .await
             .context("failed to compute aggregation verifying key")?;
         info!(elapsed_secs = t.elapsed().as_secs_f64(), "aggregation verifying key computed");

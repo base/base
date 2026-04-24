@@ -4938,6 +4938,293 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-succinct-build-utils"
+version = "0.0.0"
+dependencies = [
+ "cargo_metadata 0.18.1",
+ "sp1-build",
+]
+
+[[package]]
+name = "base-proof-succinct-client-utils"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-sol-types",
+ "anyhow",
+ "async-trait",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-genesis",
+ "base-consensus-derive",
+ "base-proof",
+ "base-proof-driver",
+ "base-proof-executor",
+ "base-proof-preimage",
+ "base-proof-primitives",
+ "base-protocol",
+ "cfg-if",
+ "kzg-rs",
+ "revm",
+ "revm-precompile",
+ "rkyv",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "spin 0.10.0",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-succinct-elfs"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "sha2 0.10.9",
+ "toml 1.1.2+spec-1.1.0",
+]
+
+[[package]]
+name = "base-proof-succinct-ethereum-client-utils"
+version = "0.0.0"
+dependencies = [
+ "alloy-genesis",
+ "anyhow",
+ "async-trait",
+ "base-common-genesis",
+ "base-consensus-derive",
+ "base-proof",
+ "base-proof-driver",
+ "base-proof-executor",
+ "base-proof-preimage",
+ "base-proof-succinct-client-utils",
+ "spin 0.10.0",
+]
+
+[[package]]
+name = "base-proof-succinct-ethereum-host-utils"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "anyhow",
+ "async-trait",
+ "base-consensus-derive",
+ "base-proof",
+ "base-proof-host",
+ "base-proof-preimage",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-ethereum-client-utils",
+ "base-proof-succinct-host-utils",
+ "rkyv",
+ "sp1-sdk",
+]
+
+[[package]]
+name = "base-proof-succinct-host-utils"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-sol-types",
+ "anyhow",
+ "async-trait",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-genesis",
+ "base-common-network",
+ "base-consensus-derive",
+ "base-proof",
+ "base-proof-host",
+ "base-proof-preimage",
+ "base-proof-primitives",
+ "base-proof-succinct-client-utils",
+ "base-protocol",
+ "bincode 2.0.1",
+ "c-kzg",
+ "cargo_metadata 0.18.1",
+ "cfg-if",
+ "futures",
+ "kzg-rs",
+ "lazy_static",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "metrics-process",
+ "num-format",
+ "opentelemetry 0.31.0",
+ "opentelemetry-appender-tracing 0.31.1",
+ "opentelemetry-otlp 0.31.1",
+ "opentelemetry_sdk 0.31.0",
+ "reqwest 0.13.2",
+ "rkyv",
+ "serde",
+ "serde_cbor",
+ "serde_json",
+ "sp1-sdk",
+ "strum",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry 0.32.1",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "base-proof-succinct-proof-utils"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-proof-succinct-elfs",
+ "base-proof-succinct-ethereum-host-utils",
+ "base-proof-succinct-host-utils",
+ "cfg-if",
+ "serde",
+ "serde_json",
+ "sp1-cluster-artifact",
+ "sp1-cluster-common",
+ "sp1-cluster-utils",
+ "sp1-prover-types",
+ "sp1-sdk",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-succinct-prove"
+version = "0.0.0"
+dependencies = [
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-node-bindings",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport-http",
+ "anyhow",
+ "base-proof-succinct-build-utils",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-elfs",
+ "base-proof-succinct-host-utils",
+ "base-proof-succinct-proof-utils",
+ "base-proof-succinct-scripts",
+ "cfg-if",
+ "clap",
+ "csv",
+ "dotenv",
+ "reqwest 0.12.28",
+ "rustls 0.23.39",
+ "serde_json",
+ "sp1-cluster-utils",
+ "sp1-sdk",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-succinct-scripts"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-network",
+ "alloy-node-bindings",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport-http",
+ "anyhow",
+ "base-proof-succinct-build-utils",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-elfs",
+ "base-proof-succinct-host-utils",
+ "base-proof-succinct-proof-utils",
+ "bincode 2.0.1",
+ "cargo_metadata 0.18.1",
+ "clap",
+ "csv",
+ "dotenv",
+ "futures",
+ "log",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sp1-sdk",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-proof-succinct-signer-utils"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth",
+ "alloy-signer",
+ "alloy-signer-gcp",
+ "alloy-signer-local",
+ "alloy-transport-http",
+ "anyhow",
+ "base-proof-succinct-host-utils",
+ "dotenv",
+ "rustls 0.23.39",
+ "tokio",
+]
+
+[[package]]
+name = "base-proof-succinct-validity"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "anyhow",
+ "base-proof-succinct-build-utils",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-elfs",
+ "base-proof-succinct-host-utils",
+ "base-proof-succinct-proof-utils",
+ "base-proof-succinct-signer-utils",
+ "base64 0.22.1",
+ "bincode 2.0.1",
+ "chrono",
+ "clap",
+ "dotenv",
+ "futures-util",
+ "postgresql_embedded",
+ "reqwest 0.13.2",
+ "rustls 0.23.39",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "sp1-cluster-utils",
+ "sp1-sdk",
+ "sqlx",
+ "strum",
+ "strum_macros 0.28.0",
+ "tikv-jemallocator",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-proof-tee-nitro-attestation-prover"
 version = "0.0.0"
 dependencies = [
@@ -5229,8 +5516,8 @@ name = "base-prover-zk"
 version = "0.0.0"
 dependencies = [
  "base-cli-utils",
- "base-succinct-host-utils",
- "base-succinct-proof-utils",
+ "base-proof-succinct-host-utils",
+ "base-proof-succinct-proof-utils",
  "base-zk-client",
  "base-zk-db",
  "base-zk-outbox",
@@ -5294,293 +5581,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
-]
-
-[[package]]
-name = "base-succinct-build-utils"
-version = "0.0.0"
-dependencies = [
- "cargo_metadata 0.18.1",
- "sp1-build",
-]
-
-[[package]]
-name = "base-succinct-client-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-evm",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
- "anyhow",
- "async-trait",
- "base-common-chains",
- "base-common-consensus",
- "base-common-evm",
- "base-common-genesis",
- "base-consensus-derive",
- "base-proof",
- "base-proof-driver",
- "base-proof-executor",
- "base-proof-preimage",
- "base-proof-primitives",
- "base-protocol",
- "cfg-if",
- "kzg-rs",
- "revm",
- "revm-precompile",
- "rkyv",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "spin 0.10.0",
- "tracing",
-]
-
-[[package]]
-name = "base-succinct-elfs"
-version = "0.0.0"
-dependencies = [
- "serde",
- "sha2 0.10.9",
- "toml 1.1.2+spec-1.1.0",
-]
-
-[[package]]
-name = "base-succinct-ethereum-client-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-genesis",
- "anyhow",
- "async-trait",
- "base-common-genesis",
- "base-consensus-derive",
- "base-proof",
- "base-proof-driver",
- "base-proof-executor",
- "base-proof-preimage",
- "base-succinct-client-utils",
- "spin 0.10.0",
-]
-
-[[package]]
-name = "base-succinct-ethereum-host-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "anyhow",
- "async-trait",
- "base-consensus-derive",
- "base-proof",
- "base-proof-host",
- "base-proof-preimage",
- "base-succinct-client-utils",
- "base-succinct-ethereum-client-utils",
- "base-succinct-host-utils",
- "rkyv",
- "sp1-sdk",
-]
-
-[[package]]
-name = "base-succinct-host-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-contract",
- "alloy-eips",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rlp",
- "alloy-sol-types",
- "anyhow",
- "async-trait",
- "base-common-chains",
- "base-common-consensus",
- "base-common-genesis",
- "base-common-network",
- "base-consensus-derive",
- "base-proof",
- "base-proof-host",
- "base-proof-preimage",
- "base-proof-primitives",
- "base-protocol",
- "base-succinct-client-utils",
- "bincode 2.0.1",
- "c-kzg",
- "cargo_metadata 0.18.1",
- "cfg-if",
- "futures",
- "kzg-rs",
- "lazy_static",
- "metrics",
- "metrics-exporter-prometheus",
- "metrics-process",
- "num-format",
- "opentelemetry 0.31.0",
- "opentelemetry-appender-tracing 0.31.1",
- "opentelemetry-otlp 0.31.1",
- "opentelemetry_sdk 0.31.0",
- "reqwest 0.13.2",
- "rkyv",
- "serde",
- "serde_cbor",
- "serde_json",
- "sp1-sdk",
- "strum",
- "tokio",
- "tracing",
- "tracing-opentelemetry 0.32.1",
- "tracing-subscriber 0.3.23",
-]
-
-[[package]]
-name = "base-succinct-proof-utils"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base-succinct-elfs",
- "base-succinct-ethereum-host-utils",
- "base-succinct-host-utils",
- "cfg-if",
- "serde",
- "serde_json",
- "sp1-cluster-artifact",
- "sp1-cluster-common",
- "sp1-cluster-utils",
- "sp1-prover-types",
- "sp1-sdk",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "base-succinct-prove"
-version = "0.0.0"
-dependencies = [
- "alloy-contract",
- "alloy-eips",
- "alloy-network",
- "alloy-node-bindings",
- "alloy-primitives",
- "alloy-provider",
- "alloy-signer-local",
- "alloy-sol-types",
- "alloy-transport-http",
- "anyhow",
- "base-succinct-build-utils",
- "base-succinct-client-utils",
- "base-succinct-elfs",
- "base-succinct-host-utils",
- "base-succinct-proof-utils",
- "base-succinct-scripts",
- "cfg-if",
- "clap",
- "csv",
- "dotenv",
- "reqwest 0.12.28",
- "rustls 0.23.39",
- "serde_json",
- "sp1-cluster-utils",
- "sp1-sdk",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "base-succinct-scripts"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-network",
- "alloy-node-bindings",
- "alloy-primitives",
- "alloy-provider",
- "alloy-signer-local",
- "alloy-sol-types",
- "alloy-transport-http",
- "anyhow",
- "base-succinct-build-utils",
- "base-succinct-client-utils",
- "base-succinct-elfs",
- "base-succinct-host-utils",
- "base-succinct-proof-utils",
- "bincode 2.0.1",
- "cargo_metadata 0.18.1",
- "clap",
- "csv",
- "dotenv",
- "futures",
- "log",
- "rayon",
- "serde",
- "serde_json",
- "sp1-sdk",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "base-succinct-signer-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-eth",
- "alloy-signer",
- "alloy-signer-gcp",
- "alloy-signer-local",
- "alloy-transport-http",
- "anyhow",
- "base-succinct-host-utils",
- "dotenv",
- "rustls 0.23.39",
- "tokio",
-]
-
-[[package]]
-name = "base-succinct-validity"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-provider",
- "alloy-signer-local",
- "alloy-sol-types",
- "anyhow",
- "base-succinct-build-utils",
- "base-succinct-client-utils",
- "base-succinct-elfs",
- "base-succinct-host-utils",
- "base-succinct-proof-utils",
- "base-succinct-signer-utils",
- "base64 0.22.1",
- "bincode 2.0.1",
- "chrono",
- "clap",
- "dotenv",
- "futures-util",
- "postgresql_embedded",
- "reqwest 0.13.2",
- "rustls 0.23.39",
- "serde",
- "serde_json",
- "serde_repr",
- "sp1-cluster-utils",
- "sp1-sdk",
- "sqlx",
- "strum",
- "strum_macros 0.28.0",
- "tikv-jemallocator",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -5772,11 +5772,11 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base-common-network",
- "base-succinct-client-utils",
- "base-succinct-elfs",
- "base-succinct-ethereum-host-utils",
- "base-succinct-host-utils",
- "base-succinct-proof-utils",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-elfs",
+ "base-proof-succinct-ethereum-host-utils",
+ "base-proof-succinct-host-utils",
+ "base-proof-succinct-proof-utils",
  "base-zk-client",
  "base-zk-db",
  "base-zk-outbox",
@@ -20986,8 +20986,8 @@ dependencies = [
 
 [[package]]
 name = "sp1-cluster-artifact"
-version = "2.1.4"
-source = "git+https://github.com/succinctlabs/sp1-cluster?rev=843ce58d15da0609a98f6ae37579389f14f5af03#843ce58d15da0609a98f6ae37579389f14f5af03"
+version = "2.1.5"
+source = "git+https://github.com/succinctlabs/sp1-cluster?tag=v2.1.5#9329b7dbdcd023050fbb00bc2ef880b97ccc52c5"
 dependencies = [
  "anyhow",
  "async-scoped",
@@ -21012,8 +21012,8 @@ dependencies = [
 
 [[package]]
 name = "sp1-cluster-common"
-version = "2.1.4"
-source = "git+https://github.com/succinctlabs/sp1-cluster?rev=843ce58d15da0609a98f6ae37579389f14f5af03#843ce58d15da0609a98f6ae37579389f14f5af03"
+version = "2.1.5"
+source = "git+https://github.com/succinctlabs/sp1-cluster?tag=v2.1.5#9329b7dbdcd023050fbb00bc2ef880b97ccc52c5"
 dependencies = [
  "backoff",
  "chrono",
@@ -21040,8 +21040,8 @@ dependencies = [
 
 [[package]]
 name = "sp1-cluster-utils"
-version = "2.1.4"
-source = "git+https://github.com/succinctlabs/sp1-cluster?rev=843ce58d15da0609a98f6ae37579389f14f5af03#843ce58d15da0609a98f6ae37579389f14f5af03"
+version = "2.1.5"
+source = "git+https://github.com/succinctlabs/sp1-cluster?tag=v2.1.5#9329b7dbdcd023050fbb00bc2ef880b97ccc52c5"
 dependencies = [
  "eyre",
  "sp1-cluster-artifact",

@@ -205,9 +205,10 @@ impl ZkArgs {
         );
 
         info!("computing range and aggregation verifying keys");
-        let (range_pk, range_vk, agg_pk, agg_vk) = base_succinct_proof_utils::cluster_setup_keys()
-            .await
-            .map_err(|e| eyre!("failed to compute verifying keys: {e}"))?;
+        let (range_pk, range_vk, agg_pk, agg_vk) =
+            base_proof_succinct_proof_utils::cluster_setup_keys()
+                .await
+                .map_err(|e| eyre!("failed to compute verifying keys: {e}"))?;
         info!("verifying keys computed successfully");
 
         let mut backend_registry = BackendRegistry::new();
@@ -220,20 +221,20 @@ impl ZkArgs {
             info!("SP1_PROVER=network: using OP-Succinct SP1 Network backend");
 
             let fetcher = Arc::new(
-                base_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new_with_rollup_config()
+                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new_with_rollup_config()
                     .await
                     .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
             );
             let provider = OpSuccinctProvider::new(fetcher);
 
             let fulfillment_strategy =
-                base_succinct_host_utils::network::parse_fulfillment_strategy(
+                base_proof_succinct_host_utils::network::parse_fulfillment_strategy(
                     self.sp1_fulfillment_strategy.clone(),
                 )
                 .map_err(|e| eyre!("invalid fulfillment strategy: {e}"))?;
 
             let network_signer =
-                base_succinct_host_utils::network::get_network_signer(self.use_kms_requester)
+                base_proof_succinct_host_utils::network::get_network_signer(self.use_kms_requester)
                     .await
                     .map_err(|e| eyre!("failed to create network signer: {e}"))?;
 
@@ -281,7 +282,7 @@ impl ZkArgs {
             // Create OP-Succinct data fetcher and provider.
             info!("creating OP-Succinct data fetcher");
             let fetcher = Arc::new(
-                base_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new_with_rollup_config()
+                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new_with_rollup_config()
                     .await
                     .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
             );

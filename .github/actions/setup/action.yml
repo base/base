@@ -18,10 +18,10 @@ inputs:
     description: Install the SP1 toolchain (cargo-prove) for building ELFs
     default: "false"
   sp1-version:
-    description: SP1 release tag used when sp1 is enabled (matches crates/succinct/Justfile)
+    description: SP1 release tag used when sp1 is enabled (matches etc/just/succinct.just)
     default: "v6.1.0"
   elf-cache:
-    description: Restore/save the ELF cache keyed on crates/succinct/elf/manifest.toml
+    description: Restore/save the ELF cache keyed on crates/proof/succinct/elf/manifest.toml
     default: "false"
   mold:
     description: Install mold linker
@@ -125,9 +125,9 @@ runs:
       uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
       with:
         path: |
-          crates/succinct/elf/range-elf-embedded
-          crates/succinct/elf/aggregation-elf
-        key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/succinct/elf/manifest.toml') }}
+          crates/proof/succinct/elf/range-elf-embedded
+          crates/proof/succinct/elf/aggregation-elf
+        key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/proof/succinct/elf/manifest.toml') }}
 
     - name: Install SP1 toolchain
       if: inputs.sp1 == 'true'

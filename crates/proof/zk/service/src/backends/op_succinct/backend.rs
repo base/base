@@ -3,8 +3,8 @@
 use std::{fmt, time::SystemTime};
 
 use async_trait::async_trait;
-use base_succinct_elfs::{AGGREGATION_ELF, RANGE_ELF_EMBEDDED};
-use base_succinct_host_utils::get_agg_proof_stdin;
+use base_proof_succinct_elfs::{AGGREGATION_ELF, RANGE_ELF_EMBEDDED};
+use base_proof_succinct_host_utils::get_agg_proof_stdin;
 use base_zk_client::ProveBlockRequest;
 use base_zk_db::{
     CreateProofSession, ProofRequest, ProofRequestRepo, ProofSession, ProofStatus, ProofType,
@@ -641,7 +641,8 @@ impl OpSuccinctBackend {
 
         // 2. Extract boot_info from public values.
         let mut public_values = stark_proof_with_pv.public_values.clone();
-        let boot_info: base_succinct_client_utils::boot::BootInfoStruct = public_values.read();
+        let boot_info: base_proof_succinct_client_utils::boot::BootInfoStruct =
+            public_values.read();
         let boot_infos = vec![boot_info];
         let proofs = vec![stark_proof_with_pv.proof];
 

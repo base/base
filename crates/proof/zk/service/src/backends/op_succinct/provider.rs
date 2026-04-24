@@ -4,8 +4,8 @@ use std::{fmt, sync::Arc};
 
 use alloy_primitives::B256;
 use anyhow::Result;
-use base_succinct_ethereum_host_utils::host::SingleChainOPSuccinctHost;
-use base_succinct_host_utils::{
+use base_proof_succinct_ethereum_host_utils::host::SingleChainOPSuccinctHost;
+use base_proof_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost, witness_generation::WitnessGenerator,
 };
 use sp1_sdk::SP1Stdin;
@@ -99,7 +99,7 @@ impl OpSuccinctProvider {
 
         let stdin = self.host.witness_generator().get_sp1_stdin(
             witness,
-            base_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
+            base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
         )?;
 
         info!(start_block = start_block, end_block = end_block, "witness generation completed");

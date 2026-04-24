@@ -13,11 +13,11 @@ base-zk-outbox.workspace = true
 base-zk-client = { workspace = true, features = ["server"] }
 
 # Succinct / SP1
-base-succinct-elfs.workspace = true
-base-succinct-host-utils.workspace = true
-base-succinct-proof-utils.workspace = true
-base-succinct-client-utils.workspace = true
-base-succinct-ethereum-host-utils.workspace = true
+base-proof-succinct-elfs.workspace = true
+base-proof-succinct-host-utils.workspace = true
+base-proof-succinct-proof-utils.workspace = true
+base-proof-succinct-client-utils.workspace = true
+base-proof-succinct-ethereum-host-utils.workspace = true
 sp1-sdk.workspace = true 
 sp1-prover-types.workspace = true
 sp1-cluster-utils.workspace = true
