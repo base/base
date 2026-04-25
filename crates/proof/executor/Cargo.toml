@@ -97,4 +97,5 @@ test-utils = [
 	"dep:tempfile",
 	"dep:tokio",
 	"std",
+	"base-common-chains?/test-utils"
 ]
