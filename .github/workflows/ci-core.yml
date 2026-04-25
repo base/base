@@ -194,10 +194,22 @@ jobs:
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
           rust-cache-save: ${{ inputs.save_rust_cache }}
+      - name: Clear prior JUnit report
+        run: rm -f target/nextest/ci/test-results.xml
       - name: Run tests
         run: ${{ inputs.test_command }}
-      - name: Report test results
+      - name: Check for JUnit testcases
         if: always()
+        id: junit-results
+        shell: bash
+        run: |
+          if [ -f target/nextest/ci/test-results.xml ] && rg -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Report test results
+        if: ${{ always() && steps.junit-results.outputs.present == 'true' }}
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
           report_paths: target/nextest/ci/test-results.xml
@@ -294,14 +306,26 @@ jobs:
           elf-cache: "true"
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
+      - name: Clear prior JUnit report
+        run: rm -f target/nextest/ci/test-results.xml
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - name: Pre-pull docker images
         run: just devnet pull-images
       - name: Run devnet tests
         run: just devnet tests-ci
-      - name: Report test results
+      - name: Check for JUnit testcases
         if: always()
+        id: junit-results
+        shell: bash
+        run: |
+          if [ -f target/nextest/ci/test-results.xml ] && rg -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Report test results
+        if: ${{ always() && steps.junit-results.outputs.present == 'true' }}
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
           report_paths: target/nextest/ci/test-results.xml
