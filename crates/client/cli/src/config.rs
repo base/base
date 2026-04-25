@@ -1,7 +1,7 @@
 //! Configuration file path wrappers for L1 and L2 configs.
 //!
 //! These types wrap `Option<PathBuf>` and provide methods to load
-//! the configuration from a file or fall back to the registry.
+//! the configuration from a file or fall back to built-in mappings.
 
 use std::{fs::File, path::PathBuf};
 
@@ -21,7 +21,7 @@ pub enum ConfigError {
     /// Failed to parse configuration file.
     #[error("failed to parse config: {0}")]
     Parse(serde_json::Error),
-    /// Failed to find configuration in registry.
+    /// Failed to find configuration in a built-in mapping.
     #[error("failed to find config for chain ID {0}")]
     NotFound(u64),
 }
@@ -29,7 +29,7 @@ pub enum ConfigError {
 /// L1 configuration file path wrapper.
 ///
 /// Wraps an optional path to a custom L1 chain configuration file.
-/// If no path is provided, the configuration is loaded from the known chains registry.
+/// If no path is provided, the configuration is loaded from the built-in Ethereum L1 mapping.
 #[derive(Clone, Debug, Default, clap::Args)]
 pub struct L1ConfigFile {
     /// Path to a custom L1 chain configuration file.
@@ -52,7 +52,7 @@ impl L1ConfigFile {
     /// Loads the L1 chain configuration.
     ///
     /// If a file path is set, loads the configuration from the JSON file.
-    /// Otherwise, falls back to the known chains registry using the provided chain ID.
+    /// Otherwise, falls back to the built-in Ethereum L1 mapping using the provided chain ID.
     pub fn load(&self, l1_chain_id: u64) -> Result<ChainConfig, ConfigError> {
         match &self.l1_config_file {
             Some(path) => {
@@ -61,8 +61,9 @@ impl L1ConfigFile {
                 from_reader(file).map_err(ConfigError::Parse)
             }
             None => {
-                debug!("Loading l1 config from known chains");
-                base_common_chains::l1_config(l1_chain_id)
+                debug!("loading l1 config from built-in mapping");
+                base_common_chains::L1_CONFIGS
+                    .get(&l1_chain_id)
                     .cloned()
                     .ok_or(ConfigError::NotFound(l1_chain_id))
             }

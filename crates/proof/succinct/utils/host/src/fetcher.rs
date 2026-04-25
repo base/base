@@ -388,17 +388,17 @@ impl OPSuccinctDataFetcher {
         let l1_config_path = l1_config_dir.join(format!("{}.json", rollup_config.l1_chain_id));
         if l1_config_path.exists() {
             tracing::info!(
-                "L1 config for chain ID {} already exists at {}",
-                rollup_config.l1_chain_id,
-                l1_config_path.display()
+                chain_id = rollup_config.l1_chain_id,
+                path = %l1_config_path.display(),
+                "l1 config already exists"
             );
 
             let file = fs::File::open(&l1_config_path)?;
             let l1_config: Value = serde_json::from_reader(file)?;
             tracing::debug!(
-                "Loaded L1 config for chain ID {} from file: {:?}",
-                rollup_config.l1_chain_id,
-                l1_config
+                chain_id = rollup_config.l1_chain_id,
+                config = ?l1_config,
+                "loaded l1 config from file"
             );
 
             return Ok(l1_config_path);
@@ -406,7 +406,7 @@ impl OPSuccinctDataFetcher {
 
         // Lookup the L1 config from the registry.
         let l1_config =
-            base_common_chains::l1_config(rollup_config.l1_chain_id).ok_or_else(|| {
+            base_common_chains::L1_CONFIGS.get(&rollup_config.l1_chain_id).ok_or_else(|| {
                 anyhow::anyhow!(
                     "No built-in L1 config exists for chain ID {}.\n\
                  To proceed, either:\n\
@@ -418,9 +418,9 @@ impl OPSuccinctDataFetcher {
             })?;
 
         tracing::debug!(
-            "Fetched L1 config for chain ID {} from registry: {:?}",
-            rollup_config.l1_chain_id,
-            l1_config
+            chain_id = rollup_config.l1_chain_id,
+            config = ?l1_config,
+            "fetched l1 config from built-in mapping"
         );
 
         // Create the L1 config directory if it doesn't exist.
@@ -432,9 +432,9 @@ impl OPSuccinctDataFetcher {
         fs::write(&l1_config_path, l1_config_str)?;
 
         tracing::info!(
-            "Saved L1 config for chain ID {} to {}",
-            rollup_config.l1_chain_id,
-            l1_config_path.display()
+            chain_id = rollup_config.l1_chain_id,
+            path = %l1_config_path.display(),
+            "saved l1 config"
         );
 
         Ok(l1_config_path)
@@ -787,7 +787,8 @@ impl OPSuccinctDataFetcher {
             let file = fs::File::open(l1_config_path)?;
             serde_json::from_reader(file)?
         } else {
-            base_common_chains::l1_config(rollup_config.l1_chain_id)
+            base_common_chains::L1_CONFIGS
+                .get(&rollup_config.l1_chain_id)
                 .ok_or_else(|| {
                     anyhow::anyhow!("No L1 config for chain ID {}", rollup_config.l1_chain_id)
                 })?

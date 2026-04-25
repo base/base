@@ -258,14 +258,14 @@ impl BootInfo {
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
         let l1_config = if let Some(config) =
-            base_common_chains::l1_config(rollup_config.l1_chain_id)
+            base_common_chains::L1_CONFIGS.get(&rollup_config.l1_chain_id)
         {
             config.clone()
         } else {
             warn!(
                 target: "boot_loader",
-                "No l1 config found for chain ID {}, falling back to preimage oracle. This is insecure in production without additional validation!",
-                rollup_config.l1_chain_id
+                chain_id = rollup_config.l1_chain_id,
+                "no l1 config found in built-in mapping, falling back to preimage oracle; insecure in production without additional validation"
             );
             let ser_cfg = oracle
                 .get(PreimageKey::new_local(L1_CONFIG_KEY.to()))

@@ -1,4 +1,4 @@
-//! Lookup table for known L1 chain configurations.
+//! Static Ethereum L1 chain configuration mapping.
 
 use alloy_chains::NamedChain;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
@@ -7,8 +7,8 @@ use spin::Lazy;
 
 use crate::{Holesky, Hoodi, Mainnet, Sepolia};
 
-/// L1 chain configurations built from known L1 genesis data.
-static L1_CONFIGS: Lazy<HashMap<u64, GenesisChainConfig>> = Lazy::new(|| {
+/// Ethereum L1 chain configurations keyed by chain ID.
+pub static L1_CONFIGS: Lazy<HashMap<u64, GenesisChainConfig>> = Lazy::new(|| {
     let mut map = HashMap::default();
     map.insert(NamedChain::Mainnet.into(), Mainnet::l1_config());
     map.insert(NamedChain::Sepolia.into(), Sepolia::l1_config());
@@ -16,11 +16,6 @@ static L1_CONFIGS: Lazy<HashMap<u64, GenesisChainConfig>> = Lazy::new(|| {
     map.insert(NamedChain::Hoodi.into(), Hoodi::l1_config());
     map
 });
-
-/// Returns the [`GenesisChainConfig`] for the given L1 chain ID, if known.
-pub fn l1_config(chain_id: u64) -> Option<&'static GenesisChainConfig> {
-    L1_CONFIGS.get(&chain_id)
-}
 
 #[cfg(test)]
 mod tests {
@@ -33,20 +28,25 @@ mod tests {
 
     #[test]
     fn l1_config_all_chains() {
-        assert!(l1_config(NamedChain::Mainnet.into()).is_some());
-        assert!(l1_config(NamedChain::Sepolia.into()).is_some());
-        assert!(l1_config(NamedChain::Holesky.into()).is_some());
-        assert!(l1_config(NamedChain::Hoodi.into()).is_some());
-        assert!(l1_config(99999).is_none());
+        let mainnet_chain_id = u64::from(NamedChain::Mainnet);
+        let sepolia_chain_id = u64::from(NamedChain::Sepolia);
+        let holesky_chain_id = u64::from(NamedChain::Holesky);
+        let hoodi_chain_id = u64::from(NamedChain::Hoodi);
+
+        assert!(L1_CONFIGS.get(&mainnet_chain_id).is_some());
+        assert!(L1_CONFIGS.get(&sepolia_chain_id).is_some());
+        assert!(L1_CONFIGS.get(&holesky_chain_id).is_some());
+        assert!(L1_CONFIGS.get(&hoodi_chain_id).is_some());
+        assert!(L1_CONFIGS.get(&99999).is_none());
     }
 
     #[test]
     fn bpo_timestamps() {
-        let sepolia = l1_config(11155111).unwrap();
+        let sepolia = L1_CONFIGS.get(&11155111).unwrap();
         assert_eq!(sepolia.bpo1_time, Some(SEPOLIA_BPO1_TIMESTAMP));
         assert_eq!(sepolia.bpo2_time, Some(SEPOLIA_BPO2_TIMESTAMP));
 
-        let holesky = l1_config(17000).unwrap();
+        let holesky = L1_CONFIGS.get(&17000).unwrap();
         assert_eq!(holesky.bpo1_time, Some(HOLESKY_BPO1_TIMESTAMP));
         assert_eq!(holesky.bpo2_time, Some(HOLESKY_BPO2_TIMESTAMP));
     }
