@@ -24,7 +24,6 @@ proof_packages=(
   base-proof-client
   base-proof-driver
   base-proof-executor
-  base-proof-fpvm-precompiles
   base-proof-mpt
   base-proof-preimage
   base-proof-primitives
