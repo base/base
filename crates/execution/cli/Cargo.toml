@@ -90,11 +90,11 @@ dev = [
 ]
 
 serde = [
+	"alloy-eips/serde",
 	"base-common-consensus/serde",
 	"base-execution-chainspec/serde",
-	"alloy-eips/serde",
 	"reth-network/serde",
-	"secp256k1/serde"
+	"secp256k1/serde",
 ]
 
 edge = [ "reth-cli-commands/edge", "reth-node-core/edge" ]

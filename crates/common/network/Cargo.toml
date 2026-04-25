@@ -44,8 +44,8 @@ std = [
 	"alloy-rpc-types-engine/std",
 	"alloy-rpc-types-eth/std",
 	"base-common-consensus/std",
-	"base-common-rpc-types/std",
 	"base-common-rpc-types-engine/std",
+	"base-common-rpc-types/std",
 ]
 serde = [
 	"alloy-consensus/serde",
@@ -53,7 +53,7 @@ serde = [
 	"alloy-rpc-types-engine/serde",
 	"alloy-rpc-types-eth/serde",
 	"base-common-consensus/serde",
-	"base-common-rpc-types/serde",
 	"base-common-rpc-types-engine/serde",
+	"base-common-rpc-types/serde",
 ]
 reth = [ "dep:reth-rpc-convert", "std" ]
