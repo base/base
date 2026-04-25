@@ -12,6 +12,7 @@ max-threads = 6
 
 [profile.ci]
 junit = { path = "test-results.xml" }
+retries = 1
 
 [[profile.default.overrides]]
 filter = 'test(system_test_)'

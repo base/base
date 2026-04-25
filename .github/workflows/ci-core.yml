@@ -203,7 +203,7 @@ jobs:
         id: junit-results
         shell: bash
         run: |
-          if [ -f target/nextest/ci/test-results.xml ] && rg -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
+          if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
@@ -319,7 +319,7 @@ jobs:
         id: junit-results
         shell: bash
         run: |
-          if [ -f target/nextest/ci/test-results.xml ] && rg -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
+          if [ -f target/nextest/ci/test-results.xml ] && grep -q '<testcase[ >]' target/nextest/ci/test-results.xml; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
