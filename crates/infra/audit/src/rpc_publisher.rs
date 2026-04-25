@@ -15,7 +15,7 @@ use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
     rpc_params,
 };
-use tracing::{debug, error};
+use tracing::debug;
 
 use crate::{publisher::BundleEventPublisher, types::BundleEvent};
 
@@ -65,14 +65,7 @@ impl BundleEventPublisher for RpcBundleEventPublisher {
                 debug!(batch_size, forwarded, "Forwarded bundle event batch to audit-archiver");
                 Ok(())
             }
-            Err(e) => {
-                error!(
-                    error = %e,
-                    batch_size,
-                    "Failed to forward bundle event batch to audit-archiver"
-                );
-                Err(anyhow::anyhow!("RPC call failed: {e}"))
-            }
+            Err(e) => Err(anyhow::anyhow!("RPC call failed: {e}")),
         }
     }
 }

@@ -20,12 +20,7 @@ use crate::{
 
 /// Archives audit events from a generic [`EventReader`] (Kafka, RPC, etc.) to
 /// an [`EventWriter`] (typically S3) via a worker pool.
-///
-/// TODO: Rename to `AuditArchiver` (e.g. `BundleEventArchiver`). The
-/// `Kafka` prefix is historical — this type is now transport-agnostic and
-/// is wired with `RpcEventReader` in the audit-archiver binary as part of
-/// the Kafka-to-RPC migration.
-pub struct KafkaAuditArchiver<R, W>
+pub struct AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,
@@ -35,17 +30,17 @@ where
     _phantom: PhantomData<W>,
 }
 
-impl<R, W> fmt::Debug for KafkaAuditArchiver<R, W>
+impl<R, W> fmt::Debug for AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KafkaAuditArchiver").finish_non_exhaustive()
+        f.debug_struct("AuditArchiver").finish_non_exhaustive()
     }
 }
 
-impl<R, W> KafkaAuditArchiver<R, W>
+impl<R, W> AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,

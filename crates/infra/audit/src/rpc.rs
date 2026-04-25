@@ -14,7 +14,7 @@ use jsonrpsee::{core::RpcResult, proc_macros::rpc, types::error::ErrorObjectOwne
 use jsonrpsee_types::error::ErrorCode;
 use moka::sync::Cache;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{metrics::Metrics, reader::Event, storage::S3EventReaderWriter, types::BundleEvent};
 
@@ -47,6 +47,11 @@ pub struct AuditArchiverRpc {
 }
 
 /// In-memory dedup + forwarding pipeline for bundle events received over RPC.
+///
+/// Uses [`moka::sync::Cache`] intentionally: `forward_batch` is synchronous
+/// (no `.await`), so the sync variant avoids async overhead on every
+/// get/insert in the hot path. Eviction housekeeping runs inline but is
+/// bounded and fast at the configured capacity.
 #[derive(Debug, Clone)]
 struct BundleEventForwarder {
     cache: Cache<String, ()>,
@@ -61,18 +66,25 @@ impl BundleEventForwarder {
         for bundle_event in batch {
             let key = bundle_event.generate_event_key();
 
-            // Cache hit = duplicate; skip silently. Insert-then-check would race
-            // against concurrent RPC calls for the same key, so do a get first.
+            // Best-effort dedup: concurrent RPC calls for the same key can
+            // both miss the cache (TOCTOU), but S3 enforces final dedup via
+            // conditional PUTs, so duplicates here are harmless.
             if self.cache.get(&key).is_some() {
                 Metrics::rpc_cache_hits().increment(1);
                 continue;
             }
-            self.cache.insert(key.clone(), ());
             Metrics::rpc_cache_misses().increment(1);
 
             let event = Event { key: key.clone(), event: bundle_event, timestamp };
             match self.event_tx.try_send(event) {
-                Ok(()) => forwarded += 1,
+                Ok(()) => {
+                    // Insert after successful send so a Full/Closed drop
+                    // doesn't poison the cache — the event can be retried on
+                    // a later RPC call. Worst case: a concurrent call also
+                    // forwards the same key; S3 dedup handles that.
+                    self.cache.insert(key, ());
+                    forwarded += 1;
+                }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     warn!(key = %key, "audit event channel full; dropping event");
                     Metrics::rpc_channel_send_failures("full").increment(1);
@@ -188,7 +200,7 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
 
         let forwarded = forwarder.forward_batch(batch, timestamp);
 
-        info!(batch_size, forwarded, "Forwarded bundle event batch");
+        debug!(batch_size, forwarded, "Forwarded bundle event batch");
         Ok(forwarded)
     }
 }

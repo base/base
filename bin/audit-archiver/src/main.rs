@@ -4,8 +4,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use audit_archiver_lib::{
-    AuditArchiverApiServer, AuditArchiverRpc, KafkaAuditArchiver, RpcEventReader,
-    S3EventReaderWriter,
+    AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, RpcEventReader, S3EventReaderWriter,
 };
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
@@ -143,7 +142,7 @@ async fn main() -> Result<()> {
     let rpc_handle = rpc_server.start(rpc_module.into_rpc());
     info!(rpc_addr = %rpc_addr, "Audit archiver RPC server started");
 
-    let mut archiver = KafkaAuditArchiver::new(
+    let mut archiver = AuditArchiver::new(
         reader,
         writer,
         args.worker_pool_size,

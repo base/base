@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod archiver;
-pub use archiver::KafkaAuditArchiver;
+pub use archiver::AuditArchiver;
 
 mod kafka_config;
 pub use kafka_config::load_kafka_config_from_file;
@@ -87,7 +87,6 @@ impl AuditConnector {
                 let recv_result = match deadline {
                     Some(d) => {
                         tokio::select! {
-                            biased;
                             maybe_event = event_rx.recv() => maybe_event,
                             () = sleep_until(d) => {
                                 Self::flush(&publisher, &mut buffer).await;
