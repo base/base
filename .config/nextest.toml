@@ -8,7 +8,7 @@ max-threads = 1
 max-threads = 1
 
 [test-groups.devnet]
-max-threads = 4
+max-threads = 6
 
 [[profile.default.overrides]]
 filter = 'test(system_test_)'
