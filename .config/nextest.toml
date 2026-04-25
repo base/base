@@ -11,6 +11,7 @@ max-threads = 1
 max-threads = 6
 
 [profile.ci]
+junit = { path = "test-results.xml" }
 
 [[profile.default.overrides]]
 filter = 'test(system_test_)'
