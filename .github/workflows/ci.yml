@@ -263,7 +263,8 @@ jobs:
 
   devnet-tests:
     name: Devnet Tests
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BasePerfRunnerGroup
     timeout-minutes: 60
     steps:
       - name: Harden the runner (Audit all outbound calls)
