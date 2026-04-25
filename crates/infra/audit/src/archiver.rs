@@ -18,7 +18,13 @@ use crate::{
     storage::EventWriter,
 };
 
-/// Archives audit events from Kafka to S3 storage.
+/// Archives audit events from a generic [`EventReader`] (Kafka, RPC, etc.) to
+/// an [`EventWriter`] (typically S3) via a worker pool.
+///
+/// TODO: Rename to `AuditArchiver` (e.g. `BundleEventArchiver`). The
+/// `Kafka` prefix is historical — this type is now transport-agnostic and
+/// is wired with `RpcEventReader` in the audit-archiver binary as part of
+/// the Kafka-to-RPC migration.
 pub struct KafkaAuditArchiver<R, W>
 where
     R: EventReader,

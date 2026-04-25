@@ -28,4 +28,14 @@ base_metrics::define_metrics! {
     in_flight_archive_tasks: gauge,
     #[describe("Number of failed archive tasks")]
     failed_archive_tasks: counter,
+    #[describe("Bundle event batches that failed to publish over RPC and were dropped")]
+    #[label(name = "reason", default = ["rpc_error"])]
+    rpc_publish_failures: counter,
+    #[describe("Bundle events deduplicated by the RPC reader cache")]
+    rpc_cache_hits: counter,
+    #[describe("Bundle events that missed the RPC reader cache and were forwarded")]
+    rpc_cache_misses: counter,
+    #[describe("Bundle events dropped because the RPC reader channel could not accept them")]
+    #[label(name = "kind", default = ["full", "closed"])]
+    rpc_channel_send_failures: counter,
 }

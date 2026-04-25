@@ -93,13 +93,34 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_KAFKA_INGRESS_TOPIC", default_value = "tips-ingress")]
     pub ingress_topic: String,
 
-    /// Kafka properties file for audit events
+    /// Deprecated: audit events are now published over RPC. Accepted for
+    /// backward compatibility with existing deploy configs and ignored at
+    /// runtime (a deprecation warning is logged when set).
     #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_PROPERTIES_FILE")]
-    pub audit_kafka_properties: String,
+    pub audit_kafka_properties: Option<String>,
 
-    /// Kafka topic for audit events
-    #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_TOPIC", default_value = "tips-audit")]
-    pub audit_topic: String,
+    /// Deprecated: audit events are now published over RPC. Accepted for
+    /// backward compatibility with existing deploy configs and ignored at
+    /// runtime (a deprecation warning is logged when set).
+    #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_TOPIC")]
+    pub audit_topic: Option<String>,
+
+    /// URL of the audit-archiver RPC endpoint that receives bundle events via
+    /// `base_persistBatchedBundleEvent`.
+    #[arg(long, env = "TIPS_INGRESS_AUDIT_RPC_URL")]
+    pub audit_rpc_url: Url,
+
+    /// Per-request timeout for audit RPC calls, in seconds.
+    #[arg(long, env = "TIPS_INGRESS_AUDIT_RPC_TIMEOUT_SECS", default_value = "2")]
+    pub audit_rpc_timeout_secs: u64,
+
+    /// Flush the audit batch when it reaches this many events.
+    #[arg(long, env = "TIPS_INGRESS_AUDIT_BATCH_MAX_SIZE", default_value = "50")]
+    pub audit_batch_max_size: usize,
+
+    /// Maximum time (ms) the first event in a batch waits before forced flush.
+    #[arg(long, env = "TIPS_INGRESS_AUDIT_BATCH_MAX_WAIT_MS", default_value = "25")]
+    pub audit_batch_max_wait_ms: u64,
 
     /// Default lifetime for sent transactions in seconds (default: 3 hours)
     #[arg(
