@@ -2777,7 +2777,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
- "base-common-provider",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-consensus-derive",
@@ -3411,24 +3410,15 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
- "alloy-rpc-types-eth",
- "base-common-consensus",
- "base-common-rpc-types",
- "reth-rpc-convert",
- "rstest",
-]
-
-[[package]]
-name = "base-common-provider"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-provider",
  "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
  "alloy-transport",
  "async-trait",
- "base-common-network",
+ "base-common-consensus",
+ "base-common-rpc-types",
  "base-common-rpc-types-engine",
+ "reth-rpc-convert",
+ "rstest",
 ]
 
 [[package]]
@@ -3623,7 +3613,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
- "base-common-provider",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-metrics",
@@ -3708,7 +3697,6 @@ dependencies = [
  "base-common-consensus",
  "base-common-genesis",
  "base-common-network",
- "base-common-provider",
  "base-common-rpc-types",
  "base-common-rpc-types-engine",
  "base-consensus-derive",
@@ -4416,7 +4404,6 @@ dependencies = [
  "alloy-rpc-types-engine",
  "backon",
  "base-common-network",
- "base-common-provider",
  "base-consensus-engine",
  "eyre",
  "thiserror 2.0.18",

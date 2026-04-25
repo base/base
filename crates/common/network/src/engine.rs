@@ -5,11 +5,12 @@ use alloy_rpc_types_engine::{
     ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use alloy_transport::TransportResult;
-use base_common_network::Base;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BaseExecutionPayloadV4, BasePayloadAttributes,
 };
+
+use crate::Base;
 
 /// Extension trait for Base Engine API RPC methods.
 ///
@@ -215,7 +216,6 @@ where
         payload: ExecutionPayloadV3,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
-        // Note: The `versioned_hashes` parameter is always an empty array for Base chains.
         let versioned_hashes: Vec<B256> = vec![];
 
         self.client()
@@ -228,8 +228,6 @@ where
         payload: BaseExecutionPayloadV4,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
-        // Note: The `versioned_hashes`, `execution_requests` parameters are always an empty array
-        // for Base chains.
         let versioned_hashes: Vec<B256> = vec![];
         let execution_requests: Vec<Bytes> = vec![];
 

@@ -32,7 +32,6 @@ alloy-provider = { workspace = true, features = ["ipc", "ws", "reqwest", "reqwes
 
 # base-alloy
 base-common-network.workspace = true
-base-common-provider.workspace = true
 base-common-rpc-types.workspace = true
 base-common-consensus = { workspace = true, features = ["std"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }

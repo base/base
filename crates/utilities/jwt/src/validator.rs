@@ -6,9 +6,7 @@ use alloy_rpc_types_engine::JwtSecret;
 #[cfg(feature = "engine-validation")]
 use backon::{ExponentialBuilder, Retryable};
 #[cfg(feature = "engine-validation")]
-use base_common_network::Base;
-#[cfg(feature = "engine-validation")]
-use base_common_provider::BaseEngineApi;
+use base_common_network::{Base, BaseEngineApi};
 #[cfg(feature = "engine-validation")]
 use base_consensus_engine::BaseEngineClient;
 #[cfg(feature = "engine-validation")]

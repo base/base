@@ -8,7 +8,8 @@ Defines the `Base` network type that implements the `alloy_network::Network` tra
 transaction and receipt types. This provides a consistent interface to alloy providers and signers
 regardless of Base-specific RPC changes. Also re-exports alloy response types (`BlockResponse`,
 `ReceiptResponse`, `TransactionResponse`) and OP transaction types (`OpTxType`, `OpTxEnvelope`,
-`OpTypedTransaction`).
+`OpTypedTransaction`). It also provides the `BaseEngineApi` extension trait for Base-specific
+Engine API RPC methods.
 
 ## Usage
 
@@ -20,10 +21,11 @@ base-common-network = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_network::Base;
+use base_common_network::{Base, BaseEngineApi};
 use alloy_provider::ProviderBuilder;
 
 let provider = ProviderBuilder::new().network::<Base>().on_http(url);
+let _ = provider.exchange_capabilities(vec![]).await?;
 ```
 
 ## License
