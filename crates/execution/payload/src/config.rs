@@ -1,4 +1,4 @@
-//! Additional configuration for the Base payload builder
+//! Additional configuration for the Base payload builder.
 
 use std::sync::{Arc, atomic::AtomicU64};
 
@@ -17,16 +17,17 @@ impl BaseBuilderConfig {
         Self { da_config, gas_limit_config }
     }
 
-    /// Returns the Data Availability configuration for the OP builder, if it has configured
+    /// Returns the data availability configuration for the Base payload builder, if it has
+    /// configured
     /// constraints.
     pub fn constrained_da_config(&self) -> Option<&BaseDAConfig> {
         if self.da_config.is_empty() { None } else { Some(&self.da_config) }
     }
 }
 
-/// Contains the Data Availability configuration for the OP builder.
+/// Contains the data availability configuration for the Base payload builder.
 ///
-/// This type is shareable and can be used to update the DA configuration for the OP payload
+/// This type is shareable and can be used to update the DA configuration for the Base payload
 /// builder.
 #[derive(Debug, Clone, Default)]
 pub struct BaseDAConfig {
@@ -46,7 +47,7 @@ impl BaseDAConfig {
         self.max_da_tx_size().is_none() && self.max_da_block_size().is_none()
     }
 
-    /// Returns the max allowed data availability size per transactions, if any.
+    /// Returns the maximum allowed data availability size per transaction, if any.
     pub fn max_da_tx_size(&self) -> Option<u64> {
         let val = self.inner.max_da_tx_size.load(std::sync::atomic::Ordering::Relaxed);
         if val == 0 { None } else { Some(val) }
@@ -90,9 +91,10 @@ struct BaseDAConfigInner {
     max_da_block_size: AtomicU64,
 }
 
-/// Contains the Gas Limit configuration for the OP builder.
+/// Contains the gas-limit configuration for the Base payload builder.
 ///
-/// This type is shareable and can be used to update the Gas Limit configuration for the OP payload
+/// This type is shareable and can be used to update the gas-limit configuration for the Base
+/// payload
 /// builder.
 #[derive(Debug, Clone, Default)]
 pub struct GasLimitConfig {

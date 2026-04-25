@@ -665,7 +665,7 @@ The Base transaction pool is defined in
 extends reth's standard transaction pool with rollup-specific validation and ordering.
 
 The
-[`OpTransactionValidator`](https://github.com/base/base/blob/main/crates/execution/txpool/src/validator.rs)
+[`BaseTransactionValidator`](https://github.com/base/base/blob/main/crates/execution/txpool/src/validator.rs)
 wraps reth's `EthTransactionValidator` and adds L1 data gas fee checks. Every transaction on Base
 incurs both an L2 execution gas cost and an L1 data fee (the cost of posting the transaction data to
 Ethereum L1). The validator ensures that the sender's balance covers both fees. It also rejects
@@ -814,7 +814,7 @@ networks are completely separate and serve different purposes.
 
 -
   [`crates/execution/txpool/src/validator.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/validator.rs)
-  — OpTransactionValidator with L1 data gas checks
+  — BaseTransactionValidator with L1 data gas checks
 -
   [`crates/execution/txpool/src/ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/ordering.rs)
   — BaseOrdering (fee-based vs FIFO)

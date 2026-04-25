@@ -1,5 +1,5 @@
 //! This module contains the prologue phase of the client program, pulling in the boot
-//! information, which is passed to the zkVM a public inputs to be verified on chain.
+//! information, which is passed to the zkVM as public inputs to be verified on-chain.
 
 use alloy_primitives::{B256, Bytes};
 use alloy_sol_types::sol;

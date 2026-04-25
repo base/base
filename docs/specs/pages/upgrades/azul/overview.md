@@ -4,7 +4,8 @@
 
 :::warning
 Only `base-consensus` and `base-reth-node` will support the Base Azul hardfork. If you are running
-`op-node`, `op-geth` or any other clients you will need to update prior to the activation date.
+`op-node`, `op-geth`, or any other clients, you will need to update them prior to the activation
+date.
 :::
 
 - Add Osaka Support

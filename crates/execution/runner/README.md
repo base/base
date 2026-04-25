@@ -13,7 +13,7 @@ aliases for building modular node extensions.
 - **`BaseNodeRunner`**: Orchestrates Base node wiring and launch.
 - **`NodeHooks`**: Hook accumulator used by extensions to register RPC and node-start hooks.
 - **`BaseNodeBuilder`**: Type alias for the node builder with launch context.
-- **`OpProvider`**: Type alias for the blockchain provider instance.
+- **`BaseProvider`**: Type alias for the blockchain provider instance.
 
 Configuration types are located in their respective feature crates:
 - **`FlashblocksConfig`**: in `base-flashblocks` crate

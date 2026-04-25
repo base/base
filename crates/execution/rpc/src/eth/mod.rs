@@ -1,4 +1,4 @@
-//! OP-Reth `eth_` endpoint implementation.
+//! Base `eth_` endpoint implementation.
 
 pub mod proofs;
 pub mod receipt;
@@ -46,7 +46,7 @@ use crate::{
 /// Adapter for [`EthApiInner`], which holds all the data required to serve core `eth_` API.
 pub type EthApiNodeBackend<N, Rpc> = EthApiInner<N, Rpc>;
 
-/// OP-Reth `Eth` API implementation.
+/// Base `Eth` API implementation.
 ///
 /// This type provides the functionality for handling `eth_` related requests.
 ///

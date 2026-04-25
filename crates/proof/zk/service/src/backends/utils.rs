@@ -9,7 +9,7 @@ use tracing::debug;
 
 /// L2 output root at a specific block.
 #[derive(serde::Deserialize, Debug)]
-pub(super) struct OpOutputAtBlock {
+pub(super) struct OutputAtBlock {
     #[serde(rename = "blockRef")]
     pub block_ref: BlockRef,
 }
@@ -92,7 +92,7 @@ impl L1HeadCalculator {
     where
         OP: Provider<Base>,
     {
-        let response: OpOutputAtBlock = op_provider
+        let response: OutputAtBlock = op_provider
             .raw_request(
                 "optimism_outputAtBlock".into(),
                 (BlockNumberOrTag::Number(l2_block_number),),

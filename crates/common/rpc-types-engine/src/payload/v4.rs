@@ -181,7 +181,7 @@ impl ssz::Encode for BaseExecutionPayloadV4 {
     }
 }
 
-/// This structure maps for the return value of `engine_getPayload` of the beacon chain spec, for
+/// This structure maps to the return value of `engine_getPayload` in the beacon chain spec, for
 /// V4.
 ///
 /// See also:

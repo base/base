@@ -7,7 +7,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-/// A configurable App on top of the cli parser.
+/// A configurable app on top of the CLI parser.
 pub mod app;
 /// Base chain specification parser.
 pub mod chainspec;
@@ -38,7 +38,7 @@ use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
 
 /// The main base-reth cli interface.
 ///
-/// This is the entrypoint to the executable.
+/// This is the entry point to the executable.
 #[derive(Debug, Parser)]
 #[command(author, name = version_metadata().name_client.as_ref(), version = version_metadata().short_version.as_ref(), long_version = version_metadata().long_version.as_ref(), about = "Reth", long_about = None)]
 pub struct Cli<
@@ -63,12 +63,12 @@ pub struct Cli<
 }
 
 impl Cli {
-    /// Parsers only the default CLI arguments
+    /// Parses only the default CLI arguments.
     pub fn parse_args() -> Self {
         Self::parse()
     }
 
-    /// Parsers only the default CLI arguments from the given iterator
+    /// Parses only the default CLI arguments from the given iterator.
     pub fn try_parse_args_from<I, T>(itr: I) -> Result<Self, clap::error::Error>
     where
         I: IntoIterator<Item = T>,

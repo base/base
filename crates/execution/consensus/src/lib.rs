@@ -91,7 +91,7 @@ where
         body: &B::Body,
         header: &SealedHeader<B::Header>,
     ) -> Result<(), ConsensusError> {
-        validation::validate_body_against_header_op(&self.chain_spec, body, header.header())
+        validation::validate_body_against_header_base(&self.chain_spec, body, header.header())
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<B>) -> Result<(), ConsensusError> {

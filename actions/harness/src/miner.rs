@@ -70,7 +70,7 @@ impl Default for L1MinerConfig {
 
 /// A batcher transaction to be included in an L1 block.
 ///
-/// Op-stack batchers submit calldata transactions where:
+/// OP Stack batchers submit calldata transactions where:
 /// - `to` is the batch inbox address from the rollup config
 /// - `from` is the batcher's address
 /// - `input` is the frame-encoded batch data (version byte + encoded frames)

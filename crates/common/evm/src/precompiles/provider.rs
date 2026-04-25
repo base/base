@@ -22,7 +22,7 @@ pub struct BasePrecompiles {
 }
 
 impl BasePrecompiles {
-    /// Create a new precompile provider with the given `OpSpec`.
+    /// Create a new precompile provider with the given [`OpSpecId`].
     #[inline]
     pub fn new_with_spec(spec: OpSpecId) -> Self {
         let precompiles = match spec {

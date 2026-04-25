@@ -51,7 +51,7 @@ The Ethereum Node Record (ENR) for a Base rollup node must contain the following
 - An IPv4 address (`ip` field) and/or IPv6 address (`ip6` field).
 - A TCP port (`tcp` field) representing the local libp2p listening port.
 - A UDP port (`udp` field) representing the local discv5 listening port.
-- An OpStack (`opstack` field) L2 network identifier
+- An OP Stack (`opstack` field) L2 network identifier.
 
 The `opstack` value is encoded as a single RLP `bytes` value, the concatenation of:
 
@@ -59,7 +59,8 @@ The `opstack` value is encoded as a single RLP `bytes` value, the concatenation 
 - fork ID (`unsigned varint`)
 
 Note that DiscV5 is a shared DHT (Distributed Hash Table): the L1 consensus and execution nodes,
-as well as testnet nodes, and even external IOT nodes, all communicate records in this large common DHT.
+as well as testnet nodes and even external IoT nodes, all communicate records in this large common
+DHT.
 This makes it more difficult to censor the discovery of node records.
 
 The discovery process in Base is a pipeline of node records:

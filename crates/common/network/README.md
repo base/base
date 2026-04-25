@@ -6,10 +6,8 @@ Base chain network types and RPC behavior abstraction.
 
 Defines the `Base` network type that implements the `alloy_network::Network` trait with Base
 transaction and receipt types. This provides a consistent interface to alloy providers and signers
-regardless of Base-specific RPC changes. Also re-exports alloy response types (`BlockResponse`,
-`ReceiptResponse`, `TransactionResponse`) and OP transaction types (`OpTxType`, `OpTxEnvelope`,
-`OpTypedTransaction`). It also provides the `BaseEngineApi` extension trait for Base-specific
-Engine API RPC methods.
+regardless of Base-specific RPC changes.
+It also provides the `BaseEngineApi` extension trait for Base-specific Engine API RPC methods.
 
 ## Usage
 

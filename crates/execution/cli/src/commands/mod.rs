@@ -30,7 +30,7 @@ pub enum Commands<Ext: clap::Args + fmt::Debug = NoArgs> {
     Init(init_cmd::InitCommand<BaseChainSpecParser>),
     /// Initialize the database from a state dump file.
     #[command(name = "init-state")]
-    InitState(init_state::InitStateCommandOp<BaseChainSpecParser>),
+    InitState(init_state::BaseInitStateCommand<BaseChainSpecParser>),
     /// Dumps genesis block JSON configuration to stdout.
     DumpGenesis(dump_genesis::DumpGenesisCommand<BaseChainSpecParser>),
     /// Database debugging utilities

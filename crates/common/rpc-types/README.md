@@ -5,9 +5,9 @@ Base chain RPC types.
 ## Overview
 
 Defines the JSON-RPC request and response types specific to Base chains, including genesis and
-chain info types (`BaseGenesisInfo`, `BaseChainInfo`, `BaseFeeInfo`), transaction types
-(`BaseTransactionFields`, `OpTransactionRequest`, `Transaction`), receipt types
-(`OpTransactionReceipt`, `OpTransactionReceiptFields`), and `L1BlockInfo` for fee data. These
+chain info types (`GenesisInfo`, `ChainInfo`, `FeeInfo`), transaction types
+(`BaseTransactionFields`, `BaseTransactionRequest`, `Transaction`), receipt types
+(`BaseTransactionReceipt`, `TransactionReceiptFields`), and `L1BlockInfo` for fee data. These
 types are used to serialize and deserialize Base-specific RPC payloads.
 
 ## Usage
@@ -20,9 +20,9 @@ base-common-rpc-types = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_rpc_types::{OpTransactionReceipt, L1BlockInfo};
+use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo};
 
-let receipt: OpTransactionReceipt = provider.get_transaction_receipt(hash).await?;
+let receipt: BaseTransactionReceipt = provider.get_transaction_receipt(hash).await?;
 let l1_fee = receipt.l1_block_info.l1_fee;
 ```
 

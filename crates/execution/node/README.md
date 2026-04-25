@@ -5,9 +5,9 @@ Base execution node implementation.
 ## Overview
 
 Provides the core node type definitions and builder components for the Base execution node. Includes
-`OpEngineTypes` for consensus/execution engine integration, `OpEngineApiBuilder` for constructing
-the Engine API handler, `OpStorage` for chain state persistence, and payload builder and attestor
-types. This crate wires together the execution layer's engine, RPC, and payload subsystems.
+`BaseEngineTypes` for consensus/execution engine integration, `BaseEngineApiBuilder` for
+constructing the Engine API handler, and payload and proof-history types. This crate wires
+together the execution layer's engine, RPC, and payload subsystems.
 
 ## Usage
 
@@ -19,10 +19,10 @@ base-execution-node = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_node::{OpEngineTypes, OpEngineApiBuilder};
+use base_execution_node::{BaseEngineApiBuilder, BaseEngineTypes};
 
 let node = NodeBuilder::new(config)
-    .with_types::<OpEngineTypes>()
+    .with_types::<BaseEngineTypes>()
     .with_components(components)
     .launch()
     .await?;
