@@ -60,7 +60,7 @@ impl BlobProvider for TestBlobProvider {
             }
         }
         if self.should_return_extra_blob {
-            blobs.push(Box::new(Blob::default()));
+            blobs.push(Box::default());
         }
         Ok(blobs)
     }

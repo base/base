@@ -197,7 +197,7 @@ fn test_paused_drops_block_and_flush_events() {
         // Pause, then send a block — it must be dropped.
         admin_handle.pause().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        source_tx.send(L2BlockEvent::Block(Box::new(BaseBlock::default()))).unwrap();
+        source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
 

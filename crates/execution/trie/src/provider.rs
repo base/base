@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_base_proofs_state_provider_ref_debug() {
-        let latest: Box<dyn StateProvider + Send> = Box::new(NoopProvider::default());
+        let latest: Box<dyn StateProvider + Send> = Box::<NoopProvider>::default();
         let storage: crate::BaseProofsStorage<InMemoryProofsStorage> =
             InMemoryProofsStorage::new().into();
         let block_number = 42u64;

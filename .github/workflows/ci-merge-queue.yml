@@ -1,0 +1,28 @@
+name: CI Merge Queue
+
+on:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  checks: write
+  contents: read
+  packages: read
+  pull-requests: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-core.yml
+    with:
+      allow_registry_login: true
+      base_ref: ""
+      build_command: just build::ci
+      clippy_command: just check::clippy-ci
+      run_devnet: true
+      run_sigsegv: true
+      save_rust_cache: false
+      test_command: just test-ci
+    secrets: inherit
