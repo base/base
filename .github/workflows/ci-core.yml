@@ -38,6 +38,7 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 permissions:
+  checks: write
   contents: read
 
 jobs:
@@ -299,3 +300,8 @@ jobs:
         run: just devnet pull-images
       - name: Run devnet tests
         run: just devnet tests-ci
+      - name: Report test results
+        if: always()
+        uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
+        with:
+          report_paths: test-results.xml
