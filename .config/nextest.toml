@@ -10,6 +10,9 @@ max-threads = 1
 [test-groups.devnet]
 max-threads = 6
 
+[profile.ci]
+inherits = "default"
+
 [[profile.default.overrides]]
 filter = 'test(system_test_)'
 test-group = 'system-test-serial'
