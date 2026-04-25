@@ -10,9 +10,8 @@ We use [vouch](https://github.com/mitchellh/vouch) to manage contributor trust. 
 
 **What this means for you:**
 
-- **Issues** are open to everyone, except typo-only issues. Typo-only issues will be closed.
+- **Issues** are how we stay in sync with the Base community and understand what matters most. Please keep them focused on bugs and feature requests so they remain useful signal — typo fixes and minor refactoring suggestions will be closed without comment.
 - **Pull requests** require you to be vouched and assigned an issue. PRs from unvouched users are auto-closed.
-- **Org collaborators** with write access bypass this check automatically.
 
 **How to get vouched:**
 
@@ -28,7 +27,7 @@ There are three ways an individual can contribute:
 
 1. **By opening an issue:** If you believe you have uncovered a bug in Base or have a feature request, creating a new issue in the issue tracker is the way to begin the process.
 2. **By adding context:** Provide additional context to existing issues, such as screenshots, logs, and code snippets, to help resolve them.
-3. **By resolving issues:** Typically this is done by opening a pull request that fixes the underlying problem in a concrete and reviewable manner.
+3. **By resolving issues:** Typically this is done by opening a pull request that fixes the underlying problem in a concrete and reviewable manner. Only do this once you have been vouched on the issue.
 
 ## Scope of Contributions
 
@@ -36,12 +35,17 @@ To ensure we're all rowing in the same direction and to prevent wasted effort, p
 
 ### What We Accept from External Contributors
 
-- **Small, focused changes**: One-liner fixes, typo corrections in code, small bug fixes, and similar minimal changes are welcome.
 - **Bug reports**: Well-documented bug reports with reproduction steps are always appreciated.
+- **Feature requests**: Feature requests, such as new RPCs or other improvements.
+
+### What We Don't Accept
+
+- **Typo fixes**: Issues and PRs that only fix typos will be closed.
+- **Minor refactoring**: Style cleanups, code reorganization, or other changes without a functional impact will be closed.
 
 ### Before Starting Work
 
-If you're considering a contribution (new features, refactors, architectural changes), **please open an issue first** to discuss your proposal. This helps:
+If you're considering a contribution, **please open an issue first** to discuss your proposal. This helps:
 
 - Ensure the change aligns with project goals
 - Prevent duplicate work
@@ -54,7 +58,7 @@ We want to respect your time. Opening a discussion before investing significant 
 
 ### Before You Start
 
-**Important:** Only work on issues that are assigned to you. If you're interested in an existing issue, comment on it to request assignment. We assign issues on a first-come, first-served basis. This helps prevent duplicate work and ensures your contribution can be merged.
+**Important:** Only work on issues that are assigned to you. If you're interested in an existing issue, comment on it to request assignment. This helps prevent duplicate work and ensures your contribution can be merged.
 
 If you want to work on something that doesn't have an issue yet, open an issue first and note that you'd like to implement it. Once we agree it's worthwhile, we'll assign the issue to you.
 
@@ -96,8 +100,6 @@ If you want to work on something that doesn't have an issue yet, open an issue f
 ## Submitting a Bug Report
 
 When filing a new bug report in the issue tracker, please include:
-
-- Do not open issues for typo-only changes. Those issues will be closed.
 
 - The Base version you are on (and that it is up to date)
 - Relevant logs and error messages
