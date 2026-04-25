@@ -200,7 +200,7 @@ jobs:
         if: always()
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
-          report_paths: test-results.xml
+          report_paths: target/nextest/ci/test-results.xml
 
   bench:
     name: Benchmarks
@@ -304,4 +304,4 @@ jobs:
         if: always()
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
-          report_paths: test-results.xml
+          report_paths: target/nextest/ci/test-results.xml
