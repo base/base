@@ -61,6 +61,14 @@ def build_reverse_deps(meta):
     return reverse
 
 
+def format_output(affected, cargo_args):
+    """Render affected packages for shell consumption."""
+    for name in sorted(affected):
+        if cargo_args:
+            print("-p")
+        print(name)
+
+
 def transitive_rdeps(changed_crates, reverse_deps):
     """Find all crates transitively affected by the changed crates."""
     affected = set(changed_crates)
@@ -78,6 +86,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("base", nargs="?", default="main", help="Base branch to diff against")
     parser.add_argument("--exclude", action="append", default=[], help="Package names to exclude")
+    parser.add_argument(
+        "--cargo-args",
+        action="store_true",
+        help="Output cargo package args as alternating lines (-p, crate)",
+    )
     args = parser.parse_args()
 
     changed_files = get_changed_files(args.base)
@@ -96,6 +109,11 @@ def main():
         "Cargo.lock",
         ".cargo/",
         "rust-toolchain.toml",
+        "Justfile",
+        "etc/just/build.just",
+        "etc/just/check.just",
+        "etc/scripts/local/affected-crates.py",
+        ".github/actions/setup/",
     )
 
     # Map changed files to their crate (longest prefix match)
@@ -120,8 +138,7 @@ def main():
     affected &= all_names
     affected -= exclude
 
-    for name in sorted(affected):
-        print(name)
+    format_output(affected, args.cargo_args)
 
 
 if __name__ == "__main__":
