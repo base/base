@@ -101,3 +101,56 @@ impl StableDevnetConfig {
         Self { network_name: "devnet-network".to_string(), ports: DevnetPorts::devnet() }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn devnet_ports_are_pairwise_unique() {
+        let p = DevnetPorts::devnet();
+        let ports = vec![
+            p.l1_http,
+            p.l1_ws,
+            p.l1_auth,
+            p.l1_p2p,
+            p.l1_cl_http,
+            p.l1_cl_p2p,
+            p.l2_builder_http,
+            p.l2_builder_ws,
+            p.l2_builder_auth,
+            p.l2_builder_p2p,
+            p.l2_builder_flashblocks,
+            p.l2_builder_metrics,
+            p.l2_builder_cl_rpc,
+            p.l2_builder_cl_p2p,
+            p.l2_builder_cl_metrics,
+            p.l2_client_http,
+            p.l2_client_ws,
+            p.l2_client_auth,
+            p.l2_client_p2p,
+            p.l2_client_metrics,
+            p.l2_client_cl_rpc,
+            p.l2_client_cl_p2p,
+            p.l2_client_cl_metrics,
+        ];
+
+        let expected_count = 23;
+        assert_eq!(
+            ports.len(),
+            expected_count,
+            "port count mismatch: expected {expected_count}, got {}",
+            ports.len()
+        );
+
+        let unique: HashSet<u16> = ports.iter().cloned().collect();
+        assert_eq!(
+            unique.len(),
+            ports.len(),
+            "duplicate port detected in DevnetPorts::devnet() — {} unique out of {} total",
+            unique.len(),
+            ports.len()
+        );
+    }
+}
