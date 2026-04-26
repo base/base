@@ -147,9 +147,12 @@ impl SetupContainer {
 
     /// Generates the L1 genesis files.
     pub fn generate_l1_genesis(&self) -> Result<L1GenesisOutput> {
-        std::fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output dir")?;
+        Self::validate_workdir_root(&self.output_dir)?;
+        std::fs::create_dir_all(&self.output_dir)
+            .wrap_err_with(|| format!("devnet/setup: failed to create output dir {}", self.output_dir.display()))?;
         let shared_dir = self.output_dir.join("shared");
-        std::fs::create_dir_all(&shared_dir).wrap_err("Failed to create shared dir")?;
+        std::fs::create_dir_all(&shared_dir)
+            .wrap_err_with(|| format!("devnet/setup: failed to create shared dir {}", shared_dir.display()))?;
 
         self.ensure_setup_image_built()?;
 
@@ -191,9 +194,16 @@ impl SetupContainer {
         }
 
         std::fs::create_dir_all(self.output_dir.join("l2"))
-            .wrap_err("Failed to create l2 output dir")?;
+            .wrap_err_with(|| format!("devnet/setup: failed to create l2 output dir {}", self.output_dir.join("l2").display()))?;
 
-        let shared_mount = self.output_dir.join("shared").to_string_lossy().to_string();
+        let shared_dir = self.output_dir.join("shared");
+        ensure!(
+            shared_dir.is_dir(),
+            "devnet/setup: shared/ not found at {} — run generate_l1_genesis first",
+            shared_dir.display()
+        );
+
+        let shared_mount = shared_dir.to_string_lossy().to_string();
         let l2_output_mount = self.output_dir.join("l2").to_string_lossy().to_string();
 
         let deployer_key = format!("0x{}", hex::encode(DEPLOYER.private_key.as_slice()));
@@ -230,6 +240,20 @@ impl SetupContainer {
         );
 
         Ok(L2DeploymentOutput { output_dir: self.output_dir.clone() })
+    }
+
+    /// Validates that `path` is usable as a workdir root.
+    ///
+    /// Returns an error if `path` already exists as a file (rather than a directory),
+    /// which would cause bind-mount failures later in unintuitive ways.
+    fn validate_workdir_root(path: &PathBuf) -> Result<()> {
+        if path.exists() && !path.is_dir() {
+            return Err(eyre::eyre!(
+                "devnet/setup: output path {} exists but is a file, not a directory",
+                path.display()
+            ));
+        }
+        Ok(())
     }
 
     fn ensure_setup_image_built(&self) -> Result<()> {
@@ -272,5 +296,34 @@ impl SetupContainer {
             }
         }
         Err(eyre::eyre!("Could not find repository root with etc/docker/Dockerfile.devnet"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn validate_workdir_root_accepts_nonexistent_path() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("new_dir");
+        assert!(SetupContainer::validate_workdir_root(&path).is_ok());
+    }
+
+    #[test]
+    fn validate_workdir_root_accepts_existing_dir() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        assert!(SetupContainer::validate_workdir_root(&path).is_ok());
+    }
+
+    #[test]
+    fn validate_workdir_root_rejects_existing_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file.txt");
+        std::fs::write(&path, "oops").unwrap();
+        let err = SetupContainer::validate_workdir_root(&path).unwrap_err();
+        assert!(err.to_string().contains("exists but is a file"));
     }
 }
