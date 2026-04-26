@@ -38,9 +38,18 @@ impl L1Stack {
     pub async fn start(config: L1StackConfig) -> Result<Self> {
         let jwt_path = config.testnet_dir.parent().unwrap_or(&config.testnet_dir).join("jwt.hex");
 
-        if !jwt_path.exists() {
+        if jwt_path.exists() {
+            let existing = std::fs::read_to_string(&jwt_path)
+                .wrap_err("failed to read existing jwt.hex")?;
+            if existing.trim() != config.jwt_secret_hex.trim() {
+                return Err(eyre::eyre!(
+                    "jwt.hex at {} contains a different secret than the one in config;                      remove it or update jwt_secret_hex to match",
+                    jwt_path.display()
+                ));
+            }
+        } else {
             std::fs::write(&jwt_path, &config.jwt_secret_hex)
-                .wrap_err("Failed to write JWT secret")?;
+                .wrap_err("failed to write jwt.hex")?;
         }
 
         let reth_config = config.container_config.clone();
@@ -96,5 +105,46 @@ impl L1Stack {
     /// Returns the public URL of the Lighthouse beacon container.
     pub async fn beacon_url(&self) -> Result<String> {
         self.beacon.beacon_url().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn jwt_hex_created_when_absent() {
+        let dir = tempdir().unwrap();
+        let jwt_path = dir.path().join("jwt.hex");
+        let secret = "deadbeef";
+
+        assert!(!jwt_path.exists());
+        std::fs::write(&jwt_path, secret).unwrap();
+        assert_eq!(std::fs::read_to_string(&jwt_path).unwrap(), secret);
+    }
+
+    #[test]
+    fn jwt_hex_accepted_when_matches() {
+        let dir = tempdir().unwrap();
+        let jwt_path = dir.path().join("jwt.hex");
+        let secret = "deadbeef";
+
+        std::fs::write(&jwt_path, secret).unwrap();
+
+        let existing = std::fs::read_to_string(&jwt_path).unwrap();
+        assert_eq!(existing.trim(), secret.trim());
+    }
+
+    #[test]
+    fn jwt_hex_rejected_when_mismatches() {
+        let dir = tempdir().unwrap();
+        let jwt_path = dir.path().join("jwt.hex");
+
+        std::fs::write(&jwt_path, "aabbccdd").unwrap();
+
+        let existing = std::fs::read_to_string(&jwt_path).unwrap();
+        let configured = "deadbeef";
+        assert_ne!(existing.trim(), configured.trim());
     }
 }
