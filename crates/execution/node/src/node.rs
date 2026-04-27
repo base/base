@@ -242,6 +242,7 @@ impl BaseNode {
             discovery_v4,
             txpool_ordering,
             base_protocol,
+            max_inflight_delegated_slots,
             ..
         } = self.args;
         let ordering = match txpool_ordering {
@@ -251,7 +252,11 @@ impl BaseNode {
         ComponentsBuilder::default()
             .node_types::<Node>()
             .executor(BaseExecutorBuilder::default())
-            .pool(BasePoolBuilder::default().with_ordering(ordering))
+            .pool(
+                BasePoolBuilder::default()
+                    .with_ordering(ordering)
+                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots),
+            )
             .payload(BasicPayloadServiceBuilder::new(
                 BasePayloadBuilder::new(compute_pending_block)
                     .with_da_config(self.da_config.clone())
@@ -844,6 +849,8 @@ pub struct BasePoolBuilder<T = BasePooledTransaction> {
     pub pool_config_overrides: PoolBuilderConfigOverrides,
     /// The ordering strategy for the transaction pool.
     pub ordering: BaseOrdering<T>,
+    /// Maximum inflight EIP-7702 delegated account transactions per sender.
+    pub max_inflight_delegated_slots: usize,
     /// Marker for the pooled transaction type.
     _pd: core::marker::PhantomData<T>,
 }
@@ -853,6 +860,7 @@ impl<T> Default for BasePoolBuilder<T> {
         Self {
             pool_config_overrides: Default::default(),
             ordering: BaseOrdering::default(),
+            max_inflight_delegated_slots: 1,
             _pd: Default::default(),
         }
     }
@@ -863,6 +871,7 @@ impl<T> Clone for BasePoolBuilder<T> {
         Self {
             pool_config_overrides: self.pool_config_overrides.clone(),
             ordering: self.ordering.clone(),
+            max_inflight_delegated_slots: self.max_inflight_delegated_slots,
             _pd: core::marker::PhantomData,
         }
     }
@@ -883,6 +892,12 @@ impl<T> BasePoolBuilder<T> {
         self.ordering = ordering;
         self
     }
+
+    /// Sets the maximum inflight EIP-7702 delegated account transactions per sender.
+    pub const fn with_max_inflight_delegated_slots(mut self, limit: usize) -> Self {
+        self.max_inflight_delegated_slots = limit;
+        self
+    }
 }
 
 impl<Node, T, Evm> PoolBuilder<Node, Evm> for BasePoolBuilder<T>
@@ -898,7 +913,7 @@ where
         ctx: &BuilderContext<Node>,
         evm_config: Evm,
     ) -> eyre::Result<Self::Pool> {
-        let Self { pool_config_overrides, ordering, .. } = self;
+        let Self { pool_config_overrides, ordering, max_inflight_delegated_slots, .. } = self;
 
         let blob_store = reth_node_builder::components::create_blob_store(ctx)?;
         let validator =
@@ -922,7 +937,8 @@ where
                         .require_l1_data_gas_fee(!ctx.config().dev.dev)
                 });
 
-        let final_pool_config = pool_config_overrides.apply(ctx.pool_config());
+        let mut final_pool_config = pool_config_overrides.apply(ctx.pool_config());
+        final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
 
         let transaction_pool = TxPoolBuilder::new(ctx)
             .with_validator(validator)
