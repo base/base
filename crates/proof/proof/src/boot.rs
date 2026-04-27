@@ -246,7 +246,7 @@ impl BootInfo {
             warn!(
                 target: "boot_loader",
                 "No rollup config found for chain ID {}, falling back to preimage oracle. This is insecure in production without additional validation!",
-                chain_id,
+                chain_id
             );
             let ser_cfg = oracle
                 .get(PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()))
