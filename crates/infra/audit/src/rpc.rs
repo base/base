@@ -1,7 +1,7 @@
 //! RPC server for the audit archiver.
 //!
 //! Exposes the `base_persistRejectedTransactionBatch` method for receiving batches
-//! of rejected transactions from the builder and persisting them to S3.
+//! of rejected transactions from the builder and persisting them to storage.
 
 use std::{
     sync::Arc,
@@ -16,14 +16,14 @@ use moka::sync::Cache;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::{metrics::Metrics, reader::Event, storage::S3EventReaderWriter, types::BundleEvent};
+use crate::{metrics::Metrics, reader::Event, storage::RejectedTxStore, types::BundleEvent};
 
 const MAX_BATCH_SIZE: usize = 500;
 
 /// RPC trait for the audit archiver.
 #[rpc(server, namespace = "base")]
 pub trait AuditArchiverApi {
-    /// Persists a batch of rejected transactions to S3 storage.
+    /// Persists a batch of rejected transactions to storage.
     /// Returns the number of items successfully persisted.
     #[method(name = "persistRejectedTransactionBatch")]
     async fn persist_rejected_transaction_batch(
@@ -41,8 +41,8 @@ pub trait AuditArchiverApi {
 
 /// RPC handler for audit archiver requests.
 #[derive(Debug)]
-pub struct AuditArchiverRpc {
-    storage: Arc<S3EventReaderWriter>,
+pub struct AuditArchiverRpc<S> {
+    storage: Arc<S>,
     bundle_events: Option<BundleEventForwarder>,
 }
 
@@ -100,10 +100,10 @@ impl BundleEventForwarder {
     }
 }
 
-impl AuditArchiverRpc {
+impl<S: RejectedTxStore> AuditArchiverRpc<S> {
     /// Creates a new `AuditArchiverRpc` that only handles rejected-transaction
     /// batches. The bundle-event RPC method will return an error.
-    pub const fn new(storage: Arc<S3EventReaderWriter>) -> Self {
+    pub const fn new(storage: Arc<S>) -> Self {
         Self { storage, bundle_events: None }
     }
 
@@ -111,7 +111,7 @@ impl AuditArchiverRpc {
     /// batches over RPC, deduplicating via `cache` and forwarding unique
     /// events to `event_tx`.
     pub const fn with_bundle_events(
-        storage: Arc<S3EventReaderWriter>,
+        storage: Arc<S>,
         cache: Cache<String, ()>,
         event_tx: mpsc::Sender<Event>,
     ) -> Self {
@@ -120,7 +120,7 @@ impl AuditArchiverRpc {
 }
 
 #[async_trait::async_trait]
-impl AuditArchiverApiServer for AuditArchiverRpc {
+impl<S: RejectedTxStore + 'static> AuditArchiverApiServer for AuditArchiverRpc<S> {
     async fn persist_rejected_transaction_batch(
         &self,
         batch: Vec<RejectedTransaction>,
@@ -143,10 +143,9 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         info!(batch_size, block_number, "Persisting rejected transaction batch");
 
         // Clone the Arc to release the borrow on `&self` so the jsonrpsee server can dispatch
-        // additional concurrent batch RPC calls while this batch's S3 writes are in flight.
+        // additional concurrent batch RPC calls while this batch's storage writes are in flight.
         let storage = Arc::clone(&self.storage);
 
-        // Peform the S3 operations in parallel on the batch. Up to 5 concurrent operations at a time.
         let persisted = stream::iter(batch)
             .map(move |tx| {
                 let storage = Arc::clone(&storage);

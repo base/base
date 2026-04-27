@@ -1,4 +1,4 @@
-//! Metrics for audit operations including event reads, S3 writes, and event processing.
+//! Metrics for audit operations including event reads, storage writes, and event processing.
 
 base_metrics::define_metrics! {
     tips_audit
@@ -14,16 +14,16 @@ base_metrics::define_metrics! {
     update_bundle_history_duration: histogram,
     #[describe("Duration of update all transaction indexes")]
     update_tx_indexes_duration: histogram,
-    #[describe("Duration of S3 get_object")]
-    s3_get_duration: histogram,
-    #[describe("Duration of S3 put_object")]
-    s3_put_duration: histogram,
+    #[describe("Duration of storage get")]
+    storage_get_duration: histogram,
+    #[describe("Duration of storage put")]
+    storage_put_duration: histogram,
     #[describe("Total events processed")]
     events_processed: counter,
-    #[describe("Total S3 writes skipped due to dedup")]
-    s3_writes_skipped: counter,
-    #[describe("Total S3 conditional write conflicts (412/409)")]
-    s3_conditional_conflicts: counter,
+    #[describe("Total storage writes skipped due to dedup")]
+    storage_writes_skipped: counter,
+    #[describe("Total storage conditional write conflicts")]
+    storage_conditional_conflicts: counter,
     #[describe("Number of in-flight archive tasks")]
     in_flight_archive_tasks: gauge,
     #[describe("Number of failed archive tasks")]

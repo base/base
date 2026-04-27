@@ -1,9 +1,7 @@
 //! S3 event storage tests.
 
 use alloy_primitives::TxHash;
-use audit_archiver_lib::{
-    BundleEvent, BundleEventS3Reader, Event, EventWriter, S3EventReaderWriter,
-};
+use audit_archiver_lib::{BundleEvent, BundleEventReader, Event, EventWriter, S3EventReaderWriter};
 use uuid::Uuid;
 
 mod common;
