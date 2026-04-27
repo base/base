@@ -76,18 +76,20 @@ let validator = BaseEngineValidator::new(
 Implement `CachedExecutionProvider` to supply pre-computed execution results:
 
 ```rust,ignore
+use base_common_consensus::OpTxType;
+use base_common_evm::{BaseHaltReason, BaseTxResult};
 use base_engine_tree::CachedExecutionProvider;
 
 #[derive(Debug, Clone)]
 struct MyFlashblockCache { /* ... */ }
 
-impl CachedExecutionProvider<OpTxResult<OpHaltReason, OpTxType>> for MyFlashblockCache {
+impl CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>> for MyFlashblockCache {
     fn get_cached_execution_for_tx(
         &self,
         parent_block_hash: &B256,
         prev_cached_hash: Option<&B256>,
         tx_hash: &B256,
-    ) -> Option<OpTxResult<OpHaltReason, OpTxType>> {
+    ) -> Option<BaseTxResult<BaseHaltReason, OpTxType>> {
         // Look up cached result from flashblock execution
         self.cache.get(start_state_root, tx_hash)
     }

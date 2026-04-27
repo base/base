@@ -61,6 +61,7 @@ std = [
 	"reth-primitives-traits/std",
 	"serde?/std",
 	"serde_json/std",
+	"spin/std",
 ]
 serde = [
 	"alloy-chains/serde",

@@ -41,9 +41,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         start_block_number: 42,
         number_of_blocks_to_prove: 1,
         sequence_window: None,
-        proof_type: ProofType::GenericZkvmClusterCompressed.into(),
+        proof_type: ProofType::Compressed.into(),
         session_id: None,
         prover_address: None,
+        l1_head: None,
     };
 
     let response = client.prove_block(request).await?;

@@ -19,6 +19,9 @@ pub use holesky::Holesky;
 mod hoodi;
 pub use hoodi::Hoodi;
 
+mod config;
+pub use config::L1_CONFIGS;
+
 /// Shared blob schedule builder for all Ethereum networks.
 pub(super) struct BlobSchedule;
 

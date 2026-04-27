@@ -8,7 +8,11 @@ max-threads = 1
 max-threads = 1
 
 [test-groups.devnet]
-max-threads = 1
+max-threads = 6
+
+[profile.ci]
+junit = { path = "test-results.xml" }
+retries = 1
 
 [[profile.default.overrides]]
 filter = 'test(system_test_)'
@@ -29,4 +33,3 @@ filter = 'package(devnet)'
 test-group = 'devnet'
 retries = 1
 slow-timeout = { period = "120s", terminate-after = 3 }
-

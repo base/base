@@ -17,7 +17,7 @@ mod check 'etc/just/check.just'
 # Cargo build targets and contract compilation
 mod build 'etc/just/build.just'
 # SP1 / succinct ELF builds and proving helpers
-mod succinct 'crates/succinct'
+mod succinct 'etc/just/succinct.just'
 
 alias t := test
 alias f := fix
@@ -118,37 +118,37 @@ test: install-nextest build::contracts build::elfs
 test-affected base="main": install-nextest build::contracts build::elfs
     #!/usr/bin/env bash
     set -euo pipefail
-    affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
-    if [ -z "$affected" ]; then
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet --cargo-args)"
+    pkg_args=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && pkg_args+=("$line")
+    done <<< "$pkg_args_output"
+    if [ "${#pkg_args[@]}" -eq 0 ]; then
         echo "No affected crates to test."
         exit 0
     fi
-    pkg_args=""
-    while IFS= read -r crate; do
-        pkg_args="$pkg_args -p $crate"
-    done <<< "$affected"
-    echo "Testing affected crates:$pkg_args"
-    cargo nextest run --all-features $pkg_args
+    echo "Testing affected crates:${pkg_args[*]}"
+    cargo nextest run --all-features "${pkg_args[@]}"
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build::contracts build::elfs
-    cargo nextest run --locked --workspace --all-features --exclude devnet --cargo-profile ci
+    cargo nextest run -P ci --locked --workspace --all-features --exclude devnet --cargo-profile ci
 
 # Runs tests only for affected crates with ci profile (for PRs)
 test-affected-ci base="main": install-nextest build::contracts build::elfs
     #!/usr/bin/env bash
     set -euo pipefail
-    affected=$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet)
-    if [ -z "$affected" ]; then
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude devnet --cargo-args)"
+    pkg_args=()
+    while IFS= read -r line; do
+        [ -n "$line" ] && pkg_args+=("$line")
+    done <<< "$pkg_args_output"
+    if [ "${#pkg_args[@]}" -eq 0 ]; then
         echo "No affected crates to test."
         exit 0
     fi
-    pkg_args=""
-    while IFS= read -r crate; do
-        pkg_args="$pkg_args -p $crate"
-    done <<< "$affected"
-    echo "Testing affected crates:$pkg_args"
-    cargo nextest run --locked --all-features --cargo-profile ci $pkg_args || {
+    echo "Testing affected crates:${pkg_args[*]}"
+    cargo nextest run -P ci --locked --all-features --cargo-profile ci "${pkg_args[@]}" || {
         code=$?
         if [ $code -eq 4 ]; then
             echo "No tests to run."
@@ -168,7 +168,7 @@ format-fix:
 
 # Fixes any clippy issues
 clippy-fix:
-    {{_skip_kernels}} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+    {{_skip_kernels}} BASE_SUCCINCT_ELF_STUB=1 cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged
 
 # Cleans the workspace
 clean:
@@ -180,7 +180,7 @@ watch-test: build::contracts
 
 # Watches checks
 watch-check:
-    cargo watch -x "fmt --all -- --check" -x "clippy --all-targets -- -D warnings" -x test
+    cargo watch -x "fmt --all -- --check" -x "clippy --all-features --all-targets -- -D warnings" -x test
 
 # Runs all benchmarks
 benches:

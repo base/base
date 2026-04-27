@@ -21,4 +21,5 @@ Our aim is to design a protocol specification that is:
 ## Lineage
 
 Base Chain inherits Ethereum's EVM semantics, transaction rules, and L1-anchored security. It was
-originally built on the [OP Stack](https://specs.optimism.io). After the Jovian Hardfork, Base Chain follows this specification.
+originally built on the [OP Stack](https://specs.optimism.io). After the Jovian Hardfork, Base
+Chain follows this specification.

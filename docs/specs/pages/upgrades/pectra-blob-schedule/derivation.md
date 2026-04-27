@@ -18,11 +18,11 @@ at any given L1 block will apply to the L1 Attributes Deposited Transaction.
 
 ## Motivation and Rationale
 
-Due to a consensus layer bug, OPStack chains on Holesky and Sepolia running officially released op-node software
+Due to a consensus layer bug, OP Stack chains on Holesky and Sepolia running officially released op-node software
 did not update their blob base fee update fraction (for L1 Attributes Deposited Transaction)
 in tandem with the Prague upgrade on L1.
 
-These chains, or any OPStack chain with a sequencer running
+These chains, or any OP Stack chain with a sequencer running
 the buggy consensus code[^1] when Holesky/Sepolia activated Pectra,
 will have an inaccurate blob base fee in the [L1Block](../../protocol/execution/evm/predeploys.md#l1block) contract.
 This optional fork is a mechanism to bring those chains back in line.

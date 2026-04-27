@@ -17,7 +17,7 @@ use base_common_consensus::{BasePrimitives, BaseReceipt, BaseTxEnvelope, Predepl
 use base_common_evm::{BaseHaltReason, L1BlockInfo, ensure_create2_deployer};
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
-use base_execution_rpc::BaseReceiptBuilder as OpRpcReceiptBuilder;
+use base_execution_rpc::BaseReceiptBuilder as BaseRpcReceiptBuilder;
 use reth_evm::{Evm, FromRecoveredTx};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use revm::{
@@ -333,7 +333,7 @@ where
                     meta,
                 };
 
-                let mut op_receipt = OpRpcReceiptBuilder::new(
+                let mut base_receipt = BaseRpcReceiptBuilder::new(
                     self.receipt_builder.chain_spec(),
                     input,
                     &mut self.l1_block_info,
@@ -341,11 +341,11 @@ where
                 .map_err(|e| ExecutionError::RpcReceiptBuild(e.to_string()))?
                 .build();
 
-                op_receipt.inner.blob_gas_used = Some(da_footprint_used);
+                base_receipt.inner.blob_gas_used = Some(da_footprint_used);
                 self.next_log_index += receipt.logs().len();
 
                 let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-                    let BaseReceipt::Deposit(deposit_receipt) = &op_receipt.inner.inner.receipt
+                    let BaseReceipt::Deposit(deposit_receipt) = &base_receipt.inner.inner.receipt
                     else {
                         return Err(ExecutionError::DepositReceiptMismatch.into());
                     };
@@ -370,7 +370,7 @@ where
 
                 Ok(ExecutedPendingTransaction {
                     rpc_transaction,
-                    receipt: op_receipt,
+                    receipt: base_receipt,
                     state,
                     result,
                     execution_time_us: Some(elapsed_us),

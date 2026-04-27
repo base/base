@@ -220,9 +220,9 @@ impl Frame {
         Ok((frame_len, frame))
     }
 
-    /// Parse the on chain serialization of frame(s) in an L1 transaction. Currently
+    /// Parse the on-chain serialization of frame(s) in an L1 transaction. Currently
     /// only version 0 of the serialization format is supported. All frames must be parsed
-    /// without error and there must not be any left over data and there must be at least one
+    /// without error, there must not be any leftover data, and there must be at least one
     /// frame.
     ///
     /// Frames are stored in L1 transactions with the following format:

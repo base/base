@@ -144,8 +144,7 @@ fn finalize_only_benches(c: &mut Criterion) {
     for &accounts_per_fb in &[10, 100, 1_000] {
         let (_deltas, full_state) = setup_flashblock_data(accounts_per_fb);
         let (_dir, storage) = create_populated_storage();
-        let provider =
-            BaseProofsStateProviderRef::new(Box::new(NoopProvider::default()), &storage, 0);
+        let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
 
         g.bench_function(BenchmarkId::new("accounts_per_fb", accounts_per_fb), |b| {
             b.iter(|| {
@@ -181,8 +180,7 @@ fn per_flashblock_benches(c: &mut Criterion) {
             .collect();
 
         let (_dir, storage) = create_populated_storage();
-        let provider =
-            BaseProofsStateProviderRef::new(Box::new(NoopProvider::default()), &storage, 0);
+        let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
 
         g.bench_function(BenchmarkId::new("accounts_per_fb", accounts_per_fb), |b| {
             b.iter(|| {

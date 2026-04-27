@@ -5,7 +5,7 @@ Transaction pool for Base.
 ## Overview
 
 Extends Reth's transaction pool with Base-specific validation and ordering for the Base node.
-`OpTransactionValidator` enforces L1 data fee checks and Base-specific validity rules.
+`BaseTransactionValidator` enforces L1 data fee checks and Base-specific validity rules.
 `BaseOrdering` and `TimestampOrdering` provide customizable transaction prioritization strategies.
 Also includes a `Consumer` for processing mempool events, a `Forwarder` for relaying transactions,
 and a `BuilderApiImpl` for builder-specific pool management.
@@ -20,10 +20,10 @@ base-txpool = { workspace = true }
 ```
 
 ```rust,ignore
-use base_txpool::{BaseTransactionPool, OpTransactionValidator, BaseOrdering};
+use base_txpool::{BaseOrdering, BaseTransactionPool, BaseTransactionValidator};
 
 let pool = Pool::new(
-    OpTransactionValidator::new(client, evm),
+    BaseTransactionValidator::new(client, evm),
     BaseOrdering::default(),
     config,
 );

@@ -1,0 +1,83 @@
+# Sub-workspace for the SP1 zkVM guest programs (range + aggregation).
+#
+# These crates are built separately via `just succinct build-elfs`
+# (which shells out to `cargo prove build` with the SP1 toolchain and
+# the `riscv32im-succinct-zkvm-elf` target). 
+
+[workspace]
+resolver = "2"
+members = [
+  "aggregation",
+  "range/ethereum",
+  "range/utils",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.93"
+license = "MIT"
+homepage = "https://github.com/base/base"
+repository = "https://github.com/base/base"
+
+[workspace.lints.rust]
+missing-debug-implementations = "warn"
+missing-docs = "warn"
+unreachable-pub = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+unnameable-types = "warn"
+
+[workspace.lints.rustdoc]
+all = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+# Internal members
+base-proof-succinct-range-utils = { path = "range/utils" }
+base-proof = { path = "../../../proof/proof", default-features = false }
+base-proof-succinct-client-utils = { path = "../utils/client" }
+base-proof-succinct-ethereum-client-utils = { path = "../utils/ethereum/client" }
+
+# SP1 (must match root Cargo.toml versions)
+sp1-zkvm = { version = "=6.1.0", features = ["verify"] }
+sp1-lib = { version = "=6.1.0", features = ["verify"] }
+
+# alloy (must match root Cargo.toml versions)
+alloy-consensus = { version = "1.8", default-features = false }
+alloy-sol-types = { version = "1.5.6", default-features = false }
+alloy-primitives = { version = "1.5.6", default-features = false }
+
+# misc (must match root Cargo.toml versions)
+rkyv = "0.8"
+anyhow = "1.0"
+serde_cbor = "0.11.2"
+sha2 = { version = "0.10", default-features = false }
+tracing = { version = "0.1.43", default-features = false }
+tracing-subscriber = "0.3.22"
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+debug = "none"
+strip = "symbols"
+panic = "unwind"
+codegen-units = 16
+
+# SP1 zkVM patches.  These override transitive dependencies so that
+# crypto operations use SP1-accelerated precompiles when compiled for
+# the zkVM target (`target_os = "zkvm"`).  On native builds the
+# patches are no-ops.
+[patch.crates-io]
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-6.0.0" }
+sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-6.0.0" }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-6.0.0-substrate-bn" }
+p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-6.0.0" }
+k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-6.0.0" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }

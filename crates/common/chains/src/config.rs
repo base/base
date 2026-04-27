@@ -1,6 +1,11 @@
 //! Base Chain configuration.
 
+use alloy_chains::Chain;
+use alloy_eips::eip1898::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, address, b256, uint};
+use base_common_genesis::{
+    ChainGenesis, FeeConfig, HardForkConfig, HardforkConfig, RollupConfig, SystemConfig,
+};
 
 /// Complete configuration for a Base chain
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +147,100 @@ impl ChainConfig {
             763360 => Some(&ZERONET),
             _ => None,
         }
+    }
+
+    /// Returns the EIP-1559 [`FeeConfig`] for this chain.
+    pub const fn fee_config(&self) -> FeeConfig {
+        FeeConfig {
+            eip1559_elasticity: self.eip1559_elasticity,
+            eip1559_denominator: self.eip1559_denominator,
+            eip1559_denominator_canyon: self.eip1559_denominator_canyon,
+        }
+    }
+
+    /// Returns the [`HardForkConfig`] (Base upgrade activation timestamps) for this chain.
+    pub const fn hardfork_config(&self) -> HardForkConfig {
+        HardForkConfig {
+            regolith_time: Some(self.regolith_timestamp),
+            canyon_time: Some(self.canyon_timestamp),
+            delta_time: Some(self.delta_timestamp),
+            ecotone_time: Some(self.ecotone_timestamp),
+            fjord_time: Some(self.fjord_timestamp),
+            granite_time: Some(self.granite_timestamp),
+            holocene_time: Some(self.holocene_timestamp),
+            pectra_blob_schedule_time: self.pectra_blob_schedule_timestamp,
+            isthmus_time: Some(self.isthmus_timestamp),
+            jovian_time: Some(self.jovian_timestamp),
+            base: HardforkConfig { azul: self.azul_timestamp },
+        }
+    }
+
+    /// Returns the [`ChainGenesis`] (L1/L2 genesis anchor + initial system config) for this chain.
+    pub const fn chain_genesis(&self) -> ChainGenesis {
+        ChainGenesis {
+            l1: BlockNumHash { hash: self.genesis_l1_hash, number: self.genesis_l1_number },
+            l2: BlockNumHash { hash: self.genesis_l2_hash, number: self.genesis_l2_number },
+            l2_time: self.genesis_l2_time,
+            system_config: Some(SystemConfig {
+                batcher_address: self.genesis_batcher_address,
+                overhead: self.genesis_overhead,
+                scalar: self.genesis_scalar,
+                gas_limit: self.genesis_gas_limit,
+                base_fee_scalar: None,
+                blob_base_fee_scalar: None,
+                eip1559_denominator: None,
+                eip1559_elasticity: None,
+                operator_fee_scalar: None,
+                operator_fee_constant: None,
+                min_base_fee: None,
+                da_footprint_gas_scalar: None,
+            }),
+        }
+    }
+
+    /// Returns the full [`RollupConfig`] for this chain, derived from its [`ChainConfig`].
+    pub fn rollup_config(&self) -> RollupConfig {
+        RollupConfig {
+            genesis: self.chain_genesis(),
+            block_time: self.block_time,
+            max_sequencer_drift: self.max_sequencer_drift,
+            seq_window_size: self.seq_window_size,
+            channel_timeout: self.channel_timeout,
+            granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+            l1_chain_id: self.l1_chain_id,
+            l2_chain_id: Chain::from_id(self.chain_id),
+            hardforks: self.hardfork_config(),
+            batch_inbox_address: self.batch_inbox_address,
+            deposit_contract_address: self.deposit_contract_address,
+            l1_system_config_address: self.system_config_address,
+            protocol_versions_address: self.protocol_versions_address,
+            blobs_enabled_l1_timestamp: None,
+            chain_op_config: self.fee_config(),
+        }
+    }
+}
+
+impl From<&ChainConfig> for FeeConfig {
+    fn from(cfg: &ChainConfig) -> Self {
+        cfg.fee_config()
+    }
+}
+
+impl From<&ChainConfig> for HardForkConfig {
+    fn from(cfg: &ChainConfig) -> Self {
+        cfg.hardfork_config()
+    }
+}
+
+impl From<&ChainConfig> for ChainGenesis {
+    fn from(cfg: &ChainConfig) -> Self {
+        cfg.chain_genesis()
+    }
+}
+
+impl From<&ChainConfig> for RollupConfig {
+    fn from(cfg: &ChainConfig) -> Self {
+        cfg.rollup_config()
     }
 }
 
@@ -424,3 +523,15 @@ const ZERONET: ChainConfig = ChainConfig {
 
     genesis_json: include_str!("../res/genesis/zeronet_base.json"),
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mainnet_fee_config_matches_const() {
+        // Guard against drift between the hardcoded `FeeConfig::BASE_MAINNET` constant
+        // (used as a serde default) and the canonical `ChainConfig::mainnet().fee_config()`.
+        assert_eq!(ChainConfig::mainnet().fee_config(), FeeConfig::base_mainnet());
+    }
+}

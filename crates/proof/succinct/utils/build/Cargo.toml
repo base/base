@@ -1,0 +1,15 @@
+[package]
+name = "base-proof-succinct-build-utils"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+sp1-build.workspace = true
+cargo_metadata.workspace = true
+
+[lints]
+workspace = true

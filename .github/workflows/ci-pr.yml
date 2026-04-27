@@ -1,0 +1,31 @@
+name: CI PR
+
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  checks: write
+  contents: read
+  packages: read
+  pull-requests: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-core.yml
+    with:
+      allow_registry_login: ${{ github.event.pull_request.head.repo.fork != true }}
+      base_ref: ${{ github.base_ref || 'main' }}
+      build_command: >-
+        just build::affected-ci "origin/${{ github.base_ref || 'main' }}"
+      clippy_command: >-
+        just check::clippy-affected-ci "origin/${{ github.base_ref || 'main' }}"
+      run_devnet: false
+      run_sigsegv: false
+      save_rust_cache: false
+      test_command: >-
+        just test-affected-ci "origin/${{ github.base_ref || 'main' }}"
+    secrets: inherit

@@ -213,7 +213,19 @@ where
 
 #[cfg(test)]
 mod tests {
+    use reth_transaction_pool::noop::NoopTransactionPool;
+
     use super::*;
+
+    fn handler(
+        current_block: u64,
+    ) -> SendBundleApiImpl<NoopTransactionPool<BasePooledTransaction>> {
+        SendBundleApiImpl::new(
+            NoopTransactionPool::<BasePooledTransaction>::new(),
+            true,
+            std::sync::Arc::new(std::sync::atomic::AtomicU64::new(current_block)),
+        )
+    }
 
     #[test]
     fn rejects_empty_txs() {
@@ -377,5 +389,41 @@ mod tests {
             builders: None,
         };
         assert!(validate_bundle_request(&req, 100).is_ok());
+    }
+
+    #[tokio::test]
+    async fn send_bundle_rejects_empty_bundle() {
+        let handler = handler(100);
+        let req = SendBundleRequest {
+            txs: vec![],
+            block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            reverting_tx_hashes: None,
+            replacement_uuid: None,
+            builders: None,
+        };
+
+        let err = handler.send_bundle(req).await.unwrap_err();
+        assert_eq!(err.code(), ErrorCode::InvalidParams.code());
+        assert!(err.message().contains("exactly 1 transaction"));
+    }
+
+    #[tokio::test]
+    async fn send_bundle_rejects_block_number_too_far_ahead() {
+        let handler = handler(100);
+        let req = SendBundleRequest {
+            txs: vec![Bytes::from_static(b"tx")],
+            block_number: Some(200),
+            min_timestamp: None,
+            max_timestamp: None,
+            reverting_tx_hashes: None,
+            replacement_uuid: None,
+            builders: None,
+        };
+
+        let err = handler.send_bundle(req).await.unwrap_err();
+        assert_eq!(err.code(), ErrorCode::InvalidParams.code());
+        assert!(err.message().contains("too far ahead"));
     }
 }

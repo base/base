@@ -1,48 +1,12 @@
 //! An adapter over `BestPayloadTransactions`
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc};
 
 use alloy_primitives::{Address, TxHash};
-use moka::sync::Cache;
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
 
-use crate::BuilderMetrics;
-
-/// Shared, cross-block cache of permanently rejected transaction hashes.
-///
-/// Backed by [`moka::sync::Cache`] with a TTL so entries expire if metering
-/// predictions or operator limits change.
-#[derive(Clone, Debug)]
-pub struct RejectionCache(Cache<TxHash, ()>);
-
-impl RejectionCache {
-    /// Creates a new [`RejectionCache`] with the given capacity and TTL.
-    pub fn new(max_capacity: u64, ttl: Duration) -> Self {
-        Self(Cache::builder().max_capacity(max_capacity).time_to_live(ttl).build())
-    }
-
-    /// Checks if a transaction hash is in the cache.
-    pub fn contains_key(&self, hash: &TxHash) -> bool {
-        self.0.contains_key(hash)
-    }
-
-    /// Adds a transaction hash to the cache.
-    pub fn insert(&self, hash: TxHash) {
-        self.0.insert(hash, ());
-    }
-
-    /// Returns the number of cached entries.
-    pub fn entry_count(&self) -> u64 {
-        self.0.entry_count()
-    }
-
-    /// Flushes pending cache maintenance tasks (evictions, TTL expiry).
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn run_pending_tasks(&self) {
-        self.0.run_pending_tasks();
-    }
-}
+use crate::{BuilderMetrics, RejectionCache};
 
 /// An adapter over `BestPayloadTransactions` that allows to skip transactions that were already
 /// committed to the state. It also allows to refresh inner iterator on each flashblock building, to
@@ -153,7 +117,7 @@ mod tests {
         test_utils::{MockTransaction, MockTransactionFactory},
     };
 
-    use crate::flashblocks::best_txs::{BestFlashblocksTxs, RejectionCache};
+    use crate::{RejectionCache, flashblocks::best_txs::BestFlashblocksTxs};
 
     fn test_rejection_cache() -> RejectionCache {
         RejectionCache::new(1000, Duration::from_secs(60))

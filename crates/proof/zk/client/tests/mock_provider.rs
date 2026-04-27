@@ -56,7 +56,7 @@ async fn mock_prove_block_returns_session_id() {
         start_block_number: 100,
         number_of_blocks_to_prove: 1,
         sequence_window: None,
-        proof_type: ProofType::GenericZkvmClusterCompressed.into(),
+        proof_type: ProofType::Compressed.into(),
         session_id: None,
         prover_address: None,
         l1_head: None,

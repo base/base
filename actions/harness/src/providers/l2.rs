@@ -90,7 +90,7 @@ impl ActionL2ChainProvider {
         self.blocks.insert(block.block_info.number, block);
     }
 
-    /// Insert a known L2 op-block (with transactions) into the provider.
+    /// Insert a known L2 block with transactions into the provider.
     pub fn insert_op_block(&mut self, number: u64, block: BaseBlock) {
         self.op_blocks.insert(number, block);
     }

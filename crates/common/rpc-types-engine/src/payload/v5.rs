@@ -7,10 +7,10 @@ use alloy_rpc_types_engine::BlobsBundleV2;
 
 use super::v4::BaseExecutionPayloadV4;
 
-/// This structure maps for the return value of `engine_getPayload` of the beacon chain spec, for
+/// This structure maps to the return value of `engine_getPayload` in the beacon chain spec, for
 /// V5.
 ///
-/// The OP variant follows the same pattern as V4: replaces `ExecutionPayloadV3` with
+/// The Base variant follows the same pattern as V4: it replaces `ExecutionPayloadV3` with
 /// [`BaseExecutionPayloadV4`] (which adds `withdrawalsRoot`), and keeps all other fields identical
 /// to the mainnet [`ExecutionPayloadEnvelopeV5`](alloy_rpc_types_engine::ExecutionPayloadEnvelopeV5).
 ///

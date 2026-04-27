@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify or refresh the sha256 entries in ``crates/succinct/elf/manifest.toml``.
+"""Verify or refresh the sha256 entries in ``crates/proof/succinct/elf/manifest.toml``.
 
 Usage::
 

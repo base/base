@@ -5,9 +5,9 @@ Base chain RPC types for the `engine` namespace.
 ## Overview
 
 Defines execution engine payload types for the consensus-to-execution Engine API. Includes
-`OpPayloadAttributes` for block building requests, versioned payload envelopes
-(`OpExecutionPayloadEnvelope`, `OpNetworkPayloadEnvelope`), `OpExecutionPayloadV4`, and
-versioned sidecars (`OpExecutionPayloadSidecar`). These types are exchanged between the
+`BasePayloadAttributes` for block building requests, versioned payload envelopes
+(`BaseExecutionPayloadEnvelope`, `NetworkPayloadEnvelope`), `BaseExecutionPayloadV4`, and
+versioned sidecars (`BaseExecutionPayloadSidecar`). These types are exchanged between the
 consensus client and the execution node via the Engine API.
 
 ## Usage
@@ -20,9 +20,10 @@ base-common-rpc-types-engine = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_rpc_types_engine::{OpPayloadAttributes, OpExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::{BaseExecutionPayloadEnvelope, BasePayloadAttributes};
 
-let attrs = OpPayloadAttributes { timestamp, transactions, .. };
+let attrs: BasePayloadAttributes = todo!();
+let envelope: BaseExecutionPayloadEnvelope = todo!();
 ```
 
 ## License

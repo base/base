@@ -147,7 +147,8 @@ impl ServerArgs {
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.server.l2_chain_id))?
             .clone();
 
-        let l1_config = base_common_chains::l1_config(rollup_config.l1_chain_id)
+        let l1_config = base_common_chains::L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 
@@ -209,7 +210,8 @@ impl LocalArgs {
             .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.server.l2_chain_id))?
             .clone();
 
-        let l1_config = base_common_chains::l1_config(rollup_config.l1_chain_id)
+        let l1_config = base_common_chains::L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
             .ok_or_else(|| eyre!("unknown L1 chain ID: {}", rollup_config.l1_chain_id))?
             .clone();
 

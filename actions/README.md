@@ -146,7 +146,7 @@ sequential blocks with incrementing numbers and timestamps) or by constructing
 
 `MockL2Block` carries only the fields the batcher inspects: block number,
 parent hash, timestamp, the L1 origin (epoch number and hash), and raw encoded
-transactions. It does not wrap a full `SealedBlock` or `OpPayloadAttributes`
+transactions. It does not wrap a full `SealedBlock` or `BasePayloadAttributes`
 because the batcher does not need the rest of the block structure.
 
 

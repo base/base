@@ -16,10 +16,12 @@ pub enum TxValidationError {
     InsufficientFundsForL1Gas(U256, U256),
 }
 
-/// Helper function to validate a transaction. A valid transaction must satisfy the following criteria:
+/// Helper function to validate a transaction.
+///
+/// A valid transaction must satisfy the following criteria:
 /// - The transaction's execution cost is less than the account's balance
 /// - The transaction's L1 gas cost is less than the account's balance
-///   
+///
 /// Note: We don't need to check for EIP-4844 because bundle transactions are Recovered<BaseTxEnvelope>
 /// which only includes Legacy, Eip2930, Eip1559, Eip7702, and Deposit.
 pub fn validate_tx<T: Transaction + Encodable2718>(
@@ -38,8 +40,8 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
         return Err(TxValidationError::InsufficientFundsForTransfer(txn_cost, account.balance));
     }
 
-    // op-checks to see if sender can cover L1 gas cost
-    // from: https://github.com/paradigmxyz/reth/blob/6aa73f14808491aae77fc7c6eb4f0aa63bef7e6e/crates/optimism/txpool/src/validator.rs#L219
+    // Base-specific checks to see whether the sender can cover the L1 gas cost.
+    // Reference: https://github.com/paradigmxyz/reth/blob/6aa73f14808491aae77fc7c6eb4f0aa63bef7e6e/crates/optimism/txpool/src/validator.rs#L219
     let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(&data, OpSpecId::ISTHMUS);
     let l1_cost = txn_cost.saturating_add(l1_cost_addition);
     if l1_cost > account.balance {

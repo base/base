@@ -83,6 +83,7 @@ std = [
 	"tracing/std",
 ]
 test-utils = [
+	"base-common-chains?/test-utils",
 	"base-protocol/test-utils",
 	"dep:alloy-provider",
 	"dep:alloy-rpc-client",

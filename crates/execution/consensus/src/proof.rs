@@ -90,7 +90,7 @@ mod tests {
     /// This was implemented due to a minor bug in op-geth and op-erigon where in
     /// the Regolith hardfork, the receipt root calculation does not include the
     /// deposit nonce in the receipt encoding.
-    /// To fix this an op-reth patch was applied to the receipt root calculation
+    /// To fix this, a downstream patch was applied to the receipt root calculation
     /// to strip the deposit nonce from each receipt before calculating the root.
     #[test]
     fn check_optimism_receipt_root() {

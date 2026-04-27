@@ -44,7 +44,6 @@ alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-rustl
 # base-common
 base-common-chains.workspace = true
 base-common-network.workspace = true
-base-common-provider.workspace = true
 base-common-consensus.workspace = true
 base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 

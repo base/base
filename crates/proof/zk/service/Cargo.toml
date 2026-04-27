@@ -1,0 +1,65 @@
+[package]
+name = "base-zk-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+base-zk-db.workspace = true
+base-zk-outbox.workspace = true
+base-zk-client = { workspace = true, features = ["server"] }
+
+# Succinct / SP1
+base-proof-succinct-elfs.workspace = true
+base-proof-succinct-host-utils.workspace = true
+base-proof-succinct-proof-utils.workspace = true
+base-proof-succinct-client-utils.workspace = true
+base-proof-succinct-ethereum-host-utils.workspace = true
+sp1-sdk.workspace = true 
+sp1-prover-types.workspace = true
+sp1-cluster-utils.workspace = true
+sp1-cluster-common.workspace = true
+sp1-cluster-artifact.workspace = true
+
+# Network
+base-common-network.workspace = true
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+tonic.workspace = true
+
+reqwest = { workspace = true, features = ["json"] }
+tower-http = { workspace = true, features = ["trace"] }
+axum = { workspace = true, features = ["tokio", "http1"] }
+tower = { workspace = true, features = ["limit", "timeout"] }
+
+governor.workspace = true
+nonzero_ext.workspace = true
+
+bincode = { workspace = true, features = ["serde"] }
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
+
+anyhow.workspace = true
+
+metrics.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+base-zk-client.workspace = true
+chrono.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tonic = { workspace = true, features = ["transport"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[lints]
+workspace = true

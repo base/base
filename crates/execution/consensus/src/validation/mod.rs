@@ -28,7 +28,7 @@ fn should_trust_precomputed_receipt_root(chain_spec: &impl Upgrades, timestamp: 
 ///   - ommer hash
 ///   - transaction root
 ///   - withdrawals root: the body's withdrawals root must only match the header's before isthmus
-pub fn validate_body_against_header_op<B, H>(
+pub fn validate_body_against_header_base<B, H>(
     chain_spec: impl Upgrades,
     body: &B,
     header: &H,
@@ -583,10 +583,10 @@ mod tests {
             ommers: vec![],
             withdrawals: Some(Default::default()),
         };
-        validate_body_against_header_op(&chainspec, &body, &header).unwrap();
+        validate_body_against_header_base(&chainspec, &body, &header).unwrap();
 
         body.withdrawals.take();
-        validate_body_against_header_op(&chainspec, &body, &header).unwrap_err();
+        validate_body_against_header_base(&chainspec, &body, &header).unwrap_err();
     }
 
     #[test]

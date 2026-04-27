@@ -42,8 +42,6 @@ base-execution-payload-builder.workspace = true
 base-execution-rpc = { workspace = true, features = ["client"] }
 
 # alloy
-alloy-chains = { workspace = true, optional = true }
-alloy-signer = { workspace = true, optional = true }
 alloy-provider = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }

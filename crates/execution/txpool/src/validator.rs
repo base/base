@@ -155,7 +155,7 @@ where
     /// See also [`TransactionValidator::validate_transaction`]
     ///
     /// This behaves the same as [`EthTransactionValidator::validate_one_with_state`], but in
-    /// addition applies OP validity checks:
+    /// addition applies Base-specific validity checks:
     /// - ensures tx is not eip4844
     /// - ensures that the account has enough balance to cover the L1 gas cost
     pub async fn validate_one_with_state(
@@ -173,11 +173,11 @@ where
 
         let outcome = self.inner.validate_one_with_state(origin, transaction, state);
 
-        self.apply_op_checks(outcome)
+        self.apply_base_checks(outcome)
     }
 
     /// Performs the necessary Base-specific checks based on top of the regular eth outcome.
-    fn apply_op_checks(
+    fn apply_base_checks(
         &self,
         outcome: TransactionValidationOutcome<Tx>,
     ) -> TransactionValidationOutcome<Tx> {
