@@ -242,8 +242,7 @@ mod tests {
 
     #[test]
     fn test_parse_max_inflight_delegated_slots() {
-        let expected_args =
-            RollupArgs { max_inflight_delegated_slots: 4, ..Default::default() };
+        let expected_args = RollupArgs { max_inflight_delegated_slots: 4, ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
             "--rollup.txpool-max-inflight-delegated-slots",
