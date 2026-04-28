@@ -71,7 +71,7 @@ pub struct RollupArgs {
     /// Maximum number of inflight EIP-7702 delegated account transactions per sender in the
     /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
     /// transactions within a block (e.g. buy + approve in a single Flashblock).
-    #[arg(long = "txpool.max-inflight-delegated-slots", default_value_t = 1)]
+    #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 1)]
     pub max_inflight_delegated_slots: usize,
 
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
@@ -246,7 +246,7 @@ mod tests {
             RollupArgs { max_inflight_delegated_slots: 4, ..Default::default() };
         let args = CommandParser::<RollupArgs>::parse_from([
             "reth",
-            "--txpool.max-inflight-delegated-slots",
+            "--rollup.txpool-max-inflight-delegated-slots",
             "4",
         ])
         .args;
