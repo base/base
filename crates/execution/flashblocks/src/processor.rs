@@ -36,7 +36,7 @@ use crate::{
 
 /// Messages consumed by the state processor.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum StateUpdate {
     /// New canonical block to reconcile against pending state.
     Canonical(RecoveredBlock<BaseBlock>),
@@ -45,7 +45,7 @@ pub enum StateUpdate {
 }
 
 /// Processes flashblocks and canonical blocks to keep pending state updated.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct StateProcessor<Client> {
     rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
@@ -376,11 +376,18 @@ where
         // Track state changes across flashblocks, accumulating bundle state
         // from previous pending blocks if available.
         let mut db = match &prev_pending_blocks {
-            Some(pending_blocks) => State::builder()
-                .with_database(state_provider_db)
-                .with_bundle_update()
-                .with_bundle_prestate(pending_blocks.get_bundle_state())
-                .build(),
+            Some(pending_blocks) => {
+                let arc_state = pending_blocks.get_bundle_state();
+                let start = Instant::now();
+                let bundle_state = Arc::unwrap_or_clone(arc_state);
+                Metrics::bundle_state_clone_duration().record(start.elapsed());
+                Metrics::bundle_state_clone_size().record(bundle_state.state.len() as f64);
+                State::builder()
+                    .with_database(state_provider_db)
+                    .with_bundle_update()
+                    .with_bundle_prestate(bundle_state)
+                    .build()
+            }
             None => State::builder().with_database(state_provider_db).with_bundle_update().build(),
         };
 
