@@ -169,10 +169,17 @@ impl OPSuccinctDataFetcher {
         }
     }
 
-    /// Initialize the fetcher with a rollup config.
+    /// Initialize the fetcher with a rollup config, reading RPC URLs from environment variables.
     pub async fn new_with_rollup_config() -> Result<Self> {
         let rpc_config = get_rpcs_from_env();
+        Self::from_rpc_config_with_rollup_config(rpc_config).await
+    }
 
+    /// Initialize the fetcher with an explicit [`RPCConfig`] and a rollup config.
+    ///
+    /// Prefer this over [`new_with_rollup_config`](Self::new_with_rollup_config) when the RPC
+    /// URLs are already known, avoiding reliance on environment variables.
+    pub async fn from_rpc_config_with_rollup_config(rpc_config: RPCConfig) -> Result<Self> {
         let l1_provider =
             Arc::new(ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone()));
         let l2_provider =
