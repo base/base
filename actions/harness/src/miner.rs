@@ -648,22 +648,30 @@ impl Action for L1Miner {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use alloy_eips::eip4844::Blob;
+    use alloy_primitives::{Address, B256, Bytes};
 
-    fn miner() -> L1Miner {
-        L1Miner::default()
+    use super::{L1Miner, PendingTx, ReorgError};
+    use crate::Action;
+
+    struct MinerFixture;
+
+    impl MinerFixture {
+        fn miner() -> L1Miner {
+            L1Miner::default()
+        }
     }
 
     #[test]
     fn genesis_block_at_number_zero() {
-        let m = miner();
+        let m = MinerFixture::miner();
         assert_eq!(m.latest_number(), 0);
         assert_eq!(m.latest().timestamp(), 0);
     }
 
     #[test]
     fn mine_increments_number_and_timestamp() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block();
         assert_eq!(m.latest_number(), 1);
         assert_eq!(m.latest().timestamp(), 12);
@@ -674,7 +682,7 @@ mod tests {
 
     #[test]
     fn blocks_form_valid_parent_hash_chain() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block();
         m.mine_block();
         m.mine_block();
@@ -687,7 +695,7 @@ mod tests {
 
     #[test]
     fn safe_and_finalized_head_start_at_genesis() {
-        let m = miner();
+        let m = MinerFixture::miner();
         assert_eq!(m.safe_head().number(), 0);
         assert_eq!(m.finalized_head().number(), 0);
         assert_eq!(m.safe_number(), 0);
@@ -696,7 +704,7 @@ mod tests {
 
     #[test]
     fn explicit_safe_next_advances_pointer() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block(); // 1
         m.mine_block(); // 2
         m.act_l1_safe_next();
@@ -706,7 +714,7 @@ mod tests {
 
     #[test]
     fn explicit_finalize_next_advances_pointer() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block();
         m.act_l1_safe_next();
         m.act_l1_finalize_next();
@@ -716,7 +724,7 @@ mod tests {
 
     #[test]
     fn act_l1_safe_sets_exactly() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         for _ in 0..5 {
             m.mine_block();
         }
@@ -726,7 +734,7 @@ mod tests {
 
     #[test]
     fn act_l1_finalize_sets_exactly() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         for _ in 0..5 {
             m.mine_block();
         }
@@ -737,7 +745,7 @@ mod tests {
 
     #[test]
     fn safe_clamped_to_latest_on_act_safe_next() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block(); // 1
         m.act_l1_safe_next(); // 1
         m.act_l1_safe_next(); // would be 2, but latest=1
@@ -746,7 +754,7 @@ mod tests {
 
     #[test]
     fn finalized_clamped_to_safe_on_act_finalize_next() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block();
         m.act_l1_safe_next(); // safe=1
         m.act_l1_finalize_next(); // finalized=1
@@ -756,7 +764,7 @@ mod tests {
 
     #[test]
     fn reorg_clamps_safe_and_finalized() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         for _ in 0..5 {
             m.mine_block();
         }
@@ -770,7 +778,7 @@ mod tests {
 
     #[test]
     fn pending_txs_included_in_next_block() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.submit_tx(PendingTx {
             from: Address::ZERO,
             to: Address::ZERO,
@@ -783,7 +791,7 @@ mod tests {
 
     #[test]
     fn pending_txs_cleared_after_mining() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.submit_tx(PendingTx { from: Address::ZERO, to: Address::ZERO, input: Bytes::new() });
         m.mine_block();
         m.mine_block();
@@ -793,14 +801,14 @@ mod tests {
 
     #[test]
     fn act_returns_block_number() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         assert_eq!(m.act().unwrap(), 1);
         assert_eq!(m.act().unwrap(), 2);
     }
 
     #[test]
     fn blob_sidecars_drained_into_block() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         let hash = B256::repeat_byte(0xAA);
         let blob = Box::new(Blob::default());
         m.enqueue_blob(hash, blob);
@@ -816,7 +824,7 @@ mod tests {
 
     #[test]
     fn reorg_truncates_chain() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block(); // 1
         m.mine_block(); // 2
         m.mine_block(); // 3
@@ -830,7 +838,7 @@ mod tests {
 
     #[test]
     fn reorg_returns_batcher_txs_from_discarded_blocks() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block(); // 1 — empty
 
         m.submit_tx(PendingTx {
@@ -853,7 +861,7 @@ mod tests {
 
     #[test]
     fn reorg_to_tip_is_no_op() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block();
         m.mine_block();
 
@@ -864,7 +872,7 @@ mod tests {
 
     #[test]
     fn post_reorg_blocks_have_distinct_hashes() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block(); // block 1 on fork 0
         let original_hash_1 = m.block_by_number(1).unwrap().hash();
 
@@ -881,7 +889,7 @@ mod tests {
 
     #[test]
     fn mine_after_reorg_builds_valid_parent_chain() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block();
         m.mine_block();
         m.mine_block();
@@ -899,14 +907,14 @@ mod tests {
 
     #[test]
     fn reorg_beyond_tip_returns_error() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block();
         assert!(matches!(m.reorg_to(5), Err(ReorgError::BeyondTip { requested: 5, tip: 1 })));
     }
 
     #[test]
     fn reorg_to_genesis_discards_all_non_genesis_blocks() {
-        let mut m = miner();
+        let mut m = MinerFixture::miner();
         m.mine_block(); // block 1
         m.mine_block(); // block 2
         let discarded = m.reorg_to(0).expect("reorg to genesis should succeed");
