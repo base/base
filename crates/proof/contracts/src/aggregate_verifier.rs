@@ -12,7 +12,7 @@ use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
-use crate::ContractError;
+use crate::{ContractError, anchor_state_registry::IAnchorStateRegistry};
 
 sol! {
     /// `AggregateVerifier` (dispute game) contract interface.
@@ -232,6 +232,30 @@ pub trait AggregateVerifierClient: Send + Sync {
 
     /// Returns the address of the `AnchorStateRegistry` contract for this game.
     async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError>;
+
+    /// Returns whether the given game has been blacklisted by the `AnchorStateRegistry`.
+    ///
+    /// Blacklisted games are permanently ineligible for `setAnchorState()`
+    /// and the `setAnchorState()` call will revert with
+    /// `AnchorStateRegistry_InvalidAnchorGame()` (selector `0x47ad367a`).
+    /// Used as a pre-flight check before submitting anchor update transactions.
+    async fn is_game_blacklisted(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError>;
+
+    /// Returns whether the given game has been retired by the `AnchorStateRegistry`.
+    ///
+    /// Retired games (created before the registry's `retirementTimestamp`) are
+    /// permanently ineligible for `setAnchorState()` and the call will revert
+    /// with `AnchorStateRegistry_InvalidAnchorGame()` (selector `0x47ad367a`).
+    /// Used as a pre-flight check before submitting anchor update transactions.
+    async fn is_game_retired(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -552,6 +576,35 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             context: "anchorStateRegistry failed".into(),
             source: e,
         })
+    }
+
+    async fn is_game_blacklisted(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        let contract =
+            IAnchorStateRegistry::IAnchorStateRegistryInstance::new(asr_address, &self.provider);
+
+        contract.isGameBlacklisted(game_address).call().await.map_err(|e| ContractError::Call {
+            context: "isGameBlacklisted failed".into(),
+            source: e,
+        })
+    }
+
+    async fn is_game_retired(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        let contract =
+            IAnchorStateRegistry::IAnchorStateRegistryInstance::new(asr_address, &self.provider);
+
+        contract
+            .isGameRetired(game_address)
+            .call()
+            .await
+            .map_err(|e| ContractError::Call { context: "isGameRetired failed".into(), source: e })
     }
 }
 

@@ -313,6 +313,12 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn anchor_state_registry(&self, _: Address) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
     }
+    async fn is_game_blacklisted(&self, _: Address, _: Address) -> Result<bool, ContractError> {
+        Ok(false)
+    }
+    async fn is_game_retired(&self, _: Address, _: Address) -> Result<bool, ContractError> {
+        Ok(false)
+    }
 }
 
 /// Creates a test [`L1BlockRef`] with the given block number.

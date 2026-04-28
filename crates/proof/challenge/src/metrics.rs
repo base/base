@@ -107,6 +107,14 @@ base_metrics::define_metrics! {
     #[label(name = "status", default = ["success", "error", "skipped"])]
     anchor_update_tx_outcome_total: counter,
 
+    #[describe(
+        "L2 block number of the most recent anchor state successfully advanced by this challenger. \
+         Monotonically increases as the challenger drives the anchor forward; absent until the \
+         first successful setAnchorState() observation."
+    )]
+    #[no_zero]
+    anchor_l2_block_number: gauge,
+
     #[describe("Challenger account balance in wei")]
     account_balance_wei: gauge,
 }

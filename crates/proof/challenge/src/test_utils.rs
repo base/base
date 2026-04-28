@@ -71,6 +71,10 @@ pub struct MockGameState {
     pub delayed_weth: Address,
     /// Address of the `AnchorStateRegistry` contract.
     pub anchor_state_registry: Address,
+    /// Whether the game is blacklisted in the `AnchorStateRegistry`.
+    pub is_blacklisted: bool,
+    /// Whether the game is retired in the `AnchorStateRegistry`.
+    pub is_retired: bool,
 }
 
 impl Default for MockGameState {
@@ -98,6 +102,8 @@ impl Default for MockGameState {
             created_at: 0,
             delayed_weth: Address::ZERO,
             anchor_state_registry: Address::ZERO,
+            is_blacklisted: false,
+            is_retired: false,
         }
     }
 }
@@ -281,6 +287,22 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError> {
         self.get(game_address, |s| s.anchor_state_registry)
     }
+
+    async fn is_game_blacklisted(
+        &self,
+        _asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        self.get(game_address, |s| s.is_blacklisted)
+    }
+
+    async fn is_game_retired(
+        &self,
+        _asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        self.get(game_address, |s| s.is_retired)
+    }
 }
 
 /// Helper to create an address from a `u64` index.
@@ -348,6 +370,8 @@ pub const fn mock_state_with_tee(
         created_at: 0,
         delayed_weth: Address::ZERO,
         anchor_state_registry: Address::ZERO,
+        is_blacklisted: false,
+        is_retired: false,
     }
 }
 
