@@ -1,12 +1,12 @@
 use std::{future::Future, sync::Arc, time::Duration};
 
-use alloy_network::{Ethereum, EthereumWallet};
+use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, TxHash, U256};
 use alloy_provider::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
-use alloy_rpc_types::BlockNumberOrTag;
+use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionReceipt;
 use parking_lot::RwLock;
@@ -87,6 +87,12 @@ impl RpcClient {
     #[instrument(skip(self), fields(address = %address))]
     pub async fn get_balance(&self, address: Address) -> Result<U256> {
         self.provider.get_balance(address).await.map_err(|e| BaselineError::Rpc(e.to_string()))
+    }
+
+    /// Executes a read-only call against a contract.
+    pub async fn eth_call(&self, to: Address, data: Bytes) -> Result<Bytes> {
+        let tx = TransactionRequest::default().with_to(to).with_input(data);
+        self.provider.call(tx.into()).await.map_err(|e| BaselineError::Rpc(e.to_string()))
     }
 
     /// Fetches the balance of an address including pending transactions.
