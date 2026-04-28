@@ -613,12 +613,12 @@ impl LoadRunner {
         tokens.into_iter().collect()
     }
 
-    /// Distributes swap tokens from the funder to all sender accounts.
+    /// Mints swap tokens to all sender accounts.
     ///
-    /// Scans the configured transaction types for token addresses, then transfers
+    /// Scans the configured transaction types for token addresses, then mints
     /// `amount_per_token` of each token to every sender that has insufficient balance.
-    /// Skips accounts that already have enough tokens. Designed for use with
-    /// `FreeTransferERC20` tokens that require no prior approval.
+    /// Skips accounts that already have enough tokens. Requires tokens that expose
+    /// a public `mint(address,uint256)` function (e.g., `FreeTransferERC20`).
     #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
     pub async fn setup_swap_tokens(
         &self,
@@ -731,16 +731,16 @@ impl LoadRunner {
             .map_err(|e| BaselineError::Rpc(e.to_string()))?;
 
         // Phase 3: Execute transfers for accounts that need tokens.
-        let pb = self.progress_bar(transfers_needed.len() as u64, "Distributing tokens");
+        let pb = self.progress_bar(transfers_needed.len() as u64, "Minting tokens");
         let mut failed_count: usize = 0;
 
         let txs: Vec<(TransactionRequest, Address, Address)> = transfers_needed
             .into_iter()
             .map(|(token, sender)| {
-                let transfer_data = Self::encode_erc20_transfer(sender, amount_per_token);
+                let mint_data = Self::encode_erc20_mint(sender, amount_per_token);
                 let tx = TransactionRequest::default()
                     .with_to(token)
-                    .with_input(transfer_data)
+                    .with_input(mint_data)
                     .with_nonce(nonce)
                     .with_chain_id(chain_id)
                     .with_gas_limit(65_000)
@@ -771,11 +771,11 @@ impl LoadRunner {
                 match result {
                     Ok(pending) => {
                         let tx_hash = *pending.tx_hash();
-                        debug!(token = %token, to = %sender, tx_hash = %tx_hash, "token transfer sent");
+                        debug!(token = %token, to = %sender, tx_hash = %tx_hash, "token mint sent");
                         pending_txs.push((tx_hash, sender));
                     }
                     Err(e) => {
-                        warn!(token = %token, to = %sender, error = %e, "token transfer failed");
+                        warn!(token = %token, to = %sender, error = %e, "token mint failed");
                         failed_count += 1;
                     }
                 }
@@ -788,7 +788,7 @@ impl LoadRunner {
 
         if failed_count > 0 {
             return Err(BaselineError::Transaction(format!(
-                "{failed_count}/{total_txs} token transfers failed — senders with missing tokens will revert on swap"
+                "{failed_count}/{total_txs} token mints failed — senders with missing tokens will revert on swap"
             )));
         }
 
@@ -801,11 +801,11 @@ impl LoadRunner {
         Ok(())
     }
 
-    fn encode_erc20_transfer(to: Address, amount: U256) -> Bytes {
+    fn encode_erc20_mint(to: Address, amount: U256) -> Bytes {
         sol! {
-            function transfer(address to, uint256 amount) external returns (bool);
+            function mint(address to, uint256 amount) external;
         }
-        Bytes::from(transferCall { to, amount }.abi_encode())
+        Bytes::from(mintCall { to, amount }.abi_encode())
     }
 
     fn encode_erc20_balance_of(account: Address) -> Bytes {
@@ -1710,9 +1710,8 @@ impl LoadRunner {
 
     /// Signals the load test to stop gracefully.
     ///
-    /// Only sets `stop_flag` — does **not** cancel WebSocket tasks or clean up
-    /// resources. The caller must ensure [`run()`](Self::run) completes, which
-    /// handles draining confirmations and cancelling background tasks.
+    /// Sets `stop_flag` and cancels WebSocket tasks. The caller must ensure
+    /// [`run()`](Self::run) completes, which handles draining confirmations.
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::SeqCst);
         self.cancel_token.cancel();
