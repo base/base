@@ -1074,14 +1074,10 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
-        // Pre-flight: skip games that are permanently ineligible. Both
-        // `isGameBlacklisted` and `isGameRetired` are terminal — once
-        // true, always true — so on either we mark the game as
-        // anchor-update-complete to avoid burning gas on a tx that is
-        // guaranteed to revert with `AnchorStateRegistry_InvalidAnchorGame()`
-        // (selector `0x47ad367a`) every poll tick. A read failure here is
-        // treated as transient (return without setting the flag) so the
-        // check is retried on the next tick.
+        // Both flags are terminal — once true, always true — so we mark the
+        // game complete to suppress the guaranteed revert on every poll tick.
+        // A read failure is treated as transient: return without setting the
+        // flag so the check is retried.
         match futures::try_join!(
             verifier_client.is_game_blacklisted(asr_address, game_address),
             verifier_client.is_game_retired(asr_address, game_address),
@@ -1133,12 +1129,10 @@ impl<C: Clock> BondManager<C> {
                 )
                 .increment(1);
 
-                // Publish the new anchor's L2 block for dashboard progression.
-                // After a successful setAnchorState(game) confirmation, this
-                // game IS the new anchor — the registry enforces monotonicity
-                // (newer than current) on the call. A read failure here is
-                // non-fatal: the gauge keeps its previous value and the next
-                // successful anchor advance will refresh it.
+                // After a successful setAnchorState(game), this game IS the new
+                // anchor (the registry enforces monotonicity on the call), so
+                // its L2 block is the gauge value. A read failure is non-fatal:
+                // the gauge keeps its previous value until the next advance.
                 match verifier_client.game_info(game_address).await {
                     Ok(info) => {
                         ChallengerMetrics::anchor_l2_block_number()
