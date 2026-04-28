@@ -6,6 +6,7 @@ use alloy_consensus::{SignableTransaction, TxEip7702};
 use alloy_eips::{eip2718::Encodable2718, eip7702::Authorization};
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, U256};
+use alloy_network::ReceiptResponse;
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -30,6 +31,8 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     let devnet = DevnetBuilder::new()
         .with_l1_chain_id(1337)
         .with_l2_chain_id(L2_CHAIN_ID)
+        .with_max_inflight_delegated_slots(4)
+        .with_base_azul_block(BASE_AZUL_BLOCK)
         .build()
         .await?;
 
@@ -51,10 +54,10 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     let signer: PrivateKeySigner = private_key_hex.parse()?;
     let sender = signer.address();
 
-    // Wait for the client to sync the sender's balance before submitting anything.
+    // Wait for the builder to have the sender's balance before submitting anything.
     timeout(Duration::from_secs(30), async {
         loop {
-            if client_provider.get_balance(sender).await? > U256::ZERO {
+            if builder_provider.get_balance(sender).await? > U256::ZERO {
                 return Ok::<_, eyre::Error>(());
             }
             sleep(BLOCK_POLL_INTERVAL).await;
@@ -67,13 +70,18 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     // and produces empty code, not the 0xef0100 prefix. Any non-zero target
     // (even one with no deployed code) sets the prefix the txpool checks for.
     let delegation_target: Address = "0x0000000000000000000000000000000000000001".parse()?;
-    let nonce = client_provider.get_transaction_count(sender).await?;
+    // Get nonce from builder since we're submitting the delegation tx there.
+    let nonce = builder_provider.get_transaction_count(sender).await?;
+    // When sender == authority (self-delegation), the sender's nonce is incremented
+    // by deduct_caller before apply_eip7702_auth_list runs. So the authorization
+    // nonce must be nonce+1, not nonce.
+    let auth_nonce = nonce + 1;
     let auth =
-        Authorization { chain_id: U256::from(L2_CHAIN_ID), address: delegation_target, nonce }
+        Authorization { chain_id: U256::from(L2_CHAIN_ID), address: delegation_target, nonce: auth_nonce }
             .into_signed(signer.sign_hash_sync(&Authorization {
                 chain_id: U256::from(L2_CHAIN_ID),
                 address: delegation_target,
-                nonce,
+                nonce: auth_nonce,
             }
             .signature_hash())?);
 
@@ -91,19 +99,30 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     let setup_sig = signer.sign_hash_sync(&setup_tx.signature_hash())?;
     let setup_signed = setup_tx.into_signed(setup_sig);
     let setup_raw: alloy_primitives::Bytes = setup_signed.encoded_2718().into();
-    let _ = client_provider.send_raw_transaction(&setup_raw).await?;
+    // Send to builder directly so it's included without needing tx forwarding.
+    let delegation_pending = builder_provider.send_raw_transaction(&setup_raw).await?;
+    let delegation_hash = *delegation_pending.tx_hash();
 
-    // Wait for the delegation tx to be included so the account has 0xef0100 code.
-    timeout(Duration::from_secs(60), async {
+    // Wait for the delegation tx receipt, then verify the 0xef0100 code.
+    let delegation_receipt = timeout(Duration::from_secs(60), async {
         loop {
-            let code = builder_provider.get_code_at(sender).await?;
-            if code.starts_with(&[0xef, 0x01, 0x00]) {
-                return Ok::<_, eyre::Error>(());
+            if let Some(receipt) = builder_provider.get_transaction_receipt(delegation_hash).await? {
+                return Ok::<_, eyre::Error>(receipt);
             }
             sleep(BLOCK_POLL_INTERVAL).await;
         }
     })
-    .await??;
+    .await
+    .map_err(|_| eyre::eyre!("delegation tx {} not included after 60s", delegation_hash))??;
+
+    if !delegation_receipt.status() {
+        return Err(eyre::eyre!("delegation tx failed: {:?}", delegation_receipt));
+    }
+
+    let code = builder_provider.get_code_at(sender).await?;
+    if !code.starts_with(&[0xef, 0x01, 0x00]) {
+        return Err(eyre::eyre!("expected 0xef0100 prefix, got: {:?}", code));
+    }
 
     // Also wait for the client to see the updated code.
     timeout(Duration::from_secs(30), async {

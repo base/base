@@ -218,6 +218,7 @@ services:
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --txpool.nolocals
+      - --rollup.txpool-max-inflight-delegated-slots=4
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --color=never

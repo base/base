@@ -131,6 +131,8 @@ pub struct DevnetBuilder {
     stable_config: Option<StableDevnetConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
     verifier_l1_confs: u64,
+    max_inflight_delegated_slots: usize,
+    base_azul_block: Option<u64>,
 }
 
 impl DevnetBuilder {
@@ -184,6 +186,20 @@ impl DevnetBuilder {
         self
     }
 
+    /// Sets the maximum number of inflight transactions per delegated (EIP-7702) sender
+    /// in the builder's txpool. Defaults to 1.
+    pub const fn with_max_inflight_delegated_slots(mut self, limit: usize) -> Self {
+        self.max_inflight_delegated_slots = limit;
+        self
+    }
+
+    /// Sets the L2 block at which Base Azul (EIP-7702 / Prague) activates.
+    /// The genesis is patched so that `osakaTime` corresponds to this block number.
+    pub const fn with_base_azul_block(mut self, block: u64) -> Self {
+        self.base_azul_block = Some(block);
+        self
+    }
+
     /// Builds and starts the devnet.
     pub async fn build(self) -> Result<Devnet> {
         let l1_chain_id = self.l1_chain_id.unwrap_or(DEFAULT_L1_CHAIN_ID);
@@ -200,6 +216,10 @@ impl DevnetBuilder {
 
         if let Some(ref config) = self.stable_config {
             setup = setup.with_network_name(&config.network_name);
+        }
+
+        if let Some(block) = self.base_azul_block {
+            setup = setup.with_base_azul_block(block);
         }
 
         let l1_genesis = tokio::task::spawn_blocking({
@@ -283,6 +303,7 @@ impl DevnetBuilder {
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
+            max_inflight_delegated_slots: self.max_inflight_delegated_slots,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;
