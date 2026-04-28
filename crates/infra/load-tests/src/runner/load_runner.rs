@@ -1639,8 +1639,7 @@ impl LoadRunner {
         let pb_confirm = self.progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
-        if let Err(e) =
-            Self::await_confirmations(&self.client, &mut pending_txs, &pb_confirm).await
+        if let Err(e) = Self::await_confirmations(&self.client, &mut pending_txs, &pb_confirm).await
         {
             warn!(error = %e, "some drain txs did not confirm within timeout");
         }
