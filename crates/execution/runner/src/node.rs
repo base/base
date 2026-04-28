@@ -68,8 +68,13 @@ impl BaseNode {
     where
         Node: FullNodeTypes<Types: BaseNodeTypes>,
     {
-        let RollupArgs { disable_txpool_gossip, compute_pending_block, discovery_v4, .. } =
-            self.args;
+        let RollupArgs {
+            disable_txpool_gossip,
+            compute_pending_block,
+            discovery_v4,
+            base_protocol,
+            ..
+        } = self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(BasePoolBuilder::default())
@@ -79,7 +84,7 @@ impl BaseNode {
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
             .consensus(BaseConsensusBuilder::default())
     }
 

@@ -33,10 +33,7 @@ use base_execution_txpool::{
     TimestampedTransaction,
 };
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
-use reth_discv5::{
-    NetworkStackId,
-    discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY},
-};
+use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::ConfigureEvm;
 use reth_network::{
     NetworkConfig, NetworkHandle, NetworkManager, NetworkPrimitives, PeersInfo,
@@ -77,6 +74,9 @@ use crate::{
     args::{RollupArgs, TxpoolOrdering},
     engine::OpEngineValidator,
 };
+
+/// Discovery v5 protocol version for Base.
+pub const BASE_V0_PROTOCOL_VERSION: [u8; 6] = *b"basev0";
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
 pub trait BaseNodeTypes:
@@ -240,6 +240,7 @@ impl BaseNode {
             compute_pending_block,
             discovery_v4,
             txpool_ordering,
+            base_protocol,
             ..
         } = self.args;
         let ordering = match txpool_ordering {
@@ -255,7 +256,7 @@ impl BaseNode {
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
             .consensus(BaseConsensusBuilder::default())
     }
 
@@ -1044,24 +1045,24 @@ where
 }
 
 /// A basic Base network builder.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct BaseNetworkBuilder {
     /// Disable transaction pool gossip
     pub disable_txpool_gossip: bool,
     /// Disable discovery v4
     pub disable_discovery_v4: bool,
-}
-
-impl Clone for BaseNetworkBuilder {
-    fn clone(&self) -> Self {
-        Self::new(self.disable_txpool_gossip, self.disable_discovery_v4)
-    }
+    /// Enable the Base discv5 protocol identity
+    pub base_protocol: bool,
 }
 
 impl BaseNetworkBuilder {
     /// Creates a new `BaseNetworkBuilder`.
-    pub const fn new(disable_txpool_gossip: bool, disable_discovery_v4: bool) -> Self {
-        Self { disable_txpool_gossip, disable_discovery_v4 }
+    pub const fn new(
+        disable_txpool_gossip: bool,
+        disable_discovery_v4: bool,
+        base_protocol: bool,
+    ) -> Self {
+        Self { disable_txpool_gossip, disable_discovery_v4, base_protocol }
     }
 }
 
@@ -1087,6 +1088,7 @@ impl BaseNetworkBuilder {
     {
         let disable_txpool_gossip = self.disable_txpool_gossip;
         let disable_discovery_v4 = self.disable_discovery_v4;
+        let base_protocol = self.base_protocol;
         let args = &ctx.config().network;
         let network_builder = ctx
             .network_config_builder()?
@@ -1118,6 +1120,17 @@ impl BaseNetworkBuilder {
 
                     let external_addr = block_on(args.nat.clone().external_addr());
 
+                    let mut discv5_config_builder =
+                        reth_discv5::discv5::ConfigBuilder::new(listen_config);
+                    if base_protocol {
+                        discv5_config_builder.protocol_identity(
+                            reth_discv5::discv5::ProtocolIdentity {
+                                protocol_id: BASE_V0_PROTOCOL_VERSION,
+                                ..Default::default()
+                            },
+                        );
+                    }
+
                     let mut reth_config_builder = args
                         .discovery
                         .discovery_v5_builder(
@@ -1128,10 +1141,7 @@ impl BaseNetworkBuilder {
                                 .or_else(|| ctx.chain_spec().bootnodes())
                                 .unwrap_or_default(),
                         )
-                        .must_not_include_keys(&[NetworkStackId::ETH, NetworkStackId::ETH2])
-                        .discv5_config(
-                            reth_discv5::discv5::ConfigBuilder::new(listen_config).build(),
-                        );
+                        .discv5_config(discv5_config_builder.build());
 
                     reth_config_builder = match external_addr {
                         Some(std::net::IpAddr::V4(addr)) => {
