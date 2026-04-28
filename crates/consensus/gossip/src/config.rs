@@ -2,7 +2,10 @@
 
 use std::time::Duration;
 
-use libp2p::gossipsub::{Config, ConfigBuilder, Message, MessageId};
+use libp2p::{
+    connection_limits::ConnectionLimits,
+    gossipsub::{Config, ConfigBuilder, Message, MessageId},
+};
 use openssl::sha::sha256;
 use snap::raw::Decoder;
 
@@ -39,6 +42,18 @@ pub const DEFAULT_MESH_DHI: usize = 12;
 /// The default mesh D lazy.
 pub const DEFAULT_MESH_DLAZY: usize = 6;
 
+/// The default maximum number of pending inbound connections.
+pub const DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS: u32 = 5;
+
+/// The default maximum number of pending outbound connections.
+pub const DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS: u32 = 16;
+
+/// The default maximum number of established libp2p connections.
+pub const DEFAULT_MAX_ESTABLISHED_CONNECTIONS: u32 = 30;
+
+/// The default maximum number of established libp2p connections per peer.
+pub const DEFAULT_MAX_ESTABLISHED_CONNECTIONS_PER_PEER: u32 = 1;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Duration Constants
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -58,6 +73,56 @@ pub const PEER_SCORE_INSPECT_FREQUENCY: Duration = Duration::from_secs(15);
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Config Building
 ////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Connection limits for the libp2p swarm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConnectionLimitsConfig {
+    /// Maximum number of pending inbound connections.
+    pub max_pending_incoming: u32,
+    /// Maximum number of pending outbound connections.
+    pub max_pending_outgoing: u32,
+    /// Maximum number of established inbound connections.
+    pub max_established_incoming: u32,
+    /// Maximum number of established outbound connections.
+    pub max_established_outgoing: u32,
+    /// Maximum number of established connections across all peers and directions.
+    pub max_established: u32,
+    /// Maximum number of established connections to a single peer.
+    pub max_established_per_peer: u32,
+}
+
+impl ConnectionLimitsConfig {
+    /// Creates a connection limit config using the same cap for inbound, outbound, and total
+    /// established connections.
+    pub const fn new(max_established: u32) -> Self {
+        Self {
+            max_pending_incoming: DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS,
+            max_pending_outgoing: DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS,
+            max_established_incoming: max_established,
+            max_established_outgoing: max_established,
+            max_established,
+            max_established_per_peer: DEFAULT_MAX_ESTABLISHED_CONNECTIONS_PER_PEER,
+        }
+    }
+}
+
+impl Default for ConnectionLimitsConfig {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_ESTABLISHED_CONNECTIONS)
+    }
+}
+
+impl From<ConnectionLimitsConfig> for ConnectionLimits {
+    fn from(config: ConnectionLimitsConfig) -> Self {
+        Self::default()
+            .with_max_pending_incoming(Some(config.max_pending_incoming))
+            .with_max_pending_outgoing(Some(config.max_pending_outgoing))
+            .with_max_established_incoming(Some(config.max_established_incoming))
+            .with_max_established_outgoing(Some(config.max_established_outgoing))
+            .with_max_established(Some(config.max_established))
+            .with_max_established_per_peer(Some(config.max_established_per_peer))
+    }
+}
 
 /// Builds the default gossipsub configuration.
 ///
@@ -131,6 +196,17 @@ mod tests {
         assert_eq!(cfg.mesh_n(), DEFAULT_MESH_D);
         assert_eq!(cfg.mesh_n_low(), DEFAULT_MESH_DLO);
         assert_eq!(cfg.mesh_n_high(), DEFAULT_MESH_DHI);
+    }
+
+    #[test]
+    fn test_constructs_default_connection_limits_config() {
+        let cfg = ConnectionLimitsConfig::default();
+        assert_eq!(cfg.max_pending_incoming, DEFAULT_MAX_PENDING_INCOMING_CONNECTIONS);
+        assert_eq!(cfg.max_pending_outgoing, DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS);
+        assert_eq!(cfg.max_established_incoming, DEFAULT_MAX_ESTABLISHED_CONNECTIONS);
+        assert_eq!(cfg.max_established_outgoing, DEFAULT_MAX_ESTABLISHED_CONNECTIONS);
+        assert_eq!(cfg.max_established, DEFAULT_MAX_ESTABLISHED_CONNECTIONS);
+        assert_eq!(cfg.max_established_per_peer, DEFAULT_MAX_ESTABLISHED_CONNECTIONS_PER_PEER);
     }
 
     #[test]

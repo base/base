@@ -1,5 +1,7 @@
 //! Network Behaviour Module.
 
+use std::convert::Infallible;
+
 use derive_more::Debug;
 use libp2p::{
     gossipsub::{Config, IdentTopic, MessageAuthenticity},
@@ -7,7 +9,7 @@ use libp2p::{
 };
 use tracing::info;
 
-use crate::{Event, Handler};
+use crate::{ConnectionLimitsConfig, Event, Handler};
 
 /// An error that can occur when creating a [`Behaviour`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -27,6 +29,11 @@ pub enum BehaviourError {
 #[derive(NetworkBehaviour, Debug)]
 #[behaviour(out_event = "Event")]
 pub struct Behaviour {
+    // Keep this first: libp2p calls behaviour connection hooks in field order, and connection
+    // limits should reject excess connections before other behaviours allocate handlers.
+    /// Enforces hard caps for pending and established libp2p connections.
+    #[debug(skip)]
+    pub connection_limits: libp2p::connection_limits::Behaviour,
     /// Responds to inbound pings and send outbound pings.
     #[debug(skip)]
     pub ping: libp2p::ping::Behaviour,
@@ -49,6 +56,23 @@ impl Behaviour {
         cfg: Config,
         handlers: &[Box<dyn Handler>],
     ) -> Result<Self, BehaviourError> {
+        Self::new_with_connection_limits(
+            public_key,
+            cfg,
+            handlers,
+            ConnectionLimitsConfig::default(),
+        )
+    }
+
+    /// Configures the swarm behaviors, subscribes to the gossip topics, and returns a new
+    /// [`Behaviour`] with the given connection limits.
+    pub fn new_with_connection_limits(
+        public_key: libp2p::identity::PublicKey,
+        cfg: Config,
+        handlers: &[Box<dyn Handler>],
+        connection_limits: ConnectionLimitsConfig,
+    ) -> Result<Self, BehaviourError> {
+        let connection_limits = libp2p::connection_limits::Behaviour::new(connection_limits.into());
         let ping = libp2p::ping::Behaviour::default();
 
         let mut gossipsub = libp2p::gossipsub::Behaviour::new(MessageAuthenticity::Anonymous, cfg)
@@ -85,7 +109,14 @@ impl Behaviour {
             info!(target: "gossip", topic = %topic, "Subscribed");
         }
 
-        Ok(Self { identify, ping, gossipsub, sync_req_resp })
+        Ok(Self { connection_limits, identify, ping, gossipsub, sync_req_resp })
+    }
+}
+
+impl From<Infallible> for Event {
+    /// Converts an impossible connection limits event to [`Event`].
+    fn from(value: Infallible) -> Self {
+        match value {}
     }
 }
 

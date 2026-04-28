@@ -13,7 +13,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
-use base_consensus_gossip::GaterConfig;
+use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig};
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_providers::AlloyChainProvider;
@@ -98,8 +98,7 @@ pub struct P2PArgs {
     /// UDP port to bind Discv5 to. Same as TCP port if left 0.
     #[arg(long = "p2p.listen.udp", default_value = "9223", env = "BASE_NODE_P2P_LISTEN_UDP_PORT")]
     pub listen_udp_port: u16,
-    /// Low-tide peer count. The node actively searches for new peer connections if below this
-    /// amount.
+    /// Deprecated: accepted for backwards compatibility, but no longer used by the P2P stack.
     #[arg(long = "p2p.peers.lo", default_value = "20", env = "BASE_NODE_P2P_PEERS_LO")]
     pub peers_lo: u32,
     /// High-tide peer count. The node starts pruning peer connections slowly after reaching this
@@ -518,6 +517,7 @@ impl P2PArgs {
                 peer_redialing: self.peer_redial,
                 dial_period: Duration::from_secs(60 * self.redial_period),
             },
+            connection_limits_config: ConnectionLimitsConfig::new(self.peers_hi),
             bootnodes,
             rollup_config: config.clone(),
             gossip_signer: self.signer.config(l2_chain_id)?,
@@ -798,6 +798,21 @@ mod tests {
             .to_string();
 
         assert!(err.contains("Failed to parse bootnode 'enr:invalid'"));
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_wires_peer_high_tide_to_connection_limits() {
+        let args = MockCommand::parse_from(["test", "--p2p.peers.hi", "42"]);
+
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .await
+            .unwrap();
+
+        assert_eq!(config.connection_limits_config.max_established_incoming, 42);
+        assert_eq!(config.connection_limits_config.max_established_outgoing, 42);
+        assert_eq!(config.connection_limits_config.max_established, 42);
     }
 
     #[test]

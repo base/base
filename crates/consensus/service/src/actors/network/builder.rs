@@ -5,7 +5,7 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
-use base_consensus_gossip::{GaterConfig, GossipDriverBuilder};
+use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig, GossipDriverBuilder};
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_sources::BlockSigner;
 use discv5::Config as Discv5Config;
@@ -53,6 +53,7 @@ impl From<NetworkConfig> for NetworkBuilder {
         .with_peer_monitoring(config.monitor_peers)
         .with_topic_scoring(config.topic_scoring)
         .with_gater_config(config.gater_config)
+        .with_connection_limits_config(config.connection_limits_config)
     }
 }
 
@@ -92,6 +93,11 @@ impl NetworkBuilder {
     /// Sets the configuration for the connection gater.
     pub fn with_gater_config(self, config: GaterConfig) -> Self {
         Self { gossip: self.gossip.with_gater_config(config), ..self }
+    }
+
+    /// Sets the connection limits enforced by the libp2p swarm.
+    pub fn with_connection_limits_config(self, config: ConnectionLimitsConfig) -> Self {
+        Self { gossip: self.gossip.with_connection_limits_config(config), ..self }
     }
 
     /// Sets the signer for the [`NetworkBuilder`].

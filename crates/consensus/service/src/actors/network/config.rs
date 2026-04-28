@@ -3,7 +3,7 @@
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
-use base_consensus_gossip::GaterConfig;
+use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig};
 use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_sources::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
@@ -41,6 +41,8 @@ pub struct NetworkConfig {
     pub bootstore: Option<BootStoreFile>,
     /// The configuration for the connection gater.
     pub gater_config: GaterConfig,
+    /// The connection limits enforced by the libp2p swarm.
+    pub connection_limits_config: ConnectionLimitsConfig,
     /// An optional list of bootnode ENRs to start the node with.
     pub bootnodes: BootNodes,
     /// The [`RollupConfig`].
@@ -90,6 +92,7 @@ impl NetworkConfig {
             bootnodes: Default::default(),
             bootstore: Default::default(),
             gater_config: Default::default(),
+            connection_limits_config: Default::default(),
             gossip_config: base_consensus_gossip::default_config(),
             scoring: Default::default(),
             topic_scoring: Default::default(),

@@ -12,7 +12,8 @@ use libp2p::{
 use tokio::sync::watch::{self};
 
 use crate::{
-    Behaviour, BlockHandler, GaterConfig, GossipDriver, GossipDriverBuilderError, Handler,
+    Behaviour, BlockHandler, ConnectionLimitsConfig, DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
+    GaterConfig, GossipDriver, GossipDriverBuilderError, Handler,
 };
 
 /// A builder for the [`GossipDriver`].
@@ -37,6 +38,8 @@ pub struct GossipDriverBuilder {
     peer_monitoring: Option<PeerMonitoring>,
     /// The configuration for the connection gater.
     gater_config: Option<GaterConfig>,
+    /// The connection limits enforced by the libp2p swarm.
+    connection_limits_config: ConnectionLimitsConfig,
     /// Topic scoring. Disabled by default.
     topic_scoring: bool,
 }
@@ -58,6 +61,9 @@ impl GossipDriverBuilder {
             config: None,
             peer_monitoring: None,
             gater_config: None,
+            connection_limits_config: ConnectionLimitsConfig::new(
+                DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
+            ),
             rollup_config,
             topic_scoring: false,
         }
@@ -66,6 +72,12 @@ impl GossipDriverBuilder {
     /// Sets the configuration for the connection gater.
     pub const fn with_gater_config(mut self, config: GaterConfig) -> Self {
         self.gater_config = Some(config);
+        self
+    }
+
+    /// Sets the connection limits enforced by the libp2p swarm.
+    pub const fn with_connection_limits_config(mut self, config: ConnectionLimitsConfig) -> Self {
+        self.connection_limits_config = config;
         self
     }
 
@@ -165,7 +177,23 @@ impl GossipDriverBuilder {
             config.validation_mode(),
             config.max_transmit_size()
         );
-        let mut behaviour = Behaviour::new(keypair.public(), config, &[Box::new(handler.clone())])?;
+        let connection_limits_config = self.connection_limits_config;
+        info!(
+            target: "gossip",
+            max_pending_incoming = connection_limits_config.max_pending_incoming,
+            max_pending_outgoing = connection_limits_config.max_pending_outgoing,
+            max_established_incoming = connection_limits_config.max_established_incoming,
+            max_established_outgoing = connection_limits_config.max_established_outgoing,
+            max_established = connection_limits_config.max_established,
+            max_established_per_peer = connection_limits_config.max_established_per_peer,
+            "Configured libp2p connection limits"
+        );
+        let mut behaviour = Behaviour::new_with_connection_limits(
+            keypair.public(),
+            config,
+            &[Box::new(handler.clone())],
+            connection_limits_config,
+        )?;
 
         // If peer scoring is configured, set it on the behaviour.
         match self.scoring {
