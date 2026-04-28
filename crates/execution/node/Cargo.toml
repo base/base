@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 # reth
+alloy-rlp.workspace = true
 reth-db.workspace = true
 reth-discv5.workspace = true
 reth-evm.workspace = true

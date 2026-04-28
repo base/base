@@ -1,9 +1,14 @@
 //! Base Node types config.
 
-use std::{marker::PhantomData, sync::Arc};
+use std::{
+    marker::PhantomData,
+    net::{SocketAddrV4, SocketAddrV6},
+    sync::Arc,
+};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B64, B256};
+use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
+use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
 use base_common_consensus::BasePrimitives;
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
@@ -28,7 +33,10 @@ use base_execution_txpool::{
     TimestampedTransaction,
 };
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
-use reth_discv5::NetworkStackId;
+use reth_discv5::{
+    NetworkStackId,
+    discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY},
+};
 use reth_evm::ConfigureEvm;
 use reth_network::{
     NetworkConfig, NetworkHandle, NetworkManager, NetworkPrimitives, PeersInfo,
@@ -1057,6 +1065,14 @@ impl BaseNetworkBuilder {
     }
 }
 
+fn block_on<T>(f: impl Future<Output = T>) -> T {
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| runtime.block_on(f))
+    } else {
+        tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+}
+
 impl BaseNetworkBuilder {
     /// Returns the [`NetworkConfig`] that contains the settings to launch the p2p network.
     ///
@@ -1081,18 +1097,61 @@ impl BaseNetworkBuilder {
                     builder = builder.disable_discv4_discovery();
                 }
                 if !args.discovery.disable_discovery {
-                    builder = builder.discovery_v5(
-                        args.discovery
-                            .discovery_v5_builder(
-                                rlpx_socket,
-                                ctx.config()
-                                    .network
-                                    .resolved_bootnodes()
-                                    .or_else(|| ctx.chain_spec().bootnodes())
-                                    .unwrap_or_default(),
-                            )
-                            .must_not_include_keys(&[NetworkStackId::ETH, NetworkStackId::ETH2]),
+                    // copied from discovery_v5_builder to override discv5_config
+                    let discv5_addr_ipv4 =
+                        args.discovery.discv5_addr.or_else(|| match rlpx_socket {
+                            std::net::SocketAddr::V4(addr) => Some(*addr.ip()),
+                            std::net::SocketAddr::V6(_) => None,
+                        });
+                    let discv5_addr_ipv6 =
+                        args.discovery.discv5_addr_ipv6.or_else(|| match rlpx_socket {
+                            std::net::SocketAddr::V4(_) => None,
+                            std::net::SocketAddr::V6(addr) => Some(*addr.ip()),
+                        });
+                    let listen_config = reth_discv5::discv5::ListenConfig::from_two_sockets(
+                        discv5_addr_ipv4
+                            .map(|addr| SocketAddrV4::new(addr, args.discovery.discv5_port)),
+                        discv5_addr_ipv6.map(|addr| {
+                            SocketAddrV6::new(addr, args.discovery.discv5_port_ipv6, 0, 0)
+                        }),
                     );
+
+                    let external_addr = block_on(args.nat.clone().external_addr());
+
+                    let mut reth_config_builder = args
+                        .discovery
+                        .discovery_v5_builder(
+                            rlpx_socket,
+                            ctx.config()
+                                .network
+                                .resolved_bootnodes()
+                                .or_else(|| ctx.chain_spec().bootnodes())
+                                .unwrap_or_default(),
+                        )
+                        .must_not_include_keys(&[NetworkStackId::ETH, NetworkStackId::ETH2])
+                        .discv5_config(
+                            reth_discv5::discv5::ConfigBuilder::new(listen_config).build(),
+                        );
+
+                    reth_config_builder = match external_addr {
+                        Some(std::net::IpAddr::V4(addr)) => {
+                            let addr = addr.octets();
+                            let mut out = BytesMut::with_capacity(addr.length());
+                            addr.encode(&mut out);
+                            reth_config_builder
+                                .add_enr_kv_pair(IP_ENR_KEY, Bytes::from(out.freeze()))
+                        }
+                        Some(std::net::IpAddr::V6(addr)) => {
+                            let addr = addr.octets();
+                            let mut out = BytesMut::with_capacity(addr.length());
+                            addr.encode(&mut out);
+                            reth_config_builder
+                                .add_enr_kv_pair(IP6_ENR_KEY, Bytes::from(out.freeze()))
+                        }
+                        _ => reth_config_builder,
+                    };
+
+                    builder = builder.discovery_v5(reth_config_builder);
                 }
 
                 builder

@@ -107,7 +107,7 @@ where
         .consensus(BaseConsensusBuilder::default())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_custom_block_priority_config() {
     reth_tracing::init_test_tracing();
 
