@@ -36,6 +36,7 @@ interface INonfungiblePositionManager {
 }
 
 interface ICLFactory {
+    function getPool(address tokenA, address tokenB, int24 tickSpacing) external view returns (address pool);
     function createPool(address tokenA, address tokenB, int24 tickSpacing, uint160 sqrtPriceX96)
         external
         returns (address pool);
@@ -132,8 +133,13 @@ contract SeedDexPools is Script {
 
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
 
-        address pool = ICLFactory(clFactory).createPool(token0, token1, tickSpacing, SQRT_PRICE_1_1);
-        console.log("Aerodrome CL pool:", pool);
+        address pool = ICLFactory(clFactory).getPool(token0, token1, tickSpacing);
+        if (pool == address(0)) {
+            pool = ICLFactory(clFactory).createPool(token0, token1, tickSpacing, SQRT_PRICE_1_1);
+            console.log("Aerodrome CL pool created:", pool);
+        } else {
+            console.log("Aerodrome CL pool exists:", pool);
+        }
 
         MockERC20(token0).approve(clPositionManager, type(uint256).max);
         MockERC20(token1).approve(clPositionManager, type(uint256).max);

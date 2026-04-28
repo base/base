@@ -70,7 +70,7 @@ impl Payload for AerodromeClPayload {
         "aerodrome_cl"
     }
 
-    fn generate(&self, rng: &mut SeededRng, _from: Address, to: Address) -> TransactionRequest {
+    fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {
         let amount = if self.min_amount == self.max_amount {
             self.min_amount
         } else {
@@ -92,7 +92,7 @@ impl Payload for AerodromeClPayload {
                 tokenIn: input,
                 tokenOut: output,
                 tickSpacing: self.tick_spacing,
-                recipient: to,
+                recipient: from,
                 deadline: U256::from(u64::MAX),
                 amountIn: amount,
                 amountOutMinimum: U256::ZERO,

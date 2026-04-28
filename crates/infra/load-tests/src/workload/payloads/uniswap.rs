@@ -56,7 +56,7 @@ impl Payload for UniswapV3Payload {
         "uniswap_v3"
     }
 
-    fn generate(&self, rng: &mut SeededRng, _from: Address, to: Address) -> TransactionRequest {
+    fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {
         let amount = if self.min_amount == self.max_amount {
             self.min_amount
         } else {
@@ -81,7 +81,7 @@ impl Payload for UniswapV3Payload {
                 tokenIn: input,
                 tokenOut: output,
                 fee: U24::from(self.fee),
-                recipient: to,
+                recipient: from,
                 amountIn: amount,
                 amountOutMinimum: U256::ZERO,
                 sqrtPriceLimitX96: U160::ZERO,
