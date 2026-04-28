@@ -687,7 +687,7 @@ impl<C: Clock> BondManager<C> {
 
             let calldata = encode_resolve_calldata();
             info!(game = %game_address, "submitting resolve transaction");
-            match submitter.send_bond_tx(game_address, calldata).await {
+            match submitter.send_bond_tx(game_address, game_address, calldata).await {
                 Ok(tx_hash) => {
                     info!(
                         game = %game_address,
@@ -873,7 +873,7 @@ impl<C: Clock> BondManager<C> {
         let calldata = encode_claim_credit_calldata();
         ChallengerMetrics::claim_credit_tx_submitted_total().increment(1);
         info!(game = %game_address, step, "submitting claimCredit transaction");
-        match submitter.send_bond_tx(game_address, calldata).await {
+        match submitter.send_bond_tx(game_address, game_address, calldata).await {
             Ok(tx_hash) => {
                 info!(
                     game = %game_address,
@@ -1113,7 +1113,7 @@ impl<C: Clock> BondManager<C> {
         }
 
         let calldata = encode_set_anchor_state_calldata(game_address);
-        match submitter.send_bond_tx(asr_address, calldata).await {
+        match submitter.send_bond_tx(game_address, asr_address, calldata).await {
             Ok(tx_hash) => {
                 info!(
                     game = %game_address,
@@ -1174,18 +1174,26 @@ impl<C: Clock> BondManager<C> {
     }
 }
 
-/// Trait for submitting bond lifecycle transactions (resolve, claimCredit).
+/// Trait for submitting bond lifecycle transactions (resolve, claimCredit,
+/// setAnchorState).
 ///
 /// This abstracts the transaction submission layer so the [`BondManager`]
 /// can be tested with mock submitters.
 #[async_trait::async_trait]
 pub trait BondTransactionSubmitter: Send + Sync {
-    /// Sends a transaction with the given calldata to the game address.
+    /// Sends a transaction with the given calldata to the recipient `to`.
+    ///
+    /// `game_address` is the dispute game this transaction concerns and is
+    /// included in logs/metrics for context. For `resolve` and `claimCredit`
+    /// the recipient `to` IS the dispute game proxy, so `to == game_address`.
+    /// For `setAnchorState` the recipient `to` is the `AnchorStateRegistry`
+    /// contract while `game_address` is the game being promoted to anchor.
     ///
     /// Returns the transaction hash on success.
     async fn send_bond_tx(
         &self,
         game_address: Address,
+        to: Address,
         calldata: alloy_primitives::Bytes,
     ) -> Result<alloy_primitives::B256, crate::ChallengeSubmitError>;
 }
@@ -1886,10 +1894,12 @@ mod tests {
         let submitter = MockBondTransactionSubmitter::success(tx_hash);
         mgr.try_anchor_update(game, &*verifier, &submitter).await;
 
-        // Should have sent exactly one tx to the ASR address.
+        // Should have sent exactly one tx to the ASR address with the game
+        // address as the dispute-game context.
         let calls = submitter.recorded_calls();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, asr, "tx should be sent to ASR address");
+        assert_eq!(calls[0].0, game, "tx should carry game address as context");
+        assert_eq!(calls[0].1, asr, "tx should be sent to ASR address");
         assert!(mgr.tracked.get(&game).unwrap().anchor_update_complete);
     }
 

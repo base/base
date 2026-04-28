@@ -712,8 +712,8 @@ pub fn build_test_header_and_account(
 pub struct MockBondTransactionSubmitter {
     /// Queue of results returned by [`send_bond_tx`](crate::BondTransactionSubmitter::send_bond_tx).
     pub responses: Mutex<VecDeque<Result<B256, crate::ChallengeSubmitError>>>,
-    /// Recorded `(game_address, calldata)` pairs for each submitted transaction.
-    pub calls: Mutex<Vec<(Address, Bytes)>>,
+    /// Recorded `(game_address, to, calldata)` tuples for each submitted transaction.
+    pub calls: Mutex<Vec<(Address, Address, Bytes)>>,
 }
 
 impl MockBondTransactionSubmitter {
@@ -727,8 +727,8 @@ impl MockBondTransactionSubmitter {
         Self { responses: Mutex::new(VecDeque::from(responses)), calls: Mutex::new(Vec::new()) }
     }
 
-    /// Returns the recorded calls.
-    pub fn recorded_calls(&self) -> Vec<(Address, Bytes)> {
+    /// Returns the recorded calls as `(game_address, to, calldata)` tuples.
+    pub fn recorded_calls(&self) -> Vec<(Address, Address, Bytes)> {
         self.calls.lock().unwrap().clone()
     }
 }
@@ -738,9 +738,10 @@ impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
     async fn send_bond_tx(
         &self,
         game_address: Address,
+        to: Address,
         calldata: Bytes,
     ) -> Result<B256, crate::ChallengeSubmitError> {
-        self.calls.lock().unwrap().push((game_address, calldata));
+        self.calls.lock().unwrap().push((game_address, to, calldata));
         self.responses
             .lock()
             .unwrap()
