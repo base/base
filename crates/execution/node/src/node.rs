@@ -948,7 +948,7 @@ where
                 final_pool_config,
             )?;
 
-        info!(target: "reth::cli", "Transaction pool initialized");
+        info!(target: "reth::cli", max_inflight_delegated_slots, "Transaction pool initialized");
         debug!(target: "reth::cli", "Spawned txpool maintenance task");
 
         Ok(transaction_pool)
