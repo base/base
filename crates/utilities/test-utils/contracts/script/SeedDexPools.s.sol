@@ -93,9 +93,14 @@ contract SeedDexPools is Script {
 
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
 
-        address pool = IUniswapV3Factory(factory).createPool(token0, token1, fee);
-        IUniswapV3Pool(pool).initialize(SQRT_PRICE_1_1);
-        console.log("Uniswap V3 pool:", pool);
+        address pool = IUniswapV3Factory(factory).getPool(token0, token1, fee);
+        if (pool == address(0)) {
+            pool = IUniswapV3Factory(factory).createPool(token0, token1, fee);
+            IUniswapV3Pool(pool).initialize(SQRT_PRICE_1_1);
+            console.log("Uniswap V3 pool created:", pool);
+        } else {
+            console.log("Uniswap V3 pool exists:", pool);
+        }
 
         MockERC20(token0).approve(positionManager, type(uint256).max);
         MockERC20(token1).approve(positionManager, type(uint256).max);
