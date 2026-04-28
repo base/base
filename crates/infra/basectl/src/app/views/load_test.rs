@@ -520,7 +520,8 @@ impl LoadTestView {
         let continuous_flag = Arc::new(AtomicBool::new(self.continuous));
         let continuous_for_task = Arc::clone(&continuous_flag);
 
-        let task_handle = tokio::spawn(async move {
+        let load_test_body = async move {
+            // Fetch chain_id from the network's RPC — required for transaction signing.
             let client = RpcClient::new(cfg.rpc.clone());
             let chain_id = client.chain_id().await.ok();
 
@@ -643,6 +644,26 @@ impl LoadTestView {
             }
 
             let _ = done_tx.send(last_result).await;
+        };
+        let task_handle = tokio::spawn(async move {
+            // Run the load test on its own dedicated tokio runtime so the
+            // async I/O (nonce RPC calls, batch submits, confirmer) is never
+            // starved by the TUI's blocking crossterm::event::poll() call,
+            // which parks a worker thread for up to EVENT_POLL_TIMEOUT on
+            // every iteration of the TUI event loop.
+            tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(
+                        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4),
+                    )
+                    .enable_all()
+                    .thread_name("load-test-worker")
+                    .build()
+                    .expect("failed to build load test runtime");
+                rt.block_on(load_test_body);
+            })
+            .await
+            .ok();
         });
 
         resources.load_test_task =
