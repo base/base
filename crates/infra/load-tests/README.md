@@ -58,7 +58,6 @@ duration: "30s"
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
-| `zeronet.yaml` | Base Zeronet | Requires `FUNDER_KEY` |
 
 ### Contract Addresses
 
