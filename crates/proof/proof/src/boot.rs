@@ -255,6 +255,16 @@ impl BootInfo {
             serde_json::from_slice(&ser_cfg).map_err(OracleProviderError::Serde)?
         };
 
+        // Registry configs should already match, but oracle-provided configs must be bound to the
+        // committed boot chain ID before any config-derived chain parameters are trusted.
+        let rollup_config_chain_id = rollup_config.l2_chain_id.id();
+        if chain_id != rollup_config_chain_id {
+            return Err(OracleProviderError::RollupConfigChainIdMismatch {
+                boot_chain_id: chain_id,
+                rollup_config_chain_id,
+            });
+        }
+
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
         let l1_config = if let Some(config) =
@@ -344,5 +354,107 @@ impl BootInfo {
             intermediate_block_interval,
             l1_head_number,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{boxed::Box, vec::Vec};
+
+    use alloy_primitives::B256;
+    use async_trait::async_trait;
+    use base_common_chains::Registry;
+    use base_proof_preimage::{
+        PreimageKey, PreimageOracleClient,
+        errors::{PreimageOracleError, PreimageOracleResult},
+    };
+
+    use super::*;
+
+    struct MockOracle {
+        data: Vec<(PreimageKey, Vec<u8>)>,
+    }
+
+    impl MockOracle {
+        fn new() -> Self {
+            Self { data: Vec::new() }
+        }
+
+        fn insert(&mut self, key: U256, value: Vec<u8>) {
+            self.data.push((PreimageKey::new_local(key.to()), value));
+        }
+    }
+
+    #[async_trait]
+    impl PreimageOracleClient for MockOracle {
+        async fn get(&self, key: PreimageKey) -> PreimageOracleResult<Vec<u8>> {
+            self.data
+                .iter()
+                .find_map(|(entry_key, value)| (*entry_key == key).then(|| value.clone()))
+                .ok_or(PreimageOracleError::KeyNotFound)
+        }
+
+        async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> PreimageOracleResult<()> {
+            let value = self.get(key).await?;
+            if value.len() != buf.len() {
+                return Err(PreimageOracleError::BufferLengthMismatch(buf.len(), value.len()));
+            }
+
+            buf.copy_from_slice(&value);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_oracle_rollup_config_with_mismatched_chain_id() {
+        let rollup_config =
+            Registry::rollup_config(84532).expect("Base Sepolia config should exist").clone();
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, 999_999_999u64.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
+        );
+
+        let err = BootInfo::load(&oracle).await.expect_err("boot info should reject mismatch");
+        assert!(matches!(
+            err,
+            OracleProviderError::RollupConfigChainIdMismatch {
+                boot_chain_id: 999_999_999,
+                rollup_config_chain_id: 84532,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn accepts_oracle_rollup_config_with_matching_chain_id() {
+        const ORACLE_CHAIN_ID: u64 = 999_999_999;
+
+        let rollup_config =
+            Registry::rollup_config(84532).expect("Base Sepolia config should exist").clone();
+        let mut rollup_config_value =
+            serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
+        rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
+
+        let mut oracle = MockOracle::new();
+        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
+        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
+        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, ORACLE_CHAIN_ID.to_be_bytes().to_vec());
+        oracle.insert(
+            L2_ROLLUP_CONFIG_KEY,
+            serde_json::to_vec(&rollup_config_value).expect("rollup config should serialize"),
+        );
+
+        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
+
+        assert_eq!(boot_info.chain_id, ORACLE_CHAIN_ID);
+        assert_eq!(boot_info.rollup_config.l2_chain_id.id(), ORACLE_CHAIN_ID);
     }
 }

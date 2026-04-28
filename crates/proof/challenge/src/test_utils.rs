@@ -69,6 +69,8 @@ pub struct MockGameState {
     pub created_at: u64,
     /// Address of the `DelayedWETH` contract.
     pub delayed_weth: Address,
+    /// Address of the `AnchorStateRegistry` contract.
+    pub anchor_state_registry: Address,
 }
 
 impl Default for MockGameState {
@@ -95,6 +97,7 @@ impl Default for MockGameState {
             proof_count: 0,
             created_at: 0,
             delayed_weth: Address::ZERO,
+            anchor_state_registry: Address::ZERO,
         }
     }
 }
@@ -274,6 +277,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError> {
         self.get(game_address, |s| s.delayed_weth)
     }
+
+    async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.get(game_address, |s| s.anchor_state_registry)
+    }
 }
 
 /// Helper to create an address from a `u64` index.
@@ -340,6 +347,7 @@ pub const fn mock_state_with_tee(
         proof_count: 0,
         created_at: 0,
         delayed_weth: Address::ZERO,
+        anchor_state_registry: Address::ZERO,
     }
 }
 

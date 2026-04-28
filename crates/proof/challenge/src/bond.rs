@@ -35,6 +35,7 @@ use alloy_primitives::Address;
 use base_proof_contracts::{
     AggregateVerifierClient, DelayedWETHClient, DelayedWETHContractClient,
     DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
+    encode_set_anchor_state_calldata,
 };
 use base_runtime::Clock;
 use futures::stream::{self, StreamExt};
@@ -79,6 +80,19 @@ pub struct TrackedGame {
     pub phase: BondPhase,
     /// The address that will receive the bond.
     pub bond_recipient: Address,
+    /// Whether the anchor state update has been completed (or skipped)
+    /// for this game. Set to `true` after a successful
+    /// `setAnchorState()` call or when the game is not eligible
+    /// (e.g. `CHALLENGER_WINS`).
+    pub anchor_update_complete: bool,
+    /// Cached on-chain game status (`0` = in progress, `1` = challenger
+    /// wins, `2` = defender wins). Populated on the first successful
+    /// `status()` RPC read; subsequent ticks reuse the cached value
+    /// because the status is immutable after resolution.
+    pub cached_status: Option<u8>,
+    /// Cached `AnchorStateRegistry` address for this game. Read from the
+    /// game contract on first use and reused thereafter (immutable per game).
+    pub cached_asr_address: Option<Address>,
 }
 
 /// Manages the bond claim lifecycle for dispute games.
@@ -128,6 +142,9 @@ impl<C: Clock> BondManager<C> {
     /// been read yet. If the real delay is shorter the withdraw will simply
     /// succeed earlier; if longer, the attempt reverts and is retried.
     const DEFAULT_WETH_DELAY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+    /// `DEFENDER_WINS` game status constant.
+    const STATUS_DEFENDER_WINS: u8 = 2;
 
     /// Creates a new bond manager for the given set of claim addresses.
     pub fn new(
@@ -195,8 +212,16 @@ impl<C: Clock> BondManager<C> {
             recipient = %bond_recipient,
             "tracking game for bond claiming"
         );
-        self.tracked
-            .insert(game_address, TrackedGame { phase: BondPhase::NeedsResolve, bond_recipient });
+        self.tracked.insert(
+            game_address,
+            TrackedGame {
+                phase: BondPhase::NeedsResolve,
+                bond_recipient,
+                anchor_update_complete: false,
+                cached_status: None,
+                cached_asr_address: None,
+            },
+        );
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         true
     }
@@ -396,7 +421,16 @@ impl<C: Clock> BondManager<C> {
                 phase = ?phase,
                 "recovered game for bond tracking"
             );
-            self.tracked.insert(game_address, TrackedGame { phase, bond_recipient });
+            self.tracked.insert(
+                game_address,
+                TrackedGame {
+                    phase,
+                    bond_recipient,
+                    anchor_update_complete: false,
+                    cached_status: None,
+                    cached_asr_address: None,
+                },
+            );
         }
 
         self.bond_scan_head = game_count;
@@ -506,7 +540,16 @@ impl<C: Clock> BondManager<C> {
                 scan_type,
                 "discovered claimable game"
             );
-            self.tracked.insert(game_address, TrackedGame { phase, bond_recipient });
+            self.tracked.insert(
+                game_address,
+                TrackedGame {
+                    phase,
+                    bond_recipient,
+                    anchor_update_complete: false,
+                    cached_status: None,
+                    cached_asr_address: None,
+                },
+            );
             discovered += 1;
         }
 
@@ -550,8 +593,16 @@ impl<C: Clock> BondManager<C> {
 
         for game_address in addresses {
             match self.advance_game(game_address, verifier_client, submitter).await {
-                Ok(Some(reason)) => removed.push((game_address, reason)),
-                Ok(None) => {}
+                Ok(Some(reason)) => {
+                    // Last-chance anchor update before the game is removed.
+                    // If the airgap delay hasn't elapsed yet the call reverts
+                    // harmlessly, but in the common case it succeeds.
+                    self.try_anchor_update(game_address, verifier_client, submitter).await;
+                    removed.push((game_address, reason));
+                }
+                Ok(None) => {
+                    self.try_anchor_update(game_address, verifier_client, submitter).await;
+                }
                 Err(e) => {
                     warn!(
                         game = %game_address,
@@ -645,6 +696,23 @@ impl<C: Clock> BondManager<C> {
                     );
                     ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_SUCCESS)
                         .increment(1);
+                    // Re-read and cache the now-immutable status so that
+                    // try_anchor_update (called later this tick) can use
+                    // it without a redundant RPC call.
+                    match verifier_client.status(game_address).await {
+                        Ok(resolved_status) => {
+                            if let Some(g) = self.tracked.get_mut(&game_address) {
+                                g.cached_status = Some(resolved_status);
+                            }
+                        }
+                        Err(e) => {
+                            debug!(
+                                game = %game_address,
+                                error = %e,
+                                "failed to cache status after resolve, will re-read later"
+                            );
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!(
@@ -661,6 +729,12 @@ impl<C: Clock> BondManager<C> {
             ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
                 .increment(1);
             info!(game = %game_address, status, "game already resolved");
+            // Status is immutable after resolution — cache it so that
+            // try_anchor_update (called later this tick) can skip the
+            // redundant RPC round-trip.
+            if let Some(g) = self.tracked.get_mut(&game_address) {
+                g.cached_status = Some(status);
+            }
         }
 
         // Re-read the onchain bondRecipient — resolve may have changed it
@@ -902,6 +976,125 @@ impl<C: Clock> BondManager<C> {
         }
     }
 
+    /// Best-effort attempt to update the `AnchorStateRegistry` for a
+    /// resolved game.
+    ///
+    /// Only attempts the update when:
+    /// - The game is past the `NeedsResolve` phase (already resolved).
+    /// - The game has not already had a successful anchor update.
+    ///
+    /// The ASR address is read from the game contract on first use and
+    /// cached on [`TrackedGame`] (it is immutable per game).
+    ///
+    /// The `setAnchorState()` call is permissionless and self-validating:
+    /// the contract checks that the game is finalized (resolved + airgap
+    /// delay elapsed), `DEFENDER_WINS`, and newer than the current anchor.
+    /// Premature or ineligible calls revert harmlessly and are retried on
+    /// the next tick.
+    async fn try_anchor_update(
+        &mut self,
+        game_address: Address,
+        verifier_client: &dyn AggregateVerifierClient,
+        submitter: &dyn BondTransactionSubmitter,
+    ) {
+        let game = match self.tracked.get(&game_address) {
+            Some(g) => g,
+            None => return,
+        };
+
+        if game.anchor_update_complete
+            || (game.cached_status.is_none() && matches!(game.phase, BondPhase::NeedsResolve))
+        {
+            return;
+        }
+
+        // Only DEFENDER_WINS games can update the anchor state.
+        // The status is immutable after resolution, so we cache it
+        // after the first successful RPC read to avoid redundant calls.
+        let status = if let Some(cached) = game.cached_status {
+            cached
+        } else {
+            match verifier_client.status(game_address).await {
+                Ok(s) => {
+                    if let Some(g) = self.tracked.get_mut(&game_address) {
+                        g.cached_status = Some(s);
+                    }
+                    s
+                }
+                Err(e) => {
+                    debug!(
+                        game = %game_address,
+                        error = %e,
+                        "failed to read status for anchor update"
+                    );
+                    return;
+                }
+            }
+        };
+
+        if status != Self::STATUS_DEFENDER_WINS {
+            if let Some(g) = self.tracked.get_mut(&game_address) {
+                g.anchor_update_complete = true;
+            }
+            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
+                .increment(1);
+            return;
+        }
+
+        // Resolve the ASR address from the game contract (cached after first read).
+        let asr_address = if let Some(cached) =
+            self.tracked.get(&game_address).and_then(|g| g.cached_asr_address)
+        {
+            cached
+        } else {
+            match verifier_client.anchor_state_registry(game_address).await {
+                Ok(addr) => {
+                    if let Some(g) = self.tracked.get_mut(&game_address) {
+                        g.cached_asr_address = Some(addr);
+                    }
+                    addr
+                }
+                Err(e) => {
+                    debug!(
+                        game = %game_address,
+                        error = %e,
+                        "failed to read anchorStateRegistry for anchor update"
+                    );
+                    return;
+                }
+            }
+        };
+
+        let calldata = encode_set_anchor_state_calldata(game_address);
+        match submitter.send_bond_tx(asr_address, calldata).await {
+            Ok(tx_hash) => {
+                info!(
+                    game = %game_address,
+                    asr = %asr_address,
+                    tx_hash = %tx_hash,
+                    "anchor state registry updated"
+                );
+                if let Some(g) = self.tracked.get_mut(&game_address) {
+                    g.anchor_update_complete = true;
+                }
+                ChallengerMetrics::anchor_update_tx_outcome_total(
+                    ChallengerMetrics::STATUS_SUCCESS,
+                )
+                .increment(1);
+            }
+            Err(e) => {
+                debug!(
+                    game = %game_address,
+                    asr = %asr_address,
+                    error = %e,
+                    "anchor state update failed, will retry"
+                );
+                ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
+                    .increment(1);
+            }
+        }
+    }
+
     /// Reads the `DelayedWETH` address from a game proxy and fetches the delay.
     async fn resolve_weth_delay(
         &mut self,
@@ -936,6 +1129,7 @@ pub trait BondTransactionSubmitter: Send + Sync {
 mod tests {
     use std::{future::Future, pin::Pin};
 
+    use alloy_primitives::B256;
     use futures::stream::BoxStream;
 
     use super::*;
@@ -1039,7 +1233,13 @@ mod tests {
         let unlocked_at = Duration::from_secs(900);
         mgr.tracked.insert(
             game,
-            TrackedGame { phase: BondPhase::AwaitingDelay { unlocked_at }, bond_recipient: addr },
+            TrackedGame {
+                phase: BondPhase::AwaitingDelay { unlocked_at },
+                bond_recipient: addr,
+                anchor_update_complete: false,
+                cached_status: None,
+                cached_asr_address: None,
+            },
         );
 
         let result = mgr.check_delay(game, unlocked_at);
@@ -1067,7 +1267,13 @@ mod tests {
         let unlocked_at = Duration::from_secs(999);
         mgr.tracked.insert(
             game,
-            TrackedGame { phase: BondPhase::AwaitingDelay { unlocked_at }, bond_recipient: addr },
+            TrackedGame {
+                phase: BondPhase::AwaitingDelay { unlocked_at },
+                bond_recipient: addr,
+                anchor_update_complete: false,
+                cached_status: None,
+                cached_asr_address: None,
+            },
         );
 
         let result = mgr.check_delay(game, unlocked_at);
@@ -1545,5 +1751,132 @@ mod tests {
 
         assert_eq!(mgr.bond_scan_head, game_count);
         assert_eq!(mgr.tracked_count(), game_count as usize);
+    }
+
+    // ---- anchor state update tests ----
+
+    #[tokio::test]
+    async fn anchor_update_skipped_for_needs_resolve_phase() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        // Game is still in NeedsResolve — should not attempt anchor update.
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+
+        assert!(submitter.recorded_calls().is_empty());
+        assert!(!mgr.tracked.get(&game).unwrap().anchor_update_complete);
+    }
+
+    #[tokio::test]
+    async fn anchor_update_skipped_for_challenger_wins() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::NeedsUnlock);
+
+        // Status 1 = CHALLENGER_WINS — not eligible for anchor update.
+        let mut state = mock_state(1, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+
+        // No tx submitted, but marked complete (won't retry).
+        assert!(submitter.recorded_calls().is_empty());
+        assert!(mgr.tracked.get(&game).unwrap().anchor_update_complete);
+    }
+
+    #[tokio::test]
+    async fn anchor_update_sends_tx_for_defender_wins() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::NeedsUnlock);
+
+        // Status 2 = DEFENDER_WINS — eligible.
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        let tx_hash = B256::repeat_byte(0xDD);
+        let submitter = MockBondTransactionSubmitter::success(tx_hash);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+
+        // Should have sent exactly one tx to the ASR address.
+        let calls = submitter.recorded_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, asr, "tx should be sent to ASR address");
+        assert!(mgr.tracked.get(&game).unwrap().anchor_update_complete);
+    }
+
+    #[tokio::test]
+    async fn anchor_update_retries_on_failure() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::AwaitingDelay { unlocked_at: Duration::from_secs(0) });
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        // First attempt fails (e.g. airgap not elapsed → tx reverted).
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![Err(
+            crate::ChallengeSubmitError::TxReverted { tx_hash: B256::ZERO },
+        )]);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+
+        // Should NOT be marked complete — will retry next tick.
+        assert!(!mgr.tracked.get(&game).unwrap().anchor_update_complete);
+    }
+
+    #[tokio::test]
+    async fn anchor_update_not_retried_after_success() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::NeedsUnlock);
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        // First call succeeds.
+        let tx_hash = B256::repeat_byte(0xDD);
+        let submitter = MockBondTransactionSubmitter::success(tx_hash);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+        assert!(mgr.tracked.get(&game).unwrap().anchor_update_complete);
+
+        // Second call should be a no-op (no submitter response needed).
+        let submitter2 = MockBondTransactionSubmitter::with_responses(vec![]);
+        mgr.try_anchor_update(game, &*verifier, &submitter2).await;
+        assert!(submitter2.recorded_calls().is_empty());
     }
 }

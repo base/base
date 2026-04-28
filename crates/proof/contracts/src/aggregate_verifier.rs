@@ -135,6 +135,9 @@ sol! {
 
         /// Returns the address of the `DelayedWETH` contract used by this game.
         function DELAYED_WETH() external view returns (address);
+
+        /// Returns the address of the `AnchorStateRegistry` contract.
+        function anchorStateRegistry() external view returns (address);
     }
 }
 
@@ -226,6 +229,9 @@ pub trait AggregateVerifierClient: Send + Sync {
 
     /// Returns the address of the `DelayedWETH` contract used by this game.
     async fn delayed_weth(&self, game_address: Address) -> Result<Address, ContractError>;
+
+    /// Returns the address of the `AnchorStateRegistry` contract for this game.
+    async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -536,6 +542,16 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .call()
             .await
             .map_err(|e| ContractError::Call { context: "DELAYED_WETH failed".into(), source: e })
+    }
+
+    async fn anchor_state_registry(&self, game_address: Address) -> Result<Address, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract.anchorStateRegistry().call().await.map_err(|e| ContractError::Call {
+            context: "anchorStateRegistry failed".into(),
+            source: e,
+        })
     }
 }
 

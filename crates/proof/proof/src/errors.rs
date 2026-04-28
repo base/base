@@ -110,6 +110,19 @@ pub enum OracleProviderError {
     /// * `0` - The unknown chain ID that was encountered
     #[error("Unknown chain ID: {0}")]
     UnknownChainId(u64),
+    /// Rollup config L2 chain ID does not match the boot chain ID.
+    ///
+    /// This error occurs when an oracle-provided rollup config claims to be for
+    /// a different L2 chain than the local chain ID used to select it.
+    #[error(
+        "Rollup config chain ID mismatch: boot chain ID {boot_chain_id}, rollup config L2 chain ID {rollup_config_chain_id}"
+    )]
+    RollupConfigChainIdMismatch {
+        /// The chain ID loaded from local boot input.
+        boot_chain_id: u64,
+        /// The L2 chain ID claimed by the loaded rollup config.
+        rollup_config_chain_id: u64,
+    },
     /// Blob KZG commitment verification failed.
     ///
     /// This error occurs when the KZG commitment computed from a reconstructed

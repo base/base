@@ -3,9 +3,9 @@
 //! Provides the anchor state (latest finalized output root) used as the starting
 //! point when no pending dispute games exist.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::RootProvider;
-use alloy_sol_types::sol;
+use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
 use crate::ContractError;
@@ -37,7 +37,23 @@ sol! {
 
         /// Returns whether the system is paused.
         function paused() external view returns (bool);
+
+        /// Updates the anchor game to the given dispute game.
+        ///
+        /// Permissionless — anyone can call. The contract validates that the
+        /// game is proper, respected, finalized, resolved as `DEFENDER_WINS`,
+        /// and newer than the current anchor.
+        function setAnchorState(address game) external;
     }
+}
+
+/// Encodes the calldata for `IAnchorStateRegistry.setAnchorState(game)`.
+///
+/// The transaction should be sent to the `AnchorStateRegistry` contract
+/// address, passing the dispute game proxy address as the argument.
+pub fn encode_set_anchor_state_calldata(game: Address) -> Bytes {
+    let call = IAnchorStateRegistry::setAnchorStateCall { game };
+    Bytes::from(call.abi_encode())
 }
 
 /// Anchor root returned by `AnchorStateRegistry.getAnchorRoot()`.

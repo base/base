@@ -1360,7 +1360,9 @@ async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
     state.status = 2; // DEFENDER_WINS
     let verifier = single_game_verifier(state);
 
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+    // One response for the anchor state update that is attempted after
+    // advance_game (DEFENDER_WINS triggers a setAnchorState call).
+    let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(DEFAULT_TX_HASH)]);
 
     let mut mgr = default_bond_manager(claim_addr);
     mgr.track_game(game_addr, claim_addr);
@@ -1387,7 +1389,10 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
     state.bond_recipient = other_addr; // bond goes to someone else
     let verifier = single_game_verifier(state);
 
-    let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+    // One response for the anchor state update — even though the bond is
+    // not claimable, anchor updates are a public good and are still
+    // attempted for DEFENDER_WINS games before removal.
+    let submitter = MockBondTransactionSubmitter::with_responses(vec![Ok(DEFAULT_TX_HASH)]);
 
     let mut mgr = default_bond_manager(claim_addr);
     mgr.track_game(game_addr, claim_addr);
@@ -1401,10 +1406,9 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
         "game should be removed when bondRecipient is not in claim addresses"
     );
 
-    assert!(
-        submitter.recorded_calls().is_empty(),
-        "no transactions should be submitted when bond is not claimable"
-    );
+    // The only transaction submitted should be the anchor state update.
+    let calls = submitter.recorded_calls();
+    assert_eq!(calls.len(), 1, "only the anchor update tx should be submitted");
 }
 
 #[tokio::test]
