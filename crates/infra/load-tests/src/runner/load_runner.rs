@@ -543,7 +543,11 @@ impl LoadRunner {
                 }
             }
 
-            Self::await_confirmations(&self.client, &mut batch_pending, &pb_fund).await?;
+            let (_, reverted) =
+                Self::await_confirmations(&self.batch_rpc, &mut batch_pending, &pb_fund).await?;
+            if reverted > 0 {
+                warn!(reverted, "some funding txs reverted");
+            }
         }
         pb_fund.finish_and_clear();
 
@@ -781,7 +785,9 @@ impl LoadRunner {
                 }
             }
 
-            Self::await_confirmations(&self.client, &mut pending_txs, &pb).await?;
+            let (_, reverted) =
+                Self::await_confirmations(&self.batch_rpc, &mut pending_txs, &pb).await?;
+            failed_count += reverted;
         }
 
         pb.finish_and_clear();
@@ -1639,9 +1645,14 @@ impl LoadRunner {
         let pb_confirm = self.progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
-        if let Err(e) = Self::await_confirmations(&self.client, &mut pending_txs, &pb_confirm).await
-        {
-            warn!(error = %e, "some drain txs did not confirm within timeout");
+        match Self::await_confirmations(&self.batch_rpc, &mut pending_txs, &pb_confirm).await {
+            Ok((_, reverted)) if reverted > 0 => {
+                warn!(reverted, "some drain txs reverted");
+            }
+            Err(e) => {
+                warn!(error = %e, "some drain txs did not confirm within timeout");
+            }
+            _ => {}
         }
         pb_confirm.finish_and_clear();
 
@@ -1663,34 +1674,43 @@ impl LoadRunner {
         pb
     }
 
+    /// Waits for pending transactions to confirm, using batched RPC calls.
+    ///
+    /// Returns `(confirmed, reverted)` counts. Reverted transactions are logged
+    /// as warnings but still count toward completion (not retried).
     async fn await_confirmations(
-        client: &RpcClient,
+        batch_rpc: &BatchRpcClient,
         pending_txs: &mut Vec<(TxHash, Address)>,
         pb: &ProgressBar,
-    ) -> Result<()> {
+    ) -> Result<(usize, usize)> {
         let timeout = Duration::from_secs(60);
         let poll_interval = Duration::from_millis(500);
         let start = Instant::now();
 
+        let mut confirmed = 0usize;
+        let mut reverted = 0usize;
+
         while !pending_txs.is_empty() && start.elapsed() < timeout {
             tokio::time::sleep(poll_interval).await;
 
+            let tx_hashes: Vec<TxHash> = pending_txs.iter().map(|(h, _)| *h).collect();
+            let receipts = batch_rpc.batch_get_transaction_receipts(&tx_hashes).await?;
+
             let mut still_pending = Vec::new();
-            for (tx_hash, address) in pending_txs.drain(..) {
-                match client.get_transaction_receipt(tx_hash).await {
-                    Ok(Some(r)) => {
+            for ((tx_hash, address), receipt_opt) in pending_txs.drain(..).zip(receipts.into_iter())
+            {
+                match receipt_opt {
+                    Some(r) => {
                         if r.status() {
                             debug!(tx_hash = %tx_hash, address = %address, "tx confirmed");
+                            confirmed += 1;
                         } else {
                             warn!(tx_hash = %tx_hash, address = %address, "tx reverted");
+                            reverted += 1;
                         }
                         pb.inc(1);
                     }
-                    Ok(None) => {
-                        still_pending.push((tx_hash, address));
-                    }
-                    Err(e) => {
-                        warn!(tx_hash = %tx_hash, error = %e, "failed to get receipt");
+                    None => {
                         still_pending.push((tx_hash, address));
                     }
                 }
@@ -1705,7 +1725,7 @@ impl LoadRunner {
             )));
         }
 
-        Ok(())
+        Ok((confirmed, reverted))
     }
 
     /// Signals the load test to stop gracefully.
