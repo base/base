@@ -63,14 +63,16 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     .await??;
 
     // --- Step 1: delegate the EOA via EIP-7702 ---
-    // Delegate to Address::ZERO — we only need the 0xef0100 code prefix, not a
-    // real contract. The txpool checks that prefix to identify delegated senders.
+    // Delegate to a non-zero address — delegating to Address::ZERO is a reset
+    // and produces empty code, not the 0xef0100 prefix. Any non-zero target
+    // (even one with no deployed code) sets the prefix the txpool checks for.
+    let delegation_target: Address = "0x0000000000000000000000000000000000000001".parse()?;
     let nonce = client_provider.get_transaction_count(sender).await?;
     let auth =
-        Authorization { chain_id: U256::from(L2_CHAIN_ID), address: Address::ZERO, nonce }
+        Authorization { chain_id: U256::from(L2_CHAIN_ID), address: delegation_target, nonce }
             .into_signed(signer.sign_hash_sync(&Authorization {
                 chain_id: U256::from(L2_CHAIN_ID),
-                address: Address::ZERO,
+                address: delegation_target,
                 nonce,
             }
             .signature_hash())?);
