@@ -20,6 +20,9 @@ exclude = [
     'https://img.shields.io/github/commit-activity/w/base/base',
     'https://img.shields.io/github/issues-pr-raw/base/base',
 
+    # Cantina code/overview pages redirect (302) through an auth gate
+    'https://cantina\.xyz/code/',
+
     # Sites that block automated HTTP clients / scrapers
     'https://.*etherscan\.io',         # Block explorer; returns 403/429 for bots
     'https://medium\.com',             # Medium blocks crawlers
