@@ -146,20 +146,26 @@ impl ForkMatrix {
 
 #[cfg(test)]
 mod tests {
-    use base_common_genesis::RollupConfig;
+    use std::any::Any;
 
-    use super::*;
+    use base_common_genesis::{HardForkConfig, RollupConfig};
 
-    fn rollup_config(hardforks: HardForkConfig) -> RollupConfig {
-        RollupConfig { block_time: 2, hardforks, ..Default::default() }
-    }
+    use super::ForkMatrix;
 
-    fn panic_message(payload: Box<dyn Any + Send>) -> String {
-        payload
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-            .unwrap_or_else(|| "non-string panic payload".to_owned())
+    struct MatrixFixture;
+
+    impl MatrixFixture {
+        fn rollup_config(hardforks: HardForkConfig) -> RollupConfig {
+            RollupConfig { block_time: 2, hardforks, ..Default::default() }
+        }
+
+        fn panic_message(payload: Box<dyn Any + Send>) -> String {
+            payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_else(|| "non-string panic payload".to_owned())
+        }
     }
 
     #[test]
@@ -204,7 +210,7 @@ mod tests {
     #[test]
     fn each_case_is_cumulative_without_enabling_the_next_fork() {
         for (fork_name, hardforks) in ForkMatrix::all().iter() {
-            let cfg = rollup_config(hardforks);
+            let cfg = MatrixFixture::rollup_config(hardforks);
             match fork_name {
                 "regolith" => {
                     assert!(cfg.is_regolith_active(0));
@@ -266,7 +272,7 @@ mod tests {
         })
         .expect_err("granite case must panic");
 
-        let message = panic_message(panic);
+        let message = MatrixFixture::panic_message(panic);
         assert!(message.contains("granite"));
         assert!(message.contains("boom"));
     }

@@ -48,5 +48,8 @@ tonic-reflection.workspace = true
 http.workspace = true
 tower-http = { workspace = true, features = ["cors"] }
 
+# URL parsing
+url.workspace = true
+
 # Tracing
 tracing.workspace = true

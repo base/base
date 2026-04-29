@@ -35,9 +35,12 @@ jobs:
           native-deps: "true"
           mold: "true"
           foundry: "true"
+          components: clippy
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
       - name: Build test contracts
         run: just build::contracts
+      - name: Lint action tests
+        run: just actions::lint-ci
       - name: Run action tests
-        run: just actions::test
+        run: just actions::test-ci

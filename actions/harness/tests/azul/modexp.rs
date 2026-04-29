@@ -54,19 +54,19 @@ const MODEXP_SENTINEL_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
 /// Build a raw MODEXP precompile input with the given field sizes and data.
 ///
 /// Format: `[base_len (32B) | exp_len (32B) | mod_len (32B) | base | exponent | modulus]`.
-fn modexp_input(base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
-    let mut input = Vec::new();
-    // base_len
-    input.extend_from_slice(&U256::from(base.len()).to_be_bytes::<32>());
-    // exp_len
-    input.extend_from_slice(&U256::from(exponent.len()).to_be_bytes::<32>());
-    // mod_len
-    input.extend_from_slice(&U256::from(modulus.len()).to_be_bytes::<32>());
-    // data
-    input.extend_from_slice(base);
-    input.extend_from_slice(exponent);
-    input.extend_from_slice(modulus);
-    input
+struct ModexpInput;
+
+impl ModexpInput {
+    fn build(base: &[u8], exponent: &[u8], modulus: &[u8]) -> Vec<u8> {
+        let mut input = Vec::new();
+        input.extend_from_slice(&U256::from(base.len()).to_be_bytes::<32>());
+        input.extend_from_slice(&U256::from(exponent.len()).to_be_bytes::<32>());
+        input.extend_from_slice(&U256::from(modulus.len()).to_be_bytes::<32>());
+        input.extend_from_slice(base);
+        input.extend_from_slice(exponent);
+        input.extend_from_slice(modulus);
+        input
+    }
 }
 
 /// EIP-7823: MODEXP rejects inputs with any field length > 1024 bytes after Base Azul.
@@ -116,7 +116,7 @@ async fn azul_modexp_upper_bound() {
     assert!(builder.has_code(contract_addr), "deployed contract must have non-empty code");
 
     // Oversized input: base_len = 1025 (> 1024-byte EIP-7823 limit).
-    let oversized_input = modexp_input(&vec![0u8; 1025], &[], &[2]);
+    let oversized_input = ModexpInput::build(&vec![0u8; 1025], &[], &[2]);
 
     // ── Block 2 (ts=4, pre-fork): call MODEXP with oversized input ───
     let call_pre = {
@@ -226,7 +226,7 @@ async fn azul_modexp_gas_cost_increase() {
     assert!(builder.has_code(contract_addr), "deployed contract must have non-empty code");
 
     // Small valid input: 2^3 mod 5 (= 3).
-    let small_input = modexp_input(&[2], &[3], &[5]);
+    let small_input = ModexpInput::build(&[2], &[3], &[5]);
 
     // ── Block 2 (ts=4, pre-fork): call MODEXP ────────────────────────
     let call_pre = {
