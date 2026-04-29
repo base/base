@@ -28,10 +28,10 @@ impl ProofRequestManager {
 
     /// Sync proof request status by delegating to backend.
     ///
-    /// Uses `_if_non_terminal` DB methods for terminal transitions so that only
-    /// the first caller to transition the request actually succeeds. This
-    /// prevents double-counting metrics when `StatusPoller` and `GetProof` RPC
-    /// race on the same proof request.
+    /// Uses guarded DB transitions for terminal states so that only the first
+    /// caller to transition the request actually succeeds. This prevents
+    /// double-counting metrics when `StatusPoller` and `GetProof` RPC race on
+    /// the same proof request.
     pub async fn sync_and_update_proof_status(&self, proof_request: &ProofRequest) -> Result<()> {
         let prev_status = proof_request.status;
         let proof_type_label = metrics::proof_type_label(proof_request.proof_type);
@@ -44,8 +44,8 @@ impl ProofRequestManager {
         let result = backend.process_proof_request(proof_request, &self.repo).await?;
 
         // 3. Update proof request status based on backend's result.
-        //    Both terminal paths use _if_non_terminal variants so that only the
-        //    first caller to transition the request actually succeeds.
+        //    Both terminal paths use guarded transitions so that only the first
+        //    caller to transition the request actually succeeds.
         match result.status {
             ProofStatus::Succeeded => {
                 // Re-query to get updated receipts (backend updated them during processing)
@@ -62,21 +62,16 @@ impl ProofRequestManager {
                     status: ProofStatus::Succeeded,
                     error_message: None,
                 };
-                let was_updated = self.repo.update_receipt_if_non_terminal(update).await?;
+                let was_updated = self.repo.transition_running_to_succeeded(update).await?;
                 if !was_updated {
                     // Another caller already transitioned this request; skip metrics.
                     return Ok(());
                 }
             }
             ProofStatus::Failed => {
-                // Mark as failed (only if not already terminal)
                 let was_updated = self
                     .repo
-                    .update_status_if_non_terminal(
-                        proof_request.id,
-                        ProofStatus::Failed,
-                        result.error_message,
-                    )
+                    .transition_running_to_failed(proof_request.id, result.error_message)
                     .await?;
                 if !was_updated {
                     // Another caller already transitioned this request; skip metrics.

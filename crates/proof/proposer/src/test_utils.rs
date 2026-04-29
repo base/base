@@ -10,7 +10,7 @@ use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorRoot, AnchorStateRegistryClient, ContractError,
+    AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorStateRegistryClient, ContractError,
     DisputeGameFactoryClient, GameAtIndex, GameInfo,
 };
 use base_proof_primitives::{ProofResult, Proposal, ProverClient};
@@ -312,6 +312,21 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
     async fn anchor_state_registry(&self, _: Address) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
+    }
+    async fn is_game_finalized(&self, _: Address, _: Address) -> Result<bool, ContractError> {
+        Ok(true)
+    }
+    async fn anchor_preflight(
+        &self,
+        _: Address,
+        _: Address,
+    ) -> Result<AnchorPreflight, ContractError> {
+        Ok(AnchorPreflight {
+            blacklisted: false,
+            retired: false,
+            respected: true,
+            anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
+        })
     }
 }
 

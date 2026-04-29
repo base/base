@@ -163,6 +163,7 @@ impl ChallengerService {
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
             );
+            bm.set_anchor_update_retention(config.anchor_update_retention);
             info!("starting bond recovery scan");
             if let Err(e) = bm.startup_scan(&*verifier_client).await {
                 // On failure `bond_scan_head` stays at 0, so

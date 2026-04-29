@@ -1236,7 +1236,8 @@ async fn test_bond_manager_full_lifecycle() {
     // Verify 2 transactions were submitted (unlock + withdraw, no resolve).
     let calls = submitter.recorded_calls();
     assert_eq!(calls.len(), 2, "expected 2 bond transactions (unlock, withdraw)");
-    for (target, _) in &calls {
+    for (game, target, _) in &calls {
+        assert_eq!(*game, game_addr, "all transactions should reference the game address");
         assert_eq!(*target, game_addr, "all transactions should target the game address");
     }
 }
