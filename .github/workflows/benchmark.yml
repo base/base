@@ -21,7 +21,8 @@ jobs:
   # Build base-reth-node, base-builder, and base-load-test together, cached by source hash
   build-binaries:
     name: Build binaries
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     permissions:
       contents: read
       actions: write
@@ -44,15 +45,14 @@ jobs:
           path: ~/bin
           key: ${{ runner.os }}-binaries-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'crates/**', 'bin/**') }}
 
-      - name: Setup Rust toolchain, cache, and dependencies
+      - name: Rust cache
         if: steps.cache-binaries.outputs.cache-hit != 'true'
-        uses: ./.github/actions/setup
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          native-deps: "true"
-          mold: "true"
-          foundry: "true"
-          rust-cache-shared-key: "benchmark"
-          rust-cache-save: "true"
+          cache-on-failure: true
+          shared-key: "benchmark"
+          save-if: "true"
+          cache-targets: "false"
 
       - name: Build base-reth-node
         if: steps.cache-binaries.outputs.cache-hit != 'true'
@@ -88,7 +88,8 @@ jobs:
   # Run the benchmark
   benchmark:
     name: Run Benchmark
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     needs: [build-binaries]
     permissions:
       contents: read
@@ -112,9 +113,6 @@ jobs:
           path: benchmark
           submodules: true
           fetch-depth: 1
-
-      - name: Set up Go
-        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
 
       - name: Install Go dependencies
         working-directory: benchmark
@@ -147,11 +145,6 @@ jobs:
             --builder-bin ${{ runner.temp }}/bin/base-builder \
             --base-reth-node-bin ${{ runner.temp }}/bin/base-reth-node \
             --load-test-bin ${{ runner.temp }}/bin/base-load-test
-
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "20"
 
       - name: Build Report
         working-directory: benchmark

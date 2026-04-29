@@ -19,7 +19,8 @@ permissions:
 jobs:
   check-no-std:
     name: no_std
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     timeout-minutes: 30
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -31,22 +32,21 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          mold: "true"
-          rust-cache-shared-key: "no-std"
-          rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Add riscv target
-        shell: bash
-        run: rustup target add riscv32imac-unknown-none-elf
+          cache-on-failure: true
+          shared-key: "no-std"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: "false"
 
       - name: check
         run: ./etc/scripts/ci/check-no-std.sh
 
   check-no-std-proof:
     name: no_std (proof)
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     timeout-minutes: 30
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -58,17 +58,13 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          toolchain: "nightly"
-          components: "rust-src"
-          mold: "true"
-          rust-cache-shared-key: "no-std-proof"
-          rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Add riscv target
-        shell: bash
-        run: rustup target add riscv32imac-unknown-none-elf
+          cache-on-failure: true
+          shared-key: "no-std-proof"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-targets: "false"
 
       - name: check
         run: ./etc/scripts/ci/check-no-std-proof.sh

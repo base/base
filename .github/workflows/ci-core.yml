@@ -69,7 +69,8 @@ jobs:
 
   metadata-checks:
     name: Metadata Checks
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
@@ -78,9 +79,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
-        with:
-          tools: cargo-deny
       - name: Validate Cargo.lock is up to date
         run: cargo metadata --format-version 1 --no-deps --locked >/dev/null
       - name: Check cargo-deny
@@ -90,7 +88,8 @@ jobs:
 
   format:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
@@ -99,18 +98,19 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          toolchain: nightly
-          components: rustfmt
-          rust-cache-shared-key: "nightly"
-          rust-cache-save: ${{ inputs.save_rust_cache }}
+          cache-on-failure: true
+          shared-key: "nightly"
+          save-if: ${{ inputs.save_rust_cache }}
+          cache-targets: "false"
       - run: just check::format
 
   build:
     name: Build
     runs-on:
-      group: BasePerfRunnerGroup
+      group: BaseCIRunnerGroup
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -124,23 +124,27 @@ jobs:
       - name: Fetch base branch
         if: inputs.base_ref != ''
         run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          free-disk: "true"
-          native-deps: "true"
-          mold: "true"
-          foundry: "true"
-          sp1: "true"
-          elf-cache: "true"
-          rust-cache-shared-key: "stable"
-          rust-cache-save: ${{ inputs.save_rust_cache }}
+          cache-on-failure: true
+          shared-key: "stable"
+          save-if: ${{ inputs.save_rust_cache }}
+          cache-targets: "false"
+      - name: Restore ELF cache
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: |
+            crates/proof/succinct/elf/range-elf-embedded
+            crates/proof/succinct/elf/aggregation-elf
+          key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/proof/succinct/elf/manifest.toml') }}
       - name: Run build
         run: ${{ inputs.build_command }}
 
   clippy:
     name: Clippy
     runs-on:
-      group: BasePerfRunnerGroup
+      group: BaseCIRunnerGroup
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -154,22 +158,20 @@ jobs:
       - name: Fetch base branch
         if: inputs.base_ref != ''
         run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          free-disk: "true"
-          native-deps: "true"
-          mold: "true"
-          foundry: "true"
-          components: clippy
-          rust-cache-shared-key: "stable"
-          rust-cache-save: ${{ inputs.save_rust_cache }}
+          cache-on-failure: true
+          shared-key: "stable"
+          save-if: ${{ inputs.save_rust_cache }}
+          cache-targets: "false"
       - name: Run clippy
         run: ${{ inputs.clippy_command }}
 
   test:
     name: Test
     runs-on:
-      group: BasePerfRunnerGroup
+      group: BaseCIRunnerGroup
     env:
       BASE_REF: ${{ inputs.base_ref }}
     steps:
@@ -183,17 +185,20 @@ jobs:
       - name: Fetch base branch
         if: inputs.base_ref != ''
         run: git fetch origin "$BASE_REF":refs/remotes/origin/"$BASE_REF"
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          free-disk: "true"
-          native-deps: "true"
-          mold: "true"
-          foundry: "true"
-          sp1: "true"
-          elf-cache: "true"
-          tools: cargo-nextest
-          rust-cache-shared-key: "stable"
-          rust-cache-save: ${{ inputs.save_rust_cache }}
+          cache-on-failure: true
+          shared-key: "stable"
+          save-if: ${{ inputs.save_rust_cache }}
+          cache-targets: "false"
+      - name: Restore ELF cache
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: |
+            crates/proof/succinct/elf/range-elf-embedded
+            crates/proof/succinct/elf/aggregation-elf
+          key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/proof/succinct/elf/manifest.toml') }}
       - name: Clear prior JUnit report
         run: rm -f target/nextest/ci/test-results.xml
       - name: Run tests
@@ -216,7 +221,8 @@ jobs:
 
   bench:
     name: Benchmarks
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
@@ -225,12 +231,13 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          free-disk: "true"
-          native-deps: "true"
-          mold: "true"
-          rust-cache-shared-key: "stable"
+          cache-on-failure: true
+          shared-key: "stable"
+          save-if: "false"
+          cache-targets: "false"
       - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
 
   docker:
@@ -265,7 +272,8 @@ jobs:
   test-musl-sigsegv:
     name: Test SIGSEGV (musl)
     if: inputs.run_sigsegv
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
@@ -274,11 +282,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
-      - name: Install musl toolchain
-        run: |
-          sudo apt-get update && sudo apt-get install -y musl-tools
-          rustup target add x86_64-unknown-linux-musl
       - name: Run SIGSEGV tests under musl
         run: cargo test --locked -p base-cli-utils --test sigsegv_test --target x86_64-unknown-linux-musl
 
@@ -286,7 +289,7 @@ jobs:
     name: Devnet Tests
     if: inputs.run_devnet
     runs-on:
-      group: BasePerfRunnerGroup
+      group: BaseCIRunnerGroup
     timeout-minutes: 60
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -296,16 +299,20 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          free-disk: "true"
-          native-deps: "true"
-          mold: "true"
-          foundry: "true"
-          sp1: "true"
-          elf-cache: "true"
-          tools: cargo-nextest
-          rust-cache-shared-key: "stable"
+          cache-on-failure: true
+          shared-key: "stable"
+          save-if: "false"
+          cache-targets: "false"
+      - name: Restore ELF cache
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: |
+            crates/proof/succinct/elf/range-elf-embedded
+            crates/proof/succinct/elf/aggregation-elf
+          key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/proof/succinct/elf/manifest.toml') }}
       - name: Clear prior JUnit report
         run: rm -f target/nextest/ci/test-results.xml
       - name: Set up Docker Buildx

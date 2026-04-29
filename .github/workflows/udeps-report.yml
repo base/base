@@ -18,7 +18,8 @@ permissions:
 
 jobs:
   udeps-report:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     timeout-minutes: 120
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -31,16 +32,13 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          free-disk: "true"
-          toolchain: nightly
-          native-deps: "true"
-          mold: "true"
-          foundry: "true"
-          tools: cargo-udeps
-          rust-cache-shared-key: "nightly-udeps-report"
-          rust-cache-save: "true"
+          cache-on-failure: true
+          shared-key: "nightly-udeps-report"
+          save-if: "true"
+          cache-targets: "false"
 
       - name: Build test contracts
         run: just build::contracts

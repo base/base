@@ -20,7 +20,7 @@ jobs:
   action-tests:
     name: Action Tests
     runs-on:
-      group: BasePerfRunnerGroup
+      group: BaseCIRunnerGroup
     timeout-minutes: 30
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -30,15 +30,13 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          free-disk: "true"
-          native-deps: "true"
-          mold: "true"
-          foundry: "true"
-          components: clippy
-          tools: cargo-nextest
-          rust-cache-shared-key: "stable"
+          cache-on-failure: true
+          shared-key: "stable"
+          save-if: "false"
+          cache-targets: "false"
       - name: Build test contracts
         run: just build::contracts
       - name: Lint action tests

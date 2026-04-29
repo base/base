@@ -20,7 +20,8 @@ permissions:
 jobs:
   warm-stable-cache:
     name: Warm Stable Cache
-    runs-on: ubuntu-latest
+    runs-on:
+      group: BaseCIRunnerGroup
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
@@ -29,14 +30,18 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
-      - uses: ./.github/actions/setup
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
         with:
-          free-disk: "true"
-          native-deps: "true"
-          mold: "true"
-          foundry: "true"
-          sp1: "true"
-          elf-cache: "true"
-          rust-cache-shared-key: "stable"
-          rust-cache-save: "true"
+          cache-on-failure: true
+          shared-key: "stable"
+          save-if: "true"
+          cache-targets: "false"
+      - name: Restore ELF cache
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: |
+            crates/proof/succinct/elf/range-elf-embedded
+            crates/proof/succinct/elf/aggregation-elf
+          key: sp1-elfs-${{ runner.os }}-${{ hashFiles('crates/proof/succinct/elf/manifest.toml') }}
       - run: just build::ci
