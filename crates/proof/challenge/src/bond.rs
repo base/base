@@ -157,6 +157,9 @@ pub struct BondManager<C: Clock> {
     /// How often a full rescan of the lookback window is performed to catch
     /// state transitions (games challenged or resolved by other actors).
     discovery_interval: Duration,
+    /// Maximum time to retain a completed bond game while waiting for its
+    /// anchor update to complete.
+    anchor_update_retention: Duration,
 }
 
 impl<C: Clock> BondManager<C> {
@@ -164,6 +167,10 @@ impl<C: Clock> BondManager<C> {
     /// been read yet. If the real delay is shorter the withdraw will simply
     /// succeed earlier; if longer, the attempt reverts and is retried.
     const DEFAULT_WETH_DELAY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+    /// Default maximum time to keep a completed bond game tracked while
+    /// waiting for its best-effort anchor update to finish.
+    const DEFAULT_ANCHOR_UPDATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 
     /// `DEFENDER_WINS` game status constant.
     const STATUS_DEFENDER_WINS: u8 = 2;
@@ -191,6 +198,7 @@ impl<C: Clock> BondManager<C> {
             last_full_scan,
             lookback,
             discovery_interval,
+            anchor_update_retention: Self::DEFAULT_ANCHOR_UPDATE_RETENTION,
         }
     }
 
@@ -203,6 +211,13 @@ impl<C: Clock> BondManager<C> {
     pub fn set_weth_delay(&mut self, delay: Duration) {
         info!(delay_secs = delay.as_secs(), "DelayedWETH delay configured");
         self.weth_delay = Some(delay);
+    }
+
+    /// Sets the maximum time a completed bond game remains tracked while
+    /// waiting for its anchor update to complete.
+    pub fn set_anchor_update_retention(&mut self, retention: Duration) {
+        info!(retention_secs = retention.as_secs(), "anchor update retention configured");
+        self.anchor_update_retention = retention;
     }
 
     /// Returns the number of games currently being tracked.
@@ -645,10 +660,21 @@ impl<C: Clock> BondManager<C> {
             return true;
         }
         if let Some(retained_since) = game.anchor_update_retained_since {
+            let retained_duration = now.saturating_sub(retained_since);
+            if retained_duration >= self.anchor_update_retention {
+                warn!(
+                    game = %game_address,
+                    reason = ?reason,
+                    retained_secs = retained_duration.as_secs(),
+                    retention_secs = self.anchor_update_retention.as_secs(),
+                    "evicting game after anchor update retention timeout"
+                );
+                return true;
+            }
             debug!(
                 game = %game_address,
                 reason = ?reason,
-                retained_secs = now.saturating_sub(retained_since).as_secs(),
+                retained_secs = retained_duration.as_secs(),
                 "keeping game tracked until anchor update completes"
             );
             return false;
@@ -1028,12 +1054,12 @@ impl<C: Clock> BondManager<C> {
     /// Best-effort attempt to update the `AnchorStateRegistry` for a
     /// resolved game.
     ///
-    /// Skips updates for games that are permanently ineligible
-    /// (blacklisted, retired, unrespected, or already stale relative to the
-    /// current anchor) so the tx submitter is not spammed each poll tick.
-    /// Transient ineligibility (airgap delay not elapsed, not yet finalized)
-    /// is left to retry on the next tick — the on-chain `setAnchorState()`
-    /// call is permissionless and self-validating.
+    /// Skips updates for games that are permanently ineligible (blacklisted,
+    /// retired, or already stale relative to the current anchor) so the tx
+    /// submitter is not spammed each poll tick. Transient ineligibility
+    /// (airgap delay not elapsed, not yet finalized, or currently
+    /// unrespected) is left to retry on the next tick — the on-chain
+    /// `setAnchorState()` call is permissionless and self-validating.
     async fn try_anchor_update(
         &mut self,
         game_address: Address,
@@ -1148,6 +1174,15 @@ impl<C: Clock> BondManager<C> {
                 "skipping permanently ineligible anchor update"
             );
             self.skip_anchor_update_permanently(game_address);
+            return;
+        }
+
+        if !preflight.respected {
+            debug!(
+                game = %game_address,
+                asr = %asr_address,
+                "anchor state update not ready because game is not currently respected"
+            );
             return;
         }
 
@@ -2025,8 +2060,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn anchor_update_skipped_for_unrespected_game() {
-        run_anchor_update_skip_case(|s| s.is_respected = false, true).await;
+    async fn anchor_update_retries_for_unrespected_game() {
+        run_anchor_update_skip_case(|s| s.is_respected = false, false).await;
     }
 
     #[tokio::test]
@@ -2060,5 +2095,31 @@ mod tests {
 
         assert!(submitter.recorded_calls().is_empty(), "no tx should be sent before finalization");
         assert!(mgr.is_tracking(&game), "game should stay tracked until anchor update completes");
+    }
+
+    #[tokio::test]
+    async fn poll_evicts_game_after_anchor_update_retention_timeout() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.set_anchor_update_retention(Duration::from_secs(10));
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::Completed);
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        state.is_finalized = false;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+
+        mgr.poll(&*verifier, &submitter).await;
+        assert!(mgr.is_tracking(&game), "game should be retained before timeout");
+
+        mgr.clock.monotonic = Duration::from_secs(10);
+        mgr.poll(&*verifier, &submitter).await;
+        assert!(!mgr.is_tracking(&game), "game should be evicted at retention timeout");
     }
 }

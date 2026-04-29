@@ -75,7 +75,7 @@ pub struct AnchorPreflight {
     pub blacklisted: bool,
     /// Whether the game is retired (permanent failure).
     pub retired: bool,
-    /// Whether the game is respected (`false` is a permanent failure).
+    /// Whether the game currently matches the registry's respected game type.
     pub respected: bool,
     /// The current anchor root in the registry.
     pub anchor_root: AnchorRoot,
@@ -85,7 +85,7 @@ impl AnchorPreflight {
     /// Returns `true` if the game can never become a valid anchor and the
     /// caller should stop retrying `setAnchorState()` for it.
     pub const fn permanently_ineligible(&self) -> bool {
-        self.blacklisted || self.retired || !self.respected
+        self.blacklisted || self.retired
     }
 }
 
