@@ -165,21 +165,21 @@ The phase machine is:
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> AwaitingProof
-    AwaitingProof --> ReadyToSubmit: proof succeeded
-    AwaitingProof --> NeedsRetry: proof failed
-    AwaitingProof --> AwaitingProof: proof pending
+    AwaitingProof --> ReadyToSubmit: succeeded
+    AwaitingProof --> NeedsRetry: failed
     NeedsRetry --> AwaitingProof: prove_block accepted
     NeedsRetry --> [*]: retries exhausted
-    ReadyToSubmit --> [*]: tx confirmed or game no longer actionable
-    ReadyToSubmit --> ReadyToSubmit: tx failed, retry next tick
-    ReadyToSubmit --> NeedsRetry: TEE tx failed with ZK fallback
+    ReadyToSubmit --> [*]: confirmed or stale
+    ReadyToSubmit --> NeedsRetry: TEE fallback
 ```
 
 ZK proofs are polled from the proving service until the job succeeds, fails, or remains pending.
 Successful ZK receipts are prefixed with the ZK proof-type byte before submission. Failed proof jobs
-are retried up to three times. A proof that remains pending causes no contract reads for that game
-on that tick.
+are retried up to three times. A proof that remains pending, or a transaction failure without ZK
+fallback, leaves the proof in its current phase until the next tick. A pending proof causes no
+contract reads for that game on that tick.
 
 ## Bond Claiming
 
