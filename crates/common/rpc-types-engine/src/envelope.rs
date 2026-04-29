@@ -14,6 +14,15 @@ use alloy_rpc_types_engine::{
 
 use crate::{BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4};
 
+/// Maximum allowed decoded size for a snappy-compressed [`NetworkPayloadEnvelope`].
+///
+/// Mirrors `MAX_GOSSIP_SIZE` in `base-consensus-gossip` and bounds the heap
+/// allocation performed by [`NetworkPayloadEnvelope::decode_v1`] and friends.
+/// Without this cap, a wire-valid 9 `MiB` snappy frame can declare a 200 `MiB`
+/// decoded length and force the decoder to allocate that buffer before any
+/// downstream length, SSZ, or signature check runs.
+pub const MAX_DECOMPRESSED_ENVELOPE_BYTES: usize = 10 * (1 << 20);
+
 /// A thin wrapper around [`BaseExecutionPayload`] that includes the parent beacon block root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -249,13 +258,31 @@ pub struct NetworkPayloadEnvelope {
 }
 
 impl NetworkPayloadEnvelope {
+    /// Snappy-decompresses `data` after checking that the declared decoded size
+    /// does not exceed [`MAX_DECOMPRESSED_ENVELOPE_BYTES`].
+    ///
+    /// `snap::raw::decompress_len` parses only the varu32 preamble and never
+    /// allocates, so this guard runs in O(1) and prevents an unauthenticated
+    /// peer from forcing arbitrarily large heap allocations on the consensus
+    /// node before any signature or SSZ check has run.
+    #[cfg(feature = "std")]
+    fn decompress_bounded(data: &[u8]) -> Result<Vec<u8>, PayloadEnvelopeError> {
+        let declared = snap::raw::decompress_len(data)?;
+        if declared > MAX_DECOMPRESSED_ENVELOPE_BYTES {
+            return Err(PayloadEnvelopeError::DecodedTooLarge {
+                given: declared,
+                max: MAX_DECOMPRESSED_ENVELOPE_BYTES,
+            });
+        }
+        Ok(snap::raw::Decoder::new().decompress_vec(data)?)
+    }
+
     /// Decode a payload envelope from a snappy-compressed byte array.
     /// The payload version decoded is `ExecutionPayloadV1` from SSZ bytes.
     #[cfg(feature = "std")]
     pub fn decode_v1(data: &[u8]) -> Result<Self, PayloadEnvelopeError> {
         use ssz::Decode;
-        let mut decoder = snap::raw::Decoder::new();
-        let decompressed = decoder.decompress_vec(data)?;
+        let decompressed = Self::decompress_bounded(data)?;
 
         if decompressed.len() < 66 {
             return Err(PayloadEnvelopeError::InvalidLength);
@@ -298,8 +325,7 @@ impl NetworkPayloadEnvelope {
     #[cfg(feature = "std")]
     pub fn decode_v2(data: &[u8]) -> Result<Self, PayloadEnvelopeError> {
         use ssz::Decode;
-        let mut decoder = snap::raw::Decoder::new();
-        let decompressed = decoder.decompress_vec(data)?;
+        let decompressed = Self::decompress_bounded(data)?;
 
         if decompressed.len() < 66 {
             return Err(PayloadEnvelopeError::InvalidLength);
@@ -342,8 +368,7 @@ impl NetworkPayloadEnvelope {
     #[cfg(feature = "std")]
     pub fn decode_v3(data: &[u8]) -> Result<Self, PayloadEnvelopeError> {
         use ssz::Decode;
-        let mut decoder = snap::raw::Decoder::new();
-        let decompressed = decoder.decompress_vec(data)?;
+        let decompressed = Self::decompress_bounded(data)?;
 
         if decompressed.len() < 98 {
             return Err(PayloadEnvelopeError::InvalidLength);
@@ -398,8 +423,7 @@ impl NetworkPayloadEnvelope {
     #[cfg(feature = "std")]
     pub fn decode_v4(data: &[u8]) -> Result<Self, PayloadEnvelopeError> {
         use ssz::Decode;
-        let mut decoder = snap::raw::Decoder::new();
-        let decompressed = decoder.decompress_vec(data)?;
+        let decompressed = Self::decompress_bounded(data)?;
 
         if decompressed.len() < 98 {
             return Err(PayloadEnvelopeError::InvalidLength);
@@ -478,6 +502,14 @@ pub enum PayloadEnvelopeError {
     /// The payload envelope is of invalid length.
     #[error("Invalid length")]
     InvalidLength,
+    /// The declared decompressed size exceeds [`MAX_DECOMPRESSED_ENVELOPE_BYTES`].
+    #[error("Decoded payload too large: {given} > {max}")]
+    DecodedTooLarge {
+        /// Declared decoded size in bytes.
+        given: usize,
+        /// Maximum allowed decoded size in bytes.
+        max: usize,
+    },
 }
 
 impl From<alloy_primitives::SignatureError> for PayloadEnvelopeError {
@@ -633,5 +665,29 @@ mod tests {
         assert_eq!(1741842007, payload_envelop.payload.timestamp());
         let encoded = payload_envelop.encode_v4().unwrap();
         assert_eq!(data, encoded);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_decode_rejects_oversized_decompressed_payload() {
+        let huge = vec![0u8; MAX_DECOMPRESSED_ENVELOPE_BYTES + 1];
+        let bomb = snap::raw::Encoder::new().compress_vec(&huge).unwrap();
+
+        let declared = snap::raw::decompress_len(&bomb).unwrap();
+        assert!(declared > MAX_DECOMPRESSED_ENVELOPE_BYTES);
+        assert!(bomb.len() < MAX_DECOMPRESSED_ENVELOPE_BYTES);
+
+        for result in [
+            NetworkPayloadEnvelope::decode_v1(&bomb),
+            NetworkPayloadEnvelope::decode_v2(&bomb),
+            NetworkPayloadEnvelope::decode_v3(&bomb),
+            NetworkPayloadEnvelope::decode_v4(&bomb),
+        ] {
+            assert!(matches!(
+                result,
+                Err(PayloadEnvelopeError::DecodedTooLarge { given, max })
+                    if given == declared && max == MAX_DECOMPRESSED_ENVELOPE_BYTES
+            ));
+        }
     }
 }
