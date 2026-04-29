@@ -166,12 +166,15 @@ pub struct MockAggregateVerifier {
     /// Per-address game state lookup, wrapped in a `Mutex` for interior
     /// mutability in multi-step tests.
     pub games: Mutex<HashMap<Address, MockGameState>>,
+    /// Addresses passed to `bond_recipient`, used by tests that assert polling
+    /// avoids redundant lifecycle reads.
+    pub bond_recipient_reads: Mutex<Vec<Address>>,
 }
 
 impl MockAggregateVerifier {
     /// Creates a new mock verifier from a pre-built game state map.
     pub const fn new(games: HashMap<Address, MockGameState>) -> Self {
-        Self { games: Mutex::new(games) }
+        Self { games: Mutex::new(games), bond_recipient_reads: Mutex::new(Vec::new()) }
     }
 
     /// Updates the state for a specific game address.
@@ -180,6 +183,16 @@ impl MockAggregateVerifier {
     /// state changes (e.g. marking a game as resolved after proof submission).
     pub fn update_game(&self, address: Address, state: MockGameState) {
         self.games.lock().unwrap().insert(address, state);
+    }
+
+    /// Returns how many times `bond_recipient` was read for a game.
+    pub fn bond_recipient_read_count(&self, game_address: Address) -> usize {
+        self.bond_recipient_reads
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|&&read_address| read_address == game_address)
+            .count()
     }
 
     fn get<T>(
@@ -267,6 +280,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
 
     async fn bond_recipient(&self, game_address: Address) -> Result<Address, ContractError> {
+        self.bond_recipient_reads.lock().unwrap().push(game_address);
         self.get(game_address, |s| s.bond_recipient)
     }
 

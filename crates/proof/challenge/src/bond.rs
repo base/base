@@ -99,6 +99,8 @@ pub struct TrackedGame {
     /// Monotonic timestamp for games whose bond lifecycle is complete but
     /// which remain tracked until the anchor update completes.
     pub anchor_update_retained_since: Option<Duration>,
+    /// Removal reason to use once a retained game is finally evicted.
+    pub anchor_update_retention_reason: Option<RemovalReason>,
 }
 
 impl TrackedGame {
@@ -113,6 +115,7 @@ impl TrackedGame {
             cached_asr_address: None,
             cached_l2_block_number: None,
             anchor_update_retained_since: None,
+            anchor_update_retention_reason: None,
         }
     }
 }
@@ -603,6 +606,16 @@ impl<C: Clock> BondManager<C> {
         let mut removed = Vec::new();
 
         for game_address in addresses {
+            if let Some(reason) =
+                self.tracked.get(&game_address).and_then(|g| g.anchor_update_retention_reason)
+            {
+                self.try_anchor_update(game_address, verifier_client, submitter).await;
+                if self.handle_lifecycle_completion(game_address, reason) {
+                    removed.push((game_address, reason));
+                }
+                continue;
+            }
+
             match self.advance_game(game_address, verifier_client, submitter).await {
                 Ok(Some(reason)) => {
                     self.try_anchor_update(game_address, verifier_client, submitter).await;
@@ -660,6 +673,7 @@ impl<C: Clock> BondManager<C> {
             return true;
         }
         if let Some(retained_since) = game.anchor_update_retained_since {
+            game.anchor_update_retention_reason = Some(reason);
             let retained_duration = now.saturating_sub(retained_since);
             if retained_duration >= self.anchor_update_retention {
                 warn!(
@@ -680,6 +694,7 @@ impl<C: Clock> BondManager<C> {
             return false;
         }
         game.anchor_update_retained_since = Some(now);
+        game.anchor_update_retention_reason = Some(reason);
         warn!(
             game = %game_address,
             reason = ?reason,
@@ -1130,6 +1145,10 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
+        // Keep the cheap finality read before the heavier preflight batch. With
+        // a nonzero ASR airgap, blacklisted/retired games may retry this single
+        // read until finality, but moving preflight earlier would add several
+        // reads for every ordinary not-yet-finalized game.
         match verifier_client.is_game_finalized(asr_address, game_address).await {
             Ok(true) => {}
             Ok(false) => {
@@ -2121,5 +2140,35 @@ mod tests {
         mgr.clock.monotonic = Duration::from_secs(10);
         mgr.poll(&*verifier, &submitter).await;
         assert!(!mgr.is_tracking(&game), "game should be evicted at retention timeout");
+    }
+
+    #[tokio::test]
+    async fn poll_skips_bond_lifecycle_for_retained_not_claimable_game() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let other_recipient = Address::repeat_byte(0xDD);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = other_recipient;
+        state.anchor_state_registry = asr;
+        state.is_finalized = false;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+
+        mgr.poll(&*verifier, &submitter).await;
+        assert!(mgr.is_tracking(&game), "game should be retained for anchor update");
+        assert_eq!(verifier.bond_recipient_read_count(game), 1);
+
+        mgr.poll(&*verifier, &submitter).await;
+        assert!(mgr.is_tracking(&game), "game should remain retained before finalization");
+        assert_eq!(
+            verifier.bond_recipient_read_count(game),
+            1,
+            "retained game should not re-run the bond lifecycle"
+        );
     }
 }
