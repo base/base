@@ -157,8 +157,9 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
                 .with_max_priority_fee_per_gas(0)
                 .with_chain_id(L2_CHAIN_ID)
                 .with_nonce(base_nonce + i);
-            let tx =
-                tx_request.build_typed_tx().map_err(|e| eyre::eyre!("invalid tx request: {e}"))?;
+            let tx = tx_request
+                .build_typed_tx()
+                .map_err(|e| eyre::eyre!("invalid tx request: {e:?}"))?;
             let sig = signer.sign_hash_sync(&tx.signature_hash())?;
             Ok(tx.into_signed(sig).encoded_2718().into())
         })
