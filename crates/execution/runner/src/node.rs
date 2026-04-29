@@ -78,7 +78,10 @@ impl BaseNode {
         } = self.args;
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .pool(BasePoolBuilder::default().with_max_inflight_delegated_slots(max_inflight_delegated_slots))
+            .pool(
+                BasePoolBuilder::default()
+                    .with_max_inflight_delegated_slots(max_inflight_delegated_slots),
+            )
             .executor(BaseExecutorBuilder::default())
             .payload(BasicPayloadServiceBuilder::new(
                 BasePayloadBuilder::new(compute_pending_block)

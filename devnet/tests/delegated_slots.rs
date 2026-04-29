@@ -4,9 +4,8 @@ use std::time::Duration;
 
 use alloy_consensus::{SignableTransaction, TxEip7702};
 use alloy_eips::{eip2718::Encodable2718, eip7702::Authorization};
-use alloy_network::TransactionBuilder;
+use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, U256};
-use alloy_network::ReceiptResponse;
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
@@ -76,7 +75,11 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     // by deduct_caller before apply_eip7702_auth_list runs. So the authorization
     // nonce must be nonce+1, not nonce.
     let auth_nonce = nonce + 1;
-    let auth = Authorization { chain_id: U256::from(L2_CHAIN_ID), address: delegation_target, nonce: auth_nonce };
+    let auth = Authorization {
+        chain_id: U256::from(L2_CHAIN_ID),
+        address: delegation_target,
+        nonce: auth_nonce,
+    };
     let auth = auth.into_signed(signer.sign_hash_sync(&auth.signature_hash())?);
 
     let setup_tx = TxEip7702 {
@@ -100,7 +103,8 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     // Wait for the delegation tx receipt, then verify the 0xef0100 code.
     let delegation_receipt = timeout(Duration::from_secs(60), async {
         loop {
-            if let Some(receipt) = builder_provider.get_transaction_receipt(delegation_hash).await? {
+            if let Some(receipt) = builder_provider.get_transaction_receipt(delegation_hash).await?
+            {
                 return Ok::<_, eyre::Error>(receipt);
             }
             sleep(BLOCK_POLL_INTERVAL).await;
