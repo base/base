@@ -141,6 +141,10 @@ pub struct BondManager<C: Clock> {
     /// How often a full rescan of the lookback window is performed to catch
     /// state transitions (games challenged or resolved by other actors).
     discovery_interval: Duration,
+    /// Number of tracked games whose bond lifecycle is complete but which
+    /// are retained while awaiting the anchor state update. Tracked
+    /// incrementally to avoid scanning `tracked` to update the gauge.
+    retained_count: usize,
 }
 
 impl<C: Clock> BondManager<C> {
@@ -175,6 +179,7 @@ impl<C: Clock> BondManager<C> {
             last_full_scan,
             lookback,
             discovery_interval,
+            retained_count: 0,
         }
     }
 
@@ -626,6 +631,7 @@ impl<C: Clock> BondManager<C> {
                                 );
                             } else {
                                 game.anchor_update_retained_since = Some(now);
+                                self.retained_count += 1;
                                 retained_count_changed = true;
                                 warn!(
                                     game = %game_address,
@@ -652,7 +658,12 @@ impl<C: Clock> BondManager<C> {
         }
 
         for (addr, reason) in &removed {
-            self.tracked.remove(addr);
+            if let Some(game) = self.tracked.remove(addr)
+                && game.anchor_update_retained_since.is_some()
+            {
+                self.retained_count = self.retained_count.saturating_sub(1);
+                retained_count_changed = true;
+            }
             match reason {
                 RemovalReason::Completed => {
                     ChallengerMetrics::bonds_completed_total().increment(1);
@@ -666,13 +677,8 @@ impl<C: Clock> BondManager<C> {
         if !removed.is_empty() {
             ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         }
-        if retained_count_changed || !removed.is_empty() {
-            let retained = self
-                .tracked
-                .values()
-                .filter(|game| game.anchor_update_retained_since.is_some())
-                .count();
-            ChallengerMetrics::anchor_update_retained_games().set(retained as f64);
+        if retained_count_changed {
+            ChallengerMetrics::anchor_update_retained_games().set(self.retained_count as f64);
         }
     }
 
@@ -1022,6 +1028,14 @@ impl<C: Clock> BondManager<C> {
         }
     }
 
+    /// Marks the anchor update as complete for a tracked game. No-op if the
+    /// game is no longer tracked.
+    fn mark_anchor_update_complete(&mut self, game_address: Address) {
+        if let Some(game) = self.tracked.get_mut(&game_address) {
+            game.anchor_update_complete = true;
+        }
+    }
+
     /// Best-effort attempt to update the `AnchorStateRegistry` for a
     /// resolved game.
     ///
@@ -1121,56 +1135,39 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
-        // These flags are terminal, so a permanently ineligible game can be
-        // marked complete before fetching transient preflight state.
-        match futures::try_join!(
+        let (blacklisted, retired, respected, finalized, anchor_root) = match futures::try_join!(
             verifier_client.is_game_blacklisted(asr_address, game_address),
             verifier_client.is_game_retired(asr_address, game_address),
             verifier_client.is_game_respected(asr_address, game_address),
+            verifier_client.is_game_finalized(asr_address, game_address),
+            verifier_client.anchor_root(asr_address),
         ) {
-            Ok((blacklisted, retired, respected)) => {
-                if blacklisted || retired || !respected {
-                    info!(
-                        game = %game_address,
-                        asr = %asr_address,
-                        blacklisted,
-                        retired,
-                        respected,
-                        "skipping anchor state update — game is permanently ineligible"
-                    );
-                    if let Some(g) = self.tracked.get_mut(&game_address) {
-                        g.anchor_update_complete = true;
-                    }
-                    ChallengerMetrics::anchor_update_tx_outcome_total(
-                        ChallengerMetrics::STATUS_SKIPPED,
-                    )
-                    .increment(1);
-                    return;
-                }
-            }
+            Ok(values) => values,
             Err(e) => {
                 debug!(
                     game = %game_address,
                     asr = %asr_address,
                     error = %e,
-                    "failed to read anchor eligibility flags, will retry"
-                );
-                return;
-            }
-        }
-
-        let finalized = match verifier_client.is_game_finalized(asr_address, game_address).await {
-            Ok(finalized) => finalized,
-            Err(e) => {
-                debug!(
-                    game = %game_address,
-                    asr = %asr_address,
-                    error = %e,
-                    "failed to read anchor finalization state, will retry"
+                    "failed to read anchor preflight state, will retry"
                 );
                 return;
             }
         };
+
+        if blacklisted || retired || !respected {
+            info!(
+                game = %game_address,
+                asr = %asr_address,
+                blacklisted,
+                retired,
+                respected,
+                "skipping anchor state update — game is permanently ineligible"
+            );
+            self.mark_anchor_update_complete(game_address);
+            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
+                .increment(1);
+            return;
+        }
 
         if !finalized {
             debug!(
@@ -1183,42 +1180,26 @@ impl<C: Clock> BondManager<C> {
 
         let cached_l2_block_number =
             self.tracked.get(&game_address).and_then(|game| game.cached_l2_block_number);
-        let (anchor_root, game_l2_block_number) =
-            if let Some(l2_block_number) = cached_l2_block_number {
-                match verifier_client.anchor_root(asr_address).await {
-                    Ok(anchor_root) => (anchor_root, l2_block_number),
-                    Err(e) => {
-                        debug!(
-                            game = %game_address,
-                            asr = %asr_address,
-                            error = %e,
-                            "failed to read anchor root, will retry"
-                        );
-                        return;
+        let game_l2_block_number = match cached_l2_block_number {
+            Some(n) => n,
+            None => match verifier_client.game_info(game_address).await {
+                Ok(info) => {
+                    if let Some(game) = self.tracked.get_mut(&game_address) {
+                        game.cached_l2_block_number = Some(info.l2_block_number);
                     }
+                    info.l2_block_number
                 }
-            } else {
-                match futures::try_join!(
-                    verifier_client.anchor_root(asr_address),
-                    verifier_client.game_info(game_address),
-                ) {
-                    Ok((anchor_root, game_info)) => {
-                        if let Some(game) = self.tracked.get_mut(&game_address) {
-                            game.cached_l2_block_number = Some(game_info.l2_block_number);
-                        }
-                        (anchor_root, game_info.l2_block_number)
-                    }
-                    Err(e) => {
-                        debug!(
-                            game = %game_address,
-                            asr = %asr_address,
-                            error = %e,
-                            "failed to read anchor preflight state, will retry"
-                        );
-                        return;
-                    }
+                Err(e) => {
+                    debug!(
+                        game = %game_address,
+                        asr = %asr_address,
+                        error = %e,
+                        "failed to read game info for anchor preflight, will retry"
+                    );
+                    return;
                 }
-            };
+            },
+        };
 
         if game_l2_block_number <= anchor_root.l2_block_number {
             info!(
@@ -1228,9 +1209,7 @@ impl<C: Clock> BondManager<C> {
                 anchor_l2_block = anchor_root.l2_block_number,
                 "skipping stale anchor state update"
             );
-            if let Some(g) = self.tracked.get_mut(&game_address) {
-                g.anchor_update_complete = true;
-            }
+            self.mark_anchor_update_complete(game_address);
             ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
                 .increment(1);
             return;
@@ -1245,9 +1224,7 @@ impl<C: Clock> BondManager<C> {
                     tx_hash = %tx_hash,
                     "anchor state registry updated"
                 );
-                if let Some(g) = self.tracked.get_mut(&game_address) {
-                    g.anchor_update_complete = true;
-                }
+                self.mark_anchor_update_complete(game_address);
                 ChallengerMetrics::anchor_update_tx_outcome_total(
                     ChallengerMetrics::STATUS_SUCCESS,
                 )
