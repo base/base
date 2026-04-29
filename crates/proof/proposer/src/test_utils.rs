@@ -313,6 +313,9 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn anchor_state_registry(&self, _: Address) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
     }
+    async fn is_game_finalized(&self, _: Address, _: Address) -> Result<bool, ContractError> {
+        Ok(true)
+    }
     async fn anchor_preflight(
         &self,
         _: Address,
@@ -322,7 +325,6 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             blacklisted: false,
             retired: false,
             respected: true,
-            finalized: true,
             anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
         })
     }

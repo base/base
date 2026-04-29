@@ -1104,6 +1104,27 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
+        match verifier_client.is_game_finalized(asr_address, game_address).await {
+            Ok(true) => {}
+            Ok(false) => {
+                debug!(
+                    game = %game_address,
+                    asr = %asr_address,
+                    "anchor state update not ready because game is not finalized"
+                );
+                return;
+            }
+            Err(e) => {
+                debug!(
+                    game = %game_address,
+                    asr = %asr_address,
+                    error = %e,
+                    "failed to read isGameFinalized, will retry"
+                );
+                return;
+            }
+        }
+
         let preflight = match verifier_client.anchor_preflight(asr_address, game_address).await {
             Ok(p) => p,
             Err(e) => {
@@ -1127,15 +1148,6 @@ impl<C: Clock> BondManager<C> {
                 "skipping permanently ineligible anchor update"
             );
             self.skip_anchor_update_permanently(game_address);
-            return;
-        }
-
-        if !preflight.finalized {
-            debug!(
-                game = %game_address,
-                asr = %asr_address,
-                "anchor state update not ready because game is not finalized"
-            );
             return;
         }
 

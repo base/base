@@ -298,6 +298,24 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(game_address, |s| s.anchor_state_registry)
     }
 
+    async fn is_game_finalized(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        let games = self.games.lock().unwrap();
+        let state = games.get(&game_address).ok_or_else(|| {
+            ContractError::Validation(format!("mock: no state for game {game_address}"))
+        })?;
+        if state.anchor_state_registry != asr_address {
+            return Err(ContractError::Validation(format!(
+                "mock: game {game_address} has ASR {} but caller passed {asr_address}",
+                state.anchor_state_registry
+            )));
+        }
+        Ok(state.is_finalized)
+    }
+
     async fn anchor_preflight(
         &self,
         asr_address: Address,
@@ -317,7 +335,6 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             blacklisted: state.is_blacklisted,
             retired: state.is_retired,
             respected: state.is_respected,
-            finalized: state.is_finalized,
             anchor_root: state.anchor_root,
         })
     }

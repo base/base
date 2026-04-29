@@ -65,8 +65,10 @@ pub struct AnchorRoot {
     pub l2_block_number: u64,
 }
 
-/// Snapshot of `AnchorStateRegistry` state read in a single batch before
-/// attempting `setAnchorState()`.
+/// Snapshot of `AnchorStateRegistry` state read in a single batch when
+/// preparing a `setAnchorState()` call. Callers must already know the game
+/// is finalized; this batch only covers the eligibility flags and the
+/// current anchor root.
 #[derive(Debug, Clone, Copy)]
 pub struct AnchorPreflight {
     /// Whether the game is blacklisted (permanent failure).
@@ -75,8 +77,6 @@ pub struct AnchorPreflight {
     pub retired: bool,
     /// Whether the game is respected (`false` is a permanent failure).
     pub respected: bool,
-    /// Whether the game is finalized (`false` is transient).
-    pub finalized: bool,
     /// The current anchor root in the registry.
     pub anchor_root: AnchorRoot,
 }
