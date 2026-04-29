@@ -81,6 +81,14 @@ pub struct AnchorPreflight {
     pub anchor_root: AnchorRoot,
 }
 
+impl AnchorPreflight {
+    /// Returns `true` if the game can never become a valid anchor and the
+    /// caller should stop retrying `setAnchorState()` for it.
+    pub const fn permanently_ineligible(&self) -> bool {
+        self.blacklisted || self.retired || !self.respected
+    }
+}
+
 /// Async trait for reading anchor state.
 #[async_trait]
 pub trait AnchorStateRegistryClient: Send + Sync {

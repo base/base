@@ -101,6 +101,22 @@ pub struct TrackedGame {
     pub anchor_update_retained_since: Option<Duration>,
 }
 
+impl TrackedGame {
+    /// Creates a freshly-tracked game in the given phase. All caches and
+    /// retention timestamps start unset.
+    pub const fn new(phase: BondPhase, bond_recipient: Address) -> Self {
+        Self {
+            phase,
+            bond_recipient,
+            anchor_update_complete: false,
+            cached_status: None,
+            cached_asr_address: None,
+            cached_l2_block_number: None,
+            anchor_update_retained_since: None,
+        }
+    }
+}
+
 /// Manages the bond claim lifecycle for dispute games.
 ///
 /// After a successful `challenge()` submission, games are registered here.
@@ -218,18 +234,8 @@ impl<C: Clock> BondManager<C> {
             recipient = %bond_recipient,
             "tracking game for bond claiming"
         );
-        self.tracked.insert(
-            game_address,
-            TrackedGame {
-                phase: BondPhase::NeedsResolve,
-                bond_recipient,
-                anchor_update_complete: false,
-                cached_status: None,
-                cached_asr_address: None,
-                cached_l2_block_number: None,
-                anchor_update_retained_since: None,
-            },
-        );
+        self.tracked
+            .insert(game_address, TrackedGame::new(BondPhase::NeedsResolve, bond_recipient));
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         true
     }
@@ -429,18 +435,7 @@ impl<C: Clock> BondManager<C> {
                 phase = ?phase,
                 "recovered game for bond tracking"
             );
-            self.tracked.insert(
-                game_address,
-                TrackedGame {
-                    phase,
-                    bond_recipient,
-                    anchor_update_complete: false,
-                    cached_status: None,
-                    cached_asr_address: None,
-                    cached_l2_block_number: None,
-                    anchor_update_retained_since: None,
-                },
-            );
+            self.tracked.insert(game_address, TrackedGame::new(phase, bond_recipient));
         }
 
         self.bond_scan_head = game_count;
@@ -550,18 +545,7 @@ impl<C: Clock> BondManager<C> {
                 scan_type,
                 "discovered claimable game"
             );
-            self.tracked.insert(
-                game_address,
-                TrackedGame {
-                    phase,
-                    bond_recipient,
-                    anchor_update_complete: false,
-                    cached_status: None,
-                    cached_asr_address: None,
-                    cached_l2_block_number: None,
-                    anchor_update_retained_since: None,
-                },
-            );
+            self.tracked.insert(game_address, TrackedGame::new(phase, bond_recipient));
             discovered += 1;
         }
 
@@ -1033,6 +1017,14 @@ impl<C: Clock> BondManager<C> {
         }
     }
 
+    /// Marks an anchor update as permanently skipped: the game cannot become
+    /// a valid anchor and we increment the SKIPPED outcome metric.
+    fn skip_anchor_update_permanently(&mut self, game_address: Address) {
+        self.mark_anchor_update_complete(game_address);
+        ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
+            .increment(1);
+    }
+
     /// Best-effort attempt to update the `AnchorStateRegistry` for a
     /// resolved game.
     ///
@@ -1084,9 +1076,7 @@ impl<C: Clock> BondManager<C> {
         };
 
         if status != Self::STATUS_DEFENDER_WINS {
-            self.mark_anchor_update_complete(game_address);
-            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
-                .increment(1);
+            self.skip_anchor_update_permanently(game_address);
             return;
         }
 
@@ -1127,7 +1117,7 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
-        if preflight.blacklisted || preflight.retired || !preflight.respected {
+        if preflight.permanently_ineligible() {
             info!(
                 game = %game_address,
                 asr = %asr_address,
@@ -1136,9 +1126,7 @@ impl<C: Clock> BondManager<C> {
                 respected = preflight.respected,
                 "skipping permanently ineligible anchor update"
             );
-            self.mark_anchor_update_complete(game_address);
-            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
-                .increment(1);
+            self.skip_anchor_update_permanently(game_address);
             return;
         }
 
@@ -1182,9 +1170,7 @@ impl<C: Clock> BondManager<C> {
                 anchor_l2_block = preflight.anchor_root.l2_block_number,
                 "skipping stale anchor state update"
             );
-            self.mark_anchor_update_complete(game_address);
-            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
-                .increment(1);
+            self.skip_anchor_update_permanently(game_address);
             return;
         }
 
@@ -1239,9 +1225,8 @@ impl<C: Clock> BondManager<C> {
 #[async_trait::async_trait]
 pub trait BondTransactionSubmitter: Send + Sync {
     /// Sends a transaction with the given calldata to `to`. `game_address`
-    /// identifies the dispute game for logs/metrics; it equals `to` for
-    /// `resolve` and `claimCredit`, and differs for `setAnchorState` where
-    /// `to` is the `AnchorStateRegistry`.
+    /// is the dispute game this transaction is associated with, used for
+    /// log/metric correlation.
     async fn send_bond_tx(
         &self,
         game_address: Address,
@@ -1356,18 +1341,7 @@ mod tests {
 
         // 100 seconds ago > 60 second delay
         let unlocked_at = Duration::from_secs(900);
-        mgr.tracked.insert(
-            game,
-            TrackedGame {
-                phase: BondPhase::AwaitingDelay { unlocked_at },
-                bond_recipient: addr,
-                anchor_update_complete: false,
-                cached_status: None,
-                cached_asr_address: None,
-                cached_l2_block_number: None,
-                anchor_update_retained_since: None,
-            },
-        );
+        mgr.tracked.insert(game, TrackedGame::new(BondPhase::AwaitingDelay { unlocked_at }, addr));
 
         let result = mgr.check_delay(game, unlocked_at);
         assert!(result.is_ok());
@@ -1392,18 +1366,7 @@ mod tests {
 
         // only 1 second ago < 3600 second delay
         let unlocked_at = Duration::from_secs(999);
-        mgr.tracked.insert(
-            game,
-            TrackedGame {
-                phase: BondPhase::AwaitingDelay { unlocked_at },
-                bond_recipient: addr,
-                anchor_update_complete: false,
-                cached_status: None,
-                cached_asr_address: None,
-                cached_l2_block_number: None,
-                anchor_update_retained_since: None,
-            },
-        );
+        mgr.tracked.insert(game, TrackedGame::new(BondPhase::AwaitingDelay { unlocked_at }, addr));
 
         let result = mgr.check_delay(game, unlocked_at);
         assert!(result.is_ok());
