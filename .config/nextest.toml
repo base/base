@@ -14,6 +14,12 @@ max-threads = 6
 junit = { path = "test-results.xml" }
 retries = 1
 
+# Action tests use a full EVM stack; the slowest tests can take 30-45 s.
+# Flag anything that runs longer than 90 s as slow and kill it after 2 periods.
+[[profile.ci.overrides]]
+filter = 'package(base-action-harness)'
+slow-timeout = { period = "90s", terminate-after = 2 }
+
 [[profile.default.overrides]]
 filter = 'test(system_test_)'
 test-group = 'system-test-serial'
