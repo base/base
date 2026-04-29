@@ -141,10 +141,6 @@ pub struct BondManager<C: Clock> {
     /// How often a full rescan of the lookback window is performed to catch
     /// state transitions (games challenged or resolved by other actors).
     discovery_interval: Duration,
-    /// Number of tracked games whose bond lifecycle is complete but which
-    /// are retained while awaiting the anchor state update. Tracked
-    /// incrementally to avoid scanning `tracked` to update the gauge.
-    retained_count: usize,
 }
 
 impl<C: Clock> BondManager<C> {
@@ -179,7 +175,6 @@ impl<C: Clock> BondManager<C> {
             last_full_scan,
             lookback,
             discovery_interval,
-            retained_count: 0,
         }
     }
 
@@ -607,32 +602,28 @@ impl<C: Clock> BondManager<C> {
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
         let mut removed = Vec::new();
-        let mut retained_count_changed = false;
+        let mut retained_changed = false;
 
         for game_address in addresses {
             match self.advance_game(game_address, verifier_client, submitter).await {
                 Ok(Some(reason)) => {
                     self.try_anchor_update(game_address, verifier_client, submitter).await;
-                    let anchor_update_complete = self
-                        .tracked
-                        .get(&game_address)
-                        .is_none_or(|game| game.anchor_update_complete);
-                    if anchor_update_complete {
-                        removed.push((game_address, reason));
-                    } else {
-                        let now = self.clock.now();
-                        if let Some(game) = self.tracked.get_mut(&game_address) {
-                            if let Some(retained_since) = game.anchor_update_retained_since {
-                                debug!(
-                                    game = %game_address,
-                                    reason = ?reason,
-                                    retained_secs = now.saturating_sub(retained_since).as_secs(),
-                                    "keeping game tracked until anchor update completes"
-                                );
-                            } else {
+                    let now = self.clock.now();
+                    match self.tracked.get_mut(&game_address) {
+                        None => removed.push((game_address, reason)),
+                        Some(game) if game.anchor_update_complete => {
+                            removed.push((game_address, reason));
+                        }
+                        Some(game) => match game.anchor_update_retained_since {
+                            Some(retained_since) => debug!(
+                                game = %game_address,
+                                reason = ?reason,
+                                retained_secs = now.saturating_sub(retained_since).as_secs(),
+                                "keeping game tracked until anchor update completes"
+                            ),
+                            None => {
                                 game.anchor_update_retained_since = Some(now);
-                                self.retained_count += 1;
-                                retained_count_changed = true;
+                                retained_changed = true;
                                 warn!(
                                     game = %game_address,
                                     reason = ?reason,
@@ -641,7 +632,7 @@ impl<C: Clock> BondManager<C> {
                                 ChallengerMetrics::anchor_update_retained_games_total()
                                     .increment(1);
                             }
-                        }
+                        },
                     }
                 }
                 Ok(None) => {
@@ -661,8 +652,7 @@ impl<C: Clock> BondManager<C> {
             if let Some(game) = self.tracked.remove(addr)
                 && game.anchor_update_retained_since.is_some()
             {
-                self.retained_count = self.retained_count.saturating_sub(1);
-                retained_count_changed = true;
+                retained_changed = true;
             }
             match reason {
                 RemovalReason::Completed => {
@@ -677,8 +667,10 @@ impl<C: Clock> BondManager<C> {
         if !removed.is_empty() {
             ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         }
-        if retained_count_changed {
-            ChallengerMetrics::anchor_update_retained_games().set(self.retained_count as f64);
+        if retained_changed {
+            let count =
+                self.tracked.values().filter(|g| g.anchor_update_retained_since.is_some()).count();
+            ChallengerMetrics::anchor_update_retained_games().set(count as f64);
         }
     }
 
@@ -1103,9 +1095,7 @@ impl<C: Clock> BondManager<C> {
         };
 
         if status != Self::STATUS_DEFENDER_WINS {
-            if let Some(g) = self.tracked.get_mut(&game_address) {
-                g.anchor_update_complete = true;
-            }
+            self.mark_anchor_update_complete(game_address);
             ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
                 .increment(1);
             return;
