@@ -854,7 +854,7 @@ impl LoadRunner {
 
         const METRICS_CHANNEL_BUFFER: usize = 2000;
         const SUBMIT_CHANNEL_BUFFER: usize = 2000;
-        const SUBMIT_BATCH_CONCURRENCY: usize = 32;
+        const SUBMIT_BATCH_CONCURRENCY: usize = 64;
         let (metrics_tx, mut metrics_rx) =
             mpsc::channel::<TransactionMetrics>(METRICS_CHANNEL_BUFFER);
         let (submit_event_tx, mut submit_event_rx) =
@@ -894,6 +894,16 @@ impl LoadRunner {
             None
         };
 
+        let confirmer_rpc_url = self
+            .config
+            .confirmer_url
+            .clone()
+            .unwrap_or_else(|| self.config.rpc_http_url.clone());
+
+        if self.config.confirmer_url.is_some() {
+            info!(url = %confirmer_rpc_url, "using separate endpoint for confirmation polling");
+        }
+
         let sender_addresses: Vec<_> = self.accounts.accounts().iter().map(|a| a.address).collect();
         let mut confirmer = Confirmer::new(
             &sender_addresses,
@@ -902,12 +912,12 @@ impl LoadRunner {
             Arc::clone(&flashblock_times),
             Arc::clone(&block_first_seen),
             block_watcher_enabled,
-            self.batch_rpc.clone(),
+            BatchRpcClient::new(confirmer_rpc_url.clone()),
         );
         let confirmer_handle = confirmer.handle();
         let confirmer_handle_for_run = confirmer_handle.clone();
 
-        let confirmer_client = RpcClient::new(self.config.rpc_http_url.clone());
+        let confirmer_client = RpcClient::new(confirmer_rpc_url.clone());
         let confirmer_task = tokio::spawn(async move {
             confirmer.run(confirmer_client, &confirmer_handle_for_run).await
         });
@@ -946,6 +956,8 @@ impl LoadRunner {
         const RATE_LIMITER_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
         const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(5);
         const DISPLAY_RENDER_INTERVAL: Duration = Duration::from_millis(500);
+        const SEMAPHORE_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+        const SUBMIT_TASK_DEADLINE: Duration = Duration::from_secs(15);
 
         let use_live_display = self.display.as_ref().is_some_and(|d| d.is_active());
         let use_snapshot_tx = self.snapshot_tx.is_some();
@@ -1106,10 +1118,26 @@ impl LoadRunner {
             rate_limiter.tick_batch(pending_batch.len()).await;
 
             let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
-            let permit = Arc::clone(&semaphore)
-                .acquire_owned()
-                .await
-                .expect("submit batch semaphore closed");
+            let permit = match tokio::time::timeout(
+                SEMAPHORE_ACQUIRE_TIMEOUT,
+                Arc::clone(&semaphore).acquire_owned(),
+            )
+            .await
+            {
+                Ok(Ok(permit)) => permit,
+                Ok(Err(_)) => {
+                    error!("submit batch semaphore closed");
+                    break;
+                }
+                Err(_) => {
+                    warn!(
+                        batch_len = batch.len(),
+                        "semaphore acquire timed out, dropping batch to stay responsive"
+                    );
+                    rate_limiter.reset_tick();
+                    continue;
+                }
+            };
             let ctx = BatchSubmitCtx {
                 providers: Arc::clone(&providers),
                 signers: Arc::clone(&signers),
@@ -1124,15 +1152,28 @@ impl LoadRunner {
             tokio::spawn(async move {
                 let _permit = permit;
                 let batch_len = batch.len();
-                match AssertUnwindSafe(Self::submit_batch(ctx.clone(), batch)).catch_unwind().await
+                match tokio::time::timeout(
+                    SUBMIT_TASK_DEADLINE,
+                    AssertUnwindSafe(Self::submit_batch(ctx.clone(), batch)).catch_unwind(),
+                )
+                .await
                 {
-                    Ok(submitted) => debug!(submitted, "batch submitted"),
-                    Err(_) => {
+                    Ok(Ok(submitted)) => debug!(submitted, "batch submitted"),
+                    Ok(Err(_)) => {
                         error!(batch_len, "batch submission task panicked");
                         for _ in 0..batch_len {
                             let _ = ctx
                                 .submit_event_tx
                                 .send(SubmitEvent::Failed("task panicked".into()))
+                                .await;
+                        }
+                    }
+                    Err(_) => {
+                        warn!(batch_len, "batch submission task timed out, releasing permit");
+                        for _ in 0..batch_len {
+                            let _ = ctx
+                                .submit_event_tx
+                                .send(SubmitEvent::Failed("submit task deadline exceeded".into()))
                                 .await;
                         }
                     }
@@ -1159,12 +1200,15 @@ impl LoadRunner {
             tokio::spawn(async move {
                 let _permit = permit;
                 let batch_len = pending_batch.len();
-                match AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch))
-                    .catch_unwind()
-                    .await
+                match tokio::time::timeout(
+                    SUBMIT_TASK_DEADLINE,
+                    AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch))
+                        .catch_unwind(),
+                )
+                .await
                 {
-                    Ok(submitted) => debug!(submitted, "final batch submitted"),
-                    Err(_) => {
+                    Ok(Ok(submitted)) => debug!(submitted, "final batch submitted"),
+                    Ok(Err(_)) => {
                         error!(batch_len, "final batch submission task panicked");
                         for _ in 0..batch_len {
                             let _ = ctx
@@ -1173,15 +1217,29 @@ impl LoadRunner {
                                 .await;
                         }
                     }
+                    Err(_) => {
+                        warn!(batch_len, "final batch submission task timed out");
+                        for _ in 0..batch_len {
+                            let _ = ctx
+                                .submit_event_tx
+                                .send(SubmitEvent::Failed("submit task deadline exceeded".into()))
+                                .await;
+                        }
+                    }
                 }
             });
         }
 
-        let all_permits = Arc::clone(&semaphore)
-            .acquire_many_owned(SUBMIT_BATCH_CONCURRENCY as u32)
-            .await
-            .expect("submit batch semaphore closed");
-        drop(all_permits);
+        match tokio::time::timeout(
+            SUBMIT_TASK_DEADLINE,
+            Arc::clone(&semaphore).acquire_many_owned(SUBMIT_BATCH_CONCURRENCY as u32),
+        )
+        .await
+        {
+            Ok(Ok(all_permits)) => drop(all_permits),
+            Ok(Err(_)) => error!("submit batch semaphore closed during drain"),
+            Err(_) => warn!("timed out waiting for in-flight batch tasks to complete"),
+        }
 
         // Close the channel so the drain below cannot miss late events.
         drop(submit_event_tx);

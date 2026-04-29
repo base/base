@@ -135,6 +135,10 @@ pub struct TestConfig {
     /// WebSocket URL for flashblocks subscription.
     #[serde(default, alias = "flashblocks_url")]
     pub flashblocks_ws_url: Option<Url>,
+    /// Separate HTTP JSON-RPC endpoint for confirmation polling.
+    /// Defaults to `rpc` when not set.
+    #[serde(default)]
+    pub confirmer_url: Option<Url>,
 }
 
 impl Default for TestConfig {
@@ -157,6 +161,7 @@ impl Default for TestConfig {
             swap_token_amount: default_swap_token_amount(),
             block_watcher_url: None,
             flashblocks_ws_url: None,
+            confirmer_url: None,
         }
     }
 }
@@ -179,6 +184,7 @@ impl fmt::Debug for TestConfig {
             .field("swap_token_amount", &self.swap_token_amount)
             .field("block_watcher_url", &self.block_watcher_url)
             .field("flashblocks_ws_url", &self.flashblocks_ws_url)
+            .field("confirmer_url", &self.confirmer_url)
             .finish()
     }
 }
@@ -461,6 +467,7 @@ impl TestConfig {
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             block_watcher_url: self.block_watcher_url.clone(),
             flashblocks_ws_url: self.flashblocks_ws_url.clone(),
+            confirmer_url: self.confirmer_url.clone(),
         })
     }
 

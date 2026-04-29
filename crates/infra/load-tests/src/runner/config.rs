@@ -121,6 +121,11 @@ pub struct LoadConfig {
     pub block_watcher_url: Option<Url>,
     /// WebSocket URL for flashblocks subscription.
     pub flashblocks_ws_url: Option<Url>,
+    /// Separate HTTP JSON-RPC endpoint for transaction confirmation polling.
+    /// When set, all receipt fetching and block queries from the confirmer use
+    /// this endpoint instead of `rpc_http_url`, reducing load on the submission
+    /// endpoint.
+    pub confirmer_url: Option<Url>,
 }
 
 impl LoadConfig {
@@ -146,6 +151,7 @@ impl LoadConfig {
             flashblocks_ws_url: Some(
                 "ws://localhost:7111".parse().expect("valid default flashblocks_ws_url"),
             ),
+            confirmer_url: None,
         }
     }
 
