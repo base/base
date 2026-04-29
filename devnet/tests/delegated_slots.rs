@@ -82,7 +82,8 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
         address: delegation_target,
         nonce: auth_nonce,
     };
-    let auth = auth.into_signed(signer.sign_hash_sync(&auth.signature_hash())?);
+    let auth_sig_hash = auth.signature_hash();
+    let auth = auth.into_signed(signer.sign_hash_sync(&auth_sig_hash)?);
 
     let setup_tx = TxEip7702 {
         chain_id: L2_CHAIN_ID,
