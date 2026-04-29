@@ -602,37 +602,13 @@ impl<C: Clock> BondManager<C> {
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
         let mut removed = Vec::new();
-        let mut retained_changed = false;
 
         for game_address in addresses {
             match self.advance_game(game_address, verifier_client, submitter).await {
                 Ok(Some(reason)) => {
                     self.try_anchor_update(game_address, verifier_client, submitter).await;
-                    let now = self.clock.now();
-                    match self.tracked.get_mut(&game_address) {
-                        None => removed.push((game_address, reason)),
-                        Some(game) if game.anchor_update_complete => {
-                            removed.push((game_address, reason));
-                        }
-                        Some(game) => match game.anchor_update_retained_since {
-                            Some(retained_since) => debug!(
-                                game = %game_address,
-                                reason = ?reason,
-                                retained_secs = now.saturating_sub(retained_since).as_secs(),
-                                "keeping game tracked until anchor update completes"
-                            ),
-                            None => {
-                                game.anchor_update_retained_since = Some(now);
-                                retained_changed = true;
-                                warn!(
-                                    game = %game_address,
-                                    reason = ?reason,
-                                    "retaining completed bond game until anchor update completes"
-                                );
-                                ChallengerMetrics::anchor_update_retained_games_total()
-                                    .increment(1);
-                            }
-                        },
+                    if self.handle_lifecycle_completion(game_address, reason) {
+                        removed.push((game_address, reason));
                     }
                 }
                 Ok(None) => {
@@ -649,11 +625,7 @@ impl<C: Clock> BondManager<C> {
         }
 
         for (addr, reason) in &removed {
-            if let Some(game) = self.tracked.remove(addr)
-                && game.anchor_update_retained_since.is_some()
-            {
-                retained_changed = true;
-            }
+            self.tracked.remove(addr);
             match reason {
                 RemovalReason::Completed => {
                     ChallengerMetrics::bonds_completed_total().increment(1);
@@ -667,11 +639,44 @@ impl<C: Clock> BondManager<C> {
         if !removed.is_empty() {
             ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
         }
-        if retained_changed {
-            let count =
-                self.tracked.values().filter(|g| g.anchor_update_retained_since.is_some()).count();
-            ChallengerMetrics::anchor_update_retained_games().set(count as f64);
+        let retained =
+            self.tracked.values().filter(|g| g.anchor_update_retained_since.is_some()).count();
+        ChallengerMetrics::anchor_update_retained_games().set(retained as f64);
+    }
+
+    /// Decides whether a game whose bond lifecycle has finished should be
+    /// removed now or retained until [`try_anchor_update`] succeeds.
+    ///
+    /// Returns `true` if the caller should remove the game from tracking.
+    fn handle_lifecycle_completion(
+        &mut self,
+        game_address: Address,
+        reason: RemovalReason,
+    ) -> bool {
+        let now = self.clock.now();
+        let Some(game) = self.tracked.get_mut(&game_address) else {
+            return true;
+        };
+        if game.anchor_update_complete {
+            return true;
         }
+        if let Some(retained_since) = game.anchor_update_retained_since {
+            debug!(
+                game = %game_address,
+                reason = ?reason,
+                retained_secs = now.saturating_sub(retained_since).as_secs(),
+                "keeping game tracked until anchor update completes"
+            );
+            return false;
+        }
+        game.anchor_update_retained_since = Some(now);
+        warn!(
+            game = %game_address,
+            reason = ?reason,
+            "retaining completed bond game until anchor update completes"
+        );
+        ChallengerMetrics::anchor_update_retained_games_total().increment(1);
+        false
     }
 
     /// Advances a single game through the bond lifecycle state machine.
