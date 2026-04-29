@@ -590,8 +590,15 @@ impl L2Sequencer {
             .map_err(|e| L2SequencerError::Engine(format!("get_sealed: {e}")))?;
 
         // 5. Conductor commit: register the sealed payload before inserting.
+        // Map ConductorError::NotLeader to L2SequencerError::NotLeader so that
+        // callers get the same variant regardless of whether leadership was lost
+        // before the build started (pre-check) or between the check and commit
+        // (TOCTOU).
         if let Some(conductor) = &self.conductor {
-            conductor.commit_unsafe_payload(&envelope).await?;
+            conductor.commit_unsafe_payload(&envelope).await.map_err(|e| match e {
+                ConductorError::NotLeader => L2SequencerError::NotLeader,
+                other => L2SequencerError::Conductor(other),
+            })?;
         }
 
         // 6. Insert the block into the engine (updates canonical head).

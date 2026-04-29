@@ -27,7 +27,7 @@ The crate exposes two top-level service types: `RollupNode` and `FollowNode`.
 
 `FollowNode` is a stripped-down variant that does not run derivation at all. Instead it polls a remote L2 execution layer node via RPC and drives the local engine to mirror that node's chain. It spawns only the engine actor, the delegate-L2 derivation actor, the L1 watcher actor, and optionally the RPC actor. It is used in contexts where a node needs to track the canonical chain without performing the full derivation computation.
 
-## RollupNode Mode
+## `RollupNode` Mode
 
 `RollupNode` is mode-aware. The mode is stored in `EngineConfig::mode` as the `NodeMode` enum with two variants: `Validator` and `Sequencer`. In `Validator` mode the engine bootstraps by seeding state from the execution layer's existing head, signals the derivation pipeline, and waits for derivation to drive safe-head updates. In `Sequencer` mode the engine bootstraps differently — either with a conductor-follower probe using zeroed safe/finalized heads, or as an active sequencer that probes with real heads or resets at genesis — and additionally publishes an `unsafe_head_tx` watch channel that the sequencer actor reads to know the current building parent.
 

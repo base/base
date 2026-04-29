@@ -269,11 +269,12 @@ impl ActionTestHarness {
         key: PrivateKeySigner,
     ) -> TestGossipTransport {
         let address = key.address();
-        sequencer.set_unsafe_block_signer(key);
+        sequencer.set_unsafe_block_signer(key.clone());
         let (p2p, mut transport) = TestGossipTransport::channel();
         sequencer.set_supervised_p2p(p2p);
         transport.set_block_signer(address);
         transport.set_chain_id(self.rollup_config.l2_chain_id.id());
+        transport.set_signing_key(key);
         transport
     }
 
