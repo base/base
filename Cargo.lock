@@ -4523,6 +4523,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
+ "alloy-rlp",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "base-common-chains",

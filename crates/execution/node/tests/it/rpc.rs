@@ -12,7 +12,7 @@ use reth_rpc_api::servers::AdminApiServer;
 use reth_tasks::Runtime;
 
 // <https://github.com/paradigmxyz/reth/issues/19765>
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_admin_external_ip() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
