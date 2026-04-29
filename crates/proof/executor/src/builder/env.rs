@@ -1,7 +1,7 @@
 //! Environment utility functions for [`StatelessL2Builder`].
 
 use alloy_consensus::{BlockHeader, Header};
-use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
 use base_common_evm::OpSpecId;
@@ -11,9 +11,6 @@ use base_proof_mpt::TrieHinter;
 use revm::{
     context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,
-    primitives::eip4844::{
-        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
-    },
 };
 
 use super::StatelessL2Builder;
@@ -101,18 +98,15 @@ where
         base_fee_params: &BaseFeeParams,
         min_base_fee: u64,
     ) -> ExecutorResult<BlockEnv> {
-        let (params, fraction) = if spec_id.is_enabled_in(OpSpecId::ISTHMUS) {
-            (Some(BlobParams::prague()), BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE)
-        } else if spec_id.is_enabled_in(OpSpecId::ECOTONE) {
-            (Some(BlobParams::cancun()), BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN)
-        } else {
-            (None, 0)
-        };
-
-        let blob_excess_gas_and_price = parent_header
-            .maybe_next_block_excess_blob_gas(params)
-            .or_else(|| spec_id.is_enabled_in(OpSpecId::ECOTONE).then_some(0))
-            .map(|excess| BlobExcessGasAndPrice::new(excess, fraction));
+        // Base L2 blocks do not have a blob fee market. The canonical sequencer EL
+        // (`base-reth-node`) hardcodes `excess_blob_gas: 0, blob_gasprice: 1` for every
+        // post-Ecotone block — per spec, BLOBBASEFEE always pushes 1 since L2 processes
+        // no blobs. The proof executor must mirror that exactly; re-deriving the value
+        // from the parent header via the EIP-4844 formula would diverge from canonical
+        // state whenever `parent.blob_gas_used` is non-zero, breaking proof generation.
+        let blob_excess_gas_and_price = spec_id
+            .is_enabled_in(OpSpecId::ECOTONE)
+            .then_some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 });
 
         let next_block_base_fee = self
             .next_block_base_fee(*base_fee_params, parent_header, min_base_fee)
@@ -164,5 +158,74 @@ where
                 Ok((config.chain_op_config.pre_canyon_params(), 0))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::Header;
+    use alloy_eips::eip1559::BaseFeeParams;
+    use alloy_primitives::Sealable;
+    use base_common_evm::{BaseEvmFactory, OpSpecId};
+    use base_common_genesis::RollupConfig;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
+    use base_proof_mpt::NoopTrieHinter;
+    use revm::context_interface::block::BlobExcessGasAndPrice;
+
+    use crate::{NoopTrieDBProvider, StatelessL2Builder};
+
+    /// Regression test: BLOBBASEFEE on Base L2 must always observe `1` once Ecotone is active,
+    /// regardless of the parent header's `blob_gas_used`. The proof executor must mirror the
+    /// canonical sequencer EL hardcoding (`excess_blob_gas: 0, blob_gasprice: 1`); any divergence
+    /// causes the TEE Nitro enclave to compute a different state root than the sequencer and
+    /// fail proof generation. See the parent `prepare_block_env` for the full context.
+    #[test]
+    fn blob_excess_gas_and_price_is_constant() {
+        // `prepare_block_env` is called with an explicit `OpSpecId`, so the rollup config is
+        // only consulted by `next_block_base_fee` for the Jovian gate — defaults are fine.
+        let config = RollupConfig::default();
+
+        // Parent header chosen to defeat the OLD buggy formula:
+        // - `blob_gas_used = 9_517_140` matches the captured Base Sepolia PoC
+        // - `excess_blob_gas` and `base_fee_per_gas` must both be `Some(_)`, otherwise
+        //   `next_block_excess_blob_gas` short-circuits to `None` and the regression is masked.
+        // Under the OLD formula these inputs yielded `blob_gasprice == 5`.
+        let parent = Header {
+            number: 100,
+            timestamp: 1,
+            blob_gas_used: Some(9_517_140),
+            excess_blob_gas: Some(0),
+            base_fee_per_gas: Some(1_000_000),
+            gas_limit: 30_000_000,
+            ..Header::default()
+        };
+
+        let mut payload_attrs = BasePayloadAttributes::default();
+        payload_attrs.payload_attributes.timestamp = 2;
+        payload_attrs.gas_limit = Some(30_000_000);
+
+        let builder = StatelessL2Builder::new(
+            &config,
+            BaseEvmFactory::default(),
+            NoopTrieDBProvider,
+            NoopTrieHinter,
+            parent.clone().seal_slow(),
+        );
+
+        let block_env = builder
+            .prepare_block_env(
+                OpSpecId::ISTHMUS,
+                &parent,
+                &payload_attrs,
+                &BaseFeeParams { max_change_denominator: 250, elasticity_multiplier: 6 },
+                0,
+            )
+            .expect("prepare_block_env");
+
+        assert_eq!(
+            block_env.blob_excess_gas_and_price,
+            Some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 }),
+            "proof executor must mirror sequencer EL: blob_gasprice is always 1 post-Ecotone"
+        );
     }
 }
