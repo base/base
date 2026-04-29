@@ -7,18 +7,28 @@ rpc: https://sepolia.base.org/
 block_watcher_url: "https://sepolia.base.org/"
 flashblocks_ws_url: "wss://sepolia.flashblocks.base.org/ws"
 
-sender_count: 50
-target_gps: 10000000
-in_flight_per_sender: 64
-batch_size: 20
+sender_count: 200
+target_gps: 70000000
+in_flight_per_sender: 128
+batch_size: 50
 batch_timeout: "100ms"
-duration: "30s"
+duration: "60s"
 seed: 12345
 
 # 0.01 ETH per account (covers gas for 30s at 2.1M GPS; drained after test)
 funding_amount: "10000000000000000"
 
 transactions:
-  - weight: 100
-    type: transfer
+  - weight: 50
+    type: uniswap_v3
+    router: "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4"
+    token_in: "0x15948C3043A980A8d980d4D615A5E4c9514B0D64"
+    token_out: "0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4"
+    fee: 3000
+  - weight: 50
+    type: aerodrome_cl
+    router: "0x6a786a4f9bc46fF861260545C490a7356c5ecbFe"
+    token_in: "0x15948C3043A980A8d980d4D615A5E4c9514B0D64"
+    token_out: "0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4"
+    tick_spacing: 100
 

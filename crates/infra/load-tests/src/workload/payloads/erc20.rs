@@ -41,8 +41,8 @@ impl Payload for Erc20Payload {
         let amount = if self.min_amount == self.max_amount {
             self.min_amount
         } else {
-            let min: u128 = self.min_amount.try_into().unwrap_or(u128::MAX);
-            let max: u128 = self.max_amount.try_into().unwrap_or(u128::MAX);
+            let min: u128 = self.min_amount.try_into().expect("erc20 min_amount must fit in u128");
+            let max: u128 = self.max_amount.try_into().expect("erc20 max_amount must fit in u128");
             U256::from(rng.gen_range(min..=max))
         };
 

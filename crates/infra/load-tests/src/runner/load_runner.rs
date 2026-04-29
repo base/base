@@ -10,12 +10,13 @@ use std::{
 
 use alloy_consensus::transaction::SignableTransaction;
 use alloy_eips::Encodable2718;
-use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, TxHash, U256, utils::format_ether};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{SolCall, sol};
 use base_tx_manager::NonceManager;
 use futures::{
     FutureExt as _,
@@ -46,8 +47,8 @@ use crate::{
     metrics::{MetricsCollector, MetricsSummary, TransactionMetrics},
     rpc::{BatchRpcClient, BatchSendResult, RpcClient, WalletProvider, create_wallet_provider},
     workload::{
-        AccountPool, CalldataPayload, Erc20Payload, OsakaPayload, PrecompilePayload,
-        TransferPayload, WorkloadGenerator,
+        AccountPool, AerodromeClPayload, CalldataPayload, Erc20Payload, OsakaPayload,
+        PrecompilePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
     },
 };
 
@@ -242,6 +243,39 @@ impl LoadRunner {
                     generator =
                         generator.with_payload(OsakaPayload::new(target.clone()), weight_pct);
                 }
+                TxType::UniswapV3 { router, token_in, token_out, fee, min_amount, max_amount } => {
+                    generator = generator.with_payload(
+                        UniswapV3Payload::new(
+                            *router,
+                            *token_in,
+                            *token_out,
+                            *fee,
+                            *min_amount,
+                            *max_amount,
+                        ),
+                        weight_pct,
+                    );
+                }
+                TxType::AerodromeCl {
+                    router,
+                    token_in,
+                    token_out,
+                    tick_spacing,
+                    min_amount,
+                    max_amount,
+                } => {
+                    generator = generator.with_payload(
+                        AerodromeClPayload::new(
+                            *router,
+                            *token_in,
+                            *token_out,
+                            *tick_spacing,
+                            *min_amount,
+                            *max_amount,
+                        ),
+                        weight_pct,
+                    );
+                }
             }
         }
 
@@ -287,6 +321,7 @@ impl LoadRunner {
                     OsakaTarget::Clz => 80_000,
                     OsakaTarget::P256verifyOsaka | OsakaTarget::ModexpOsaka => 30_000,
                 },
+                TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 250_000,
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }
@@ -508,7 +543,11 @@ impl LoadRunner {
                 }
             }
 
-            Self::await_confirmations(&self.batch_rpc, &mut batch_pending, &pb_fund).await?;
+            let (_, reverted) =
+                Self::await_confirmations(&self.batch_rpc, &mut batch_pending, &pb_fund).await?;
+            if reverted > 0 {
+                warn!(reverted, "some funding txs reverted");
+            }
         }
         pb_fund.finish_and_clear();
 
@@ -556,6 +595,230 @@ impl LoadRunner {
 
         info!(funded = accounts_to_fund.len(), "funding complete");
         Ok(())
+    }
+
+    /// Collects unique token addresses from configured swap transaction types.
+    pub fn collect_swap_tokens(&self) -> Vec<Address> {
+        let mut tokens = std::collections::HashSet::new();
+        for tx_config in &self.config.transactions {
+            match &tx_config.tx_type {
+                TxType::UniswapV3 { token_in, token_out, .. }
+                | TxType::AerodromeCl { token_in, token_out, .. } => {
+                    tokens.insert(*token_in);
+                    tokens.insert(*token_out);
+                }
+                TxType::Transfer
+                | TxType::Calldata { .. }
+                | TxType::Erc20 { .. }
+                | TxType::Precompile { .. }
+                | TxType::Osaka { .. } => {}
+            }
+        }
+        tokens.into_iter().collect()
+    }
+
+    /// Mints swap tokens to all sender accounts.
+    ///
+    /// Scans the configured transaction types for token addresses, then mints
+    /// `amount_per_token` of each token to every sender that has insufficient balance.
+    /// Skips accounts that already have enough tokens. Requires tokens that expose
+    /// a public `mint(address,uint256)` function (e.g., `FreeTransferERC20`).
+    #[instrument(skip(self, funding_key), fields(accounts = self.accounts.len()))]
+    pub async fn setup_swap_tokens(
+        &self,
+        funding_key: PrivateKeySigner,
+        amount_per_token: U256,
+    ) -> Result<()> {
+        let tokens = self.collect_swap_tokens();
+        if tokens.is_empty() {
+            debug!("no swap tokens configured, skipping token setup");
+            return Ok(());
+        }
+
+        let sender_addresses: Vec<Address> =
+            self.accounts.accounts().iter().map(|a| a.address).collect();
+        let token_count = tokens.len();
+        let total_pairs = token_count * sender_addresses.len();
+
+        // Phase 1: Check existing token balances for all (token, sender) pairs.
+        let pb_check = self.progress_bar(total_pairs as u64, "Checking token balances");
+        let client = &self.client;
+
+        let balance_futs: Vec<_> = tokens
+            .iter()
+            .flat_map(|&token| {
+                sender_addresses.iter().map(move |&sender| {
+                    let client = client.clone();
+                    let call_data = Self::encode_erc20_balance_of(sender);
+                    async move {
+                        let result = client
+                            .eth_call(token, call_data)
+                            .await
+                            .map(|bytes| U256::from_be_slice(bytes.as_ref()))
+                            .unwrap_or(U256::ZERO);
+                        (token, sender, result)
+                    }
+                })
+            })
+            .collect();
+
+        let balance_results: Vec<_> = stream::iter(balance_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_check.inc(1))
+            .collect()
+            .await;
+        pb_check.finish_and_clear();
+
+        // Filter to only (token, sender) pairs that need funding.
+        let mut transfers_needed: Vec<(Address, Address)> = Vec::new();
+        let mut already_funded = 0usize;
+        for (token, sender, balance) in balance_results {
+            if balance < amount_per_token {
+                transfers_needed.push((token, sender));
+            } else {
+                already_funded += 1;
+                debug!(token = %token, sender = %sender, balance = %balance, "account already has sufficient tokens");
+            }
+        }
+
+        if transfers_needed.is_empty() {
+            info!(
+                tokens = token_count,
+                accounts = sender_addresses.len(),
+                "all accounts already have sufficient token balances, skipping distribution"
+            );
+            return Ok(());
+        }
+
+        info!(
+            transfers_needed = transfers_needed.len(),
+            already_funded = already_funded,
+            tokens = token_count,
+            accounts = sender_addresses.len(),
+            "distributing swap tokens"
+        );
+
+        // Phase 2: Setup for transfers.
+        let funder_address = funding_key.address();
+        let wallet = EthereumWallet::from(funding_key);
+        let funder_provider =
+            Arc::new(create_wallet_provider(self.config.rpc_http_url.clone(), wallet));
+        let chain_id = self.config.chain_id;
+        let max_gas_price = self.config.max_gas_price;
+
+        let gas_price = self.client.get_gas_price().await?;
+        let max_priority_fee = (gas_price / 10).max(1);
+        let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(max_gas_price);
+
+        // Pre-flight balance check — abort before sending any TXs if the funder
+        // cannot cover the total gas cost for needed token transfers.
+        let gas_cost_per_tx = U256::from(65_000u64).saturating_mul(U256::from(max_fee));
+        let total_gas_cost = gas_cost_per_tx.saturating_mul(U256::from(transfers_needed.len()));
+        let funder_balance = self.client.get_balance(funder_address).await?;
+
+        if funder_balance < total_gas_cost {
+            let shortfall = total_gas_cost.saturating_sub(funder_balance);
+            return Err(BaselineError::Transaction(format!(
+                "funder {} has insufficient balance for token distribution: has {} ETH, needs {} ETH (gas for {} txs), shortfall {} ETH",
+                funder_address,
+                format_ether(funder_balance),
+                format_ether(total_gas_cost),
+                transfers_needed.len(),
+                format_ether(shortfall),
+            )));
+        }
+
+        let mut nonce = funder_provider
+            .get_transaction_count(funder_address)
+            .pending()
+            .await
+            .map_err(|e| BaselineError::Rpc(e.to_string()))?;
+
+        // Phase 3: Execute transfers for accounts that need tokens.
+        let pb = self.progress_bar(transfers_needed.len() as u64, "Minting tokens");
+        let mut failed_count: usize = 0;
+
+        let txs: Vec<(TransactionRequest, Address, Address)> = transfers_needed
+            .into_iter()
+            .map(|(token, sender)| {
+                let mint_data = Self::encode_erc20_mint(sender, amount_per_token);
+                let tx = TransactionRequest::default()
+                    .with_to(token)
+                    .with_input(mint_data)
+                    .with_nonce(nonce)
+                    .with_chain_id(chain_id)
+                    .with_gas_limit(65_000)
+                    .with_max_fee_per_gas(max_fee)
+                    .with_max_priority_fee_per_gas(max_priority_fee);
+                nonce += 1;
+                (tx, token, sender)
+            })
+            .collect();
+
+        let total_txs = txs.len();
+        let mut txs_remaining = txs.into_iter().peekable();
+        while txs_remaining.peek().is_some() {
+            let batch: Vec<_> = txs_remaining.by_ref().take(FUNDING_BATCH_SIZE).collect();
+            let mut pending_txs: Vec<(TxHash, Address)> = Vec::new();
+
+            let send_futs = batch.into_iter().map(|(tx, token, sender)| {
+                let provider = Arc::clone(&funder_provider);
+                async move {
+                    let result = provider.send_transaction(tx).await;
+                    (result, token, sender)
+                }
+            });
+
+            let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
+
+            while let Some((result, token, sender)) = send_stream.next().await {
+                match result {
+                    Ok(pending) => {
+                        let tx_hash = *pending.tx_hash();
+                        debug!(token = %token, to = %sender, tx_hash = %tx_hash, "token mint sent");
+                        pending_txs.push((tx_hash, sender));
+                    }
+                    Err(e) => {
+                        warn!(token = %token, to = %sender, error = %e, "token mint failed");
+                        failed_count += 1;
+                    }
+                }
+            }
+
+            let (_, reverted) =
+                Self::await_confirmations(&self.batch_rpc, &mut pending_txs, &pb).await?;
+            failed_count += reverted;
+        }
+
+        pb.finish_and_clear();
+
+        if failed_count > 0 {
+            return Err(BaselineError::Transaction(format!(
+                "{failed_count}/{total_txs} token mints failed — senders with missing tokens will revert on swap"
+            )));
+        }
+
+        info!(
+            tokens = token_count,
+            transfers = total_txs,
+            skipped = already_funded,
+            "swap token setup complete"
+        );
+        Ok(())
+    }
+
+    fn encode_erc20_mint(to: Address, amount: U256) -> Bytes {
+        sol! {
+            function mint(address to, uint256 amount) external;
+        }
+        Bytes::from(mintCall { to, amount }.abi_encode())
+    }
+
+    fn encode_erc20_balance_of(account: Address) -> Bytes {
+        sol! {
+            function balanceOf(address account) external view returns (uint256);
+        }
+        Bytes::from(balanceOfCall { account }.abi_encode())
     }
 
     /// Runs the load test and returns metrics summary.
@@ -932,7 +1195,9 @@ impl LoadRunner {
             }
         }
 
+        // stop_flag drains the confirmer; cancel_token stops the WebSocket watchers.
         self.stop_flag.store(true, Ordering::SeqCst);
+        self.cancel_token.cancel();
 
         if let Some(display) = &self.display {
             display.finish();
@@ -1380,10 +1645,14 @@ impl LoadRunner {
         let pb_confirm = self.progress_bar(pending_txs.len() as u64, "Confirming drain txs");
         info!(count = pending_txs.len(), total = %total_drained, "waiting for drain txs to confirm");
 
-        if let Err(e) =
-            Self::await_confirmations(&self.batch_rpc, &mut pending_txs, &pb_confirm).await
-        {
-            warn!(error = %e, "some drain txs did not confirm within timeout");
+        match Self::await_confirmations(&self.batch_rpc, &mut pending_txs, &pb_confirm).await {
+            Ok((_, reverted)) if reverted > 0 => {
+                warn!(reverted, "some drain txs reverted");
+            }
+            Err(e) => {
+                warn!(error = %e, "some drain txs did not confirm within timeout");
+            }
+            _ => {}
         }
         pb_confirm.finish_and_clear();
 
@@ -1405,35 +1674,45 @@ impl LoadRunner {
         pb
     }
 
+    /// Waits for pending transactions to confirm, using batched RPC calls.
+    ///
+    /// Returns `(confirmed, reverted)` counts. Reverted transactions are logged
+    /// as warnings but still count toward completion (not retried).
     async fn await_confirmations(
         batch_rpc: &BatchRpcClient,
         pending_txs: &mut Vec<(TxHash, Address)>,
         pb: &ProgressBar,
-    ) -> Result<()> {
+    ) -> Result<(usize, usize)> {
         let timeout = Duration::from_secs(60);
         let poll_interval = Duration::from_millis(500);
         let start = Instant::now();
 
+        let mut confirmed = 0usize;
+        let mut reverted = 0usize;
+
         while !pending_txs.is_empty() && start.elapsed() < timeout {
             tokio::time::sleep(poll_interval).await;
 
-            let hashes: Vec<TxHash> = pending_txs.iter().map(|(h, _)| *h).collect();
-            let results = match batch_rpc.batch_get_transaction_receipts(&hashes).await {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!(error = %e, "batch receipt fetch failed during confirmation wait");
-                    continue;
-                }
-            };
+            let tx_hashes: Vec<TxHash> = pending_txs.iter().map(|(h, _)| *h).collect();
+            let receipts = batch_rpc.batch_get_transaction_receipts(&tx_hashes).await?;
 
             let mut still_pending = Vec::new();
-            for ((tx_hash, address), receipt_opt) in pending_txs.drain(..).zip(results.into_iter())
+            for ((tx_hash, address), receipt_opt) in pending_txs.drain(..).zip(receipts.into_iter())
             {
-                if receipt_opt.is_some() {
-                    debug!(tx_hash = %tx_hash, address = %address, "tx confirmed");
-                    pb.inc(1);
-                } else {
-                    still_pending.push((tx_hash, address));
+                match receipt_opt {
+                    Some(r) => {
+                        if r.status() {
+                            debug!(tx_hash = %tx_hash, address = %address, "tx confirmed");
+                            confirmed += 1;
+                        } else {
+                            warn!(tx_hash = %tx_hash, address = %address, "tx reverted");
+                            reverted += 1;
+                        }
+                        pb.inc(1);
+                    }
+                    None => {
+                        still_pending.push((tx_hash, address));
+                    }
                 }
             }
             *pending_txs = still_pending;
@@ -1446,16 +1725,16 @@ impl LoadRunner {
             )));
         }
 
-        Ok(())
+        Ok((confirmed, reverted))
     }
 
     /// Signals the load test to stop gracefully.
     ///
-    /// Only sets `stop_flag` — does **not** cancel WebSocket tasks or clean up
-    /// resources. The caller must ensure [`run()`](Self::run) completes, which
-    /// handles draining confirmations and cancelling background tasks.
+    /// Sets `stop_flag` and cancels WebSocket tasks. The caller must ensure
+    /// [`run()`](Self::run) completes, which handles draining confirmations.
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::SeqCst);
+        self.cancel_token.cancel();
     }
 
     /// Returns a clone of the stop flag for external coordination.

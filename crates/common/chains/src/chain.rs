@@ -56,11 +56,6 @@ impl ChainUpgrades {
         Self::new(BaseUpgrade::devnet())
     }
 
-    /// Creates a new [`ChainUpgrades`] with Base devnet-0-sepolia-dev-0 configuration.
-    pub fn base_devnet_0_sepolia_dev_0() -> Self {
-        Self::new(BaseUpgrade::base_devnet_0_sepolia_dev_0())
-    }
-
     /// Creates a new [`ChainUpgrades`] with Base Zeronet configuration.
     pub fn zeronet() -> Self {
         Self::new(BaseUpgrade::zeronet())
@@ -289,13 +284,6 @@ mod tests {
         let devnet_forks = ChainUpgrades::devnet();
         assert!(devnet_forks.is_base_azul_active_at_timestamp(0));
 
-        // Azul is scheduled on devnet-0-sepolia-dev-0 at 1774890000
-        let devnet0_forks = ChainUpgrades::base_devnet_0_sepolia_dev_0();
-        assert!(!devnet0_forks.is_base_azul_active_at_timestamp(0));
-        assert!(!devnet0_forks.is_base_azul_active_at_timestamp(1_774_889_999));
-        assert!(devnet0_forks.is_base_azul_active_at_timestamp(1_774_890_000));
-        assert!(devnet0_forks.is_base_azul_active_at_timestamp(u64::MAX));
-
         // Azul is scheduled on zeronet at 1775152800
         let zeronet_forks = ChainUpgrades::zeronet();
         assert!(!zeronet_forks.is_base_azul_active_at_timestamp(0));
@@ -322,12 +310,6 @@ mod tests {
         assert_eq!(
             devnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::ZERO_TIMESTAMP
-        );
-
-        let devnet0_forks = ChainUpgrades::base_devnet_0_sepolia_dev_0();
-        assert_eq!(
-            devnet0_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
-            ForkCondition::Timestamp(1_774_890_000)
         );
 
         let zeronet_forks = ChainUpgrades::zeronet();

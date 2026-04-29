@@ -1,20 +1,21 @@
 use alloy_network::TransactionBuilder;
-use alloy_primitives::{Address, Bytes, U160, U256, Uint};
+use alloy_primitives::{Address, Bytes, Signed, U160, U256};
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::{SolCall, sol};
-
-type U24 = Uint<24, 1>;
 
 use super::Payload;
 use crate::workload::SeededRng;
 
+type I24 = Signed<24, 1>;
+
 sol! {
-    interface IUniswapV3Router {
+    interface IAerodromeClRouter {
         struct ExactInputSingleParams {
             address tokenIn;
             address tokenOut;
-            uint24 fee;
+            int24 tickSpacing;
             address recipient;
+            uint256 deadline;
             uint256 amountIn;
             uint256 amountOutMinimum;
             uint160 sqrtPriceLimitX96;
@@ -26,34 +27,47 @@ sol! {
     }
 }
 
-/// Generates Uniswap V3 style swap transactions.
+/// Generates Aerodrome Slipstream (concentrated liquidity) swap transactions.
 #[derive(Debug, Clone)]
-pub struct UniswapV3Payload {
-    router: Address,
-    token_in: Address,
-    token_out: Address,
-    fee: u32,
-    min_amount: U256,
-    max_amount: U256,
+pub struct AerodromeClPayload {
+    /// CL Router contract address.
+    pub router: Address,
+    /// Input token address.
+    pub token_in: Address,
+    /// Output token address.
+    pub token_out: Address,
+    /// Tick spacing (pre-converted to `i24` at construction time).
+    pub tick_spacing: I24,
+    /// Minimum swap amount.
+    pub min_amount: U256,
+    /// Maximum swap amount.
+    pub max_amount: U256,
 }
 
-impl UniswapV3Payload {
-    /// Creates a new `UniswapV3` payload.
-    pub const fn new(
+impl AerodromeClPayload {
+    /// Creates a new `AerodromeCl` payload.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `tick_spacing` does not fit in an `i24`. Callers must validate
+    /// the range before calling (config parsing validates this).
+    pub fn new(
         router: Address,
         token_in: Address,
         token_out: Address,
-        fee: u32,
+        tick_spacing: i32,
         min_amount: U256,
         max_amount: U256,
     ) -> Self {
-        Self { router, token_in, token_out, fee, min_amount, max_amount }
+        let tick_spacing =
+            I24::try_from(tick_spacing).expect("tick_spacing validated to fit i24 at config parse");
+        Self { router, token_in, token_out, tick_spacing, min_amount, max_amount }
     }
 }
 
-impl Payload for UniswapV3Payload {
+impl Payload for AerodromeClPayload {
     fn name(&self) -> &'static str {
-        "uniswap_v3"
+        "aerodrome_cl"
     }
 
     fn generate(&self, rng: &mut SeededRng, from: Address, _to: Address) -> TransactionRequest {
@@ -67,21 +81,19 @@ impl Payload for UniswapV3Payload {
             U256::from(rng.gen_range(min..=max))
         };
 
-        // Randomly swap direction to exercise both sides of the pool.
-        // V3 pools are keyed by (token0, token1, fee) with token0 < token1,
-        // so the fee tier is direction-agnostic and this is safe.
         let (input, output) = if rng.random::<bool>() {
             (self.token_in, self.token_out)
         } else {
             (self.token_out, self.token_in)
         };
 
-        let call = IUniswapV3Router::exactInputSingleCall {
-            params: IUniswapV3Router::ExactInputSingleParams {
+        let call = IAerodromeClRouter::exactInputSingleCall {
+            params: IAerodromeClRouter::ExactInputSingleParams {
                 tokenIn: input,
                 tokenOut: output,
-                fee: U24::from(self.fee),
+                tickSpacing: self.tick_spacing,
                 recipient: from,
+                deadline: U256::from(u64::MAX),
                 amountIn: amount,
                 amountOutMinimum: U256::ZERO,
                 sqrtPriceLimitX96: U160::ZERO,

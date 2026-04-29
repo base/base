@@ -28,6 +28,10 @@ seed: 12345
 # 0.01 ETH per account (covers gas for 30s at 2.1M GPS; drained after test)
 funding_amount: "10000000000000000"
 
+# Amount of each swap token to distribute per sender (1000 tokens).
+# Only used when swap transaction types are configured.
+# swap_token_amount: "1000000000000000000000"
+
 # Transaction mix
 transactions:
   - weight: 70
@@ -38,3 +42,14 @@ transactions:
   - weight: 10
     type: precompile
     target: sha256
+  # Swap transaction types (require deployed contracts):
+  # - weight: 5
+  #   type: uniswap_v3
+  #   router: "0x..."
+  #   token_in: "0x..."
+  #   token_out: "0x..."
+  # - weight: 5
+  #   type: aerodrome_cl
+  #   router: "0x..."
+  #   token_in: "0x..."
+  #   token_out: "0x..."

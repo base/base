@@ -57,7 +57,30 @@ duration: "30s"
 | Config | Target | Notes |
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
-| `sepolia.yaml` | Sepolia | Requires `FUNDER_KEY` |
+| `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
+
+### Contract Addresses
+
+Contract addresses for swap testing and related tokens.
+
+#### Base Sepolia (Chain ID: 84532)
+
+| Contract | Address |
+|----------|---------|
+| Uniswap V3 Router | `0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4` |
+| Aerodrome CL `SwapRouter` | `0x6a786a4f9bc46fF861260545C490a7356c5ecbFe` |
+| Load Test Token A (LTTA) | `0x15948C3043A980A8d980d4D615A5E4c9514B0D64` |
+| Load Test Token B (LTTB) | `0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4` |
+
+#### Base Zeronet (Chain ID: 763360)
+
+| Contract | Address |
+|----------|---------|
+| Uniswap V3 Router | `0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4` |
+| Load Test Token A (LTTA) | `0x27589a9836dd2150036829120f092ad38a0b3740` |
+| Load Test Token B (LTTB) | `0xc411b5f78fadab5880a287f21bb7997a192975f3` |
+
+These tokens are deployed via `DeployTestTokenPair.s.sol` and use `FreeTransferERC20` which allows permissionless minting for load testing.
 
 ### Environment Variables
 
