@@ -1139,14 +1139,15 @@ impl<C: Clock> BondManager<C> {
             return;
         }
 
-        let cached_l2_block_number =
-            self.tracked.get(&game_address).and_then(|game| game.cached_l2_block_number);
-        let game_l2_block_number = match cached_l2_block_number {
-            Some(n) => n,
-            None => match verifier_client.game_info(game_address).await {
+        let game_l2_block_number = if let Some(cached) =
+            self.tracked.get(&game_address).and_then(|g| g.cached_l2_block_number)
+        {
+            cached
+        } else {
+            match verifier_client.game_info(game_address).await {
                 Ok(info) => {
-                    if let Some(game) = self.tracked.get_mut(&game_address) {
-                        game.cached_l2_block_number = Some(info.l2_block_number);
+                    if let Some(g) = self.tracked.get_mut(&game_address) {
+                        g.cached_l2_block_number = Some(info.l2_block_number);
                     }
                     info.l2_block_number
                 }
@@ -1159,7 +1160,7 @@ impl<C: Clock> BondManager<C> {
                     );
                     return;
                 }
-            },
+            }
         };
 
         if game_l2_block_number <= preflight.anchor_root.l2_block_number {
