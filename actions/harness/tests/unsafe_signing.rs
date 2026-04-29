@@ -142,7 +142,10 @@ async fn signer_rotation_gates_acceptance() {
 
     let block2 = seq.build_next_block_with_single_transaction().await;
     seq.broadcast_unsafe_block(&block2);
-    assert!(transport.try_next_unsafe_block().is_none(), "key_a block must be rejected after rotation to key_b");
+    assert!(
+        transport.try_next_unsafe_block().is_none(),
+        "key_a block must be rejected after rotation to key_b"
+    );
 
     // Rotate sequencer to key_b.
     seq.set_unsafe_block_signer(key_b);

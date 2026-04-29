@@ -280,7 +280,8 @@ impl TxManager for L1MinerTxManager {
             if inner.fail_remaining > 0 {
                 inner.fail_remaining -= 1;
                 let (tx, rx) = oneshot::channel::<SendResponse>();
-                let _ = tx.send(Err(TxManagerError::Rpc("simulated submission failure".to_string())));
+                let _ =
+                    tx.send(Err(TxManagerError::Rpc("simulated submission failure".to_string())));
                 return SendHandle::new(rx);
             }
         }

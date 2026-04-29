@@ -16,10 +16,10 @@ use base_common_rpc_types_engine::{
     NetworkPayloadEnvelope, PayloadHash,
 };
 use base_consensus_derive::{AttributesBuilder, StatefulAttributesBuilder};
-use base_consensus_node::{L1OriginSelector, OriginSelector, SequencerEngineClient};
+use base_consensus_node::{
+    Conductor, ConductorError, L1OriginSelector, OriginSelector, SequencerEngineClient,
+};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
-
-use base_consensus_node::{Conductor, ConductorError};
 
 use crate::{
     ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider, L2BlockProvider,
@@ -470,15 +470,18 @@ impl L2Sequencer {
             };
             let ph = envelope.payload_hash();
             let msg = ph.signature_message(self.rollup_config.l2_chain_id.id());
-            let sig = signer
-                .sign_hash_sync(&msg)
-                .expect("unsafe block signing must not fail");
+            let sig = signer.sign_hash_sync(&msg).expect("unsafe block signing must not fail");
             (sig, ph)
         } else {
             (Signature::new(U256::ZERO, U256::ZERO, false), PayloadHash(B256::ZERO))
         };
 
-        p2p.send(NetworkPayloadEnvelope { payload: execution_payload, signature, payload_hash, parent_beacon_block_root });
+        p2p.send(NetworkPayloadEnvelope {
+            payload: execution_payload,
+            signature,
+            payload_hash,
+            parent_beacon_block_root,
+        });
     }
 
     /// Build the next L2 block containing no user transactions.
