@@ -49,9 +49,6 @@ pub struct InProcessBuilderConfig {
     pub p2p_port: Option<u16>,
     /// Optional fixed Flashblocks port (uses random if None).
     pub flashblocks_port: Option<u16>,
-    /// Maximum number of inflight transactions per delegated (EIP-7702) sender.
-    /// Set to 0 to block all delegated-account transactions.
-    pub max_inflight_delegated_slots: usize,
 }
 
 /// An in-process builder node that replaces Docker-based `BuilderContainer`.
@@ -121,10 +118,7 @@ impl InProcessBuilder {
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
 
-        let rollup_args = RollupArgs {
-            max_inflight_delegated_slots: config.max_inflight_delegated_slots,
-            ..Default::default()
-        };
+        let rollup_args = RollupArgs::default();
 
         let base_node = BaseNode::new(rollup_args.clone());
 
@@ -356,7 +350,6 @@ fn create_test_db(data_path: &std::path::Path) -> Result<(DatabaseEnv, PathBuf)>
     Ok((db, db_path))
 }
 
-fn pool_component(rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
+fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransaction> {
     BasePoolBuilder::<BasePooledTransaction>::default()
-        .with_max_inflight_delegated_slots(rollup_args.max_inflight_delegated_slots)
 }

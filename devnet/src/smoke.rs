@@ -122,7 +122,7 @@ impl Devnet {
 }
 
 /// Builder for creating a new `Devnet`.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DevnetBuilder {
     l1_chain_id: Option<u64>,
     l2_chain_id: Option<u64>,
@@ -131,24 +131,6 @@ pub struct DevnetBuilder {
     stable_config: Option<StableDevnetConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
     verifier_l1_confs: u64,
-    max_inflight_delegated_slots: usize,
-}
-
-impl Default for DevnetBuilder {
-    fn default() -> Self {
-        Self {
-            // Default to 1 so devnet tests without an explicit setting do not
-            // block all delegated-account transactions (usize default = 0).
-            max_inflight_delegated_slots: 1,
-            l1_chain_id: None,
-            l2_chain_id: None,
-            slot_duration: None,
-            output_dir: None,
-            stable_config: None,
-            tx_forwarding_config: None,
-            verifier_l1_confs: 0,
-        }
-    }
 }
 
 impl DevnetBuilder {
@@ -199,13 +181,6 @@ impl DevnetBuilder {
     /// client (validator) node's derivation pipeline.
     pub const fn with_verifier_l1_confs(mut self, confs: u64) -> Self {
         self.verifier_l1_confs = confs;
-        self
-    }
-
-    /// Sets the maximum number of inflight transactions per delegated (EIP-7702) sender
-    /// in the builder's txpool. Defaults to 1.
-    pub const fn with_max_inflight_delegated_slots(mut self, limit: usize) -> Self {
-        self.max_inflight_delegated_slots = limit;
         self
     }
 
@@ -308,7 +283,6 @@ impl DevnetBuilder {
             container_config: l2_container_config,
             tx_forwarding_config: self.tx_forwarding_config,
             verifier_l1_confs: self.verifier_l1_confs,
-            max_inflight_delegated_slots: self.max_inflight_delegated_slots,
         };
 
         let l2_stack = L2Stack::start(l2_config).await.wrap_err("Failed to start L2 stack")?;

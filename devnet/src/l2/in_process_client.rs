@@ -53,9 +53,6 @@ pub struct InProcessClientConfig {
     /// Optional transaction forwarding configuration.
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
-    /// Maximum number of inflight transactions per delegated (EIP-7702) sender.
-    /// Set to 0 to block all delegated-account transactions.
-    pub max_inflight_delegated_slots: usize,
 }
 
 /// In-process Base client node that syncs from a builder.
@@ -139,11 +136,8 @@ impl InProcessClient {
         }
 
         // Configure rollup args with sequencer URL
-        let rollup_args = RollupArgs {
-            sequencer: Some(config.builder_rpc_url.clone()),
-            max_inflight_delegated_slots: config.max_inflight_delegated_slots,
-            ..Default::default()
-        };
+        let rollup_args =
+            RollupArgs { sequencer: Some(config.builder_rpc_url.clone()), ..Default::default() };
 
         let op_node = BaseNode::new(rollup_args.clone());
 

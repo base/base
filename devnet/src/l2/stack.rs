@@ -51,9 +51,6 @@ pub struct L2StackConfig {
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
-    /// Maximum number of inflight transactions per delegated (EIP-7702) sender.
-    /// Propagated to both the builder and the client node.
-    pub max_inflight_delegated_slots: usize,
 }
 
 /// A complete L2 network stack composed of Builder + Consensus + Batcher.
@@ -116,7 +113,6 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.builder_auth_port),
             p2p_port: container_config.and_then(|c| c.builder_p2p_port),
             flashblocks_port: container_config.and_then(|c| c.builder_flashblocks_port),
-            max_inflight_delegated_slots: config.max_inflight_delegated_slots,
         };
         let builder = InProcessBuilder::start(builder_config)
             .await
@@ -183,7 +179,6 @@ impl L2Stack {
             auth_port: container_config.and_then(|c| c.client_auth_port),
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             tx_forwarding_config,
-            max_inflight_delegated_slots: config.max_inflight_delegated_slots,
         };
         let client = InProcessClient::start(client_config)
             .await
