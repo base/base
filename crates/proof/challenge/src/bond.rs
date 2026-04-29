@@ -1036,28 +1036,12 @@ impl<C: Clock> BondManager<C> {
     /// Best-effort attempt to update the `AnchorStateRegistry` for a
     /// resolved game.
     ///
-    /// Only attempts the update when:
-    /// - The game is past the `NeedsResolve` phase (already resolved).
-    /// - The game has not already had a successful anchor update.
-    /// - The game is `DEFENDER_WINS`.
-    /// - The game is not blacklisted, retired, or unrespected in the registry.
-    ///
-    /// The ASR address is read from the game contract on first use and
-    /// cached on [`TrackedGame`] (it is immutable per game).
-    ///
-    /// The `setAnchorState()` call is permissionless and self-validating:
-    /// the contract checks that the game is finalized (resolved + airgap
-    /// delay elapsed), `DEFENDER_WINS`, and newer than the current anchor.
-    /// Premature or ineligible calls revert harmlessly and are retried on
-    /// the next tick.
-    ///
-    /// Blacklisted, retired, and unrespected games are filtered out
-    /// client-side because they are *permanent* failure modes:
-    /// `setAnchorState()` will revert forever with
-    /// `AnchorStateRegistry_InvalidAnchorGame()` (selector `0x47ad367a`),
-    /// which would otherwise spam the bond tx submitter every poll tick.
-    /// Other revert causes (airgap delay not yet elapsed, paused) are
-    /// transient and continue to be retried.
+    /// Skips updates for games that are permanently ineligible
+    /// (blacklisted, retired, unrespected, or already stale relative to the
+    /// current anchor) so the tx submitter is not spammed each poll tick.
+    /// Transient ineligibility (airgap delay not elapsed, not yet finalized)
+    /// is left to retry on the next tick — the on-chain `setAnchorState()`
+    /// call is permissionless and self-validating.
     async fn try_anchor_update(
         &mut self,
         game_address: Address,
@@ -1130,14 +1114,8 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
-        let (blacklisted, retired, respected, finalized, anchor_root) = match futures::try_join!(
-            verifier_client.is_game_blacklisted(asr_address, game_address),
-            verifier_client.is_game_retired(asr_address, game_address),
-            verifier_client.is_game_respected(asr_address, game_address),
-            verifier_client.is_game_finalized(asr_address, game_address),
-            verifier_client.anchor_root(asr_address),
-        ) {
-            Ok(values) => values,
+        let preflight = match verifier_client.anchor_preflight(asr_address, game_address).await {
+            Ok(p) => p,
             Err(e) => {
                 debug!(
                     game = %game_address,
@@ -1149,14 +1127,14 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
-        if blacklisted || retired || !respected {
+        if preflight.blacklisted || preflight.retired || !preflight.respected {
             info!(
                 game = %game_address,
                 asr = %asr_address,
-                blacklisted,
-                retired,
-                respected,
-                "skipping anchor state update — game is permanently ineligible"
+                blacklisted = preflight.blacklisted,
+                retired = preflight.retired,
+                respected = preflight.respected,
+                "skipping permanently ineligible anchor update"
             );
             self.mark_anchor_update_complete(game_address);
             ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
@@ -1164,7 +1142,7 @@ impl<C: Clock> BondManager<C> {
             return;
         }
 
-        if !finalized {
+        if !preflight.finalized {
             debug!(
                 game = %game_address,
                 asr = %asr_address,
@@ -1196,12 +1174,12 @@ impl<C: Clock> BondManager<C> {
             },
         };
 
-        if game_l2_block_number <= anchor_root.l2_block_number {
+        if game_l2_block_number <= preflight.anchor_root.l2_block_number {
             info!(
                 game = %game_address,
                 asr = %asr_address,
                 game_l2_block = game_l2_block_number,
-                anchor_l2_block = anchor_root.l2_block_number,
+                anchor_l2_block = preflight.anchor_root.l2_block_number,
                 "skipping stale anchor state update"
             );
             self.mark_anchor_update_complete(game_address);
@@ -1224,10 +1202,6 @@ impl<C: Clock> BondManager<C> {
                     ChallengerMetrics::STATUS_SUCCESS,
                 )
                 .increment(1);
-
-                // After a successful setAnchorState(game), this game IS the new
-                // anchor (the registry enforces monotonicity on the call), so
-                // its L2 block is the gauge value.
                 ChallengerMetrics::anchor_l2_block_number().set(game_l2_block_number as f64);
             }
             Err(e) => {
@@ -1264,15 +1238,10 @@ impl<C: Clock> BondManager<C> {
 /// can be tested with mock submitters.
 #[async_trait::async_trait]
 pub trait BondTransactionSubmitter: Send + Sync {
-    /// Sends a transaction with the given calldata to the recipient `to`.
-    ///
-    /// `game_address` is the dispute game this transaction concerns and is
-    /// included in logs/metrics for context. For `resolve` and `claimCredit`
-    /// the recipient `to` IS the dispute game proxy, so `to == game_address`.
-    /// For `setAnchorState` the recipient `to` is the `AnchorStateRegistry`
-    /// contract while `game_address` is the game being promoted to anchor.
-    ///
-    /// Returns the transaction hash on success.
+    /// Sends a transaction with the given calldata to `to`. `game_address`
+    /// identifies the dispute game for logs/metrics; it equals `to` for
+    /// `resolve` and `claimCredit`, and differs for `setAnchorState` where
+    /// `to` is the `AnchorStateRegistry`.
     async fn send_bond_tx(
         &self,
         game_address: Address,
@@ -1290,7 +1259,7 @@ mod tests {
 
     use super::*;
     use crate::test_utils::{
-        MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory,
+        MockAggregateVerifier, MockBondTransactionSubmitter, MockDisputeGameFactory, MockGameState,
         TEST_DISCOVERY_INTERVAL, addr, empty_factory, factory_game, mock_state,
     };
 
@@ -1981,8 +1950,6 @@ mod tests {
         let submitter = MockBondTransactionSubmitter::success(tx_hash);
         mgr.try_anchor_update(game, &*verifier, &submitter).await;
 
-        // Should have sent exactly one tx to the ASR address with the game
-        // address as the dispute-game context.
         let calls = submitter.recorded_calls();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, game, "tx should carry game address as context");
@@ -2042,8 +2009,10 @@ mod tests {
         assert!(submitter2.recorded_calls().is_empty());
     }
 
-    #[tokio::test]
-    async fn anchor_update_skipped_for_blacklisted_game() {
+    async fn run_anchor_update_skip_case(
+        mutate: impl FnOnce(&mut MockGameState),
+        expect_complete: bool,
+    ) {
         let claim_addr = Address::repeat_byte(0xCC);
         let asr = Address::repeat_byte(0xAA);
         let game = addr(0);
@@ -2052,128 +2021,46 @@ mod tests {
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::NeedsUnlock);
 
-        // DEFENDER_WINS but blacklisted — setAnchorState would revert with
-        // AnchorStateRegistry_InvalidAnchorGame() forever, so we should
-        // mark complete without sending a tx.
         let mut state = mock_state(2, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
-        state.is_blacklisted = true;
+        mutate(&mut state);
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
 
         let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
         mgr.try_anchor_update(game, &*verifier, &submitter).await;
 
-        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent for blacklisted game");
-        assert!(
+        assert!(submitter.recorded_calls().is_empty(), "no tx expected");
+        assert_eq!(
             mgr.tracked.get(&game).unwrap().anchor_update_complete,
-            "blacklisted game should be marked complete (won't retry)"
+            expect_complete,
+            "anchor_update_complete mismatch"
         );
+    }
+
+    #[tokio::test]
+    async fn anchor_update_skipped_for_blacklisted_game() {
+        run_anchor_update_skip_case(|s| s.is_blacklisted = true, true).await;
     }
 
     #[tokio::test]
     async fn anchor_update_skipped_for_retired_game() {
-        let claim_addr = Address::repeat_byte(0xCC);
-        let asr = Address::repeat_byte(0xAA);
-        let game = addr(0);
-
-        let mut mgr = make_manager(vec![claim_addr]);
-        mgr.track_game(game, claim_addr);
-        mgr.set_phase(game, BondPhase::NeedsUnlock);
-
-        // DEFENDER_WINS but retired — same permanent failure mode.
-        let mut state = mock_state(2, Address::ZERO, 100);
-        state.bond_recipient = claim_addr;
-        state.anchor_state_registry = asr;
-        state.is_retired = true;
-        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
-
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        mgr.try_anchor_update(game, &*verifier, &submitter).await;
-
-        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent for retired game");
-        assert!(
-            mgr.tracked.get(&game).unwrap().anchor_update_complete,
-            "retired game should be marked complete (won't retry)"
-        );
+        run_anchor_update_skip_case(|s| s.is_retired = true, true).await;
     }
 
     #[tokio::test]
     async fn anchor_update_skipped_for_unrespected_game() {
-        let claim_addr = Address::repeat_byte(0xCC);
-        let asr = Address::repeat_byte(0xAA);
-        let game = addr(0);
-
-        let mut mgr = make_manager(vec![claim_addr]);
-        mgr.track_game(game, claim_addr);
-        mgr.set_phase(game, BondPhase::NeedsUnlock);
-
-        let mut state = mock_state(2, Address::ZERO, 100);
-        state.bond_recipient = claim_addr;
-        state.anchor_state_registry = asr;
-        state.is_respected = false;
-        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
-
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        mgr.try_anchor_update(game, &*verifier, &submitter).await;
-
-        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent for unrespected game");
-        assert!(
-            mgr.tracked.get(&game).unwrap().anchor_update_complete,
-            "unrespected game should be marked complete (won't retry)"
-        );
+        run_anchor_update_skip_case(|s| s.is_respected = false, true).await;
     }
 
     #[tokio::test]
     async fn anchor_update_skipped_for_stale_game() {
-        let claim_addr = Address::repeat_byte(0xCC);
-        let asr = Address::repeat_byte(0xAA);
-        let game = addr(0);
-
-        let mut mgr = make_manager(vec![claim_addr]);
-        mgr.track_game(game, claim_addr);
-        mgr.set_phase(game, BondPhase::NeedsUnlock);
-
-        let mut state = mock_state(2, Address::ZERO, 100);
-        state.bond_recipient = claim_addr;
-        state.anchor_state_registry = asr;
-        state.anchor_root.l2_block_number = 200;
-        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
-
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        mgr.try_anchor_update(game, &*verifier, &submitter).await;
-
-        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent for stale game");
-        assert!(
-            mgr.tracked.get(&game).unwrap().anchor_update_complete,
-            "stale game should be marked complete (won't retry)"
-        );
+        run_anchor_update_skip_case(|s| s.anchor_root.l2_block_number = 200, true).await;
     }
 
     #[tokio::test]
     async fn anchor_update_waits_for_finalization() {
-        let claim_addr = Address::repeat_byte(0xCC);
-        let asr = Address::repeat_byte(0xAA);
-        let game = addr(0);
-
-        let mut mgr = make_manager(vec![claim_addr]);
-        mgr.track_game(game, claim_addr);
-        mgr.set_phase(game, BondPhase::NeedsUnlock);
-
-        let mut state = mock_state(2, Address::ZERO, 100);
-        state.bond_recipient = claim_addr;
-        state.anchor_state_registry = asr;
-        state.is_finalized = false;
-        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
-
-        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
-        mgr.try_anchor_update(game, &*verifier, &submitter).await;
-
-        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent before finalization");
-        assert!(
-            !mgr.tracked.get(&game).unwrap().anchor_update_complete,
-            "non-finalized game should remain retryable"
-        );
+        run_anchor_update_skip_case(|s| s.is_finalized = false, false).await;
     }
 
     #[tokio::test]

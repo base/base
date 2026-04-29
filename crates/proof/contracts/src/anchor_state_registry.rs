@@ -65,6 +65,22 @@ pub struct AnchorRoot {
     pub l2_block_number: u64,
 }
 
+/// Snapshot of `AnchorStateRegistry` state read in a single batch before
+/// attempting `setAnchorState()`.
+#[derive(Debug, Clone, Copy)]
+pub struct AnchorPreflight {
+    /// Whether the game is blacklisted (permanent failure).
+    pub blacklisted: bool,
+    /// Whether the game is retired (permanent failure).
+    pub retired: bool,
+    /// Whether the game is respected (`false` is a permanent failure).
+    pub respected: bool,
+    /// Whether the game is finalized (`false` is transient).
+    pub finalized: bool,
+    /// The current anchor root in the registry.
+    pub anchor_root: AnchorRoot,
+}
+
 /// Async trait for reading anchor state.
 #[async_trait]
 pub trait AnchorStateRegistryClient: Send + Sync {
