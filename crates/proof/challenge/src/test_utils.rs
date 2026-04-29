@@ -330,14 +330,30 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(game_address, |s| s.is_retired)
     }
 
-    async fn anchor_root(&self, _asr_address: Address) -> Result<AnchorRoot, ContractError> {
-        self.games
-            .lock()
-            .unwrap()
-            .values()
-            .next()
-            .map(|s| s.anchor_root)
-            .ok_or_else(|| ContractError::Validation("mock: no anchor root configured".into()))
+    async fn anchor_root(&self, asr_address: Address) -> Result<AnchorRoot, ContractError> {
+        let games = self.games.lock().unwrap();
+        let mut anchor_root: Option<AnchorRoot> = None;
+
+        for state in games.values().filter(|state| state.anchor_state_registry == asr_address) {
+            match anchor_root {
+                Some(existing)
+                    if existing.root != state.anchor_root.root
+                        || existing.l2_block_number != state.anchor_root.l2_block_number =>
+                {
+                    return Err(ContractError::Validation(format!(
+                        "mock: conflicting anchor roots for ASR {asr_address}"
+                    )));
+                }
+                Some(_) => {}
+                None => anchor_root = Some(state.anchor_root),
+            }
+        }
+
+        anchor_root.ok_or_else(|| {
+            ContractError::Validation(format!(
+                "mock: no anchor root configured for ASR {asr_address}"
+            ))
+        })
     }
 }
 
@@ -1112,5 +1128,29 @@ mod tests {
 
         assert_eq!(candidates.len(), 1, "only the non-nullified game should be a candidate");
         assert_eq!(candidates[0].index, 1);
+    }
+
+    #[tokio::test]
+    async fn test_anchor_root_is_keyed_by_asr_address() {
+        let first_asr = Address::repeat_byte(0x11);
+        let second_asr = Address::repeat_byte(0x22);
+
+        let first_root = AnchorRoot { root: B256::repeat_byte(0xAA), l2_block_number: 100 };
+        let second_root = AnchorRoot { root: B256::repeat_byte(0xBB), l2_block_number: 200 };
+
+        let mut first_state = mock_state(0, Address::ZERO, 100);
+        first_state.anchor_state_registry = first_asr;
+        first_state.anchor_root = first_root;
+
+        let mut second_state = mock_state(0, Address::ZERO, 200);
+        second_state.anchor_state_registry = second_asr;
+        second_state.anchor_root = second_root;
+
+        let verifier = MockAggregateVerifier::new(
+            [(addr(0), first_state), (addr(1), second_state)].into_iter().collect(),
+        );
+
+        assert_eq!(verifier.anchor_root(first_asr).await.unwrap().l2_block_number, 100);
+        assert_eq!(verifier.anchor_root(second_asr).await.unwrap().l2_block_number, 200);
     }
 }
