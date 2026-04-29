@@ -316,8 +316,17 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn is_game_blacklisted(&self, _: Address, _: Address) -> Result<bool, ContractError> {
         Ok(false)
     }
+    async fn is_game_finalized(&self, _: Address, _: Address) -> Result<bool, ContractError> {
+        Ok(true)
+    }
+    async fn is_game_respected(&self, _: Address, _: Address) -> Result<bool, ContractError> {
+        Ok(true)
+    }
     async fn is_game_retired(&self, _: Address, _: Address) -> Result<bool, ContractError> {
         Ok(false)
+    }
+    async fn anchor_root(&self, _: Address) -> Result<AnchorRoot, ContractError> {
+        Ok(AnchorRoot { root: B256::ZERO, l2_block_number: 0 })
     }
 }
 

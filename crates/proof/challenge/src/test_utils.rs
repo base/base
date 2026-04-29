@@ -17,7 +17,8 @@ use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{
-    AggregateVerifierClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
+    AggregateVerifierClient, AnchorRoot, ContractError, DisputeGameFactoryClient, GameAtIndex,
+    GameInfo,
 };
 use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
@@ -73,8 +74,14 @@ pub struct MockGameState {
     pub anchor_state_registry: Address,
     /// Whether the game is blacklisted in the `AnchorStateRegistry`.
     pub is_blacklisted: bool,
+    /// Whether the game is finalized in the `AnchorStateRegistry`.
+    pub is_finalized: bool,
+    /// Whether the game is respected in the `AnchorStateRegistry`.
+    pub is_respected: bool,
     /// Whether the game is retired in the `AnchorStateRegistry`.
     pub is_retired: bool,
+    /// Current anchor root returned by the `AnchorStateRegistry`.
+    pub anchor_root: AnchorRoot,
 }
 
 impl Default for MockGameState {
@@ -103,7 +110,10 @@ impl Default for MockGameState {
             delayed_weth: Address::ZERO,
             anchor_state_registry: Address::ZERO,
             is_blacklisted: false,
+            is_finalized: true,
+            is_respected: true,
             is_retired: false,
+            anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
         }
     }
 }
@@ -296,12 +306,38 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(game_address, |s| s.is_blacklisted)
     }
 
+    async fn is_game_finalized(
+        &self,
+        _asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        self.get(game_address, |s| s.is_finalized)
+    }
+
+    async fn is_game_respected(
+        &self,
+        _asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        self.get(game_address, |s| s.is_respected)
+    }
+
     async fn is_game_retired(
         &self,
         _asr_address: Address,
         game_address: Address,
     ) -> Result<bool, ContractError> {
         self.get(game_address, |s| s.is_retired)
+    }
+
+    async fn anchor_root(&self, _asr_address: Address) -> Result<AnchorRoot, ContractError> {
+        self.games
+            .lock()
+            .unwrap()
+            .values()
+            .next()
+            .map(|s| s.anchor_root)
+            .ok_or_else(|| ContractError::Validation("mock: no anchor root configured".into()))
     }
 }
 
@@ -371,7 +407,10 @@ pub const fn mock_state_with_tee(
         delayed_weth: Address::ZERO,
         anchor_state_registry: Address::ZERO,
         is_blacklisted: false,
+        is_finalized: true,
+        is_respected: true,
         is_retired: false,
+        anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
     }
 }
 

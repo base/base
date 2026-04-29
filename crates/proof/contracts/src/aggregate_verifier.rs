@@ -12,7 +12,10 @@ use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 
-use crate::{ContractError, anchor_state_registry::IAnchorStateRegistry};
+use crate::{
+    ContractError,
+    anchor_state_registry::{AnchorRoot, IAnchorStateRegistry},
+};
 
 sol! {
     /// `AggregateVerifier` (dispute game) contract interface.
@@ -245,6 +248,25 @@ pub trait AggregateVerifierClient: Send + Sync {
         game_address: Address,
     ) -> Result<bool, ContractError>;
 
+    /// Returns whether the given game is finalized by the `AnchorStateRegistry`.
+    ///
+    /// Non-finalized games are not yet eligible for `setAnchorState()` but may
+    /// become eligible later.
+    async fn is_game_finalized(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError>;
+
+    /// Returns whether the given game is respected by the `AnchorStateRegistry`.
+    ///
+    /// Unrespected games are permanently ineligible for `setAnchorState()`.
+    async fn is_game_respected(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError>;
+
     /// Returns whether the given game has been retired by the `AnchorStateRegistry`.
     ///
     /// Retired games (created before the registry's `retirementTimestamp`) are
@@ -256,6 +278,9 @@ pub trait AggregateVerifierClient: Send + Sync {
         asr_address: Address,
         game_address: Address,
     ) -> Result<bool, ContractError>;
+
+    /// Returns the current anchor root from the `AnchorStateRegistry`.
+    async fn anchor_root(&self, asr_address: Address) -> Result<AnchorRoot, ContractError>;
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -592,6 +617,34 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         })
     }
 
+    async fn is_game_finalized(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        let contract =
+            IAnchorStateRegistry::IAnchorStateRegistryInstance::new(asr_address, &self.provider);
+
+        contract.isGameFinalized(game_address).call().await.map_err(|e| ContractError::Call {
+            context: "isGameFinalized failed".into(),
+            source: e,
+        })
+    }
+
+    async fn is_game_respected(
+        &self,
+        asr_address: Address,
+        game_address: Address,
+    ) -> Result<bool, ContractError> {
+        let contract =
+            IAnchorStateRegistry::IAnchorStateRegistryInstance::new(asr_address, &self.provider);
+
+        contract.isGameRespected(game_address).call().await.map_err(|e| ContractError::Call {
+            context: "isGameRespected failed".into(),
+            source: e,
+        })
+    }
+
     async fn is_game_retired(
         &self,
         asr_address: Address,
@@ -605,6 +658,22 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             .call()
             .await
             .map_err(|e| ContractError::Call { context: "isGameRetired failed".into(), source: e })
+    }
+
+    async fn anchor_root(&self, asr_address: Address) -> Result<AnchorRoot, ContractError> {
+        let contract =
+            IAnchorStateRegistry::IAnchorStateRegistryInstance::new(asr_address, &self.provider);
+
+        let result = contract.getAnchorRoot().call().await.map_err(|e| ContractError::Call {
+            context: "getAnchorRoot failed".into(),
+            source: e,
+        })?;
+
+        let l2_block_number: u64 = result.l2SequenceNumber.try_into().map_err(|_| {
+            ContractError::Validation("anchor l2SequenceNumber overflows u64".into())
+        })?;
+
+        Ok(AnchorRoot { root: result.root, l2_block_number })
     }
 }
 

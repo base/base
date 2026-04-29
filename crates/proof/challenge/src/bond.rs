@@ -594,11 +594,20 @@ impl<C: Clock> BondManager<C> {
         for game_address in addresses {
             match self.advance_game(game_address, verifier_client, submitter).await {
                 Ok(Some(reason)) => {
-                    // Last-chance anchor update before the game is removed.
-                    // If the airgap delay hasn't elapsed yet the call reverts
-                    // harmlessly, but in the common case it succeeds.
                     self.try_anchor_update(game_address, verifier_client, submitter).await;
-                    removed.push((game_address, reason));
+                    let anchor_update_complete = self
+                        .tracked
+                        .get(&game_address)
+                        .is_none_or(|game| game.anchor_update_complete);
+                    if anchor_update_complete {
+                        removed.push((game_address, reason));
+                    } else {
+                        debug!(
+                            game = %game_address,
+                            reason = ?reason,
+                            "keeping game tracked until anchor update completes"
+                        );
+                    }
                 }
                 Ok(None) => {
                     self.try_anchor_update(game_address, verifier_client, submitter).await;
@@ -1112,6 +1121,63 @@ impl<C: Clock> BondManager<C> {
             }
         }
 
+        let (respected, finalized, anchor_root, game_info) = match futures::try_join!(
+            verifier_client.is_game_respected(asr_address, game_address),
+            verifier_client.is_game_finalized(asr_address, game_address),
+            verifier_client.anchor_root(asr_address),
+            verifier_client.game_info(game_address),
+        ) {
+            Ok(values) => values,
+            Err(e) => {
+                debug!(
+                    game = %game_address,
+                    asr = %asr_address,
+                    error = %e,
+                    "failed to read anchor preflight state, will retry"
+                );
+                return;
+            }
+        };
+
+        if !respected {
+            info!(
+                game = %game_address,
+                asr = %asr_address,
+                "skipping anchor state update because game is not respected"
+            );
+            if let Some(g) = self.tracked.get_mut(&game_address) {
+                g.anchor_update_complete = true;
+            }
+            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
+                .increment(1);
+            return;
+        }
+
+        if !finalized {
+            debug!(
+                game = %game_address,
+                asr = %asr_address,
+                "anchor state update not ready because game is not finalized"
+            );
+            return;
+        }
+
+        if game_info.l2_block_number <= anchor_root.l2_block_number {
+            info!(
+                game = %game_address,
+                asr = %asr_address,
+                game_l2_block = game_info.l2_block_number,
+                anchor_l2_block = anchor_root.l2_block_number,
+                "skipping stale anchor state update"
+            );
+            if let Some(g) = self.tracked.get_mut(&game_address) {
+                g.anchor_update_complete = true;
+            }
+            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
+                .increment(1);
+            return;
+        }
+
         let calldata = encode_set_anchor_state_calldata(game_address);
         match submitter.send_bond_tx(game_address, asr_address, calldata).await {
             Ok(tx_hash) => {
@@ -1131,21 +1197,8 @@ impl<C: Clock> BondManager<C> {
 
                 // After a successful setAnchorState(game), this game IS the new
                 // anchor (the registry enforces monotonicity on the call), so
-                // its L2 block is the gauge value. A read failure is non-fatal:
-                // the gauge keeps its previous value until the next advance.
-                match verifier_client.game_info(game_address).await {
-                    Ok(info) => {
-                        ChallengerMetrics::anchor_l2_block_number()
-                            .set(info.l2_block_number as f64);
-                    }
-                    Err(e) => {
-                        debug!(
-                            game = %game_address,
-                            error = %e,
-                            "anchor advanced but failed to read l2 block for gauge"
-                        );
-                    }
-                }
+                // its L2 block is the gauge value.
+                ChallengerMetrics::anchor_l2_block_number().set(game_info.l2_block_number as f64);
             }
             Err(e) => {
                 debug!(
@@ -2009,5 +2062,80 @@ mod tests {
             mgr.tracked.get(&game).unwrap().anchor_update_complete,
             "retired game should be marked complete (won't retry)"
         );
+    }
+
+    #[tokio::test]
+    async fn anchor_update_skipped_for_stale_game() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::NeedsUnlock);
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        state.anchor_root.l2_block_number = 200;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+
+        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent for stale game");
+        assert!(
+            mgr.tracked.get(&game).unwrap().anchor_update_complete,
+            "stale game should be marked complete (won't retry)"
+        );
+    }
+
+    #[tokio::test]
+    async fn anchor_update_waits_for_finalization() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::NeedsUnlock);
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        state.is_finalized = false;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+
+        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent before finalization");
+        assert!(
+            !mgr.tracked.get(&game).unwrap().anchor_update_complete,
+            "non-finalized game should remain retryable"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_keeps_game_until_anchor_update_completes() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::Completed);
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        state.is_finalized = false;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        mgr.poll(&*verifier, &submitter).await;
+
+        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent before finalization");
+        assert!(mgr.is_tracking(&game), "game should stay tracked until anchor update completes");
     }
 }
