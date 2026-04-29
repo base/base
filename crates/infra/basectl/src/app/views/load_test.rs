@@ -199,8 +199,8 @@ impl StrategyOption {
         }
     }
 
-    fn to_tx_type(self, network: &str) -> TxTypeConfig {
-        match self {
+    fn to_tx_type(self, network: &str) -> Option<TxTypeConfig> {
+        let cfg = match self {
             Self::Transfer => TxTypeConfig::Transfer,
             Self::Calldata => TxTypeConfig::Calldata { max_size: 128, repeat_count: 1 },
             Self::Ecrecover => {
@@ -239,8 +239,7 @@ impl StrategyOption {
             Self::OsakaP256verify => TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka },
             Self::OsakaModexp => TxTypeConfig::Osaka { target: OsakaTarget::ModexpOsaka },
             Self::UniswapV3 => {
-                let addrs = swap_addresses(network)
-                    .expect("UniswapV3 should only be selectable on supported networks");
+                let addrs = swap_addresses(network)?;
                 TxTypeConfig::UniswapV3 {
                     router: addrs.uniswap_v3_router.to_string(),
                     token_in: addrs.token_a.to_string(),
@@ -251,11 +250,8 @@ impl StrategyOption {
                 }
             }
             Self::AerodromeCl => {
-                let addrs = swap_addresses(network)
-                    .expect("AerodromeCl should only be selectable on supported networks");
-                let router = addrs
-                    .aerodrome_cl_router
-                    .expect("AerodromeCl should only be selectable when router is available");
+                let addrs = swap_addresses(network)?;
+                let router = addrs.aerodrome_cl_router?;
                 TxTypeConfig::AerodromeCl {
                     router: router.to_string(),
                     token_in: addrs.token_a.to_string(),
@@ -265,7 +261,8 @@ impl StrategyOption {
                     max_amount: "10000000000000000".to_string(),
                 }
             }
-        }
+        };
+        Some(cfg)
     }
 
     const fn matches_tx_type(self, tx: &TxTypeConfig) -> bool {
@@ -389,10 +386,10 @@ impl StrategyModal {
         ALL_STRATEGIES
             .iter()
             .enumerate()
-            .filter(|&(i, strategy)| self.enabled[i] && strategy.is_available(&self.network))
-            .map(|(_, &strategy)| WeightedTxType {
-                weight: 1,
-                tx_type: strategy.to_tx_type(&self.network),
+            .filter(|&(i, _)| self.enabled[i])
+            .filter_map(|(_, &strategy)| {
+                let tx_type = strategy.to_tx_type(&self.network)?;
+                Some(WeightedTxType { weight: 1, tx_type })
             })
             .collect()
     }
@@ -735,7 +732,7 @@ impl LoadTestView {
         // every iteration of the TUI event loop.
         let task_handle = tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4))
+                .worker_threads(1)
                 .enable_all()
                 .thread_name("load-test-worker")
                 .build()
