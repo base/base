@@ -168,23 +168,24 @@ flowchart TB
     ZkStart([ZK job accepted]) --> AwaitingProof[AwaitingProof]
     TeeStart([TEE proof ready]) --> ReadyToSubmit[ReadyToSubmit]
 
-    AwaitingProof -->|success| ReadyToSubmit
-    AwaitingProof -->|failure| NeedsRetry[NeedsRetry]
+    AwaitingProof -->|ZK success| ReadyToSubmit
+    AwaitingProof -->|ZK failed| NeedsRetry[NeedsRetry]
 
     NeedsRetry -->|retry accepted| AwaitingProof
     NeedsRetry -->|exhausted/no fallback| Dropped[Dropped]
 
     ReadyToSubmit -->|submitted/stale| Dropped
-    ReadyToSubmit -->|TEE tx failed| NeedsRetry
+    ReadyToSubmit -->|ZK fallback| AwaitingProof
 ```
 
 ZK proofs are polled from the proving service until the job succeeds, fails, or remains pending.
 Successful ZK receipts are prefixed with the ZK proof-type byte before submission. Failed proof jobs
 are retried up to three times. A TEE proof enters `ReadyToSubmit` immediately after it is obtained;
-if its transaction fails, the challenger switches to the pre-built ZK fallback request when one is
-available. A proof that remains pending, a failed ZK transaction, or a failed `prove_block` retry
-leaves the proof in its current phase until the next tick. A pending proof causes no contract reads
-for that game on that tick.
+if its transaction fails, the challenger immediately requests the pre-built ZK fallback proof when
+one is available. If no fallback request exists, the entry is dropped; if the fallback `prove_block`
+call fails, the entry remains in `NeedsRetry` until the next tick. A proof that remains pending, a
+failed ZK transaction, or a failed `prove_block` retry leaves the proof in its current phase until
+the next tick. A pending proof causes no contract reads for that game on that tick.
 
 ## Bond Claiming
 
