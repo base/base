@@ -154,7 +154,7 @@ async fn test_get_payload_v5_success(#[values(true, false)] with_channel: bool) 
     // `EngineGetPayloadVersion::V5` is selected.
     let cfg = Arc::new(RollupConfig {
         hardforks: HardForkConfig {
-            base: HardforkConfig { azul: Some(2000) },
+            base: HardforkConfig { azul: Some(2000), beryl: None },
             ..Default::default()
         },
         ..Default::default()

@@ -54,6 +54,9 @@ pub enum OpSpecId {
     /// Base Azul spec id.
     #[strum(serialize = "Azul")]
     AZUL,
+    /// Beryl spec id.
+    #[strum(serialize = "Beryl")]
+    BERYL,
 }
 
 impl OpSpecId {
@@ -64,7 +67,7 @@ impl OpSpecId {
             Self::CANYON => SpecId::SHANGHAI,
             Self::ECOTONE | Self::FJORD | Self::GRANITE | Self::HOLOCENE => SpecId::CANCUN,
             Self::ISTHMUS | Self::JOVIAN => SpecId::PRAGUE,
-            Self::AZUL => SpecId::OSAKA,
+            Self::AZUL | Self::BERYL => SpecId::OSAKA,
         }
     }
 
@@ -85,7 +88,9 @@ impl OpSpecId {
     /// This is only intended to be used after the Bedrock, when hardforks are activated by
     /// timestamp.
     pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
-        if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
+        if chain_spec.is_beryl_active_at_timestamp(timestamp) {
+            Self::BERYL
+        } else if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
             Self::AZUL
         } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
             Self::JOVIAN
@@ -226,6 +231,27 @@ mod tests {
                     (OpSpecId::HOLOCENE, true),
                     (OpSpecId::ISTHMUS, true),
                     (OpSpecId::JOVIAN, true),
+                ],
+            ),
+            (
+                OpSpecId::BERYL,
+                vec![
+                    (SpecId::OSAKA, true),
+                    (SpecId::PRAGUE, true),
+                    (SpecId::SHANGHAI, true),
+                    (SpecId::CANCUN, true),
+                    (SpecId::MERGE, true),
+                ],
+                vec![
+                    (OpSpecId::BEDROCK, true),
+                    (OpSpecId::REGOLITH, true),
+                    (OpSpecId::CANYON, true),
+                    (OpSpecId::ECOTONE, true),
+                    (OpSpecId::FJORD, true),
+                    (OpSpecId::HOLOCENE, true),
+                    (OpSpecId::ISTHMUS, true),
+                    (OpSpecId::JOVIAN, true),
+                    (OpSpecId::AZUL, true),
                 ],
             ),
         ];

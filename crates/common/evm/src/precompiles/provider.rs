@@ -34,7 +34,7 @@ impl BasePrecompiles {
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => Self::granite(),
             OpSpecId::ISTHMUS => Self::isthmus(),
             OpSpecId::JOVIAN => Self::jovian(),
-            OpSpecId::AZUL => Self::azul(),
+            OpSpecId::AZUL | OpSpecId::BERYL => Self::azul(),
         };
 
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }

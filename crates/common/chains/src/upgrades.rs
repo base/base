@@ -64,6 +64,11 @@ pub trait Upgrades: EthereumHardforks {
     fn is_base_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.upgrade_activation(BaseUpgrade::Azul).active_at_timestamp(timestamp)
     }
+
+    /// Returns `true` if [`Beryl`](BaseUpgrade::Beryl) is active at given block timestamp.
+    fn is_beryl_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.upgrade_activation(BaseUpgrade::Beryl).active_at_timestamp(timestamp)
+    }
 }
 
 impl Upgrades for RollupConfig {
@@ -110,12 +115,16 @@ impl Upgrades for RollupConfig {
                 .jovian_time
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
-            // Azul is standalone: not part of the Base upgrade cascade chain. It only activates
-            // when explicitly configured and never implies (or is implied by) Jovian being active.
             BaseUpgrade::Azul => self
                 .hardforks
                 .base
                 .azul
+                .map(ForkCondition::Timestamp)
+                .unwrap_or(ForkCondition::Never),
+            BaseUpgrade::Beryl => self
+                .hardforks
+                .base
+                .beryl
                 .map(ForkCondition::Timestamp)
                 .unwrap_or(ForkCondition::Never),
         }
@@ -150,5 +159,6 @@ mod tests {
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Bedrock), ForkCondition::Block(0));
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Jovian), ForkCondition::Never);
         assert_eq!(cfg.upgrade_activation(BaseUpgrade::Azul), ForkCondition::Never);
+        assert_eq!(cfg.upgrade_activation(BaseUpgrade::Beryl), ForkCondition::Never);
     }
 }

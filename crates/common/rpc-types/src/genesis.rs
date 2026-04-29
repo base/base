@@ -39,6 +39,9 @@ pub struct HardforkInfo {
     /// Base Azul hardfork timestamp.
     #[serde(alias = "v1")]
     pub azul: Option<u64>,
+    /// Beryl hardfork timestamp.
+    #[serde(alias = "v2")]
+    pub beryl: Option<u64>,
 }
 
 /// The Base chain-specific genesis block specification.
@@ -128,7 +131,8 @@ mod tests {
           "canyonTime": 0,
           "ecotoneTime": 0,
           "base": {
-            "v1": 14
+            "v1": 14,
+            "v2": 16
           }
         }
         "#;
@@ -148,7 +152,7 @@ mod tests {
                 holocene_time: None,
                 isthmus_time: None,
                 jovian_time: None,
-                base: HardforkInfo { azul: Some(14) },
+                base: HardforkInfo { azul: Some(14), beryl: Some(16) },
             }
         );
     }
@@ -187,7 +191,8 @@ mod tests {
           "canyonTime": 0,
           "ecotoneTime": 0,
           "base": {
-            "v1": 14
+            "v1": 14,
+            "v2": 16
           },
           "optimism": {
             "eip1559Denominator": 8,
@@ -212,7 +217,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { azul: Some(14) },
+                    base: HardforkInfo { azul: Some(14), beryl: Some(16) },
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,
@@ -237,7 +242,7 @@ mod tests {
                     holocene_time: None,
                     isthmus_time: None,
                     jovian_time: None,
-                    base: HardforkInfo { azul: Some(14) },
+                    base: HardforkInfo { azul: Some(14), beryl: Some(16) },
                 }),
                 base_fee_info: Some(FeeInfo {
                     eip1559_elasticity: None,

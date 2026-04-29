@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::ops::Index;
 
 use BaseUpgrade::{
-    Azul, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+    Azul, Bedrock, Beryl, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
 };
 // Production imports for upgrade implementations
 use EthereumHardfork::{
@@ -105,6 +105,7 @@ impl Index<BaseUpgrade> for ChainUpgrades {
             Isthmus => &self.forks[Isthmus.idx()].1,
             Jovian => &self.forks[Jovian.idx()].1,
             Azul => &self.forks[Azul.idx()].1,
+            Beryl => &self.forks[Beryl.idx()].1,
         }
     }
 }
@@ -136,7 +137,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
 #[cfg(test)]
 mod tests {
     use BaseUpgrade::{
-        Azul, Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
+        Azul, Bedrock, Beryl, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Regolith,
     };
     use alloy_hardforks::EthereumHardfork;
 
@@ -186,6 +187,7 @@ mod tests {
             base_mainnet_forks[Azul],
             ForkCondition::Timestamp(ChainConfig::mainnet().azul_timestamp.unwrap())
         );
+        assert_eq!(base_mainnet_forks[Beryl], ForkCondition::Never);
     }
 
     #[test]
@@ -231,6 +233,7 @@ mod tests {
             base_sepolia_forks[Azul],
             ForkCondition::Timestamp(ChainConfig::sepolia().azul_timestamp.unwrap())
         );
+        assert_eq!(base_sepolia_forks[Beryl], ForkCondition::Never);
     }
 
     #[test]
@@ -290,6 +293,19 @@ mod tests {
         assert!(!zeronet_forks.is_base_azul_active_at_timestamp(1_775_152_799));
         assert!(zeronet_forks.is_base_azul_active_at_timestamp(1_775_152_800));
         assert!(zeronet_forks.is_base_azul_active_at_timestamp(u64::MAX));
+    }
+
+    #[test]
+    fn is_beryl_active_at_timestamp() {
+        for forks in [
+            ChainUpgrades::mainnet(),
+            ChainUpgrades::sepolia(),
+            ChainUpgrades::devnet(),
+            ChainUpgrades::zeronet(),
+        ] {
+            assert!(!forks.is_beryl_active_at_timestamp(0));
+            assert!(!forks.is_beryl_active_at_timestamp(u64::MAX));
+        }
     }
 
     #[test]
