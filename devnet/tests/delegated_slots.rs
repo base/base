@@ -175,24 +175,28 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
             client_provider
                 .send_raw_transaction(&raw_txs[0])
                 .await
+                .map(drop)
                 .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce, e))
         },
         async {
             client_provider
                 .send_raw_transaction(&raw_txs[1])
                 .await
+                .map(drop)
                 .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 1, e))
         },
         async {
             client_provider
                 .send_raw_transaction(&raw_txs[2])
                 .await
+                .map(drop)
                 .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 2, e))
         },
         async {
             client_provider
                 .send_raw_transaction(&raw_txs[3])
                 .await
+                .map(drop)
                 .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 3, e))
         },
     )?;
