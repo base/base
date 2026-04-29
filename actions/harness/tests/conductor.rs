@@ -1,3 +1,5 @@
+//! Action tests for conductor-gated sequencer leadership.
+
 use std::sync::Arc;
 
 use base_action_harness::{

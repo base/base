@@ -1,3 +1,5 @@
+//! Action tests for unsafe block signing and P2P signature validation.
+
 use alloy_primitives::{B256, Signature, U256};
 use alloy_signer_local::PrivateKeySigner;
 use base_action_harness::{ActionTestHarness, SharedL1Chain, TestGossipTransport};
@@ -102,7 +104,7 @@ async fn injected_forged_block_dropped_real_block_accepted() {
 
     // Inject a forged (zero-sig) envelope directly via the supervisor channel.
     p2p.send(NetworkPayloadEnvelope {
-        payload: execution_payload.clone(),
+        payload: execution_payload,
         signature: Signature::new(U256::ZERO, U256::ZERO, false),
         payload_hash: PayloadHash(B256::ZERO),
         parent_beacon_block_root: block.header.parent_beacon_block_root,

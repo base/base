@@ -58,7 +58,7 @@ impl SupervisedP2P {
 /// as in production where [`BlockHandler`] rejects invalid gossip before
 /// forwarding to the derivation pipeline.
 ///
-/// ### publish() and signing
+/// ### `publish()` and signing
 ///
 /// [`GossipTransport::publish`] is used in self-loop scenarios where the same
 /// transport both publishes and receives. If a `signing_key` is set via
@@ -112,7 +112,7 @@ impl TestGossipTransport {
     ///
     /// Must be set alongside [`GossipTransport::set_block_signer`] for
     /// signature validation to activate.
-    pub fn set_chain_id(&mut self, chain_id: u64) {
+    pub const fn set_chain_id(&mut self, chain_id: u64) {
         self.chain_id = Some(chain_id);
     }
 

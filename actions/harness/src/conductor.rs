@@ -19,7 +19,7 @@ pub struct ConductorState {
 }
 
 impl ConductorState {
-    fn new(leader_id: Option<u8>) -> Self {
+    const fn new(leader_id: Option<u8>) -> Self {
         Self { leader_id, committed_payloads: Vec::new() }
     }
 }

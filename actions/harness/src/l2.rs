@@ -463,18 +463,19 @@ impl L2Sequencer {
         let (execution_payload, _) = BaseExecutionPayload::from_block_unchecked(block_hash, block);
         let parent_beacon_block_root = block.header.parent_beacon_block_root;
 
-        let (signature, payload_hash) = if let Some(signer) = &self.unsafe_block_signer {
-            let envelope = BaseExecutionPayloadEnvelope {
-                execution_payload: execution_payload.clone(),
-                parent_beacon_block_root,
-            };
-            let ph = envelope.payload_hash();
-            let msg = ph.signature_message(self.rollup_config.l2_chain_id.id());
-            let sig = signer.sign_hash_sync(&msg).expect("unsafe block signing must not fail");
-            (sig, ph)
-        } else {
-            (Signature::new(U256::ZERO, U256::ZERO, false), PayloadHash(B256::ZERO))
-        };
+        let (signature, payload_hash) = self.unsafe_block_signer.as_ref().map_or_else(
+            || (Signature::new(U256::ZERO, U256::ZERO, false), PayloadHash(B256::ZERO)),
+            |signer| {
+                let envelope = BaseExecutionPayloadEnvelope {
+                    execution_payload: execution_payload.clone(),
+                    parent_beacon_block_root,
+                };
+                let ph = envelope.payload_hash();
+                let msg = ph.signature_message(self.rollup_config.l2_chain_id.id());
+                let sig = signer.sign_hash_sync(&msg).expect("unsafe block signing must not fail");
+                (sig, ph)
+            },
+        );
 
         p2p.send(NetworkPayloadEnvelope {
             payload: execution_payload,
