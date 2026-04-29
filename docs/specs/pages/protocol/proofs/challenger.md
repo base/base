@@ -145,10 +145,10 @@ The challenger submits one of two game calls:
 TEE proofs always target `nullify()`. ZK proofs can target either `challenge()` or `nullify()`
 depending on the candidate category.
 
-Before submitting, the challenger rechecks the game status and prover slots. If the game has already
-resolved, has already been challenged, or the targeted prover slot has already been zeroed, the
-pending proof is dropped. This prevents duplicate transactions when another actor has already
-handled the game.
+Before submitting or retrying a failed proof, the challenger rechecks the game status and prover
+slots. If the game has already resolved, has already been challenged, or the targeted prover slot
+has already been zeroed, the pending proof is dropped. This prevents duplicate transactions when
+another actor has already handled the game.
 
 ## Pending Proof Lifecycle
 
@@ -165,23 +165,26 @@ The phase machine is:
 
 ```mermaid
 flowchart TB
-    Start([new pending proof]) --> AwaitingProof[AwaitingProof]
+    ZkStart([ZK job accepted]) --> AwaitingProof[AwaitingProof]
+    TeeStart([TEE proof ready]) --> ReadyToSubmit[ReadyToSubmit]
 
-    AwaitingProof -->|succeeded| ReadyToSubmit[ReadyToSubmit]
-    AwaitingProof -->|failed| NeedsRetry[NeedsRetry]
+    AwaitingProof -->|success| ReadyToSubmit
+    AwaitingProof -->|failure| NeedsRetry[NeedsRetry]
 
-    NeedsRetry -->|prove_block accepted| AwaitingProof
-    NeedsRetry -->|retries exhausted| Stop([stop tracking])
+    NeedsRetry -->|retry accepted| AwaitingProof
+    NeedsRetry -->|exhausted/no fallback| Dropped[Dropped]
 
-    ReadyToSubmit -->|confirmed or stale| Stop
-    ReadyToSubmit -->|TEE fallback| NeedsRetry
+    ReadyToSubmit -->|submitted/stale| Dropped
+    ReadyToSubmit -->|TEE tx failed| NeedsRetry
 ```
 
 ZK proofs are polled from the proving service until the job succeeds, fails, or remains pending.
 Successful ZK receipts are prefixed with the ZK proof-type byte before submission. Failed proof jobs
-are retried up to three times. A proof that remains pending, or a transaction failure without ZK
-fallback, leaves the proof in its current phase until the next tick. A pending proof causes no
-contract reads for that game on that tick.
+are retried up to three times. A TEE proof enters `ReadyToSubmit` immediately after it is obtained;
+if its transaction fails, the challenger switches to the pre-built ZK fallback request when one is
+available. A proof that remains pending, a failed ZK transaction, or a failed `prove_block` retry
+leaves the proof in its current phase until the next tick. A pending proof causes no contract reads
+for that game on that tick.
 
 ## Bond Claiming
 
