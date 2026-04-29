@@ -164,15 +164,17 @@ Each pending proof is keyed by game address and tracks:
 The phase machine is:
 
 ```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> AwaitingProof
-    AwaitingProof --> ReadyToSubmit: succeeded
-    AwaitingProof --> NeedsRetry: failed
-    NeedsRetry --> AwaitingProof: prove_block accepted
-    NeedsRetry --> [*]: retries exhausted
-    ReadyToSubmit --> [*]: confirmed or stale
-    ReadyToSubmit --> NeedsRetry: TEE fallback
+flowchart TB
+    Start([new pending proof]) --> AwaitingProof[AwaitingProof]
+
+    AwaitingProof -->|succeeded| ReadyToSubmit[ReadyToSubmit]
+    AwaitingProof -->|failed| NeedsRetry[NeedsRetry]
+
+    NeedsRetry -->|prove_block accepted| AwaitingProof
+    NeedsRetry -->|retries exhausted| Stop([stop tracking])
+
+    ReadyToSubmit -->|confirmed or stale| Stop
+    ReadyToSubmit -->|TEE fallback| NeedsRetry
 ```
 
 ZK proofs are polled from the proving service until the job succeeds, fails, or remains pending.
