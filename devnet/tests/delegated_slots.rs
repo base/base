@@ -132,39 +132,59 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
             sleep(BLOCK_POLL_INTERVAL).await;
         }
     })
-    .await??;
+    .await
+    .map_err(|_| eyre::eyre!("client did not see 0xef0100 delegation code after 30s"))??;
 
     // --- Step 2: send 4 inflight transactions from the now-delegated account ---
+    // Pre-sign all transactions before submitting any. Signing takes ~1ms per tx;
+    // if done inline the 2s block timer could fire between sends and include an
+    // earlier tx, reducing the simultaneous inflight count below 4 and letting the
+    // test pass even with a limit of 1.
     let base_nonce = client_provider.get_transaction_count(sender).await?;
-
     let recipient: Address = "0x000000000000000000000000000000000000dEaD".parse()?;
-    let mut tx_hashes = Vec::new();
-    for i in 0..4u64 {
-        let tx_request = BaseTransactionRequest::default()
-            .from(sender)
-            .to(recipient)
-            .value(U256::from(1u64))
-            .transaction_type(2)
-            .with_gas_limit(21_000)
-            .with_max_fee_per_gas(1_000_000_000)
-            .with_max_priority_fee_per_gas(0)
-            .with_chain_id(L2_CHAIN_ID)
-            .with_nonce(base_nonce + i);
 
-        let tx =
-            tx_request.build_typed_tx().map_err(|e| eyre::eyre!("invalid tx request: {e:?}"))?;
-        let sig = signer.sign_hash_sync(&tx.signature_hash())?;
-        let signed = tx.into_signed(sig);
-        let hash = *signed.hash();
-        let raw: alloy_primitives::Bytes = signed.encoded_2718().into();
+    let raw_txs: Vec<alloy_primitives::Bytes> = (0..4u64)
+        .map(|i| -> Result<alloy_primitives::Bytes> {
+            let tx_request = BaseTransactionRequest::default()
+                .from(sender)
+                .to(recipient)
+                .value(U256::from(1u64))
+                .transaction_type(2)
+                .with_gas_limit(21_000)
+                .with_max_fee_per_gas(1_000_000_000)
+                .with_max_priority_fee_per_gas(0)
+                .with_chain_id(L2_CHAIN_ID)
+                .with_nonce(base_nonce + i);
+            let tx = tx_request
+                .build_typed_tx()
+                .map_err(|e| eyre::eyre!("invalid tx request: {e:?}"))?;
+            let sig = signer.sign_hash_sync(&tx.signature_hash())?;
+            Ok(tx.into_signed(sig).encoded_2718().into())
+        })
+        .collect::<Result<_>>()?;
 
-        let _ = client_provider
-            .send_raw_transaction(&raw)
-            .await
-            .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + i, e))?;
-
-        tx_hashes.push(hash);
-    }
+    // Submit all 4 concurrently so they arrive at the pool at the same time.
+    // This prevents the scenario where sequential sends allow a block to be
+    // produced between requests, including tx N before tx N+1 is submitted and
+    // making a limit-of-1 pool appear to accept all four.
+    tokio::try_join!(
+        async {
+            client_provider.send_raw_transaction(&raw_txs[0]).await
+                .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce, e))
+        },
+        async {
+            client_provider.send_raw_transaction(&raw_txs[1]).await
+                .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 1, e))
+        },
+        async {
+            client_provider.send_raw_transaction(&raw_txs[2]).await
+                .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 2, e))
+        },
+        async {
+            client_provider.send_raw_transaction(&raw_txs[3]).await
+                .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 3, e))
+        },
+    )?;
 
     Ok(())
 }

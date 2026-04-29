@@ -50,7 +50,7 @@ pub struct InProcessBuilderConfig {
     /// Optional fixed Flashblocks port (uses random if None).
     pub flashblocks_port: Option<u16>,
     /// Maximum number of inflight transactions per delegated (EIP-7702) sender.
-    /// Defaults to 1 if not set.
+    /// Set to 0 to block all delegated-account transactions.
     pub max_inflight_delegated_slots: usize,
 }
 

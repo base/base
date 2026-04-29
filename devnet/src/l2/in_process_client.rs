@@ -54,7 +54,7 @@ pub struct InProcessClientConfig {
     /// When set, the client will forward transactions to builder RPC endpoints.
     pub tx_forwarding_config: Option<TxForwardingConfig>,
     /// Maximum number of inflight transactions per delegated (EIP-7702) sender.
-    /// Defaults to 1 if not set.
+    /// Set to 0 to block all delegated-account transactions.
     pub max_inflight_delegated_slots: usize,
 }
 
