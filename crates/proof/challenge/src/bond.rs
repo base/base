@@ -93,6 +93,12 @@ pub struct TrackedGame {
     /// Cached `AnchorStateRegistry` address for this game. Read from the
     /// game contract on first use and reused thereafter (immutable per game).
     pub cached_asr_address: Option<Address>,
+    /// Cached L2 block number for this game. Read from immutable game info
+    /// once the game is finalized and reused for retries.
+    pub cached_l2_block_number: Option<u64>,
+    /// Monotonic timestamp for games whose bond lifecycle is complete but
+    /// which remain tracked until the anchor update completes.
+    pub anchor_update_retained_since: Option<Duration>,
 }
 
 /// Manages the bond claim lifecycle for dispute games.
@@ -220,6 +226,8 @@ impl<C: Clock> BondManager<C> {
                 anchor_update_complete: false,
                 cached_status: None,
                 cached_asr_address: None,
+                cached_l2_block_number: None,
+                anchor_update_retained_since: None,
             },
         );
         ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
@@ -429,6 +437,8 @@ impl<C: Clock> BondManager<C> {
                     anchor_update_complete: false,
                     cached_status: None,
                     cached_asr_address: None,
+                    cached_l2_block_number: None,
+                    anchor_update_retained_since: None,
                 },
             );
         }
@@ -548,6 +558,8 @@ impl<C: Clock> BondManager<C> {
                     anchor_update_complete: false,
                     cached_status: None,
                     cached_asr_address: None,
+                    cached_l2_block_number: None,
+                    anchor_update_retained_since: None,
                 },
             );
             discovered += 1;
@@ -590,6 +602,7 @@ impl<C: Clock> BondManager<C> {
 
         let addresses: Vec<Address> = self.tracked.keys().copied().collect();
         let mut removed = Vec::new();
+        let mut retained_count_changed = false;
 
         for game_address in addresses {
             match self.advance_game(game_address, verifier_client, submitter).await {
@@ -602,11 +615,27 @@ impl<C: Clock> BondManager<C> {
                     if anchor_update_complete {
                         removed.push((game_address, reason));
                     } else {
-                        debug!(
-                            game = %game_address,
-                            reason = ?reason,
-                            "keeping game tracked until anchor update completes"
-                        );
+                        let now = self.clock.now();
+                        if let Some(game) = self.tracked.get_mut(&game_address) {
+                            if let Some(retained_since) = game.anchor_update_retained_since {
+                                debug!(
+                                    game = %game_address,
+                                    reason = ?reason,
+                                    retained_secs = now.saturating_sub(retained_since).as_secs(),
+                                    "keeping game tracked until anchor update completes"
+                                );
+                            } else {
+                                game.anchor_update_retained_since = Some(now);
+                                retained_count_changed = true;
+                                warn!(
+                                    game = %game_address,
+                                    reason = ?reason,
+                                    "retaining completed bond game until anchor update completes"
+                                );
+                                ChallengerMetrics::anchor_update_retained_games_total()
+                                    .increment(1);
+                            }
+                        }
                     }
                 }
                 Ok(None) => {
@@ -636,6 +665,14 @@ impl<C: Clock> BondManager<C> {
 
         if !removed.is_empty() {
             ChallengerMetrics::bonds_tracked().set(self.tracked.len() as f64);
+        }
+        if retained_count_changed || !removed.is_empty() {
+            let retained = self
+                .tracked
+                .values()
+                .filter(|game| game.anchor_update_retained_since.is_some())
+                .count();
+            ChallengerMetrics::anchor_update_retained_games().set(retained as f64);
         }
     }
 
@@ -992,7 +1029,7 @@ impl<C: Clock> BondManager<C> {
     /// - The game is past the `NeedsResolve` phase (already resolved).
     /// - The game has not already had a successful anchor update.
     /// - The game is `DEFENDER_WINS`.
-    /// - The game is neither blacklisted nor retired in the registry.
+    /// - The game is not blacklisted, retired, or unrespected in the registry.
     ///
     /// The ASR address is read from the game contract on first use and
     /// cached on [`TrackedGame`] (it is immutable per game).
@@ -1003,12 +1040,13 @@ impl<C: Clock> BondManager<C> {
     /// Premature or ineligible calls revert harmlessly and are retried on
     /// the next tick.
     ///
-    /// Blacklisted and retired games are filtered out client-side because
-    /// they are *permanent* failure modes: `setAnchorState()` will revert
-    /// forever with `AnchorStateRegistry_InvalidAnchorGame()` (selector
-    /// `0x47ad367a`), which would otherwise spam the bond tx submitter
-    /// every poll tick. Other revert causes (airgap delay not yet elapsed,
-    /// stale L2 height, paused) are transient and continue to be retried.
+    /// Blacklisted, retired, and unrespected games are filtered out
+    /// client-side because they are *permanent* failure modes:
+    /// `setAnchorState()` will revert forever with
+    /// `AnchorStateRegistry_InvalidAnchorGame()` (selector `0x47ad367a`),
+    /// which would otherwise spam the bond tx submitter every poll tick.
+    /// Other revert causes (airgap delay not yet elapsed, paused) are
+    /// transient and continue to be retried.
     async fn try_anchor_update(
         &mut self,
         game_address: Address,
@@ -1083,21 +1121,21 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
-        // Both flags are terminal — once true, always true — so we mark the
-        // game complete to suppress the guaranteed revert on every poll tick.
-        // A read failure is treated as transient: return without setting the
-        // flag so the check is retried.
+        // These flags are terminal, so a permanently ineligible game can be
+        // marked complete before fetching transient preflight state.
         match futures::try_join!(
             verifier_client.is_game_blacklisted(asr_address, game_address),
             verifier_client.is_game_retired(asr_address, game_address),
+            verifier_client.is_game_respected(asr_address, game_address),
         ) {
-            Ok((blacklisted, retired)) => {
-                if blacklisted || retired {
+            Ok((blacklisted, retired, respected)) => {
+                if blacklisted || retired || !respected {
                     info!(
                         game = %game_address,
                         asr = %asr_address,
                         blacklisted,
                         retired,
+                        respected,
                         "skipping anchor state update — game is permanently ineligible"
                     );
                     if let Some(g) = self.tracked.get_mut(&game_address) {
@@ -1121,37 +1159,18 @@ impl<C: Clock> BondManager<C> {
             }
         }
 
-        let (respected, finalized, anchor_root, game_info) = match futures::try_join!(
-            verifier_client.is_game_respected(asr_address, game_address),
-            verifier_client.is_game_finalized(asr_address, game_address),
-            verifier_client.anchor_root(asr_address),
-            verifier_client.game_info(game_address),
-        ) {
-            Ok(values) => values,
+        let finalized = match verifier_client.is_game_finalized(asr_address, game_address).await {
+            Ok(finalized) => finalized,
             Err(e) => {
                 debug!(
                     game = %game_address,
                     asr = %asr_address,
                     error = %e,
-                    "failed to read anchor preflight state, will retry"
+                    "failed to read anchor finalization state, will retry"
                 );
                 return;
             }
         };
-
-        if !respected {
-            info!(
-                game = %game_address,
-                asr = %asr_address,
-                "skipping anchor state update because game is not respected"
-            );
-            if let Some(g) = self.tracked.get_mut(&game_address) {
-                g.anchor_update_complete = true;
-            }
-            ChallengerMetrics::anchor_update_tx_outcome_total(ChallengerMetrics::STATUS_SKIPPED)
-                .increment(1);
-            return;
-        }
 
         if !finalized {
             debug!(
@@ -1162,11 +1181,50 @@ impl<C: Clock> BondManager<C> {
             return;
         }
 
-        if game_info.l2_block_number <= anchor_root.l2_block_number {
+        let cached_l2_block_number =
+            self.tracked.get(&game_address).and_then(|game| game.cached_l2_block_number);
+        let (anchor_root, game_l2_block_number) =
+            if let Some(l2_block_number) = cached_l2_block_number {
+                match verifier_client.anchor_root(asr_address).await {
+                    Ok(anchor_root) => (anchor_root, l2_block_number),
+                    Err(e) => {
+                        debug!(
+                            game = %game_address,
+                            asr = %asr_address,
+                            error = %e,
+                            "failed to read anchor root, will retry"
+                        );
+                        return;
+                    }
+                }
+            } else {
+                match futures::try_join!(
+                    verifier_client.anchor_root(asr_address),
+                    verifier_client.game_info(game_address),
+                ) {
+                    Ok((anchor_root, game_info)) => {
+                        if let Some(game) = self.tracked.get_mut(&game_address) {
+                            game.cached_l2_block_number = Some(game_info.l2_block_number);
+                        }
+                        (anchor_root, game_info.l2_block_number)
+                    }
+                    Err(e) => {
+                        debug!(
+                            game = %game_address,
+                            asr = %asr_address,
+                            error = %e,
+                            "failed to read anchor preflight state, will retry"
+                        );
+                        return;
+                    }
+                }
+            };
+
+        if game_l2_block_number <= anchor_root.l2_block_number {
             info!(
                 game = %game_address,
                 asr = %asr_address,
-                game_l2_block = game_info.l2_block_number,
+                game_l2_block = game_l2_block_number,
                 anchor_l2_block = anchor_root.l2_block_number,
                 "skipping stale anchor state update"
             );
@@ -1198,7 +1256,7 @@ impl<C: Clock> BondManager<C> {
                 // After a successful setAnchorState(game), this game IS the new
                 // anchor (the registry enforces monotonicity on the call), so
                 // its L2 block is the gauge value.
-                ChallengerMetrics::anchor_l2_block_number().set(game_info.l2_block_number as f64);
+                ChallengerMetrics::anchor_l2_block_number().set(game_l2_block_number as f64);
             }
             Err(e) => {
                 debug!(
@@ -1365,6 +1423,8 @@ mod tests {
                 anchor_update_complete: false,
                 cached_status: None,
                 cached_asr_address: None,
+                cached_l2_block_number: None,
+                anchor_update_retained_since: None,
             },
         );
 
@@ -1399,6 +1459,8 @@ mod tests {
                 anchor_update_complete: false,
                 cached_status: None,
                 cached_asr_address: None,
+                cached_l2_block_number: None,
+                anchor_update_retained_since: None,
             },
         );
 
@@ -2061,6 +2123,32 @@ mod tests {
         assert!(
             mgr.tracked.get(&game).unwrap().anchor_update_complete,
             "retired game should be marked complete (won't retry)"
+        );
+    }
+
+    #[tokio::test]
+    async fn anchor_update_skipped_for_unrespected_game() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let asr = Address::repeat_byte(0xAA);
+        let game = addr(0);
+
+        let mut mgr = make_manager(vec![claim_addr]);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::NeedsUnlock);
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.anchor_state_registry = asr;
+        state.is_respected = false;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![]);
+        mgr.try_anchor_update(game, &*verifier, &submitter).await;
+
+        assert!(submitter.recorded_calls().is_empty(), "no tx should be sent for unrespected game");
+        assert!(
+            mgr.tracked.get(&game).unwrap().anchor_update_complete,
+            "unrespected game should be marked complete (won't retry)"
         );
     }
 

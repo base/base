@@ -108,6 +108,16 @@ base_metrics::define_metrics! {
     anchor_update_tx_outcome_total: counter,
 
     #[describe(
+        "Number of otherwise-removable games currently retained while awaiting anchor state update"
+    )]
+    anchor_update_retained_games: gauge,
+
+    #[describe(
+        "Total games retained past bond lifecycle completion while awaiting anchor state update"
+    )]
+    anchor_update_retained_games_total: counter,
+
+    #[describe(
         "L2 block number of the most recent anchor state successfully advanced by this challenger. \
          Monotonically increases as the challenger drives the anchor forward; absent until the \
          first successful setAnchorState() observation."
