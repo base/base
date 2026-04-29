@@ -51,7 +51,8 @@ pub struct L2StackConfig {
     /// Number of L1 blocks to keep distance from the L1 head for the client (validator)
     /// consensus node's derivation pipeline.
     pub verifier_l1_confs: u64,
-    /// Maximum number of inflight transactions per delegated (EIP-7702) sender in the builder.
+    /// Maximum number of inflight transactions per delegated (EIP-7702) sender.
+    /// Propagated to both the builder and the client node.
     pub max_inflight_delegated_slots: usize,
 }
 

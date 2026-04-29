@@ -47,7 +47,8 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
             sleep(BLOCK_POLL_INTERVAL).await;
         }
     })
-    .await??;
+    .await
+    .map_err(|_| eyre::eyre!("Base Azul (EIP-7702) did not activate within 120s"))??;
 
     let private_key_hex = format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice()));
     let signer: PrivateKeySigner = private_key_hex.parse()?;
@@ -62,7 +63,8 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
             sleep(BLOCK_POLL_INTERVAL).await;
         }
     })
-    .await??;
+    .await
+    .map_err(|_| eyre::eyre!("sender {sender} had no balance on builder after 30s"))??;
 
     // --- Step 1: delegate the EOA via EIP-7702 ---
     // Delegate to a non-zero address — delegating to Address::ZERO is a reset
@@ -155,9 +157,8 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
                 .with_max_priority_fee_per_gas(0)
                 .with_chain_id(L2_CHAIN_ID)
                 .with_nonce(base_nonce + i);
-            let tx = tx_request
-                .build_typed_tx()
-                .map_err(|e| eyre::eyre!("invalid tx request: {e:?}"))?;
+            let tx =
+                tx_request.build_typed_tx().map_err(|e| eyre::eyre!("invalid tx request: {e}"))?;
             let sig = signer.sign_hash_sync(&tx.signature_hash())?;
             Ok(tx.into_signed(sig).encoded_2718().into())
         })
@@ -169,19 +170,27 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     // making a limit-of-1 pool appear to accept all four.
     tokio::try_join!(
         async {
-            client_provider.send_raw_transaction(&raw_txs[0]).await
+            client_provider
+                .send_raw_transaction(&raw_txs[0])
+                .await
                 .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce, e))
         },
         async {
-            client_provider.send_raw_transaction(&raw_txs[1]).await
+            client_provider
+                .send_raw_transaction(&raw_txs[1])
+                .await
                 .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 1, e))
         },
         async {
-            client_provider.send_raw_transaction(&raw_txs[2]).await
+            client_provider
+                .send_raw_transaction(&raw_txs[2])
+                .await
                 .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 2, e))
         },
         async {
-            client_provider.send_raw_transaction(&raw_txs[3]).await
+            client_provider
+                .send_raw_transaction(&raw_txs[3])
+                .await
                 .map_err(|e| eyre::eyre!("tx nonce={} rejected: {}", base_nonce + 3, e))
         },
     )?;
