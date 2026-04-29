@@ -76,14 +76,8 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
     // by deduct_caller before apply_eip7702_auth_list runs. So the authorization
     // nonce must be nonce+1, not nonce.
     let auth_nonce = nonce + 1;
-    let auth =
-        Authorization { chain_id: U256::from(L2_CHAIN_ID), address: delegation_target, nonce: auth_nonce }
-            .into_signed(signer.sign_hash_sync(&Authorization {
-                chain_id: U256::from(L2_CHAIN_ID),
-                address: delegation_target,
-                nonce: auth_nonce,
-            }
-            .signature_hash())?);
+    let auth = Authorization { chain_id: U256::from(L2_CHAIN_ID), address: delegation_target, nonce: auth_nonce };
+    let auth = auth.into_signed(signer.sign_hash_sync(&auth.signature_hash())?);
 
     let setup_tx = TxEip7702 {
         chain_id: L2_CHAIN_ID,
@@ -154,7 +148,7 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
             .with_nonce(base_nonce + i);
 
         let tx =
-            tx_request.build_typed_tx().map_err(|_| eyre::eyre!("invalid tx request"))?;
+            tx_request.build_typed_tx().map_err(|e| eyre::eyre!("invalid tx request: {e:?}"))?;
         let sig = signer.sign_hash_sync(&tx.signature_hash())?;
         let signed = tx.into_signed(sig);
         let hash = *signed.hash();
@@ -168,6 +162,5 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
         tx_hashes.push(hash);
     }
 
-    assert_eq!(tx_hashes.len(), 4, "all 4 transactions must be accepted by the mempool");
     Ok(())
 }

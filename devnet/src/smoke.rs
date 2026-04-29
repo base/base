@@ -122,7 +122,7 @@ impl Devnet {
 }
 
 /// Builder for creating a new `Devnet`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DevnetBuilder {
     l1_chain_id: Option<u64>,
     l2_chain_id: Option<u64>,
@@ -133,6 +133,24 @@ pub struct DevnetBuilder {
     verifier_l1_confs: u64,
     max_inflight_delegated_slots: usize,
     base_azul_block: Option<u64>,
+}
+
+impl Default for DevnetBuilder {
+    fn default() -> Self {
+        Self {
+            // Default to 1 so devnet tests without an explicit setting do not
+            // block all delegated-account transactions (usize default = 0).
+            max_inflight_delegated_slots: 1,
+            l1_chain_id: None,
+            l2_chain_id: None,
+            slot_duration: None,
+            output_dir: None,
+            stable_config: None,
+            tx_forwarding_config: None,
+            verifier_l1_confs: 0,
+            base_azul_block: None,
+        }
+    }
 }
 
 impl DevnetBuilder {
