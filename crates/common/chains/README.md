@@ -6,8 +6,7 @@ Single source of truth for Base chain configuration and network upgrade bindings
 
 Defines `BaseChainConfig` — a compile-time struct containing all chain parameters (chain IDs,
 upgrade timestamps, genesis data, base fee params, contract addresses, and embedded genesis JSON).
-Const instances `BASE_MAINNET`, `BASE_SEPOLIA`, and `BASE_DEVNET_0_SEPOLIA_DEV_0` eliminate
-duplicated configuration across the workspace.
+Const chain configuration instances eliminate duplicated configuration across the workspace.
 
 Also provides the `BaseUpgrade` enum, `BaseUpgrades` trait, and `BaseChainUpgrades` for the
 Base upgrade sequence (Bedrock, Canyon, Ecotone, Fjord, Granite, Holocene, Isthmus, Jovian, Azul).

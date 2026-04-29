@@ -89,10 +89,6 @@ pub static BASE_SEPOLIA_UPGRADES: Lazy<ChainHardforks> =
 pub static BASE_MAINNET_UPGRADES: Lazy<ChainHardforks> =
     Lazy::new(|| ChainUpgrades::mainnet().to_chain_hardforks());
 
-/// Base devnet-0-sepolia-dev-0 chain upgrades.
-pub static BASE_DEVNET_0_SEPOLIA_DEV_0_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| ChainUpgrades::base_devnet_0_sepolia_dev_0().to_chain_hardforks());
-
 /// Base Zeronet chain upgrades.
 pub static BASE_ZERONET_UPGRADES: Lazy<ChainHardforks> =
     Lazy::new(|| ChainUpgrades::zeronet().to_chain_hardforks());

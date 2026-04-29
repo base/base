@@ -347,10 +347,6 @@ mod tests {
             b256!("12e9c45f19f9817c6d4385fad29e7a70c355502cf0883e76a9a7e478a85d1360"),
         );
         assert_eq!(
-            config_hash_for_chain(11763072).unwrap(),
-            b256!("4600cdaa81262bf5f124bd9276f605264e2ded951e34923bc838e81c442f0fa4"),
-        );
-        assert_eq!(
             config_hash_for_chain(1337).unwrap(),
             b256!("1bb15c380e7cf5cfd303807cc1dff6cd5275a6facc7628091d8b3a7ab6d631b1"),
         );

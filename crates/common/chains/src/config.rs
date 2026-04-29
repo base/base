@@ -118,11 +118,6 @@ impl ChainConfig {
         &SEPOLIA
     }
 
-    /// Base alpha (devnet-0-sepolia-dev-0) chain configuration.
-    pub const fn alpha() -> &'static Self {
-        &ALPHA
-    }
-
     /// Local dev chain configuration (all forks active at genesis).
     pub const fn devnet() -> &'static Self {
         &DEVNET
@@ -134,8 +129,8 @@ impl ChainConfig {
     }
 
     /// Returns all known chain configurations, including devnet.
-    pub const fn all() -> [&'static Self; 5] {
-        [&MAINNET, &SEPOLIA, &ALPHA, &DEVNET, &ZERONET]
+    pub const fn all() -> [&'static Self; 4] {
+        [&MAINNET, &SEPOLIA, &DEVNET, &ZERONET]
     }
 
     /// Looks up a chain config by L2 chain ID.
@@ -143,7 +138,6 @@ impl ChainConfig {
         match id {
             8453 => Some(&MAINNET),
             84532 => Some(&SEPOLIA),
-            11763072 => Some(&ALPHA),
             763360 => Some(&ZERONET),
             _ => None,
         }
@@ -365,56 +359,6 @@ const SEPOLIA: ChainConfig = ChainConfig {
     ],
 
     genesis_json: include_str!("../res/genesis/sepolia_base.json"),
-};
-
-const ALPHA: ChainConfig = ChainConfig {
-    chain_id: 11763072,
-    l1_chain_id: 11155111,
-
-    block_time: 2,
-    seq_window_size: 3600,
-    max_sequencer_drift: 600,
-    channel_timeout: 300,
-
-    bedrock_block: 0,
-    regolith_timestamp: 0,
-    canyon_timestamp: 1_698_436_800,
-    delta_timestamp: 1_706_555_000,
-    ecotone_timestamp: 1_706_634_000,
-    fjord_timestamp: 1_715_961_600,
-    granite_timestamp: 1_723_046_400,
-    holocene_timestamp: 1_731_682_800,
-    pectra_blob_schedule_timestamp: Some(1_742_486_400),
-    isthmus_timestamp: 1_744_300_800,
-    jovian_timestamp: 1_762_185_600,
-    azul_timestamp: Some(1_774_890_000),
-
-    genesis_l1_hash: b256!("86252c512dc5bd7201d0532b31d50696ba84344a7cda545e04a98073a8e13d87"),
-    genesis_l1_number: 4_344_216,
-    genesis_l2_hash: b256!("1ab91449a7c65b8cd6c06f13e2e7ea2d10b6f9cbf5def79f362f2e7e501d2928"),
-    genesis_l2_number: 0,
-    genesis_l2_time: 1_695_433_056,
-    genesis_batcher_address: address!("212dd524932bc43478688f91045f2682913ad8ee"),
-    genesis_overhead: uint!(0x834_U256),
-    genesis_scalar: uint!(0xf4240_U256),
-    genesis_gas_limit: 25_000_000,
-
-    eip1559_elasticity: 6,
-    eip1559_denominator: 50,
-    eip1559_denominator_canyon: 250,
-
-    batch_inbox_address: address!("ff00000000000000000000000000000011763072"),
-    deposit_contract_address: address!("579c82a835b884336b632eebecc78fa08d3291ec"),
-    system_config_address: address!("7f67dc4959cb3e532b10a99f41bdd906c46fdfde"),
-    protocol_versions_address: address!("252cbe9517f731c618961d890d534183822dcc8d"),
-
-    unsafe_block_signer: None,
-
-    max_gas_limit: 25_000_000,
-
-    bootnodes: &[],
-
-    genesis_json: include_str!("../res/genesis/devnet_0_sepolia_dev_0_base.json"),
 };
 
 const DEVNET: ChainConfig = ChainConfig {

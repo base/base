@@ -13,9 +13,6 @@ extern crate alloc;
 mod base;
 pub use base::BASE_MAINNET;
 
-mod base_devnet_0_sepolia_dev_0;
-pub use base_devnet_0_sepolia_dev_0::BASE_DEVNET_0_SEPOLIA_DEV_0;
-
 mod base_zeronet;
 pub use base_zeronet::BASE_ZERONET;
 
@@ -33,8 +30,8 @@ pub use dev::BASE_DEV;
 
 mod hardforks;
 pub use hardforks::{
-    BASE_DEVNET_0_SEPOLIA_DEV_0_UPGRADES, BASE_MAINNET_UPGRADES, BASE_SEPOLIA_UPGRADES,
-    BASE_ZERONET_UPGRADES, ChainUpgradesExt, DEV_UPGRADES,
+    BASE_MAINNET_UPGRADES, BASE_SEPOLIA_UPGRADES, BASE_ZERONET_UPGRADES, ChainUpgradesExt,
+    DEV_UPGRADES,
 };
 
 mod spec;

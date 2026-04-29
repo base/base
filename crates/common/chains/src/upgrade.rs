@@ -70,11 +70,6 @@ impl BaseUpgrade {
         Self::forks_for(ChainConfig::devnet())
     }
 
-    /// Base devnet-0-sepolia-dev-0 list of upgrades.
-    pub const fn base_devnet_0_sepolia_dev_0() -> [(Self, ForkCondition); 10] {
-        Self::forks_for(ChainConfig::alpha())
-    }
-
     /// Base Zeronet list of upgrades.
     pub const fn zeronet() -> [(Self, ForkCondition); 10] {
         Self::forks_for(ChainConfig::zeronet())

@@ -103,8 +103,8 @@ fn all_chains() -> [ChainUpgrades; 4] {
     [
         ChainUpgrades {
             display_name: "Devnet",
-            rpc: user_config_rpc("alpha").or_else(|| user_config_rpc("devnet")),
-            specs: specs_from_config(ChainConfig::alpha()),
+            rpc: user_config_rpc("devnet"),
+            specs: specs_from_config(ChainConfig::devnet()),
         },
         ChainUpgrades {
             display_name: "Zeronet",
