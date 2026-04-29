@@ -107,7 +107,6 @@ pub struct SetupContainer {
     l2_chain_id: u64,
     slot_duration: u64,
     network_name: Option<String>,
-    base_azul_block: Option<u64>,
 }
 
 impl SetupContainer {
@@ -119,7 +118,6 @@ impl SetupContainer {
             l2_chain_id: 84538453,
             slot_duration: 2,
             network_name: None,
-            base_azul_block: None,
         }
     }
 
@@ -144,14 +142,6 @@ impl SetupContainer {
     /// Sets the Docker network name.
     pub fn with_network_name(mut self, network_name: impl Into<String>) -> Self {
         self.network_name = Some(network_name.into());
-        self
-    }
-
-    /// Sets the L2 block at which Base Azul (EIP-7702 / Prague) activates.
-    /// When set, `L2_BASE_AZUL_BLOCK` is passed to the setup container so the
-    /// genesis is patched with the corresponding `osakaTime`.
-    pub const fn with_base_azul_block(mut self, block: u64) -> Self {
-        self.base_azul_block = Some(block);
         self
     }
 
@@ -208,8 +198,10 @@ impl SetupContainer {
 
         let deployer_key = format!("0x{}", hex::encode(DEPLOYER.private_key.as_slice()));
 
-        let mut image = GenericImage::new("devnet-setup", "local")
-            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
+        let image = GenericImage::new("devnet-setup", "local")
+            .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)));
+
+        let _container = image
             .with_network(net)
             .with_startup_timeout(Duration::from_secs(DEPLOY_TIMEOUT_SECS))
             .with_env_var("OUTPUT_DIR", "/output/l2")
@@ -228,13 +220,9 @@ impl SetupContainer {
             .with_env_var("BUILDER_ENODE_ID", BUILDER_ENODE_ID)
             .with_mount(Mount::bind_mount(l2_output_mount, "/output/l2"))
             .with_mount(Mount::bind_mount(shared_mount, "/shared"))
-            .with_cmd(["setup-l2.sh"]);
-
-        if let Some(block) = self.base_azul_block {
-            image = image.with_env_var("L2_BASE_AZUL_BLOCK", block.to_string());
-        }
-
-        let _container = image.start().wrap_err("Failed to run setup-l2.sh")?;
+            .with_cmd(["setup-l2.sh"])
+            .start()
+            .wrap_err("Failed to run setup-l2.sh")?;
 
         ensure!(
             self.output_dir.join("l2/genesis.json").exists(),

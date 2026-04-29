@@ -15,8 +15,6 @@ use eyre::Result;
 use tokio::time::{sleep, timeout};
 
 const L2_CHAIN_ID: u64 = 84538453;
-// The devnet activates Base Azul (Prague/EIP-7702) at block 20.
-const BASE_AZUL_BLOCK: u64 = 20;
 const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Verifies that a delegated (EIP-7702) account can have 4 inflight transactions
@@ -31,24 +29,11 @@ async fn test_delegated_account_multiple_inflight_txs() -> Result<()> {
         .with_l1_chain_id(1337)
         .with_l2_chain_id(L2_CHAIN_ID)
         .with_max_inflight_delegated_slots(4)
-        .with_base_azul_block(BASE_AZUL_BLOCK)
         .build()
         .await?;
 
     let builder_provider = devnet.l2_builder_provider()?;
     let client_provider = devnet.l2_client_provider()?;
-
-    // Wait until EIP-7702 is active.
-    timeout(Duration::from_secs(120), async {
-        loop {
-            if builder_provider.get_block_number().await? >= BASE_AZUL_BLOCK {
-                return Ok::<_, eyre::Error>(());
-            }
-            sleep(BLOCK_POLL_INTERVAL).await;
-        }
-    })
-    .await
-    .map_err(|_| eyre::eyre!("Base Azul (EIP-7702) did not activate within 120s"))??;
 
     let private_key_hex = format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice()));
     let signer: PrivateKeySigner = private_key_hex.parse()?;

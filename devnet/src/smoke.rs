@@ -132,7 +132,6 @@ pub struct DevnetBuilder {
     tx_forwarding_config: Option<TxForwardingConfig>,
     verifier_l1_confs: u64,
     max_inflight_delegated_slots: usize,
-    base_azul_block: Option<u64>,
 }
 
 impl Default for DevnetBuilder {
@@ -148,7 +147,6 @@ impl Default for DevnetBuilder {
             stable_config: None,
             tx_forwarding_config: None,
             verifier_l1_confs: 0,
-            base_azul_block: None,
         }
     }
 }
@@ -211,13 +209,6 @@ impl DevnetBuilder {
         self
     }
 
-    /// Sets the L2 block at which Base Azul (EIP-7702 / Prague) activates.
-    /// The genesis is patched so that `osakaTime` corresponds to this block number.
-    pub const fn with_base_azul_block(mut self, block: u64) -> Self {
-        self.base_azul_block = Some(block);
-        self
-    }
-
     /// Builds and starts the devnet.
     pub async fn build(self) -> Result<Devnet> {
         let l1_chain_id = self.l1_chain_id.unwrap_or(DEFAULT_L1_CHAIN_ID);
@@ -234,10 +225,6 @@ impl DevnetBuilder {
 
         if let Some(ref config) = self.stable_config {
             setup = setup.with_network_name(&config.network_name);
-        }
-
-        if let Some(block) = self.base_azul_block {
-            setup = setup.with_base_azul_block(block);
         }
 
         let l1_genesis = tokio::task::spawn_blocking({
