@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use base_cli_utils::{LogConfig, RuntimeManager};
+use base_proof_succinct_host_utils::fetcher::RPCConfig;
 use base_zk_client::prover_service_server::ProverServiceServer as ProtoProverServiceServer;
 use base_zk_db::{DatabaseConfig, ProofRequestRepo};
 use base_zk_outbox::{DatabaseOutboxReader, OutboxProcessor};
@@ -18,6 +19,7 @@ use http::header;
 use tonic::transport::Server;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing::info;
+use url::Url;
 
 base_cli_utils::define_log_args!("BASE_PROVER_ZK");
 base_cli_utils::define_metrics_args!("BASE_PROVER_ZK", 7301);
@@ -186,23 +188,15 @@ impl ZkArgs {
 
         info!(l1_url = %l1_url, l2_url = %l2_url, beacon_url = %beacon_url, "using RPC URLs");
 
-        // Set OP-Succinct environment variables required by the data fetcher.
-        // SAFETY: called before spawning any threads; the tokio runtime is
-        // single-threaded at this point so no concurrent reads can race.
-        unsafe {
-            std::env::set_var("L1_RPC", &l1_url);
-            std::env::set_var("L1_BEACON_RPC", &beacon_url);
-            std::env::set_var("L2_RPC", &l2_url);
-            std::env::set_var("L2_NODE_RPC", &self.base_consensus_address);
-        }
-
-        info!(
-            l1_rpc = %l1_url,
-            l1_beacon_rpc = %beacon_url,
-            l2_rpc = %l2_url,
-            l2_node_rpc = %self.base_consensus_address,
-            "set OP-Succinct RPC environment variables"
-        );
+        let rpc_config = RPCConfig {
+            l1_rpc: Url::parse(&l1_url).map_err(|e| eyre!("invalid L1 RPC URL: {e}"))?,
+            l1_beacon_rpc: Some(
+                Url::parse(&beacon_url).map_err(|e| eyre!("invalid beacon RPC URL: {e}"))?,
+            ),
+            l2_rpc: Url::parse(&l2_url).map_err(|e| eyre!("invalid L2 RPC URL: {e}"))?,
+            l2_node_rpc: Url::parse(&self.base_consensus_address)
+                .map_err(|e| eyre!("invalid L2 node RPC URL: {e}"))?,
+        };
 
         info!("computing range and aggregation verifying keys");
         let (range_pk, range_vk, agg_pk, agg_vk) =
@@ -221,7 +215,7 @@ impl ZkArgs {
             info!("SP1_PROVER=network: using OP-Succinct SP1 Network backend");
 
             let fetcher = Arc::new(
-                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new_with_rollup_config()
+                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
                     .await
                     .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
             );
@@ -279,10 +273,9 @@ impl ZkArgs {
         } else {
             info!("SP1_PROVER=cluster: using OP-Succinct cluster backend");
 
-            // Create OP-Succinct data fetcher and provider.
             info!("creating OP-Succinct data fetcher");
             let fetcher = Arc::new(
-                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new_with_rollup_config()
+                base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
                     .await
                     .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
             );
