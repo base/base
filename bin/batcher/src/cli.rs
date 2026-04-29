@@ -267,9 +267,15 @@ pub(crate) struct BatcherArgs {
 impl BatcherArgs {
     /// Convert CLI arguments into a [`BatcherConfig`].
     fn into_config(self) -> eyre::Result<BatcherConfig> {
+        let frame_size = match self.da_type {
+            base_batcher_encoder::DaType::Blob => self
+                .target_frame_size
+                .saturating_sub(base_batcher_encoder::EncoderConfig::BLOB_DERIVATION_PREFIX_SIZE),
+            base_batcher_encoder::DaType::Calldata => self.target_frame_size,
+        };
         let encoder_config = base_batcher_encoder::EncoderConfig {
-            target_frame_size: self.target_frame_size,
-            max_frame_size: self.target_frame_size,
+            target_frame_size: frame_size,
+            max_frame_size: frame_size,
             max_channel_duration: self.max_channel_duration,
             sub_safety_margin: self.sub_safety_margin,
             target_num_frames: self.target_num_frames,
@@ -394,11 +400,42 @@ mod tests {
     }
 
     #[test]
+    fn into_config_reserves_blob_derivation_prefix_from_target_frame_size() {
+        let cli = parse_cli(&[]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(
+            config.encoder_config.target_frame_size,
+            base_batcher_encoder::EncoderConfig::MAX_BLOB_FRAME_SIZE
+        );
+        assert_eq!(config.encoder_config.max_frame_size, config.encoder_config.target_frame_size);
+    }
+
+    #[test]
+    fn into_config_reserves_blob_prefix_for_explicit_target_frame_size() {
+        let cli = parse_cli(&["--target-frame-size", "130000"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.target_frame_size, 129_999);
+        assert_eq!(config.encoder_config.max_frame_size, 129_999);
+    }
+
+    #[test]
     fn into_config_accepts_calldata_da_mode() {
         let cli = parse_cli(&["--data-availability-type", "calldata"]);
         let config = cli.args.into_config().expect("config should build");
 
         assert_eq!(config.encoder_config.da_type, base_batcher_encoder::DaType::Calldata);
+    }
+
+    #[test]
+    fn into_config_does_not_reserve_blob_prefix_for_calldata_da_mode() {
+        let cli =
+            parse_cli(&["--data-availability-type", "calldata", "--target-frame-size", "130000"]);
+        let config = cli.args.into_config().expect("config should build");
+
+        assert_eq!(config.encoder_config.target_frame_size, 130_000);
+        assert_eq!(config.encoder_config.max_frame_size, 130_000);
     }
 
     #[test]

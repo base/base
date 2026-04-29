@@ -987,7 +987,7 @@ mod tests {
     fn test_da_backlog_counts_span_blocks_before_flush() {
         let config = EncoderConfig {
             batch_type: BatchType::Span,
-            target_frame_size: 130_044,
+            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
             max_channel_duration: 1000,
             ..EncoderConfig::default()
         };
@@ -1372,7 +1372,7 @@ mod tests {
         let config = EncoderConfig {
             batch_type: BatchType::Span,
             target_frame_size: 1,
-            max_frame_size: 130_044,
+            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
             ..EncoderConfig::default()
         };
         BatchEncoder::new(Arc::new(RollupConfig::default()), config)
@@ -1385,7 +1385,7 @@ mod tests {
     fn test_span_batch_accumulates_blocks_without_channel() {
         let config = EncoderConfig {
             batch_type: BatchType::Span,
-            target_frame_size: 130_044, // large: size won't trigger
+            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE, // large: size won't trigger
             max_channel_duration: 1000,
             ..EncoderConfig::default()
         };
@@ -1452,8 +1452,8 @@ mod tests {
         });
         let config = EncoderConfig {
             batch_type: BatchType::Span,
-            target_frame_size: 130_044,
-            max_frame_size: 130_044,
+            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
+            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
             max_channel_duration: 1000,
             ..EncoderConfig::default()
         };
@@ -1500,8 +1500,8 @@ mod tests {
     ) {
         let config = EncoderConfig {
             batch_type: BatchType::Span,
-            target_frame_size: 130_044, // large: size won't trigger
-            max_frame_size: 130_044,
+            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE, // large: size won't trigger
+            max_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE,
             max_channel_duration,
             sub_safety_margin,
             ..EncoderConfig::default()
@@ -1556,7 +1556,7 @@ mod tests {
     fn test_span_batch_reset_clears_span_state() {
         let config = EncoderConfig {
             batch_type: BatchType::Span,
-            target_frame_size: 130_044, // large: size won't trigger
+            target_frame_size: EncoderConfig::MAX_BLOB_FRAME_SIZE, // large: size won't trigger
             max_channel_duration: 1000,
             ..EncoderConfig::default()
         };
