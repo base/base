@@ -66,11 +66,21 @@ impl ProverServiceServer {
             })?;
         }
 
-        // Reject `intermediate_root_interval == 0`
-        if let Some(0) = prove_block_request.intermediate_root_interval {
-            return Err(Status::invalid_argument(
-                "Invalid intermediate_root_interval: must be greater than 0",
-            ));
+        if let Some(interval) = prove_block_request.intermediate_root_interval {
+            // Reject `intermediate_root_interval == 0`
+            if interval == 0 {
+                return Err(Status::invalid_argument(
+                    "Invalid intermediate_root_interval: must be greater than 0",
+                ));
+            }
+            // Reject misaligned ranges: `number_of_blocks_to_prove` must end on an
+            // intermediate-root boundary
+            if !prove_block_request.number_of_blocks_to_prove.is_multiple_of(interval) {
+                return Err(Status::invalid_argument(format!(
+                    "Invalid number_of_blocks_to_prove ({}): must be a multiple of intermediate_root_interval ({})",
+                    prove_block_request.number_of_blocks_to_prove, interval,
+                )));
+            }
         }
 
         let session_id = match prove_block_request.session_id {
