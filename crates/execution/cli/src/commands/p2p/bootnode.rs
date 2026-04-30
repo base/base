@@ -7,7 +7,7 @@ use clap::Parser;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
 use reth_discv4::{DiscoveryUpdate, Discv4, Discv4Config};
 use reth_discv5::{
-    Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, Discv5,
+    Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, DEFAULT_DISCOVERY_V5_PORT, Discv5,
     discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ProtocolIdentity},
 };
 use reth_net_nat::{NatResolver, external_addr_with};
@@ -164,6 +164,8 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     fn cmd(v4_addr: &str, v5_addr: &str) -> Command {
@@ -178,12 +180,28 @@ mod tests {
     }
 
     #[test]
-    fn discv4_config_builds() {
-        let _config = cmd("0.0.0.0:30301", "0.0.0.0:9200").discv4_config();
+    fn discv4_config_uses_command_nat_resolver() {
+        let mut command = cmd("0.0.0.0:30301", "0.0.0.0:9200");
+        command.nat = NatResolver::ExternalIp("192.0.2.1".parse().unwrap());
+
+        let config = command.discv4_config();
+
+        assert_eq!(config.external_ip_resolver, Some(command.nat));
     }
 
-    #[test]
-    fn discv5_config_builds() {
-        let _config = cmd("0.0.0.0:30301", "0.0.0.0:9200").discv5_config();
+    #[rstest]
+    #[case("0.0.0.0:30301", "0.0.0.0:9200")]
+    #[case("0.0.0.0:30303", "0.0.0.0:9000")]
+    #[case("127.0.0.1:10001", "127.0.0.1:10002")]
+    fn discv5_config_preserves_default_discovery_socket_and_sets_rlpx_socket(
+        #[case] v4_addr: &str,
+        #[case] v5_addr: &str,
+    ) {
+        let command = cmd(v4_addr, v5_addr);
+        let config = command.discv5_config();
+
+        assert_eq!(config.rlpx_socket(), &command.v5_addr);
+        assert_eq!(config.discovery_socket().ip(), command.v5_addr.ip());
+        assert_eq!(config.discovery_socket().port(), DEFAULT_DISCOVERY_V5_PORT);
     }
 }

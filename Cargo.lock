@@ -3973,6 +3973,7 @@ dependencies = [
  "reth-provider",
  "reth-rpc-server-types",
  "reth-tracing",
+ "rstest",
  "secp256k1 0.30.0",
  "tempfile",
  "tokio",
