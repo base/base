@@ -3676,6 +3676,7 @@ dependencies = [
  "libp2p",
  "libp2p-identity",
  "libp2p-stream",
+ "lru 0.16.4",
  "metrics",
  "multihash",
  "openssl",

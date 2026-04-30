@@ -1,6 +1,6 @@
 //! Gossipsub Config
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use libp2p::{
     connection_limits::ConnectionLimits,
@@ -59,6 +59,10 @@ const DOMAIN_INVALID_SNAPPY: [u8; 4] = [0x0, 0x0, 0x0, 0x0];
 
 /// Domain tag for valid snappy messages in gossip message IDs.
 const DOMAIN_VALID_SNAPPY: [u8; 4] = [0x1, 0x0, 0x0, 0x0];
+
+/// The default maximum number of peers to retain identify metadata for.
+pub const DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS: NonZeroUsize =
+    NonZeroUsize::new(1024).expect("default identify peerstore limit must be non-zero");
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Duration Constants
