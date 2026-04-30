@@ -5142,6 +5142,7 @@ dependencies = [
  "alloy-signer-local",
  "alloy-sol-types",
  "anyhow",
+ "base-proof-contracts",
  "base-proof-succinct-build-utils",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",

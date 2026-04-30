@@ -287,6 +287,8 @@ pub struct CreateProofRequest {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash for witness generation.
     pub l1_head: Option<String>,
+    /// Intermediate root interval for ZK proof generation.
+    pub intermediate_root_interval: Option<u64>,
 }
 
 /// Parameters for creating a new proof session

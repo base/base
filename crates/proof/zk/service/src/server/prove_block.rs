@@ -66,6 +66,13 @@ impl ProverServiceServer {
             })?;
         }
 
+        // Reject `intermediate_root_interval == 0`
+        if let Some(0) = prove_block_request.intermediate_root_interval {
+            return Err(Status::invalid_argument(
+                "Invalid intermediate_root_interval: must be greater than 0",
+            ));
+        }
+
         let session_id = match prove_block_request.session_id {
             Some(ref id_str) => {
                 let parsed = Uuid::parse_str(id_str)
@@ -83,6 +90,7 @@ impl ProverServiceServer {
             session_id,
             prover_address: prove_block_request.prover_address,
             l1_head: prove_block_request.l1_head,
+            intermediate_root_interval: prove_block_request.intermediate_root_interval,
         };
 
         let proof_request_id = self

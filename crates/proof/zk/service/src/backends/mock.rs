@@ -166,6 +166,7 @@ impl ProvingBackend for MockBackend {
                             session_id: None,
                             prover_address: proof_request.prover_address.clone(),
                             l1_head: proof_request.l1_head.clone(),
+                            intermediate_root_interval: None,
                         };
                         self.create_mock_stark_proof(&request)
                     }
@@ -314,6 +315,7 @@ mod tests {
             session_id: None,
             prover_address: None,
             l1_head: None,
+            intermediate_root_interval: None,
         };
 
         let pv = MockBackend::build_mock_public_values(&request);

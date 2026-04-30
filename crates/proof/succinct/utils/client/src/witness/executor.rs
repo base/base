@@ -121,13 +121,16 @@ pub trait WitnessExecutor {
     ) -> Result<OraclePipeline<Self::O, Self::L1, Self::L2, Self::DA>>;
 
     /// Run derivation and block execution to produce the proven boot info.
+    ///
+    /// The intermediate root sampling interval is taken from
+    /// [`BootInfo::intermediate_block_interval`] (committed via preimage key 9, same source as
+    /// the TEE), so callers do not need to pass it explicitly.
     async fn run<O, DP, P>(
         &self,
         boot: BootInfo,
         pipeline: DP,
         cursor: Arc<RwLock<PipelineCursor>>,
         l2_provider: OracleL2ChainProvider<O>,
-        intermediate_root_interval: u64,
     ) -> Result<(BootInfo, Vec<alloy_primitives::B256>)>
     where
         O: CommsClient + FlushableCache + Send + Sync + Debug,
@@ -138,6 +141,7 @@ pub trait WitnessExecutor {
         revm::precompile::install_crypto(CustomCrypto::default());
 
         let boot_clone = boot.clone();
+        let intermediate_block_interval = boot.intermediate_block_interval.max(1);
 
         let rollup_config = Arc::new(boot.rollup_config);
 
@@ -159,7 +163,7 @@ pub trait WitnessExecutor {
             &mut driver,
             rollup_config.as_ref(),
             Some(boot.claimed_l2_block_number),
-            intermediate_root_interval,
+            intermediate_block_interval,
         )
         .await?;
         #[cfg(target_os = "zkvm")]

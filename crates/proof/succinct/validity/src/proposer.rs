@@ -200,6 +200,7 @@ where
             requester_config.safe_db_fallback,
             requester_config.max_price_per_pgu,
             requester_config.proving_timeout,
+            requester_config.intermediate_root_interval,
             requester_config.range_cycle_limit,
             requester_config.range_gas_limit,
             requester_config.agg_cycle_limit,

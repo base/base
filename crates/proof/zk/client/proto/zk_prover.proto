@@ -30,6 +30,7 @@ message ProveBlockRequest {
   // Optional: explicit L1 head hash (hex-encoded B256) to use for witness generation.
   // When provided, bypasses SafeDB and sequence_window L1 head calculation.
   optional string l1_head = 7;
+  optional uint64 intermediate_root_interval = 8;
 }
 
 message ProveBlockResponse {

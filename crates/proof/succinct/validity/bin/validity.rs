@@ -13,6 +13,7 @@ use base_proof_succinct_host_utils::{
 use base_proof_succinct_proof_utils::initialize_host;
 use base_proof_succinct_validity::{
     DriverDBClient, Proposer, RequesterConfig, ValidityGauge, read_proposer_env,
+    resolve_intermediate_root_interval,
 };
 use tikv_jemallocator::Jemalloc;
 use tracing::info;
@@ -48,6 +49,9 @@ async fn main() -> Result<()> {
     // Read the environment variables.
     let env_config = read_proposer_env().await?;
 
+    let intermediate_root_interval =
+        resolve_intermediate_root_interval(&env_config.l1_rpc, env_config.dgf_address).await?;
+
     let db_client = Arc::new(DriverDBClient::new(&env_config.db_url).await?);
 
     let base_proof_succinct_config_name_hash =
@@ -79,6 +83,7 @@ async fn main() -> Result<()> {
         use_kms_requester: env_config.use_kms_requester,
         max_price_per_pgu: env_config.max_price_per_pgu,
         proving_timeout: env_config.proving_timeout,
+        intermediate_root_interval,
         network_calls_timeout: env_config.network_calls_timeout,
         range_cycle_limit: env_config.range_cycle_limit,
         range_gas_limit: env_config.range_gas_limit,

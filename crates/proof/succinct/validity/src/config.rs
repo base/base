@@ -116,6 +116,8 @@ pub struct RequesterConfig {
 
     /// The timeout to use for proving (in seconds).
     pub proving_timeout: u64,
+    /// Interval (in L2 blocks) at which intermediate output roots are recorded.
+    pub intermediate_root_interval: u64,
 
     /// The timeout to use for network prover calls (in seconds).
     pub network_calls_timeout: u64,
@@ -164,6 +166,7 @@ impl RequesterConfig {
             use_kms_requester = self.use_kms_requester,
             max_price_per_pgu = self.max_price_per_pgu,
             proving_timeout = self.proving_timeout,
+            intermediate_root_interval = self.intermediate_root_interval,
             network_calls_timeout = self.network_calls_timeout,
             range_cycle_limit = self.range_cycle_limit,
             range_gas_limit = self.range_gas_limit,

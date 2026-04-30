@@ -49,6 +49,7 @@ const fn compressed_request() -> CreateProofRequest {
         session_id: None,
         prover_address: None,
         l1_head: None,
+        intermediate_root_interval: None,
     }
 }
 
@@ -63,6 +64,7 @@ fn snark_request() -> CreateProofRequest {
         l1_head: Some(
             "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890".to_string(),
         ),
+        intermediate_root_interval: None,
     }
 }
 

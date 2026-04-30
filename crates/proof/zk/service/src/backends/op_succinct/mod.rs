@@ -4,4 +4,4 @@ mod backend;
 pub use backend::OpSuccinctBackend;
 
 mod provider;
-pub use provider::OpSuccinctProvider;
+pub use provider::{OpSuccinctProvider, WitnessParams};

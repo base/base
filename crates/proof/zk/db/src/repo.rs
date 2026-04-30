@@ -87,6 +87,7 @@ impl ProofRequestRepo {
             req.proof_type.as_str(),
             req.prover_address.as_deref(),
             req.l1_head.as_deref(),
+            req.intermediate_root_interval,
         );
 
         let mut tx = self.pool.begin().await?;
@@ -448,6 +449,7 @@ impl ProofRequestRepo {
                 row.get::<&str, _>("proof_type"),
                 row.get::<Option<&str>, _>("prover_address"),
                 row.get::<Option<&str>, _>("l1_head"),
+                None,
             );
 
             sqlx::query(
@@ -990,6 +992,7 @@ fn build_outbox_params(
     proof_type: &str,
     prover_address: Option<&str>,
     l1_head: Option<&str>,
+    intermediate_root_interval: Option<u64>,
 ) -> serde_json::Value {
     serde_json::json!({
         "start_block_number": start_block_number,
@@ -998,6 +1001,7 @@ fn build_outbox_params(
         "proof_type": proof_type,
         "prover_address": prover_address,
         "l1_head": l1_head,
+        "intermediate_root_interval": intermediate_root_interval,
     })
 }
 

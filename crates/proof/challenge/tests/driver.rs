@@ -139,6 +139,7 @@ fn default_ready_proof(intent: DisputeIntent) -> PendingProof {
         session_id: Some(session_id),
         prover_address: Some(format!("{:#x}", addr(0))),
         l1_head: Some(format!("{DEFAULT_L1_HEAD:#x}")),
+        intermediate_root_interval: None,
     };
 
     PendingProof::ready(
