@@ -210,12 +210,17 @@ async fn main() {
         let message_data = if args.enable_compression {
             let data_bytes = data.as_bytes();
             let mut compressed_data_bytes = Vec::new();
-            {
+            let compress_result = {
                 let mut compressor =
                     brotli::CompressorWriter::new(&mut compressed_data_bytes, 4096, 5, 22);
-                compressor.write_all(data_bytes).unwrap();
+                compressor.write_all(data_bytes)
+            };
+            if let Err(e) = compress_result {
+                error!(message = "failed to compress data, sending uncompressed", error = %e);
+                data_bytes.to_vec()
+            } else {
+                compressed_data_bytes
             }
-            compressed_data_bytes
         } else {
             data.into_bytes()
         };
@@ -308,8 +313,10 @@ async fn main() {
     );
     let server_task = server.listen(token.clone());
 
-    let mut interrupt = signal(SignalKind::interrupt()).unwrap();
-    let mut terminate = signal(SignalKind::terminate()).unwrap();
+    let mut interrupt = signal(SignalKind::interrupt())
+        .expect("failed to register SIGINT handler");
+    let mut terminate = signal(SignalKind::terminate())
+        .expect("failed to register SIGTERM handler");
 
     tokio::select! {
         _ = futures::future::join_all(subscriber_tasks) => {
