@@ -179,14 +179,37 @@ mod tests {
         }
     }
 
-    #[test]
-    fn discv4_config_uses_command_nat_resolver() {
+    #[rstest]
+    #[case(NatResolver::None)]
+    #[case(NatResolver::ExternalIp("192.0.2.1".parse().unwrap()))]
+    fn discv4_config_matches_refactored_builder(#[case] nat: NatResolver) {
         let mut command = cmd("0.0.0.0:30301", "0.0.0.0:9200");
-        command.nat = NatResolver::ExternalIp("192.0.2.1".parse().unwrap());
+        command.nat = nat;
 
-        let config = command.discv4_config();
+        let actual = command.discv4_config();
+        let expected =
+            Discv4Config::builder().external_ip_resolver(Some(command.nat.clone())).build();
 
-        assert_eq!(config.external_ip_resolver, Some(command.nat));
+        assert_eq!(actual.udp_egress_message_buffer, expected.udp_egress_message_buffer);
+        assert_eq!(actual.udp_ingress_message_buffer, expected.udp_ingress_message_buffer);
+        assert_eq!(actual.max_find_node_failures, expected.max_find_node_failures);
+        assert_eq!(actual.ping_interval, expected.ping_interval);
+        assert_eq!(actual.ping_expiration, expected.ping_expiration);
+        assert_eq!(actual.lookup_interval, expected.lookup_interval);
+        assert_eq!(actual.request_timeout, expected.request_timeout);
+        assert_eq!(actual.enr_expiration, expected.enr_expiration);
+        assert_eq!(actual.neighbours_expiration, expected.neighbours_expiration);
+        assert_eq!(actual.bootstrap_nodes, expected.bootstrap_nodes);
+        assert_eq!(actual.enable_dht_random_walk, expected.enable_dht_random_walk);
+        assert_eq!(actual.enable_lookup, expected.enable_lookup);
+        assert_eq!(actual.enable_eip868, expected.enable_eip868);
+        assert_eq!(actual.enforce_expiration_timestamps, expected.enforce_expiration_timestamps);
+        assert_eq!(actual.additional_eip868_rlp_pairs, expected.additional_eip868_rlp_pairs);
+        assert_eq!(actual.external_ip_resolver, expected.external_ip_resolver);
+        assert_eq!(actual.resolve_external_ip_interval, expected.resolve_external_ip_interval);
+        assert_eq!(actual.bond_expiration, expected.bond_expiration);
+
+        assert_eq!(actual.external_ip_resolver, Some(command.nat));
     }
 
     #[rstest]
