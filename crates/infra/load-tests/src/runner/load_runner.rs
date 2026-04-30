@@ -894,11 +894,8 @@ impl LoadRunner {
             None
         };
 
-        let confirmer_rpc_url = self
-            .config
-            .confirmer_url
-            .clone()
-            .unwrap_or_else(|| self.config.rpc_http_url.clone());
+        let confirmer_rpc_url =
+            self.config.confirmer_url.clone().unwrap_or_else(|| self.config.rpc_http_url.clone());
 
         if self.config.confirmer_url.is_some() {
             info!(url = %confirmer_rpc_url, "using separate endpoint for confirmation polling");
@@ -1202,8 +1199,7 @@ impl LoadRunner {
                 let batch_len = pending_batch.len();
                 match tokio::time::timeout(
                     SUBMIT_TASK_DEADLINE,
-                    AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch))
-                        .catch_unwind(),
+                    AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch)).catch_unwind(),
                 )
                 .await
                 {
@@ -1231,7 +1227,7 @@ impl LoadRunner {
         }
 
         match tokio::time::timeout(
-            SUBMIT_TASK_DEADLINE,
+            SUBMIT_TASK_DEADLINE + Duration::from_secs(5),
             Arc::clone(&semaphore).acquire_many_owned(SUBMIT_BATCH_CONCURRENCY as u32),
         )
         .await
