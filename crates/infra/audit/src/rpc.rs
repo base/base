@@ -67,7 +67,7 @@ impl AuditArchiverApiServer for AuditArchiverRpc {
         // additional concurrent batch RPC calls while this batch's S3 writes are in flight.
         let storage = Arc::clone(&self.storage);
 
-        // Peform the S3 operations in parallel on the batch. Up to 5 concurrent operations at a time.
+        // Perform the S3 operations in parallel on the batch. Up to 5 concurrent operations at a time.
         let persisted = stream::iter(batch)
             .map(move |tx| {
                 let storage = Arc::clone(&storage);
