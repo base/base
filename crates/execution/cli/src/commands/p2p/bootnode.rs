@@ -40,7 +40,7 @@ pub struct Command {
     pub v5: bool,
 
     /// Enable the Base discv5 protocol identity.
-    #[arg(long = "v5.base-protocol", default_value_t = false, action = clap::ArgAction::Set)]
+    #[arg(long = "v5.base-protocol", default_value_t = true, action = clap::ArgAction::Set)]
     pub base_protocol: bool,
 }
 
