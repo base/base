@@ -7,8 +7,8 @@ use clap::Parser;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
 use reth_discv4::{DiscoveryUpdate, Discv4, Discv4Config};
 use reth_discv5::{
-    Config, Discv5,
-    discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ListenConfig, ProtocolIdentity},
+    Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, Discv5,
+    discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ProtocolIdentity},
 };
 use reth_net_nat::{NatResolver, external_addr_with};
 use reth_network_peers::NodeRecord;
@@ -140,10 +140,9 @@ impl Command {
         Discv4Config::builder().external_ip_resolver(Some(self.nat.clone())).build()
     }
 
-    /// Build the discv5 configuration with the UDP listen port set from `--v5-addr`.
+    /// Build the discv5 configuration.
     pub fn discv5_config(&self) -> Config {
-        let listen = ListenConfig::from_ip(self.v5_addr.ip(), self.v5_addr.port());
-        let mut inner_builder = Discv5ConfigBuilder::new(listen);
+        let mut inner_builder = Discv5ConfigBuilder::new(DEFAULT_DISCOVERY_V5_LISTEN_CONFIG);
 
         if self.base_protocol {
             inner_builder.protocol_identity(ProtocolIdentity {
@@ -165,8 +164,6 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use super::*;
 
     fn cmd(v4_addr: &str, v5_addr: &str) -> Command {
@@ -178,18 +175,6 @@ mod tests {
             v5: false,
             base_protocol: true,
         }
-    }
-
-    #[rstest]
-    #[case("0.0.0.0:30301", "0.0.0.0:9200")]
-    #[case("0.0.0.0:30303", "0.0.0.0:9000")]
-    #[case("127.0.0.1:10001", "127.0.0.1:10002")]
-    fn discv5_discovery_port_matches_v5_addr(#[case] v4_addr: &str, #[case] v5_addr: &str) {
-        let command = cmd(v4_addr, v5_addr);
-        let discv5_port = command.discv5_config().discovery_socket().port();
-
-        assert_eq!(discv5_port, command.v5_addr.port());
-        assert_ne!(discv5_port, command.v4_addr.port());
     }
 
     #[test]
