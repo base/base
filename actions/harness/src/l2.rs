@@ -12,10 +12,13 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadSidecar, NetworkPayloadEnvelope, PayloadHash,
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
+    NetworkPayloadEnvelope, PayloadHash,
 };
 use base_consensus_derive::{AttributesBuilder, StatefulAttributesBuilder};
-use base_consensus_node::{L1OriginSelector, OriginSelector, SequencerEngineClient};
+use base_consensus_node::{
+    Conductor, ConductorError, L1OriginSelector, OriginSelector, SequencerEngineClient,
+};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
 use crate::{
@@ -142,6 +145,12 @@ pub enum L2SequencerError {
     /// Payload conversion error.
     #[error("payload conversion error: {0}")]
     PayloadConversion(String),
+    /// Conductor rejected the block (e.g. not leader, RPC error).
+    #[error("conductor error: {0}")]
+    Conductor(#[from] ConductorError),
+    /// This sequencer is not the conductor leader and cannot build blocks.
+    #[error("sequencer is not the conductor leader")]
+    NotLeader,
 }
 
 /// A pre-built queue of [`BaseBlock`]s for the batcher to drain.
@@ -282,6 +291,15 @@ pub struct L2Sequencer {
     l1_origin_pin: Option<BlockInfo>,
     /// Mutable L2 chain provider (for inserting new blocks/configs after each build).
     l2_provider: ActionL2ChainProvider,
+    /// Optional conductor. When set, each build checks leadership via `leader()` and
+    /// commits the sealed payload via `commit_unsafe_payload()` before inserting.
+    conductor: Option<Arc<dyn Conductor>>,
+    /// Optional signing key for gossip. When set, [`broadcast_unsafe_block`] computes the
+    /// real [`PayloadHash`] and signs with the production formula instead of using a zero
+    /// signature.
+    ///
+    /// [`broadcast_unsafe_block`]: L2Sequencer::broadcast_unsafe_block
+    unsafe_block_signer: Option<PrivateKeySigner>,
 }
 
 impl L2Sequencer {
@@ -308,6 +326,8 @@ impl L2Sequencer {
             supervised_p2p: None,
             l1_origin_pin: None,
             l2_provider,
+            conductor: None,
+            unsafe_block_signer: None,
         }
     }
 
@@ -384,25 +404,85 @@ impl L2Sequencer {
         self.supervised_p2p = Some(p2p);
     }
 
-    /// Broadcast `block` as an [`NetworkPayloadEnvelope`] to the wired
+    /// Attach an unsafe block signing key to this sequencer.
+    ///
+    /// Once set, [`broadcast_unsafe_block`] computes the real [`PayloadHash`]
+    /// and signs it with the production formula:
+    /// `keccak256(domain || chain_id_padded || keccak256(SSZ(payload)))`.
+    ///
+    /// Wire the corresponding address to the receiving [`TestGossipTransport`]
+    /// via [`GossipTransport::set_block_signer`] and [`TestGossipTransport::set_chain_id`]
+    /// to activate end-to-end signature validation.
+    ///
+    /// [`broadcast_unsafe_block`]: L2Sequencer::broadcast_unsafe_block
+    /// [`GossipTransport::set_block_signer`]: base_consensus_node::GossipTransport::set_block_signer
+    /// [`TestGossipTransport::set_chain_id`]: crate::TestGossipTransport::set_chain_id
+    pub fn set_unsafe_block_signer(&mut self, key: PrivateKeySigner) {
+        self.unsafe_block_signer = Some(key);
+    }
+
+    /// Return the address corresponding to the configured unsafe block signing key, if any.
+    pub fn unsafe_block_signer_address(&self) -> Option<Address> {
+        self.unsafe_block_signer.as_ref().map(|s| s.address())
+    }
+
+    /// Attach a conductor to this sequencer.
+    ///
+    /// Once set, every call to [`build_next_block_with_transactions`] first
+    /// checks leadership via [`Conductor::leader`] and, after sealing,
+    /// commits the payload via [`Conductor::commit_unsafe_payload`]. Build
+    /// attempts return [`L2SequencerError::NotLeader`] when leadership is
+    /// absent.
+    ///
+    /// Use [`TestConductorHandle::conductor`] to create a [`TestConductor`]
+    /// and pass it here.
+    ///
+    /// [`build_next_block_with_transactions`]: L2Sequencer::build_next_block_with_transactions
+    /// [`TestConductorHandle::conductor`]: crate::TestConductorHandle::conductor
+    /// [`TestConductor`]: crate::TestConductor
+    pub fn set_conductor(&mut self, conductor: Arc<dyn Conductor>) {
+        self.conductor = Some(conductor);
+    }
+
+    /// Broadcast `block` as a [`NetworkPayloadEnvelope`] to the wired
     /// [`SupervisedP2P`] handle.
     ///
-    /// A no-op when no handle has been set via [`set_supervised_p2p`]. The
-    /// envelope carries a zero signature; test transports skip signature
-    /// validation.
+    /// A no-op when no handle has been set via [`set_supervised_p2p`].
+    ///
+    /// When an unsafe block signing key is configured via
+    /// [`set_unsafe_block_signer`], the envelope is signed with the production
+    /// formula (`keccak256(domain || chain_id_padded || keccak256(SSZ(payload)))`).
+    /// Otherwise the envelope carries a zero signature, which passes through
+    /// transports that have no expected signer configured.
     ///
     /// [`set_supervised_p2p`]: L2Sequencer::set_supervised_p2p
+    /// [`set_unsafe_block_signer`]: L2Sequencer::set_unsafe_block_signer
     pub fn broadcast_unsafe_block(&self, block: &BaseBlock) {
         let Some(p2p) = &self.supervised_p2p else { return };
         let block_hash = block.header.hash_slow();
         let (execution_payload, _) = BaseExecutionPayload::from_block_unchecked(block_hash, block);
-        let network = NetworkPayloadEnvelope {
+        let parent_beacon_block_root = block.header.parent_beacon_block_root;
+
+        let (signature, payload_hash) = self.unsafe_block_signer.as_ref().map_or_else(
+            || (Signature::new(U256::ZERO, U256::ZERO, false), PayloadHash(B256::ZERO)),
+            |signer| {
+                let envelope = BaseExecutionPayloadEnvelope {
+                    execution_payload: execution_payload.clone(),
+                    parent_beacon_block_root,
+                };
+                let ph = envelope.payload_hash();
+                let msg = ph.signature_message(self.rollup_config.l2_chain_id.id());
+                let sig = signer.sign_hash_sync(&msg).expect("unsafe block signing must not fail");
+                (sig, ph)
+            },
+        );
+
+        p2p.send(NetworkPayloadEnvelope {
             payload: execution_payload,
-            signature: Signature::new(U256::ZERO, U256::ZERO, false),
-            payload_hash: PayloadHash(B256::ZERO),
-            parent_beacon_block_root: None,
-        };
-        p2p.send(network);
+            signature,
+            payload_hash,
+            parent_beacon_block_root,
+        });
     }
 
     /// Build the next L2 block containing no user transactions.
@@ -456,6 +536,14 @@ impl L2Sequencer {
         &mut self,
         user_txs: Vec<BaseTxEnvelope>,
     ) -> Result<BaseBlock, L2SequencerError> {
+        // 0. Conductor leadership check: refuse to build if this node is not the leader.
+        if let Some(conductor) = &self.conductor {
+            let is_leader = conductor.leader().await?;
+            if !is_leader {
+                return Err(L2SequencerError::NotLeader);
+            }
+        }
+
         // 1. Origin selection: use pinned origin if set, otherwise production L1OriginSelector.
         let l1_origin = if let Some(pin) = self.l1_origin_pin {
             pin
@@ -502,13 +590,25 @@ impl L2Sequencer {
             .await
             .map_err(|e| L2SequencerError::Engine(format!("get_sealed: {e}")))?;
 
-        // 5. Insert the block into the engine (updates canonical head).
+        // 5. Conductor commit: register the sealed payload before inserting.
+        // Map ConductorError::NotLeader to L2SequencerError::NotLeader so that
+        // callers get the same variant regardless of whether leadership was lost
+        // before the build started (pre-check) or between the check and commit
+        // (TOCTOU).
+        if let Some(conductor) = &self.conductor {
+            conductor.commit_unsafe_payload(&envelope).await.map_err(|e| match e {
+                ConductorError::NotLeader => L2SequencerError::NotLeader,
+                other => L2SequencerError::Conductor(other),
+            })?;
+        }
+
+        // 6. Insert the block into the engine (updates canonical head).
         self.engine_client
             .insert_unsafe_payload(envelope.clone())
             .await
             .map_err(|e| L2SequencerError::Engine(format!("insert: {e}")))?;
 
-        // 6. Convert BaseExecutionPayload to BaseBlock.
+        // 7. Convert BaseExecutionPayload to BaseBlock.
         // Use try_into_block_with_sidecar so PBBR and requests_hash are restored on the
         // returned header. try_into_block() omits these fields, making hash_slow() return a
         // different value than the sealed block hash. BatchEncoder::add_block tracks self.tip
@@ -541,7 +641,7 @@ impl L2Sequencer {
             .try_into_block_with_sidecar(&sidecar)
             .map_err(|e| L2SequencerError::PayloadConversion(format!("{e}")))?;
 
-        // 7. Compute seq_num and update head.
+        // 8. Compute seq_num and update head.
         let seq_num =
             if l1_origin.number == self.head.l1_origin.number { self.head.seq_num + 1 } else { 0 };
         let block_number = block.header.number;
@@ -558,7 +658,7 @@ impl L2Sequencer {
             seq_num,
         };
 
-        // 8. Update L2 provider state for next iteration.
+        // 9. Update L2 provider state for next iteration.
         self.l2_provider.insert_block(self.head);
         // The system config is updated via the attributes builder's internal
         // L2 chain provider when the epoch changes. For the sequencer's

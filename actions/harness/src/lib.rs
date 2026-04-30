@@ -6,6 +6,9 @@
 mod action;
 pub use action::{Action, L2BlockProvider};
 
+mod conductor;
+pub use conductor::{ConductorState, TestConductor, TestConductorHandle};
+
 mod miner;
 pub use miner::{
     L1Block, L1Miner, L1MinerConfig, PendingTx, ReorgError, UserDeposit, block_info_from,

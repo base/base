@@ -224,6 +224,41 @@ impl<S: L2BlockProvider> Batcher<S> {
         self.tx_manager.stage_n_to_l1(l1, n)
     }
 
+    /// Schedule the next `n` frame submissions to fail immediately.
+    ///
+    /// Each of the next `n` calls the background [`BatchDriver`] makes to
+    /// [`TxManager::send_async`] will resolve with
+    /// [`TxManagerError::Rpc`] instead of queuing to the L1 miner. The driver
+    /// requeues the frame and retries, so calling this before [`encode_only`]
+    /// simulates transient L1 submission failures without losing data.
+    ///
+    /// Use [`wait_until_requeued`] after [`encode_only`] to wait for the driver
+    /// to process the failures and return frames to the pending queue.
+    ///
+    /// [`TxManager::send_async`]: base_tx_manager::TxManager::send_async
+    /// [`TxManagerError::Rpc`]: base_tx_manager::TxManagerError::Rpc
+    /// [`encode_only`]: Batcher::encode_only
+    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
+    pub fn fail_next_n_submissions(&self, n: usize) {
+        self.tx_manager.fail_next_n(n);
+    }
+
+    /// Mine all pending frame submissions in one L1 block.
+    ///
+    /// Stages every pending frame, mines one L1 block, fires all receipt
+    /// oneshots, and yields once so the driver processes confirmations.
+    /// Returns the mined block number.
+    ///
+    /// Use this after [`wait_until_requeued`] to confirm a requeued batch
+    /// without needing to encode new L2 blocks.
+    ///
+    /// [`wait_until_requeued`]: Batcher::wait_until_requeued
+    pub async fn mine_pending(&self, l1: &mut L1Miner) -> u64 {
+        let block_number = self.tx_manager.mine_block(l1);
+        tokio::task::yield_now().await;
+        block_number
+    }
+
     /// Drop the first `n` pending frame submissions without staging them to L1.
     ///
     /// Returns the actual number dropped. Use this to skip specific frame

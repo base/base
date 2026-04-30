@@ -120,17 +120,19 @@ impl<T: TxManager> BondTransactionSubmitter for ChallengeSubmitter<T> {
     async fn send_bond_tx(
         &self,
         game_address: Address,
+        to: Address,
         calldata: Bytes,
     ) -> Result<B256, ChallengeSubmitError> {
         let candidate = TxCandidate {
             tx_data: calldata,
-            to: Some(game_address),
+            to: Some(to),
             value: U256::ZERO,
             ..Default::default()
         };
 
         info!(
             game = %game_address,
+            to = %to,
             calldata_len = candidate.tx_data.len(),
             "sending bond transaction"
         );

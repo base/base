@@ -7,7 +7,7 @@ mod models;
 pub use models::{
     CreateOutboxEntry, CreateProofRequest, CreateProofSession, MarkOutboxError,
     MarkOutboxProcessed, OutboxEntry, ProofRequest, ProofSession, ProofStatus, ProofType,
-    SessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
+    RetryOutcome, SessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
 };
 
 mod repo;

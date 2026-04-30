@@ -65,6 +65,30 @@ pub struct AnchorRoot {
     pub l2_block_number: u64,
 }
 
+/// Snapshot of `AnchorStateRegistry` state read in a single batch when
+/// preparing a `setAnchorState()` call. Callers must already know the game
+/// is finalized; this batch only covers the eligibility flags and the
+/// current anchor root.
+#[derive(Debug, Clone, Copy)]
+pub struct AnchorPreflight {
+    /// Whether the game is blacklisted (permanent failure).
+    pub blacklisted: bool,
+    /// Whether the game is retired (permanent failure).
+    pub retired: bool,
+    /// Whether the game currently matches the registry's respected game type.
+    pub respected: bool,
+    /// The current anchor root in the registry.
+    pub anchor_root: AnchorRoot,
+}
+
+impl AnchorPreflight {
+    /// Returns `true` if the game can never become a valid anchor and the
+    /// caller should stop retrying `setAnchorState()` for it.
+    pub const fn permanently_ineligible(&self) -> bool {
+        self.blacklisted || self.retired
+    }
+}
+
 /// Async trait for reading anchor state.
 #[async_trait]
 pub trait AnchorStateRegistryClient: Send + Sync {

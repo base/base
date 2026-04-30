@@ -149,6 +149,20 @@ const executionSection: SidebarItem = {
   collapsed: true,
 }
 
+const proofsSection: SidebarItem = {
+  text: 'Proofs',
+  link: '/protocol/proofs',
+  items: [
+    { text: 'Challenger', link: '/protocol/proofs/challenger' },
+    { text: 'Proposer', link: '/protocol/proofs/proposer' },
+    { text: 'Registrar', link: '/protocol/proofs/registrar' },
+    { text: 'TEE Provers', link: '/protocol/proofs/tee-provers' },
+    { text: 'ZK Provers', link: '/protocol/proofs/zk-provers' },
+    { text: 'Contracts', link: '/protocol/proofs/contracts' },
+  ],
+  collapsed: true,
+}
+
 const sidebar: SidebarItem[] = [
   { text: 'Home', link: '/' },
   {
@@ -159,7 +173,8 @@ const sidebar: SidebarItem[] = [
       executionSection,
       bridgingSection,
       { text: 'Batcher', link: '/protocol/batcher' },
-      { ...sectionItem('protocol/fault-proof', 'Proofs'), collapsed: true },
+      proofsSection,
+      { ...sectionItem('protocol/fault-proof', 'Fault Proofs'), collapsed: true },
     ],
   },
   bcpsSection,

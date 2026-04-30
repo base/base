@@ -152,6 +152,8 @@ enum StrategyOption {
     OsakaClz,
     OsakaP256verify,
     OsakaModexp,
+    UniswapV3,
+    AerodromeCl,
 }
 
 const ALL_STRATEGIES: &[StrategyOption] = &[
@@ -170,6 +172,8 @@ const ALL_STRATEGIES: &[StrategyOption] = &[
     StrategyOption::OsakaClz,
     StrategyOption::OsakaP256verify,
     StrategyOption::OsakaModexp,
+    StrategyOption::UniswapV3,
+    StrategyOption::AerodromeCl,
 ];
 
 impl StrategyOption {
@@ -190,11 +194,13 @@ impl StrategyOption {
             Self::OsakaClz => "osaka  clz",
             Self::OsakaP256verify => "osaka  p256verify",
             Self::OsakaModexp => "osaka  modexp",
+            Self::UniswapV3 => "swap  uniswap_v3",
+            Self::AerodromeCl => "swap  aerodrome_cl",
         }
     }
 
-    const fn to_tx_type(self) -> TxTypeConfig {
-        match self {
+    fn to_tx_type(self, network: &str) -> Option<TxTypeConfig> {
+        let cfg = match self {
             Self::Transfer => TxTypeConfig::Transfer,
             Self::Calldata => TxTypeConfig::Calldata { max_size: 128, repeat_count: 1 },
             Self::Ecrecover => {
@@ -232,7 +238,31 @@ impl StrategyOption {
             Self::OsakaClz => TxTypeConfig::Osaka { target: OsakaTarget::Clz },
             Self::OsakaP256verify => TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka },
             Self::OsakaModexp => TxTypeConfig::Osaka { target: OsakaTarget::ModexpOsaka },
-        }
+            Self::UniswapV3 => {
+                let addrs = swap_addresses(network)?;
+                TxTypeConfig::UniswapV3 {
+                    router: addrs.uniswap_v3_router.to_string(),
+                    token_in: addrs.token_a.to_string(),
+                    token_out: addrs.token_b.to_string(),
+                    fee: 3000,
+                    min_amount: "1000000000000000".to_string(),
+                    max_amount: "10000000000000000".to_string(),
+                }
+            }
+            Self::AerodromeCl => {
+                let addrs = swap_addresses(network)?;
+                let router = addrs.aerodrome_cl_router?;
+                TxTypeConfig::AerodromeCl {
+                    router: router.to_string(),
+                    token_in: addrs.token_a.to_string(),
+                    token_out: addrs.token_b.to_string(),
+                    tick_spacing: 100,
+                    min_amount: "1000000000000000".to_string(),
+                    max_amount: "10000000000000000".to_string(),
+                }
+            }
+        };
+        Some(cfg)
     }
 
     const fn matches_tx_type(self, tx: &TxTypeConfig) -> bool {
@@ -280,7 +310,52 @@ impl StrategyOption {
                     TxTypeConfig::Osaka { target: OsakaTarget::P256verifyOsaka }
                 )
                 | (Self::OsakaModexp, TxTypeConfig::Osaka { target: OsakaTarget::ModexpOsaka })
+                | (Self::UniswapV3, TxTypeConfig::UniswapV3 { .. })
+                | (Self::AerodromeCl, TxTypeConfig::AerodromeCl { .. })
         )
+    }
+
+    /// Returns `true` if this strategy is available on the given network.
+    fn is_available(self, network: &str) -> bool {
+        match self {
+            Self::UniswapV3 => {
+                swap_addresses(network).is_some_and(|a| !a.uniswap_v3_router.is_empty())
+            }
+            Self::AerodromeCl => {
+                swap_addresses(network).is_some_and(|a| a.aerodrome_cl_router.is_some())
+            }
+            _ => true,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-network swap contract addresses
+// ---------------------------------------------------------------------------
+
+struct SwapAddresses {
+    uniswap_v3_router: &'static str,
+    aerodrome_cl_router: Option<&'static str>,
+    token_a: &'static str,
+    token_b: &'static str,
+}
+
+/// Returns hardcoded swap contract addresses for the given network, if available.
+fn swap_addresses(network: &str) -> Option<SwapAddresses> {
+    match network {
+        "sepolia" => Some(SwapAddresses {
+            uniswap_v3_router: "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+            aerodrome_cl_router: Some("0x6a786a4f9bc46fF861260545C490a7356c5ecbFe"),
+            token_a: "0x15948C3043A980A8d980d4D615A5E4c9514B0D64",
+            token_b: "0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4",
+        }),
+        "zeronet" => Some(SwapAddresses {
+            uniswap_v3_router: "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4",
+            aerodrome_cl_router: None,
+            token_a: "0x27589a9836dd2150036829120f092ad38a0b3740",
+            token_b: "0xc411b5f78fadab5880a287f21bb7997a192975f3",
+        }),
+        _ => None,
     }
 }
 
@@ -290,10 +365,12 @@ struct StrategyModal {
     cursor: usize,
     /// Which strategies are currently enabled.
     enabled: Vec<bool>,
+    /// Current network name (for swap address lookups and availability checks).
+    network: String,
 }
 
 impl StrategyModal {
-    fn from_config(transactions: &[WeightedTxType]) -> Self {
+    fn from_config(transactions: &[WeightedTxType], network: &str) -> Self {
         let mut enabled = vec![false; ALL_STRATEGIES.len()];
         for (i, &strategy) in ALL_STRATEGIES.iter().enumerate() {
             enabled[i] = transactions.iter().any(|t| strategy.matches_tx_type(&t.tx_type));
@@ -302,15 +379,18 @@ impl StrategyModal {
         if !enabled.iter().any(|&e| e) {
             enabled[0] = true;
         }
-        Self { cursor: 0, enabled }
+        Self { cursor: 0, enabled, network: network.to_string() }
     }
 
     fn to_transactions(&self) -> Vec<WeightedTxType> {
         ALL_STRATEGIES
             .iter()
             .enumerate()
-            .filter(|(i, _)| self.enabled[*i])
-            .map(|(_, &strategy)| WeightedTxType { weight: 1, tx_type: strategy.to_tx_type() })
+            .filter(|&(i, _)| self.enabled[i])
+            .filter_map(|(_, &strategy)| {
+                let tx_type = strategy.to_tx_type(&self.network)?;
+                Some(WeightedTxType { weight: 1, tx_type })
+            })
             .collect()
     }
 }
@@ -520,7 +600,8 @@ impl LoadTestView {
         let continuous_flag = Arc::new(AtomicBool::new(self.continuous));
         let continuous_for_task = Arc::clone(&continuous_flag);
 
-        let task_handle = tokio::spawn(async move {
+        let load_test_body = async move {
+            // Fetch chain_id from the network's RPC — required for transaction signing.
             let client = RpcClient::new(cfg.rpc.clone());
             let chain_id = client.chain_id().await.ok();
 
@@ -643,6 +724,20 @@ impl LoadTestView {
             }
 
             let _ = done_tx.send(last_result).await;
+        };
+        // Run the load test on its own dedicated tokio runtime so the
+        // async I/O (nonce RPC calls, batch submits, confirmer) is never
+        // starved by the TUI's blocking crossterm::event::poll() call,
+        // which parks a worker thread for up to EVENT_POLL_TIMEOUT on
+        // every iteration of the TUI event loop.
+        let task_handle = tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .thread_name("load-test-worker")
+                .build()
+                .expect("failed to build load test runtime");
+            rt.block_on(load_test_body);
         });
 
         resources.load_test_task =
@@ -857,7 +952,10 @@ impl LoadTestView {
             KeyCode::Char(' ') => {
                 if let Some(ref mut modal) = self.strategy_modal {
                     let i = modal.cursor;
-                    modal.enabled[i] = !modal.enabled[i];
+                    let strategy = ALL_STRATEGIES[i];
+                    if strategy.is_available(&modal.network) {
+                        modal.enabled[i] = !modal.enabled[i];
+                    }
                 }
             }
             KeyCode::Enter => {
@@ -1070,7 +1168,8 @@ impl View for LoadTestView {
             {
                 let txs =
                     self.effective_config().map(|c| c.transactions.clone()).unwrap_or_default();
-                self.strategy_modal = Some(StrategyModal::from_config(&txs));
+                let network = self.selected_name().unwrap_or("").to_string();
+                self.strategy_modal = Some(StrategyModal::from_config(&txs, &network));
             }
 
             // Open edit modal.
@@ -1934,22 +2033,35 @@ fn render_strategy_modal(frame: &mut Frame<'_>, parent: Rect, modal: &StrategyMo
 
     let mut lines: Vec<Line<'_>> = vec![Line::from("")];
 
+    let unavailable_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM);
+
     let end = (scroll + visible_rows).min(n);
     for (i, &strategy) in ALL_STRATEGIES.iter().enumerate().take(end).skip(scroll) {
         let is_selected = i == modal.cursor;
         let is_enabled = modal.enabled[i];
+        let available = strategy.is_available(&modal.network);
 
         let selector = if is_selected { "▸ " } else { "  " };
-        let selector_style = if is_selected { selected_style } else { dim_style };
-        let checkbox = if is_enabled { "[x] " } else { "[ ] " };
-        let check_style = if is_enabled { check_on_style } else { dim_style };
-        let label_sty = if is_selected { selected_style } else { label_style };
 
-        lines.push(Line::from(vec![
-            Span::styled(selector, selector_style),
-            Span::styled(checkbox, check_style),
-            Span::styled(strategy.label(), label_sty),
-        ]));
+        if !available {
+            let checkbox = "[-] ";
+            lines.push(Line::from(vec![
+                Span::styled(selector, unavailable_style),
+                Span::styled(checkbox, unavailable_style),
+                Span::styled(strategy.label(), unavailable_style),
+            ]));
+        } else {
+            let selector_style = if is_selected { selected_style } else { dim_style };
+            let checkbox = if is_enabled { "[x] " } else { "[ ] " };
+            let check_style = if is_enabled { check_on_style } else { dim_style };
+            let label_sty = if is_selected { selected_style } else { label_style };
+
+            lines.push(Line::from(vec![
+                Span::styled(selector, selector_style),
+                Span::styled(checkbox, check_style),
+                Span::styled(strategy.label(), label_sty),
+            ]));
+        }
     }
 
     lines.push(Line::from(""));

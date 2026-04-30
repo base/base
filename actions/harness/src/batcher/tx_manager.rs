@@ -37,6 +37,9 @@ impl std::fmt::Debug for Pending {
 pub struct Inner {
     pending: Vec<Pending>,
     staged: Vec<Pending>,
+    /// Number of upcoming `send_async` calls to immediately fail with
+    /// [`TxManagerError::Rpc`] before falling through to normal queuing.
+    fail_remaining: usize,
 }
 
 /// Adapts [`L1Miner`] to the [`TxManager`] trait for action tests.
@@ -102,6 +105,20 @@ impl L1MinerTxManager {
     /// Returns the number of pending (not yet staged) submissions.
     pub fn pending_count(&self) -> usize {
         self.inner.lock().unwrap().pending.len()
+    }
+
+    /// Schedule the next `n` [`send_async`] calls to immediately resolve with
+    /// [`TxManagerError::Rpc`], causing the [`BatchDriver`] to requeue the
+    /// associated frames in the encoder pipeline.
+    ///
+    /// Failures are consumed one-per-call: setting `n = 3` means the next
+    /// three separate `send_async` calls each fail, regardless of whether they
+    /// carry the same or different frames.
+    ///
+    /// [`send_async`]: L1MinerTxManager::send_async
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    pub fn fail_next_n(&self, n: usize) {
+        self.inner.lock().unwrap().fail_remaining += n;
     }
 
     /// Drop the first `n` pending submissions without staging them to L1.
@@ -258,6 +275,17 @@ impl TxManager for L1MinerTxManager {
     }
 
     async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if inner.fail_remaining > 0 {
+                inner.fail_remaining -= 1;
+                let (tx, rx) = oneshot::channel::<SendResponse>();
+                let _ =
+                    tx.send(Err(TxManagerError::Rpc("simulated submission failure".to_string())));
+                return SendHandle::new(rx);
+            }
+        }
+
         let (responder, rx) = oneshot::channel::<SendResponse>();
         let pending = if candidate.blobs.is_empty() {
             Pending {

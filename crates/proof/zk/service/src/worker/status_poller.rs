@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use base_zk_db::ProofRequestRepo;
+use base_zk_db::{ProofRequestRepo, RetryOutcome};
 use tokio::time::sleep;
-use tracing::{Instrument, error, info};
+use tracing::{Instrument, error, info, warn};
 
 use crate::{metrics, proof_request_manager::ProofRequestManager};
 
@@ -14,24 +14,27 @@ use crate::{metrics, proof_request_manager::ProofRequestManager};
 /// jobs complete (SUCCEEDED) or fail (FAILED).
 ///
 /// Additionally, it detects stuck requests (PENDING/RUNNING without active sessions)
-/// and fails them after a timeout to prevent orphaned jobs.
+/// and retries or fails them after a timeout to prevent orphaned jobs.
 #[derive(Debug, Clone)]
 pub struct StatusPoller {
     repo: ProofRequestRepo,
     manager: ProofRequestManager,
     poll_interval_secs: u64,
     stuck_timeout_mins: i32,
+    max_proof_retries: i32,
 }
 
 impl StatusPoller {
-    /// Creates a status poller (`poll_interval_secs=<secs>`, `stuck_timeout_mins=<mins>`).
+    /// Creates a status poller (`poll_interval_secs=<secs>`, `stuck_timeout_mins=<mins>`,
+    /// `max_proof_retries=<n>`).
     pub const fn new(
         repo: ProofRequestRepo,
         manager: ProofRequestManager,
         poll_interval_secs: u64,
         stuck_timeout_mins: i32,
+        max_proof_retries: i32,
     ) -> Self {
-        Self { repo, manager, poll_interval_secs, stuck_timeout_mins }
+        Self { repo, manager, poll_interval_secs, stuck_timeout_mins, max_proof_retries }
     }
 
     /// Run the status poller in a loop
@@ -92,31 +95,47 @@ impl StatusPoller {
             for request in stuck_requests {
                 let proof_type_label = metrics::proof_type_label(request.proof_type);
 
-                error!(
-                    proof_request_id = %request.id,
-                    status = %request.status,
-                    updated_at = %request.updated_at,
-                    "Failing stuck proof request"
-                );
-
                 let error_msg = format!(
                     "Request stuck in {} state without active session for {}+ minutes",
                     request.status, self.stuck_timeout_mins
                 );
 
-                if let Err(e) = self
+                match self
                     .repo
-                    .update_status(request.id, base_zk_db::ProofStatus::Failed, Some(error_msg))
+                    .retry_or_fail_stuck_request(request.id, self.max_proof_retries, &error_msg)
                     .await
                 {
-                    error!(
-                        proof_request_id = %request.id,
-                        error = %e,
-                        "Failed to mark stuck request as failed"
-                    );
-                } else {
-                    metrics::inc_stuck_requests(proof_type_label);
-                    metrics::inc_proof_requests_completed("failed", proof_type_label);
+                    Ok(RetryOutcome::Retried) => {
+                        info!(
+                            proof_request_id = %request.id,
+                            retry_count = request.retry_count + 1,
+                            max_retries = self.max_proof_retries,
+                            "Retrying stuck request — reset to CREATED with new outbox entry"
+                        );
+                        metrics::inc_retried_requests(proof_type_label);
+                    }
+                    Ok(RetryOutcome::PermanentlyFailed) => {
+                        error!(
+                            proof_request_id = %request.id,
+                            retry_count = request.retry_count,
+                            "Permanently failing stuck request — max retries exceeded"
+                        );
+                        metrics::inc_stuck_requests(proof_type_label);
+                        metrics::inc_proof_requests_completed("failed", proof_type_label);
+                    }
+                    Ok(RetryOutcome::Skipped) => {
+                        warn!(
+                            proof_request_id = %request.id,
+                            "Stuck request no longer PENDING — already claimed or transitioned"
+                        );
+                    }
+                    Err(e) => {
+                        error!(
+                            proof_request_id = %request.id,
+                            error = %e,
+                            "Failed to retry/fail stuck request"
+                        );
+                    }
                 }
             }
         }

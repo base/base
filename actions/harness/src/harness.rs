@@ -2,10 +2,11 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
+use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{DataAvailabilityProvider, PipelineBuilder, StatefulAttributesBuilder};
-use base_consensus_node::L1OriginSelector;
+use base_consensus_node::{GossipTransport, L1OriginSelector};
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
@@ -248,6 +249,33 @@ impl ActionTestHarness {
         let transport = self.create_supervised_p2p(sequencer);
         let node = self.create_blob_test_rollup_node(sequencer, l1_chain.clone(), transport);
         (node, l1_chain)
+    }
+
+    /// Create a [`SupervisedP2P`] / [`TestGossipTransport`] pair with real
+    /// signature signing and validation enabled.
+    ///
+    /// - Attaches `key` to `sequencer` so that [`L2Sequencer::broadcast_unsafe_block`]
+    ///   signs each gossipped block with the production formula.
+    /// - Configures the returned [`TestGossipTransport`] to validate incoming
+    ///   blocks against the same address, using the rollup config's chain ID.
+    ///
+    /// Use this in place of [`create_supervised_p2p`] when a test needs to
+    /// exercise signature verification.
+    ///
+    /// [`create_supervised_p2p`]: ActionTestHarness::create_supervised_p2p
+    pub fn create_signing_p2p(
+        &self,
+        sequencer: &mut L2Sequencer,
+        key: PrivateKeySigner,
+    ) -> TestGossipTransport {
+        let address = key.address();
+        sequencer.set_unsafe_block_signer(key.clone());
+        let (p2p, mut transport) = TestGossipTransport::channel();
+        sequencer.set_supervised_p2p(p2p);
+        transport.set_block_signer(address);
+        transport.set_chain_id(self.rollup_config.l2_chain_id.id());
+        transport.set_signing_key(key);
+        transport
     }
 
     /// Create an [`L2Sequencer`] starting from L2 genesis, wired to a

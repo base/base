@@ -536,7 +536,7 @@ impl OpSuccinctBackend {
                         error_message: None,
                     },
                 };
-                repo.update_receipt_if_non_terminal(update_receipt).await?;
+                repo.update_receipt_if_running(update_receipt).await?;
 
                 info!(
                     proof_request_id = %proof_request_id,

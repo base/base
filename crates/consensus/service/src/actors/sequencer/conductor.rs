@@ -75,4 +75,7 @@ pub enum ConductorError {
     /// An error occurred while making an RPC call to the conductor.
     #[error("RPC error: {0}")]
     Rpc(#[from] ClientError),
+    /// The conductor rejected the payload because this node is not the leader.
+    #[error("not the conductor leader")]
+    NotLeader,
 }

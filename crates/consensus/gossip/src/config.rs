@@ -166,24 +166,46 @@ pub fn default_config() -> Config {
 }
 
 /// Computes the [`MessageId`] of a `gossipsub` message.
+///
+/// Reject oversized snappy frames before allocating: `snap::raw::decompress_len`
+/// parses only the varu32 preamble and never allocates. Frames whose declared
+/// decoded size exceeds [`MAX_GOSSIP_SIZE`] are hashed under the invalid-snappy
+/// domain, identical to malformed snappy input. This prevents an anonymous peer
+/// from forcing the gossipsub task to allocate hundreds of `MiB` per packet.
 fn compute_message_id(msg: &Message) -> MessageId {
-    let mut decoder = Decoder::new();
-    let id = decoder.decompress_vec(&msg.data).map_or_else(
-        |_| {
-            warn!(target: "cfg", "Failed to decompress message, using invalid snappy");
-            let domain_invalid_snappy: Vec<u8> = vec![0x0, 0x0, 0x0, 0x0];
-            sha256([domain_invalid_snappy.as_slice(), msg.data.as_slice()].concat().as_slice())
-                [..20]
-                .to_vec()
-        },
-        |data| {
-            let domain_valid_snappy: Vec<u8> = vec![0x1, 0x0, 0x0, 0x0];
-            sha256([domain_valid_snappy.as_slice(), data.as_slice()].concat().as_slice())[..20]
-                .to_vec()
-        },
-    );
+    let id = match snap::raw::decompress_len(&msg.data) {
+        Ok(declared) if declared > MAX_GOSSIP_SIZE => {
+            warn!(target: "cfg", declared, max = MAX_GOSSIP_SIZE, "Rejecting oversized snappy message");
+            invalid_snappy_id(&msg.data)
+        }
+        Ok(_) => {
+            let mut decoder = Decoder::new();
+            decoder.decompress_vec(&msg.data).map_or_else(
+                |_| {
+                    warn!(target: "cfg", "Failed to decompress message, using invalid snappy");
+                    invalid_snappy_id(&msg.data)
+                },
+                |data| {
+                    let domain_valid_snappy: Vec<u8> = vec![0x1, 0x0, 0x0, 0x0];
+                    sha256([domain_valid_snappy.as_slice(), data.as_slice()].concat().as_slice())
+                        [..20]
+                        .to_vec()
+                },
+            )
+        }
+        Err(_) => {
+            warn!(target: "cfg", "Failed to read snappy preamble, using invalid snappy");
+            invalid_snappy_id(&msg.data)
+        }
+    };
 
     MessageId(id)
+}
+
+/// Hash `data` under the invalid-snappy domain tag.
+fn invalid_snappy_id(data: &[u8]) -> Vec<u8> {
+    let domain_invalid_snappy: Vec<u8> = vec![0x0, 0x0, 0x0, 0x0];
+    sha256([domain_invalid_snappy.as_slice(), data].concat().as_slice())[..20].to_vec()
 }
 
 #[cfg(test)]
@@ -236,5 +258,24 @@ mod tests {
         let id = compute_message_id(&msg);
         let hashed = sha256(&[&[0x1, 0x0, 0x0, 0x0], [1, 2, 3, 4, 5].as_slice()].concat());
         assert_eq!(id.0, hashed[..20].to_vec());
+    }
+
+    #[test]
+    fn test_compute_message_id_rejects_oversized_snappy_bomb() {
+        let huge = vec![0u8; MAX_GOSSIP_SIZE + 1];
+        let bomb = snap::raw::Encoder::new().compress_vec(&huge).unwrap();
+        assert!(bomb.len() < MAX_GOSSIP_SIZE, "wire size must pass max_transmit_size");
+        assert!(snap::raw::decompress_len(&bomb).unwrap() > MAX_GOSSIP_SIZE);
+
+        let msg = Message {
+            source: None,
+            data: bomb.clone(),
+            sequence_number: None,
+            topic: libp2p::gossipsub::TopicHash::from_raw("test"),
+        };
+
+        let id = compute_message_id(&msg);
+        let expected = sha256(&[&[0x0, 0x0, 0x0, 0x0], bomb.as_slice()].concat())[..20].to_vec();
+        assert_eq!(id.0, expected, "oversized bomb must hash under the invalid-snappy domain");
     }
 }

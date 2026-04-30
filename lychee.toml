@@ -33,6 +33,7 @@ exclude = [
     'https://patreon\.com',
     'https://www\.patreon\.com',
     'https://tidelift\.com',
+    'https://www\.coinbase\.com',      # Fails in GitHub Actions with HTTP/2 protocol errors
 
     # Moved/deleted source files (links in docs that predate refactors)
     'https://github\.com/base/base/blob/main/crates/execution/upgrades/src/chain\.rs',
