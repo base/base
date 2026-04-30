@@ -62,14 +62,20 @@ pub mod cycle_tracker {
     }
 }
 
-/// Get the ZKVM-accelerated precompiles.
-fn get_precompiles() -> Vec<PrecompileWithAddress> {
+/// Get the ZKVM-accelerated precompiles for the given spec.
+/// Returns the precompile variants that match the given [`OpSpecId`], ensuring that the ZKVM
+/// replay path uses the same precompile pricing and behavior as canonical Base execution.
+fn get_precompiles(spec: OpSpecId) -> Vec<PrecompileWithAddress> {
     vec![
         bn254::add::ISTANBUL,
         bn254::mul::ISTANBUL,
         bn254::pair::ISTANBUL,
         secp256k1::ECRECOVER,
-        secp256r1::P256VERIFY,
+        if matches!(spec, OpSpecId::AZUL) {
+            secp256r1::P256VERIFY_OSAKA
+        } else {
+            secp256r1::P256VERIFY
+        },
         kzg_point_evaluation::POINT_EVALUATION,
     ]
 }
@@ -93,11 +99,12 @@ fn get_or_create_precompiles(spec: OpSpecId) -> &'static Precompiles {
         }
         OpSpecId::FJORD => BasePrecompiles::fjord().clone(),
         OpSpecId::GRANITE | OpSpecId::HOLOCENE => BasePrecompiles::granite().clone(),
-        OpSpecId::ISTHMUS | OpSpecId::JOVIAN => BasePrecompiles::isthmus().clone(),
+        OpSpecId::ISTHMUS => BasePrecompiles::isthmus().clone(),
+        OpSpecId::JOVIAN => BasePrecompiles::jovian().clone(),
         OpSpecId::AZUL => BasePrecompiles::azul().clone(),
     };
     let mut precompiles = base;
-    precompiles.extend(get_precompiles());
+    precompiles.extend(get_precompiles(spec));
     let leaked: &'static Precompiles = alloc::boxed::Box::leak(alloc::boxed::Box::new(precompiles));
 
     PRECOMPILE_CACHE.lock().push((spec, leaked));
@@ -413,16 +420,18 @@ mod tests {
 
     #[test]
     fn test_all_accelerated_precompiles_have_tracker_names() {
-        let precompiles = get_precompiles();
-        assert_eq!(precompiles.len(), 6, "Expected 6 accelerated precompiles");
+        for spec in [OpSpecId::FJORD, OpSpecId::AZUL] {
+            let precompiles = get_precompiles(spec);
+            assert_eq!(precompiles.len(), 6, "Expected 6 accelerated precompiles for {spec:?}");
 
-        for precompile in &precompiles {
-            let tracker = get_precompile_tracker_name(precompile.id());
-            assert!(
-                tracker.is_some(),
-                "Precompile {:?} is missing a cycle tracker name",
-                precompile.id()
-            );
+            for precompile in &precompiles {
+                let tracker = get_precompile_tracker_name(precompile.id());
+                assert!(
+                    tracker.is_some(),
+                    "Precompile {:?} is missing a cycle tracker name",
+                    precompile.id()
+                );
+            }
         }
     }
 
@@ -450,6 +459,29 @@ mod tests {
                 "Key '{key}' contains underscores (should use dashes)"
             );
         }
+    }
+
+    #[test]
+    fn test_azul_uses_osaka_p256verify() {
+        let p256_addr = *secp256r1::P256VERIFY.address();
+
+        let jovian_set = get_or_create_precompiles(OpSpecId::JOVIAN);
+        let azul_set = get_or_create_precompiles(OpSpecId::AZUL);
+
+        let jovian_p256 = jovian_set.get(&p256_addr).expect("JOVIAN must have P256VERIFY");
+        let azul_p256 = azul_set.get(&p256_addr).expect("AZUL must have P256VERIFY");
+
+        // Legacy P256VERIFY costs 3,450 gas. With 5,000 gas it should succeed.
+        assert!(
+            jovian_p256.execute(&[], 5_000).is_ok(),
+            "JOVIAN P256VERIFY must succeed with 5,000 gas (legacy pricing, 3,450 base fee)",
+        );
+
+        // Osaka P256VERIFY costs 6,900 gas. With 5,000 gas it must fail with OOG.
+        assert!(
+            matches!(azul_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)),
+            "AZUL P256VERIFY must fail with 5,000 gas (Osaka pricing, 6,900 base fee)",
+        );
     }
 
     #[test]
