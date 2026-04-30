@@ -7,7 +7,7 @@ use clap::Parser;
 use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
 use reth_discv4::{DiscoveryUpdate, Discv4, Discv4Config};
 use reth_discv5::{
-    Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, DEFAULT_DISCOVERY_V5_PORT, Discv5,
+    Config, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, Discv5,
     discv5::{ConfigBuilder as Discv5ConfigBuilder, Event, ProtocolIdentity},
 };
 use reth_net_nat::{NatResolver, external_addr_with};
@@ -164,6 +164,7 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
+    use reth_discv5::DEFAULT_DISCOVERY_V5_PORT;
     use rstest::rstest;
 
     use super::*;
