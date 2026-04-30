@@ -57,13 +57,6 @@ async fn main() -> Result<()> {
     let base_proof_succinct_config_name_hash =
         alloy_primitives::keccak256(env_config.base_proof_succinct_config_name.as_bytes());
 
-    // Validate that at least one of gas_limit or range_proof_interval is nonzero
-    if env_config.evm_gas_limit == 0 && env_config.range_proof_interval == 0 {
-        return Err(anyhow::anyhow!(
-            "At least one of GAS_LIMIT or RANGE_PROOF_INTERVAL must be non-zero"
-        ));
-    }
-
     let proposer_config = RequesterConfig {
         l1_chain_id: fetcher.l1_provider.get_chain_id().await? as i64,
         l2_chain_id: fetcher.l2_provider.get_chain_id().await? as i64,
@@ -93,6 +86,7 @@ async fn main() -> Result<()> {
         min_auction_period: env_config.min_auction_period,
         auction_timeout: env_config.auction_timeout,
     };
+    proposer_config.validate()?;
     proposer_config.log();
 
     let l1_provider = ProviderBuilder::new().connect_http(env_config.l1_rpc.clone());
