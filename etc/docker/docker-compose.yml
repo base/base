@@ -25,7 +25,7 @@ services:
     entrypoint: ["/usr/local/bin/setup-l1.sh"]
 
   l1-el:
-    image: ghcr.io/paradigmxyz/reth:v1.11.3
+    image: ghcr.io/paradigmxyz/reth:v1.11.4
     container_name: l1-el
     depends_on:
       setup-l1:
