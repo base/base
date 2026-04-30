@@ -2,7 +2,7 @@
 
 use std::{
     marker::PhantomData,
-    net::{SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
 };
 
@@ -36,9 +36,10 @@ use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::ConfigureEvm;
 use reth_network::{
-    NetworkConfig, NetworkHandle, NetworkManager, NetworkPrimitives, PeersInfo,
-    types::BasicNetworkPrimitives,
+    NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, NetworkPrimitives,
+    PeersInfo, types::BasicNetworkPrimitives,
 };
+use reth_network_peers::NodeRecord;
 use reth_node_api::{
     AddOnsContext, BuildNextEnv, EngineTypes, FullNodeComponents, HeaderTy, NodeAddOns,
     NodePrimitives, PayloadAttributesBuilder, PayloadTypes, PrimitivesTy, TxTy,
@@ -57,6 +58,7 @@ use reth_node_builder::{
         RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
     },
 };
+use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::{DebugApiServer, DebugExecutionWitnessApiServer, eth::RpcTypes};
@@ -1072,13 +1074,140 @@ impl BaseNetworkBuilder {
     ) -> Self {
         Self { disable_txpool_gossip, disable_discovery_v4, base_protocol }
     }
+
+    /// Runs a future on the current runtime, or creates one when needed.
+    pub fn block_on<T>(f: impl Future<Output = T>) -> T {
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| runtime.block_on(f))
+        } else {
+            tokio::runtime::Runtime::new().unwrap().block_on(f)
+        }
+    }
 }
 
-fn block_on<T>(f: impl Future<Output = T>) -> T {
-    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| runtime.block_on(f))
-    } else {
-        tokio::runtime::Runtime::new().unwrap().block_on(f)
+/// Base-specific discovery configuration.
+#[derive(Debug, Clone)]
+pub struct BaseDiscoveryConfig {
+    /// Disable discovery v4.
+    pub disable_discovery_v4: bool,
+    /// Enable the Base discv5 protocol identity.
+    pub base_protocol: bool,
+}
+
+impl BaseDiscoveryConfig {
+    /// Creates a new discovery config.
+    pub const fn new(disable_discovery_v4: bool, base_protocol: bool) -> Self {
+        Self { disable_discovery_v4, base_protocol }
+    }
+
+    /// Returns true if discv4 discovery should be disabled.
+    pub const fn should_disable_discv4(&self, discovery: &DiscoveryArgs) -> bool {
+        self.disable_discovery_v4
+            || discovery.disable_discovery
+            || discovery.disable_discv4_discovery
+    }
+
+    /// Applies Base discovery settings to the reth network config builder.
+    pub fn apply_to_network_builder<N>(
+        &self,
+        mut builder: NetworkConfigBuilder<N>,
+        args: &RethNetworkArgs,
+        boot_nodes: impl IntoIterator<Item = NodeRecord>,
+        external_addr: Option<IpAddr>,
+    ) -> NetworkConfigBuilder<N>
+    where
+        N: NetworkPrimitives,
+    {
+        if self.should_disable_discv4(&args.discovery) {
+            builder = builder.disable_discv4_discovery();
+        }
+
+        if !args.discovery.disable_discovery {
+            builder =
+                builder.discovery_v5(self.discovery_v5_builder(args, boot_nodes, external_addr));
+        }
+
+        builder
+    }
+
+    /// Creates the Base discv5 config builder from reth network arguments.
+    pub fn discovery_v5_builder(
+        &self,
+        args: &RethNetworkArgs,
+        boot_nodes: impl IntoIterator<Item = NodeRecord>,
+        external_addr: Option<IpAddr>,
+    ) -> reth_discv5::ConfigBuilder {
+        let rlpx_socket = Self::rlpx_socket(args);
+        let mut builder = args
+            .discovery
+            .discovery_v5_builder(rlpx_socket, boot_nodes)
+            .discv5_config(self.discv5_config(args));
+
+        if let Some((key, value)) = Self::enr_ip_kv_pair(external_addr) {
+            builder = builder.add_enr_kv_pair(key, value);
+        }
+
+        builder
+    }
+
+    /// Creates the inner discv5 config with Base protocol identity when enabled.
+    pub fn discv5_config(&self, args: &RethNetworkArgs) -> reth_discv5::discv5::Config {
+        let mut builder = reth_discv5::discv5::ConfigBuilder::new(self.discv5_listen_config(args));
+
+        if self.base_protocol {
+            builder.protocol_identity(reth_discv5::discv5::ProtocolIdentity {
+                protocol_id: BASE_V0_PROTOCOL_VERSION,
+                ..Default::default()
+            });
+        }
+
+        builder.build()
+    }
+
+    /// Creates the discv5 listen config from reth network arguments.
+    pub fn discv5_listen_config(
+        &self,
+        args: &RethNetworkArgs,
+    ) -> reth_discv5::discv5::ListenConfig {
+        let rlpx_socket = Self::rlpx_socket(args);
+        let discv5_addr_ipv4 = args.discovery.discv5_addr.or_else(|| match rlpx_socket {
+            SocketAddr::V4(addr) => Some(*addr.ip()),
+            SocketAddr::V6(_) => None,
+        });
+        let discv5_addr_ipv6 = args.discovery.discv5_addr_ipv6.or_else(|| match rlpx_socket {
+            SocketAddr::V4(_) => None,
+            SocketAddr::V6(addr) => Some(*addr.ip()),
+        });
+
+        reth_discv5::discv5::ListenConfig::from_two_sockets(
+            discv5_addr_ipv4.map(|addr| SocketAddrV4::new(addr, args.discovery.discv5_port)),
+            discv5_addr_ipv6
+                .map(|addr| SocketAddrV6::new(addr, args.discovery.discv5_port_ipv6, 0, 0)),
+        )
+    }
+
+    /// Returns the RLPx socket configured by reth network arguments.
+    pub fn rlpx_socket(args: &RethNetworkArgs) -> SocketAddr {
+        (args.addr, args.port).into()
+    }
+
+    /// Encodes the NAT-discovered external IP as an ENR key-value pair.
+    pub fn enr_ip_kv_pair(external_addr: Option<IpAddr>) -> Option<(&'static [u8], Bytes)> {
+        match external_addr {
+            Some(IpAddr::V4(addr)) => {
+                let addr = addr.octets();
+                let mut out = BytesMut::with_capacity(addr.length());
+                addr.encode(&mut out);
+                Some((IP_ENR_KEY, Bytes::from(out.freeze())))
+            }
+            Some(IpAddr::V6(addr)) => {
+                let addr = addr.octets();
+                let mut out = BytesMut::with_capacity(addr.length());
+                addr.encode(&mut out);
+                Some((IP6_ENR_KEY, Bytes::from(out.freeze())))
+            }
+            None => None,
+        }
     }
 }
 
@@ -1095,84 +1224,24 @@ impl BaseNetworkBuilder {
         NetworkP: NetworkPrimitives,
     {
         let disable_txpool_gossip = self.disable_txpool_gossip;
-        let disable_discovery_v4 = self.disable_discovery_v4;
-        let base_protocol = self.base_protocol;
+        let discovery_config =
+            BaseDiscoveryConfig::new(self.disable_discovery_v4, self.base_protocol);
         let args = &ctx.config().network;
         let network_builder = ctx
             .network_config_builder()?
             // apply discovery settings
-            .apply(|mut builder| {
-                let rlpx_socket = (args.addr, args.port).into();
-                if disable_discovery_v4 || args.discovery.disable_discovery {
-                    builder = builder.disable_discv4_discovery();
-                }
-                if !args.discovery.disable_discovery {
-                    // copied from discovery_v5_builder to override discv5_config
-                    let discv5_addr_ipv4 =
-                        args.discovery.discv5_addr.or_else(|| match rlpx_socket {
-                            std::net::SocketAddr::V4(addr) => Some(*addr.ip()),
-                            std::net::SocketAddr::V6(_) => None,
-                        });
-                    let discv5_addr_ipv6 =
-                        args.discovery.discv5_addr_ipv6.or_else(|| match rlpx_socket {
-                            std::net::SocketAddr::V4(_) => None,
-                            std::net::SocketAddr::V6(addr) => Some(*addr.ip()),
-                        });
-                    let listen_config = reth_discv5::discv5::ListenConfig::from_two_sockets(
-                        discv5_addr_ipv4
-                            .map(|addr| SocketAddrV4::new(addr, args.discovery.discv5_port)),
-                        discv5_addr_ipv6.map(|addr| {
-                            SocketAddrV6::new(addr, args.discovery.discv5_port_ipv6, 0, 0)
-                        }),
-                    );
-
-                    let external_addr = block_on(args.nat.clone().external_addr());
-
-                    let mut discv5_config_builder =
-                        reth_discv5::discv5::ConfigBuilder::new(listen_config);
-                    if base_protocol {
-                        discv5_config_builder.protocol_identity(
-                            reth_discv5::discv5::ProtocolIdentity {
-                                protocol_id: BASE_V0_PROTOCOL_VERSION,
-                                ..Default::default()
-                            },
-                        );
-                    }
-
-                    let mut reth_config_builder = args
-                        .discovery
-                        .discovery_v5_builder(
-                            rlpx_socket,
-                            ctx.config()
-                                .network
-                                .resolved_bootnodes()
-                                .or_else(|| ctx.chain_spec().bootnodes())
-                                .unwrap_or_default(),
-                        )
-                        .discv5_config(discv5_config_builder.build());
-
-                    reth_config_builder = match external_addr {
-                        Some(std::net::IpAddr::V4(addr)) => {
-                            let addr = addr.octets();
-                            let mut out = BytesMut::with_capacity(addr.length());
-                            addr.encode(&mut out);
-                            reth_config_builder
-                                .add_enr_kv_pair(IP_ENR_KEY, Bytes::from(out.freeze()))
-                        }
-                        Some(std::net::IpAddr::V6(addr)) => {
-                            let addr = addr.octets();
-                            let mut out = BytesMut::with_capacity(addr.length());
-                            addr.encode(&mut out);
-                            reth_config_builder
-                                .add_enr_kv_pair(IP6_ENR_KEY, Bytes::from(out.freeze()))
-                        }
-                        _ => reth_config_builder,
-                    };
-
-                    builder = builder.discovery_v5(reth_config_builder);
-                }
-
-                builder
+            .apply(|builder| {
+                let external_addr = Self::block_on(args.nat.clone().external_addr());
+                discovery_config.apply_to_network_builder(
+                    builder,
+                    args,
+                    ctx.config()
+                        .network
+                        .resolved_bootnodes()
+                        .or_else(|| ctx.chain_spec().bootnodes())
+                        .unwrap_or_default(),
+                    external_addr,
+                )
             });
 
         let mut network_config = ctx.build_network_config(network_builder);
@@ -1253,3 +1322,227 @@ where
 
 /// Network primitive types used by Base networks.
 pub type BaseNetworkPrimitives = BasicNetworkPrimitives<BasePrimitives, BasePooledTransaction>;
+
+#[cfg(test)]
+mod tests {
+    use std::{net::Ipv4Addr, sync::Arc};
+
+    use reth_chainspec::MAINNET;
+    use reth_discv5::{
+        build_local_enr,
+        discv5::{ListenConfig, ProtocolIdentity},
+    };
+    use reth_network::{EthNetworkPrimitives, NetworkConfigBuilder, config::rng_secret_key};
+    use rstest::rstest;
+
+    use super::*;
+
+    #[rstest]
+    #[case::enabled(false, false, false, false)]
+    #[case::disabled_by_base(true, false, false, true)]
+    #[case::disabled_by_reth(false, true, false, true)]
+    #[case::disabled_by_global_discovery(false, false, true, true)]
+    fn discv4_disable_decision_uses_base_and_reth_flags(
+        #[case] disable_by_base: bool,
+        #[case] disable_by_reth: bool,
+        #[case] disable_all_discovery: bool,
+        #[case] expected: bool,
+    ) {
+        let discovery_args = DiscoveryArgs {
+            disable_discovery: disable_all_discovery,
+            disable_discv4_discovery: disable_by_reth,
+            ..Default::default()
+        };
+        let discovery_config = BaseDiscoveryConfig::new(disable_by_base, true);
+
+        assert_eq!(discovery_config.should_disable_discv4(&discovery_args), expected);
+    }
+
+    #[rstest]
+    #[case::enabled(false, false, false, true)]
+    #[case::disabled_by_base(true, false, false, false)]
+    #[case::disabled_by_reth(false, true, false, false)]
+    #[case::disabled_by_global_discovery(false, false, true, false)]
+    fn discovery_config_applies_discv4_setting(
+        #[case] disable_by_base: bool,
+        #[case] disable_by_reth: bool,
+        #[case] disable_all_discovery: bool,
+        #[case] expected_enabled: bool,
+    ) {
+        let mut args = RethNetworkArgs::default();
+        args.discovery.disable_discovery = disable_all_discovery;
+        args.discovery.disable_discv4_discovery = disable_by_reth;
+        let discovery_config = BaseDiscoveryConfig::new(disable_by_base, true);
+
+        let network_config = discovery_config
+            .apply_to_network_builder(
+                NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(),
+                &args,
+                Vec::<NodeRecord>::new(),
+                None,
+            )
+            .build_with_noop_provider(Arc::clone(&MAINNET));
+
+        assert_eq!(network_config.discovery_v4_config.is_some(), expected_enabled);
+    }
+
+    #[rstest]
+    #[case::enabled(false, true)]
+    #[case::disabled(true, false)]
+    fn discovery_config_applies_discv5_setting(
+        #[case] disable_all_discovery: bool,
+        #[case] expected_enabled: bool,
+    ) {
+        let mut args = RethNetworkArgs::default();
+        args.discovery.disable_discovery = disable_all_discovery;
+        let discovery_config = BaseDiscoveryConfig::new(false, true);
+
+        let network_config = discovery_config
+            .apply_to_network_builder(
+                NetworkConfigBuilder::<EthNetworkPrimitives>::with_rng_secret_key(),
+                &args,
+                Vec::<NodeRecord>::new(),
+                None,
+            )
+            .build_with_noop_provider(Arc::clone(&MAINNET));
+
+        assert_eq!(network_config.discovery_v5_config.is_some(), expected_enabled);
+    }
+
+    #[rstest]
+    #[case::ipv4(true, BASE_V0_PROTOCOL_VERSION)]
+    #[case::default_protocol(false, ProtocolIdentity::default().protocol_id)]
+    fn discv5_config_uses_protocol_identity(
+        #[case] base_protocol: bool,
+        #[case] expected_protocol_id: [u8; 6],
+    ) {
+        let args = RethNetworkArgs::default();
+        let discovery_config = BaseDiscoveryConfig::new(false, base_protocol);
+
+        let discv5_config = discovery_config.discv5_config(&args);
+
+        assert_eq!(discv5_config.protocol_identity.protocol_id, expected_protocol_id);
+    }
+
+    #[rstest]
+    #[case::rlpx_ipv4(
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+        None,
+        None,
+        9201,
+        9202,
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+        9201
+    )]
+    #[case::explicit_ipv4_overwritten_by_rlpx(
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+        Some(Ipv4Addr::new(203, 0, 113, 1)),
+        None,
+        9201,
+        9202,
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+        9201
+    )]
+    #[case::rlpx_ipv6(
+        IpAddr::V6("2001:db8::1".parse().expect("valid ipv6")),
+        None,
+        None,
+        9201,
+        9202,
+        IpAddr::V6("2001:db8::1".parse().expect("valid ipv6")),
+        9202
+    )]
+    #[case::dual_stack(
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+        None,
+        Some("2001:db8::2".parse().expect("valid ipv6")),
+        9201,
+        9202,
+        IpAddr::V6("2001:db8::2".parse().expect("valid ipv6")),
+        9202
+    )]
+    fn discv5_listen_config_uses_explicit_addresses_or_rlpx_fallback(
+        #[case] rlpx_ip: IpAddr,
+        #[case] discv5_addr: Option<Ipv4Addr>,
+        #[case] discv5_addr_ipv6: Option<std::net::Ipv6Addr>,
+        #[case] discv5_port: u16,
+        #[case] discv5_port_ipv6: u16,
+        #[case] expected_advertised_ip: IpAddr,
+        #[case] expected_advertised_port: u16,
+    ) {
+        let mut args = RethNetworkArgs { addr: rlpx_ip, port: 30303, ..Default::default() };
+        args.discovery.discv5_addr = discv5_addr;
+        args.discovery.discv5_addr_ipv6 = discv5_addr_ipv6;
+        args.discovery.discv5_port = discv5_port;
+        args.discovery.discv5_port_ipv6 = discv5_port_ipv6;
+        let discovery_config = BaseDiscoveryConfig::new(false, true);
+
+        let reth_discv5_config =
+            discovery_config.discovery_v5_builder(&args, Vec::<NodeRecord>::new(), None).build();
+
+        assert_eq!(
+            reth_discv5_config.discovery_socket(),
+            SocketAddr::new(expected_advertised_ip, expected_advertised_port)
+        );
+        assert_eq!(reth_discv5_config.rlpx_socket(), &SocketAddr::new(rlpx_ip, args.port));
+    }
+
+    #[rstest]
+    #[case::ipv4(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)))]
+    #[case::ipv6(IpAddr::V6("2001:db8::10".parse().expect("valid ipv6")))]
+    fn discovery_v5_builder_advertises_external_ip(#[case] external_addr: IpAddr) {
+        let mut args = RethNetworkArgs::default();
+        args.addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let discovery_config = BaseDiscoveryConfig::new(false, true);
+
+        let reth_discv5_config = discovery_config
+            .discovery_v5_builder(&args, Vec::<NodeRecord>::new(), Some(external_addr))
+            .build();
+        let secret_key = rng_secret_key();
+        let (enr, _, _, _) = build_local_enr(&secret_key, &reth_discv5_config);
+
+        match external_addr {
+            IpAddr::V4(addr) => assert_eq!(enr.ip4(), Some(addr)),
+            IpAddr::V6(addr) => assert_eq!(enr.ip6(), Some(addr)),
+        }
+    }
+
+    #[rstest]
+    #[case::ipv4(
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+        ListenConfig::Ipv4 { ip: Ipv4Addr::new(192, 0, 2, 1), port: 9200 }
+    )]
+    #[case::ipv6(
+        IpAddr::V6("2001:db8::1".parse().expect("valid ipv6")),
+        ListenConfig::Ipv6 { ip: "2001:db8::1".parse().expect("valid ipv6"), port: 9200 }
+    )]
+    fn discv5_inner_listen_config_matches_rlpx_ip(
+        #[case] rlpx_ip: IpAddr,
+        #[case] expected: ListenConfig,
+    ) {
+        let args = RethNetworkArgs { addr: rlpx_ip, port: 30303, ..Default::default() };
+        let discovery_config = BaseDiscoveryConfig::new(false, true);
+
+        let discv5_config = discovery_config.discv5_config(&args);
+
+        match (discv5_config.listen_config, expected) {
+            (
+                ListenConfig::Ipv4 { ip, port },
+                ListenConfig::Ipv4 { ip: expected_ip, port: expected_port },
+            ) => {
+                assert_eq!(ip, expected_ip);
+                assert_eq!(port, expected_port);
+            }
+            (
+                ListenConfig::Ipv6 { ip, port },
+                ListenConfig::Ipv6 { ip: expected_ip, port: expected_port },
+            ) => {
+                assert_eq!(ip, expected_ip);
+                assert_eq!(port, expected_port);
+            }
+            (actual, expected) => {
+                panic!("unexpected listen config: actual={actual:?} expected={expected:?}")
+            }
+        }
+    }
+}

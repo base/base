@@ -28,6 +28,7 @@ reth-node-core.workspace = true
 reth-chainspec.workspace = true
 reth-trie-common.workspace = true
 reth-node-builder.workspace = true
+reth-network-peers.workspace = true
 reth-rpc-engine-api.workspace = true
 reth-payload-builder.workspace = true
 reth-transaction-pool.workspace = true
@@ -82,6 +83,7 @@ alloy-genesis = { workspace = true, optional = true }
 reth-e2e-test-utils = { workspace = true, optional = true }
 
 [dev-dependencies]
+rstest.workspace = true
 reth-rpc.workspace = true
 reth-trie-db.workspace = true
 reth-payload-util.workspace = true
