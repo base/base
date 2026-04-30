@@ -204,6 +204,17 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
                 println!("  {count:>6}x  {reason}");
             }
         }
+
+        // Write JSON results to file when LOAD_TEST_OUTPUT is set.
+        if let Ok(output_path) = std::env::var("LOAD_TEST_OUTPUT") {
+            match summary.to_json() {
+                Ok(json) => match std::fs::write(&output_path, &json) {
+                    Ok(()) => println!("Results written to {output_path}"),
+                    Err(e) => eprintln!("Warning: failed to write results to {output_path}: {e}"),
+                },
+                Err(e) => eprintln!("Warning: failed to serialize results: {e}"),
+            }
+        }
     }
 
     // Brief cooldown so in-flight load-test transactions can land and
