@@ -596,8 +596,9 @@ mod tests {
 
     #[test]
     fn el_bootnodes_unknown_chain_returns_none() {
-        let unknown =
-            BaseChainSpecBuilder::base_mainnet().chain(alloy_chains::Chain::from_id(99_999)).build();
+        let unknown = BaseChainSpecBuilder::base_mainnet()
+            .chain(alloy_chains::Chain::from_id(99_999))
+            .build();
         assert!(unknown.bootnodes().is_none());
     }
 
