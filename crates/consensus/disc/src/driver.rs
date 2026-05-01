@@ -461,9 +461,8 @@ mod tests {
             })
             .collect();
 
-        // There should be 6 valid boot nodes for the testnet:
-        // 2 ENRs + 4 enodes (each enode listed on ports 30301 and 9200).
-        assert_eq!(testnet.len(), 6);
+        // `BootNodes::testnet()` returns CL bootnodes only — 2 raw ENRs.
+        assert_eq!(testnet.len(), 2);
 
         // Those ENRs should be in the testnet bootnodes.
         for enr in &enrs {
@@ -502,9 +501,8 @@ mod tests {
             })
             .collect();
 
-        // There should be 15 valid boot nodes for the mainnet:
-        // 5 Base Mainnet ENRs + 10 Base enodes (each enode listed on ports 30301 and 9200).
-        assert_eq!(mainnet.len(), 15);
+        // `BootNodes::mainnet()` returns CL bootnodes only — 5 raw ENRs.
+        assert_eq!(mainnet.len(), 5);
 
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 
@@ -533,9 +531,10 @@ mod tests {
             &discovery.disc,
         )
         .await;
+        // All 5 CL ENRs are added directly without I/O — no liveness check needed.
         assert!(
-            discovery.disc.table_entries_enr().len() >= 10,
-            "Discovery table should have at least 10 ENRs"
+            discovery.disc.table_entries_enr().len() >= 5,
+            "Discovery table should have at least 5 ENRs"
         );
 
         // Those ENRs should be in the mainnet bootnodes.
