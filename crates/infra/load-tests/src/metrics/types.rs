@@ -190,18 +190,3 @@ pub struct ConfigSummary {
     /// Amount of each swap token per sender (in wei, as string).
     pub swap_token_amount: String,
 }
-pub struct ConfigSummary {
-    pub funding_amount: String,
-    pub sender_count: u32,
-    pub sender_offset: u32,
-    pub in_flight_per_sender: u32,
-    pub batch_size: u32,
-    pub batch_timeout: Option<String>,
-    pub duration: Option<String>,
-    pub target_gps: Option<u64>,
-    pub seed: u64,
-    pub chain_id: Option<u64>,
-    pub transactions: serde_json::Value,
-    pub looper_contract: Option<String>,
-    pub swap_token_amount: String,
-}
