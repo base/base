@@ -319,7 +319,7 @@ impl SpanBatch {
                 .enumerate()
                 .find(|(_, origin)| origin.number == batch.epoch_num)
                 .map(|(i, origin)| {
-                    origin_index = i;
+                    origin_index += i;
                     origin.hash
                 })
                 .ok_or(SpanBatchError::MissingL1Origin)?;
