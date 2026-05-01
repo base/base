@@ -122,7 +122,7 @@ fn metrics_summary_latency() {
         ));
     }
 
-    let summary = collector.summarize(Duration::from_secs(10));
+    let summary = collector.summarize(Duration::from_secs(10), None);
 
     assert_eq!(summary.throughput.total_confirmed, 5);
 
@@ -157,7 +157,7 @@ fn metrics_summary_gas() {
         Some(2),
     ));
 
-    let summary = collector.summarize(Duration::from_secs(10));
+    let summary = collector.summarize(Duration::from_secs(10), None);
 
     assert_eq!(summary.gas.total_gas, 63000);
     assert_eq!(summary.gas.avg_gas, 31500);
@@ -176,7 +176,7 @@ fn metrics_summary_json_serialization() {
         Some(1),
     ));
 
-    let summary = collector.summarize(Duration::from_secs(10));
+    let summary = collector.summarize(Duration::from_secs(10), None);
     let json = summary.to_json().unwrap();
 
     assert!(json.contains("block_latency"));

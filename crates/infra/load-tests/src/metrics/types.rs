@@ -128,6 +128,17 @@ pub struct GasMetrics {
     pub avg_gas_price: u128,
 }
 
+/// A single throughput sample captured during the test run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThroughputSample {
+    /// Elapsed time since the test started, in seconds.
+    pub elapsed_secs: f64,
+    /// Rolling 30s transactions-per-second at this point.
+    pub tps: f64,
+    /// Rolling 30s gas-per-second at this point.
+    pub gps: f64,
+}
+
 /// Aggregated flashblocks latency percentiles.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlashblocksLatencyMetrics {
@@ -147,4 +158,23 @@ pub struct FlashblocksLatencyMetrics {
     pub p95: Duration,
     /// 99th percentile latency.
     pub p99: Duration,
+}
+
+/// Test configuration included in the JSON output (excludes URLs and secrets).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(missing_docs)]
+pub struct ConfigSummary {
+    pub funding_amount: String,
+    pub sender_count: u32,
+    pub sender_offset: u32,
+    pub in_flight_per_sender: u32,
+    pub batch_size: u32,
+    pub batch_timeout: Option<String>,
+    pub duration: Option<String>,
+    pub target_gps: Option<u64>,
+    pub seed: u64,
+    pub chain_id: Option<u64>,
+    pub transactions: serde_json::Value,
+    pub looper_contract: Option<String>,
+    pub swap_token_amount: String,
 }

@@ -44,7 +44,7 @@ use super::{
 use crate::{
     BaselineError, Result,
     config::{OsakaTarget, WorkloadConfig},
-    metrics::{MetricsCollector, MetricsSummary, TransactionMetrics},
+    metrics::{ConfigSummary, MetricsCollector, MetricsSummary, TransactionMetrics},
     rpc::{BatchRpcClient, BatchSendResult, RpcClient, WalletProvider, create_wallet_provider},
     workload::{
         AccountPool, AerodromeClPayload, CalldataPayload, Erc20Payload, OsakaPayload,
@@ -96,6 +96,7 @@ const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
     config: LoadConfig,
+    config_summary: Option<ConfigSummary>,
     client: RpcClient,
     accounts: AccountPool,
     generator: WorkloadGenerator,
@@ -157,6 +158,7 @@ impl LoadRunner {
 
         Ok(Self {
             config,
+            config_summary: None,
             client,
             accounts,
             generator,
@@ -181,6 +183,11 @@ impl LoadRunner {
     /// Sets the funder wallet address for inclusion in live snapshots.
     pub fn set_funder_address(&mut self, addr: String) {
         self.funder_address = Some(addr);
+    }
+
+    /// Sets the config summary for inclusion in JSON output.
+    pub fn set_config_summary(&mut self, summary: ConfigSummary) {
+        self.config_summary = Some(summary);
     }
 
     fn build_providers(
@@ -1016,7 +1023,7 @@ impl LoadRunner {
 
             if use_live_display || use_snapshot_tx {
                 if last_progress_report.elapsed() >= DISPLAY_RENDER_INTERVAL {
-                    self.collector.sample_throughput();
+                    self.collector.sample_throughput(start.elapsed());
                     let snap = self.build_snapshot(
                         start,
                         &confirmer_handle,
@@ -1032,7 +1039,7 @@ impl LoadRunner {
                     last_progress_report = Instant::now();
                 }
             } else if last_progress_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
-                self.collector.sample_throughput();
+                self.collector.sample_throughput(start.elapsed());
                 let elapsed_secs = start.elapsed().as_secs();
                 let submitted = self.collector.submitted_count();
                 let confirmed = self.collector.confirmed_count();
@@ -1331,7 +1338,7 @@ impl LoadRunner {
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
-        Ok(self.collector.summarize(last_confirmed_at))
+        Ok(self.collector.summarize(last_confirmed_at, self.config_summary.clone()))
     }
 
     fn build_snapshot(

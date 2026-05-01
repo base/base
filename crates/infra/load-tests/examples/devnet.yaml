@@ -13,6 +13,9 @@ block_watcher_url: "ws://localhost:8546"
 # Flashblocks websocket url (flashblock latency tracking)
 flashblocks_ws_url: "ws://localhost:7111"
 
+# Separate endpoint for confirmation polling (defaults to rpc when not set)
+# confirmer_url: "http://localhost:8547"
+
 # Number of sender accounts
 sender_count: 100
 
