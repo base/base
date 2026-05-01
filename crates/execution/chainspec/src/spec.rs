@@ -172,11 +172,7 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
-        ChainConfig::by_chain_id(self.chain().id()).map(|cfg| {
-            let enodes: Vec<&str> =
-                cfg.bootnodes.iter().filter(|s| !s.starts_with("enr:")).copied().collect();
-            parse_nodes(&enodes)
-        })
+        ChainConfig::by_chain_id(self.chain().id()).map(|cfg| parse_nodes(cfg.bootnodes.execution))
     }
 
     fn is_optimism(&self) -> bool {
@@ -555,6 +551,55 @@ mod tests {
             genesis.hash_slow(),
             b256!("0x1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf")
         );
+    }
+
+    #[test]
+    fn el_bootnodes_count_matches_config() {
+        // `bootnodes()` must surface every EL entry from `ChainConfig.bootnodes.execution`.
+        // A mismatch means `parse_nodes` silently dropped a malformed entry.
+        for (spec, cfg) in [
+            (&*BASE_MAINNET, ChainConfig::mainnet()),
+            (&*BASE_SEPOLIA, ChainConfig::sepolia()),
+            (&*BASE_ZERONET, ChainConfig::zeronet()),
+        ] {
+            let parsed = spec.bootnodes().expect("known chain returns Some");
+            assert_eq!(
+                parsed.len(),
+                cfg.bootnodes.execution.len(),
+                "EL bootnode parse drop on chain {}",
+                cfg.chain_id,
+            );
+        }
+    }
+
+    #[test]
+    fn el_bootnodes_have_no_consensus_entries() {
+        // The EL chainspec must never expose CL ENRs — they belong to a different
+        // discv5 network (different protocol ID / port) and bricked discovery in the past.
+        for (spec, cfg) in [
+            (&*BASE_MAINNET, ChainConfig::mainnet()),
+            (&*BASE_SEPOLIA, ChainConfig::sepolia()),
+            (&*BASE_ZERONET, ChainConfig::zeronet()),
+        ] {
+            assert!(
+                cfg.bootnodes.execution.iter().all(|s| s.starts_with("enode://")),
+                "non-enode entry in EL list for chain {}",
+                cfg.chain_id,
+            );
+            let parsed = spec.bootnodes().unwrap();
+            for record in &parsed {
+                assert_ne!(record.tcp_port, 0, "EL bootnode missing TCP port: {record:?}");
+                assert_ne!(record.udp_port, 0, "EL bootnode missing UDP port: {record:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn el_bootnodes_unknown_chain_returns_none() {
+        let unknown = BaseChainSpecBuilder::base_mainnet()
+            .chain(alloy_chains::Chain::from_id(99_999))
+            .build();
+        assert!(unknown.bootnodes().is_none());
     }
 
     #[test]
