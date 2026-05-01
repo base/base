@@ -1152,7 +1152,7 @@ impl BaseDiscoveryConfig {
 
     /// Creates the inner discv5 config with Base protocol identity when enabled.
     pub fn discv5_config(&self, args: &RethNetworkArgs) -> reth_discv5::discv5::Config {
-        let mut builder = reth_discv5::discv5::ConfigBuilder::new(self.discv5_listen_config(args));
+        let mut builder = reth_discv5::discv5::ConfigBuilder::new(Self::discv5_listen_config(args));
 
         if self.base_protocol {
             builder.protocol_identity(reth_discv5::discv5::ProtocolIdentity {
@@ -1165,10 +1165,12 @@ impl BaseDiscoveryConfig {
     }
 
     /// Creates the discv5 listen config from reth network arguments.
-    pub fn discv5_listen_config(
-        &self,
-        args: &RethNetworkArgs,
-    ) -> reth_discv5::discv5::ListenConfig {
+    ///
+    /// Note: reth's `build()` always overwrites the discv5 IPv4/IPv6 address with the `RLPx`
+    /// address, because ENR has no mechanism to advertise different addresses for `RLPx` and
+    /// discv5. As a result, `discv5_addr` only influences the UDP listen port, not the
+    /// advertised IP.
+    pub fn discv5_listen_config(args: &RethNetworkArgs) -> reth_discv5::discv5::ListenConfig {
         let rlpx_socket = Self::rlpx_socket(args);
         let discv5_addr_ipv4 = args.discovery.discv5_addr.or_else(|| match rlpx_socket {
             SocketAddr::V4(addr) => Some(*addr.ip()),
@@ -1410,7 +1412,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::ipv4(true, BASE_V0_PROTOCOL_VERSION)]
+    #[case::base_protocol_enabled(true, BASE_V0_PROTOCOL_VERSION)]
     #[case::default_protocol(false, ProtocolIdentity::default().protocol_id)]
     fn discv5_config_uses_protocol_identity(
         #[case] base_protocol: bool,
