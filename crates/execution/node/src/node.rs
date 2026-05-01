@@ -1186,7 +1186,7 @@ impl BaseDiscoveryConfig {
         )
     }
 
-    /// Returns the RLPx socket configured by reth network arguments.
+    /// Returns the `RLPx` socket configured by reth network arguments.
     pub fn rlpx_socket(args: &RethNetworkArgs) -> SocketAddr {
         (args.addr, args.port).into()
     }
