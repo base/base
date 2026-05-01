@@ -10,7 +10,7 @@ use alloy_trie::{Nibbles, TrieAccount};
 use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError};
 use revm::{
     Database,
-    database::{BundleState, states::StorageSlot},
+    database::{AccountStatus, BundleState, states::StorageSlot},
     primitives::{BLOCK_HASH_HISTORY, HashMap},
     state::{AccountInfo, Bytecode},
 };
@@ -176,11 +176,22 @@ where
             // Compute the path to the account in the trie.
             let account_path = Nibbles::unpack(hashed_address.as_slice());
 
-            // If the account was destroyed, delete it from the trie.
-            if bundle_account.was_destroyed() {
-                self.root_node.delete(&account_path, &self.fetcher)?;
-                self.storage_roots.remove(address);
-                continue;
+            // `DestroyedChanged` means the account was destroyed then re-funded or re-touched in
+            // the same block (reachable post-EIP-6780). The account survives with wiped storage
+            // and a new balance/nonce, so fall through to the update path below.
+            // For `Destroyed` and `DestroyedAgain` the account is truly gone — remove it.
+            match bundle_account.status {
+                AccountStatus::Destroyed | AccountStatus::DestroyedAgain => {
+                    self.root_node.delete(&account_path, &self.fetcher)?;
+                    self.storage_roots.remove(address);
+                    continue;
+                }
+                AccountStatus::DestroyedChanged => {
+                    // SELFDESTRUCT wiped all prior storage; reset to an empty trie so that
+                    // stale slots from the pre-destruction state are not carried forward.
+                    self.storage_roots.insert(*address, TrieNode::new_blinded(EMPTY_ROOT_HASH));
+                }
+                _ => {}
             }
 
             let account_info =
@@ -349,8 +360,12 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_consensus::Sealable;
-    use alloy_primitives::b256;
+    use alloy_primitives::{U256, b256};
     use base_proof_mpt::NoopTrieHinter;
+    use revm::{
+        database::{BundleAccount, StorageWithOriginalValues},
+        state::AccountInfo,
+    };
 
     use super::*;
 
@@ -407,6 +422,133 @@ mod tests {
         assert_eq!(
             block_hash,
             b256!("78dec18c6d7da925bbe773c315653cdc70f6444ed6c1de9ac30bdb36cff74c3b")
+        );
+    }
+
+    fn make_bundle(
+        address: Address,
+        original: Option<AccountInfo>,
+        present: Option<AccountInfo>,
+        storage: StorageWithOriginalValues,
+        status: AccountStatus,
+    ) -> BundleState {
+        let account = BundleAccount::new(original, present, storage, status);
+        BundleState { state: HashMap::from_iter([(address, account)]), ..Default::default() }
+    }
+
+    #[test]
+    fn test_destroyed_changed_account_survives_with_cleared_storage() {
+        let mut db = new_test_db();
+        let address = Address::repeat_byte(1);
+
+        let pre_info = AccountInfo { balance: U256::from(100), nonce: 1, ..Default::default() };
+
+        // Step 1: insert account with non-zero storage.
+        let mut storage = StorageWithOriginalValues::default();
+        storage.insert(U256::from(1), StorageSlot::new_changed(U256::ZERO, U256::from(42)));
+        let bundle = make_bundle(
+            address,
+            None,
+            Some(pre_info.clone()),
+            storage,
+            AccountStatus::InMemoryChange,
+        );
+        db.state_root(&bundle).unwrap();
+
+        let trie_account = db.get_trie_account(&address, 0).unwrap().expect("account must exist");
+        assert_ne!(trie_account.storage_root, EMPTY_ROOT_HASH, "storage root must be non-empty");
+
+        // Step 2: DestroyedChanged — account destroyed then re-funded in the same block.
+        // Canonical EVM state: account present, storage wiped, new balance.
+        let post_info = AccountInfo { balance: U256::from(50), nonce: 0, ..Default::default() };
+        let bundle = make_bundle(
+            address,
+            Some(pre_info),
+            Some(post_info),
+            StorageWithOriginalValues::default(),
+            AccountStatus::DestroyedChanged,
+        );
+        db.state_root(&bundle).unwrap();
+
+        let trie_account = db
+            .get_trie_account(&address, 0)
+            .unwrap()
+            .expect("DestroyedChanged account must remain in trie");
+        assert_eq!(
+            trie_account.storage_root, EMPTY_ROOT_HASH,
+            "storage must be cleared after destruction"
+        );
+        assert_eq!(trie_account.balance, U256::from(50));
+        assert_eq!(trie_account.nonce, 0);
+    }
+
+    #[test]
+    fn test_destroyed_changed_new_storage_applied() {
+        let mut db = new_test_db();
+        let address = Address::repeat_byte(2);
+
+        let pre_info = AccountInfo { balance: U256::from(100), nonce: 1, ..Default::default() };
+
+        // Step 1: insert account with storage slot 1 = 99.
+        let mut storage = StorageWithOriginalValues::default();
+        storage.insert(U256::from(1), StorageSlot::new_changed(U256::ZERO, U256::from(99)));
+        let bundle = make_bundle(
+            address,
+            None,
+            Some(pre_info.clone()),
+            storage,
+            AccountStatus::InMemoryChange,
+        );
+        db.state_root(&bundle).unwrap();
+
+        // Step 2: DestroyedChanged with a new post-destruction storage write to slot 2 = 7.
+        // Slot 1 must NOT appear (it was wiped by SELFDESTRUCT).
+        let post_info = AccountInfo { balance: U256::from(1), nonce: 0, ..Default::default() };
+        let mut new_storage = StorageWithOriginalValues::default();
+        new_storage.insert(U256::from(2), StorageSlot::new_changed(U256::ZERO, U256::from(7)));
+        let bundle = make_bundle(
+            address,
+            Some(pre_info),
+            Some(post_info),
+            new_storage,
+            AccountStatus::DestroyedChanged,
+        );
+        db.state_root(&bundle).unwrap();
+
+        let trie_account = db
+            .get_trie_account(&address, 0)
+            .unwrap()
+            .expect("account must exist after DestroyedChanged");
+        assert_ne!(
+            trie_account.storage_root, EMPTY_ROOT_HASH,
+            "new post-destruction storage must be reflected"
+        );
+    }
+
+    #[test]
+    fn test_destroyed_account_removed_from_trie() {
+        let mut db = new_test_db();
+        let address = Address::repeat_byte(3);
+
+        let info = AccountInfo { balance: U256::from(100), ..Default::default() };
+        let bundle = make_bundle(
+            address,
+            None,
+            Some(info.clone()),
+            Default::default(),
+            AccountStatus::InMemoryChange,
+        );
+        db.state_root(&bundle).unwrap();
+
+        assert!(db.get_trie_account(&address, 0).unwrap().is_some(), "account must exist");
+
+        let bundle =
+            make_bundle(address, Some(info), None, Default::default(), AccountStatus::Destroyed);
+        db.state_root(&bundle).unwrap();
+
+        assert!(
+            db.get_trie_account(&address, 0).unwrap().is_none(),
+            "Destroyed account must be removed from trie"
         );
     }
 }
