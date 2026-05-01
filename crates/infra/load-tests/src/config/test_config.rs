@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{
+    metrics::ConfigSummary,
     runner::{TxConfig, TxType},
     utils::{BaselineError, Result},
 };
@@ -420,6 +421,32 @@ impl TestConfig {
                 self.swap_token_amount
             ))
         })
+    }
+
+    /// Returns a summary of the config for JSON output (excludes URLs and secrets).
+    pub fn to_summary(&self) -> ConfigSummary {
+        ConfigSummary {
+            funding_amount: self.funding_amount.clone(),
+            sender_count: self.sender_count,
+            sender_offset: self.sender_offset,
+            in_flight_per_sender: self.in_flight_per_sender,
+            batch_size: self.batch_size,
+            batch_timeout: self.batch_timeout.clone(),
+            duration: self.duration.clone(),
+            target_gps: self.target_gps,
+            seed: self.seed,
+            chain_id: self.chain_id,
+            transactions: serde_json::to_value(&self.transactions)
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        error = %e,
+                        "failed to serialize transactions for config summary"
+                    );
+                })
+                .unwrap_or_default(),
+            looper_contract: self.looper_contract.clone(),
+            swap_token_amount: self.swap_token_amount.clone(),
+        }
     }
 
     /// Converts this test config into a `LoadConfig` for runtime use.

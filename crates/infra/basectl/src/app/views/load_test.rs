@@ -106,11 +106,11 @@ enum RunState {
         snap_rx: watch::Receiver<DisplaySnapshot>,
         run_count_rx: watch::Receiver<u32>,
         done_rx: mpsc::Receiver<Result<MetricsSummary, String>>,
-        current_snap: DisplaySnapshot,
+        current_snap: Box<DisplaySnapshot>,
         current_phase: RunPhase,
     },
     Complete {
-        summary: MetricsSummary,
+        summary: Box<MetricsSummary>,
         elapsed: Duration,
         run_count: u32,
     },
@@ -753,7 +753,7 @@ impl LoadTestView {
             snap_rx,
             run_count_rx,
             done_rx,
-            current_snap: DisplaySnapshot::default(),
+            current_snap: Box::<DisplaySnapshot>::default(),
             current_phase: RunPhase::Bootstrap,
         };
 
@@ -1067,7 +1067,7 @@ impl View for LoadTestView {
             }
             // Update snapshot (non-blocking — take latest value).
             if snap_rx.has_changed().unwrap_or(false) {
-                *current_snap = snap_rx.borrow_and_update().clone();
+                **current_snap = snap_rx.borrow_and_update().clone();
             }
             // Update run count from the background task loop.
             if run_count_rx.has_changed().unwrap_or(false) {
@@ -1097,7 +1097,8 @@ impl View for LoadTestView {
                         summary.throughput.tps,
                         summary.throughput.gps,
                     )));
-                    self.state = RunState::Complete { summary, elapsed, run_count };
+                    self.state =
+                        RunState::Complete { summary: Box::new(summary), elapsed, run_count };
                 }
                 Err(e) => {
                     resources.load_test_task = None;
