@@ -155,13 +155,16 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
     )
     .await;
 
-    let summary = match &run_result {
-        Ok(s) => s.clone(),
-        Err(e) => MetricsSummary {
-            config: Some(config_summary),
-            error: Some(e.to_string()),
-            ..Default::default()
-        },
+    let (summary, run_err) = match run_result {
+        Ok(summary) => (summary, None),
+        Err(e) => {
+            let summary = MetricsSummary {
+                config: Some(config_summary),
+                error: Some(e.to_string()),
+                ..Default::default()
+            };
+            (summary, Some(e))
+        }
     };
 
     if summary.error.is_none() || summary.throughput.total_submitted > 0 {
@@ -235,7 +238,9 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
         Err(e) => eprintln!("Warning: drain failed: {e}"),
     }
 
-    run_result?;
+    if let Some(e) = run_err {
+        return Err(e.into());
+    }
 
     Ok(())
 }
