@@ -46,6 +46,9 @@ pub enum BatchDecodingError {
     /// Error decoding a span batch
     #[error("Error decoding a span batch: {0}")]
     SpanBatchError(#[from] SpanBatchError),
+    /// Invalid batch type
+    #[error("Invalid batch type: {0}")]
+    InvalidBatchType(u8),
 }
 
 /// Decoding Error
