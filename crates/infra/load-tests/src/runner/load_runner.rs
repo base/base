@@ -1122,6 +1122,7 @@ impl LoadRunner {
             rate_limiter.tick_batch(pending_batch.len()).await;
 
             let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
+            let batch_len = batch.len();
             let permit = match tokio::time::timeout(
                 SEMAPHORE_ACQUIRE_TIMEOUT,
                 Arc::clone(&semaphore).acquire_owned(),
@@ -1135,9 +1136,14 @@ impl LoadRunner {
                 }
                 Err(_) => {
                     warn!(
-                        batch_len = batch.len(),
+                        batch_len,
                         "semaphore acquire timed out, dropping batch to stay responsive"
                     );
+                    for _ in 0..batch_len {
+                        let _ = submit_event_tx
+                            .send(SubmitEvent::Failed("submit semaphore acquire timed out".into()))
+                            .await;
+                    }
                     rate_limiter.reset_tick();
                     continue;
                 }
@@ -1186,51 +1192,82 @@ impl LoadRunner {
         }
 
         if !pending_batch.is_empty() {
-            let permit = Arc::clone(&semaphore)
-                .acquire_owned()
-                .await
-                .expect("submit batch semaphore closed");
-            let ctx = BatchSubmitCtx {
-                providers: Arc::clone(&providers),
-                signers: Arc::clone(&signers),
-                batch_rpc: batch_rpc.clone(),
-                nonce_managers: Arc::clone(&nonce_managers),
-                confirmer_handle: confirmer_handle.clone(),
-                submit_event_tx: submit_event_tx.clone(),
-                gas_price: self.gas_price,
-                chain_id: self.config.chain_id,
-                max_gas_price: self.config.max_gas_price,
-            };
-            tokio::spawn(async move {
-                let _permit = permit;
-                let batch_len = pending_batch.len();
-                match tokio::time::timeout(
-                    SUBMIT_TASK_DEADLINE,
-                    AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch)).catch_unwind(),
-                )
-                .await
-                {
-                    Ok(Ok(submitted)) => debug!(submitted, "final batch submitted"),
-                    Ok(Err(_)) => {
-                        error!(batch_len, "final batch submission task panicked");
-                        for _ in 0..batch_len {
-                            let _ = ctx
-                                .submit_event_tx
-                                .send(SubmitEvent::Failed("task panicked".into()))
-                                .await;
-                        }
+            let final_batch_len = pending_batch.len();
+            let permit = match tokio::time::timeout(
+                SEMAPHORE_ACQUIRE_TIMEOUT,
+                Arc::clone(&semaphore).acquire_owned(),
+            )
+            .await
+            {
+                Ok(Ok(permit)) => Some(permit),
+                Ok(Err(_)) => {
+                    error!(batch_len = final_batch_len, "submit batch semaphore closed");
+                    for _ in 0..final_batch_len {
+                        let _ = submit_event_tx
+                            .send(SubmitEvent::Failed("submit batch semaphore closed".into()))
+                            .await;
                     }
-                    Err(_) => {
-                        warn!(batch_len, "final batch submission task timed out");
-                        for _ in 0..batch_len {
-                            let _ = ctx
-                                .submit_event_tx
-                                .send(SubmitEvent::Failed("submit task deadline exceeded".into()))
-                                .await;
-                        }
-                    }
+                    None
                 }
-            });
+                Err(_) => {
+                    warn!(
+                        batch_len = final_batch_len,
+                        "semaphore acquire timed out, dropping final batch to stay responsive"
+                    );
+                    for _ in 0..final_batch_len {
+                        let _ = submit_event_tx
+                            .send(SubmitEvent::Failed("submit semaphore acquire timed out".into()))
+                            .await;
+                    }
+                    None
+                }
+            };
+            if let Some(permit) = permit {
+                let ctx = BatchSubmitCtx {
+                    providers: Arc::clone(&providers),
+                    signers: Arc::clone(&signers),
+                    batch_rpc: batch_rpc.clone(),
+                    nonce_managers: Arc::clone(&nonce_managers),
+                    confirmer_handle: confirmer_handle.clone(),
+                    submit_event_tx: submit_event_tx.clone(),
+                    gas_price: self.gas_price,
+                    chain_id: self.config.chain_id,
+                    max_gas_price: self.config.max_gas_price,
+                };
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let batch_len = pending_batch.len();
+                    match tokio::time::timeout(
+                        SUBMIT_TASK_DEADLINE,
+                        AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch))
+                            .catch_unwind(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(submitted)) => debug!(submitted, "final batch submitted"),
+                        Ok(Err(_)) => {
+                            error!(batch_len, "final batch submission task panicked");
+                            for _ in 0..batch_len {
+                                let _ = ctx
+                                    .submit_event_tx
+                                    .send(SubmitEvent::Failed("task panicked".into()))
+                                    .await;
+                            }
+                        }
+                        Err(_) => {
+                            warn!(batch_len, "final batch submission task timed out");
+                            for _ in 0..batch_len {
+                                let _ = ctx
+                                    .submit_event_tx
+                                    .send(SubmitEvent::Failed(
+                                        "submit task deadline exceeded".into(),
+                                    ))
+                                    .await;
+                            }
+                        }
+                    }
+                });
+            }
         }
 
         match tokio::time::timeout(
