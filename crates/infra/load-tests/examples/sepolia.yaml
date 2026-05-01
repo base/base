@@ -2,11 +2,11 @@
 #
 # Requires FUNDER_KEY environment variable with a funded private key
 
-rpc: "https://sepolia-dedicated.base.org/AQpTGzZOSBOdzLusH3tBiTXIkCqcNM5M"
+rpc: "https://sepolia.base.org/"
 
-block_watcher_url: "https://c3-chainproxy-base-sepolia-archive-dev.cbhq.net"
+block_watcher_url: "https://sepolia.base.org/"
 flashblocks_ws_url: "wss://sepolia.flashblocks.base.org/ws"
-confirmer_url: "https://c3-chainproxy-base-sepolia-archive-dev.cbhq.net"
+confirmer_url: "https://sepolia.base.org/"
 
 sender_count: 200
 target_gps: 60000000
