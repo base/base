@@ -40,6 +40,8 @@ pub struct PendingBlocksBuilder {
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, BaseTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
+    transaction_position: HashMap<B256, (BlockNumber, usize)>,
+    next_position_per_block: HashMap<BlockNumber, usize>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
@@ -48,6 +50,9 @@ pub struct PendingBlocksBuilder {
     state_root_times: HashMap<B256, u128>,
 
     bundle_state: BundleState,
+
+    // Deferred error from `with_transaction` (e.g. duplicate hash). Surfaced from `build()`.
+    deferred_error: Option<BuildError>,
 }
 
 impl Default for PendingBlocksBuilder {
@@ -67,6 +72,8 @@ impl PendingBlocksBuilder {
             transaction_count: HashMap::new(),
             transaction_receipts: HashMap::new(),
             transactions_by_hash: HashMap::new(),
+            transaction_position: HashMap::new(),
+            next_position_per_block: HashMap::new(),
             transaction_state: HashMap::new(),
             transaction_senders: HashMap::new(),
             transaction_results: HashMap::new(),
@@ -74,6 +81,7 @@ impl PendingBlocksBuilder {
             state_root_times: HashMap::new(),
             state_overrides: None,
             bundle_state: BundleState::default(),
+            deferred_error: None,
         }
     }
 
@@ -92,9 +100,23 @@ impl PendingBlocksBuilder {
     }
 
     /// Stores a transaction in the builder.
+    ///
+    /// Each `tx_hash` may only be added once. A duplicate is recorded as a deferred
+    /// [`BuildError::DuplicateTransaction`] and surfaced from [`Self::build`], rather
+    /// than silently corrupting the per-block position index or the existing
+    /// per-hash maps (`transactions_by_hash`, etc.) that would otherwise overwrite.
     #[inline]
     pub fn with_transaction(&mut self, transaction: Transaction) -> &Self {
-        self.transactions_by_hash.insert(transaction.tx_hash(), transaction.clone());
+        let tx_hash = transaction.tx_hash();
+        if self.transaction_position.contains_key(&tx_hash) {
+            self.deferred_error.get_or_insert(BuildError::DuplicateTransaction { tx_hash });
+            return self;
+        }
+        let block_number = transaction.block_number.unwrap_or(0);
+        let position = self.next_position_per_block.entry(block_number).or_insert(0);
+        self.transaction_position.insert(tx_hash, (block_number, *position));
+        *position += 1;
+        self.transactions_by_hash.insert(tx_hash, transaction.clone());
         self.transactions.push(transaction);
         self
     }
@@ -178,6 +200,9 @@ impl PendingBlocksBuilder {
 
     /// Builds the pending blocks.
     pub fn build(self) -> Result<PendingBlocks, StateProcessorError> {
+        if let Some(err) = self.deferred_error {
+            return Err(err.into());
+        }
         let earliest_header = self.headers.first().cloned().ok_or(BuildError::MissingHeaders)?;
         let latest_header = self.headers.last().cloned().ok_or(BuildError::MissingHeaders)?;
 
@@ -201,6 +226,7 @@ impl PendingBlocksBuilder {
             transaction_count: self.transaction_count,
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
+            transaction_position: self.transaction_position,
             transaction_state: self.transaction_state,
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
@@ -225,6 +251,7 @@ pub struct PendingBlocks {
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, BaseTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
+    transaction_position: HashMap<B256, (BlockNumber, usize)>,
     transaction_state: HashMap<B256, EvmState>,
     transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
@@ -408,6 +435,14 @@ impl PendingBlocks {
     /// Returns true if the transaction hash is in the pending blocks.
     pub fn has_transaction_hash(&self, tx_hash: &B256) -> bool {
         self.transactions_by_hash.contains_key(tx_hash)
+    }
+
+    /// Returns the per-block position (0-indexed) of a transaction within `block_number`,
+    /// or `None` if the hash is not present in the pending state for that block.
+    pub fn transaction_position(&self, block_number: BlockNumber, tx_hash: &B256) -> Option<usize> {
+        self.transaction_position
+            .get(tx_hash)
+            .and_then(|&(bn, pos)| (bn == block_number).then_some(pos))
     }
 
     /// Returns the transaction count for an address in pending state.
@@ -885,6 +920,24 @@ mod tests {
         let result = pending_blocks.get_tx_result(&tx_hash).expect("should return tx result");
 
         assert_eq!(result.inner.blob_gas_used, 0);
+    }
+
+    #[test]
+    fn build_rejects_duplicate_transaction() {
+        let tx = test_legacy_transaction();
+        let tx_hash = tx.tx_hash();
+        let mut builder = PendingBlocksBuilder::default();
+        builder.with_flashblocks([test_flashblock()]);
+        builder.with_header(Sealed::new_unchecked(Header::default(), B256::ZERO));
+        builder.with_transaction(tx.clone());
+        builder.with_transaction(tx);
+        builder.with_transaction_sender(tx_hash, test_sender());
+        builder.with_transaction_state(tx_hash, Default::default());
+        builder.with_transaction_result(tx_hash, test_execution_result());
+        builder.with_receipt(tx_hash, test_receipt(tx_hash, None));
+
+        let err = builder.build().expect_err("build should fail on duplicate tx");
+        assert_eq!(err, StateProcessorError::Build(BuildError::DuplicateTransaction { tx_hash }));
     }
 
     #[test]
