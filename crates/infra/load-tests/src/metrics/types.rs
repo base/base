@@ -162,7 +162,34 @@ pub struct FlashblocksLatencyMetrics {
 
 /// Test configuration included in the JSON output (excludes URLs and secrets).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(missing_docs)]
+pub struct ConfigSummary {
+    /// Amount funded to each sender account (in wei, as string).
+    pub funding_amount: String,
+    /// Number of sender accounts.
+    pub sender_count: u32,
+    /// Offset into the derivation path.
+    pub sender_offset: u32,
+    /// Maximum in-flight transactions per sender.
+    pub in_flight_per_sender: u32,
+    /// Number of transactions per RPC batch.
+    pub batch_size: u32,
+    /// Maximum wait before flushing a partial batch.
+    pub batch_timeout: Option<String>,
+    /// Test duration.
+    pub duration: Option<String>,
+    /// Target gas per second.
+    pub target_gps: Option<u64>,
+    /// Deterministic account seed.
+    pub seed: u64,
+    /// Chain ID.
+    pub chain_id: Option<u64>,
+    /// Transaction type configuration.
+    pub transactions: serde_json::Value,
+    /// Address of the precompile looper contract.
+    pub looper_contract: Option<String>,
+    /// Amount of each swap token per sender (in wei, as string).
+    pub swap_token_amount: String,
+}
 pub struct ConfigSummary {
     pub funding_amount: String,
     pub sender_count: u32,
