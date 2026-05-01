@@ -1327,7 +1327,10 @@ pub type BaseNetworkPrimitives = BasicNetworkPrimitives<BasePrimitives, BasePool
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, sync::Arc};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        sync::Arc,
+    };
 
     use reth_chainspec::MAINNET;
     use reth_discv5::{
@@ -1466,7 +1469,7 @@ mod tests {
     fn discv5_listen_config_uses_explicit_addresses_or_rlpx_fallback(
         #[case] rlpx_ip: IpAddr,
         #[case] discv5_addr: Option<Ipv4Addr>,
-        #[case] discv5_addr_ipv6: Option<std::net::Ipv6Addr>,
+        #[case] discv5_addr_ipv6: Option<Ipv6Addr>,
         #[case] discv5_port: u16,
         #[case] discv5_port_ipv6: u16,
         #[case] expected_advertised_ip: IpAddr,
