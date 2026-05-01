@@ -157,12 +157,11 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
 
     let summary = match &run_result {
         Ok(s) => s.clone(),
-        Err(e) => {
-            let mut error_summary = MetricsSummary::default();
-            error_summary.config = Some(config_summary);
-            error_summary.error = Some(e.to_string());
-            error_summary
-        }
+        Err(e) => MetricsSummary {
+            config: Some(config_summary),
+            error: Some(e.to_string()),
+            ..Default::default()
+        },
     };
 
     if summary.error.is_none() || summary.throughput.total_submitted > 0 {
@@ -241,6 +240,7 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
+/// Runs funding, token setup, and the load test loop, returning the metrics summary.
 async fn run_test_phases(
     runner: &mut LoadRunner,
     funding_key: &PrivateKeySigner,

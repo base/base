@@ -436,7 +436,14 @@ impl TestConfig {
             target_gps: self.target_gps,
             seed: self.seed,
             chain_id: self.chain_id,
-            transactions: serde_json::to_value(&self.transactions).unwrap_or_default(),
+            transactions: serde_json::to_value(&self.transactions)
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        error = %e,
+                        "failed to serialize transactions for config summary"
+                    );
+                })
+                .unwrap_or_default(),
             looper_contract: self.looper_contract.clone(),
             swap_token_amount: self.swap_token_amount.clone(),
         }
