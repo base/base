@@ -1496,7 +1496,8 @@ mod tests {
     #[case::ipv4(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)))]
     #[case::ipv6(IpAddr::V6("2001:db8::10".parse().expect("valid ipv6")))]
     fn discovery_v5_builder_advertises_external_ip(#[case] external_addr: IpAddr) {
-        let args = RethNetworkArgs { addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED), ..Default::default() };
+        let args =
+            RethNetworkArgs { addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED), ..Default::default() };
         let discovery_config = BaseDiscoveryConfig::new(false, true);
 
         let reth_discv5_config = discovery_config
