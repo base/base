@@ -3418,7 +3418,7 @@ dependencies = [
 [[package]]
 name = "reth-codecs"
 version = "1.11.3"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.3#d6324d63e27ef6b7c49cdc9b1977c1b808234c7b"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.4#2ac58a25f561827e2b816a3c1ed972194f3b2915"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3436,7 +3436,7 @@ dependencies = [
 [[package]]
 name = "reth-codecs-derive"
 version = "1.11.3"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.3#d6324d63e27ef6b7c49cdc9b1977c1b808234c7b"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.4#2ac58a25f561827e2b816a3c1ed972194f3b2915"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3446,7 +3446,7 @@ dependencies = [
 [[package]]
 name = "reth-ethereum-primitives"
 version = "1.11.3"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.3#d6324d63e27ef6b7c49cdc9b1977c1b808234c7b"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.4#2ac58a25f561827e2b816a3c1ed972194f3b2915"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3464,7 +3464,7 @@ dependencies = [
 [[package]]
 name = "reth-primitives-traits"
 version = "1.11.3"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.3#d6324d63e27ef6b7c49cdc9b1977c1b808234c7b"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.4#2ac58a25f561827e2b816a3c1ed972194f3b2915"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3492,7 +3492,7 @@ dependencies = [
 [[package]]
 name = "reth-zstd-compressors"
 version = "1.11.3"
-source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.3#d6324d63e27ef6b7c49cdc9b1977c1b808234c7b"
+source = "git+https://github.com/paradigmxyz/reth?tag=v1.11.4#2ac58a25f561827e2b816a3c1ed972194f3b2915"
 dependencies = [
  "zstd",
 ]

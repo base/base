@@ -6,7 +6,7 @@ use alloy_eips::eip7840::BlobParams;
 use alloy_genesis::Genesis;
 use alloy_hardforks::Hardfork;
 use alloy_primitives::{B256, U256};
-use base_common_chains::{BaseUpgrade, Upgrades};
+use base_common_chains::{BaseUpgrade, ChainConfig, Upgrades};
 use base_common_consensus::Predeploys;
 use derive_more::{Constructor, Deref, Into};
 use reth_chainspec::{
@@ -14,7 +14,7 @@ use reth_chainspec::{
     EthereumHardforks, ForkFilter, ForkId, Hardforks, Head,
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
-use reth_network_peers::NodeRecord;
+use reth_network_peers::{NodeRecord, parse_nodes};
 use reth_primitives_traits::SealedHeader;
 
 use crate::{
@@ -172,7 +172,11 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn bootnodes(&self) -> Option<Vec<NodeRecord>> {
-        self.inner.bootnodes()
+        ChainConfig::by_chain_id(self.chain().id()).map(|cfg| {
+            let enodes: Vec<&str> =
+                cfg.bootnodes.iter().filter(|s| !s.starts_with("enr:")).copied().collect();
+            parse_nodes(&enodes)
+        })
     }
 
     fn is_optimism(&self) -> bool {

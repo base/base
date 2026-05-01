@@ -1,9 +1,14 @@
 //! Base Node types config.
 
-use std::{marker::PhantomData, sync::Arc};
+use std::{
+    marker::PhantomData,
+    net::{SocketAddrV4, SocketAddrV6},
+    sync::Arc,
+};
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::{Address, B64, B256};
+use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
+use alloy_rlp::Encodable;
 use base_common_chains::Upgrades;
 use base_common_consensus::BasePrimitives;
 use base_common_rpc_types_engine::{BasePayloadAttributes, ExecutionData};
@@ -28,7 +33,7 @@ use base_execution_txpool::{
     BaseTransactionValidator, TimestampedTransaction,
 };
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
-use reth_discv5::NetworkStackId;
+use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use reth_evm::ConfigureEvm;
 use reth_network::{
     NetworkConfig, NetworkHandle, NetworkManager, NetworkPrimitives, PeersInfo,
@@ -69,6 +74,9 @@ use crate::{
     args::{RollupArgs, TxpoolOrdering},
     engine::BaseEngineValidator,
 };
+
+/// Discovery v5 protocol version for Base.
+pub const BASE_V0_PROTOCOL_VERSION: [u8; 6] = *b"basev0";
 
 /// Marker trait for Base node types with standard engine, chain spec, and primitives.
 pub trait BaseNodeTypes:
@@ -233,6 +241,7 @@ impl BaseNode {
             compute_pending_block,
             discovery_v4,
             txpool_ordering,
+            base_protocol,
             ..
         } = self.args;
         let ordering = match txpool_ordering {
@@ -248,7 +257,7 @@ impl BaseNode {
                     .with_da_config(self.da_config.clone())
                     .with_gas_limit_config(self.gas_limit_config.clone()),
             ))
-            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4))
+            .network(BaseNetworkBuilder::new(disable_txpool_gossip, !discovery_v4, base_protocol))
             .consensus(BaseConsensusBuilder::default())
     }
 
@@ -1038,24 +1047,38 @@ where
 }
 
 /// A basic Base network builder.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone)]
 pub struct BaseNetworkBuilder {
     /// Disable transaction pool gossip
     pub disable_txpool_gossip: bool,
     /// Disable discovery v4
     pub disable_discovery_v4: bool,
+    /// Enable the Base discv5 protocol identity
+    pub base_protocol: bool,
 }
 
-impl Clone for BaseNetworkBuilder {
-    fn clone(&self) -> Self {
-        Self::new(self.disable_txpool_gossip, self.disable_discovery_v4)
+impl Default for BaseNetworkBuilder {
+    fn default() -> Self {
+        Self { disable_discovery_v4: false, disable_txpool_gossip: false, base_protocol: true }
     }
 }
 
 impl BaseNetworkBuilder {
     /// Creates a new `BaseNetworkBuilder`.
-    pub const fn new(disable_txpool_gossip: bool, disable_discovery_v4: bool) -> Self {
-        Self { disable_txpool_gossip, disable_discovery_v4 }
+    pub const fn new(
+        disable_txpool_gossip: bool,
+        disable_discovery_v4: bool,
+        base_protocol: bool,
+    ) -> Self {
+        Self { disable_txpool_gossip, disable_discovery_v4, base_protocol }
+    }
+}
+
+fn block_on<T>(f: impl Future<Output = T>) -> T {
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| runtime.block_on(f))
+    } else {
+        tokio::runtime::Runtime::new().unwrap().block_on(f)
     }
 }
 
@@ -1073,6 +1096,7 @@ impl BaseNetworkBuilder {
     {
         let disable_txpool_gossip = self.disable_txpool_gossip;
         let disable_discovery_v4 = self.disable_discovery_v4;
+        let base_protocol = self.base_protocol;
         let args = &ctx.config().network;
         let network_builder = ctx
             .network_config_builder()?
@@ -1083,18 +1107,69 @@ impl BaseNetworkBuilder {
                     builder = builder.disable_discv4_discovery();
                 }
                 if !args.discovery.disable_discovery {
-                    builder = builder.discovery_v5(
-                        args.discovery
-                            .discovery_v5_builder(
-                                rlpx_socket,
-                                ctx.config()
-                                    .network
-                                    .resolved_bootnodes()
-                                    .or_else(|| ctx.chain_spec().bootnodes())
-                                    .unwrap_or_default(),
-                            )
-                            .must_not_include_keys(&[NetworkStackId::ETH, NetworkStackId::ETH2]),
+                    // copied from discovery_v5_builder to override discv5_config
+                    let discv5_addr_ipv4 =
+                        args.discovery.discv5_addr.or_else(|| match rlpx_socket {
+                            std::net::SocketAddr::V4(addr) => Some(*addr.ip()),
+                            std::net::SocketAddr::V6(_) => None,
+                        });
+                    let discv5_addr_ipv6 =
+                        args.discovery.discv5_addr_ipv6.or_else(|| match rlpx_socket {
+                            std::net::SocketAddr::V4(_) => None,
+                            std::net::SocketAddr::V6(addr) => Some(*addr.ip()),
+                        });
+                    let listen_config = reth_discv5::discv5::ListenConfig::from_two_sockets(
+                        discv5_addr_ipv4
+                            .map(|addr| SocketAddrV4::new(addr, args.discovery.discv5_port)),
+                        discv5_addr_ipv6.map(|addr| {
+                            SocketAddrV6::new(addr, args.discovery.discv5_port_ipv6, 0, 0)
+                        }),
                     );
+
+                    let external_addr = block_on(args.nat.clone().external_addr());
+
+                    let mut discv5_config_builder =
+                        reth_discv5::discv5::ConfigBuilder::new(listen_config);
+                    if base_protocol {
+                        discv5_config_builder.protocol_identity(
+                            reth_discv5::discv5::ProtocolIdentity {
+                                protocol_id: BASE_V0_PROTOCOL_VERSION,
+                                ..Default::default()
+                            },
+                        );
+                    }
+
+                    let mut reth_config_builder = args
+                        .discovery
+                        .discovery_v5_builder(
+                            rlpx_socket,
+                            ctx.config()
+                                .network
+                                .resolved_bootnodes()
+                                .or_else(|| ctx.chain_spec().bootnodes())
+                                .unwrap_or_default(),
+                        )
+                        .discv5_config(discv5_config_builder.build());
+
+                    reth_config_builder = match external_addr {
+                        Some(std::net::IpAddr::V4(addr)) => {
+                            let addr = addr.octets();
+                            let mut out = BytesMut::with_capacity(addr.length());
+                            addr.encode(&mut out);
+                            reth_config_builder
+                                .add_enr_kv_pair(IP_ENR_KEY, Bytes::from(out.freeze()))
+                        }
+                        Some(std::net::IpAddr::V6(addr)) => {
+                            let addr = addr.octets();
+                            let mut out = BytesMut::with_capacity(addr.length());
+                            addr.encode(&mut out);
+                            reth_config_builder
+                                .add_enr_kv_pair(IP6_ENR_KEY, Bytes::from(out.freeze()))
+                        }
+                        _ => reth_config_builder,
+                    };
+
+                    builder = builder.discovery_v5(reth_config_builder);
                 }
 
                 builder
