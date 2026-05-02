@@ -186,14 +186,14 @@ impl<EngineClient_: EngineClient> PartialOrd for EngineTask<EngineClient_> {
 
 impl<EngineClient_: EngineClient> Ord for EngineTask<EngineClient_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Order (descending): BuildBlock -> InsertUnsafe -> Consolidate -> Finalize
+        // Order (descending): BuildBlock -> Insert -> Consolidate -> Finalize
         //
         // https://specs.base.org/protocol/consensus/derivation#forkchoice-synchronization
         //
         // - Block building jobs are prioritized above all other tasks, to give priority to the
         //   sequencer. BuildTask handles forkchoice updates automatically.
-        // - InsertUnsafe tasks are prioritized over Consolidate tasks, to ensure that unsafe block
-        //   gossip is imported promptly.
+        // - Insert tasks are prioritized over Consolidate tasks, to ensure direct payload imports
+        //   are handled promptly.
         // - Consolidate tasks are prioritized over Finalize tasks, as they advance the safe chain
         //   via derivation.
         // - Finalize tasks have the lowest priority, as they only update finalized status.
@@ -217,11 +217,11 @@ impl<EngineClient_: EngineClient> Ord for EngineTask<EngineClient_> {
             (Self::Seal(_) | Self::GetPayload(_), _) => Ordering::Greater,
             (_, Self::Seal(_) | Self::GetPayload(_)) => Ordering::Less,
 
-            // BuildBlock tasks are prioritized over InsertUnsafe and Consolidate tasks
+            // BuildBlock tasks are prioritized over Insert and Consolidate tasks
             (Self::Build(_), _) => Ordering::Greater,
             (_, Self::Build(_)) => Ordering::Less,
 
-            // InsertUnsafe tasks are prioritized over Consolidate and Finalize tasks
+            // Insert tasks are prioritized over Consolidate and Finalize tasks
             (Self::Insert(_), _) => Ordering::Greater,
             (_, Self::Insert(_)) => Ordering::Less,
 

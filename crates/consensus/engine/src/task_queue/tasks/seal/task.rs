@@ -11,7 +11,8 @@ use tokio::sync::mpsc;
 
 use super::SealTaskError;
 use crate::{
-    EngineClient, EngineGetPayloadVersion, EngineState, EngineTaskExt, InsertTask,
+    EngineClient, EngineGetPayloadVersion, EngineState, EngineTaskExt, InsertPayloadSafety,
+    InsertTask,
     InsertTaskError::{self},
     task_queue::build_and_seal,
 };
@@ -147,12 +148,14 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         state: &mut EngineState,
         new_payload: BaseExecutionPayloadEnvelope,
     ) -> Result<(), SealTaskError> {
+        let payload_safety = self.insert_payload_safety();
+
         // Insert the new block into the engine.
         match InsertTask::new(
             Arc::clone(&self.engine),
             Arc::clone(&self.cfg),
             new_payload.clone(),
-            self.is_attributes_derived,
+            payload_safety,
         )
         .execute(state)
         .await
@@ -191,11 +194,20 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                 };
             }
             Err(e) => {
-                error!(target: "engine", error = %e, "Payload import failed");
+                error!(
+                    target: "engine",
+                    error = %e,
+                    payload_safety = payload_safety.as_label(),
+                    "Payload import failed"
+                );
                 return Err(Box::new(e).into());
             }
             Ok(_) => {
-                info!(target: "engine", "Successfully imported payload")
+                info!(
+                    target: "engine",
+                    payload_safety = payload_safety.as_label(),
+                    "Successfully imported payload"
+                );
             }
         }
 
@@ -230,14 +242,29 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
 
         let block_import_duration = block_import_start_time.elapsed();
 
-        info!(
-            target: "engine",
-            l2_number = new_block_ref.block_info.number,
-            l2_time = new_block_ref.block_info.timestamp,
-            block_import_duration = ?block_import_duration,
-            "Built and imported new {} block",
-            if self.is_attributes_derived { "safe" } else { "unsafe" },
-        );
+        let payload_safety = self.insert_payload_safety();
+        match payload_safety {
+            InsertPayloadSafety::Safe => {
+                info!(
+                    target: "engine",
+                    l2_number = new_block_ref.block_info.number,
+                    l2_time = new_block_ref.block_info.timestamp,
+                    payload_safety = payload_safety.as_label(),
+                    block_import_duration = ?block_import_duration,
+                    "Built and imported new safe block",
+                );
+            }
+            InsertPayloadSafety::Unsafe => {
+                info!(
+                    target: "engine",
+                    l2_number = new_block_ref.block_info.number,
+                    l2_time = new_block_ref.block_info.timestamp,
+                    payload_safety = payload_safety.as_label(),
+                    block_import_duration = ?block_import_duration,
+                    "Built and imported new unsafe block",
+                );
+            }
+        }
 
         Ok(new_payload)
     }
@@ -262,6 +289,15 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         }
 
         Ok(())
+    }
+
+    /// Returns whether inserting this sealed payload should advance the safe head.
+    pub const fn insert_payload_safety(&self) -> InsertPayloadSafety {
+        if self.is_attributes_derived {
+            InsertPayloadSafety::Safe
+        } else {
+            InsertPayloadSafety::Unsafe
+        }
     }
 }
 

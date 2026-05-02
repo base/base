@@ -584,12 +584,10 @@ where
                     }
                     EngineProcessingRequest::ProcessUnsafeL2Block(envelope) => {
                         self.log_follower_upgrade_activation(&envelope);
-                        let task = EngineTask::Insert(Box::new(InsertTask::new(
+                        let task = EngineTask::Insert(Box::new(InsertTask::unsafe_payload(
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),
                             *envelope,
-                            false, /* The payload is not derived in this case. This is an unsafe
-                                    * block. */
                         )));
                         self.engine.enqueue(task);
                     }

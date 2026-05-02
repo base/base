@@ -1,4 +1,4 @@
-//! A task to insert an unsafe payload into the execution engine.
+//! A task to insert a payload into the execution engine.
 
 use std::{sync::Arc, time::Instant};
 
@@ -19,6 +19,30 @@ use crate::{
     state::EngineSyncStateUpdate,
 };
 
+/// Whether inserting a payload should advance the safe head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InsertPayloadSafety {
+    /// Insert an unsafe payload.
+    Unsafe,
+    /// Insert a payload that is already safe.
+    Safe,
+}
+
+impl InsertPayloadSafety {
+    /// Returns true if this insert should advance the safe head.
+    pub const fn advances_safe_head(self) -> bool {
+        matches!(self, Self::Safe)
+    }
+
+    /// Returns the label used for structured logs.
+    pub const fn as_label(self) -> &'static str {
+        match self {
+            Self::Unsafe => "unsafe",
+            Self::Safe => "safe",
+        }
+    }
+}
+
 /// The task to insert a payload into the execution engine.
 #[derive(Debug, Clone)]
 pub struct InsertTask<EngineClient_: EngineClient> {
@@ -26,11 +50,10 @@ pub struct InsertTask<EngineClient_: EngineClient> {
     client: Arc<EngineClient_>,
     /// The rollup config.
     rollup_config: Arc<RollupConfig>,
-    /// The network payload envelope.
+    /// The payload envelope.
     envelope: BaseExecutionPayloadEnvelope,
-    /// If the payload is safe this is true.
-    /// A payload is safe if it is derived from a safe block.
-    is_payload_safe: bool,
+    /// Whether the inserted payload should advance the safe head.
+    payload_safety: InsertPayloadSafety,
 }
 
 impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
@@ -39,13 +62,31 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         client: Arc<EngineClient_>,
         rollup_config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
-        is_attributes_derived: bool,
+        payload_safety: InsertPayloadSafety,
     ) -> Self {
-        Self { client, rollup_config, envelope, is_payload_safe: is_attributes_derived }
+        Self { client, rollup_config, envelope, payload_safety }
+    }
+
+    /// Creates a new task to insert an unsafe payload.
+    pub const fn unsafe_payload(
+        client: Arc<EngineClient_>,
+        rollup_config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> Self {
+        Self::new(client, rollup_config, envelope, InsertPayloadSafety::Unsafe)
+    }
+
+    /// Creates a new task to insert a safe payload.
+    pub const fn safe_payload(
+        client: Arc<EngineClient_>,
+        rollup_config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> Self {
+        Self::new(client, rollup_config, envelope, InsertPayloadSafety::Safe)
     }
 
     /// Checks the response of the `engine_newPayload` call.
-    const fn check_new_payload_status(&self, status: &PayloadStatusEnum) -> bool {
+    pub const fn check_new_payload_status(&self, status: &PayloadStatusEnum) -> bool {
         matches!(status, PayloadStatusEnum::Valid | PayloadStatusEnum::Syncing)
     }
 }
@@ -59,8 +100,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
     async fn execute(&self, state: &mut EngineState) -> Result<(), InsertTaskError> {
         let time_start = Instant::now();
 
-        // Insert the new payload.
-        // Form the new unsafe block ref from the execution payload.
+        // Insert the new payload and form a block ref from the execution payload.
         let parent_beacon_block_root = self.envelope.parent_beacon_block_root.unwrap_or_default();
         let insert_time_start = Instant::now();
         let (response, block): (_, BaseBlock) = match self.envelope.execution_payload.clone() {
@@ -109,7 +149,12 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         let response = match response {
             Ok(resp) => resp,
             Err(e) => {
-                warn!(target: "engine", error = %e, "Failed to insert new payload");
+                warn!(
+                    target: "engine",
+                    error = %e,
+                    payload_safety = self.payload_safety.as_label(),
+                    "Failed to insert new payload"
+                );
                 return Err(InsertTaskError::InsertFailed(e));
             }
         };
@@ -118,7 +163,8 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
         }
         let insert_duration = insert_time_start.elapsed();
 
-        let new_unsafe_ref =
+        let advances_safe_head = self.payload_safety.advances_safe_head();
+        let new_block_ref =
             L2BlockInfo::from_block_and_genesis(&block, &self.rollup_config.genesis)
                 .map_err(InsertTaskError::L2BlockInfoConstruction)?;
 
@@ -127,9 +173,9 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
             Arc::clone(&self.client),
             Arc::clone(&self.rollup_config),
             EngineSyncStateUpdate {
-                unsafe_head: Some(new_unsafe_ref),
-                local_safe_head: self.is_payload_safe.then_some(new_unsafe_ref),
-                safe_head: self.is_payload_safe.then_some(new_unsafe_ref),
+                unsafe_head: Some(new_block_ref),
+                local_safe_head: advances_safe_head.then_some(new_block_ref),
+                safe_head: advances_safe_head.then_some(new_block_ref),
                 ..Default::default()
             },
         )
@@ -138,14 +184,30 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
 
         let total_duration = time_start.elapsed();
 
-        info!(
-            target: "engine",
-            hash = %new_unsafe_ref.block_info.hash,
-            number = new_unsafe_ref.block_info.number,
-            total_duration = ?total_duration,
-            insert_duration = ?insert_duration,
-            "Inserted new unsafe block"
-        );
+        match self.payload_safety {
+            InsertPayloadSafety::Unsafe => {
+                info!(
+                    target: "engine",
+                    hash = %new_block_ref.block_info.hash,
+                    number = new_block_ref.block_info.number,
+                    payload_safety = self.payload_safety.as_label(),
+                    total_duration = ?total_duration,
+                    insert_duration = ?insert_duration,
+                    "Inserted new unsafe payload"
+                );
+            }
+            InsertPayloadSafety::Safe => {
+                info!(
+                    target: "engine",
+                    hash = %new_block_ref.block_info.hash,
+                    number = new_block_ref.block_info.number,
+                    payload_safety = self.payload_safety.as_label(),
+                    total_duration = ?total_duration,
+                    insert_duration = ?insert_duration,
+                    "Inserted new safe payload"
+                );
+            }
+        }
 
         Ok(())
     }
@@ -162,7 +224,7 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::L1BlockInfoBedrock;
 
-    use super::InsertTask;
+    use super::{InsertPayloadSafety, InsertTask};
     use crate::{
         EngineTaskExt,
         test_utils::{TestEngineStateBuilder, test_engine_client_builder},
@@ -251,7 +313,7 @@ mod tests {
             Arc::clone(&client),
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
-            false,
+            InsertPayloadSafety::Unsafe,
         )
         .execute(&mut state)
         .await
@@ -281,7 +343,7 @@ mod tests {
             Arc::clone(&client),
             Arc::new(base_common_genesis::RollupConfig::default()),
             envelope,
-            false,
+            InsertPayloadSafety::Unsafe,
         )
         .execute(&mut state)
         .await
@@ -296,5 +358,53 @@ mod tests {
             Some(vec![]),
             "canyon payload must preserve withdrawals when sent via engine_newPayloadV2"
         );
+    }
+
+    #[tokio::test]
+    async fn unsafe_payload_insert_advances_only_unsafe_head() {
+        let client = test_client();
+        let payload = bedrock_payload(2);
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: payload,
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+
+        InsertTask::unsafe_payload(
+            Arc::clone(&client),
+            Arc::new(base_common_genesis::RollupConfig::default()),
+            envelope,
+        )
+        .execute(&mut state)
+        .await
+        .expect("unsafe payload should be inserted");
+
+        assert_eq!(state.sync_state.unsafe_head().block_info.number, 2);
+        assert_eq!(state.sync_state.local_safe_head().block_info.number, 0);
+        assert_eq!(state.sync_state.safe_head().block_info.number, 0);
+    }
+
+    #[tokio::test]
+    async fn safe_payload_insert_advances_safe_heads() {
+        let client = test_client();
+        let payload = bedrock_payload(3);
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: payload,
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+
+        InsertTask::safe_payload(
+            Arc::clone(&client),
+            Arc::new(base_common_genesis::RollupConfig::default()),
+            envelope,
+        )
+        .execute(&mut state)
+        .await
+        .expect("safe payload should be inserted");
+
+        assert_eq!(state.sync_state.unsafe_head().block_info.number, 3);
+        assert_eq!(state.sync_state.local_safe_head().block_info.number, 3);
+        assert_eq!(state.sync_state.safe_head().block_info.number, 3);
     }
 }
