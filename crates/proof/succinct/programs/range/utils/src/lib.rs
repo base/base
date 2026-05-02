@@ -27,7 +27,6 @@ pub async fn run_range_program<E>(
     executor: E,
     oracle: Arc<PreimageStore>,
     beacon: BlobStore,
-    intermediate_root_interval: u64,
 ) where
     E: WitnessExecutor<
             O = PreimageStore,
@@ -60,10 +59,7 @@ pub async fn run_range_program<E>(
                 .await
                 .unwrap();
 
-            executor
-                .run(boot_info, pipeline, cursor, l2_provider, intermediate_root_interval)
-                .await
-                .unwrap()
+            executor.run(boot_info, pipeline, cursor, l2_provider).await.unwrap()
         }
         None => (boot_info, Vec::new()),
     };

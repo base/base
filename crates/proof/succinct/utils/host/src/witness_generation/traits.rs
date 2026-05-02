@@ -4,13 +4,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base_proof::{CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider};
 use base_proof_preimage::{HintWriter, NativeChannel, OracleReader};
-use base_proof_succinct_client_utils::{
-    client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
-    witness::{
-        BlobData, WitnessData,
-        executor::{WitnessExecutor, get_inputs_for_pipeline},
-        preimage_store::PreimageStore,
-    },
+use base_proof_succinct_client_utils::witness::{
+    BlobData, WitnessData,
+    executor::{WitnessExecutor, get_inputs_for_pipeline},
+    preimage_store::PreimageStore,
 };
 use sp1_sdk::SP1Stdin;
 
@@ -77,10 +74,7 @@ pub trait WitnessGenerator {
                 )
                 .await
                 .unwrap();
-            let _ = self
-                .get_executor()
-                .run(boot_info, pipeline, cursor, l2_provider, DEFAULT_INTERMEDIATE_ROOT_INTERVAL)
-                .await?;
+            let _ = self.get_executor().run(boot_info, pipeline, cursor, l2_provider).await?;
         }
 
         let witness = Self::WitnessData::from_parts(
@@ -92,9 +86,9 @@ pub trait WitnessGenerator {
     }
 
     /// Build SP1 stdin from the collected witness data.
-    fn get_sp1_stdin(
-        &self,
-        witness: Self::WitnessData,
-        intermediate_root_interval: u64,
-    ) -> Result<SP1Stdin>;
+    ///
+    /// The intermediate root sampling interval is sourced from `BootInfo` inside the zkVM
+    /// (preimage key 9) — the same channel the TEE enclave reads — so it is intentionally not
+    /// passed through stdin.
+    fn get_sp1_stdin(&self, witness: Self::WitnessData) -> Result<SP1Stdin>;
 }

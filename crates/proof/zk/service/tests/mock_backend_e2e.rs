@@ -100,6 +100,7 @@ async fn test_compressed_proof_succeeds() {
             session_id: None,
             prover_address: None,
             l1_head: None,
+            intermediate_root_interval: None,
         })
         .await
         .expect("ProveBlock should succeed");
@@ -146,6 +147,7 @@ async fn test_snark_groth16_proof_succeeds() {
             session_id: None,
             prover_address: Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
             l1_head: None,
+            intermediate_root_interval: None,
         })
         .await
         .expect("ProveBlock SNARK should succeed");
@@ -185,6 +187,7 @@ async fn test_snark_groth16_both_receipts_available() {
             session_id: None,
             prover_address: Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd".to_string()),
             l1_head: None,
+            intermediate_root_interval: None,
         })
         .await
         .unwrap();
@@ -267,6 +270,7 @@ async fn test_idempotent_request_returns_same_session() {
             session_id: Some(session_id.clone()),
             prover_address: None,
             l1_head: None,
+            intermediate_root_interval: None,
         })
         .await
         .expect("first call should succeed");
@@ -280,6 +284,7 @@ async fn test_idempotent_request_returns_same_session() {
             session_id: Some(session_id.clone()),
             prover_address: None,
             l1_head: None,
+            intermediate_root_interval: None,
         })
         .await
         .expect("duplicate call should succeed (idempotent)");
@@ -321,6 +326,7 @@ async fn test_multiple_concurrent_compressed_proofs() {
                 session_id: None,
                 prover_address: None,
                 l1_head: None,
+                intermediate_root_interval: None,
             })
             .await
             .expect("ProveBlock should succeed");
@@ -358,6 +364,7 @@ async fn test_invalid_proof_type_rejected() {
             session_id: None,
             prover_address: None,
             l1_head: None,
+            intermediate_root_interval: None,
         })
         .await
         .expect_err("invalid proof_type should be rejected");
@@ -381,6 +388,7 @@ async fn test_snark_without_prover_address_rejected() {
             session_id: None,
             prover_address: None, // required for SNARK_GROTH16
             l1_head: None,
+            intermediate_root_interval: None,
         })
         .await
         .expect_err("SNARK without prover_address should be rejected");

@@ -7,7 +7,7 @@ mod network;
 pub use network::NetworkBackend;
 
 mod op_succinct;
-pub use op_succinct::{OpSuccinctBackend, OpSuccinctProvider};
+pub use op_succinct::{OpSuccinctBackend, OpSuccinctProvider, WitnessParams};
 
 mod traits;
 pub use traits::{

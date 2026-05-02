@@ -24,14 +24,12 @@ fn main() {
         let witness_rkyv_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
         let witness_data = rkyv::from_bytes::<DefaultWitnessData, Error>(&witness_rkyv_bytes)
             .expect("Failed to deserialize witness data.");
-        let intermediate_root_interval: u64 = sp1_zkvm::io::read();
 
         let (oracle, beacon) = witness_data
             .get_oracle_and_blob_provider()
             .await
             .expect("Failed to load oracle and blob provider");
 
-        run_range_program(ETHDAWitnessExecutor::new(), oracle, beacon, intermediate_root_interval)
-            .await;
+        run_range_program(ETHDAWitnessExecutor::new(), oracle, beacon).await;
     });
 }

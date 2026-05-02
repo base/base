@@ -38,15 +38,10 @@ impl WitnessGenerator for ETHDAWitnessGenerator {
         &self.executor
     }
 
-    fn get_sp1_stdin(
-        &self,
-        witness: Self::WitnessData,
-        intermediate_root_interval: u64,
-    ) -> Result<SP1Stdin> {
+    fn get_sp1_stdin(&self, witness: Self::WitnessData) -> Result<SP1Stdin> {
         let mut stdin = SP1Stdin::default();
         let buffer = to_bytes::<rkyv::rancor::Error>(&witness)?;
         stdin.write_slice(&buffer);
-        stdin.write(&intermediate_root_interval);
         Ok(stdin)
     }
 }
