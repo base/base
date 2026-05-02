@@ -29,3 +29,6 @@ curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bas
 ## License
 
 Licensed under [MIT](LICENSE).
+## Beginner Notes
+
+This section was added to provide extra clarity for beginners exploring Base ecosystem and understanding how to interact with the network.
