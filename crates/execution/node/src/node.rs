@@ -1233,7 +1233,11 @@ impl BaseNetworkBuilder {
             .network_config_builder()?
             // apply discovery settings
             .apply(|builder| {
-                let external_addr = Self::block_on(args.nat.clone().external_addr());
+                let external_addr = if args.discovery.disable_discovery {
+                    None
+                } else {
+                    Self::block_on(args.nat.clone().external_addr())
+                };
                 discovery_config.apply_to_network_builder(
                     builder,
                     args,
