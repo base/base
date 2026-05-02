@@ -26,7 +26,7 @@ pub struct BasePayloadAttributes {
     /// Transactions is a field for rollups: the transactions list is forced into the block
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub transactions: Option<Vec<Bytes>>,
-    /// If true, the no transactions are taken out of the tx-pool, only transactions from the above
+    /// If true, no transactions are taken from the tx-pool; only transactions from the above
     /// Transactions list will be included.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub no_tx_pool: Option<bool>,
@@ -121,7 +121,7 @@ impl BasePayloadAttributes {
             .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
-    /// Extracts the Holocene 1599 parameters from the encoded form:
+    /// Extracts the Holocene EIP-1559 parameters from the encoded form:
     /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#eip1559params-encoding>
     ///
     /// Returns (`elasticity`, `denominator`)

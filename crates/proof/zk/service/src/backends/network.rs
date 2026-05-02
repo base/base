@@ -269,7 +269,7 @@ impl ProvingBackend for NetworkBackend {
     }
 
     fn name(&self) -> &'static str {
-        "OP-Succinct (SP1 Network)"
+        "Succinct (SP1 Network)"
     }
 }
 

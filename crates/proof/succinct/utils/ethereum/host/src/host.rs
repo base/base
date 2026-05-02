@@ -10,7 +10,7 @@ use base_proof_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, host::OPSuc
 
 use crate::witness_generator::ETHDAWitnessGenerator;
 
-/// Single-chain OP Succinct host backed by Ethereum DA.
+/// Single-chain SP1 host backed by Ethereum DA.
 #[derive(Clone)]
 pub struct SingleChainOPSuccinctHost {
     /// L1/L2 data fetcher.

@@ -126,6 +126,6 @@ The Base-specific behavior is:
   - `DEPOSIT_CONTRACT_ADDRESS`, `CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS`, and
     `WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS` are omitted.
 
-Base-specific predeploys and other OP Stack system contracts documented in the
+Base-specific predeploys and other rollup system contracts documented in the
 [predeploys specification](../../protocol/execution/evm/predeploys.md) are not serialized into
 `eth_config` unless they are part of the EIP-7910 schema.

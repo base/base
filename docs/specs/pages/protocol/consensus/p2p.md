@@ -51,7 +51,7 @@ The Ethereum Node Record (ENR) for a Base rollup node must contain the following
 - An IPv4 address (`ip` field) and/or IPv6 address (`ip6` field).
 - A TCP port (`tcp` field) representing the local libp2p listening port.
 - A UDP port (`udp` field) representing the local discv5 listening port.
-- An OP Stack (`opstack` field) L2 network identifier.
+- An `opstack` ENR field L2 network identifier.
 
 The `opstack` value is encoded as a single RLP `bytes` value, the concatenation of:
 

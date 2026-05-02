@@ -1,4 +1,4 @@
-//! Contains Base specific precompiles.
+//! Contains Base-specific precompiles.
 
 mod provider;
 pub use provider::BasePrecompiles;

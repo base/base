@@ -88,7 +88,7 @@ impl NodeHooks {
     /// Applies all accumulated hooks to the given configured builder.
     ///
     /// This is generic over `CB` so that it works with any payload service whose component
-    /// builder produces the same concrete `Components` type as the default OP builder.
+    /// builder produces the same concrete `Components` type as the default payload builder.
     pub fn apply_to<CB>(self, mut builder: RethNodeBuilder<CB>) -> RethNodeBuilder<CB>
     where
         CB: NodeComponentsBuilder<BaseNodeTypes, Components = BaseComponents>,

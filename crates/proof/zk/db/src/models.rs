@@ -150,10 +150,10 @@ pub enum RetryOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR")]
 pub enum ProofType {
-    /// Compressed proof generated via OP-Succinct SP1 cluster.
+    /// Compressed proof generated via the Succinct SP1 cluster.
     #[sqlx(rename = "op_succinct_sp1_cluster_compressed")]
     OpSuccinctSp1ClusterCompressed,
-    /// SNARK Groth16 proof generated via OP-Succinct SP1 cluster.
+    /// SNARK Groth16 proof generated via the Succinct SP1 cluster.
     #[sqlx(rename = "op_succinct_sp1_cluster_snark_groth16")]
     OpSuccinctSp1ClusterSnarkGroth16,
 }

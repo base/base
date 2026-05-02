@@ -69,7 +69,7 @@ impl L2ClientArgs {
     }
 
     /// Validate the jwt secret if specified by exchanging capabilities with the engine.
-    /// Since the engine client will fail if the jwt token is invalid, this allows to ensure
+    /// Since the engine client will fail if the jwt token is invalid, this ensures
     /// that the jwt token passed as a cli arg is correct.
     pub async fn validate_jwt(&self) -> eyre::Result<JwtSecret> {
         let jwt_secret = self.jwt_secret().map_err(|e| eyre::eyre!(e))?;

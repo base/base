@@ -1,4 +1,4 @@
-//! OP-Succinct proving backend using the SP1 cluster.
+//! Succinct proving backend using the SP1 cluster.
 
 use std::{fmt, time::SystemTime};
 
@@ -28,7 +28,7 @@ use crate::backends::traits::{
     ProvingBackend, SessionStatus,
 };
 
-/// OP Succinct proving backend.
+/// Succinct proving backend.
 #[derive(Clone)]
 pub struct OpSuccinctBackend {
     provider: OpSuccinctProvider,
@@ -96,7 +96,7 @@ impl ProvingBackend for OpSuccinctBackend {
             sequence_window = sequence_window,
             intermediate_root_interval = intermediate_root_interval,
             l1_head = ?l1_head,
-            "starting OP-Succinct proof generation"
+            "starting Succinct proof generation"
         );
 
         // 1. Generate witness (the expensive operation).
@@ -276,7 +276,7 @@ impl ProvingBackend for OpSuccinctBackend {
     }
 
     fn name(&self) -> &'static str {
-        "OP-Succinct (SP1 Cluster)"
+        "Succinct (SP1 Cluster)"
     }
 }
 

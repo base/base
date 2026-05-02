@@ -215,7 +215,7 @@ impl ZkArgs {
             let mock_backend = MockBackend::new(range_vk, agg_vk);
             backend_registry.register(Arc::new(mock_backend));
         } else if self.prover_mode == "network" {
-            info!("SP1_PROVER=network: using OP-Succinct SP1 Network backend");
+            info!("SP1_PROVER=network: using Succinct SP1 Network backend");
 
             let fetcher = Arc::new(
                 base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
@@ -274,9 +274,9 @@ impl ZkArgs {
             let backend = Arc::new(NetworkBackend::new(provider, config));
             backend_registry.register(backend);
         } else {
-            info!("SP1_PROVER=cluster: using OP-Succinct cluster backend");
+            info!("SP1_PROVER=cluster: using Succinct cluster backend");
 
-            info!("creating OP-Succinct data fetcher");
+            info!("creating Succinct data fetcher");
             let fetcher = Arc::new(
                 base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher::from_rpc_config_with_rollup_config(rpc_config)
                     .await

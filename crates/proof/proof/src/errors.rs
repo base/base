@@ -65,12 +65,12 @@ pub enum OracleProviderError {
     /// formats, or unsupported block versions.
     #[error("From block error: {0}")]
     BlockInfo(FromBlockError),
-    /// Base specific block conversion error.
+    /// Base-specific block conversion error.
     ///
     /// This error occurs when converting between different Base block
-    /// formats fails due to incompatible data structures, missing OP-specific
+    /// formats fails due to incompatible data structures, missing rollup-specific
     /// fields, or version mismatches between block formats.
-    #[error("Op block conversion error: {0}")]
+    #[error("Block conversion error: {0}")]
     BaseBlockConversion(BaseBlockConversionError),
     /// RLP (Recursive Length Prefix) encoding or decoding error.
     ///

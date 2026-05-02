@@ -55,7 +55,7 @@ impl LocalNode {
         base_enr.encode(&mut base_enr_data);
 
         let mut enr_builder = Enr::builder();
-        enr_builder.add_value_rlp(BaseEnr::OP_CL_KEY, base_enr_data.into());
+        enr_builder.add_value_rlp(BaseEnr::OPSTACK_ENR_KEY, base_enr_data.into());
         match self.ip {
             IpAddr::V4(addr) => {
                 enr_builder.ip4(addr).tcp4(self.tcp_port).udp4(self.udp_port);

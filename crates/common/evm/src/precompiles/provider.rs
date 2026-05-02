@@ -15,7 +15,7 @@ use crate::OpSpecId;
 /// Base precompile provider.
 #[derive(Debug, Clone)]
 pub struct BasePrecompiles {
-    /// Inner precompile provider is same as Ethereums.
+    /// Inner precompile provider is the same as Ethereum's.
     inner: EthPrecompiles,
     /// Spec id of the precompile provider.
     spec: OpSpecId,

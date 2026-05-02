@@ -424,12 +424,12 @@ mod tests {
     fn sanity_l1_block_ecotone() {
         // rig
 
-        // OP mainnet ecotone block 118024092
+        // OP Mainnet Ecotone compatibility fixture, block 118024092.
         // <https://optimistic.etherscan.io/block/118024092>
         const TIMESTAMP: u64 = 1711603765;
         assert!(BASE_MAINNET.is_ecotone_active_at_timestamp(TIMESTAMP));
 
-        // First transaction in OP mainnet block 118024092
+        // First transaction in the OP Mainnet compatibility fixture, block 118024092.
         //
         // https://optimistic.etherscan.io/getRawTx?tx=0x88501da5d5ca990347c2193be90a07037af1e3820bb40774c8154871c7669150
         const TX: [u8; 251] = hex!(
@@ -466,7 +466,8 @@ mod tests {
     fn parse_l1_info_fjord() {
         // rig
 
-        // L1 block info for OP mainnet block 124665056 (stored in input of tx at index 0)
+        // L1 block info from an OP Mainnet compatibility fixture, block 124665056
+        // (stored in input of tx at index 0).
         //
         // https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
         const DATA: &[u8] = &hex!(

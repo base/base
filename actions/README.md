@@ -2,7 +2,7 @@
 
 Action tests are a framework for integration-testing the Base rollup protocol
 by composing simulated actors and driving them through discrete, reproducible
-scenarios. The pattern is borrowed from Optimism's op-e2e Go framework, but
+scenarios. The pattern is borrowed from the op-e2e Go framework, but
 implemented in Rust and built directly on the same types the production node
 uses.
 
@@ -158,7 +158,7 @@ into a `base_comp::ChannelOut<BrotliCompressor>` at `BrotliLevel::Brotli10`
 (the compression level Base uses in production), and call
 `L1Miner::submit_tx()` for each output frame.
 
-The frame encoding follows the OP Stack derivation spec:
+The frame encoding follows the rollup derivation spec:
 
 ```
 [DERIVATION_VERSION_0] ++ channel_id (16 B) ++ frame_number (2 B)

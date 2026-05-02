@@ -103,7 +103,7 @@ async fn update_l2oo_config() -> Result<()> {
                 .map_or(search_start, |block_num| block_num);
 
             // NOTE: Starting from block 0 (genesis) is intentionally disallowed because in
-            // op-stack chains genesis state is provided as part of the `RollupConfig`, which is
+            // Rollup chain genesis state is provided as part of the `RollupConfig`, which is
             // NOT part of the chain state.
             if finalized_l2_block_number <= num_blocks_for_finality {
                 bail!(

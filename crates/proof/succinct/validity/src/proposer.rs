@@ -410,7 +410,7 @@ where
         Ok(())
     }
 
-    /// Process a single OP Succinct request's proof status.
+    /// Process a single Succinct request's proof status.
     #[tracing::instrument(name = "proposer.process_proof_request_status", skip(self, request))]
     pub async fn process_proof_request_status(&self, request: OPSuccinctRequest) -> Result<()> {
         let network_prover = self

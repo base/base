@@ -70,7 +70,7 @@ pub trait DebugApiOverride<Attributes> {
 }
 
 #[derive(Debug)]
-/// Overrides applied to the `debug_` namespace of the RPC API for the OP Proofs `ExEx`.
+/// Overrides applied to the `debug_` namespace of the RPC API for the proofs `ExEx`.
 pub struct DebugApiExt<Eth: FullEthApi, Storage, Provider, EvmConfig, Attrs> {
     inner: Arc<DebugApiExtInner<Eth, Storage, Provider, EvmConfig, Attrs>>,
 }

@@ -46,9 +46,9 @@ pub struct BaseAddOns<
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
     pub rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
-    /// Gas limit configuration for the OP builder.
+    /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
 }
 
@@ -215,7 +215,7 @@ where
             ctx.node.provider().clone(),
             ctx.node.evm_config().clone(),
         );
-        // install additional OP specific rpc methods
+        // Install additional rollup-specific RPC methods.
         let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
             ctx.node.provider().clone(),
             Box::new(ctx.node.task_executor().clone()),
@@ -313,9 +313,9 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the payload builder.
     da_config: Option<BaseDAConfig>,
-    /// Gas limit configuration for the OP builder.
+    /// Gas limit configuration for the payload builder.
     gas_limit_config: Option<GasLimitConfig>,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,

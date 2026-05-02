@@ -8,7 +8,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 use reth_chainspec::{BaseFeeParams, EthChainSpec};
 
-/// Extracts the Holocene 1599 parameters from the encoded extra data from the parent header.
+/// Extracts the Holocene EIP-1559 parameters from the encoded extra data from the parent header.
 ///
 /// Caution: Caller must ensure that holocene is active in the parent header.
 ///
@@ -32,7 +32,7 @@ where
     Ok(parent.next_block_base_fee(base_fee_params).unwrap_or_default())
 }
 
-/// Extracts the Jovian 1599 parameters from the encoded extra data from the parent header.
+/// Extracts the Jovian EIP-1559 parameters from the encoded extra data from the parent header.
 /// Additionally to [`decode_holocene_base_fee`], checks if the next block base fee is less than the
 /// minimum base fee, then the minimum base fee is returned.
 ///

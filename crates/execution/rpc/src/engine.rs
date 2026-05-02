@@ -51,7 +51,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2>
     ///
-    /// No modifications needed for OP compatibility.
+    /// No modifications needed for rollup compatibility.
     #[method(name = "newPayloadV2")]
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus>;
 
@@ -59,7 +59,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_newpayloadv3>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - expected versioned hashes MUST be an empty array: therefore the `versioned_hashes`
     ///   parameter is removed.
     /// - parent beacon block root MUST be the parent beacon block root from the L1 origin block of
@@ -107,7 +107,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_forkchoiceupdatedv2>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     #[method(name = "forkchoiceUpdatedV2")]
     async fn fork_choice_updated_v2(
@@ -121,7 +121,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_forkchoiceupdatedv3>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - Must be called with an Ecotone payload
     /// - Attributes must contain the parent beacon block root field
     /// - The `payload_attributes` parameter is extended with the [`EngineTypes::PayloadAttributes`](EngineTypes) type as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
@@ -140,7 +140,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// No modifications needed for OP compatibility.
+    /// No modifications needed for rollup compatibility.
     #[method(name = "getPayloadV2")]
     async fn get_payload_v2(
         &self,
@@ -155,7 +155,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - the response type is extended to [`EngineTypes::ExecutionPayloadEnvelopeV3`].
     #[method(name = "getPayloadV3")]
     async fn get_payload_v3(
@@ -171,7 +171,7 @@ pub trait BaseEngineApi<Engine: EngineTypes> {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - the response type is extended to [`EngineTypes::ExecutionPayloadEnvelopeV4`].
     #[method(name = "getPayloadV4")]
     async fn get_payload_v4(

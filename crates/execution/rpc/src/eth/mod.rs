@@ -263,7 +263,7 @@ pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
     /// network.
     sequencer_client: Option<SequencerClient>,
-    /// Minimum priority fee enforced by OP-specific logic.
+    /// Minimum priority fee enforced by rollup-specific logic.
     ///
     /// See also <https://github.com/ethereum-optimism/op-geth/blob/d4e0fe9bb0c2075a9bff269fb975464dd8498f75/eth/gasprice/optimism-gasprice.go#L38-L38>
     min_suggested_priority_fee: U256,

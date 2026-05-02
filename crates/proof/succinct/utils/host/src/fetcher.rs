@@ -224,7 +224,7 @@ impl OPSuccinctDataFetcher {
 
     /// Get the aggregate block statistics for a range of blocks exclusive of the start block.
     ///
-    /// When proving a range in OP Succinct, we are proving the transition from the block hash
+    /// When proving a range with Succinct, we are proving the transition from the block hash
     /// of the start block to the block hash of the end block. This means that we don't expend
     /// resources to "prove" the start block. This is why the start block is not included in the
     /// range for which we fetch block data.

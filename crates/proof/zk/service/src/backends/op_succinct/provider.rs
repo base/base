@@ -1,4 +1,4 @@
-//! Witness generation for OP-Succinct proving.
+//! Witness generation for Succinct proving.
 
 use std::{fmt, sync::Arc};
 
@@ -36,7 +36,7 @@ pub struct WitnessParams<'a> {
     pub intermediate_root_interval: u64,
 }
 
-/// Provider wrapping the OP Succinct host for witness generation and proving.
+/// Provider wrapping the Succinct host for witness generation and proving.
 #[derive(Clone)]
 pub struct OpSuccinctProvider {
     host: Arc<SingleChainOPSuccinctHost>,
@@ -51,7 +51,7 @@ impl fmt::Debug for OpSuccinctProvider {
 impl OpSuccinctProvider {
     /// Create a new provider with an initialized host.
     pub fn new(fetcher: Arc<OPSuccinctDataFetcher>) -> Self {
-        info!("initializing OP-Succinct provider with Ethereum DA");
+        info!("initializing Succinct provider with Ethereum DA");
         let host = Arc::new(SingleChainOPSuccinctHost::new(fetcher));
         Self { host }
     }

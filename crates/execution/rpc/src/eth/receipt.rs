@@ -30,7 +30,7 @@ where
 {
 }
 
-/// Converter for OP receipts.
+/// Converter for Base receipts.
 #[derive(Debug, Clone)]
 pub struct BaseReceiptConverter<Provider> {
     provider: Provider,
@@ -272,10 +272,10 @@ impl ReceiptFieldsBuilder {
 /// Builds an [`BaseTransactionReceipt`].
 #[derive(Debug)]
 pub struct BaseReceiptBuilder {
-    /// Core receipt, has all the fields of an L1 receipt and is the basis for the OP receipt.
+    /// Core receipt with all fields from an L1 receipt and used as the basis for the Base receipt.
     pub core_receipt: TransactionReceipt<ReceiptWithBloom<BaseReceipt<Log>>>,
-    /// Additional OP receipt fields.
-    pub op_receipt_fields: TransactionReceiptFields,
+    /// Additional Base receipt fields.
+    pub receipt_fields: TransactionReceiptFields,
 }
 
 impl BaseReceiptBuilder {
@@ -322,19 +322,19 @@ impl BaseReceiptBuilder {
             core_receipt.blob_gas_used = Some(da_size);
         });
 
-        let op_receipt_fields = ReceiptFieldsBuilder::new(timestamp, block_number)
+        let receipt_fields = ReceiptFieldsBuilder::new(timestamp, block_number)
             .l1_block_info(chain_spec, tx_signed, l1_block_info)?
             .build();
 
-        Ok(Self { core_receipt, op_receipt_fields })
+        Ok(Self { core_receipt, receipt_fields })
     }
 
-    /// Builds [`BaseTransactionReceipt`] by combining core (l1) receipt fields and additional OP
+    /// Builds [`BaseTransactionReceipt`] by combining core L1 receipt fields and additional Base
     /// receipt fields.
     pub fn build(self) -> BaseTransactionReceipt {
-        let Self { core_receipt: inner, op_receipt_fields } = self;
+        let Self { core_receipt: inner, receipt_fields } = self;
 
-        let TransactionReceiptFields { l1_block_info, .. } = op_receipt_fields;
+        let TransactionReceiptFields { l1_block_info, .. } = receipt_fields;
 
         BaseTransactionReceipt { inner, l1_block_info }
     }
@@ -352,17 +352,17 @@ mod tests {
 
     use super::*;
 
-    /// OP Mainnet transaction at index 0 in block 124665056.
+    /// OP Mainnet compatibility fixture transaction at index 0 in block 124665056.
     ///
     /// <https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1>
-    const TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_124665056: [u8; 251] = hex!(
+    const TX_SET_L1_BLOCK_OP_MAINNET_BLOCK_124665056: [u8; 251] = hex!(
         "7ef8f8a0683079df94aa5b9cf86687d739a60a9b4f0835e520ec4d664e2e415dca17a6df94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a3000000000000000000000000000000000000000000000000000000003ef1278700000000000000000000000000000000000000000000000000000000000000012fdf87b89884a61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a590000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985"
     );
 
-    /// OP Mainnet transaction at index 1 in block 124665056.
+    /// OP Mainnet compatibility fixture transaction at index 1 in block 124665056.
     ///
     /// <https://optimistic.etherscan.io/tx/0x1059e8004daff32caa1f1b1ef97fe3a07a8cf40508f5b835b66d9420d87c4a4a>
-    const TX_1_BASE_MAINNET_BLOCK_124665056: [u8; 1176] = hex!(
+    const TX_1_OP_MAINNET_BLOCK_124665056: [u8; 1176] = hex!(
         "02f904940a8303fba78401d6d2798401db2b6d830493e0943e6f4f7866654c18f536170780344aa8772950b680b904246a761202000000000000000000000000087000a300de7200382b55d40045000000e5d60e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003a0000000000000000000000000000000000000000000000000000000000000022482ad56cb0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000120000000000000000000000000dc6ff44d5d932cbd77b52e5612ba0529dc6226f1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000044095ea7b300000000000000000000000021c4928109acb0659a88ae5329b5374a3024694c0000000000000000000000000000000000000000000000049b9ca9a6943400000000000000000000000000000000000000000000000000000000000000000000000000000000000021c4928109acb0659a88ae5329b5374a3024694c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000024b6b55f250000000000000000000000000000000000000000000000049b9ca9a694340000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000415ec214a3950bea839a7e6fbb0ba1540ac2076acd50820e2d5ef83d0902cdffb24a47aff7de5190290769c4f0a9c6fabf63012986a0d590b1b571547a8c7050ea1b00000000000000000000000000000000000000000000000000000000000000c080a06db770e6e25a617fe9652f0958bd9bd6e49281a53036906386ed39ec48eadf63a07f47cf51a4a40b4494cf26efc686709a9b03939e20ee27e59682f5faa536667e"
     );
 
@@ -374,7 +374,7 @@ mod tests {
     /// L1 block info for transaction at index 1 in block 124665056.
     ///
     /// <https://optimistic.etherscan.io/tx/0x1059e8004daff32caa1f1b1ef97fe3a07a8cf40508f5b835b66d9420d87c4a4a>
-    const TX_META_TX_1_BASE_MAINNET_BLOCK_124665056: TransactionReceiptFields =
+    const TX_META_TX_1_OP_MAINNET_BLOCK_124665056: TransactionReceiptFields =
         TransactionReceiptFields {
             l1_block_info: L1BlockInfo {
                 l1_gas_price: Some(1055991687), // since bedrock l1 base fee
@@ -396,12 +396,12 @@ mod tests {
     fn base_receipt_fields_from_block_and_tx() {
         // rig
         let tx_0 = BaseTransactionSigned::decode_2718(
-            &mut TX_SET_L1_BLOCK_BASE_MAINNET_BLOCK_124665056.as_slice(),
+            &mut TX_SET_L1_BLOCK_OP_MAINNET_BLOCK_124665056.as_slice(),
         )
         .unwrap();
 
         let tx_1 =
-            BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
+            BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
         let block: Block<BaseTransactionSigned> = Block {
@@ -434,49 +434,49 @@ mod tests {
         } = receipt_meta.l1_block_info;
 
         assert_eq!(
-            l1_gas_price, TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.l1_gas_price,
+            l1_gas_price, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_gas_price,
             "incorrect l1 base fee (former gas price)"
         );
         assert_eq!(
-            l1_gas_used, TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.l1_gas_used,
+            l1_gas_used, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_gas_used,
             "incorrect l1 gas used"
         );
         assert_eq!(
-            l1_fee, TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.l1_fee,
+            l1_fee, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_fee,
             "incorrect l1 fee"
         );
         assert_eq!(
-            l1_fee_scalar, TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.l1_fee_scalar,
+            l1_fee_scalar, TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_fee_scalar,
             "incorrect l1 fee scalar"
         );
         assert_eq!(
             l1_base_fee_scalar,
-            TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.l1_base_fee_scalar,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_base_fee_scalar,
             "incorrect l1 base fee scalar"
         );
         assert_eq!(
             l1_blob_base_fee,
-            TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.l1_blob_base_fee,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_blob_base_fee,
             "incorrect l1 blob base fee"
         );
         assert_eq!(
             l1_blob_base_fee_scalar,
-            TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.l1_blob_base_fee_scalar,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.l1_blob_base_fee_scalar,
             "incorrect l1 blob base fee scalar"
         );
         assert_eq!(
             operator_fee_scalar,
-            TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.operator_fee_scalar,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.operator_fee_scalar,
             "incorrect operator fee scalar"
         );
         assert_eq!(
             operator_fee_constant,
-            TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.operator_fee_constant,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.operator_fee_constant,
             "incorrect operator fee constant"
         );
         assert_eq!(
             da_footprint_gas_scalar,
-            TX_META_TX_1_BASE_MAINNET_BLOCK_124665056.l1_block_info.da_footprint_gas_scalar,
+            TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.da_footprint_gas_scalar,
             "incorrect da footprint gas scalar"
         );
     }
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn base_non_zero_operator_fee_params_included_in_receipt() {
         let tx_1 =
-            BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
+            BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
         let mut l1_block_info = base_common_evm::L1BlockInfo {
@@ -508,7 +508,7 @@ mod tests {
     #[test]
     fn base_zero_operator_fee_params_not_included_in_receipt() {
         let tx_1 =
-            BaseTransactionSigned::decode_2718(&mut TX_1_BASE_MAINNET_BLOCK_124665056.as_slice())
+            BaseTransactionSigned::decode_2718(&mut TX_1_OP_MAINNET_BLOCK_124665056.as_slice())
                 .unwrap();
 
         let mut l1_block_info = base_common_evm::L1BlockInfo {
@@ -607,10 +607,10 @@ mod tests {
             ..Default::default()
         };
 
-        let op_hardforks = &*BASE_MAINNET;
+        let hardforks = &*BASE_MAINNET;
 
         let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp, u64::MAX)
-            .l1_block_info(&op_hardforks, &tx, &mut l1_block_info)
+            .l1_block_info(&hardforks, &tx, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
 
@@ -642,10 +642,10 @@ mod tests {
             ..Default::default()
         };
 
-        let op_hardforks = &*BASE_MAINNET;
+        let hardforks = &*BASE_MAINNET;
 
-        let op_receipt = BaseReceiptBuilder::new(
-            &op_hardforks,
+        let receipt = BaseReceiptBuilder::new(
+            &hardforks,
             ConvertReceiptInput::<BasePrimitives> {
                 tx: Recovered::new_unchecked(&tx, Address::default()),
                 receipt: BaseReceipt::Eip7702(Receipt {
@@ -668,7 +668,7 @@ mod tests {
             .saturating_div(1_000_000)
             .saturating_mul(DA_FOOTPRINT_GAS_SCALAR.into());
 
-        assert_eq!(op_receipt.core_receipt.blob_gas_used, Some(expected_blob_gas_used));
+        assert_eq!(receipt.core_receipt.blob_gas_used, Some(expected_blob_gas_used));
     }
 
     #[test]
@@ -696,10 +696,10 @@ mod tests {
             ..Default::default()
         };
 
-        let op_hardforks = &*BASE_MAINNET;
+        let hardforks = &*BASE_MAINNET;
 
-        let op_receipt = BaseReceiptBuilder::new(
-            &op_hardforks,
+        let receipt = BaseReceiptBuilder::new(
+            &hardforks,
             ConvertReceiptInput::<BasePrimitives> {
                 tx: Recovered::new_unchecked(&tx, Address::default()),
                 receipt: BaseReceipt::Eip7702(Receipt {
@@ -718,6 +718,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(op_receipt.core_receipt.blob_gas_used, None);
+        assert_eq!(receipt.core_receipt.blob_gas_used, None);
     }
 }

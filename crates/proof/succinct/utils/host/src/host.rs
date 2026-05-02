@@ -34,7 +34,7 @@ impl PreimageServerStarter for HostConfig {
     }
 }
 
-/// Host interface for OP Succinct proof generation.
+/// Host interface for Succinct proof generation.
 #[async_trait]
 pub trait OPSuccinctHost: Send + Sync + 'static {
     /// Host arguments (e.g. [`HostConfig`]).

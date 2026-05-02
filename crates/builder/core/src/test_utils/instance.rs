@@ -57,7 +57,7 @@ pub fn clear_otel_env_vars() {
     }
 }
 
-/// Represents a type that emulates a local in-process instance of the OP builder node.
+/// Represents a type that emulates a local in-process instance of the builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
 #[derive(Debug)]
 pub struct LocalInstance {
@@ -102,7 +102,7 @@ where
 }
 
 impl LocalInstance {
-    /// Creates a new local instance of the OP builder node with the given builder configuration,
+    /// Creates a new local instance of the builder node with the given builder configuration,
     /// with the default Reth node configuration.
     ///
     /// This method does not prefund any accounts, so before sending any transactions
@@ -111,7 +111,7 @@ impl LocalInstance {
         Box::pin(Self::new_with_node_config(builder_config, default_node_config())).await
     }
 
-    /// Creates a new local instance of the OP builder node with the given builder configuration,
+    /// Creates a new local instance of the builder node with the given builder configuration,
     /// with a given Reth node configuration.
     ///
     /// This method does not prefund any accounts, so before sending any transactions
@@ -194,7 +194,7 @@ impl LocalInstance {
         })
     }
 
-    /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
+    /// Creates a new local instance of the builder node with the flashblocks builder configuration.
     /// This method prefunds the default accounts with 1 ETH each.
     pub async fn flashblocks() -> eyre::Result<Self> {
         clear_otel_env_vars();

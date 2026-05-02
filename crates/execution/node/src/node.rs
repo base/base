@@ -186,15 +186,15 @@ impl PayloadAttributesBuilder<BasePayloadAttributes> for BaseLocalPayloadAttribu
 pub struct BaseNode {
     /// Additional Base args
     pub args: RollupArgs,
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the payload builder.
     ///
     /// Used to throttle the size of the data availability payloads (configured by the batcher via
     /// the `miner_` api).
     ///
     /// By default no throttling is applied.
     pub da_config: BaseDAConfig,
-    /// Gas limit configuration for the OP builder.
-    /// Used to control the gas limit of the blocks produced by the OP builder.(configured by the
+    /// Gas limit configuration for the payload builder.
+    /// Used to control the gas limit of the blocks produced by the payload builder (configured by the
     /// batcher via the `miner_` api)
     pub gas_limit_config: GasLimitConfig,
 }
@@ -219,13 +219,13 @@ impl BaseNode {
         }
     }
 
-    /// Configure the data availability configuration for the OP builder.
+    /// Configure the data availability configuration for the payload builder.
     pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = da_config;
         self
     }
 
-    /// Configure the gas limit configuration for the OP builder.
+    /// Configure the gas limit configuration for the payload builder.
     pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
         self
@@ -273,7 +273,7 @@ impl BaseNode {
 
     /// Instantiates the [`ProviderFactoryBuilder`] for a Base node.
     ///
-    /// # Open a Providerfactory in read-only mode from a datadir
+    /// # Open a `ProviderFactory` in read-only mode from a datadir
     ///
     /// See also: [`ProviderFactoryBuilder`] and
     /// [`ReadOnlyConfig`](reth_provider::providers::ReadOnlyConfig).
@@ -289,7 +289,7 @@ impl BaseNode {
     /// }
     /// ```
     ///
-    /// # Open a Providerfactory with custom config
+    /// # Open a `ProviderFactory` with custom config
     ///
     /// ```no_run
     /// use base_execution_chainspec::BaseChainSpecBuilder;
@@ -381,9 +381,9 @@ pub struct BaseAddOns<
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
     /// and eth-api.
     pub rpc_add_ons: RpcAddOns<N, EthB, PVB, EB, EVB, RpcMiddleware>,
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the payload builder.
     pub da_config: BaseDAConfig,
-    /// Gas limit configuration for the OP builder.
+    /// Gas limit configuration for the payload builder.
     pub gas_limit_config: GasLimitConfig,
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
     /// network.
@@ -582,7 +582,7 @@ where
             ctx.node.provider().clone(),
             ctx.node.evm_config().clone(),
         );
-        // install additional OP specific rpc methods
+        // Install additional rollup-specific RPC methods.
         let debug_ext = BaseDebugWitnessApi::<_, _, _, Attrs>::new(
             ctx.node.provider().clone(),
             Box::new(ctx.node.task_executor().clone()),
@@ -676,9 +676,9 @@ pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,
-    /// Data availability configuration for the OP builder.
+    /// Data availability configuration for the payload builder.
     da_config: Option<BaseDAConfig>,
-    /// Gas limit configuration for the OP builder.
+    /// Gas limit configuration for the payload builder.
     gas_limit_config: Option<GasLimitConfig>,
     /// Marker for network types.
     _nt: PhantomData<NetworkT>,
@@ -957,7 +957,7 @@ pub struct BasePayloadBuilder<Txs = ()> {
     /// This data availability configuration specifies constraints for the payload builder
     /// when assembling payloads
     pub da_config: BaseDAConfig,
-    /// Gas limit configuration for the OP builder.
+    /// Gas limit configuration for the payload builder.
     /// This is used to configure gas limit related constraints for the payload builder.
     pub gas_limit_config: GasLimitConfig,
 }
@@ -974,13 +974,13 @@ impl BasePayloadBuilder {
         }
     }
 
-    /// Configure the data availability configuration for the OP payload builder.
+    /// Configure the data availability configuration for the payload builder.
     pub fn with_da_config(mut self, da_config: BaseDAConfig) -> Self {
         self.da_config = da_config;
         self
     }
 
-    /// Configure the gas limit configuration for the OP payload builder.
+    /// Configure the gas limit configuration for the payload builder.
     pub fn with_gas_limit_config(mut self, gas_limit_config: GasLimitConfig) -> Self {
         self.gas_limit_config = gas_limit_config;
         self

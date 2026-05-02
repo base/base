@@ -183,7 +183,7 @@ const sidebar: SidebarItem[] = [
     items: [
       { text: 'Azul', link: '/upgrades/azul/overview' },
       {
-        text: 'Optimism',
+        text: 'Inherited Upgrades',
         collapsed: true,
         items: [
           { text: 'Jovian', link: '/upgrades/jovian/overview' },

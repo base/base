@@ -14,7 +14,7 @@ use base_proof_contracts::{
 use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use reqwest::Url;
 
-/// OP Succinct validity dispute game type (see `Proposer` tests / `initBonds`).
+/// Succinct validity dispute game type (see `Proposer` tests / `initBonds`).
 pub const OP_SUCCINCT_VALIDITY_GAME_TYPE: u32 = 6;
 
 /// Resolve the interval the proposer must use when sampling intermediate output roots.

@@ -27,7 +27,7 @@ use clap::Parser;
 use sp1_sdk::{Elf, ProveRequest, Prover, utils};
 use tracing::{debug, info, warn};
 
-/// Execute the OP Succinct program for multiple blocks.
+/// Execute the Succinct program for multiple blocks.
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = HostExecutorArgs::parse();

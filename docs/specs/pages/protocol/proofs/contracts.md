@@ -39,7 +39,7 @@ standalone verifier and registry contracts referenced by the game implementation
 
 ## Data Model
 
-The contracts share the OP Stack dispute-game types:
+The contracts share the same dispute-game types:
 
 | Type         | Meaning                                                                                   |
 | ------------ | ----------------------------------------------------------------------------------------- |

@@ -52,7 +52,7 @@ impl ForkMatrix {
         Self::all().retain(|_, h| h.granite_time.is_some() && h.isthmus_time.is_none())
     }
 
-    /// Returns the cumulative OP hardforks from Isthmus onward.
+    /// Returns the cumulative inherited rollup hardforks from Isthmus onward.
     ///
     /// Base-specific forks (e.g. `azul`) are excluded.
     pub fn from_isthmus() -> Self {

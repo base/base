@@ -149,7 +149,7 @@ fn cascade_implies_all_preceding_forks_and_no_later_forks() {
     assert!(rc.is_granite_active(granite_time));
     assert!(!rc.is_holocene_active(granite_time), "Holocene must not be implied by Granite");
 
-    // At jovian_time: all OP hardforks are implied.
+    // At jovian_time: all inherited rollup hardforks are implied.
     assert!(rc.is_canyon_active(jovian_time));
     assert!(rc.is_delta_active(jovian_time));
     assert!(rc.is_ecotone_active(jovian_time));

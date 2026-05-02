@@ -324,7 +324,8 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 }
 
-// L1 block info for OP mainnet block 124665056 (stored in input of tx at index 0)
+// L1 block info from an OP Mainnet compatibility fixture, block 124665056
+// (stored in input of tx at index 0).
 // https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
 // It has the following modifications:
 // 1. Function signature  support Jovian: cast sig "setL1BlockValuesJovian()" => 0x3db6be2b

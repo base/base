@@ -1,4 +1,4 @@
-//! [`PrecompileProvider`] for FPVM-accelerated OP Stack precompiles.
+//! [`PrecompileProvider`] for FPVM-accelerated rollup precompiles.
 
 use alloc::string::String;
 

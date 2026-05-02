@@ -26,7 +26,7 @@ pub trait BaseEngineApi {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2>
     ///
-    /// No modifications needed for OP compatibility.
+    /// No modifications needed for rollup compatibility.
     async fn new_payload_v2(
         &self,
         payload: ExecutionPayloadInputV2,
@@ -36,7 +36,7 @@ pub trait BaseEngineApi {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_newpayloadv3>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - expected versioned hashes MUST be an empty array: therefore the `versioned_hashes`
     ///   parameter is removed.
     /// - parent beacon block root MUST be the parent beacon block root from the L1 origin block of
@@ -51,7 +51,7 @@ pub trait BaseEngineApi {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/03911ffc053b8b806123f1fc237184b0092a485a/src/engine/prague.md#engine_newpayloadv4>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - expected versioned hashes MUST be an empty array.
     /// - parent beacon block root MUST be the parent beacon block root from the L1 origin block of
     ///   the L2 block.
@@ -69,7 +69,7 @@ pub trait BaseEngineApi {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_forkchoiceupdatedv2>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - The `payload_attributes` parameter is extended with the [`BasePayloadAttributes`] type
     ///   as described in <https://specs.base.org/protocol/execution#extended-payloadattributesv2>
     async fn fork_choice_updated_v2(
@@ -83,7 +83,7 @@ pub trait BaseEngineApi {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#engine_forkchoiceupdatedv3>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - Must be called with an Ecotone payload
     /// - Attributes must contain the parent beacon block root field
     /// - The `payload_attributes` parameter is extended with the [`BasePayloadAttributes`] type
@@ -102,7 +102,7 @@ pub trait BaseEngineApi {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// No modifications needed for OP compatibility.
+    /// No modifications needed for rollup compatibility.
     async fn get_payload_v2(
         &self,
         payload_id: PayloadId,
@@ -116,7 +116,7 @@ pub trait BaseEngineApi {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - the response type is extended to [`BaseExecutionPayloadEnvelopeV3`].
     async fn get_payload_v3(
         &self,
@@ -131,7 +131,7 @@ pub trait BaseEngineApi {
     /// Note:
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - the response type is extended to [`BaseExecutionPayloadEnvelopeV4`].
     async fn get_payload_v4(
         &self,
@@ -143,7 +143,7 @@ pub trait BaseEngineApi {
     ///
     /// See also <https://github.com/ethereum/execution-apis/blob/main/src/engine/osaka.md#engine_getpayloadv5>
     ///
-    /// OP modifications:
+    /// Rollup modifications:
     /// - the response type is [`BaseExecutionPayloadEnvelopeV5`], which uses
     ///   [`BaseExecutionPayloadV4`](base_common_rpc_types_engine::BaseExecutionPayloadV4) for the
     ///   execution payload and otherwise follows the V5 envelope shape.

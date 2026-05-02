@@ -1,4 +1,4 @@
-//! Host-side utilities for OP Succinct proof generation.
+//! Host-side utilities for SP1 proof generation.
 
 /// L2 block range calculation and splitting.
 pub mod block_range;
@@ -6,7 +6,7 @@ mod constants;
 mod contract;
 /// L1/L2 RPC data fetcher.
 pub mod fetcher;
-/// OP Succinct host trait and helpers.
+/// SP1 host trait and helpers.
 pub mod host;
 mod proof;
 pub mod rpc_types;
