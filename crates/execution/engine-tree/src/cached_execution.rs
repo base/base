@@ -55,26 +55,29 @@ where
 
         let pending_blocks = flashblocks_state.get_pending_blocks().clone()?;
 
-        if let Some(prev_cached_hash) = prev_cached_hash {
-            // all previous transactions from start of block to prev_cached_hash are cached, so only check if the previous transaction is cached
-            if !pending_blocks.has_transaction_hash(prev_cached_hash) {
-                warn!(
-                    prev_cached_hash = ?prev_cached_hash,
-                    "Not using cached results - previous transaction not cached",
-                );
-                return None;
-            }
-        } else {
-            // must be the first tx in the block
-            if pending_blocks
-                .get_transactions_for_block(this_block_number)
-                .next()
-                .map(|tx| tx.inner.inner.tx_hash())
-                != Some(*tx_hash)
-            {
-                warn!(tx_hash = ?tx_hash, "Not using cached results - first transaction not cached");
-                return None;
-            }
+        // The cached `ResultAndState` is only valid when applied atop the exact
+        // prefix it was computed under, so require `tx_hash` to occupy the
+        // immediate successor position to `prev_cached_hash` in the cached order.
+        let Some(this_pos) = pending_blocks.transaction_position(this_block_number, tx_hash) else {
+            warn!(
+                tx_hash = ?tx_hash,
+                "Not using cached results - transaction not cached for this block",
+            );
+            return None;
+        };
+        let positions_align = prev_cached_hash.map_or(this_pos == 0, |prev| {
+            pending_blocks
+                .transaction_position(this_block_number, prev)
+                .is_some_and(|prev_pos| prev_pos + 1 == this_pos)
+        });
+        if !positions_align {
+            warn!(
+                tx_hash = ?tx_hash,
+                prev_cached_hash = ?prev_cached_hash,
+                this_pos = this_pos,
+                "Not using cached results - transaction is not the expected successor in cached order",
+            );
+            return None;
         }
 
         trace!(tx_hash = ?tx_hash, "cache hit for transaction");
@@ -83,9 +86,11 @@ where
 }
 
 /// Trait for providers that fetch cached execution results for transactions.
+///
+/// Callers must invoke in payload order and stop on the first `None`, so that any
+/// returned cached result is applied atop the same prefix it was computed under.
 pub trait CachedExecutionProvider<TxResult> {
-    /// Gets the cached execution result for a transaction. This method is expected to be called in the order of the transactions in the block.
-    /// This allows only checking if the previous transaction matches the expected hash.
+    /// Gets the cached execution result for a transaction.
     fn get_cached_execution_for_tx(
         &self,
         parent_block_hash: &B256,
@@ -229,5 +234,291 @@ where
 
     fn evm(&self) -> &Self::Evm {
         self.executor.evm()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use alloy_consensus::{
+        Header, Receipt, ReceiptWithBloom, Sealed, Signed, TxLegacy, transaction::Recovered,
+    };
+    use alloy_eips::BlockHashOrNumber;
+    use alloy_primitives::{Address, B256, BlockNumber, Bloom, Bytes, Signature, TxKind, U256};
+    use alloy_rpc_types_engine::PayloadId;
+    use alloy_rpc_types_eth::TransactionReceipt;
+    use base_common_flashblocks::{
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+    };
+    use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, Transaction};
+    use base_flashblocks::{FlashblocksState, PendingBlocks, PendingBlocksBuilder};
+    use reth_chainspec::ChainInfo;
+    use reth_provider::{BlockHashReader, BlockNumReader};
+    use reth_storage_errors::provider::ProviderResult;
+    use revm::context::result::ExecutionResult;
+
+    use super::{
+        BaseHaltReason, BaseReceipt, BaseTxEnvelope, CachedExecutionProvider,
+        FlashblocksCachedExecutionProvider,
+    };
+
+    #[derive(Clone)]
+    struct StubBlockNumReader {
+        parent_hash: B256,
+        parent_number: BlockNumber,
+    }
+
+    impl BlockHashReader for StubBlockNumReader {
+        fn block_hash(&self, _number: BlockNumber) -> ProviderResult<Option<B256>> {
+            Ok(None)
+        }
+
+        fn canonical_hashes_range(
+            &self,
+            _start: BlockNumber,
+            _end: BlockNumber,
+        ) -> ProviderResult<Vec<B256>> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl BlockNumReader for StubBlockNumReader {
+        fn chain_info(&self) -> ProviderResult<ChainInfo> {
+            Ok(ChainInfo::default())
+        }
+
+        fn best_block_number(&self) -> ProviderResult<BlockNumber> {
+            Ok(self.parent_number)
+        }
+
+        fn last_block_number(&self) -> ProviderResult<BlockNumber> {
+            Ok(self.parent_number)
+        }
+
+        fn block_number(&self, hash: B256) -> ProviderResult<Option<BlockNumber>> {
+            Ok((hash == self.parent_hash).then_some(self.parent_number))
+        }
+
+        fn convert_hash_or_number(
+            &self,
+            id: BlockHashOrNumber,
+        ) -> ProviderResult<Option<BlockNumber>> {
+            match id {
+                BlockHashOrNumber::Hash(hash) => self.block_number(hash),
+                BlockHashOrNumber::Number(num) => Ok(Some(num)),
+            }
+        }
+    }
+
+    fn provider_with_cache(
+        parent_hash: B256,
+        parent_number: BlockNumber,
+        cached_hashes: &[B256],
+    ) -> FlashblocksCachedExecutionProvider<StubBlockNumReader> {
+        let state = Arc::new(FlashblocksState::default());
+        state.set_pending_blocks_for_testing(Some(build_pending_blocks(
+            parent_number + 1,
+            cached_hashes,
+        )));
+        FlashblocksCachedExecutionProvider::new(
+            StubBlockNumReader { parent_hash, parent_number },
+            Some(state),
+        )
+    }
+
+    fn h(byte: u8) -> B256 {
+        B256::repeat_byte(byte)
+    }
+
+    fn build_pending_blocks(block_number: BlockNumber, tx_hashes: &[B256]) -> PendingBlocks {
+        let mut builder = PendingBlocksBuilder::new();
+        builder.with_flashblocks([stub_flashblock(block_number)]);
+        builder.with_header(Sealed::new_unchecked(
+            Header { number: block_number, ..Default::default() },
+            B256::ZERO,
+        ));
+        for &hash in tx_hashes {
+            builder.with_transaction(stub_transaction(hash, block_number));
+            builder.with_receipt(hash, stub_receipt(hash, block_number));
+            builder.with_transaction_state(hash, Default::default());
+            builder.with_transaction_sender(hash, Address::ZERO);
+            builder.with_transaction_result(hash, stub_execution_result());
+        }
+        builder.build().expect("test pending blocks should build")
+    }
+
+    const fn stub_execution_result() -> ExecutionResult<BaseHaltReason> {
+        ExecutionResult::Success {
+            reason: revm::context::result::SuccessReason::Stop,
+            gas_used: 21_000,
+            gas_refunded: 0,
+            logs: Vec::new(),
+            output: revm::context::result::Output::Call(Bytes::new()),
+        }
+    }
+
+    fn stub_flashblock(block_number: BlockNumber) -> Flashblock {
+        Flashblock {
+            payload_id: PayloadId::default(),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::ZERO,
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::ZERO,
+                block_number,
+                gas_limit: 30_000_000,
+                timestamp: 1_700_000_000,
+                extra_data: Bytes::default(),
+                base_fee_per_gas: U256::from(1_000_000_000u64),
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::default(),
+                gas_used: 0,
+                block_hash: B256::ZERO,
+                transactions: vec![],
+                withdrawals: vec![],
+                withdrawals_root: B256::ZERO,
+                blob_gas_used: None,
+            },
+            metadata: Metadata { block_number },
+        }
+    }
+
+    fn stub_transaction(hash: B256, block_number: BlockNumber) -> Transaction {
+        let legacy = TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 1_000_000_000,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        };
+        let envelope = BaseTxEnvelope::Legacy(Signed::new_unchecked(
+            legacy,
+            Signature::test_signature(),
+            hash,
+        ));
+        Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: Recovered::new_unchecked(envelope, Address::ZERO),
+                block_hash: Some(B256::ZERO),
+                block_number: Some(block_number),
+                transaction_index: Some(0),
+                effective_gas_price: Some(1_000_000_000),
+            },
+            deposit_nonce: None,
+            deposit_receipt_version: None,
+        }
+    }
+
+    fn stub_receipt(tx_hash: B256, block_number: BlockNumber) -> BaseTransactionReceipt {
+        BaseTransactionReceipt {
+            inner: TransactionReceipt {
+                inner: ReceiptWithBloom {
+                    receipt: BaseReceipt::Legacy(Receipt {
+                        status: alloy_consensus::Eip658Value::Eip658(true),
+                        cumulative_gas_used: 21_000,
+                        logs: vec![],
+                    }),
+                    logs_bloom: Bloom::default(),
+                },
+                transaction_hash: tx_hash,
+                transaction_index: Some(0),
+                block_hash: Some(B256::ZERO),
+                block_number: Some(block_number),
+                gas_used: 21_000,
+                effective_gas_price: 1_000_000_000,
+                blob_gas_used: None,
+                blob_gas_price: None,
+                from: Address::ZERO,
+                to: None,
+                contract_address: None,
+            },
+            l1_block_info: L1BlockInfo::default(),
+        }
+    }
+
+    #[test]
+    fn honest_path_hits_at_every_position() {
+        let parent = h(0xff);
+        let (a, b, c) = (h(0x01), h(0x02), h(0x03));
+        let provider = provider_with_cache(parent, 1, &[a, b, c]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, None, &a).is_some());
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&a), &b).is_some());
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&b), &c).is_some());
+    }
+
+    /// Models the original report's payload `[deposit, nonce1]` against cache
+    /// `[deposit, nonce0, nonce1]` as `[a, c]` against `[a, b, c]`.
+    #[test]
+    fn skip_middle_returns_none_for_unrelated_successor() {
+        let parent = h(0xff);
+        let (a, b, c) = (h(0x01), h(0x02), h(0x03));
+        let provider = provider_with_cache(parent, 1, &[a, b, c]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&a), &c).is_none());
+    }
+
+    #[test]
+    fn out_of_order_successor_returns_none() {
+        let parent = h(0xff);
+        let (a, b, c) = (h(0x01), h(0x02), h(0x03));
+        let provider = provider_with_cache(parent, 1, &[a, b, c]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&b), &a).is_none());
+    }
+
+    #[test]
+    fn first_tx_must_match_first_cached() {
+        let parent = h(0xff);
+        let (a, b) = (h(0x01), h(0x02));
+        let provider = provider_with_cache(parent, 1, &[a, b]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, None, &a).is_some());
+        assert!(provider.get_cached_execution_for_tx(&parent, None, &b).is_none());
+    }
+
+    #[test]
+    fn prev_not_in_cache_returns_none() {
+        let parent = h(0xff);
+        let (a, b, z) = (h(0x01), h(0x02), h(0x09));
+        let provider = provider_with_cache(parent, 1, &[a, b]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&z), &b).is_none());
+    }
+
+    #[test]
+    fn prev_is_last_cached_returns_none() {
+        let parent = h(0xff);
+        let (a, b, c) = (h(0x01), h(0x02), h(0x03));
+        let provider = provider_with_cache(parent, 1, &[a, b]);
+
+        assert!(provider.get_cached_execution_for_tx(&parent, Some(&b), &c).is_none());
+    }
+
+    #[test]
+    fn missing_flashblocks_state_returns_none() {
+        let parent = h(0xff);
+        let provider = FlashblocksCachedExecutionProvider::new(
+            StubBlockNumReader { parent_hash: parent, parent_number: 1 },
+            None,
+        );
+        assert!(provider.get_cached_execution_for_tx(&parent, None, &h(0x01)).is_none());
+    }
+
+    #[test]
+    fn unknown_parent_hash_returns_none() {
+        let parent = h(0xff);
+        let other = h(0xee);
+        let a = h(0x01);
+        let provider = provider_with_cache(parent, 1, &[a]);
+
+        assert!(provider.get_cached_execution_for_tx(&other, None, &a).is_none());
     }
 }

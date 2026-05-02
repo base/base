@@ -15,10 +15,10 @@ use std::{
 };
 
 use alloy_consensus::{Receipt, Transaction};
-use alloy_eips::{BlockHashOrNumber, Encodable2718};
+use alloy_eips::{BlockHashOrNumber, Decodable2718, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::HashMap};
 use alloy_rpc_types_engine::PayloadId;
-use base_common_consensus::{BaseBlock, BaseReceipt, BaseTransactionSigned, DepositReceipt};
+use base_common_consensus::{BaseBlock, BaseReceipt, BaseTransactionSigned, TxDeposit};
 use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
@@ -30,8 +30,8 @@ use base_flashblocks::{
 use base_node_runner::{
     BaseNodeExtension, NodeHooks,
     test_utils::{
-        L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNode, LocalNodeProvider,
-        NODE_STARTUP_DELAY_MS, TestHarness, init_silenced_tracing,
+        L1_BLOCK_INFO_DEPOSIT_TX, LocalNode, LocalNodeProvider, NODE_STARTUP_DELAY_MS, TestHarness,
+        init_silenced_tracing,
     },
 };
 use base_test_utils::{Account, build_test_genesis_azul};
@@ -499,6 +499,10 @@ pub struct FlashblockBuilder<'a> {
     canonical_block_number: Option<BlockNumber>,
     /// The index of the flashblock.
     index: u64,
+    /// When `true`, [`Self::build`] prepends a per-block-unique deposit transaction
+    /// (matching the production invariant that each L2 block carries a distinct L1
+    /// attributes deposit). Set by [`Self::new_base`]; cleared on user override.
+    auto_deposit: bool,
 }
 
 impl<'a> FlashblockBuilder<'a> {
@@ -506,25 +510,11 @@ impl<'a> FlashblockBuilder<'a> {
     pub fn new_base(harness: &'a FlashblocksBuilderTestHarness) -> Self {
         Self {
             canonical_block_number: None,
-            transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX],
-            receipts: Some({
-                let mut receipts = alloy_primitives::map::HashMap::default();
-                receipts.insert(
-                    L1_BLOCK_INFO_DEPOSIT_TX_HASH,
-                    BaseReceipt::Deposit(DepositReceipt {
-                        inner: Receipt {
-                            status: true.into(),
-                            cumulative_gas_used: 10000,
-                            logs: vec![],
-                        },
-                        deposit_nonce: Some(4012991u64),
-                        deposit_receipt_version: None,
-                    }),
-                );
-                receipts
-            }),
+            transactions: Vec::new(),
+            receipts: Some(HashMap::default()),
             index: 0,
             harness,
+            auto_deposit: true,
         }
     }
 
@@ -536,6 +526,7 @@ impl<'a> FlashblockBuilder<'a> {
             receipts: Some(HashMap::default()),
             harness,
             index,
+            auto_deposit: false,
         }
     }
 
@@ -596,6 +587,11 @@ impl<'a> FlashblockBuilder<'a> {
             None
         };
 
+        let mut transactions = self.transactions.clone();
+        if self.auto_deposit {
+            transactions.insert(0, build_unique_deposit_tx(canonical_block_num));
+        }
+
         Flashblock {
             payload_id: PayloadId::default(),
             index: self.index,
@@ -608,10 +604,28 @@ impl<'a> FlashblockBuilder<'a> {
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
                 withdrawals_root: Default::default(),
-                transactions: self.transactions.clone(),
+                transactions,
                 blob_gas_used: Default::default(),
             },
             metadata: Metadata { block_number: canonical_block_num },
         }
     }
+}
+
+/// Build a deposit transaction whose `tx_hash` is unique per `block_number`.
+/// Mirrors the production invariant where each L2 block's L1 attributes deposit
+/// has a distinct `source_hash`, so the same hash never appears in two pending
+/// blocks accumulated in the flashblocks state. The base deposit is taken from
+/// the well-known [`L1_BLOCK_INFO_DEPOSIT_TX`] fixture (so its `input` calls the
+/// `L1Block` predeploy correctly and executes successfully); only `source_hash`
+/// is varied per block.
+fn build_unique_deposit_tx(block_number: BlockNumber) -> Bytes {
+    let mut deposit = TxDeposit::decode_2718(&mut L1_BLOCK_INFO_DEPOSIT_TX.as_ref())
+        .expect("L1_BLOCK_INFO_DEPOSIT_TX must decode as a deposit transaction");
+    let mut source_hash = [0u8; 32];
+    source_hash[24..].copy_from_slice(&block_number.to_be_bytes());
+    deposit.source_hash = B256::from(source_hash);
+    let mut buf = Vec::with_capacity(deposit.encode_2718_len());
+    deposit.encode_2718(&mut buf);
+    buf.into()
 }

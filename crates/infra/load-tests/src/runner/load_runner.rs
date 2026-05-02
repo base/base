@@ -44,7 +44,7 @@ use super::{
 use crate::{
     BaselineError, Result,
     config::{OsakaTarget, WorkloadConfig},
-    metrics::{MetricsCollector, MetricsSummary, TransactionMetrics},
+    metrics::{ConfigSummary, MetricsCollector, MetricsSummary, TransactionMetrics},
     rpc::{BatchRpcClient, BatchSendResult, RpcClient, WalletProvider, create_wallet_provider},
     workload::{
         AccountPool, AerodromeClPayload, CalldataPayload, Erc20Payload, OsakaPayload,
@@ -96,6 +96,7 @@ const NONCE_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// Executes load tests by generating and submitting transactions at a target rate.
 pub struct LoadRunner {
     config: LoadConfig,
+    config_summary: Option<ConfigSummary>,
     client: RpcClient,
     accounts: AccountPool,
     generator: WorkloadGenerator,
@@ -157,6 +158,7 @@ impl LoadRunner {
 
         Ok(Self {
             config,
+            config_summary: None,
             client,
             accounts,
             generator,
@@ -181,6 +183,11 @@ impl LoadRunner {
     /// Sets the funder wallet address for inclusion in live snapshots.
     pub fn set_funder_address(&mut self, addr: String) {
         self.funder_address = Some(addr);
+    }
+
+    /// Sets the config summary for inclusion in JSON output.
+    pub fn set_config_summary(&mut self, summary: ConfigSummary) {
+        self.config_summary = Some(summary);
     }
 
     fn build_providers(
@@ -481,6 +488,8 @@ impl LoadRunner {
 
             let mut send_stream = stream::iter(send_futs).buffer_unordered(FUNDING_BATCH_SIZE);
 
+            let mut nonce_refresh_needed: Vec<(Address, U256)> = Vec::new();
+
             while let Some((result, address, deficit, nonce)) = send_stream.next().await {
                 match result {
                     Ok(pending) => {
@@ -492,6 +501,9 @@ impl LoadRunner {
                         let error_str = e.to_string();
                         if error_str.contains("already known") {
                             retries.push((address, deficit, nonce));
+                        } else if error_str.contains("nonce too low") {
+                            info!(to = %address, nonce, "nonce too low, will refresh and retry");
+                            nonce_refresh_needed.push((address, deficit));
                         } else {
                             error!(to = %address, error = %e, "failed to fund account");
                             fatal_errors.push(format!("failed to fund {address}: {e}"));
@@ -547,6 +559,61 @@ impl LoadRunner {
                 Self::await_confirmations(&self.batch_rpc, &mut batch_pending, &pb_fund).await?;
             if reverted > 0 {
                 warn!(reverted, "some funding txs reverted");
+            }
+
+            if !nonce_refresh_needed.is_empty() {
+                let fresh_nonce = funder_provider
+                    .get_transaction_count(funder_address)
+                    .pending()
+                    .await
+                    .map_err(|e| BaselineError::Rpc(e.to_string()))?;
+
+                info!(
+                    count = nonce_refresh_needed.len(),
+                    fresh_nonce, "retrying funding txs with refreshed nonce"
+                );
+
+                let nonce_retry_futs =
+                    nonce_refresh_needed.into_iter().enumerate().map(|(i, (address, deficit))| {
+                        let provider = Arc::clone(&funder_provider);
+                        let retry_nonce = fresh_nonce + i as u64;
+                        async move {
+                            let tx = TransactionRequest::default()
+                                .with_to(address)
+                                .with_value(deficit)
+                                .with_nonce(retry_nonce)
+                                .with_chain_id(chain_id)
+                                .with_gas_limit(21_000)
+                                .with_max_fee_per_gas(max_fee)
+                                .with_max_priority_fee_per_gas(max_priority_fee);
+                            let result = provider.send_transaction(tx).await;
+                            (result, address, retry_nonce)
+                        }
+                    });
+
+                let mut nonce_retry_stream =
+                    stream::iter(nonce_retry_futs).buffered(FUNDING_BATCH_SIZE);
+
+                let mut nonce_retry_pending: Vec<(TxHash, Address)> = Vec::new();
+                while let Some((result, address, retry_nonce)) = nonce_retry_stream.next().await {
+                    match result {
+                        Ok(pending) => {
+                            let tx_hash = *pending.tx_hash();
+                            info!(to = %address, nonce = retry_nonce, tx_hash = %tx_hash, "nonce-refreshed funding tx sent");
+                            nonce_retry_pending.push((tx_hash, address));
+                        }
+                        Err(retry_err) => {
+                            warn!(to = %address, nonce = retry_nonce, error = %retry_err, "nonce-refreshed retry also failed, proceeding");
+                        }
+                    }
+                }
+
+                let (_, nonce_reverted) =
+                    Self::await_confirmations(&self.batch_rpc, &mut nonce_retry_pending, &pb_fund)
+                        .await?;
+                if nonce_reverted > 0 {
+                    warn!(reverted = nonce_reverted, "some nonce-refreshed funding txs reverted");
+                }
             }
         }
         pb_fund.finish_and_clear();
@@ -1016,7 +1083,7 @@ impl LoadRunner {
 
             if use_live_display || use_snapshot_tx {
                 if last_progress_report.elapsed() >= DISPLAY_RENDER_INTERVAL {
-                    self.collector.sample_throughput();
+                    self.collector.sample_throughput(start.elapsed());
                     let snap = self.build_snapshot(
                         start,
                         &confirmer_handle,
@@ -1032,7 +1099,7 @@ impl LoadRunner {
                     last_progress_report = Instant::now();
                 }
             } else if last_progress_report.elapsed() >= PROGRESS_REPORT_INTERVAL {
-                self.collector.sample_throughput();
+                self.collector.sample_throughput(start.elapsed());
                 let elapsed_secs = start.elapsed().as_secs();
                 let submitted = self.collector.submitted_count();
                 let confirmed = self.collector.confirmed_count();
@@ -1115,6 +1182,7 @@ impl LoadRunner {
             rate_limiter.tick_batch(pending_batch.len()).await;
 
             let batch = std::mem::replace(&mut pending_batch, Vec::with_capacity(batch_size));
+            let batch_len = batch.len();
             let permit = match tokio::time::timeout(
                 SEMAPHORE_ACQUIRE_TIMEOUT,
                 Arc::clone(&semaphore).acquire_owned(),
@@ -1128,9 +1196,14 @@ impl LoadRunner {
                 }
                 Err(_) => {
                     warn!(
-                        batch_len = batch.len(),
+                        batch_len,
                         "semaphore acquire timed out, dropping batch to stay responsive"
                     );
+                    for _ in 0..batch_len {
+                        let _ = submit_event_tx
+                            .send(SubmitEvent::Failed("submit semaphore acquire timed out".into()))
+                            .await;
+                    }
                     rate_limiter.reset_tick();
                     continue;
                 }
@@ -1179,51 +1252,82 @@ impl LoadRunner {
         }
 
         if !pending_batch.is_empty() {
-            let permit = Arc::clone(&semaphore)
-                .acquire_owned()
-                .await
-                .expect("submit batch semaphore closed");
-            let ctx = BatchSubmitCtx {
-                providers: Arc::clone(&providers),
-                signers: Arc::clone(&signers),
-                batch_rpc: batch_rpc.clone(),
-                nonce_managers: Arc::clone(&nonce_managers),
-                confirmer_handle: confirmer_handle.clone(),
-                submit_event_tx: submit_event_tx.clone(),
-                gas_price: self.gas_price,
-                chain_id: self.config.chain_id,
-                max_gas_price: self.config.max_gas_price,
-            };
-            tokio::spawn(async move {
-                let _permit = permit;
-                let batch_len = pending_batch.len();
-                match tokio::time::timeout(
-                    SUBMIT_TASK_DEADLINE,
-                    AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch)).catch_unwind(),
-                )
-                .await
-                {
-                    Ok(Ok(submitted)) => debug!(submitted, "final batch submitted"),
-                    Ok(Err(_)) => {
-                        error!(batch_len, "final batch submission task panicked");
-                        for _ in 0..batch_len {
-                            let _ = ctx
-                                .submit_event_tx
-                                .send(SubmitEvent::Failed("task panicked".into()))
-                                .await;
-                        }
+            let final_batch_len = pending_batch.len();
+            let permit = match tokio::time::timeout(
+                SEMAPHORE_ACQUIRE_TIMEOUT,
+                Arc::clone(&semaphore).acquire_owned(),
+            )
+            .await
+            {
+                Ok(Ok(permit)) => Some(permit),
+                Ok(Err(_)) => {
+                    error!(batch_len = final_batch_len, "submit batch semaphore closed");
+                    for _ in 0..final_batch_len {
+                        let _ = submit_event_tx
+                            .send(SubmitEvent::Failed("submit batch semaphore closed".into()))
+                            .await;
                     }
-                    Err(_) => {
-                        warn!(batch_len, "final batch submission task timed out");
-                        for _ in 0..batch_len {
-                            let _ = ctx
-                                .submit_event_tx
-                                .send(SubmitEvent::Failed("submit task deadline exceeded".into()))
-                                .await;
-                        }
-                    }
+                    None
                 }
-            });
+                Err(_) => {
+                    warn!(
+                        batch_len = final_batch_len,
+                        "semaphore acquire timed out, dropping final batch to stay responsive"
+                    );
+                    for _ in 0..final_batch_len {
+                        let _ = submit_event_tx
+                            .send(SubmitEvent::Failed("submit semaphore acquire timed out".into()))
+                            .await;
+                    }
+                    None
+                }
+            };
+            if let Some(permit) = permit {
+                let ctx = BatchSubmitCtx {
+                    providers: Arc::clone(&providers),
+                    signers: Arc::clone(&signers),
+                    batch_rpc: batch_rpc.clone(),
+                    nonce_managers: Arc::clone(&nonce_managers),
+                    confirmer_handle: confirmer_handle.clone(),
+                    submit_event_tx: submit_event_tx.clone(),
+                    gas_price: self.gas_price,
+                    chain_id: self.config.chain_id,
+                    max_gas_price: self.config.max_gas_price,
+                };
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let batch_len = pending_batch.len();
+                    match tokio::time::timeout(
+                        SUBMIT_TASK_DEADLINE,
+                        AssertUnwindSafe(Self::submit_batch(ctx.clone(), pending_batch))
+                            .catch_unwind(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(submitted)) => debug!(submitted, "final batch submitted"),
+                        Ok(Err(_)) => {
+                            error!(batch_len, "final batch submission task panicked");
+                            for _ in 0..batch_len {
+                                let _ = ctx
+                                    .submit_event_tx
+                                    .send(SubmitEvent::Failed("task panicked".into()))
+                                    .await;
+                            }
+                        }
+                        Err(_) => {
+                            warn!(batch_len, "final batch submission task timed out");
+                            for _ in 0..batch_len {
+                                let _ = ctx
+                                    .submit_event_tx
+                                    .send(SubmitEvent::Failed(
+                                        "submit task deadline exceeded".into(),
+                                    ))
+                                    .await;
+                            }
+                        }
+                    }
+                });
+            }
         }
 
         match tokio::time::timeout(
@@ -1331,7 +1435,7 @@ impl LoadRunner {
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
-        Ok(self.collector.summarize(last_confirmed_at))
+        Ok(self.collector.summarize(last_confirmed_at, self.config_summary.clone()))
     }
 
     fn build_snapshot(

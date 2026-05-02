@@ -30,8 +30,12 @@ impl Crypto for CustomCrypto {
         let proof =
             Bytes48::from_slice(proof).map_err(|_| PrecompileError::BlobVerifyKzgProofFailed)?;
 
-        KzgProof::verify_kzg_proof(&commitment, &z, &y, &proof, &self.kzg_settings)
+        let valid = KzgProof::verify_kzg_proof(&commitment, &z, &y, &proof, &self.kzg_settings)
             .map_err(|_| PrecompileError::BlobVerifyKzgProofFailed)?;
+
+        if !valid {
+            return Err(PrecompileError::BlobVerifyKzgProofFailed);
+        }
 
         Ok(())
     }

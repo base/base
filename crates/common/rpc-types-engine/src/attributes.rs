@@ -148,14 +148,10 @@ impl BasePayloadAttributes {
     ///
     /// This iterator will be empty if there are no transactions in the attributes.
     pub fn decoded_transactions(&self) -> impl Iterator<Item = Eip2718Result<BaseTxEnvelope>> + '_ {
-        self.transactions.iter().flatten().map(|tx_bytes| {
-            let mut buf = tx_bytes.as_ref();
-            let tx = BaseTxEnvelope::decode_2718(&mut buf).map_err(alloy_rlp::Error::from)?;
-            if !buf.is_empty() {
-                return Err(alloy_rlp::Error::UnexpectedLength.into());
-            }
-            Ok(tx)
-        })
+        self.transactions
+            .iter()
+            .flatten()
+            .map(|tx_bytes| BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref()))
     }
 
     /// Returns iterator over decoded transactions with their original encoded bytes.

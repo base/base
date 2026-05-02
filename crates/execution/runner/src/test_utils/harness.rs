@@ -30,6 +30,16 @@ use crate::{
     },
 };
 
+/// A block that has been built and accepted via `engine_newPayload` but not yet
+/// promoted to the canonical head via a forkchoice update.
+#[derive(Debug, Clone, Copy)]
+pub struct PreparedBlock {
+    /// Hash of the parent the new block was built on.
+    pub parent_hash: B256,
+    /// Hash of the newly-built block.
+    pub new_block_hash: B256,
+}
+
 /// Builder for configuring and launching a test harness.
 #[derive(Debug, Default)]
 pub struct TestHarnessBuilder {
@@ -134,9 +144,21 @@ impl TestHarness {
         Ok(RpcClient::new_http(url))
     }
 
-    /// Build a block using the provided transactions and push it through the engine.
-    pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
-        // Ensure the block always starts with the required L1 block info deposit.
+    /// Direct access to the IPC-backed Engine API client.
+    pub const fn engine(&self) -> &EngineApi<IpcEngine> {
+        &self.engine
+    }
+
+    /// Build a block using the provided transactions and push it through the engine
+    /// up to (but not including) the final canonical forkchoice update.
+    ///
+    /// Returns the parent hash and the new block hash so callers can issue the
+    /// final FCU themselves — useful for benchmarks that want to time only the
+    /// canonical FCU step.
+    pub async fn prepare_unsafe_block(
+        &self,
+        mut transactions: Vec<Bytes>,
+    ) -> Result<PreparedBlock> {
         if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
             transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX);
         }
@@ -213,6 +235,14 @@ impl TestHarness {
         let new_block_hash = payload_status
             .latest_valid_hash
             .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
+
+        Ok(PreparedBlock { parent_hash, new_block_hash })
+    }
+
+    /// Build a block using the provided transactions and push it through the engine.
+    pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
+        let PreparedBlock { parent_hash, new_block_hash } =
+            self.prepare_unsafe_block(transactions).await?;
 
         self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
 

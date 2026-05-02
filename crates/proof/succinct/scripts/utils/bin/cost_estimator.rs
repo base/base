@@ -99,13 +99,7 @@ where
 
             // Generate witness and convert to SP1Stdin
             let witness_data = host.run(&host_args).await.unwrap();
-            let stdin = host
-                .witness_generator()
-                .get_sp1_stdin(
-                    witness_data,
-                    base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
-                )
-                .unwrap();
+            let stdin = host.witness_generator().get_sp1_stdin(witness_data).unwrap();
 
             // Save SP1Stdin to cache
             if cache_enabled
@@ -277,9 +271,15 @@ async fn main() -> Result<()> {
 
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
-            host.fetch(range.start, range.end, None, args.safe_db_fallback)
-                .await
-                .expect("Failed to get host CLI args")
+            host.fetch(
+                range.start,
+                range.end,
+                None,
+                base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
+                args.safe_db_fallback,
+            )
+            .await
+            .expect("Failed to get host CLI args")
         })
         .buffered(15)
         .collect::<Vec<_>>()

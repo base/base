@@ -48,9 +48,15 @@ async fn main() -> Result<()> {
     // Get the host CLIs in order, in parallel.
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
-            host.fetch(range.start, range.end, None, args.safe_db_fallback)
-                .await
-                .expect("Failed to get host CLI args")
+            host.fetch(
+                range.start,
+                range.end,
+                None,
+                base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
+                args.safe_db_fallback,
+            )
+            .await
+            .expect("Failed to get host CLI args")
         })
         .buffered(15)
         .collect::<Vec<_>>()
@@ -59,10 +65,7 @@ async fn main() -> Result<()> {
     let mut successful_ranges = Vec::new();
     for (range, host_args) in split_ranges.iter().zip(host_args.iter()) {
         let witness_data = host.run(host_args).await?;
-        let sp1_stdin = host.witness_generator().get_sp1_stdin(
-            witness_data,
-            base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
-        )?;
+        let sp1_stdin = host.witness_generator().get_sp1_stdin(witness_data)?;
         successful_ranges.push((sp1_stdin, range.clone()));
     }
 

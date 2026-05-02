@@ -597,7 +597,7 @@ pub fn decode_flashblock_transactions(
     raw_txs
         .iter()
         .filter_map(|tx_bytes| {
-            let envelope = BaseTxEnvelope::decode_2718(&mut tx_bytes.as_ref())
+            let envelope = BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref())
                 .inspect_err(|e| warn!(error = %e, "failed to decode transaction"))
                 .ok()?;
             let hash = envelope.tx_hash();

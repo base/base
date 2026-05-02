@@ -128,6 +128,17 @@ pub struct GasMetrics {
     pub avg_gas_price: u128,
 }
 
+/// A single throughput sample captured during the test run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThroughputSample {
+    /// Elapsed time since the test started, in seconds.
+    pub elapsed_secs: f64,
+    /// Rolling 30s transactions-per-second at this point.
+    pub tps: f64,
+    /// Rolling 30s gas-per-second at this point.
+    pub gps: f64,
+}
+
 /// Aggregated flashblocks latency percentiles.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlashblocksLatencyMetrics {
@@ -147,4 +158,35 @@ pub struct FlashblocksLatencyMetrics {
     pub p95: Duration,
     /// 99th percentile latency.
     pub p99: Duration,
+}
+
+/// Test configuration included in the JSON output (excludes URLs and secrets).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigSummary {
+    /// Amount funded to each sender account (in wei, as string).
+    pub funding_amount: String,
+    /// Number of sender accounts.
+    pub sender_count: u32,
+    /// Offset into the derivation path.
+    pub sender_offset: u32,
+    /// Maximum in-flight transactions per sender.
+    pub in_flight_per_sender: u32,
+    /// Number of transactions per RPC batch.
+    pub batch_size: u32,
+    /// Maximum wait before flushing a partial batch.
+    pub batch_timeout: Option<String>,
+    /// Test duration.
+    pub duration: Option<String>,
+    /// Target gas per second.
+    pub target_gps: Option<u64>,
+    /// Deterministic account seed.
+    pub seed: u64,
+    /// Chain ID.
+    pub chain_id: Option<u64>,
+    /// Transaction type configuration.
+    pub transactions: serde_json::Value,
+    /// Address of the precompile looper contract.
+    pub looper_contract: Option<String>,
+    /// Amount of each swap token per sender (in wei, as string).
+    pub swap_token_amount: String,
 }

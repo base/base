@@ -6,7 +6,7 @@
 extern crate alloc;
 
 mod config;
-pub use config::ChainConfig;
+pub use config::{Bootnodes, ChainConfig};
 
 mod upgrade;
 pub use upgrade::BaseUpgrade;

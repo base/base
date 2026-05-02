@@ -2,18 +2,42 @@
 
 use std::sync::Arc;
 
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{FixedBytes, b256};
+use alloy_consensus::transaction::Recovered;
+use alloy_eips::{BlockNumberOrTag, Encodable2718};
+use alloy_primitives::{Address, FixedBytes, b256};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
-use alloy_rpc_types_eth::Block as RpcBlock;
+use alloy_rpc_types_eth::{Block as RpcBlock, BlockTransactions};
+use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::Transaction as BaseTransaction;
+use base_protocol::L1BlockInfoBedrock;
 
 use crate::{
-    ConsolidateTask, EngineTaskExt,
+    AttributesMatch, AttributesMismatch, ConsolidateTask, EngineTaskExt,
     task_queue::tasks::consolidate::task::ConsolidateInput,
     test_utils::{TestAttributesBuilder, TestEngineStateBuilder, test_engine_client_builder},
 };
+
+fn l1_info_deposit_tx() -> BaseTxEnvelope {
+    BaseTxEnvelope::from(TxDeposit {
+        input: L1BlockInfoBedrock::default().encode_calldata(),
+        ..Default::default()
+    })
+}
+
+fn rpc_transaction(tx: BaseTxEnvelope, block_number: u64) -> BaseTransaction {
+    BaseTransaction {
+        inner: alloy_rpc_types_eth::Transaction {
+            inner: Recovered::new_unchecked(tx, Address::ZERO),
+            block_hash: None,
+            block_number: Some(block_number),
+            effective_gas_price: Some(0),
+            transaction_index: Some(0),
+        },
+        deposit_nonce: None,
+        deposit_receipt_version: None,
+    }
+}
 
 /// Verifies that consolidation does NOT fatally error when safe head is behind
 /// the unsafe head and the derived attributes don't match the existing block.
@@ -93,4 +117,54 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
             "must not fail with UnsafeHeadChangedSinceBuild: {err}"
         );
     }
+}
+
+#[tokio::test]
+async fn consolidate_rejects_attribute_transaction_with_trailing_bytes() {
+    let safe_head = crate::test_utils::test_block_info(0);
+    let tx = l1_info_deposit_tx();
+    let mut attr_tx = Vec::new();
+    tx.encode_2718(&mut attr_tx);
+    attr_tx.extend_from_slice(b"trailing bytes");
+
+    let attributes = TestAttributesBuilder::new()
+        .with_parent(safe_head)
+        .with_transactions(vec![attr_tx.into()])
+        .build();
+    let block_number = attributes.block_number();
+
+    let mut unsafe_block = RpcBlock::<BaseTransaction>::default();
+    unsafe_block.header.inner.number = block_number;
+    unsafe_block.header.inner.parent_hash = safe_head.block_info.hash;
+    unsafe_block.header.inner.timestamp = attributes.attributes().payload_attributes.timestamp;
+    unsafe_block.header.inner.mix_hash = attributes.attributes().payload_attributes.prev_randao;
+    unsafe_block.header.inner.gas_limit = attributes.attributes().gas_limit.unwrap_or_default();
+    unsafe_block.header.inner.parent_beacon_block_root =
+        attributes.attributes().payload_attributes.parent_beacon_block_root;
+    unsafe_block.transactions = BlockTransactions::Full(vec![rpc_transaction(tx, block_number)]);
+
+    let cfg = RollupConfig::default();
+    assert_eq!(
+        AttributesMatch::check(&cfg, &attributes, &unsafe_block),
+        AttributesMismatch::MalformedAttributesTransaction.into()
+    );
+
+    let mut state = TestEngineStateBuilder::new()
+        .with_safe_head(safe_head)
+        .with_unsafe_head(crate::test_utils::test_block_info(block_number))
+        .build();
+    let original_safe_head = state.sync_state.safe_head();
+    let original_local_safe_head = state.sync_state.local_safe_head();
+    let client = Arc::new(
+        test_engine_client_builder()
+            .with_l2_block_by_label(BlockNumberOrTag::Number(block_number), unsafe_block)
+            .build(),
+    );
+    let task = ConsolidateTask::new(client, Arc::new(cfg), ConsolidateInput::from(attributes));
+
+    let result = task.execute(&mut state).await;
+
+    assert!(result.is_err());
+    assert_eq!(state.sync_state.safe_head(), original_safe_head);
+    assert_eq!(state.sync_state.local_safe_head(), original_local_safe_head);
 }

@@ -629,6 +629,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             session_id: Some(session_id),
             prover_address: Some(prover_address),
             l1_head: Some(format!("{:#x}", candidate.l1_head)),
+            intermediate_root_interval: Some(candidate.intermediate_block_interval),
         })
     }
 

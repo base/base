@@ -131,7 +131,7 @@ impl<T: CommsClient + Send + Sync> BatchValidationProvider for OracleL2ChainProv
         let transactions = trie_walker
             .into_iter()
             .map(|(_, rlp)| {
-                let res = BaseTxEnvelope::decode_2718(&mut rlp.as_ref())?;
+                let res = BaseTxEnvelope::decode_2718_exact(rlp.as_ref())?;
                 Ok(res)
             })
             .collect::<Result<Vec<_>, _>>()

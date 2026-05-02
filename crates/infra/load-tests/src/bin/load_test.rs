@@ -19,7 +19,7 @@ use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use base_load_tests::{
     AccountPool, BaselineError, BatchRpcClient, FundedAccount, LoadRunner, LoadTestDisplay,
-    Result as LoadResult, RpcClient, TestConfig, create_wallet_provider,
+    MetricsSummary, Result as LoadResult, RpcClient, TestConfig, create_wallet_provider,
 };
 use eyre::{Result, bail};
 use futures::stream::{self, StreamExt};
@@ -135,7 +135,9 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
     let funding_amount = test_config.parse_funding_amount()?;
     let swap_token_amount = test_config.parse_swap_token_amount()?;
 
+    let config_summary = test_config.to_summary();
     let mut runner = LoadRunner::new(load_config.clone())?;
+    runner.set_config_summary(config_summary.clone());
 
     // Install signal handler before any long-running work. First signal sets
     // the stop flag so `run()` exits its loop gracefully and the drain sequence
@@ -143,29 +145,34 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
     let stop_flag = runner.stop_flag();
     install_signal_handler(stop_flag);
 
-    println!("Funding test accounts...");
-    runner.fund_accounts(funding_key.clone(), funding_amount).await?;
-    println!("Accounts funded.");
+    let run_result = run_test_phases(
+        &mut runner,
+        &funding_key,
+        funding_amount,
+        swap_token_amount,
+        &mp,
+        load_config.duration,
+    )
+    .await;
 
-    if !runner.collect_swap_tokens().is_empty() {
-        println!("Distributing swap tokens...");
-        runner.setup_swap_tokens(funding_key.clone(), swap_token_amount).await?;
-        println!("Swap tokens distributed.");
-    }
-    println!();
+    let (summary, run_err) = match run_result {
+        Ok(summary) => (summary, None),
+        Err(e) => {
+            let summary = MetricsSummary {
+                config: Some(config_summary),
+                error: Some(e.to_string()),
+                ..Default::default()
+            };
+            (summary, Some(e))
+        }
+    };
 
-    println!("Running load test...");
-
-    // Create bars after all pre-run println output so setup text doesn't
-    // interleave with the live display.
-    let display = LoadTestDisplay::new(&mp, load_config.duration);
-    runner.set_display(display);
-
-    let run_result = runner.run().await;
-
-    if let Ok(ref summary) = run_result {
+    if summary.error.is_none() || summary.throughput.total_submitted > 0 {
         println!();
         println!("=== Results ===");
+        if let Some(ref err) = summary.error {
+            println!("Error: {err}");
+        }
         println!(
             "Submitted: {} | Confirmed: {} | Failed: {}",
             summary.throughput.total_submitted,
@@ -204,16 +211,19 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
                 println!("  {count:>6}x  {reason}");
             }
         }
+    } else if let Some(ref err) = summary.error {
+        println!();
+        println!("=== Error ===");
+        println!("{err}");
+    }
 
-        // Write JSON results to file when LOAD_TEST_OUTPUT is set.
-        if let Ok(output_path) = std::env::var("LOAD_TEST_OUTPUT") {
-            match summary.to_json() {
-                Ok(json) => match std::fs::write(&output_path, &json) {
-                    Ok(()) => println!("Results written to {output_path}"),
-                    Err(e) => eprintln!("Warning: failed to write results to {output_path}: {e}"),
-                },
-                Err(e) => eprintln!("Warning: failed to serialize results: {e}"),
-            }
+    if let Ok(output_path) = std::env::var("LOAD_TEST_OUTPUT") {
+        match summary.to_json() {
+            Ok(json) => match std::fs::write(&output_path, &json) {
+                Ok(()) => println!("Results written to {output_path}"),
+                Err(e) => eprintln!("Warning: failed to write results to {output_path}: {e}"),
+            },
+            Err(e) => eprintln!("Warning: failed to serialize results: {e}"),
         }
     }
 
@@ -228,13 +238,41 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
         Err(e) => eprintln!("Warning: drain failed: {e}"),
     }
 
-    run_result?;
+    if let Some(e) = run_err {
+        return Err(e.into());
+    }
 
     Ok(())
 }
 
-/// Spawns a background task that converts OS signals into a cooperative stop
-/// via the shared [`AtomicBool`]. A second signal force-exits the process.
+/// Runs funding, token setup, and the load test loop, returning the metrics summary.
+async fn run_test_phases(
+    runner: &mut LoadRunner,
+    funding_key: &PrivateKeySigner,
+    funding_amount: U256,
+    swap_token_amount: U256,
+    mp: &indicatif::MultiProgress,
+    duration: Option<Duration>,
+) -> LoadResult<MetricsSummary> {
+    println!("Funding test accounts...");
+    runner.fund_accounts(funding_key.clone(), funding_amount).await?;
+    println!("Accounts funded.");
+
+    if !runner.collect_swap_tokens().is_empty() {
+        println!("Distributing swap tokens...");
+        runner.setup_swap_tokens(funding_key.clone(), swap_token_amount).await?;
+        println!("Swap tokens distributed.");
+    }
+    println!();
+
+    println!("Running load test...");
+
+    let display = LoadTestDisplay::new(mp, duration);
+    runner.set_display(display);
+
+    runner.run().await
+}
+
 fn install_signal_handler(stop_flag: Arc<AtomicBool>) {
     tokio::spawn(async move {
         wait_for_shutdown_signal().await;

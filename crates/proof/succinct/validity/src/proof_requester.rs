@@ -63,6 +63,8 @@ pub struct OPSuccinctProofRequester<H: OPSuccinctHost> {
     pub max_price_per_pgu: u64,
     /// Timeout in seconds before a proving request is considered failed.
     pub proving_timeout: u64,
+    /// Interval (in L2 blocks) at which intermediate output roots are recorded.
+    pub intermediate_root_interval: u64,
     /// Cycle limit for range proofs.
     pub range_cycle_limit: u64,
     /// Gas limit for range proofs.
@@ -110,6 +112,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         safe_db_fallback: bool,
         max_price_per_pgu: u64,
         proving_timeout: u64,
+        intermediate_root_interval: u64,
         range_cycle_limit: u64,
         range_gas_limit: u64,
         agg_cycle_limit: u64,
@@ -142,6 +145,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             safe_db_fallback,
             max_price_per_pgu,
             proving_timeout,
+            intermediate_root_interval,
             range_cycle_limit,
             range_gas_limit,
             agg_cycle_limit,
@@ -202,6 +206,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
                 request.start_block as u64,
                 request.end_block as u64,
                 None,
+                self.intermediate_root_interval,
                 self.safe_db_fallback,
             )
             .await?;
@@ -214,10 +219,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         }
 
         let witness = self.host.run(&host_args).await?;
-        let sp1_stdin = self.host.witness_generator().get_sp1_stdin(
-            witness,
-            base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
-        )?;
+        let sp1_stdin = self.host.witness_generator().get_sp1_stdin(witness)?;
 
         Ok(sp1_stdin)
     }

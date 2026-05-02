@@ -2,6 +2,7 @@ use std::{fmt, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use alloy_provider::Provider;
+use anyhow::{Result, ensure};
 use base_proof_succinct_host_utils::{
     DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
@@ -116,6 +117,8 @@ pub struct RequesterConfig {
 
     /// The timeout to use for proving (in seconds).
     pub proving_timeout: u64,
+    /// Interval (in L2 blocks) at which intermediate output roots are recorded.
+    pub intermediate_root_interval: u64,
 
     /// The timeout to use for network prover calls (in seconds).
     pub network_calls_timeout: u64,
@@ -143,6 +146,26 @@ pub struct RequesterConfig {
 }
 
 impl RequesterConfig {
+    /// Validate the proposer configuration before starting the run loop
+    /// by enforcing that the invariants the ZK pipeline depends on are met.
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.evm_gas_limit != 0 || self.range_proof_interval != 0,
+            "at least one of RANGE_PROOF_EVM_GAS_LIMIT or RANGE_PROOF_INTERVAL must be non-zero"
+        );
+        ensure!(
+            self.intermediate_root_interval != 0,
+            "intermediate_root_interval must be non-zero; refusing to run with disabled intermediate root sampling"
+        );
+        ensure!(
+            self.range_proof_interval.is_multiple_of(self.intermediate_root_interval),
+            "range_proof_interval ({}) must be a multiple of intermediate_root_interval ({}); range proofs that do not end on an intermediate-root boundary fail on-chain verification",
+            self.range_proof_interval,
+            self.intermediate_root_interval,
+        );
+        Ok(())
+    }
+
     /// Log the configuration using structured tracing fields.
     pub fn log(&self) {
         tracing::info!(
@@ -164,6 +187,7 @@ impl RequesterConfig {
             use_kms_requester = self.use_kms_requester,
             max_price_per_pgu = self.max_price_per_pgu,
             proving_timeout = self.proving_timeout,
+            intermediate_root_interval = self.intermediate_root_interval,
             network_calls_timeout = self.network_calls_timeout,
             range_cycle_limit = self.range_cycle_limit,
             range_gas_limit = self.range_gas_limit,

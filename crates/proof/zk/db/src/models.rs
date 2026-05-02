@@ -237,6 +237,8 @@ pub struct ProofRequest {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash used for witness generation.
     pub l1_head: Option<String>,
+    /// Intermediate root interval requested for ZK proof generation.
+    pub intermediate_root_interval: Option<i64>,
     /// Timestamp when the request was created.
     pub created_at: DateTime<Utc>,
     /// Timestamp of the last status update.
@@ -287,6 +289,8 @@ pub struct CreateProofRequest {
     pub prover_address: Option<String>,
     /// Explicit L1 head hash for witness generation.
     pub l1_head: Option<String>,
+    /// Intermediate root interval for ZK proof generation.
+    pub intermediate_root_interval: Option<u64>,
 }
 
 /// Parameters for creating a new proof session

@@ -3,6 +3,7 @@
 use std::{fmt, time::SystemTime};
 
 use async_trait::async_trait;
+use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use base_proof_succinct_elfs::{AGGREGATION_ELF, RANGE_ELF_EMBEDDED};
 use base_proof_succinct_host_utils::get_agg_proof_stdin;
 use base_zk_client::ProveBlockRequest;
@@ -21,7 +22,7 @@ use sp1_sdk::{ProofFromNetwork, SP1ProofWithPublicValues, network::proto::types:
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use super::provider::OpSuccinctProvider;
+use super::provider::{OpSuccinctProvider, WitnessParams};
 use crate::backends::traits::{
     ArtifactClientWrapper, BackendConfig, BackendType, ProofProcessingResult, ProveResult,
     ProvingBackend, SessionStatus,
@@ -85,11 +86,15 @@ impl ProvingBackend for OpSuccinctBackend {
             .transpose()
             .map_err(|e| anyhow::anyhow!("Invalid l1_head hash: {e}"))?;
 
+        let intermediate_root_interval =
+            request.intermediate_root_interval.unwrap_or(DEFAULT_INTERMEDIATE_ROOT_INTERVAL);
+
         info!(
             start_block = start_block,
             end_block = end_block,
             num_blocks = num_blocks,
             sequence_window = sequence_window,
+            intermediate_root_interval = intermediate_root_interval,
             l1_head = ?l1_head,
             "starting OP-Succinct proof generation"
         );
@@ -98,14 +103,15 @@ impl ProvingBackend for OpSuccinctBackend {
         let witness_start = std::time::Instant::now();
         let stdin = self
             .provider
-            .generate_witness(
+            .generate_witness(WitnessParams {
                 start_block,
                 end_block,
                 sequence_window,
                 l1_node_url,
                 base_consensus_url,
                 l1_head,
-            )
+                intermediate_root_interval,
+            })
             .await
             .map_err(|e| {
                 error!(

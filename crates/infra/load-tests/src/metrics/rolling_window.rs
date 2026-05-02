@@ -3,9 +3,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-const WINDOW: Duration = Duration::from_secs(30);
+const WINDOW: Duration = Duration::from_secs(5);
 
-/// A rolling 30-second window for computing instantaneous TPS, GPS, and latency percentiles.
+/// A rolling 5-second window for computing instantaneous TPS, GPS, and latency percentiles.
 #[derive(Debug)]
 pub struct RollingWindow {
     gas_events: VecDeque<(Instant, u64)>,

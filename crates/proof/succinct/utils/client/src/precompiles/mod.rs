@@ -1,6 +1,6 @@
 //! [`PrecompileProvider`] for FPVM-accelerated OP Stack precompiles.
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 
 use alloy_primitives::{Address, Bytes};
 use base_common_evm::{BasePrecompiles, OpSpecId};
@@ -8,12 +8,11 @@ use revm::{
     context::{Cfg, ContextTr},
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInput, CallInputs, Gas, InstructionResult, InterpreterResult},
-    precompile::{Precompile as PrecompileWithAddress, PrecompileError, Precompiles},
+    precompile::{PrecompileError, Precompiles},
     primitives::hardfork::SpecId,
 };
 #[cfg(any(test, target_os = "zkvm"))]
 use revm_precompile::PrecompileId;
-use revm_precompile::{bn254, kzg_point_evaluation, secp256k1, secp256r1};
 
 mod custom;
 pub use custom::CustomCrypto;
@@ -62,46 +61,8 @@ pub mod cycle_tracker {
     }
 }
 
-/// Get the ZKVM-accelerated precompiles.
-fn get_precompiles() -> Vec<PrecompileWithAddress> {
-    vec![
-        bn254::add::ISTANBUL,
-        bn254::mul::ISTANBUL,
-        bn254::pair::ISTANBUL,
-        secp256k1::ECRECOVER,
-        secp256r1::P256VERIFY,
-        kzg_point_evaluation::POINT_EVALUATION,
-    ]
-}
-
-/// Cache of leaked precompiles per [`OpSpecId`], ensuring each spec variant is only
-/// allocated once rather than on every [`OpZkvmPrecompiles::set_spec`] call.
-static PRECOMPILE_CACHE: spin::Mutex<Vec<(OpSpecId, &'static Precompiles)>> =
-    spin::Mutex::new(Vec::new());
-
-/// Returns a `&'static Precompiles` for the given spec, creating and caching it on first use.
 fn get_or_create_precompiles(spec: OpSpecId) -> &'static Precompiles {
-    let cache = PRECOMPILE_CACHE.lock();
-    if let Some((_, precompiles)) = cache.iter().find(|(s, _)| *s == spec) {
-        return precompiles;
-    }
-    drop(cache);
-
-    let base = match spec {
-        spec @ (OpSpecId::BEDROCK | OpSpecId::REGOLITH | OpSpecId::CANYON | OpSpecId::ECOTONE) => {
-            Precompiles::new(spec.into_eth_spec().into()).clone()
-        }
-        OpSpecId::FJORD => BasePrecompiles::fjord().clone(),
-        OpSpecId::GRANITE | OpSpecId::HOLOCENE => BasePrecompiles::granite().clone(),
-        OpSpecId::ISTHMUS | OpSpecId::JOVIAN => BasePrecompiles::isthmus().clone(),
-        OpSpecId::AZUL => BasePrecompiles::azul().clone(),
-    };
-    let mut precompiles = base;
-    precompiles.extend(get_precompiles());
-    let leaked: &'static Precompiles = alloc::boxed::Box::leak(alloc::boxed::Box::new(precompiles));
-
-    PRECOMPILE_CACHE.lock().push((spec, leaked));
-    leaked
+    BasePrecompiles::new_with_spec(spec).precompiles()
 }
 
 /// Get the cycle tracker name for a precompile by its ID.
@@ -237,6 +198,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use alloy_primitives::U256;
     use base_common_evm::{BaseContext, DefaultBase as _};
     use revm::{
@@ -245,11 +208,24 @@ mod tests {
         handler::PrecompileProvider,
         interpreter::{CallInput, CallScheme, CallValue},
     };
-    use revm_precompile::PrecompileId;
+    use revm_precompile::{PrecompileId, secp256r1};
 
     use super::*;
 
     type TestContext = BaseContext<EmptyDB>;
+
+    const ALL_OP_SPECS: [OpSpecId; 10] = [
+        OpSpecId::BEDROCK,
+        OpSpecId::REGOLITH,
+        OpSpecId::CANYON,
+        OpSpecId::ECOTONE,
+        OpSpecId::FJORD,
+        OpSpecId::GRANITE,
+        OpSpecId::HOLOCENE,
+        OpSpecId::ISTHMUS,
+        OpSpecId::JOVIAN,
+        OpSpecId::AZUL,
+    ];
 
     /// Creates a [`CallInputs`] with `bytecode_address` set to the given address
     /// and `target_address` set to zero, simulating a DELEGATECALL scenario.
@@ -412,17 +388,47 @@ mod tests {
     // ===== Consistency Tests =====
 
     #[test]
-    fn test_all_accelerated_precompiles_have_tracker_names() {
-        let precompiles = get_precompiles();
-        assert_eq!(precompiles.len(), 6, "Expected 6 accelerated precompiles");
+    fn test_zkvm_precompiles_match_base_evm_precompiles() {
+        for spec in ALL_OP_SPECS {
+            let base_precompiles = BasePrecompiles::new_with_spec(spec);
+            let zkvm_precompiles = OpZkvmPrecompiles::new_with_spec(spec);
 
-        for precompile in &precompiles {
-            let tracker = get_precompile_tracker_name(precompile.id());
-            assert!(
-                tracker.is_some(),
-                "Precompile {:?} is missing a cycle tracker name",
-                precompile.id()
+            let base_addresses: Vec<_> =
+                <BasePrecompiles as PrecompileProvider<TestContext>>::warm_addresses(
+                    &base_precompiles,
+                )
+                .collect();
+            let zkvm_addresses: Vec<_> =
+                <OpZkvmPrecompiles as PrecompileProvider<TestContext>>::warm_addresses(
+                    &zkvm_precompiles,
+                )
+                .collect();
+
+            assert_eq!(
+                zkvm_addresses.len(),
+                base_addresses.len(),
+                "ZKVM and Base EVM precompile counts must match for {spec:?}",
             );
+
+            for address in &base_addresses {
+                assert!(
+                    <OpZkvmPrecompiles as PrecompileProvider<TestContext>>::contains(
+                        &zkvm_precompiles,
+                        address,
+                    ),
+                    "ZKVM precompiles missing Base EVM precompile {address:?} for {spec:?}",
+                );
+            }
+
+            for address in &zkvm_addresses {
+                assert!(
+                    <BasePrecompiles as PrecompileProvider<TestContext>>::contains(
+                        &base_precompiles,
+                        address,
+                    ),
+                    "ZKVM precompiles contain non-Base EVM precompile {address:?} for {spec:?}",
+                );
+            }
         }
     }
 
@@ -450,6 +456,29 @@ mod tests {
                 "Key '{key}' contains underscores (should use dashes)"
             );
         }
+    }
+
+    #[test]
+    fn test_azul_uses_osaka_p256verify() {
+        let p256_addr = *secp256r1::P256VERIFY.address();
+
+        let jovian_set = get_or_create_precompiles(OpSpecId::JOVIAN);
+        let azul_set = get_or_create_precompiles(OpSpecId::AZUL);
+
+        let jovian_p256 = jovian_set.get(&p256_addr).expect("JOVIAN must have P256VERIFY");
+        let azul_p256 = azul_set.get(&p256_addr).expect("AZUL must have P256VERIFY");
+
+        // Legacy P256VERIFY costs 3,450 gas. With 5,000 gas it should succeed.
+        assert!(
+            jovian_p256.execute(&[], 5_000).is_ok(),
+            "JOVIAN P256VERIFY must succeed with 5,000 gas (legacy pricing, 3,450 base fee)",
+        );
+
+        // Osaka P256VERIFY costs 6,900 gas. With 5,000 gas it must fail with OOG.
+        assert!(
+            matches!(azul_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)),
+            "AZUL P256VERIFY must fail with 5,000 gas (Osaka pricing, 6,900 base fee)",
+        );
     }
 
     #[test]

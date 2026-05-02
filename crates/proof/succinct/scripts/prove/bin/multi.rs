@@ -55,8 +55,15 @@ async fn main() -> Result<()> {
 
     // Helper closure to generate stdin (runs witness generation and converts to SP1Stdin)
     let generate_stdin = || async {
-        let host_args =
-            host.fetch(l2_start_block, l2_end_block, None, args.safe_db_fallback).await?;
+        let host_args = host
+            .fetch(
+                l2_start_block,
+                l2_end_block,
+                None,
+                base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
+                args.safe_db_fallback,
+            )
+            .await?;
         debug!("Host args: {:?}", host_args);
 
         let start_time = Instant::now();
@@ -64,10 +71,7 @@ async fn main() -> Result<()> {
         let duration = start_time.elapsed();
 
         // Convert witness to SP1Stdin
-        let stdin = host.witness_generator().get_sp1_stdin(
-            witness,
-            base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
-        )?;
+        let stdin = host.witness_generator().get_sp1_stdin(witness)?;
 
         // Save to cache if enabled
         if args.cache {

@@ -27,9 +27,10 @@ impl ProofRequestRepo {
             r#"
             INSERT INTO proof_requests (
                 id, start_block_number, number_of_blocks_to_prove,
-                sequence_window, proof_type, status, prover_address, l1_head
+                sequence_window, proof_type, status, prover_address, l1_head,
+                intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             "#,
         )
         .bind(id)
@@ -54,6 +55,15 @@ impl ProofRequestRepo {
         .bind(ProofStatus::Created.as_str())
         .bind(&req.prover_address)
         .bind(&req.l1_head)
+        .bind(
+            req.intermediate_root_interval
+                .map(|v| {
+                    i64::try_from(v).map_err(|_| {
+                        sqlx::Error::Protocol("intermediate root interval exceeds i64 range".into())
+                    })
+                })
+                .transpose()?,
+        )
         .execute(&self.pool)
         .await?;
 
@@ -79,6 +89,14 @@ impl ProofRequestRepo {
                     .map_err(|_| sqlx::Error::Protocol("sequence window exceeds i64 range".into()))
             })
             .transpose()?;
+        let intermediate_root_interval = req
+            .intermediate_root_interval
+            .map(|v| {
+                i64::try_from(v).map_err(|_| {
+                    sqlx::Error::Protocol("intermediate root interval exceeds i64 range".into())
+                })
+            })
+            .transpose()?;
 
         let request_params = build_outbox_params(
             start_block_number,
@@ -87,6 +105,7 @@ impl ProofRequestRepo {
             req.proof_type.as_str(),
             req.prover_address.as_deref(),
             req.l1_head.as_deref(),
+            intermediate_root_interval,
         );
 
         let mut tx = self.pool.begin().await?;
@@ -95,9 +114,10 @@ impl ProofRequestRepo {
             r#"
             INSERT INTO proof_requests (
                 id, start_block_number, number_of_blocks_to_prove,
-                sequence_window, proof_type, status, prover_address, l1_head
+                sequence_window, proof_type, status, prover_address, l1_head,
+                intermediate_root_interval
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (id) DO NOTHING
             "#,
         )
@@ -109,6 +129,7 @@ impl ProofRequestRepo {
         .bind(ProofStatus::Created.as_str())
         .bind(&req.prover_address)
         .bind(&req.l1_head)
+        .bind(intermediate_root_interval)
         .execute(&mut *tx)
         .await?;
 
@@ -143,7 +164,7 @@ impl ProofRequestRepo {
                 sequence_window, proof_type,
                 stark_receipt, snark_receipt,
                 status, error_message,
-                prover_address, l1_head,
+                prover_address, l1_head, intermediate_root_interval,
                 created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE id = $1
@@ -366,7 +387,8 @@ impl ProofRequestRepo {
         let maybe_row = sqlx::query(
             r#"
             SELECT retry_count, status, start_block_number, number_of_blocks_to_prove,
-                   sequence_window, proof_type, prover_address, l1_head
+                   sequence_window, proof_type, prover_address, l1_head,
+                   intermediate_root_interval
             FROM proof_requests
             WHERE id = $1
             FOR UPDATE
@@ -448,6 +470,7 @@ impl ProofRequestRepo {
                 row.get::<&str, _>("proof_type"),
                 row.get::<Option<&str>, _>("prover_address"),
                 row.get::<Option<&str>, _>("l1_head"),
+                row.get::<Option<i64>, _>("intermediate_root_interval"),
             );
 
             sqlx::query(
@@ -557,6 +580,7 @@ impl ProofRequestRepo {
             SELECT id, start_block_number, number_of_blocks_to_prove,
                    sequence_window, proof_type, stark_receipt, snark_receipt,
                    status, error_message, prover_address, l1_head,
+                   intermediate_root_interval,
                    created_at, updated_at, completed_at, retry_count
             FROM proof_requests
             WHERE status = $1
@@ -581,6 +605,7 @@ impl ProofRequestRepo {
                 pr.id, pr.start_block_number, pr.number_of_blocks_to_prove,
                 pr.sequence_window, pr.proof_type, pr.stark_receipt, pr.snark_receipt,
                 pr.status, pr.error_message, pr.prover_address, pr.l1_head,
+                pr.intermediate_root_interval,
                 pr.created_at, pr.updated_at, pr.completed_at, pr.retry_count
             FROM proof_requests pr
             WHERE pr.status = 'PENDING'
@@ -784,7 +809,7 @@ impl ProofRequestRepo {
                     sequence_window, proof_type,
                     stark_receipt, snark_receipt,
                     status, error_message,
-                    prover_address, l1_head,
+                    prover_address, l1_head, intermediate_root_interval,
                     created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 WHERE status = $1
@@ -804,7 +829,7 @@ impl ProofRequestRepo {
                     sequence_window, proof_type,
                     stark_receipt, snark_receipt,
                     status, error_message,
-                    prover_address, l1_head,
+                    prover_address, l1_head, intermediate_root_interval,
                     created_at, updated_at, completed_at, retry_count
                 FROM proof_requests
                 ORDER BY created_at DESC
@@ -946,6 +971,7 @@ fn row_to_proof_request(row: &sqlx::postgres::PgRow) -> Result<ProofRequest> {
         error_message: row.get("error_message"),
         prover_address: row.get("prover_address"),
         l1_head: row.get("l1_head"),
+        intermediate_root_interval: row.get("intermediate_root_interval"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
         completed_at: row.get("completed_at"),
@@ -990,6 +1016,7 @@ fn build_outbox_params(
     proof_type: &str,
     prover_address: Option<&str>,
     l1_head: Option<&str>,
+    intermediate_root_interval: Option<i64>,
 ) -> serde_json::Value {
     serde_json::json!({
         "start_block_number": start_block_number,
@@ -998,6 +1025,7 @@ fn build_outbox_params(
         "proof_type": proof_type,
         "prover_address": prover_address,
         "l1_head": l1_head,
+        "intermediate_root_interval": intermediate_root_interval,
     })
 }
 
