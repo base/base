@@ -40,8 +40,8 @@ pub struct SealTask<EngineClient_: EngineClient> {
     pub payload_id: PayloadId,
     /// The [`AttributesWithParent`] to instruct the execution layer to build.
     pub attributes: AttributesWithParent,
-    /// Whether or not the payload was derived, or created by the sequencer.
-    pub is_attributes_derived: bool,
+    /// Whether the sealed payload should advance the safe head.
+    pub payload_safety: InsertPayloadSafety,
     /// An optional sender to convey success/failure result of the built
     /// [`BaseExecutionPayloadEnvelope`] after the block has been built, imported, and canonicalized
     /// or the [`SealTaskError`] that occurred during processing.
@@ -148,14 +148,12 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         state: &mut EngineState,
         new_payload: BaseExecutionPayloadEnvelope,
     ) -> Result<(), SealTaskError> {
-        let payload_safety = self.insert_payload_safety();
-
         // Insert the new block into the engine.
         match InsertTask::new(
             Arc::clone(&self.engine),
             Arc::clone(&self.cfg),
             new_payload.clone(),
-            payload_safety,
+            self.payload_safety,
         )
         .execute(state)
         .await
@@ -182,7 +180,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                     Arc::clone(&self.engine),
                     Arc::clone(&self.cfg),
                     deposits_only_attrs.clone(),
-                    self.is_attributes_derived,
+                    self.payload_safety,
                 )
                 .await
                 {
@@ -197,7 +195,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                 error!(
                     target: "engine",
                     error = %e,
-                    payload_safety = payload_safety.as_label(),
+                    payload_safety = self.payload_safety.as_label(),
                     "Payload import failed"
                 );
                 return Err(Box::new(e).into());
@@ -205,7 +203,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
             Ok(_) => {
                 info!(
                     target: "engine",
-                    payload_safety = payload_safety.as_label(),
+                    payload_safety = self.payload_safety.as_label(),
                     "Successfully imported payload"
                 );
             }
@@ -242,29 +240,14 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
 
         let block_import_duration = block_import_start_time.elapsed();
 
-        let payload_safety = self.insert_payload_safety();
-        match payload_safety {
-            InsertPayloadSafety::Safe => {
-                info!(
-                    target: "engine",
-                    l2_number = new_block_ref.block_info.number,
-                    l2_time = new_block_ref.block_info.timestamp,
-                    payload_safety = payload_safety.as_label(),
-                    block_import_duration = ?block_import_duration,
-                    "Built and imported new safe block",
-                );
-            }
-            InsertPayloadSafety::Unsafe => {
-                info!(
-                    target: "engine",
-                    l2_number = new_block_ref.block_info.number,
-                    l2_time = new_block_ref.block_info.timestamp,
-                    payload_safety = payload_safety.as_label(),
-                    block_import_duration = ?block_import_duration,
-                    "Built and imported new unsafe block",
-                );
-            }
-        }
+        info!(
+            target: "engine",
+            l2_number = new_block_ref.block_info.number,
+            l2_time = new_block_ref.block_info.timestamp,
+            payload_safety = self.payload_safety.as_label(),
+            block_import_duration = ?block_import_duration,
+            "Built and imported new block",
+        );
 
         Ok(new_payload)
     }
@@ -289,15 +272,6 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         }
 
         Ok(())
-    }
-
-    /// Returns whether inserting this sealed payload should advance the safe head.
-    pub const fn insert_payload_safety(&self) -> InsertPayloadSafety {
-        if self.is_attributes_derived {
-            InsertPayloadSafety::Safe
-        } else {
-            InsertPayloadSafety::Unsafe
-        }
     }
 }
 

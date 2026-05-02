@@ -7,7 +7,8 @@ use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
     BuildTask, ConsolidateInput, ConsolidateTask, DelegatedForkchoiceTask,
     DelegatedForkchoiceUpdate, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
-    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask, SealTask,
+    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertPayloadSafety,
+    InsertTask, SealTask,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -632,8 +633,7 @@ where
                             Arc::clone(&self.rollup),
                             payload_id,
                             attributes,
-                            // The payload is not derived in this case.
-                            false,
+                            InsertPayloadSafety::Unsafe,
                             Some(result_tx),
                         )));
                         self.engine.enqueue(task);

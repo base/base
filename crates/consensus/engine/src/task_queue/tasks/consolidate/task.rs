@@ -9,8 +9,8 @@ use base_common_rpc_types::Transaction;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 
 use crate::{
-    ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, SynchronizeTask,
-    state::EngineSyncStateUpdate, task_queue::build_and_seal,
+    ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety,
+    SynchronizeTask, state::EngineSyncStateUpdate, task_queue::build_and_seal,
 };
 
 /// Input for consolidation - either derived attributes or safe L2 block
@@ -96,7 +96,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
             Arc::clone(&self.client),
             Arc::clone(&self.cfg),
             attributes.clone(),
-            true,
+            InsertPayloadSafety::Safe,
         )
         .await?;
 

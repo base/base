@@ -86,7 +86,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     }
 
     /// Checks the response of the `engine_newPayload` call.
-    pub const fn check_new_payload_status(&self, status: &PayloadStatusEnum) -> bool {
+    const fn check_new_payload_status(&self, status: &PayloadStatusEnum) -> bool {
         matches!(status, PayloadStatusEnum::Valid | PayloadStatusEnum::Syncing)
     }
 }
@@ -184,30 +184,15 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
 
         let total_duration = time_start.elapsed();
 
-        match self.payload_safety {
-            InsertPayloadSafety::Unsafe => {
-                info!(
-                    target: "engine",
-                    hash = %new_block_ref.block_info.hash,
-                    number = new_block_ref.block_info.number,
-                    payload_safety = self.payload_safety.as_label(),
-                    total_duration = ?total_duration,
-                    insert_duration = ?insert_duration,
-                    "Inserted new unsafe payload"
-                );
-            }
-            InsertPayloadSafety::Safe => {
-                info!(
-                    target: "engine",
-                    hash = %new_block_ref.block_info.hash,
-                    number = new_block_ref.block_info.number,
-                    payload_safety = self.payload_safety.as_label(),
-                    total_duration = ?total_duration,
-                    insert_duration = ?insert_duration,
-                    "Inserted new safe payload"
-                );
-            }
-        }
+        info!(
+            target: "engine",
+            hash = %new_block_ref.block_info.hash,
+            number = new_block_ref.block_info.number,
+            payload_safety = self.payload_safety.as_label(),
+            total_duration = ?total_duration,
+            insert_duration = ?insert_duration,
+            "Inserted new payload"
+        );
 
         Ok(())
     }
