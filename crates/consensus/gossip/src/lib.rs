@@ -36,13 +36,13 @@ mod gate;
 pub use gate::ConnectionGate;
 
 mod gater;
-pub use gater::{ConnectionGater, DialInfo, GaterConfig};
+pub use gater::{ConnectionGater, DialInfo, DnsResolutionFailure, GaterConfig};
 
 mod builder;
 pub use builder::GossipDriverBuilder;
 
 mod error;
-pub use error::{DialError, GossipDriverBuilderError, HandlerEncodeError, PublishError};
+pub use error::{ConnectionError, GossipDriverBuilderError, HandlerEncodeError, PublishError};
 
 mod event;
 pub use event::Event;

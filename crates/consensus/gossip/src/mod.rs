@@ -54,6 +54,7 @@ mod gater;
 pub use gater::{
     ConnectionGater, // implementation
     DialInfo,
+    DnsResolutionFailure,
     GaterConfig,
 };
 
@@ -61,7 +62,7 @@ mod builder;
 pub use builder::GossipDriverBuilder;
 
 mod error;
-pub use error::{DialError, GossipDriverBuilderError, HandlerEncodeError, PublishError};
+pub use error::{ConnectionError, GossipDriverBuilderError, HandlerEncodeError, PublishError};
 
 mod event;
 pub use event::Event;

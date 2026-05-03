@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId};
 
-use crate::{Connectedness, DialError};
+use crate::{Connectedness, ConnectionError};
 
 /// Connection Gate
 ///
@@ -14,12 +14,16 @@ use crate::{Connectedness, DialError};
 /// gossip swarm.
 pub trait ConnectionGate {
     /// Checks if an outbound peer is allowed to connect to the gossip swarm.
-    /// Returns Ok(()) if the peer can be dialed, or Err(DialError) with the reason why not.
-    fn can_connect_outbound(&mut self, addr: &Multiaddr) -> Result<(), DialError>;
+    /// Returns Ok(()) if the peer can be dialed, or Err(ConnectionError) with the reason why not.
+    fn can_connect_outbound(&mut self, addr: &Multiaddr) -> Result<(), ConnectionError>;
 
     /// Checks if an inbound peer is allowed to connect to the gossip swarm.
-    /// Returns Ok(()) if the peer can be accepted, or Err(DialError) with the reason why not.
-    fn can_connect_inbound(&mut self, peer_id: &PeerId, addr: &Multiaddr) -> Result<(), DialError>;
+    /// Returns Ok(()) if the peer can be accepted, or Err(ConnectionError) with the reason why not.
+    fn can_connect_inbound(
+        &mut self,
+        peer_id: &PeerId,
+        addr: &Multiaddr,
+    ) -> Result<(), ConnectionError>;
 
     /// Returns the [`Connectedness`] for a given peer id.
     fn connectedness(&self, peer_id: &PeerId) -> Connectedness;
