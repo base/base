@@ -1,9 +1,8 @@
 //! JWT secret loading and generation utilities.
 
-use std::{fs::OpenOptions, io::Write, path::Path};
-
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::{fs::OpenOptions, io::Write, path::Path};
 
 use alloy_rpc_types_engine::JwtSecret;
 
@@ -115,7 +114,6 @@ mod tests {
     static CWD_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    #[cfg(unix)]
     fn default_jwt_secret_creates_file_with_owner_only_permissions() {
         let _guard = CWD_LOCK.lock().unwrap();
         let original_dir = env::current_dir().expect("should read current directory");
@@ -140,7 +138,6 @@ mod tests {
         fs::remove_dir_all(test_dir).expect("should remove test directory");
     }
 
-    #[cfg(unix)]
     fn unique_temp_dir() -> std::path::PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
