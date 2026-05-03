@@ -239,8 +239,8 @@ where
     /// Dials the given [`Multiaddr`].
     pub fn dial_multiaddr(&mut self, addr: Multiaddr) {
         // Check if we're allowed to dial the address.
-        if let Err(dial_error) = self.connection_gate.can_dial(&addr) {
-            debug!(target: "gossip", ?dial_error, "unable to dial peer");
+        if let Err(connect_error) = self.connection_gate.can_connect_outbound(&addr) {
+            debug!(target: "gossip", ?connect_error, "unable to dial peer");
             return;
         }
 
@@ -377,7 +377,17 @@ where
             SwarmEvent::Behaviour(behavior_event) => {
                 return self.handle_gossip_event(behavior_event);
             }
-            SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+            SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, .. } => {
+                if endpoint.is_listener() {
+                    let addr = endpoint.get_remote_address();
+                    if let Err(error) = self.connection_gate.can_connect_inbound(&peer_id, addr) {
+                        debug!(target: "gossip", peer_id = %peer_id, addr = %addr, error = ?error, "Closing blocked inbound connection");
+                        self.swarm.close_connection(connection_id);
+                        Metrics::gossipsub_connection("blocked_inbound").increment(1.0);
+                        return None;
+                    }
+                }
+
                 let peer_count = self.swarm.connected_peers().count();
                 debug!(target: "gossip", peer_id = %peer_id, peer_count, "Connection established");
                 Metrics::gossipsub_connection("connected").increment(1.0);
