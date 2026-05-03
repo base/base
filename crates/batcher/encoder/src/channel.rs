@@ -13,6 +13,8 @@ pub struct OpenChannel {
     pub opened_at_l1: u64,
     /// Number of L2 blocks fed into this channel so far.
     pub blocks_added: usize,
+    /// Estimated DA bytes for blocks fed into this channel.
+    pub da_backlog_bytes: u64,
 }
 
 impl fmt::Debug for OpenChannel {
@@ -21,6 +23,7 @@ impl fmt::Debug for OpenChannel {
             .field("channel_id", &self.out.id)
             .field("opened_at_l1", &self.opened_at_l1)
             .field("blocks_added", &self.blocks_added)
+            .field("da_backlog_bytes", &self.da_backlog_bytes)
             .finish()
     }
 }
@@ -38,6 +41,8 @@ pub struct ReadyChannel {
     pub cursor: usize,
     /// Which input blocks this channel covers (indices into the encoder's block queue).
     pub block_range: Range<usize>,
+    /// DA bytes still represented by this closed channel's frames.
+    pub da_backlog_bytes: u64,
     /// Number of in-flight submissions for this channel.
     pub pending_confirmations: usize,
     /// Number of frames that have been confirmed.
