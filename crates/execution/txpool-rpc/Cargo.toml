@@ -16,6 +16,7 @@ workspace = true
 base-node-runner.workspace = true
 
 # reth
+reth-rpc-server-types.workspace = true
 reth-transaction-pool.workspace = true
 
 # alloy

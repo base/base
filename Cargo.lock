@@ -5607,6 +5607,7 @@ dependencies = [
  "eyre",
  "httpmock",
  "jsonrpsee",
+ "reth-rpc-server-types",
  "reth-transaction-pool",
  "serde",
  "serde_json",
