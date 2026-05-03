@@ -15,10 +15,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     AlloyL1BlockFetcher, BlockStream, DelegateL2Client, DelegateL2DerivationActor, EngineActor,
-    EngineActorRequest, EngineConfig, EngineProcessor, EngineRpcProcessor, L1Config,
-    L1WatcherActor, L1WatcherQueryProcessor, NodeActor, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, RpcActor,
-    RpcContext, service::node::HEAD_STREAM_POLL_INTERVAL,
+    EngineActorRequest, EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRpcProcessor,
+    L1Config, L1WatcherActor, L1WatcherQueryProcessor, NodeActor, NodeMode,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, RpcActor, RpcContext,
+    service::node::HEAD_STREAM_POLL_INTERVAL,
 };
 
 /// A lightweight node that follows another L2 node by polling its execution
@@ -90,9 +91,12 @@ impl FollowNode {
             Arc::clone(&self.config),
             derivation_client,
             engine,
-            None,
-            None,  // no conductor in follow mode
-            false, // sequencer_stopped irrelevant for validator/follow mode
+            EngineProcessorOptions {
+                node_mode: NodeMode::Validator,
+                unsafe_head_tx: None,
+                conductor: None,
+                sequencer_stopped: false,
+            },
         );
 
         let engine_rpc_processor = EngineRpcProcessor::new(

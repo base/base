@@ -14,7 +14,7 @@ use base_consensus_engine::{
 };
 use base_consensus_node::{
     EngineDerivationClient, EngineError, EngineProcessingRequest, EngineProcessor,
-    EngineRequestReceiver,
+    EngineProcessorOptions, EngineRequestReceiver, NodeMode,
 };
 use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::sync::{mpsc, watch};
@@ -105,9 +105,12 @@ async fn follow_restart_delegated_forkchoice_does_not_finalize_past_actual_safe_
         Arc::new(RollupConfig::default()),
         NoopDerivationClient,
         engine,
-        None,
-        None,
-        false,
+        EngineProcessorOptions {
+            node_mode: NodeMode::Validator,
+            unsafe_head_tx: None,
+            conductor: None,
+            sequencer_stopped: false,
+        },
     );
 
     let (req_tx, req_rx) = mpsc::channel(8);
