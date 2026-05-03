@@ -180,6 +180,20 @@ impl BlockHandler {
             });
         }
 
+        // CHECK: The signature is valid before doing expensive block conversion and hashing work.
+        let msg = envelope.payload_hash.signature_message(self.rollup_config.l2_chain_id.id());
+        let block_signer = *self.signer_recv.borrow();
+
+        // The block has a valid signature.
+        let Ok(msg_signer) = envelope.signature.recover_address_from_prehash(&msg) else {
+            return Err(BlockInvalidError::Signature);
+        };
+
+        // The block is signed by the expected signer (the unsafe block signer).
+        if msg_signer != block_signer {
+            return Err(BlockInvalidError::Signer { expected: block_signer, received: msg_signer });
+        }
+
         // CHECK: Ensure the block hash is valid.
         let expected = envelope.payload.block_hash();
         let mut block: Block<BaseTxEnvelope> = envelope.payload.clone().try_into_block()?;
@@ -213,20 +227,6 @@ impl BlockHandler {
                     block_hash: envelope.payload.block_hash(),
                 });
             }
-        }
-
-        // CHECK: The signature is valid.
-        let msg = envelope.payload_hash.signature_message(self.rollup_config.l2_chain_id.id());
-        let block_signer = *self.signer_recv.borrow();
-
-        // The block has a valid signature.
-        let Ok(msg_signer) = envelope.signature.recover_address_from_prehash(&msg) else {
-            return Err(BlockInvalidError::Signature);
-        };
-
-        // The block is signed by the expected signer (the unsafe block signer).
-        if msg_signer != block_signer {
-            return Err(BlockInvalidError::Signer { expected: block_signer, received: msg_signer });
         }
 
         self.seen_hashes
@@ -612,6 +612,38 @@ pub(crate) mod tests {
         let block = v1_valid_block();
 
         let v1 = ExecutionPayloadV1::from_block_slow(&block);
+
+        let payload = BaseExecutionPayload::V1(v1);
+        let mut envelope = NetworkPayloadEnvelope {
+            payload,
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        };
+
+        let msg = envelope.payload_hash.signature_message(8453);
+        let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
+        let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
+        let mut handler = BlockHandler::new(
+            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
+            unsafe_signer,
+        );
+
+        let mut signature_bytes = envelope.signature.as_bytes();
+        signature_bytes[0] = !signature_bytes[0];
+        envelope.signature = Signature::from_raw_array(&signature_bytes).unwrap();
+
+        assert!(handler.seen_hashes.is_empty());
+        assert!(matches!(handler.block_valid(&envelope), Err(BlockInvalidError::Signature)));
+    }
+
+    /// Invalid signatures should be rejected before block hash validation.
+    #[test]
+    fn test_invalid_signature_precedes_block_hash_validation() {
+        let block = v1_valid_block();
+
+        let mut v1 = ExecutionPayloadV1::from_block_slow(&block);
+        v1.block_hash = B256::ZERO;
 
         let payload = BaseExecutionPayload::V1(v1);
         let mut envelope = NetworkPayloadEnvelope {
