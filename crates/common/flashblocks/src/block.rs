@@ -11,6 +11,9 @@ use super::{
     FlashblocksPayloadV1, Metadata,
 };
 
+/// Maximum allowed decoded flashblock payload size, in bytes.
+pub const MAX_DECOMPRESSED_FLASHBLOCK_BYTES: usize = 5 * 1024 * 1024;
+
 /// A flashblock containing partial block data.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Flashblock {
@@ -50,12 +53,25 @@ impl Flashblock {
         if let Ok(text) = std::str::from_utf8(&bytes)
             && text.trim_start().starts_with('{')
         {
+            if bytes.len() > MAX_DECOMPRESSED_FLASHBLOCK_BYTES {
+                return Err(FlashblockDecodeError::PayloadTooLarge {
+                    given: bytes.len(),
+                    max: MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
+                });
+            }
             return Ok(text.to_owned());
         }
 
-        let mut decompressor = brotli::Decompressor::new(bytes.as_ref(), 4096);
+        let decompressor = brotli::Decompressor::new(bytes.as_ref(), 4096);
+        let mut bounded = decompressor.take((MAX_DECOMPRESSED_FLASHBLOCK_BYTES + 1) as u64);
         let mut decompressed = Vec::new();
-        decompressor.read_to_end(&mut decompressed).map_err(FlashblockDecodeError::Decompress)?;
+        bounded.read_to_end(&mut decompressed).map_err(FlashblockDecodeError::Decompress)?;
+        if decompressed.len() > MAX_DECOMPRESSED_FLASHBLOCK_BYTES {
+            return Err(FlashblockDecodeError::PayloadTooLarge {
+                given: decompressed.len(),
+                max: MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
+            });
+        }
 
         let text = String::from_utf8(decompressed).map_err(FlashblockDecodeError::Utf8)?;
         Ok(text)
@@ -121,16 +137,54 @@ mod tests {
         assert!(Flashblock::try_decode_message(bytes).is_err());
     }
 
+    #[test]
+    fn try_decode_message_rejects_oversized_brotli_payload() {
+        let oversized = vec![b' '; MAX_DECOMPRESSED_FLASHBLOCK_BYTES + 1];
+        let compressed = encode_brotli_bytes(&oversized);
+
+        let error = Flashblock::try_decode_message(compressed).expect_err("payload must be capped");
+
+        assert!(matches!(
+            error,
+            FlashblockDecodeError::PayloadTooLarge {
+                given,
+                max: MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
+            } if given == MAX_DECOMPRESSED_FLASHBLOCK_BYTES + 1
+        ));
+    }
+
+    #[test]
+    fn try_decode_message_rejects_oversized_plain_payload() {
+        let mut oversized = Vec::with_capacity(MAX_DECOMPRESSED_FLASHBLOCK_BYTES + 1);
+        oversized.push(b'{');
+        oversized.resize(MAX_DECOMPRESSED_FLASHBLOCK_BYTES + 1, b' ');
+
+        let error = Flashblock::try_decode_message(Bytes::from(oversized))
+            .expect_err("payload must be capped");
+
+        assert!(matches!(
+            error,
+            FlashblockDecodeError::PayloadTooLarge {
+                given,
+                max: MAX_DECOMPRESSED_FLASHBLOCK_BYTES,
+            } if given == MAX_DECOMPRESSED_FLASHBLOCK_BYTES + 1
+        ));
+    }
+
     fn encode_plain(payload: &FlashblocksPayloadV1) -> Bytes {
         Bytes::from(serde_json::to_vec(payload).expect("serialize payload"))
     }
 
     fn encode_brotli(payload: &FlashblocksPayloadV1) -> Bytes {
-        let mut compressed = Vec::new();
         let data = serde_json::to_vec(payload).expect("serialize payload");
+        encode_brotli_bytes(&data)
+    }
+
+    fn encode_brotli_bytes(data: &[u8]) -> Bytes {
+        let mut compressed = Vec::new();
         {
             let mut writer = brotli::CompressorWriter::new(&mut compressed, 4096, 5, 22);
-            writer.write_all(&data).expect("write compressed payload");
+            writer.write_all(data).expect("write compressed payload");
         }
         Bytes::from(compressed)
     }
