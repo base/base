@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use alloy_eips::BlockNumberOrTag;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
@@ -17,7 +17,7 @@ use tokio::{
 
 use crate::{
     BuildRequest, Conductor, EngineClientError, EngineDerivationClient, EngineError,
-    GetPayloadRequest, ResetRequest, SealRequest,
+    GetPayloadRequest, MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP, NodeMode, ResetRequest, SealRequest,
 };
 
 /// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.
@@ -46,6 +46,8 @@ pub enum EngineProcessingRequest {
     ProcessFinalizedL2BlockNumber(Box<u64>),
     /// Request to process a received unsafe L2 block.
     ProcessUnsafeL2Block(Box<BaseExecutionPayloadEnvelope>),
+    /// Request to process a locally produced sequencer unsafe L2 block.
+    ProcessLocalUnsafeL2Block(Box<BaseExecutionPayloadEnvelope>),
     /// Request to reset the forkchoice.
     Reset(Box<ResetRequest>),
     /// Request to seal a block.
@@ -65,6 +67,29 @@ pub enum BootstrapRole {
     ActiveSequencer,
     /// Conductor follower or stopped sequencer — probe the EL with zeroed safe/finalized heads.
     ConductorFollower,
+}
+
+/// Configuration for mode-specific [`EngineProcessor`] behavior.
+pub struct EngineProcessorOptions {
+    /// The configured node mode.
+    pub node_mode: NodeMode,
+    /// Channel used to publish unsafe head updates in sequencer mode.
+    pub unsafe_head_tx: Option<watch::Sender<L2BlockInfo>>,
+    /// Optional conductor client used during sequencer bootstrap.
+    pub conductor: Option<Arc<dyn Conductor>>,
+    /// Whether the sequencer starts in a stopped state.
+    pub sequencer_stopped: bool,
+}
+
+impl fmt::Debug for EngineProcessorOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EngineProcessorOptions")
+            .field("node_mode", &self.node_mode)
+            .field("has_unsafe_head_tx", &self.unsafe_head_tx.is_some())
+            .field("has_conductor", &self.conductor.is_some())
+            .field("sequencer_stopped", &self.sequencer_stopped)
+            .finish()
+    }
 }
 
 /// Responsible for managing the operations sent to the execution layer's Engine API. To accomplish
@@ -87,6 +112,8 @@ where
     /// like a [`BootstrapRole::ConductorFollower`] so it does not issue an active-sequencer
     /// forkchoice update before being explicitly started.
     sequencer_stopped: bool,
+    /// The configured node mode.
+    node_mode: NodeMode,
     /// The last safe head update sent.
     last_safe_head_sent: L2BlockInfo,
     /// The [`RollupConfig`] .
@@ -122,20 +149,19 @@ where
         config: Arc<RollupConfig>,
         derivation_client: DerivationClient,
         engine: Engine<EngineClient_>,
-        unsafe_head_tx: Option<watch::Sender<L2BlockInfo>>,
-        conductor: Option<Arc<dyn Conductor>>,
-        sequencer_stopped: bool,
+        options: EngineProcessorOptions,
     ) -> Self {
         Self {
             client,
-            conductor,
+            conductor: options.conductor,
             derivation_client,
             el_sync_complete: false,
             engine,
             last_safe_head_sent: L2BlockInfo::default(),
+            node_mode: options.node_mode,
             rollup: config,
-            sequencer_stopped,
-            unsafe_head_tx,
+            sequencer_stopped: options.sequencer_stopped,
+            unsafe_head_tx: options.unsafe_head_tx,
         }
     }
 
@@ -208,6 +234,73 @@ where
         Ok(())
     }
 
+    fn enqueue_unsafe_payload_insert(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        self.log_follower_upgrade_activation(&envelope);
+        let task = EngineTask::Insert(Box::new(InsertTask::new(
+            Arc::clone(&self.client),
+            Arc::clone(&self.rollup),
+            envelope,
+            false, /* The payload is not derived in this case. This is an unsafe block. */
+        )));
+        self.engine.enqueue(task);
+    }
+
+    fn handle_external_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        let block_number = envelope.execution_payload.block_number();
+        let sync_state = self.engine.state().sync_state;
+        let unsafe_head = sync_state.unsafe_head();
+
+        if self.node_mode.is_validator() {
+            info!(
+                target: "engine",
+                block_number,
+                block_hash = %envelope.execution_payload.block_hash(),
+                parent_hash = %envelope.execution_payload.parent_hash(),
+                "Validator enqueuing external unsafe payload"
+            );
+            self.enqueue_unsafe_payload_insert(envelope);
+            return;
+        }
+
+        let block_gap = block_number.checked_sub(unsafe_head.block_info.number);
+        if block_gap.is_some_and(|gap| gap > 0 && gap <= MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP) {
+            info!(
+                target: "engine",
+                block_number,
+                block_hash = %envelope.execution_payload.block_hash(),
+                parent_hash = %envelope.execution_payload.parent_hash(),
+                block_gap = ?block_gap,
+                max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
+                "Sequencer enqueuing external unsafe payload within gap limit"
+            );
+            self.enqueue_unsafe_payload_insert(envelope);
+            return;
+        }
+
+        info!(
+            target: "engine",
+            block_number,
+            block_hash = %envelope.execution_payload.block_hash(),
+            parent_hash = %envelope.execution_payload.parent_hash(),
+            block_gap = ?block_gap,
+            max_external_unsafe_gap = MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
+            unsafe_head_number = unsafe_head.block_info.number,
+            unsafe_head_hash = %unsafe_head.block_info.hash,
+            "Sequencer dropped external unsafe payload outside gap limit"
+        );
+    }
+
+    fn handle_local_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+        debug!(
+            target: "engine",
+            block_number = envelope.execution_payload.block_number(),
+            block_hash = %envelope.execution_payload.block_hash(),
+            parent_hash = %envelope.execution_payload.parent_hash(),
+            "Enqueuing local sequencer unsafe payload"
+        );
+        self.enqueue_unsafe_payload_insert(envelope);
+    }
+
     async fn mark_el_sync_complete_and_notify_derivation_actor(
         &mut self,
     ) -> Result<(), EngineError> {
@@ -255,7 +348,7 @@ where
     }
 
     fn log_follower_upgrade_activation(&self, envelope: &BaseExecutionPayloadEnvelope) {
-        if self.unsafe_head_tx.is_some() {
+        if self.node_mode.is_sequencer() {
             return;
         }
 
@@ -269,16 +362,16 @@ where
     ///
     /// Decision table:
     ///
-    /// | `unsafe_head_tx` | `sequencer_stopped` | result |
-    /// |-----------------|---------------------|--------|
-    /// | `None`          | any                 | [`BootstrapRole::Validator`] |
-    /// | `Some`          | `true`              | [`BootstrapRole::ConductorFollower`] |
-    /// | `Some`          | `false`             | [`BootstrapRole::ActiveSequencer`]* |
+    /// | `node_mode` | `sequencer_stopped` | result |
+    /// |-------------|---------------------|--------|
+    /// | Validator   | any                 | [`BootstrapRole::Validator`] |
+    /// | Sequencer   | `true`              | [`BootstrapRole::ConductorFollower`] |
+    /// | Sequencer   | `false`             | [`BootstrapRole::ActiveSequencer`]* |
     ///
     /// *Subject to downgrade to [`BootstrapRole::ConductorFollower`] by
     /// [`Self::resolve_bootstrap_role`] if a conductor reports this node is not the leader.
     pub const fn config_bootstrap_role(&self) -> BootstrapRole {
-        if self.unsafe_head_tx.is_none() {
+        if self.node_mode.is_validator() {
             BootstrapRole::Validator
         } else if self.sequencer_stopped {
             BootstrapRole::ConductorFollower
@@ -583,15 +676,10 @@ where
                         self.engine.enqueue(task);
                     }
                     EngineProcessingRequest::ProcessUnsafeL2Block(envelope) => {
-                        self.log_follower_upgrade_activation(&envelope);
-                        let task = EngineTask::Insert(Box::new(InsertTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            *envelope,
-                            false, /* The payload is not derived in this case. This is an unsafe
-                                    * block. */
-                        )));
-                        self.engine.enqueue(task);
+                        self.handle_external_unsafe_l2_block(*envelope);
+                    }
+                    EngineProcessingRequest::ProcessLocalUnsafeL2Block(envelope) => {
+                        self.handle_local_unsafe_l2_block(*envelope);
                     }
                     EngineProcessingRequest::Reset(reset_request) => {
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
@@ -651,21 +739,25 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash};
-    use alloy_primitives::B256;
-    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+    use alloy_primitives::{Address, B256, Bloom, U256};
+    use alloy_rpc_types_engine::{
+        ExecutionPayloadV1, ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum,
+    };
     use alloy_rpc_types_eth::Block as RpcBlock;
     use base_common_rpc_types::Transaction as OpTransaction;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_engine::{
         Engine, EngineState,
-        test_utils::{test_block_info, test_engine_client_builder},
+        test_utils::{TestEngineStateBuilder, test_block_info, test_engine_client_builder},
     };
     use base_consensus_genesis::{ChainGenesis, RollupConfig, SystemConfig};
     use base_protocol::{BlockInfo, L2BlockInfo};
     use tokio::sync::{mpsc, watch};
 
     use crate::{
-        EngineClientError, EngineProcessingRequest, EngineProcessor, EngineRequestReceiver,
-        MockConductor, ResetRequest, actors::engine::client::MockEngineDerivationClient,
+        EngineClientError, EngineProcessingRequest, EngineProcessor, EngineProcessorOptions,
+        EngineRequestReceiver, MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP, MockConductor, NodeMode,
+        ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Returns a default all-zero L2 block and its canonical hash.
@@ -696,6 +788,255 @@ mod tests {
             },
             payload_id: None,
         }
+    }
+
+    fn l2_head(number: u64, hash: B256) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo { number, hash, ..Default::default() },
+            ..Default::default()
+        }
+    }
+
+    fn unsafe_payload(
+        block_number: u64,
+        parent_hash: B256,
+        block_hash: B256,
+    ) -> BaseExecutionPayloadEnvelope {
+        BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
+                parent_hash,
+                fee_recipient: Address::ZERO,
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::ZERO,
+                prev_randao: B256::ZERO,
+                block_number,
+                gas_limit: 30_000_000,
+                gas_used: 0,
+                timestamp: block_number,
+                extra_data: Default::default(),
+                base_fee_per_gas: U256::ZERO,
+                block_hash,
+                transactions: vec![],
+            }),
+        }
+    }
+
+    fn unsafe_payload_processor(
+        node_mode: NodeMode,
+        el_sync_finished: bool,
+        unsafe_head: L2BlockInfo,
+        safe_head: Option<L2BlockInfo>,
+    ) -> (
+        EngineProcessor<
+            base_consensus_engine::test_utils::MockEngineClient,
+            MockEngineDerivationClient,
+        >,
+        watch::Receiver<usize>,
+    ) {
+        let client = Arc::new(test_engine_client_builder().build());
+        let config = Arc::new(RollupConfig::default());
+        let derivation_client = MockEngineDerivationClient::new();
+        let mut initial_state_builder = TestEngineStateBuilder::new()
+            .with_unsafe_head(unsafe_head)
+            .with_el_sync_finished(el_sync_finished);
+        if let Some(safe_head) = safe_head {
+            initial_state_builder = initial_state_builder.with_safe_head(safe_head);
+        }
+        let initial_state = initial_state_builder.build();
+        let (state_tx, _) = watch::channel(initial_state);
+        let (queue_tx, queue_rx) = watch::channel(0usize);
+        let engine = Engine::new(initial_state, state_tx, queue_tx);
+        let unsafe_head_tx = if node_mode.is_sequencer() {
+            let (tx, _) = watch::channel(L2BlockInfo::default());
+            Some(tx)
+        } else {
+            None
+        };
+
+        (
+            EngineProcessor::new(
+                client,
+                config,
+                derivation_client,
+                engine,
+                EngineProcessorOptions {
+                    node_mode,
+                    unsafe_head_tx,
+                    conductor: None,
+                    sequencer_stopped: false,
+                },
+            ),
+            queue_rx,
+        )
+    }
+
+    #[test]
+    fn sequencer_enqueues_contiguous_external_unsafe_payload() {
+        let unsafe_head = l2_head(10, B256::with_last_byte(10));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, None);
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            11,
+            B256::with_last_byte(10),
+            B256::with_last_byte(11),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
+    }
+
+    #[test]
+    fn sequencer_enqueues_near_tip_external_unsafe_payload_when_safe_is_behind() {
+        let unsafe_head = l2_head(1_940_222, B256::with_last_byte(22));
+        let safe_head = l2_head(1_940_222, B256::with_last_byte(22));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, Some(safe_head));
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            1_940_265,
+            B256::with_last_byte(64),
+            B256::with_last_byte(65),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
+    }
+
+    #[test]
+    fn sequencer_enqueues_observed_restart_gap_external_unsafe_payload() {
+        let unsafe_head = l2_head(1_939_909, B256::with_last_byte(9));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, None);
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            1_940_000,
+            B256::with_last_byte(99),
+            B256::with_last_byte(100),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
+    }
+
+    #[test]
+    fn sequencer_enqueues_external_unsafe_payload_at_gap_boundary() {
+        let unsafe_head = l2_head(1_000, B256::with_last_byte(10));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, None);
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            1_000 + MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
+            B256::with_last_byte(50),
+            B256::with_last_byte(51),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
+    }
+
+    #[test]
+    fn sequencer_drops_external_unsafe_payload_beyond_gap_boundary() {
+        let unsafe_head = l2_head(1_000, B256::with_last_byte(10));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, None);
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            1_000 + MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP + 1,
+            B256::with_last_byte(50),
+            B256::with_last_byte(51),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 0);
+    }
+
+    #[test]
+    fn sequencer_drops_deep_sync_external_unsafe_payload() {
+        let unsafe_head = l2_head(878_765, B256::with_last_byte(10));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, None);
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            1_936_802,
+            B256::with_last_byte(50),
+            B256::with_last_byte(51),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 0);
+    }
+
+    #[test]
+    fn sequencer_drops_stale_external_unsafe_payload() {
+        let unsafe_head = l2_head(10, B256::with_last_byte(10));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, None);
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            10,
+            B256::with_last_byte(9),
+            B256::with_last_byte(10),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 0);
+    }
+
+    #[test]
+    fn sequencer_enqueues_external_next_block_with_parent_mismatch() {
+        let unsafe_head = l2_head(10, B256::with_last_byte(10));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, None);
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            11,
+            B256::with_last_byte(99),
+            B256::with_last_byte(11),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
+    }
+
+    #[test]
+    fn sequencer_cl_sync_preserves_local_unsafe_payload_insertion() {
+        let unsafe_head = l2_head(10, B256::with_last_byte(10));
+        let safe_head = l2_head(9, B256::with_last_byte(9));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, Some(safe_head));
+
+        processor.handle_local_unsafe_l2_block(unsafe_payload(
+            11,
+            B256::with_last_byte(10),
+            B256::with_last_byte(11),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
+    }
+
+    #[test]
+    fn local_sequencer_inserts_old_unsafe_payload_without_gap_limit() {
+        let unsafe_head = l2_head(10_000, B256::with_last_byte(10));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Sequencer, true, unsafe_head, None);
+
+        processor.handle_local_unsafe_l2_block(unsafe_payload(
+            6_400,
+            B256::with_last_byte(99),
+            B256::with_last_byte(100),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
+    }
+
+    #[test]
+    fn validator_preserves_immediate_unsafe_payload_insertion() {
+        let unsafe_head = l2_head(10, B256::with_last_byte(10));
+        let (mut processor, queue_rx) =
+            unsafe_payload_processor(NodeMode::Validator, false, unsafe_head, None);
+
+        processor.handle_external_unsafe_l2_block(unsafe_payload(
+            12,
+            B256::with_last_byte(11),
+            B256::with_last_byte(12),
+        ));
+
+        assert_eq!(*queue_rx.borrow(), 1);
     }
 
     /// Verifies that when a standalone sequencer (no conductor) is beyond genesis and reth
@@ -739,9 +1080,12 @@ mod tests {
             Arc::new(RollupConfig::default()),
             mock_derivation,
             engine,
-            Some(unsafe_head_tx),
-            None, // no conductor — standalone sequencer (active by default)
-            false,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: None,
+                sequencer_stopped: false,
+            },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -802,9 +1146,12 @@ mod tests {
             Arc::new(RollupConfig::default()),
             mock_derivation,
             engine,
-            Some(unsafe_head_tx),
-            None, // no conductor — standalone sequencer (active by default)
-            false,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: None,
+                sequencer_stopped: false,
+            },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -877,9 +1224,12 @@ mod tests {
             Arc::new(RollupConfig::default()),
             mock_derivation,
             engine,
-            Some(unsafe_head_tx),
-            Some(Arc::new(mock_conductor)),
-            false,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Sequencer,
+                unsafe_head_tx: Some(unsafe_head_tx),
+                conductor: Some(Arc::new(mock_conductor)),
+                sequencer_stopped: false,
+            },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -948,9 +1298,12 @@ mod tests {
             Arc::new(RollupConfig::default()),
             mock_derivation,
             engine,
-            None,
-            None,
-            false,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Validator,
+                unsafe_head_tx: None,
+                conductor: None,
+                sequencer_stopped: false,
+            },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -1013,9 +1366,12 @@ mod tests {
             Arc::new(RollupConfig::default()),
             mock_derivation,
             engine,
-            None, // validator mode
-            None, // no conductor
-            false,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Validator,
+                unsafe_head_tx: None,
+                conductor: None,
+                sequencer_stopped: false,
+            },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);
@@ -1077,9 +1433,12 @@ mod tests {
             config,
             derivation_client,
             engine,
-            unsafe_head_tx,
-            conductor,
-            sequencer_stopped,
+            EngineProcessorOptions {
+                node_mode: if is_sequencer { NodeMode::Sequencer } else { NodeMode::Validator },
+                unsafe_head_tx,
+                conductor,
+                sequencer_stopped,
+            },
         )
     }
 
@@ -1230,9 +1589,12 @@ mod tests {
             Arc::clone(&cfg),
             mock_derivation,
             engine,
-            None, // validator mode
-            None, // no conductor
-            false,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Validator,
+                unsafe_head_tx: None,
+                conductor: None,
+                sequencer_stopped: false,
+            },
         );
 
         let (req_tx, req_rx) = mpsc::channel(8);

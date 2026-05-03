@@ -53,8 +53,10 @@ pub enum EngineActorRequest {
     ProcessDelegatedForkchoiceUpdateRequest(Box<DelegatedForkchoiceUpdate>),
     /// Request to finalize the L2 block at the provided block number.
     ProcessFinalizedL2BlockNumberRequest(Box<u64>),
-    /// Request to insert the provided unsafe block.
+    /// Request to insert the provided external unsafe block.
     ProcessUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
+    /// Request to insert a locally produced sequencer unsafe block.
+    ProcessLocalUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
     /// Request for the engine to process the provided RPC request.

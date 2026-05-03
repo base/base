@@ -188,7 +188,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
     ) -> EngineClientResult<()> {
         trace!(target: "sequencer", "Sending insert unsafe payload request to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload)))
+            .send(EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(payload)))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))
     }

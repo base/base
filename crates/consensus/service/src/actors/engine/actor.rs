@@ -153,6 +153,9 @@ where
                         EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                             send_engine_processing_request(EngineProcessingRequest::ProcessUnsafeL2Block(envelope)).await?;
                         }
+                        EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
+                            send_engine_processing_request(EngineProcessingRequest::ProcessLocalUnsafeL2Block(envelope)).await?;
+                        }
                         EngineActorRequest::ResetRequest(reset_req) => {
                             send_engine_processing_request(EngineProcessingRequest::Reset(reset_req)).await?;
                         }
