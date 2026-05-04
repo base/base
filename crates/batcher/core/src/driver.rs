@@ -481,10 +481,13 @@ mod tests {
             &self,
             _: TxCandidate,
         ) -> impl std::future::Future<Output = SendHandle> + Send {
-            self.state.sends.fetch_add(1, Ordering::SeqCst);
-            let (tx, rx) = oneshot::channel();
-            let _ = tx.send(Err(TxManagerError::AlreadyReserved));
-            std::future::ready(SendHandle::new(rx))
+            let state = Arc::clone(&self.state);
+            async move {
+                state.sends.fetch_add(1, Ordering::SeqCst);
+                let (tx, rx) = oneshot::channel();
+                let _ = tx.send(Err(TxManagerError::AlreadyReserved));
+                SendHandle::new(rx)
+            }
         }
 
         fn cancel_tx(
