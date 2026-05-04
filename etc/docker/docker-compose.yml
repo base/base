@@ -299,8 +299,10 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_BUILDER_P2P_PORT}
       - --discovery.port=${L2_BUILDER_P2P_PORT}
+      - --nat=extip:${L2_BUILDER_ADVERTISE_IP}
       - --p2p-secret-key-hex=${BUILDER_P2P_KEY}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
@@ -318,6 +320,9 @@ services:
       timeout: 1s
       retries: 240
       start_period: 250ms
+    networks:
+      default:
+        ipv4_address: ${L2_BUILDER_ADVERTISE_IP}
     restart: unless-stopped
 
   base-builder-cl:
@@ -478,6 +483,7 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
+      - --nat=extip:${L2_CLIENT_ADVERTISE_IP}
       - --metrics=0.0.0.0:${L2_CLIENT_METRICS_PORT}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=4
@@ -486,6 +492,7 @@ services:
       - --rpc.eth-proof-window=1209600
       - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --enable-metering
       - --metering.gas-limit=${METERING_GAS_LIMIT}
@@ -501,6 +508,9 @@ services:
       timeout: 1s
       retries: 240
       start_period: 250ms
+    networks:
+      default:
+        ipv4_address: ${L2_CLIENT_ADVERTISE_IP}
     restart: unless-stopped
 
   base-client-cl:

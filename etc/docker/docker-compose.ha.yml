@@ -167,8 +167,10 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_SEQ1_P2P_PORT}
       - --discovery.port=${L2_SEQ1_P2P_PORT}
+      - --nat=extip:${L2_SEQ1_ADVERTISE_IP}
       - --p2p-secret-key-hex=${SEQ1_P2P_KEY}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_SEQ1_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
@@ -182,6 +184,9 @@ services:
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_SEQ1_HTTP_PORT}"]
       <<: *sequencer-healthcheck
+    networks:
+      default:
+        ipv4_address: ${L2_SEQ1_ADVERTISE_IP}
 
   base-sequencer-1-cl:
     <<: *sequencer-cl-base
@@ -294,8 +299,10 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_SEQ2_P2P_PORT}
       - --discovery.port=${L2_SEQ2_P2P_PORT}
+      - --nat=extip:${L2_SEQ2_ADVERTISE_IP}
       - --p2p-secret-key-hex=${SEQ2_P2P_KEY}
       - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_SEQ2_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
@@ -309,6 +316,9 @@ services:
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_SEQ2_HTTP_PORT}"]
       <<: *sequencer-healthcheck
+    networks:
+      default:
+        ipv4_address: ${L2_SEQ2_ADVERTISE_IP}
 
   base-sequencer-2-cl:
     <<: *sequencer-cl-base
