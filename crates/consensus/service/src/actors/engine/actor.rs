@@ -10,8 +10,7 @@ use tokio_util::{
 };
 
 use crate::{
-    EngineActorRequest, EngineError, EngineProcessingRequest, EngineRequestReceiver, NodeActor,
-    actors::CancellableContext,
+    EngineActorRequest, EngineError, EngineRequestReceiver, NodeActor, actors::CancellableContext,
 };
 
 /// The [`EngineActor`] is an intermediary that receives [`EngineActorRequest`] and delegates:
@@ -86,7 +85,7 @@ where
             .then(handle_task_result("Engine processing", processing_cancellation.clone()));
 
         // Helper to send processing requests with error handling.
-        let send_engine_processing_request = |req: EngineProcessingRequest| async {
+        let send_engine_processing_request = |req: EngineActorRequest| async {
             engine_processing_tx.send(req).await.map_err(|_| {
                 error!(target: "engine", "Engine processing channel closed unexpectedly");
                 self.cancellation_token.clone().cancel();
@@ -111,33 +110,7 @@ where
                         return Err(EngineError::ChannelClosed);
                     };
 
-                    // Route the request to the appropriate channel.
-                    match request {
-                        EngineActorRequest::BuildRequest(build_req) => {
-                            send_engine_processing_request(EngineProcessingRequest::Build(build_req)).await?;
-                        }
-                        EngineActorRequest::ProcessSafeL2SignalRequest(signal) => {
-                            send_engine_processing_request(EngineProcessingRequest::ProcessSafeL2Signal(signal)).await?;
-                        }
-                        EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(update) => {
-                            send_engine_processing_request(EngineProcessingRequest::ProcessDelegatedForkchoiceUpdate(update)).await?;
-                        }
-                        EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(block_number) => {
-                            send_engine_processing_request(EngineProcessingRequest::ProcessFinalizedL2BlockNumber(block_number)).await?;
-                        }
-                        EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
-                            send_engine_processing_request(EngineProcessingRequest::ProcessUnsafeL2Block(envelope)).await?;
-                        }
-                        EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
-                            send_engine_processing_request(EngineProcessingRequest::ProcessLocalUnsafeL2Block(envelope)).await?;
-                        }
-                        EngineActorRequest::ResetRequest(reset_req) => {
-                            send_engine_processing_request(EngineProcessingRequest::Reset(reset_req)).await?;
-                        }
-                        EngineActorRequest::GetPayloadRequest(get_payload_req) => {
-                            send_engine_processing_request(EngineProcessingRequest::GetPayload(get_payload_req)).await?;
-                        }
-                    }
+                    send_engine_processing_request(request).await?;
                 }
             }
         }

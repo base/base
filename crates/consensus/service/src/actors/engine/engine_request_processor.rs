@@ -5,10 +5,9 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    BuildTask, ConsolidateInput, ConsolidateTask, DelegatedForkchoiceTask,
-    DelegatedForkchoiceUpdate, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
-    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask,
-    InsertTaskResult, Metrics as EngineMetrics,
+    BuildTask, ConsolidateTask, DelegatedForkchoiceTask, Engine, EngineClient,
+    EngineSyncStateUpdate, EngineTask, EngineTaskError, EngineTaskErrorSeverity, FinalizeTask,
+    GetPayloadTask, InsertTask, InsertTaskResult, Metrics as EngineMetrics,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -17,40 +16,19 @@ use tokio::{
 };
 
 use crate::{
-    BuildRequest, Conductor, EngineClientError, EngineDerivationClient, EngineError,
-    GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode, ResetRequest,
+    BuildRequest, Conductor, EngineActorRequest, EngineClientError, EngineDerivationClient,
+    EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
 };
 
-/// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.
+/// Requires that the implementor handles engine requests via the provided channel.
 /// Note: this exists to facilitate unit testing rather than consolidate multiple implementations
 /// under a well-thought-out interface.
 pub trait EngineRequestReceiver: Send + Sync {
     /// Starts a task to handle engine processing requests.
     fn start(
         self,
-        request_channel: mpsc::Receiver<EngineProcessingRequest>,
+        request_channel: mpsc::Receiver<EngineActorRequest>,
     ) -> JoinHandle<Result<(), EngineError>>;
-}
-
-/// A request to process engine tasks.
-#[derive(Debug)]
-pub enum EngineProcessingRequest {
-    /// Request to start building a block.
-    Build(Box<BuildRequest>),
-    /// Request to fetch a sealed payload without inserting it.
-    GetPayload(Box<GetPayloadRequest>),
-    /// Request to process a Safe signal, which can be derived attributes or delegated block info.
-    ProcessSafeL2Signal(ConsolidateInput),
-    /// Request to apply delegated safe/finalized labels together for follow mode.
-    ProcessDelegatedForkchoiceUpdate(Box<DelegatedForkchoiceUpdate>),
-    /// Request to process the finalized L2 block with the provided block number.
-    ProcessFinalizedL2BlockNumber(Box<u64>),
-    /// Request to process a received unsafe L2 block.
-    ProcessUnsafeL2Block(Box<BaseExecutionPayloadEnvelope>),
-    /// Request to process a locally produced sequencer unsafe L2 block.
-    ProcessLocalUnsafeL2Block(Box<InsertUnsafePayloadRequest>),
-    /// Request to reset the forkchoice.
-    Reset(Box<ResetRequest>),
 }
 
 /// Classifies the bootstrap behavior for the [`EngineProcessor`].
@@ -585,7 +563,7 @@ where
 {
     fn start(
         mut self,
-        mut request_channel: mpsc::Receiver<EngineProcessingRequest>,
+        mut request_channel: mpsc::Receiver<EngineActorRequest>,
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
             // Bootstrap: pre-populate the unsafe_head_tx watch channel so that external callers
@@ -659,7 +637,7 @@ where
                 };
 
                 match request {
-                    EngineProcessingRequest::Build(build_request) => {
+                    EngineActorRequest::BuildRequest(build_request) => {
                         let BuildRequest { attributes, result_tx } = *build_request;
                         let task = EngineTask::Build(Box::new(BuildTask::new(
                             Arc::clone(&self.client),
@@ -669,7 +647,7 @@ where
                         )));
                         self.engine.enqueue(task);
                     }
-                    EngineProcessingRequest::GetPayload(get_payload_request) => {
+                    EngineActorRequest::GetPayloadRequest(get_payload_request) => {
                         let GetPayloadRequest { payload_id, attributes, result_tx } =
                             *get_payload_request;
                         let task = EngineTask::GetPayload(Box::new(GetPayloadTask::new(
@@ -681,7 +659,7 @@ where
                         )));
                         self.engine.enqueue(task);
                     }
-                    EngineProcessingRequest::ProcessSafeL2Signal(safe_signal) => {
+                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),
@@ -689,7 +667,7 @@ where
                         )));
                         self.engine.enqueue(task);
                     }
-                    EngineProcessingRequest::ProcessDelegatedForkchoiceUpdate(update) => {
+                    EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(update) => {
                         let task = EngineTask::DelegatedForkchoice(Box::new(
                             DelegatedForkchoiceTask::new(
                                 Arc::clone(&self.client),
@@ -699,7 +677,7 @@ where
                         ));
                         self.engine.enqueue(task);
                     }
-                    EngineProcessingRequest::ProcessFinalizedL2BlockNumber(
+                    EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
                         finalized_l2_block_number,
                     ) => {
                         // Finalize the L2 block at the provided block number.
@@ -710,13 +688,13 @@ where
                         )));
                         self.engine.enqueue(task);
                     }
-                    EngineProcessingRequest::ProcessUnsafeL2Block(envelope) => {
+                    EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                         self.handle_external_unsafe_l2_block(*envelope);
                     }
-                    EngineProcessingRequest::ProcessLocalUnsafeL2Block(envelope) => {
+                    EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
                         self.handle_local_unsafe_l2_block(*envelope);
                     }
-                    EngineProcessingRequest::Reset(reset_request) => {
+                    EngineActorRequest::ResetRequest(reset_request) => {
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
                         // forkchoice_updated to reth pointing at the sync-start block, which will
                         // return Valid and cause reth to set that stale block as canonical,
@@ -782,7 +760,7 @@ mod tests {
     use tokio::sync::{mpsc, watch};
 
     use crate::{
-        BuildRequest, EngineClientError, EngineProcessingRequest, EngineProcessor,
+        BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
         EngineProcessorOptions, EngineRequestReceiver, InsertUnsafePayloadRequest, MockConductor,
         NodeMode, ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
@@ -1160,7 +1138,7 @@ mod tests {
         // Send a Reset — the ELSyncing guard must fire and return ELSyncing.
         let (result_tx, mut result_rx) = mpsc::channel(1);
         req_tx
-            .send(EngineProcessingRequest::Reset(Box::new(ResetRequest { result_tx })))
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx })))
             .await
             .expect("failed to send reset request");
 
@@ -1699,7 +1677,7 @@ mod tests {
             .build();
         let (build_result_tx, _build_result_rx) = mpsc::channel(1);
         req_tx
-            .send(EngineProcessingRequest::Build(Box::new(BuildRequest {
+            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
                 attributes,
                 result_tx: build_result_tx,
             })))

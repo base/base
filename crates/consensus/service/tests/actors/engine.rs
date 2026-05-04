@@ -21,8 +21,8 @@ use base_consensus_engine::{
 };
 use base_consensus_node::{
     BuildRequest, EngineActor, EngineActorRequest, EngineDerivationClient, EngineError,
-    EngineProcessingRequest, EngineProcessor, EngineProcessorOptions, EngineRequestReceiver,
-    NodeActor, NodeMode, QueuedEngineRpcClient,
+    EngineProcessor, EngineProcessorOptions, EngineRequestReceiver, NodeActor, NodeMode,
+    QueuedEngineRpcClient,
 };
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use jsonrpsee::types::ErrorCode;
@@ -85,7 +85,7 @@ struct CountingEngineReceiver {
 impl EngineRequestReceiver for CountingEngineReceiver {
     fn start(
         self,
-        mut request_channel: mpsc::Receiver<EngineProcessingRequest>,
+        mut request_channel: mpsc::Receiver<EngineActorRequest>,
     ) -> JoinHandle<Result<(), EngineError>> {
         let builds_processed = self.builds_processed;
         tokio::spawn(async move {
@@ -94,7 +94,7 @@ impl EngineRequestReceiver for CountingEngineReceiver {
                     return Err(EngineError::ChannelClosed);
                 };
 
-                if let EngineProcessingRequest::Build(build_request) = request {
+                if let EngineActorRequest::BuildRequest(build_request) = request {
                     builds_processed.fetch_add(1, Ordering::SeqCst);
                     let payload_id = PayloadId::new([0x01; 8]);
                     let _ = build_request.result_tx.send(payload_id).await;
@@ -165,7 +165,7 @@ async fn follow_restart_delegated_forkchoice_does_not_finalize_past_actual_safe_
         .expect("bootstrap did not seed unsafe head");
 
     req_tx
-        .send(EngineProcessingRequest::ProcessDelegatedForkchoiceUpdate(Box::new(
+        .send(EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(Box::new(
             DelegatedForkchoiceUpdate {
                 safe_l2: delegated_safe,
                 finalized_l2_number: Some(delegated_safe_number),
