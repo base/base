@@ -169,6 +169,75 @@ services:
       - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
+  base-el-bootnode:
+    image: base-reth-node:local
+    build:
+      <<: *rust-service-build
+      target: client
+    container_name: base-el-bootnode
+    depends_on:
+      setup-l2:
+        condition: service_completed_successfully
+    ports:
+      - "${L2_EL_BOOTNODE_P2P_PORT}:${L2_EL_BOOTNODE_P2P_PORT}/udp" # Discovery
+    volumes:
+      - ../../.devnet/l2/el-bootnode:/data
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    entrypoint: /app/base-client
+    command:
+      - p2p
+      - bootnode
+      - --v4-addr=0.0.0.0:${L2_EL_BOOTNODE_P2P_PORT}
+      - --nat=extip:${L2_EL_BOOTNODE_ADVERTISE_IP}
+      - --p2p-secret-key=/genesis/l2/el-bootnode-p2p-key.txt
+      - --color=never
+      - -vvv
+    networks:
+      default:
+        ipv4_address: ${L2_EL_BOOTNODE_ADVERTISE_IP}
+    restart: unless-stopped
+
+  base-cl-bootnode:
+    image: base-consensus:local
+    build:
+      <<: *rust-service-build
+      target: consensus
+    container_name: base-cl-bootnode
+    depends_on:
+      setup-l2:
+        condition: service_completed_successfully
+    ports:
+      - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}"     # P2P TCP metadata
+      - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}/udp" # Discovery
+    volumes:
+      - ../../.devnet/l2/cl-bootnode:/data
+      - ../../.devnet/l2/configs:/genesis/l2
+    entrypoint: /app/base-consensus
+    command:
+      - bootnode
+      - --chain
+      - ${L2_CHAIN_ID}
+      - --l2-config-file
+      - /genesis/l2/rollup.json
+      - --p2p.listen.ip
+      - 0.0.0.0
+      - --p2p.listen.tcp
+      - "${L2_CL_BOOTNODE_P2P_PORT}"
+      - --p2p.listen.udp
+      - "${L2_CL_BOOTNODE_P2P_PORT}"
+      - --p2p.advertise.ip
+      - "${L2_CL_BOOTNODE_ADVERTISE_IP}"
+      - --p2p.priv.path
+      - /genesis/l2/cl-bootnode-p2p-key.txt
+      - --p2p.bootstore
+      - /data/bootstore.json
+      - --p2p.enr-output
+      - "${L2_CL_BOOTNODE_ENR_PATH}"
+    networks:
+      default:
+        ipv4_address: ${L2_CL_BOOTNODE_ADVERTISE_IP}
+    restart: unless-stopped
+
   base-builder:
     image: base-builder:local
     build:
@@ -569,3 +638,9 @@ services:
       - prometheus
       - jaeger
     restart: unless-stopped
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${L2_BOOTNODE_DOCKER_SUBNET}
