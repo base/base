@@ -266,11 +266,11 @@ mod tests {
 
     #[test]
     fn is_base_azul_active_at_timestamp() {
-        // Azul is scheduled on mainnet at 1778695200
+        // Azul is scheduled on mainnet at 1779386400
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert!(!base_mainnet_forks.is_base_azul_active_at_timestamp(0));
-        assert!(!base_mainnet_forks.is_base_azul_active_at_timestamp(1_778_695_199));
-        assert!(base_mainnet_forks.is_base_azul_active_at_timestamp(1_778_695_200));
+        assert!(!base_mainnet_forks.is_base_azul_active_at_timestamp(1_779_386_399));
+        assert!(base_mainnet_forks.is_base_azul_active_at_timestamp(1_779_386_400));
         assert!(base_mainnet_forks.is_base_azul_active_at_timestamp(u64::MAX));
 
         // Azul is scheduled on sepolia at 1776708000
@@ -297,7 +297,7 @@ mod tests {
         let base_mainnet_forks = ChainUpgrades::mainnet();
         assert_eq!(
             base_mainnet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
-            ForkCondition::Timestamp(1_778_695_200)
+            ForkCondition::Timestamp(1_779_386_400)
         );
 
         let base_sepolia_forks = ChainUpgrades::sepolia();
