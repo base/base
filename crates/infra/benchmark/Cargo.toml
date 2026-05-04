@@ -1,0 +1,45 @@
+[package]
+name = "base-benchmark"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Benchmark orchestrator for Base EL clients"
+
+[[bin]]
+name = "base-bench"
+path = "src/bin/base_bench.rs"
+
+[dependencies]
+eyre.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+rand.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+hex.workspace = true
+nix = { workspace = true, features = ["signal", "process"] }
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["full"] }
+axum = { workspace = true, features = ["http1", "json", "tokio", "ws"] }
+serde = { workspace = true, features = ["derive"] }
+reqwest = { workspace = true, features = ["json"] }
+tracing.workspace = true
+sha2 = { workspace = true }
+thiserror.workspace = true
+tempfile.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+serde_yaml.workspace = true
+async-trait.workspace = true
+prometheus-parse.workspace = true
+tokio-tungstenite.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+base-jwt.workspace = true
+base-test-utils.workspace = true
+base-common-evm.workspace = true
+base-common-genesis.workspace = true
+base-consensus-engine.workspace = true
+base-common-flashblocks.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine.workspace = true
+
+[lints]
+workspace = true
