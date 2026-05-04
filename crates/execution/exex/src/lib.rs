@@ -117,14 +117,14 @@ where
 /// use reth_db::test_utils::create_test_rw_db;
 /// use reth_node_api::NodeTypesWithDBAdapter;
 /// use reth_node_builder::{NodeBuilder, NodeConfig};
-/// use base_execution_chainspec::BASE_MAINNET;
+/// use base_execution_chainspec::BaseChainSpec;
 /// use base_execution_exex::BaseProofsExEx;
 /// use base_node_core::{BaseNode, args::RollupArgs};
 /// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, db::MdbxProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
 ///
-/// let config = NodeConfig::new(BASE_MAINNET.clone());
+/// let config = NodeConfig::new(Arc::new(BaseChainSpec::mainnet()));
 /// let db = create_test_rw_db();
 /// let args = RollupArgs::default();
 /// let op_node = BaseNode::new(args);

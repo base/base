@@ -10,29 +10,14 @@
 
 extern crate alloc;
 
-mod base;
-pub use base::BASE_MAINNET;
-
-mod base_zeronet;
-pub use base_zeronet::BASE_ZERONET;
-
-mod base_sepolia;
-pub use base_sepolia::BASE_SEPOLIA;
-
 mod basefee;
 pub use basefee::*;
 
 mod builder;
 pub use builder::BaseChainSpecBuilder;
 
-mod dev;
-pub use dev::BASE_DEV;
-
 mod hardforks;
-pub use hardforks::{
-    BASE_MAINNET_UPGRADES, BASE_SEPOLIA_UPGRADES, BASE_ZERONET_UPGRADES, ChainUpgradesExt,
-    DEV_UPGRADES,
-};
+pub use hardforks::ChainUpgradesExt;
 
 mod spec;
 pub use spec::{BaseChainSpec, GenesisInfo, SUPPORTED_CHAINS};

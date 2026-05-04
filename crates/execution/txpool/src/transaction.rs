@@ -426,7 +426,7 @@ mod tests {
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
     use base_common_consensus::{BasePrimitives, BaseTransactionSigned, TxDeposit};
-    use base_execution_chainspec::BASE_MAINNET;
+    use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
@@ -437,10 +437,11 @@ mod tests {
     use crate::{BasePooledTransaction, BaseTransactionValidator};
     #[tokio::test]
     async fn validate_base_transaction() {
+        let chain_spec = std::sync::Arc::new(BaseChainSpec::mainnet());
         let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(BASE_MAINNET.clone())
+            .with_chain_spec(chain_spec.clone())
             .with_genesis_block();
-        let evm_config = BaseEvmConfig::base(BASE_MAINNET.clone());
+        let evm_config = BaseEvmConfig::base(chain_spec);
         let validator = EthTransactionValidatorBuilder::new(client, evm_config)
             .no_shanghai()
             .no_cancun()

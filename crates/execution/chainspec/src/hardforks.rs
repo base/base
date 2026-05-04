@@ -3,8 +3,6 @@ use alloc::{boxed::Box, vec};
 use alloy_primitives::U256;
 use base_common_chains::{BaseUpgrade, ChainUpgrades};
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
-use spin::Lazy;
-
 /// Extension trait to convert alloy's [`ChainUpgrades`] into reth's [`ChainHardforks`].
 pub trait ChainUpgradesExt {
     /// Expands Base upgrades into a full [`ChainHardforks`] including implied Ethereum entries.
@@ -76,22 +74,6 @@ impl ChainUpgradesExt for ChainUpgrades {
         ChainHardforks::new(forks)
     }
 }
-
-/// Dev chain upgrades.
-pub static DEV_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| ChainUpgrades::devnet().to_chain_hardforks());
-
-/// Base Sepolia chain upgrades.
-pub static BASE_SEPOLIA_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| ChainUpgrades::sepolia().to_chain_hardforks());
-
-/// Base mainnet chain upgrades.
-pub static BASE_MAINNET_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| ChainUpgrades::mainnet().to_chain_hardforks());
-
-/// Base Zeronet chain upgrades.
-pub static BASE_ZERONET_UPGRADES: Lazy<ChainHardforks> =
-    Lazy::new(|| ChainUpgrades::zeronet().to_chain_hardforks());
 
 #[cfg(test)]
 mod tests {

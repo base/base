@@ -119,7 +119,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_execution_chainspec::{BASE_DEV, BASE_MAINNET};
+    use base_execution_chainspec::BaseChainSpec;
     use base_node_core::args::RollupArgs;
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn parse_dev() {
         let cmd = NodeCommand::<BaseChainSpecParser, NoArgs>::parse_from(["base-reth", "--dev"]);
-        let chain = BASE_DEV.clone();
+        let chain = BaseChainSpec::devnet();
         assert_eq!(cmd.chain.chain, chain.chain);
         assert_eq!(cmd.chain.genesis_hash(), chain.genesis_hash());
         assert_eq!(
@@ -189,7 +189,7 @@ mod tests {
 
         match cmd.command {
             Commands::Node(command) => {
-                assert_eq!(command.chain.as_ref(), BASE_MAINNET.as_ref());
+                assert_eq!(command.chain.as_ref(), &BaseChainSpec::mainnet());
             }
             _ => panic!("unexpected command"),
         }

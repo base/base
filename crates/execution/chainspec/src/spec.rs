@@ -17,10 +17,7 @@ use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition};
 use reth_network_peers::{NodeRecord, parse_nodes};
 use reth_primitives_traits::SealedHeader;
 
-use crate::{
-    BASE_DEV, BASE_MAINNET, BASE_MAINNET_UPGRADES, BASE_SEPOLIA, BASE_ZERONET,
-    compute_jovian_base_fee, decode_holocene_base_fee,
-};
+use crate::{ChainUpgradesExt, compute_jovian_base_fee, decode_holocene_base_fee};
 
 /// All supported chain names for the CLI.
 pub const SUPPORTED_CHAINS: &[&str] =
@@ -85,6 +82,26 @@ pub struct BaseChainSpec {
 }
 
 impl BaseChainSpec {
+    /// Builds the Base Mainnet chain spec from [`ChainConfig::mainnet`].
+    pub fn mainnet() -> Self {
+        Self::try_from(ChainConfig::mainnet()).expect("Base mainnet chain config must be valid")
+    }
+
+    /// Builds the Base Sepolia chain spec from [`ChainConfig::sepolia`].
+    pub fn sepolia() -> Self {
+        Self::try_from(ChainConfig::sepolia()).expect("Base Sepolia chain config must be valid")
+    }
+
+    /// Builds the Base Zeronet chain spec from [`ChainConfig::zeronet`].
+    pub fn zeronet() -> Self {
+        Self::try_from(ChainConfig::zeronet()).expect("Base Zeronet chain config must be valid")
+    }
+
+    /// Builds the local dev chain spec from [`ChainConfig::devnet`].
+    pub fn devnet() -> Self {
+        Self::try_from(ChainConfig::devnet()).expect("Base devnet chain config must be valid")
+    }
+
     /// Converts the given [`Genesis`] into an [`BaseChainSpec`].
     pub fn from_genesis(genesis: Genesis) -> Self {
         genesis.into()
@@ -113,18 +130,64 @@ impl BaseChainSpec {
 
     /// Parses a chain name into an [`BaseChainSpec`], if recognized.
     pub fn parse_chain(s: &str) -> Option<Arc<Self>> {
-        match s {
-            "dev" => Some(BASE_DEV.clone()),
-            "base" => Some(BASE_MAINNET.clone()),
-            "base_sepolia" | "base-sepolia" => Some(BASE_SEPOLIA.clone()),
-            "base-zeronet" => Some(BASE_ZERONET.clone()),
-            _ => None,
-        }
+        let cfg = match s {
+            "dev" => ChainConfig::devnet(),
+            "base" => ChainConfig::mainnet(),
+            "base_sepolia" | "base-sepolia" => ChainConfig::sepolia(),
+            "base-zeronet" => ChainConfig::zeronet(),
+            _ => return None,
+        };
+        Self::try_from(cfg).ok().map(Arc::new)
     }
 
     /// Activates or updates the given hardfork condition in-place.
     pub fn set_fork<H: Hardfork>(&mut self, fork: H, condition: ForkCondition) {
         self.inner.hardforks.insert(fork, condition);
+    }
+}
+
+impl TryFrom<&ChainConfig> for BaseChainSpec {
+    type Error = serde_json::Error;
+
+    fn try_from(cfg: &ChainConfig) -> Result<Self, Self::Error> {
+        let genesis = serde_json::from_str(cfg.genesis_json)?;
+        let hardforks = base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg))
+            .to_chain_hardforks();
+        let genesis_header =
+            SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks));
+        let fee_config = cfg.fee_config();
+        let base_fee_params = BaseFeeParamsKind::Variable(
+            vec![
+                (
+                    EthereumHardfork::London.boxed(),
+                    BaseFeeParams::new(
+                        fee_config.eip1559_denominator as u128,
+                        fee_config.eip1559_elasticity as u128,
+                    ),
+                ),
+                (
+                    BaseUpgrade::Canyon.boxed(),
+                    BaseFeeParams::new(
+                        fee_config.eip1559_denominator_canyon as u128,
+                        fee_config.eip1559_elasticity as u128,
+                    ),
+                ),
+            ]
+            .into(),
+        );
+
+        Ok(Self {
+            inner: ChainSpec {
+                chain: cfg.chain_id.into(),
+                genesis_header,
+                genesis,
+                paris_block_and_final_difficulty: Some((0, U256::ZERO)),
+                hardforks,
+                base_fee_params,
+                prune_delete_limit: cfg.prune_delete_limit,
+                ..Default::default()
+            },
+        })
     }
 }
 
@@ -234,7 +297,7 @@ impl From<Genesis> for BaseChainSpec {
         let genesis_info =
             optimism_genesis_info.optimism_chain_info.genesis_info.unwrap_or_default();
 
-        // Block-based hardforks
+        // Block-based hardforks in canonical fork ID order.
         let hardfork_opts = [
             (EthereumHardfork::Frontier.boxed(), Some(0)),
             (EthereumHardfork::Homestead.boxed(), genesis.config.homestead_block),
@@ -249,15 +312,14 @@ impl From<Genesis> for BaseChainSpec {
             (EthereumHardfork::London.boxed(), genesis.config.london_block),
             (EthereumHardfork::ArrowGlacier.boxed(), genesis.config.arrow_glacier_block),
             (EthereumHardfork::GrayGlacier.boxed(), genesis.config.gray_glacier_block),
-            (BaseUpgrade::Bedrock.boxed(), genesis_info.bedrock_block),
         ];
-        let mut block_hardforks = hardfork_opts
+        let mut hardforks = hardfork_opts
             .into_iter()
             .filter_map(|(hardfork, opt)| opt.map(|block| (hardfork, ForkCondition::Block(block))))
             .collect::<Vec<_>>();
 
         // We set the paris hardfork for Base networks to zero
-        block_hardforks.push((
+        hardforks.push((
             EthereumHardfork::Paris.boxed(),
             ForkCondition::TTD {
                 activation_block_number: 0,
@@ -265,6 +327,10 @@ impl From<Genesis> for BaseChainSpec {
                 fork_block: genesis.config.merge_netsplit_block,
             },
         ));
+
+        if let Some(block) = genesis_info.bedrock_block {
+            hardforks.push((BaseUpgrade::Bedrock.boxed(), ForkCondition::Block(block)));
+        }
 
         // Time-based hardforks
         // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
@@ -292,21 +358,9 @@ impl From<Genesis> for BaseChainSpec {
             })
             .collect::<Vec<_>>();
 
-        block_hardforks.append(&mut time_hardforks);
+        hardforks.append(&mut time_hardforks);
 
-        // Order hardforks to match mainnet ordering
-        let mainnet_hardforks = BASE_MAINNET_UPGRADES.clone();
-        let mainnet_order = mainnet_hardforks.forks_iter();
-
-        let mut ordered_hardforks = Vec::with_capacity(block_hardforks.len());
-        for (hardfork, _) in mainnet_order {
-            if let Some(pos) = block_hardforks.iter().position(|(e, _)| **e == *hardfork) {
-                ordered_hardforks.push(block_hardforks.remove(pos));
-            }
-        }
-        ordered_hardforks.append(&mut block_hardforks);
-
-        let hardforks = ChainHardforks::new(ordered_hardforks);
+        let hardforks = ChainHardforks::new(hardforks);
         let genesis_header =
             SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks));
 
@@ -350,7 +404,7 @@ mod tests {
     };
     use reth_ethereum_forks::{EthereumHardfork, ForkCondition, ForkHash, ForkId, Head};
 
-    use crate::{BASE_MAINNET, BASE_SEPOLIA, BASE_ZERONET, BaseChainSpec, BaseChainSpecBuilder};
+    use crate::{BaseChainSpec, BaseChainSpecBuilder};
 
     #[test]
     fn test_storage_root_consistency() {
@@ -390,10 +444,11 @@ mod tests {
 
     #[test]
     fn base_mainnet_forkids() {
+        let base_mainnet_spec = BaseChainSpec::mainnet();
         let mut base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
-        base_mainnet.inner.genesis_header.set_hash(BASE_MAINNET.genesis_hash());
+        base_mainnet.inner.genesis_header.set_hash(base_mainnet_spec.genesis_hash());
         test_fork_ids(
-            &BASE_MAINNET,
+            &base_mainnet_spec,
             &[
                 (
                     Head { number: 0, ..Default::default() },
@@ -444,7 +499,7 @@ mod tests {
                         timestamp: ChainConfig::mainnet().jovian_timestamp,
                         ..Default::default()
                     },
-                    BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Jovian).unwrap(),
+                    base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Jovian).unwrap(),
                 ),
                 (
                     Head {
@@ -452,7 +507,7 @@ mod tests {
                         timestamp: ChainConfig::mainnet().azul_timestamp.unwrap(),
                         ..Default::default()
                     },
-                    BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
+                    base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
                 ),
             ],
         );
@@ -460,8 +515,9 @@ mod tests {
 
     #[test]
     fn base_sepolia_forkids() {
+        let base_sepolia_spec = BaseChainSpec::sepolia();
         test_fork_ids(
-            &BASE_SEPOLIA,
+            &base_sepolia_spec,
             &[
                 (
                     Head { number: 0, ..Default::default() },
@@ -516,7 +572,7 @@ mod tests {
                         timestamp: ChainConfig::sepolia().jovian_timestamp,
                         ..Default::default()
                     },
-                    BASE_SEPOLIA.hardfork_fork_id(BaseUpgrade::Jovian).unwrap(),
+                    base_sepolia_spec.hardfork_fork_id(BaseUpgrade::Jovian).unwrap(),
                 ),
             ],
         );
@@ -524,29 +580,32 @@ mod tests {
 
     #[test]
     fn base_mainnet_genesis() {
-        let genesis = BASE_MAINNET.genesis_header();
+        let base_mainnet_spec = BaseChainSpec::mainnet();
+        let genesis = base_mainnet_spec.genesis_header();
         assert_eq!(
             genesis.hash_slow(),
             b256!("0xf712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd")
         );
-        let base_fee = BASE_MAINNET.next_block_base_fee(genesis, genesis.timestamp).unwrap();
+        let base_fee = base_mainnet_spec.next_block_base_fee(genesis, genesis.timestamp).unwrap();
         assert_eq!(base_fee, 980000000);
     }
 
     #[test]
     fn base_sepolia_genesis() {
-        let genesis = BASE_SEPOLIA.genesis_header();
+        let base_sepolia_spec = BaseChainSpec::sepolia();
+        let genesis = base_sepolia_spec.genesis_header();
         assert_eq!(
             genesis.hash_slow(),
             b256!("0x0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4")
         );
-        let base_fee = BASE_SEPOLIA.next_block_base_fee(genesis, genesis.timestamp).unwrap();
+        let base_fee = base_sepolia_spec.next_block_base_fee(genesis, genesis.timestamp).unwrap();
         assert_eq!(base_fee, 980000000);
     }
 
     #[test]
     fn base_zeronet_genesis() {
-        let genesis = BASE_ZERONET.genesis_header();
+        let base_zeronet_spec = BaseChainSpec::zeronet();
+        let genesis = base_zeronet_spec.genesis_header();
         assert_eq!(
             genesis.hash_slow(),
             b256!("0x1842d6ef4c40e2a4794458e167f6d327269df919b626979111c37ad3a96047bf")
@@ -558,9 +617,9 @@ mod tests {
         // `bootnodes()` must surface every EL entry from `ChainConfig.bootnodes.execution`.
         // A mismatch means `parse_nodes` silently dropped a malformed entry.
         for (spec, cfg) in [
-            (&*BASE_MAINNET, ChainConfig::mainnet()),
-            (&*BASE_SEPOLIA, ChainConfig::sepolia()),
-            (&*BASE_ZERONET, ChainConfig::zeronet()),
+            (BaseChainSpec::mainnet(), ChainConfig::mainnet()),
+            (BaseChainSpec::sepolia(), ChainConfig::sepolia()),
+            (BaseChainSpec::zeronet(), ChainConfig::zeronet()),
         ] {
             let parsed = spec.bootnodes().expect("known chain returns Some");
             assert_eq!(
@@ -577,9 +636,9 @@ mod tests {
         // The EL chainspec must never expose CL ENRs — they belong to a different
         // discv5 network (different protocol ID / port) and bricked discovery in the past.
         for (spec, cfg) in [
-            (&*BASE_MAINNET, ChainConfig::mainnet()),
-            (&*BASE_SEPOLIA, ChainConfig::sepolia()),
-            (&*BASE_ZERONET, ChainConfig::zeronet()),
+            (BaseChainSpec::mainnet(), ChainConfig::mainnet()),
+            (BaseChainSpec::sepolia(), ChainConfig::sepolia()),
+            (BaseChainSpec::zeronet(), ChainConfig::zeronet()),
         ] {
             assert!(
                 cfg.bootnodes.execution.iter().all(|s| s.starts_with("enode://")),
@@ -604,17 +663,19 @@ mod tests {
 
     #[test]
     fn latest_base_mainnet_fork_id() {
+        let base_mainnet_spec = BaseChainSpec::mainnet();
         assert_eq!(
-            BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
-            BASE_MAINNET.latest_fork_id()
+            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
+            base_mainnet_spec.latest_fork_id()
         )
     }
 
     #[test]
     fn latest_base_mainnet_fork_id_with_builder() {
+        let base_mainnet_spec = BaseChainSpec::mainnet();
         let base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         assert_eq!(
-            BASE_MAINNET.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
+            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Azul).unwrap(),
             base_mainnet.latest_fork_id()
         )
     }
@@ -1040,7 +1101,7 @@ mod tests {
 
     #[test]
     fn display_hardorks() {
-        let content = BASE_MAINNET.display_hardforks().to_string();
+        let content = BaseChainSpec::mainnet().display_hardforks().to_string();
         for eth_hf in EthereumHardfork::VARIANTS {
             assert!(!content.contains(eth_hf.name()));
         }

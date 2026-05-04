@@ -3948,7 +3948,6 @@ dependencies = [
  "reth-primitives-traits",
  "serde",
  "serde_json",
- "spin 0.10.0",
 ]
 
 [[package]]

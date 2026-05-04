@@ -106,14 +106,15 @@ impl BaseNode {
     /// [`ReadOnlyConfig`](reth_provider::providers::ReadOnlyConfig).
     ///
     /// ```no_run
-    /// use base_execution_chainspec::BASE_MAINNET;
+    /// use base_execution_chainspec::BaseChainSpec;
     /// use base_node_runner::BaseNode;
     /// use reth_provider::providers::ReadOnlyConfig;
+    /// use std::sync::Arc;
     ///
     /// let runtime = reth_tasks::Runtime::test();
     /// let factory = BaseNode::provider_factory_builder()
     ///     .open_read_only(
-    ///         BASE_MAINNET.clone(),
+    ///         Arc::new(BaseChainSpec::mainnet()),
     ///         ReadOnlyConfig::from_datadir("datadir").no_watch(),
     ///         runtime,
     ///     )

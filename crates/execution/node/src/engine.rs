@@ -303,12 +303,19 @@ mod tests {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::ChainConfig;
-    use base_execution_chainspec::BASE_SEPOLIA;
+    use base_execution_chainspec::BaseChainSpec;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
 
     use super::*;
     use crate::engine;
+
+    fn validator() -> BaseEngineValidator<Arc<BaseChainSpec>, NoopProvider, KeccakKeyHasher> {
+        BaseEngineValidator::new::<KeccakKeyHasher>(
+            Arc::new(BaseChainSpec::sepolia()),
+            NoopProvider::default(),
+        )
+    }
 
     macro_rules! assert_invalid_params_error {
         ($result:expr, $msg:expr) => {{
@@ -345,10 +352,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_pre_holocene() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(None, None, 1732633199);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -361,10 +365,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_no_eip1559_params() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(None, None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -377,10 +378,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_eip1559_params_zero_denominator() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000008")), None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -393,10 +391,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_eip1559_params_zero_elasticity() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000000")), None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -409,10 +404,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_valid() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000800000008")), None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -425,10 +417,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_holocene_valid_all_zero() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), None, 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -441,10 +430,7 @@ mod tests {
 
     #[test]
     fn test_well_formed_attributes_jovian_valid() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(
             Some(b64!("0000000000000000")),
             Some(1),
@@ -462,10 +448,7 @@ mod tests {
     /// After Jovian (and holocene), eip1559 params must be Some
     #[test]
     fn test_malformed_attributes_jovian_with_eip_1559_params_none() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(None, Some(1), ChainConfig::sepolia().jovian_timestamp);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -479,10 +462,7 @@ mod tests {
     /// Before Jovian, min base fee must be None
     #[test]
     fn test_malformed_attributes_pre_jovian_with_min_base_fee() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(Some(b64!("0000000000000000")), Some(1), 1732633200);
 
         let result = <engine::BaseEngineValidator<_, _, _> as EngineApiValidator<
@@ -496,10 +476,7 @@ mod tests {
     /// After Jovian, min base fee must be Some
     #[test]
     fn test_malformed_attributes_post_jovian_with_min_base_fee_none() {
-        let validator = BaseEngineValidator::new::<KeccakKeyHasher>(
-            BASE_SEPOLIA.clone(),
-            NoopProvider::default(),
-        );
+        let validator = validator();
         let attributes = get_attributes(
             Some(b64!("0000000000000000")),
             None,

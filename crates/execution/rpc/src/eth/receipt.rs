@@ -347,7 +347,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_common_chains::ChainConfig;
     use base_common_consensus::{BasePrimitives, BaseTransactionSigned, BaseTypedTransaction};
-    use base_execution_chainspec::BASE_MAINNET;
+    use base_execution_chainspec::BaseChainSpec;
     use reth_primitives_traits::Recovered;
 
     use super::*;
@@ -413,10 +413,11 @@ mod tests {
             base_execution_evm::extract_l1_info(&block.body).expect("should extract l1 info");
 
         // test
-        assert!(Upgrades::is_fjord_active_at_timestamp(&*BASE_MAINNET, BLOCK_124665056_TIMESTAMP));
+        let base_mainnet = BaseChainSpec::mainnet();
+        assert!(Upgrades::is_fjord_active_at_timestamp(&base_mainnet, BLOCK_124665056_TIMESTAMP));
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
-            .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
+            .l1_block_info(&base_mainnet, &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
 
@@ -494,7 +495,7 @@ mod tests {
         };
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
-            .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
+            .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
 
@@ -518,7 +519,7 @@ mod tests {
         };
 
         let receipt_meta = ReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
-            .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
+            .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
 
@@ -552,7 +553,7 @@ mod tests {
         let tx_1 = BaseTransactionSigned::decode_2718(&mut &tx[..]).unwrap();
 
         let receipt_meta = ReceiptFieldsBuilder::new(1730216981, 21713817)
-            .l1_block_info(&*BASE_MAINNET, &tx_1, &mut l1_block_info)
+            .l1_block_info(&BaseChainSpec::mainnet(), &tx_1, &mut l1_block_info)
             .expect("should parse revm l1 info")
             .build();
 
@@ -607,7 +608,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hardforks = &*BASE_MAINNET;
+        let hardforks = BaseChainSpec::mainnet();
 
         let receipt = ReceiptFieldsBuilder::new(ChainConfig::mainnet().jovian_timestamp, u64::MAX)
             .l1_block_info(&hardforks, &tx, &mut l1_block_info)
@@ -642,7 +643,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hardforks = &*BASE_MAINNET;
+        let hardforks = BaseChainSpec::mainnet();
 
         let receipt = BaseReceiptBuilder::new(
             &hardforks,
@@ -696,7 +697,7 @@ mod tests {
             ..Default::default()
         };
 
-        let hardforks = &*BASE_MAINNET;
+        let hardforks = BaseChainSpec::mainnet();
 
         let receipt = BaseReceiptBuilder::new(
             &hardforks,

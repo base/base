@@ -233,7 +233,7 @@ mod tests {
     use alloy_trie::root::ordered_trie_root_with_encoder;
     use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BaseReceipt, BaseTxEnvelope, DepositReceipt};
-    use base_execution_chainspec::{BASE_SEPOLIA, BaseChainSpec};
+    use base_execution_chainspec::BaseChainSpec;
     use reth_chainspec::{BaseFeeParams, EthChainSpec, ForkCondition};
 
     use super::*;
@@ -246,19 +246,19 @@ mod tests {
     const CANYON_TIMESTAMP: u64 = 1699981200;
 
     fn holocene_chainspec() -> Arc<BaseChainSpec> {
-        let mut chainspec = BASE_SEPOLIA.as_ref().clone();
+        let mut chainspec = BaseChainSpec::sepolia();
         chainspec.set_fork(BaseUpgrade::Holocene, ForkCondition::Timestamp(HOLOCENE_TIMESTAMP));
         Arc::new(chainspec)
     }
 
     fn isthmus_chainspec() -> BaseChainSpec {
-        let mut chainspec = BASE_SEPOLIA.as_ref().clone();
+        let mut chainspec = BaseChainSpec::sepolia();
         chainspec.set_fork(BaseUpgrade::Isthmus, ForkCondition::Timestamp(ISTHMUS_TIMESTAMP));
         chainspec
     }
 
     fn jovian_chainspec() -> BaseChainSpec {
-        let mut chainspec = BASE_SEPOLIA.as_ref().clone();
+        let mut chainspec = BaseChainSpec::sepolia();
         chainspec.set_fork(BaseUpgrade::Jovian, ForkCondition::Timestamp(JOVIAN_TIMESTAMP));
         chainspec
     }
@@ -289,7 +289,7 @@ mod tests {
         let receipts_with_bloom =
             receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
         let receipts_root =
-            calculate_receipt_root(&receipts_with_bloom, BASE_SEPOLIA.as_ref(), timestamp);
+            calculate_receipt_root(&receipts_with_bloom, &BaseChainSpec::sepolia(), timestamp);
         let logs_bloom = receipts_with_bloom
             .iter()
             .fold(Bloom::ZERO, |bloom, receipt| bloom | receipt.bloom_ref());
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_get_base_fee_pre_holocene() {
-        let op_chain_spec = BASE_SEPOLIA.clone();
+        let op_chain_spec = BaseChainSpec::sepolia();
         let parent = Header {
             base_fee_per_gas: Some(1),
             gas_used: 15763614,
@@ -383,7 +383,7 @@ mod tests {
         };
 
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &*BASE_SEPOLIA,
+            &BaseChainSpec::sepolia(),
             &parent,
             1735315546,
         )
@@ -412,7 +412,7 @@ mod tests {
         };
 
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &*BASE_SEPOLIA,
+            &BaseChainSpec::sepolia(),
             &parent,
             1735315546,
         );
@@ -637,13 +637,13 @@ mod tests {
 
     #[test]
     fn trusts_precomputed_receipt_root_after_canyon() {
-        assert!(should_trust_precomputed_receipt_root(BASE_SEPOLIA.as_ref(), CANYON_TIMESTAMP));
+        assert!(should_trust_precomputed_receipt_root(&BaseChainSpec::sepolia(), CANYON_TIMESTAMP));
     }
 
     #[test]
     fn ignores_precomputed_receipt_root_before_canyon() {
         assert!(!should_trust_precomputed_receipt_root(
-            BASE_SEPOLIA.as_ref(),
+            &BaseChainSpec::sepolia(),
             PRE_CANYON_TIMESTAMP
         ));
 
@@ -658,7 +658,7 @@ mod tests {
 
         validate_block_post_execution(
             &header,
-            BASE_SEPOLIA.as_ref(),
+            &BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
         )
@@ -683,7 +683,7 @@ mod tests {
         assert!(matches!(
             validate_block_post_execution(
                 &header,
-                BASE_SEPOLIA.as_ref(),
+                &BaseChainSpec::sepolia(),
                 &result,
                 Some((invalid_receipts_root, logs_bloom)),
             )
@@ -705,7 +705,7 @@ mod tests {
 
         validate_block_post_execution(
             &header,
-            BASE_SEPOLIA.as_ref(),
+            &BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
         )

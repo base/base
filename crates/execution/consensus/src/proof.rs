@@ -82,7 +82,7 @@ mod tests {
     use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
     use alloy_primitives::{Address, Bytes, Log, LogData, b256, bloom, hex};
     use base_common_consensus::{BaseReceipt, DepositReceipt};
-    use base_execution_chainspec::BASE_SEPOLIA;
+    use base_execution_chainspec::BaseChainSpec;
 
     use super::*;
 
@@ -465,7 +465,7 @@ mod tests {
             ];
             let root = calculate_receipt_root(
                 &receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>(),
-                BASE_SEPOLIA.as_ref(),
+                &BaseChainSpec::sepolia(),
                 case.1,
             );
             assert_eq!(root, case.2);
@@ -488,7 +488,7 @@ mod tests {
         });
         let receipt = ReceiptWithBloom { receipt: &inner, logs_bloom };
         let receipt = vec![receipt];
-        let root = calculate_receipt_root(&receipt, BASE_SEPOLIA.as_ref(), 0);
+        let root = calculate_receipt_root(&receipt, &BaseChainSpec::sepolia(), 0);
         assert_eq!(
             root,
             b256!("0xfe70ae4a136d98944951b2123859698d59ad251a381abc9960fa81cae3d0d4a0")

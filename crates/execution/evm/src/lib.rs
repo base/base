@@ -355,7 +355,7 @@ mod tests {
     };
     use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
     use base_common_evm::OpSpecId;
-    use base_execution_chainspec::{BASE_MAINNET, BaseChainSpec, BaseChainSpecBuilder};
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::ChainSpec;
     use reth_evm::execute::ProviderError;
     use reth_execution_types::{
@@ -373,7 +373,7 @@ mod tests {
     use super::*;
 
     fn test_evm_config() -> BaseEvmConfig {
-        BaseEvmConfig::base(BASE_MAINNET.clone())
+        BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()))
     }
 
     #[test]

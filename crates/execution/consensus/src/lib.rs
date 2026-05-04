@@ -232,7 +232,7 @@ mod tests {
         BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
         HoloceneExtraData, JovianExtraData,
     };
-    use base_execution_chainspec::{BASE_MAINNET, BaseChainSpecBuilder};
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::BaseFeeParams;
     use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
@@ -259,13 +259,16 @@ mod tests {
         BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip7702(tx), signature)
     }
 
+    fn base_mainnet_builder() -> BaseChainSpecBuilder {
+        let base_mainnet = BaseChainSpec::mainnet();
+        BaseChainSpecBuilder::default()
+            .genesis(base_mainnet.genesis.clone())
+            .chain(base_mainnet.chain)
+    }
+
     #[test]
     fn test_block_blob_gas_used_validation_isthmus() {
-        let chain_spec = BaseChainSpecBuilder::default()
-            .isthmus_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
@@ -298,11 +301,7 @@ mod tests {
 
     #[test]
     fn test_block_blob_gas_used_validation_failure_isthmus() {
-        let chain_spec = BaseChainSpecBuilder::default()
-            .isthmus_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
@@ -341,11 +340,7 @@ mod tests {
         const BLOB_GAS_USED: u64 = 1000;
         const GAS_USED: u64 = 10;
 
-        let chain_spec = BaseChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
@@ -412,11 +407,7 @@ mod tests {
         const BLOB_GAS_USED: u64 = 1000;
         const GAS_USED: u64 = 10;
 
-        let chain_spec = BaseChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
@@ -486,11 +477,7 @@ mod tests {
     fn test_header_min_base_fee_validation() {
         const MIN_BASE_FEE: u64 = 1000;
 
-        let chain_spec = BaseChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
@@ -557,11 +544,7 @@ mod tests {
     fn test_header_min_base_fee_validation_failure() {
         const MIN_BASE_FEE: u64 = 1000;
 
-        let chain_spec = BaseChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
@@ -634,11 +617,7 @@ mod tests {
         const DA_FOOTPRINT: u64 = GAS_LIMIT - 1;
         const GAS_LIMIT: u64 = 100_000_000;
 
-        let chain_spec = BaseChainSpecBuilder::default()
-            .jovian_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().jovian_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);
@@ -708,11 +687,7 @@ mod tests {
         const DA_FOOTPRINT: u64 = GAS_LIMIT - 1;
         const GAS_LIMIT: u64 = 100_000_000;
 
-        let chain_spec = BaseChainSpecBuilder::default()
-            .isthmus_activated()
-            .genesis(BASE_MAINNET.genesis.clone())
-            .chain(BASE_MAINNET.chain)
-            .build();
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
 
         // create a tx
         let transaction = mock_tx(0);

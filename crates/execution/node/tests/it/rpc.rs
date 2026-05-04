@@ -1,6 +1,8 @@
 //! RPC integration tests.
 
-use base_execution_chainspec::BASE_MAINNET;
+use std::sync::Arc;
+
+use base_execution_chainspec::BaseChainSpec;
 use base_node_core::BaseNode;
 use reth_network::types::NatResolver;
 use reth_node_builder::{NodeBuilder, NodeHandle};
@@ -26,7 +28,7 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
     network_args.discovery.discv5_port = 0;
     network_args.discovery.discv5_port_ipv6 = 0;
     let node_config = NodeConfig::test()
-        .map_chain(BASE_MAINNET.clone())
+        .map_chain(Arc::new(BaseChainSpec::mainnet()))
         .with_network(network_args)
         .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 

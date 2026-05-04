@@ -2,26 +2,21 @@
 
 ## Overview
 
-Provides `BaseChainSpec`, the chain specification type for Base nodes, along with pre-built specs
-for Base Mainnet (8453), Base Sepolia (84532), and a local dev chain. Includes hardfork-specific
+Provides `BaseChainSpec`, the chain specification type for Base nodes. Includes hardfork-specific
 base fee computation helpers for Holocene and Jovian, and supported chain resolution from CLI
 strings.
 
 ## How it works
 
 `BaseChainSpec` wraps reth's `ChainSpec` and adds Base-specific hardfork awareness via the
-`BaseUpgrades` trait. Each network spec is constructed from a bundled genesis JSON file and a
-hardfork schedule:
-
-- `BASE_MAINNET` - Base Mainnet (chain ID 8453), with London and Canyon variable base fee params.
-- `BASE_SEPOLIA` - Base Sepolia testnet (chain ID 84532), with equivalent hardfork schedule.
-- `BASE_DEV` - Local dev chain with all hardforks active at genesis, prefunded test accounts.
+`BaseUpgrades` trait. Network specs are converted from `base-common-chains` configs, which own the
+genesis JSON, hardfork schedule, base fee params, and other chain constants.
 
 The genesis header is derived at startup from the genesis JSON using `make_op_genesis_header`,
 which computes the correct state root, storage root, and other fields for Base.
 
 Chain names are resolved from CLI strings via `SUPPORTED_CHAINS`, which maps `"base"`,
-`"base_sepolia"`, `"base-sepolia"`, and `"dev"` to the corresponding static spec.
+`"base_sepolia"`, `"base-sepolia"`, and `"dev"` to specs built from `base-common-chains`.
 
 ### Base fee computation
 
@@ -35,7 +30,7 @@ Two helpers handle hardfork-specific base fee logic:
   next-block fee calculation.
 
 Gas limits and other chain parameters are sourced from
-[`base_common_chains::BaseChainConfig`](../../../crates/common/chains/src/config.rs).
+[`base_common_chains::ChainConfig`](../../../crates/common/chains/src/config.rs).
 
 ## Usage
 
@@ -45,12 +40,12 @@ Add the crate to your `Cargo.toml`:
 base-execution-chainspec = { workspace = true }
 ```
 
-Access the pre-built chain specs:
+Build a chain spec from common chain config:
 
 ```rust,ignore
-use base_execution_chainspec::{BASE_DEV, BASE_MAINNET, BASE_SEPOLIA};
+use base_execution_chainspec::BaseChainSpec;
 
-let spec = BASE_MAINNET.clone();
+let spec = BaseChainSpec::mainnet();
 println!("chain: {}", spec.chain());
 ```
 

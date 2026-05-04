@@ -391,7 +391,7 @@ mod tests {
     use alloy_primitives::{Bytes, hex_literal::hex, keccak256};
     use base_common_chains::Upgrades;
     use base_common_consensus::BaseTransactionSigned;
-    use base_execution_chainspec::BASE_MAINNET;
+    use base_execution_chainspec::BaseChainSpec;
 
     use super::*;
 
@@ -427,7 +427,7 @@ mod tests {
         // OP Mainnet Ecotone compatibility fixture, block 118024092.
         // <https://optimistic.etherscan.io/block/118024092>
         const TIMESTAMP: u64 = 1711603765;
-        assert!(BASE_MAINNET.is_ecotone_active_at_timestamp(TIMESTAMP));
+        assert!(BaseChainSpec::mainnet().is_ecotone_active_at_timestamp(TIMESTAMP));
 
         // First transaction in the OP Mainnet compatibility fixture, block 118024092.
         //
