@@ -28,6 +28,15 @@ pub struct Pending {
     responder: oneshot::Sender<SendResponse>,
 }
 
+/// A signed L1 submission plus any blob sidecars it references.
+#[derive(Debug, Clone)]
+pub struct L1SignedSubmission {
+    /// Signed transaction envelope submitted to L1.
+    pub envelope: TxEnvelope,
+    /// Blob sidecars keyed by the versioned hashes referenced by `envelope`.
+    pub blobs: Vec<(B256, Box<Blob>)>,
+}
+
 impl std::fmt::Debug for Pending {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Pending")
@@ -273,7 +282,7 @@ impl L1MinerTxManager {
         &self,
         candidate: &TxCandidate,
         nonce: u64,
-    ) -> Result<(TxEnvelope, Vec<(B256, Box<Blob>)>), TxManagerError> {
+    ) -> Result<L1SignedSubmission, TxManagerError> {
         let gas_limit = candidate.gas_limit.max(21_000);
         let to = candidate.to.unwrap_or(self.inbox_address);
 
@@ -293,7 +302,10 @@ impl L1MinerTxManager {
                 .signer
                 .sign_hash_sync(&tx.signature_hash())
                 .map_err(|e| TxManagerError::Sign(e.to_string()))?;
-            return Ok((TxEnvelope::Eip1559(tx.into_signed(signature)), Vec::new()));
+            return Ok(L1SignedSubmission {
+                envelope: TxEnvelope::Eip1559(tx.into_signed(signature)),
+                blobs: Vec::new(),
+            });
         }
 
         let sidecar = BlobTxBuilder::build_sidecar(&candidate.blobs)?;
@@ -321,7 +333,10 @@ impl L1MinerTxManager {
             .signer
             .sign_hash_sync(&variant.signature_hash())
             .map_err(|e| TxManagerError::Sign(e.to_string()))?;
-        Ok((TxEnvelope::Eip4844(variant.into_signed(signature)), blobs))
+        Ok(L1SignedSubmission {
+            envelope: TxEnvelope::Eip4844(variant.into_signed(signature)),
+            blobs,
+        })
     }
 }
 
@@ -348,7 +363,7 @@ impl TxManager for L1MinerTxManager {
             inner.next_nonce += 1;
             nonce
         };
-        let (envelope, blobs) = match self.sign_candidate(&candidate, nonce) {
+        let signed = match self.sign_candidate(&candidate, nonce) {
             Ok(signed) => signed,
             Err(e) => {
                 let (tx, rx) = oneshot::channel::<SendResponse>();
@@ -358,7 +373,7 @@ impl TxManager for L1MinerTxManager {
         };
 
         let (responder, rx) = oneshot::channel::<SendResponse>();
-        let pending = Pending { envelope, blobs, responder };
+        let pending = Pending { envelope: signed.envelope, blobs: signed.blobs, responder };
         self.inner.lock().unwrap().pending.push(pending);
         SendHandle::new(rx)
     }

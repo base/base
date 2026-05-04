@@ -31,9 +31,9 @@ fn submit_signed_blob_frames(
         batcher_cfg.inbox_address,
         h.rollup_config.l1_chain_id,
     );
-    let (tx, blobs) = tx_manager.sign_candidate(&candidate, nonce).expect("blob tx signs");
-    h.l1.submit_transaction(tx);
-    for (hash, blob) in blobs {
+    let signed = tx_manager.sign_candidate(&candidate, nonce).expect("blob tx signs");
+    h.l1.submit_transaction(signed.envelope);
+    for (hash, blob) in signed.blobs {
         h.l1.enqueue_blob(hash, blob);
     }
 }

@@ -26,7 +26,9 @@ mod harness;
 pub use harness::ActionTestHarness;
 
 mod batcher;
-pub use batcher::{Batcher, BatcherConfig, BatcherError, Inner, L1MinerTxManager, Pending};
+pub use batcher::{
+    Batcher, BatcherConfig, BatcherError, Inner, L1MinerTxManager, L1SignedSubmission, Pending,
+};
 
 mod matrix;
 pub use matrix::{ForkMatrix, ForkSetter};
