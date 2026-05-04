@@ -205,7 +205,7 @@ echo "=== Generating P2P Keys ==="
 
 echo "$BUILDER_P2P_KEY" >"$OUTPUT_DIR/builder-p2p-key.txt"
 echo "$BUILDER_ENODE_ID" >"$OUTPUT_DIR/builder-enode-id.txt"
-echo "$L2_EL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/el-bootnode-p2p-key.txt"
+printf "%s" "$L2_EL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/el-bootnode-p2p-key.txt"
 echo "$L2_EL_BOOTNODE_ENODE_ID" >"$OUTPUT_DIR/el-bootnode-enode-id.txt"
 echo "$L2_EL_BOOTNODE_ENODE" >"$OUTPUT_DIR/el-bootnode-enode.txt"
 echo "$L2_CL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/cl-bootnode-p2p-key.txt"
