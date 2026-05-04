@@ -315,6 +315,7 @@ impl ConnectionGate for ConnectionGater {
                 }
                 ConnectionError::SubnetBlocked { ip } => {
                     debug!(target: "gossip", ip = %ip, "IP address is in a blocked subnet, not dialing");
+                    self.connectedness.insert(peer_id, Connectedness::CannotConnect);
                     Metrics::dial_peer_error("blocked_subnet").increment(1.0);
                 }
                 _ => {}
@@ -334,20 +335,22 @@ impl ConnectionGate for ConnectionGater {
             match &error {
                 ConnectionError::PeerBlocked { .. } => {
                     debug!(target: "gossip", peer = %peer_id, addr = ?addr, "Inbound peer is blocked");
-                    Metrics::dial_peer_error("blocked_inbound_peer").increment(1.0);
+                    Metrics::inbound_connection_error("blocked_peer").increment(1.0);
                     self.connectedness.insert(*peer_id, Connectedness::CannotConnect);
                 }
                 ConnectionError::InvalidIpAddress { .. } => {
                     warn!(target: "p2p", addr = ?addr, peer = %peer_id, "Failed to extract IpAddr from inbound Multiaddr");
+                    Metrics::inbound_connection_error("invalid_ip_address").increment(1.0);
+                    self.connectedness.insert(*peer_id, Connectedness::CannotConnect);
                 }
                 ConnectionError::AddressBlocked { ip } => {
                     debug!(target: "gossip", peer = %peer_id, ip = %ip, "Inbound address is blocked");
-                    Metrics::dial_peer_error("blocked_inbound_address").increment(1.0);
+                    Metrics::inbound_connection_error("blocked_address").increment(1.0);
                     self.connectedness.insert(*peer_id, Connectedness::CannotConnect);
                 }
                 ConnectionError::SubnetBlocked { ip } => {
                     debug!(target: "gossip", peer = %peer_id, ip = %ip, "Inbound address is in a blocked subnet");
-                    Metrics::dial_peer_error("blocked_inbound_subnet").increment(1.0);
+                    Metrics::inbound_connection_error("blocked_subnet").increment(1.0);
                     self.connectedness.insert(*peer_id, Connectedness::CannotConnect);
                 }
                 _ => {}
@@ -605,6 +608,8 @@ mod tests {
         // Should now fail because localhost resolves to blocked IP
         let result = gater.can_connect_outbound(&dns_localhost);
         assert!(matches!(result, Err(ConnectionError::AddressBlocked { .. })));
+        let peer_id = ConnectionGater::peer_id_from_addr(&dns_localhost).unwrap();
+        assert_eq!(gater.connectedness(&peer_id), Connectedness::CannotConnect);
     }
 
     #[test]
@@ -626,6 +631,8 @@ mod tests {
         // Should now fail because localhost resolves to IP in blocked subnet
         let result = gater.can_connect_outbound(&dns_localhost);
         assert!(matches!(result, Err(ConnectionError::SubnetBlocked { .. })));
+        let peer_id = ConnectionGater::peer_id_from_addr(&dns_localhost).unwrap();
+        assert_eq!(gater.connectedness(&peer_id), Connectedness::CannotConnect);
     }
 
     #[test]

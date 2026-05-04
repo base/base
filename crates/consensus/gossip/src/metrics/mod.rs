@@ -21,7 +21,10 @@ base_metrics::define_metrics! {
     gossipsub_event: gauge,
 
     #[describe("Connections made to the libp2p Swarm")]
-    #[label(name = "type", default = ["connected", "outgoing_error", "incoming_error", "closed"])]
+    #[label(
+        name = "type",
+        default = ["connected", "outgoing_error", "incoming_error", "closed", "blocked_inbound"]
+    )]
     gossipsub_connection: gauge,
 
     #[describe("Number of NetworkPayloadEnvelope gossipped out through the libp2p Swarm")]
@@ -49,6 +52,13 @@ base_metrics::define_metrics! {
         ]
     )]
     dial_peer_error: gauge,
+
+    #[describe("Number of inbound connection rejections by the connection gate")]
+    #[label(
+        name = "type",
+        default = ["blocked_peer", "blocked_address", "blocked_subnet", "invalid_ip_address"]
+    )]
+    inbound_connection_error: gauge,
 
     #[describe("Calls made to the Gossip RPC module")]
     #[label(
