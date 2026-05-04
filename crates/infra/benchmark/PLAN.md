@@ -1,6 +1,6 @@
 ---
 status: in-progress
-phase: 3
+phase: 4
 updated: 2026-05-04
 ---
 
@@ -105,28 +105,14 @@ crates/infra/benchmark/
 - [x] 2.4 Output helpers in `src/output.rs` — gzip, write_result_json, dump_log_tail, random_id (shipped in Phase 1)
 - [x] 2.5 Tests — 20 tests total passing (ports ×5, snapshots ×6, output ×2, config ×4, matrix ×3)
 
-## Phase 3: Client Abstraction [PENDING]
+## Phase 3: Client Abstraction [COMPLETE]
 
-- [ ] 3.1 Define `ExecutionClient` trait in `src/client/mod.rs`:
-  ```rust
-  #[async_trait]
-  pub trait ExecutionClient: Send + Sync {
-      async fn run(&mut self) -> Result<(), BenchmarkError>;
-      async fn stop(&mut self) -> Result<(), BenchmarkError>;
-      fn rpc_url(&self) -> &str;
-      fn auth_rpc_url(&self) -> &str;
-      fn metrics_port(&self) -> u16;
-      async fn get_version(&self) -> Result<String, BenchmarkError>;
-      async fn set_head(&self, block: u64) -> Result<(), BenchmarkError>;
-      fn flashblocks_client(&self) -> Option<&FlashblocksClient>;
-      fn supports_flashblocks(&self) -> bool;
-  }
-  ```
-  Define `ClientOptions` {node_type: String, extra_args: Vec<String>, reth_bin: PathBuf, builder_bin: PathBuf}. Define `InternalClientOptions` {jwt_secret_path: PathBuf, chain_cfg_path: PathBuf, data_dir_path: PathBuf, test_dir_path: PathBuf, jwt_secret: [u8; 32], metrics_dir: PathBuf}.
-- [ ] 3.2 Implement `BaseRethNodeClient` in `src/client/mod.rs`: holds `ProcessHandle`, `Arc<PortManager>`, 4 acquired ports (EL, AuthEL, ELMetrics, P2P), `InternalClientOptions`. `run()`: delete `data_dir/txpool-transactions-backup.rlp` if exists; build arg vec (--color never --chain <chain_cfg_path> --datadir <data_dir> --http --http.port <el_port> --http.api eth,net,web3,miner --authrpc.port <auth_port> --authrpc.jwtsecret <jwt_path> --metrics <metrics_port> --engine.state-provider-metrics --disable-discovery --port <p2p_port> -vvv --txpool.pending-max-count 100000000 --txpool.queued-max-count 100000000 --txpool.max-account-slots 100000000 --txpool.pending-max-size 100 --txpool.queued-max-size 100 --db.read-transaction-timeout 0 [extra_args] [--websocket-url <fb_url> if Some]); spawn via ProcessHandle; poll `eth_chainId` until success (240s, 500ms interval); dial auth RPC with JWT. `stop()`: ProcessHandle.stop(), release 4 ports. `get_version()`: run `binary --version`, parse "Version: X.Y.Z". `set_head(block)`: call `debug_setHead` RPC.
-- [ ] 3.3 Implement `BuilderClient` in `src/client/mod.rs`: wraps `BaseRethNodeClient`. `run()`: acquire FlashblocksWebsocket port, append `--flashblocks.port <ws_port> --flashblocks.block-time <fb_ms> --rollup.chain-block-time <block_ms>` to inner args, call inner `run()`, create `FlashblocksClient(ws_port)`. `stop()`: stop flashblocks client, release ws port, call inner `stop()`. `supports_flashblocks()` = false. `flashblocks_client()` returns the WS client handle.
-- [ ] 3.4 Implement `setup_node()` fn: match `node_type` str → `Box<dyn ExecutionClient>` ("base-reth-node" → `BaseRethNodeClient`, "builder" → `BuilderClient`), open `el.log` in test dir, call `client.run()`, return boxed client.
-- [ ] 3.5 Tests: BaseRethNodeClient arg list construction. BuilderClient extra arg appending.
+- [x] 3.1 `ExecutionClient` trait, `ClientOptions`, `InternalClientOptions` in `src/client/mod.rs`
+- [x] 3.2 `BaseRethNodeClient` — 4 ports, full arg list, txpool backup cleanup, 240s RPC wait, SIGINT stop
+- [x] 3.3 `BuilderClient` — wraps inner, acquires flashblocks WS port, appends flashblocks flags
+- [x] 3.4 `setup_node()` dispatch fn — `"builder"` → `BuilderClient`, all others → `BaseRethNodeClient`
+- [x] 3.5 Tests — arg list completeness, websocket URL injection, builder default block time, dispatch. `FlashblocksClient` stub added to `src/flashblocks/mod.rs` (full impl in Phase 7)
+- 25 tests passing
 
 ## Phase 4: Consensus Clients [PENDING]
 

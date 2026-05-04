@@ -22,6 +22,15 @@ pub use process::ProcessHandle;
 mod snapshots;
 pub use snapshots::SnapshotManager;
 
+mod client;
+pub use client::{
+    setup_node, BuilderClient, BaseRethNodeClient, ClientOptions, ExecutionClient,
+    InternalClientOptions,
+};
+
+mod flashblocks;
+pub use flashblocks::FlashblocksClient;
+
 mod params;
 pub use params::{
     prefund_amount, BATCH_INBOX_ADDRESS, BATCHER_KEY, CHANNEL_TIMEOUT, DEFAULT_GAS_LIMIT,
