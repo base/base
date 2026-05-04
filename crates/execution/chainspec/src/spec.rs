@@ -636,7 +636,8 @@ mod tests {
         "isthmusTime": 53,
         "jovianTime": 54,
         "base": {
-          "v1": 55
+          "v1": 55,
+          "v2": 60
         },
         "optimism": {
           "eip1559Elasticity": 60,
@@ -674,6 +675,8 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Osaka, 98));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 54));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 55));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 59));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 60));
     }
 
     #[test]
@@ -865,7 +868,7 @@ mod tests {
                     (String::from("holoceneTime"), 0.into()),
                     (String::from("isthmusTime"), 0.into()),
                     (String::from("jovianTime"), 0.into()),
-                    (String::from("base"), serde_json::json!({ "v1": 0 })),
+                    (String::from("base"), serde_json::json!({ "v1": 0, "v2": 0 })),
                 ]
                 .into_iter()
                 .collect(),
@@ -906,6 +909,7 @@ mod tests {
             BaseUpgrade::Jovian.boxed(),
             EthereumHardfork::Osaka.boxed(),
             BaseUpgrade::Azul.boxed(),
+            BaseUpgrade::Beryl.boxed(),
         ];
 
         for (expected, actual) in expected_hardforks.iter().zip(hardforks.iter()) {

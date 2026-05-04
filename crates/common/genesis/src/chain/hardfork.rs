@@ -15,10 +15,7 @@ pub struct HardforkConfig {
     pub azul: Option<u64>,
     /// `beryl` sets the activation time for the Beryl network upgrade.
     /// Active if `beryl` != None && L2 block timestamp >= `Some(beryl)`, inactive otherwise.
-    #[cfg_attr(
-        feature = "serde",
-        serde(rename = "beryl", alias = "v2", skip_serializing_if = "Option::is_none")
-    )]
+    #[cfg_attr(feature = "serde", serde(alias = "v2", skip_serializing_if = "Option::is_none"))]
     pub beryl: Option<u64>,
 }
 
