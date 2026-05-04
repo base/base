@@ -139,6 +139,20 @@ pub struct ThroughputSample {
     pub gps: f64,
 }
 
+/// Range of block numbers in which test transactions were included.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BlockRange {
+    /// First block containing a confirmed test transaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_block: Option<u64>,
+    /// Last block containing a confirmed test transaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_block: Option<u64>,
+    /// Inclusive number of blocks spanned (`last_block - first_block + 1`),
+    /// or `0` when no test transactions were confirmed.
+    pub block_count: u64,
+}
+
 /// Aggregated flashblocks latency percentiles.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlashblocksLatencyMetrics {

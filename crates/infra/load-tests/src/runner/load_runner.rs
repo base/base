@@ -25,7 +25,10 @@ use futures::{
 use indicatif::{ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
 use revm::precompile::PrecompileId;
-use tokio::sync::{Semaphore, mpsc, watch};
+use tokio::{
+    sync::{Semaphore, mpsc, watch},
+    task::JoinSet,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -1009,6 +1012,7 @@ impl LoadRunner {
 
         let mut pending_batch: Vec<PreparedTx> = Vec::with_capacity(batch_size);
         let semaphore = Arc::new(Semaphore::new(SUBMIT_BATCH_CONCURRENCY));
+        let mut submit_tasks: JoinSet<()> = JoinSet::new();
         let providers = Arc::clone(&self.providers);
         let signers = Arc::clone(&self.signers);
         let nonce_managers = Arc::clone(&self.nonce_managers);
@@ -1219,7 +1223,7 @@ impl LoadRunner {
                 chain_id: self.config.chain_id,
                 max_gas_price: self.config.max_gas_price,
             };
-            tokio::spawn(async move {
+            submit_tasks.spawn(async move {
                 let _permit = permit;
                 let batch_len = batch.len();
                 match tokio::time::timeout(
@@ -1249,6 +1253,8 @@ impl LoadRunner {
                     }
                 }
             });
+
+            while submit_tasks.try_join_next().is_some() {}
         }
 
         if !pending_batch.is_empty() {
@@ -1294,7 +1300,7 @@ impl LoadRunner {
                     chain_id: self.config.chain_id,
                     max_gas_price: self.config.max_gas_price,
                 };
-                tokio::spawn(async move {
+                submit_tasks.spawn(async move {
                     let _permit = permit;
                     let batch_len = pending_batch.len();
                     match tokio::time::timeout(
@@ -1330,15 +1336,31 @@ impl LoadRunner {
             }
         }
 
-        match tokio::time::timeout(
-            SUBMIT_TASK_DEADLINE + Duration::from_secs(5),
-            Arc::clone(&semaphore).acquire_many_owned(SUBMIT_BATCH_CONCURRENCY as u32),
-        )
-        .await
-        {
-            Ok(Ok(all_permits)) => drop(all_permits),
-            Ok(Err(_)) => error!("submit batch semaphore closed during drain"),
-            Err(_) => warn!("timed out waiting for in-flight batch tasks to complete"),
+        let remaining = submit_tasks.len();
+        if remaining > 0 {
+            debug!(remaining, "draining in-flight submit tasks");
+            let drain_deadline = Instant::now() + SUBMIT_TASK_DEADLINE + Duration::from_secs(5);
+            while !submit_tasks.is_empty() {
+                let timeout_remaining = drain_deadline.saturating_duration_since(Instant::now());
+                if timeout_remaining.is_zero() {
+                    let abandoned = submit_tasks.len();
+                    warn!(abandoned, "timed out waiting for submit tasks, abandoning");
+                    submit_tasks.abort_all();
+                    break;
+                }
+                match tokio::time::timeout(timeout_remaining, submit_tasks.join_next()).await {
+                    Ok(Some(Ok(()))) => {}
+                    Ok(Some(Err(e))) if e.is_cancelled() => {}
+                    Ok(Some(Err(e))) => warn!(error = %e, "submit task panicked"),
+                    Ok(None) => break,
+                    Err(_) => {
+                        let abandoned = submit_tasks.len();
+                        warn!(abandoned, "timed out waiting for submit tasks, abandoning");
+                        submit_tasks.abort_all();
+                        break;
+                    }
+                }
+            }
         }
 
         // Close the channel so the drain below cannot miss late events.

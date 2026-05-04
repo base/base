@@ -1,6 +1,7 @@
 //! Discovery-only bootnode command.
 
 use std::{
+    fs,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     path::PathBuf,
 };
@@ -13,7 +14,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
 use base_consensus_peers::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
 use clap::Args;
-use discv5::{Config, ConfigBuilder, enr::k256};
+use discv5::{Config, ConfigBuilder, Enr, enr::k256};
 use eyre::Context;
 use libp2p::identity::Keypair;
 use tokio::time::Duration;
@@ -54,6 +55,28 @@ pub struct Bootnode {
     pub p2p: BootnodeP2PArgs,
 }
 
+/// Prints the deterministic ENR for a Base consensus bootnode.
+#[derive(Args, Clone, Debug)]
+pub struct BootnodeEnr {
+    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
+    #[arg(
+        long = "chain",
+        short = 'n',
+        global = true,
+        default_value = "8453",
+        env = "BASE_NODE_NETWORK"
+    )]
+    pub l2_chain_id: Chain,
+
+    /// L2 configuration file.
+    #[clap(flatten)]
+    pub l2_config: L2ConfigFile,
+
+    /// Bootnode P2P discovery arguments.
+    #[command(flatten)]
+    pub p2p: BootnodeP2PArgs,
+}
+
 impl Bootnode {
     /// Runs the CLI.
     pub fn run(self) -> eyre::Result<()> {
@@ -81,6 +104,7 @@ impl Bootnode {
         let driver = self.p2p.discovery_driver(chain_id)?;
         let (handler, mut discovered_enrs) = driver.start();
         let local_enr = handler.local_enr().await.wrap_err("discovery service stopped")?;
+        self.p2p.write_enr_output(&local_enr)?;
 
         info!(
             target: "rollup_node::bootnode",
@@ -100,6 +124,17 @@ impl Bootnode {
         }
 
         warn!(target: "rollup_node::bootnode", "Discovery ENR stream closed");
+        Ok(())
+    }
+}
+
+impl BootnodeEnr {
+    /// Runs the CLI.
+    pub fn run(self) -> eyre::Result<()> {
+        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+        let enr = self.p2p.local_enr(cfg.l2_chain_id.id())?;
+        self.p2p.write_enr_output(&enr)?;
+        println!("{enr}");
         Ok(())
     }
 }
@@ -169,6 +204,10 @@ pub struct BootnodeP2PArgs {
     /// Optionally remove random peers from discovery to rotate the peer set.
     #[arg(long = "p2p.discovery.randomize", env = "BASE_NODE_P2P_DISCOVERY_RANDOMIZE")]
     pub discovery_randomize: Option<u64>,
+
+    /// Path to write the local bootnode ENR after it is materialized.
+    #[arg(long = "p2p.enr-output", env = "BASE_NODE_P2P_ENR_OUTPUT")]
+    pub enr_output: Option<PathBuf>,
 }
 
 impl Default for BootnodeP2PArgs {
@@ -187,6 +226,7 @@ impl Default for BootnodeP2PArgs {
             disable_bootstore: false,
             bootnodes: Vec::new(),
             discovery_randomize: None,
+            enr_output: None,
         }
     }
 }
@@ -223,6 +263,35 @@ impl BootnodeP2PArgs {
         }
 
         builder.build().map_err(Into::into)
+    }
+
+    /// Builds the local bootnode ENR without starting the discovery service.
+    pub fn local_enr(&self, chain_id: u64) -> eyre::Result<Enr> {
+        let keypair = self.keypair(chain_id)?;
+        let local_node_key = Self::local_node_key(keypair)?;
+        self.advertised_node(local_node_key)
+            .build_enr(chain_id)
+            .map_err(|e| eyre::eyre!("Failed to build bootnode ENR: {e}"))
+    }
+
+    /// Writes the local ENR to `--p2p.enr-output`, if configured.
+    pub fn write_enr_output(&self, enr: &Enr) -> eyre::Result<()> {
+        let Some(path) = &self.enr_output else {
+            return Ok(());
+        };
+
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).wrap_err_with(|| {
+                format!("Failed to create ENR output directory {}", parent.display())
+            })?;
+        }
+
+        fs::write(path, format!("{enr}\n"))
+            .wrap_err_with(|| format!("Failed to write bootnode ENR to {}", path.display()))?;
+        info!(target: "rollup_node::bootnode", path = %path.display(), "Wrote bootnode ENR");
+        Ok(())
     }
 
     fn keypair(&self, chain_id: u64) -> eyre::Result<Keypair> {
@@ -330,6 +399,7 @@ mod tests {
     use std::{net::Ipv4Addr, path::PathBuf};
 
     use alloy_primitives::b256;
+    use base_consensus_peers::EnrValidation;
     use clap::Parser;
 
     use super::*;
@@ -399,6 +469,45 @@ mod tests {
     }
 
     #[test]
+    fn local_enr_uses_advertised_address_and_valid_chain_metadata() {
+        let p2p = BootnodeP2PArgs {
+            private_key: Some(b256!(
+                "1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be"
+            )),
+            advertise_ip: Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10))),
+            listen_tcp_port: 30303,
+            listen_udp_port: 30304,
+            ..Default::default()
+        };
+
+        let enr = p2p.local_enr(84538453).expect("ENR should build");
+
+        assert_eq!(enr.ip4(), Some(Ipv4Addr::new(192, 0, 2, 10)));
+        assert_eq!(enr.tcp4(), Some(30303));
+        assert_eq!(enr.udp4(), Some(30304));
+        assert!(EnrValidation::validate(&enr, 84538453).is_valid());
+    }
+
+    #[test]
+    fn writes_enr_output_file() {
+        let dir = tempfile::tempdir().expect("tempdir should be created");
+        let output = dir.path().join("nested").join("bootnode.enr");
+        let p2p = BootnodeP2PArgs {
+            private_key: Some(b256!(
+                "1d2b0bda21d56b8bd12d4f94ebacffdfb35f5e226f84b461103bb8beab6353be"
+            )),
+            enr_output: Some(output.clone()),
+            ..Default::default()
+        };
+        let enr = p2p.local_enr(84538453).expect("ENR should build");
+
+        p2p.write_enr_output(&enr).expect("ENR output should be written");
+
+        let written = std::fs::read_to_string(output).expect("ENR output should be readable");
+        assert_eq!(written, format!("{enr}\n"));
+    }
+
+    #[test]
     fn bootstore_defaults_to_chain_scoped_file() {
         let p2p = BootnodeP2PArgs::default();
 
@@ -430,5 +539,12 @@ mod tests {
         let err = p2p.bootnodes().expect_err("invalid bootnode should fail");
 
         assert!(err.to_string().contains("Failed to parse bootnode 'enr:invalid'"));
+    }
+
+    #[test]
+    fn parses_enr_output_path() {
+        let p2p = p2p_args(&["--p2p.enr-output", "/tmp/base-cl-bootnode.enr"]);
+
+        assert_eq!(p2p.enr_output, Some(PathBuf::from("/tmp/base-cl-bootnode.enr")));
     }
 }
