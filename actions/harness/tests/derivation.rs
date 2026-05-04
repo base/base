@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_signer_local::PrivateKeySigner;
 use base_action_harness::{
     ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
@@ -573,8 +574,9 @@ async fn batcher_key_rotation_accepts_new_batcher() {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
-    let batcher_b =
-        BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
+    let batcher_b_signer =
+        PrivateKeySigner::from_bytes(&B256::repeat_byte(0xBB)).expect("valid batcher B signer");
+    let batcher_b = batcher_a.clone().with_l1_signer(batcher_b_signer);
 
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a)
         .with_l1_system_config_address(l1_sys_cfg_addr)
@@ -1657,8 +1659,9 @@ async fn batcher_config_update_rolled_back_on_reorg() {
         encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
         ..BatcherConfig::default()
     };
-    let batcher_b =
-        BatcherConfig { batcher_address: Address::repeat_byte(0xBB), ..batcher_a.clone() };
+    let batcher_b_signer =
+        PrivateKeySigner::from_bytes(&B256::repeat_byte(0xBB)).expect("valid batcher B signer");
+    let batcher_b = batcher_a.clone().with_l1_signer(batcher_b_signer);
 
     let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_a)
         .with_l1_system_config_address(l1_sys_cfg_addr)
