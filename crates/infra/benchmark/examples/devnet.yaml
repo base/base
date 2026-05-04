@@ -1,0 +1,26 @@
+name: devnet-throughput
+description: Measures sequencer throughput on a fresh in-memory devnet
+
+block_time_ms: 2000
+num_blocks: 20
+
+transaction_payloads:
+  - id: erc20-transfers
+    payload_type: load-test
+    params:
+      sender_count: 50
+      funding_amount: "1000000000000000000"
+      transactions:
+        - weight: 1
+          tx_type: transfer
+
+benchmarks:
+  - node_type: reth
+    datadir: {}
+    metrics:
+      warning:
+        - metric: gas_per_block
+          min: 1000000
+      error:
+        - metric: gas_per_second
+          min: 500000
