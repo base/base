@@ -1,8 +1,8 @@
 # Guest binary name (hyphens become underscores in the compiled binary)
 guest := "base-proof-tee-nitro-verifier-guest"
 
-# Repo root: guest/ → nitro-attestation-prover/ → tee/ → proof/ → crates/ → <root>
-repo_root := canonicalize("../../../../..")
+# Repo root (resolved via git so the path doesn't break if the crate moves).
+repo_root := `git rev-parse --show-toplevel`
 
 # Cargo registry cache (defaults to ~/.cargo)
 cargo_home := env("CARGO_HOME", home_directory() / ".cargo")
