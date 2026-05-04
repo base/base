@@ -450,20 +450,17 @@ where
 
             // Extract per-transaction opcode and precompile gas, then reset for next tx.
             let inspector = builder.evm_mut().inspector_mut();
-            let opcode_data = inspector.take_opcode_inspector();
+            let opcode_data = inspector.take_opcode_gas();
             let precompile_data = inspector.take_precompile_gas();
 
-            let mut opcode_gas: Vec<OpcodeGas> = metered_opcodes
-                .opcodes
+            let mut opcode_gas: Vec<OpcodeGas> = opcode_data
                 .iter()
-                .filter_map(|&opcode| {
-                    let count = opcode_data.opcode_counts().get(&opcode).copied().unwrap_or(0);
-                    if count > 0 {
-                        let gas_used = opcode_data.opcode_gas().get(&opcode).copied().unwrap_or(0);
-                        Some(OpcodeGas { opcode: opcode.as_str().to_string(), count, gas_used })
-                    } else {
-                        None
-                    }
+                .filter(|(_, usage)| usage.count > 0)
+                .map(|(&(contract_address, opcode), usage)| OpcodeGas {
+                    contract_address,
+                    opcode: opcode.as_str().to_string(),
+                    count: usage.count,
+                    gas_used: usage.gas_used,
                 })
                 .collect();
 
@@ -472,12 +469,16 @@ where
                     && usage.count > 0
                 {
                     opcode_gas.push(OpcodeGas {
+                        contract_address: *addr,
                         opcode: name.clone(),
                         count: usage.count,
                         gas_used: usage.gas_used,
                     });
                 }
             }
+            opcode_gas.sort_by(|a, b| {
+                a.contract_address.cmp(&b.contract_address).then_with(|| a.opcode.cmp(&b.opcode))
+            });
 
             results.push(TransactionResult {
                 coinbase_diff: gas_fees,
@@ -826,8 +827,86 @@ mod tests {
         let sstore = tx_opcodes.iter().find(|o| o.opcode == "SSTORE");
         assert!(sstore.is_some(), "SSTORE should appear in opcode gas results");
         let sstore = sstore.unwrap();
+        assert_eq!(sstore.contract_address, contract_address);
         assert!(sstore.count > 0, "SSTORE count should be non-zero");
         assert!(sstore.gas_used > 0, "SSTORE gas_used should be non-zero");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn meter_bundle_opcode_gas_splits_by_contract() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+
+        let (deployment_tx_1, contract_address_1, _) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 0)?;
+        let (deployment_tx_2, contract_address_2, _) =
+            Account::Deployer.create_deployment_tx(SimpleStorage::BYTECODE.clone(), 1)?;
+        harness.build_block_from_transactions(vec![deployment_tx_1, deployment_tx_2]).await?;
+
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let tx_1 = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(contract_address_1)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(1) }.abi_encode())
+            .into_eip1559();
+        let tx_1 =
+            BaseTransactionSigned::Eip1559(tx_1.as_eip1559().expect("eip1559 transaction").clone());
+
+        let tx_2 = TransactionBuilder::default()
+            .signer(Account::Alice.signer_b256())
+            .chain_id(harness.chain_id())
+            .nonce(1)
+            .to(contract_address_2)
+            .gas_limit(100_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .input(SimpleStorage::setValueCall { v: U256::from(2) }.abi_encode())
+            .into_eip1559();
+        let tx_2 =
+            BaseTransactionSigned::Eip1559(tx_2.as_eip1559().expect("eip1559 transaction").clone());
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let parsed_bundle = create_parsed_bundle(vec![tx_1, tx_2])?;
+        let metered = MeteredOpcodes::parse(&["SSTORE".to_string()]).unwrap();
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: parsed_bundle,
+            header: header.clone(),
+            parent_beacon_block_root: header.parent_beacon_block_root(),
+            pending_state: None,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(metered),
+        })?;
+
+        assert_eq!(output.results.len(), 2);
+        let sstore_1 = output.results[0]
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE")
+            .expect("first contract should report SSTORE gas");
+        let sstore_2 = output.results[1]
+            .opcode_gas
+            .iter()
+            .find(|entry| entry.opcode == "SSTORE")
+            .expect("second contract should report SSTORE gas");
+
+        assert_eq!(sstore_1.contract_address, contract_address_1);
+        assert_eq!(sstore_2.contract_address, contract_address_2);
+        assert_ne!(sstore_1.contract_address, sstore_2.contract_address);
 
         Ok(())
     }
