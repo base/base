@@ -1,6 +1,6 @@
 ---
 status: in-progress
-phase: 6
+phase: 8
 updated: 2026-05-04
 ---
 
@@ -168,7 +168,7 @@ crates/infra/benchmark/
   - `stop()`: kill process, stop proxy, drop temp file (auto-deleted by `NamedTempFile`).
 - [ ] 5.5 Tests: proxy captures eth_sendRawTransaction (mock upstream). Proxy forwards other methods transparently.
 
-## Phase 6: Metrics [PENDING]
+## Phase 6: Metrics [COMPLETE]
 
 - [ ] 6.1 Implement Prometheus scraper in `src/metrics/mod.rs`: `async fn scrape(url: &str) -> Result<Vec<prometheus_parse::Sample>, BenchmarkError>`: HTTP GET, parse with `prometheus_parse::Scrape::parse()`.
 - [ ] 6.2 Implement `BlockMetrics` in `src/metrics/mod.rs`: `block_number: u64`, `timestamp: Instant`, `prev_metrics: HashMap<String, prometheus_parse::Sample>`, `execution_metrics: HashMap<String, f64>`. `update_prometheus_metric(&mut self, name: &str, current: &Sample)`: Histogram/Summary → `(sum-prev_sum)/(count-prev_count)`, skip if delta_count==0 (NaN guard); Gauge/Counter → raw value. `add_execution_metric(&mut self, name: &str, value: f64)`.
@@ -178,7 +178,7 @@ crates/infra/benchmark/
 - [ ] 6.6 Implement threshold checking: `check_thresholds(metrics: &[BlockMetrics], config: &MetricsConfig) -> Vec<ThresholdViolation>`. `pub struct ThresholdViolation { metric: String, value: f64, bound: f64, severity: Severity }`. Log: `warn!(metric = %name, value = %v, bound = %b, "metric threshold exceeded")`.
 - [ ] 6.7 Tests: BlockMetrics delta logic (Histogram, Gauge, NaN guard). Threshold checking (pass, warn, error).
 
-## Phase 7: Flashblocks [PENDING]
+## Phase 7: Flashblocks [COMPLETE]
 
 - [ ] 7.1 Import (do NOT redefine) `FlashblocksPayloadV1` and `ExecutionPayloadFlashblockDeltaV1` from `base-common-flashblocks`.
 - [ ] 7.2 Implement `FlashblocksClient` in `src/flashblocks/mod.rs`: `tokio-tungstenite` WS connect to builder's flashblocks port. Receive + deserialize `FlashblocksPayloadV1` messages. Store in `Arc<Mutex<HashMap<u64, Vec<FlashblocksPayloadV1>>>>` keyed by base block number. `get_flashblocks(block: u64) -> Vec<FlashblocksPayloadV1>`. `async stop()`: close WS.

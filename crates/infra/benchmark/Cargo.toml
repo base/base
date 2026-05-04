@@ -36,6 +36,7 @@ serde_json = { workspace = true, features = ["std"] }
 serde_yaml.workspace = true
 async-trait.workspace = true
 prometheus-parse.workspace = true
+futures.workspace = true
 tokio-tungstenite.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 base-jwt.workspace = true

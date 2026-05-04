@@ -48,7 +48,7 @@ mod payload;
 pub use payload::{LoadTestPayloadWorker, PayloadWorker};
 
 mod flashblocks;
-pub use flashblocks::FlashblocksClient;
+pub use flashblocks::{FlashblockReplayServer, FlashblocksClient};
 
 mod params;
 pub use params::{
