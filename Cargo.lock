@@ -3328,7 +3328,6 @@ dependencies = [
  "jsonrpsee",
  "miniz_oxide 0.9.1",
  "tokio",
- "tokio-util",
  "tracing",
  "url",
 ]
@@ -6350,6 +6349,7 @@ dependencies = [
  "base-metrics",
  "base-runtime",
  "clap",
+ "futures",
  "humantime",
  "metrics",
  "proptest",

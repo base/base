@@ -92,7 +92,7 @@ type ServiceDriver = BatchDriver<
     HybridBlockSource<Subscription, RpcPollingSource, TokioRuntime>,
     SimpleTxManager<RootProvider>,
     ServiceThrottle,
-    HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource>,
+    HybridL1HeadSource<L1Subscription, RpcL1HeadPollingSource, TokioRuntime>,
 >;
 
 /// A fully-initialised batcher ready to run the submission loop.
@@ -590,6 +590,7 @@ impl BatcherService {
             .await?,
         ));
         let l1_head_source = HybridL1HeadSource::new(
+            TokioRuntime::new(),
             l1_head_subscription,
             l1_head_poller,
             self.config.poll_interval,
@@ -628,10 +629,8 @@ impl BatcherService {
         // Spawn the safe-head poller. It polls `optimism_syncStatus` at the
         // configured interval and advances the watch when the safe L2 head
         // moves forward, allowing the encoder to prune confirmed blocks.
-        // Extract the raw token so the poller can use it before the runtime
-        // moves into the driver below.
         SafeHeadPoller::new(rollup_client, self.config.poll_interval, safe_head_tx)
-            .spawn(runtime.token().clone());
+            .spawn(runtime.clone());
 
         // Build the driver — all fallible setup is complete at this point.
         let mut driver = BatchDriver::new(

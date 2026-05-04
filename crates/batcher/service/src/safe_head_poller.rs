@@ -2,8 +2,8 @@
 
 use std::{future::Future, time::Duration};
 
+use base_runtime::{Runtime, TokioRuntime};
 use tokio::sync::watch;
-use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 /// Fetches the current safe L2 head block number from the rollup node.
@@ -32,8 +32,8 @@ impl SafeHeadProvider for jsonrpsee::http_client::HttpClient {
 /// When the safe head advances, it calls [`watch::Sender::send_if_modified`]
 /// so receivers are only woken when the value actually changes.
 ///
-/// Stops cleanly when the [`CancellationToken`] passed to [`run`](Self::run)
-/// is cancelled — at most one in-flight RPC call is waited for before exit.
+/// Stops cleanly when the runtime passed to [`run`](Self::run) is cancelled.
+/// At most one in-flight RPC call is waited for before exit.
 #[derive(Debug)]
 pub struct SafeHeadPoller<C: SafeHeadProvider> {
     provider: C,
@@ -54,13 +54,13 @@ impl<C: SafeHeadProvider> SafeHeadPoller<C> {
     /// Run the polling loop until `cancellation` fires.
     ///
     /// Cancellation is checked before every sleep, so the poller exits within
-    /// one poll interval of the token being cancelled.
-    pub async fn run(self, cancellation: CancellationToken) {
+    /// one poll interval of the runtime being cancelled.
+    pub async fn run<R: Runtime>(self, runtime: R) {
         loop {
             tokio::select! {
                 biased;
-                _ = cancellation.cancelled() => break,
-                _ = tokio::time::sleep(self.poll_interval) => {}
+                _ = runtime.cancelled() => break,
+                _ = runtime.sleep(self.poll_interval) => {}
             }
             match self.provider.safe_l2_number().await {
                 Ok(n) => {
@@ -81,8 +81,14 @@ impl<C: SafeHeadProvider> SafeHeadPoller<C> {
     }
 
     /// Spawn the polling loop as a background tokio task.
-    pub fn spawn(self, cancellation: CancellationToken) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(self.run(cancellation))
+    pub fn spawn(self, runtime: TokioRuntime) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(self.run(runtime))
+    }
+
+    /// Spawn the polling loop on an injected runtime.
+    pub fn spawn_with_runtime<R: Runtime>(self, runtime: R) {
+        let task_runtime = runtime.clone();
+        std::mem::drop(runtime.spawn(self.run(task_runtime)));
     }
 }
 
@@ -93,8 +99,11 @@ mod tests {
         time::Duration,
     };
 
+    use base_runtime::{
+        Cancellation, Clock, Spawner,
+        deterministic::{Config, Runner},
+    };
     use tokio::sync::watch;
-    use tokio_util::sync::CancellationToken;
 
     use super::{SafeHeadPoller, SafeHeadProvider};
 
@@ -125,87 +134,86 @@ mod tests {
 
     /// When the provider returns a higher block number, the watch channel must
     /// be updated and receivers notified.
-    #[tokio::test]
-    async fn poll_advances_watch_channel() {
-        let (tx, mut rx) = watch::channel(0u64);
-        let provider = MockProvider { values: Arc::new(Mutex::new(vec![5, 10])) };
-        let cancellation = CancellationToken::new();
+    #[test]
+    fn poll_advances_watch_channel() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (tx, mut rx) = watch::channel(0u64);
+            let provider = MockProvider { values: Arc::new(Mutex::new(vec![5, 10])) };
 
-        let poller = SafeHeadPoller::new(provider, Duration::from_millis(1), tx);
-        let handle = poller.spawn(cancellation.clone());
+            let poller = SafeHeadPoller::new(provider, Duration::from_secs(1), tx);
+            let handle = ctx.spawn(poller.run(ctx.clone()));
 
-        // Wait for at least one advance.
-        tokio::time::timeout(Duration::from_millis(200), rx.changed())
-            .await
-            .expect("watch should fire within 200 ms")
-            .expect("sender should still be alive");
+            rx.changed().await.expect("sender should still be alive");
 
-        cancellation.cancel();
-        handle.await.unwrap();
+            ctx.cancel();
+            handle.await.expect("poller task should stop");
 
-        assert!(*rx.borrow() >= 5, "safe head must have advanced to at least 5");
+            assert_eq!(*rx.borrow(), 5, "safe head must advance to first provider value");
+        });
     }
 
     /// When the cancellation token fires, the poller must exit within one poll
     /// interval. It must not leak as a background task.
-    #[tokio::test]
-    async fn cancellation_stops_poller() {
-        let (tx, _rx) = watch::channel(0u64);
-        let provider = MockProvider { values: Arc::new(Mutex::new(vec![])) };
-        let cancellation = CancellationToken::new();
+    #[test]
+    fn cancellation_stops_poller() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (tx, _rx) = watch::channel(0u64);
+            let provider = MockProvider { values: Arc::new(Mutex::new(vec![])) };
 
-        let poller = SafeHeadPoller::new(provider, Duration::from_millis(50), tx);
-        let handle = poller.spawn(cancellation.clone());
+            let poller = SafeHeadPoller::new(provider, Duration::from_secs(50), tx);
+            let handle = ctx.spawn(poller.run(ctx.clone()));
 
-        cancellation.cancel();
+            ctx.cancel();
 
-        tokio::time::timeout(Duration::from_millis(200), handle)
-            .await
-            .expect("poller must stop within 200 ms of cancellation")
-            .unwrap();
+            handle.await.expect("poller must stop after cancellation");
+        });
     }
 
     /// Provider errors must be logged and swallowed — the poller must keep
     /// running and not advance the watch channel.
-    #[tokio::test]
-    async fn provider_errors_are_non_fatal() {
-        let (tx, rx) = watch::channel(0u64);
-        let cancellation = CancellationToken::new();
+    #[test]
+    fn provider_errors_are_non_fatal() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (tx, rx) = watch::channel(0u64);
 
-        let poller = SafeHeadPoller::new(ErrorProvider, Duration::from_millis(1), tx);
-        let handle = poller.spawn(cancellation.clone());
+            let poller = SafeHeadPoller::new(ErrorProvider, Duration::from_secs(1), tx);
+            let handle = ctx.spawn(poller.run(ctx.clone()));
 
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        cancellation.cancel();
-        handle.await.unwrap();
+            ctx.sleep(Duration::from_secs(3)).await;
+            ctx.cancel();
+            handle.await.expect("poller task should stop");
 
-        assert_eq!(*rx.borrow(), 0, "watch must not advance when provider errors");
+            assert_eq!(*rx.borrow(), 0, "watch must not advance when provider errors");
+        });
     }
 
     /// When the provider returns the same or lower value, `send_if_modified`
     /// must not notify receivers. Check while the poller is still running
     /// (sender alive) so a dropped-sender signal cannot mask a missing change.
-    #[tokio::test]
-    async fn watch_not_notified_when_value_unchanged() {
-        let (tx, mut rx) = watch::channel(10u64);
-        // Mark the initial value as seen so `changed()` only fires on a new send.
-        let _ = rx.borrow_and_update();
+    #[test]
+    fn watch_not_notified_when_value_unchanged() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (tx, mut rx) = watch::channel(10u64);
+            // Mark the initial value as seen so `changed()` only fires on a new send.
+            let _ = rx.borrow_and_update();
 
-        // MockProvider with no queued values returns 0, which is < 10 (initial),
-        // so send_if_modified will always return false.
-        let provider = MockProvider { values: Arc::new(Mutex::new(vec![])) };
-        let cancellation = CancellationToken::new();
+            // MockProvider with no queued values returns 0, which is < 10 (initial),
+            // so send_if_modified will always return false.
+            let provider = MockProvider { values: Arc::new(Mutex::new(vec![])) };
 
-        let poller = SafeHeadPoller::new(provider, Duration::from_millis(1), tx);
-        let handle = poller.spawn(cancellation.clone());
+            let poller = SafeHeadPoller::new(provider, Duration::from_secs(1), tx);
+            let handle = ctx.spawn(poller.run(ctx.clone()));
+            let timeout_ctx = ctx.clone();
 
-        // Let the poller run multiple cycles, then check *before* cancelling so
-        // the sender is still alive and a Err(RecvError) cannot mask an absent change.
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        let changed = tokio::time::timeout(Duration::from_millis(5), rx.changed()).await;
-        assert!(changed.is_err(), "watch must not fire when safe head does not advance");
+            tokio::select! {
+                changed = rx.changed() => {
+                    panic!("watch fired without advancement: {changed:?}");
+                }
+                _ = timeout_ctx.sleep(Duration::from_secs(3)) => {}
+            }
 
-        cancellation.cancel();
-        handle.await.unwrap();
+            ctx.cancel();
+            handle.await.expect("poller task should stop");
+        });
     }
 }

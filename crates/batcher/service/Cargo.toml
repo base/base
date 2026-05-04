@@ -15,7 +15,6 @@ workspace = true
 url.workspace = true
 eyre.workspace = true
 futures.workspace = true
-tokio-util.workspace = true
 async-trait.workspace = true
 base-tx-manager.workspace = true
 base-batcher-core.workspace = true
@@ -49,4 +48,5 @@ httpmock.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 miniz_oxide.workspace = true
+base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

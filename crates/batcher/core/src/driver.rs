@@ -424,6 +424,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::VecDeque,
         sync::{
             Arc, Mutex,
             atomic::{AtomicU64, Ordering},
@@ -433,6 +434,9 @@ mod tests {
 
     use alloy_primitives::Address;
     use base_batcher_encoder::{BatchSubmission, DaType, SubmissionId};
+    use base_batcher_source::{
+        L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
+    };
     use base_blobs::BlobEncoder;
     use base_protocol::{ChannelId, Frame};
     use base_runtime::{
@@ -440,12 +444,61 @@ mod tests {
         deterministic::{Config, Runner},
     };
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
-    use tokio::sync::oneshot;
+    use tokio::sync::{mpsc, oneshot, watch};
 
-    use crate::test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager,
-        Recorded, SubmissionStub, TrackingPipeline,
+    use crate::{
+        AdminCommand, BatchDriver, BatchDriverConfig, DaThrottle, NoopThrottleClient,
+        ThrottleController,
+        event::DriverEvent,
+        test_utils::{
+            DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager,
+            NeverConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline,
+        },
     };
+
+    #[derive(Debug)]
+    struct QueuedSource {
+        events: VecDeque<Result<L2BlockEvent, SourceError>>,
+    }
+
+    impl QueuedSource {
+        fn new(events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>) -> Self {
+            Self { events: events.into_iter().collect() }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl UnsafeBlockSource for QueuedSource {
+        async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+            match self.events.pop_front() {
+                Some(event) => event,
+                None => std::future::pending().await,
+            }
+        }
+
+        fn reset_catchup(&mut self, _: u64) {}
+    }
+
+    #[derive(Debug)]
+    struct QueuedL1HeadSource {
+        events: VecDeque<Result<L1HeadEvent, SourceError>>,
+    }
+
+    impl QueuedL1HeadSource {
+        fn new(events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>) -> Self {
+            Self { events: events.into_iter().collect() }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl L1HeadSource for QueuedL1HeadSource {
+        async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
+            match self.events.pop_front() {
+                Some(event) => event,
+                None => std::future::pending().await,
+            }
+        }
+    }
 
     /// Build a [`BatchSubmission`] whose single frame exactly fills one blob payload,
     /// leaving no room for any additional frame alongside it.
@@ -459,6 +512,35 @@ mod tests {
             da_type: DaType::Blob,
             frames: vec![Arc::new(Frame { data: vec![0u8; data_len], ..Frame::default() })],
         }
+    }
+
+    fn driver_for_next_event<R: base_runtime::Runtime, TM: TxManager>(
+        runtime: R,
+        source_events: impl IntoIterator<Item = Result<L2BlockEvent, SourceError>>,
+        l1_events: impl IntoIterator<Item = Result<L1HeadEvent, SourceError>>,
+        tx_manager: TM,
+    ) -> BatchDriver<
+        R,
+        TrackingPipeline,
+        QueuedSource,
+        TM,
+        Arc<NoopThrottleClient>,
+        QueuedL1HeadSource,
+    > {
+        BatchDriver::new(
+            runtime,
+            TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
+            QueuedSource::new(source_events),
+            tx_manager,
+            BatchDriverConfig {
+                inbox: Address::ZERO,
+                max_pending_transactions: 1,
+                drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
+            },
+            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            QueuedL1HeadSource::new(l1_events),
+        )
     }
 
     #[derive(Debug, Default)]
@@ -501,6 +583,120 @@ mod tests {
         fn sender_address(&self) -> Address {
             Address::ZERO
         }
+    }
+
+    #[test]
+    fn next_event_prioritizes_cancellation_over_ready_admin() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (admin_tx, admin_rx) = mpsc::channel(1);
+            admin_tx.send(AdminCommand::Flush).await.expect("admin receiver should be open");
+
+            let mut driver = driver_for_next_event(
+                ctx.clone(),
+                [Ok(L2BlockEvent::Flush)],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .with_admin_rx(admin_rx);
+
+            ctx.cancel();
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::Shutdown));
+        });
+    }
+
+    #[test]
+    fn next_event_prioritizes_admin_before_source() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (admin_tx, admin_rx) = mpsc::channel(1);
+            admin_tx.send(AdminCommand::Flush).await.expect("admin receiver should be open");
+
+            let mut driver = driver_for_next_event(
+                ctx,
+                [Ok(L2BlockEvent::Block(Box::default()))],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .with_admin_rx(admin_rx);
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::Flush));
+        });
+    }
+
+    #[test]
+    fn next_event_prioritizes_source_before_receipts_and_heads() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (_safe_tx, safe_rx) = watch::channel(0);
+            let mut driver = driver_for_next_event(
+                ctx,
+                [Ok(L2BlockEvent::Flush)],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .with_safe_head_rx(safe_rx);
+            driver.pipeline.submissions.push_back(SubmissionStub::stub());
+            driver.submissions.submit_pending(&mut driver.pipeline).await;
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::Flush));
+        });
+    }
+
+    #[test]
+    fn next_event_prioritizes_receipts_before_l1_head_and_safe_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (safe_tx, safe_rx) = watch::channel(0);
+            safe_tx.send(5).expect("safe-head receiver should be open");
+
+            let mut driver = driver_for_next_event(
+                ctx,
+                [],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 42 },
+            )
+            .with_safe_head_rx(safe_rx);
+            driver.pipeline.submissions.push_back(SubmissionStub::stub());
+            driver.submissions.submit_pending(&mut driver.pipeline).await;
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::Receipt(_, _)));
+        });
+    }
+
+    #[test]
+    fn next_event_prioritizes_l1_head_before_safe_head() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (safe_tx, safe_rx) = watch::channel(0);
+            safe_tx.send(5).expect("safe-head receiver should be open");
+
+            let mut driver = driver_for_next_event(
+                ctx,
+                [],
+                [Ok(L1HeadEvent::NewHead(9))],
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .with_safe_head_rx(safe_rx);
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::L1Head(9)));
+        });
+    }
+
+    #[test]
+    fn next_event_returns_safe_head_when_only_safe_head_is_ready() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let (safe_tx, safe_rx) = watch::channel(0);
+            safe_tx.send(7).expect("safe-head receiver should be open");
+
+            let mut driver =
+                driver_for_next_event(ctx, [], [], ImmediateConfirmTxManager { l1_block: 1 })
+                    .with_safe_head_rx(safe_rx);
+
+            let event = driver.next_event().await.expect("next_event should succeed");
+            assert!(matches!(event, DriverEvent::SafeHead(7)));
+        });
     }
 
     /// `advance_l1_head` must be called with the confirmed L1 block on every
