@@ -57,11 +57,7 @@ impl<'a> MetricsAggregator<'a> {
             return BlockRange::default();
         };
         let (min, max) = iter.fold((first, first), |(lo, hi), b| (lo.min(b), hi.max(b)));
-        BlockRange {
-            first_block: Some(min),
-            last_block: Some(max),
-            block_count: max - min + 1,
-        }
+        BlockRange { first_block: Some(min), last_block: Some(max), block_count: max - min + 1 }
     }
 
     fn compute_block_latency(&self) -> LatencyMetrics {

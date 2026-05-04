@@ -25,8 +25,10 @@ use futures::{
 use indicatif::{ProgressBar, ProgressStyle};
 use parking_lot::RwLock;
 use revm::precompile::PrecompileId;
-use tokio::sync::{Semaphore, mpsc, watch};
-use tokio::task::JoinSet;
+use tokio::{
+    sync::{Semaphore, mpsc, watch},
+    task::JoinSet,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
 

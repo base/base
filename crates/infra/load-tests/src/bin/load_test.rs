@@ -207,10 +207,9 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
         println!("Gas: total={}  avg/tx={}", summary.gas.total_gas, summary.gas.avg_gas);
         let br = &summary.block_range;
         match (br.first_block, br.last_block) {
-            (Some(first), Some(last)) => println!(
-                "Blocks: first={first}  last={last}  span={} block(s)",
-                br.block_count
-            ),
+            (Some(first), Some(last)) => {
+                println!("Blocks: first={first}  last={last}  span={} block(s)", br.block_count)
+            }
             _ => println!("Blocks: no confirmed transactions"),
         }
         if !summary.top_failure_reasons.is_empty() {
