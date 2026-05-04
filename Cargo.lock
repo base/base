@@ -3541,6 +3541,7 @@ dependencies = [
  "reqwest 0.13.2",
  "rstest",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",

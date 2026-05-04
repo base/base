@@ -1,6 +1,7 @@
 //! P2P CLI Flags
 
 use std::{
+    fs,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     num::ParseIntError,
     path::PathBuf,
@@ -19,7 +20,7 @@ use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLev
 use base_consensus_providers::AlloyChainProvider;
 use clap::Parser;
 use discv5::enr::k256;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use libp2p::identity::Keypair;
 use tokio::time::Duration;
 use tracing::{error, info, warn};
@@ -201,6 +202,12 @@ pub struct P2PArgs {
     /// An optional list of bootnode ENRs or node records to start the node with.
     #[arg(long = "p2p.bootnodes", value_delimiter = ',', env = "BASE_NODE_P2P_BOOTNODES")]
     pub bootnodes: Vec<String>,
+
+    /// Path to a file containing bootnode ENRs or node records.
+    ///
+    /// Entries may be separated by newlines or commas.
+    #[arg(long = "p2p.bootnodes-file", env = "BASE_NODE_P2P_BOOTNODES_FILE")]
+    pub bootnodes_file: Option<PathBuf>,
 
     /// Optionally enable topic scoring.
     ///
@@ -479,6 +486,16 @@ impl P2PArgs {
         let unsafe_block_signer =
             self.unsafe_block_signer(l2_chain_id, config, l1_rpc, genesis_signer).await?;
 
+        let bootnodes = self
+            .bootnode_strings()?
+            .into_iter()
+            .map(|bootnode| {
+                BootNode::parse_bootnode(&bootnode)
+                    .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))
+            })
+            .collect::<Result<Vec<BootNode>>>()?
+            .into();
+
         let bootstore =
             if self.disable_bootstore {
                 None
@@ -488,16 +505,6 @@ impl P2PArgs {
                     BootStoreFile::Custom,
                 ))
             };
-
-        let bootnodes = self
-            .bootnodes
-            .iter()
-            .map(|bootnode| {
-                BootNode::parse_bootnode(bootnode)
-                    .map_err(|e| eyre::eyre!("Failed to parse bootnode '{bootnode}': {e}"))
-            })
-            .collect::<Result<Vec<BootNode>>>()?
-            .into();
 
         Ok(NetworkConfig {
             discovery_config,
@@ -549,6 +556,24 @@ impl P2PArgs {
         };
 
         base_consensus_peers::SecretKeyLoader::load(key_path).map_err(|e| eyre::eyre!(e))
+    }
+
+    fn bootnode_strings(&self) -> Result<Vec<String>> {
+        let mut bootnodes = self.bootnodes.clone();
+
+        if let Some(path) = &self.bootnodes_file {
+            let contents = fs::read_to_string(path)
+                .wrap_err_with(|| format!("Failed to read bootnodes file {}", path.display()))?;
+            bootnodes.extend(
+                contents
+                    .split([',', '\n'])
+                    .map(str::trim)
+                    .filter(|bootnode| !bootnode.is_empty())
+                    .map(ToOwned::to_owned),
+            );
+        }
+
+        Ok(bootnodes)
     }
 }
 
@@ -732,6 +757,36 @@ mod tests {
                 "enr:-J64QBbwPjPLZ6IOOToOLsSjtFUjjzN66qmBZdUexpO32Klrc458Q24kbty2PdRaLacHM5z-cZQr8mjeQu3pik6jPSOGAYYFIqBfgmlkgnY0gmlwhDaRWFWHb3BzdGFja4SzlAUAiXNlY3AyNTZrMaECmeSnJh7zjKrDSPoNMGXoopeDF4hhpj5I0OsQUUt4u8uDdGNwgiQGg3VkcIIkBg",
             ]
         );
+    }
+
+    #[test]
+    fn test_p2p_args_bootnodes_file() {
+        let args = MockCommand::parse_from(["test", "--p2p.bootnodes-file", "/tmp/bootnodes.txt"]);
+
+        assert_eq!(args.p2p.bootnodes_file, Some(PathBuf::from("/tmp/bootnodes.txt")));
+    }
+
+    #[test]
+    fn test_p2p_bootnode_strings_reads_file_entries() {
+        let file = tempfile::NamedTempFile::new().expect("bootnode file should be created");
+        std::fs::write(
+            file.path(),
+            "enode://ca2774c3c401325850b2477fd7d0f27911efbf79b1e8b335066516e2bd8c4c9e0ba9696a94b1cb030a88eac582305ff55e905e64fb77fe0edcd70a4e5296d3ec@34.65.175.185:30305,\n\
+             enode://dd751a9ef8912be1bfa7a5e34e2c3785cc5253110bd929f385e07ba7ac19929fb0e0c5d93f77827291f4da02b2232240fbc47ea7ce04c46e333e452f8656b667@34.65.107.0:30305\n",
+        )
+        .expect("bootnode file should be written");
+        let args = MockCommand::parse_from([
+            "test",
+            "--p2p.bootnodes",
+            "enode://2bd2e657bb3c8efffb8ff6db9071d9eb7be70d7c6d7d980ff80fc93b2629675c5f750bc0a5ef27cd788c2e491b8795a7e9a4a6e72178c14acc6753c0e5d77ae4@34.65.205.244:30305",
+            "--p2p.bootnodes-file",
+            file.path().to_str().expect("temp path should be utf8"),
+        ]);
+
+        let bootnodes = args.p2p.bootnode_strings().expect("bootnodes should load");
+
+        assert_eq!(bootnodes.len(), 3);
+        assert!(bootnodes.iter().all(|bootnode| bootnode.starts_with("enode://")));
     }
 
     #[tokio::test]
