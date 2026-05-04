@@ -151,7 +151,7 @@ impl EthereumHardforks for RollupConfig {
             // Isthmus activates Prague; cascade through later Base upgrades if unset.
             cascade(&[self.hardforks.isthmus_time, self.hardforks.jovian_time])
         } else if fork <= EthereumHardfork::Osaka {
-            cascade(&[self.hardforks.base.azul, self.hardforks.base.beryl])
+            self.hardforks.base.azul.map(ForkCondition::Timestamp).unwrap_or(ForkCondition::Never)
         } else {
             ForkCondition::Never
         }
@@ -810,13 +810,10 @@ mod tests {
         assert!(cfg.is_base_azul_active(800));
         assert!(cfg.is_beryl_active(800));
 
-        // Azul unset → Osaka cascades to beryl_time.
+        // Beryl requires Azul, and does not independently activate Osaka.
         let mut cfg = RollupConfig::default();
         cfg.hardforks.base = HardforkConfig { azul: None, beryl: Some(800) };
-        assert_eq!(
-            cfg.ethereum_fork_activation(EthereumHardfork::Osaka),
-            ForkCondition::Timestamp(800)
-        );
+        assert_eq!(cfg.ethereum_fork_activation(EthereumHardfork::Osaka), ForkCondition::Never);
 
         // Jovian set but Azul unset → Osaka is Never.
         let mut cfg = RollupConfig::default();
