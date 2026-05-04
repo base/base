@@ -9,6 +9,8 @@ cargo_home := env("CARGO_HOME", home_directory() / ".cargo")
 
 # Remap absolute paths so the ELF (and image ID) is identical regardless of
 # where the repo is checked out or where the Cargo registry lives.
+# NOTE: repo_root and cargo_home must not contain spaces — rustc splits
+# RUSTFLAGS on whitespace, which would break the remap arguments.
 remap_flags := "--remap-path-prefix=" + repo_root + "=/build --remap-path-prefix=" + cargo_home + "=/registry"
 
 # Default recipe to display help information
