@@ -1,6 +1,6 @@
 ---
-status: not-started
-phase: 1
+status: in-progress
+phase: 3
 updated: 2026-05-04
 ---
 
@@ -85,7 +85,7 @@ crates/infra/benchmark/
 
 > **AGENTS.md rules applied:** Each `mod foo; pub use foo::*;` grouped together in lib.rs. No `pub mod` except test utils. All types `pub`. No logic in lib.rs. Binary contains only glue. `mod.rs` files begin with `//!` doc comment. Structured tracing with key=value fields.
 
-## Phase 1: Crate Scaffold, Config & Error Types [PENDING]
+## Phase 1: Crate Scaffold, Config & Error Types [COMPLETE]
 
 - [ ] 1.1 Create `Cargo.toml`: workspace deps (`clap`, `tokio`, `serde`, `serde_yaml`, `serde_json`, `tracing`, `tracing-subscriber`, `rand`, `thiserror`, `eyre`, `alloy`, `reqwest`, `axum`, `tokio-tungstenite`, `flate2`, `sha2`, `nix`, `prometheus-parse`, `base-consensus-engine`, `base-jwt`, `base-common-genesis`, `base-common-flashblocks`, `base-common-consensus`, `base-common-evm`, `base-test-utils`). `[[bin]] name = "base-bench" path = "src/bin/base_bench.rs"`. `[lints] workspace = true`.
 - [ ] 1.2 Create `src/error.rs`: `BenchmarkError` enum with variants: `Config(String)`, `Io(#[from] std::io::Error)`, `Client(String)`, `EngineApi(String)`, `Metrics(String)`, `Proxy(String)`, `Snapshot(String)`, `Timeout(String)`, `ProcessCrash { binary: String, exit_code: Option<i32> }`. All Display via thiserror.
@@ -97,13 +97,13 @@ crates/infra/benchmark/
 - [ ] 1.8 Implement CLI in `src/bin/base_bench.rs`: `#[derive(Parser)] struct Cli` with `--config: PathBuf`, `--root-dir: PathBuf`, `--output-dir: PathBuf`, `--benchmark-run-id: Option<String>`, `--reth-bin: Option<PathBuf>` (default: sibling exe / "base-reth-node"), `--builder-bin: Option<PathBuf>` (default: sibling exe / "base-builder"), `--load-test-bin: Option<PathBuf>` (default: sibling exe / "base-load-test"), `--machine-type: Option<String>`, `--machine-provider: Option<String>`, `--machine-region: Option<String>`, `--file-system: Option<String>`. Env: `#[arg(env = "BASE_BENCH_CONFIG")]` etc.
 - [ ] 1.9 Tests: config deserialization round-trip, matrix expansion (0 vars, 1 var, 2+ vars, >100 error), params const sanity checks.
 
-## Phase 2: Infrastructure Utilities [PENDING]
+## Phase 2: Infrastructure Utilities [COMPLETE]
 
-- [ ] 2.1 Implement `PortManager` in `src/ports.rs`: `Arc<Mutex<HashSet<u16>>>` tracking in-use ports. `acquire() -> Result<u16>`: scan 10000–65535, `TcpListener::bind(("127.0.0.1", port))` probe, skip already-acquired. `release(port: u16)`. `acquire_n(n: usize) -> Result<Vec<u16>>`. Note: diverges from workspace ephemeral pattern because child processes need explicit port numbers in their CLI args.
-- [ ] 2.2 Implement `ProcessHandle` in `src/process.rs`: `new(binary: PathBuf, args: Vec<String>, env: Vec<(String, String)>, stdout_file: File, stderr_file: File) -> Self`. `async start(&mut self) -> Result<()>`: spawn via `tokio::process::Command`, pipe stdout/stderr to files, log `info!(pid = %pid, binary = %name, "process started")`. `async stop(&mut self) -> Result<()>`: send SIGINT via `nix::sys::signal::kill(Pid::from_raw(pid), Signal::SIGINT)`, `tokio::time::timeout(5s, child.wait())`, escalate to `child.kill()` (SIGKILL) on timeout. `async wait(&mut self) -> Result<ExitStatus>`. On unexpected non-zero exit: return `Err(BenchmarkError::ProcessCrash { binary, exit_code })`.
-- [ ] 2.3 Implement `SnapshotManager` in `src/snapshots.rs`: `HashMap<(String, String, String), PathBuf>` cache keyed by `(node_type, role, sha256(command)[:12]hex)`. `async ensure_snapshot(config: &DatadirConfig, snapshot: &SnapshotConfig, node_type: &str, role: &str) -> Result<PathBuf>`: if explicit path in config use directly; else compute cache key, check cache, if miss or `force_clean` run external script via `ProcessHandle` with args `[node_type, snapshot_path]`, cache result.
-- [ ] 2.4 Implement output helpers in `src/output.rs`: `create_run_dir(output_dir, run_id, test_id, index) -> Result<PathBuf>`. `write_tags_json(dir, tags)`. `write_result_json(dir, role, test_name, success, error: Option<&str>)`. `gzip_file(src, dest)` via `flate2::write::GzEncoder`. `copy_metrics(src, role)` — rename `metrics.json` → `metrics-<role>.json`. `dump_log_tail(path, max_bytes)` — last 1MB to stderr. `random_id() -> String` — `hex::encode(rand::random::<[u8; 8]>())`.
-- [ ] 2.5 Tests: PortManager acquire/release/acquire_n. ProcessHandle start/stop (sleep binary). SnapshotManager with test script. Output dir creation and gzip round-trip.
+- [x] 2.1 `PortManager` in `src/ports.rs` — acquire/release/acquire_n, TcpListener::bind probe
+- [x] 2.2 `ProcessHandle` in `src/process.rs` — SIGINT + 5s grace + SIGKILL, structured tracing
+- [x] 2.3 `SnapshotManager` in `src/snapshots.rs` — sha256(command)[:12] cache, force_clean, explicit path passthrough
+- [x] 2.4 Output helpers in `src/output.rs` — gzip, write_result_json, dump_log_tail, random_id (shipped in Phase 1)
+- [x] 2.5 Tests — 20 tests total passing (ports ×5, snapshots ×6, output ×2, config ×4, matrix ×3)
 
 ## Phase 3: Client Abstraction [PENDING]
 

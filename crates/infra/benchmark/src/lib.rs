@@ -13,6 +13,15 @@ pub use error::BenchmarkError;
 mod output;
 pub use output::random_id;
 
+mod ports;
+pub use ports::PortManager;
+
+mod process;
+pub use process::ProcessHandle;
+
+mod snapshots;
+pub use snapshots::SnapshotManager;
+
 mod params;
 pub use params::{
     prefund_amount, BATCH_INBOX_ADDRESS, BATCHER_KEY, CHANNEL_TIMEOUT, DEFAULT_GAS_LIMIT,
