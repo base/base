@@ -137,7 +137,9 @@ impl BaseChainSpec {
             "base-zeronet" => ChainConfig::zeronet(),
             _ => return None,
         };
-        Self::try_from(cfg).ok().map(Arc::new)
+        Some(Arc::new(
+            Self::try_from(cfg).expect("recognized Base chain config must build a valid chainspec"),
+        ))
     }
 
     /// Activates or updates the given hardfork condition in-place.
