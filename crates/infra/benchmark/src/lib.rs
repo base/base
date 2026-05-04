@@ -41,6 +41,12 @@ pub use metrics::{
     UPDATE_FORK_CHOICE_LATENCY,
 };
 
+mod proxy;
+pub use proxy::run_proxy;
+
+mod payload;
+pub use payload::{LoadTestPayloadWorker, PayloadWorker};
+
 mod flashblocks;
 pub use flashblocks::FlashblocksClient;
 

@@ -1,6 +1,6 @@
 ---
 status: in-progress
-phase: 5
+phase: 6
 updated: 2026-05-04
 ---
 
@@ -143,7 +143,7 @@ crates/infra/benchmark/
 - [ ] 4.4 Implement `FakeMempool` in `src/consensus/mod.rs`: `Arc<Mutex<VecDeque<Bytes>>>`. `add_transactions(txs: Vec<Bytes>)`. `drain() -> Vec<Bytes>`: take all, move deposit txs (first byte == 0x7E) to front of returned vec.
 - [ ] 4.5 Tests: FakeMempool drain ordering (deposits first). Payload attributes generation (L1BlockInfo encoding, EIP-1559 params).
 
-## Phase 5: Payload Worker [PENDING]
+## Phase 5: Payload Worker [COMPLETE]
 
 - [ ] 5.1 Implement JSON-RPC proxy in `src/proxy.rs`: Axum HTTP server on port from `PortManager`. `POST /` handler:
   - Parse JSON body, inspect `method` field
