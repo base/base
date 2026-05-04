@@ -289,6 +289,7 @@ impl ExecutionClient for BaseRethNodeClient {
 /// flashblocks for a connected validator or replay server.
 pub struct BuilderClient {
     inner: BaseRethNodeClient,
+    builder_bin: PathBuf,
     flashblocks_client: Option<FlashblocksClient>,
     flashblocks_port: Option<u16>,
     block_time_ms: u64,
@@ -304,9 +305,11 @@ impl BuilderClient {
         block_time_ms: u64,
     ) -> Self {
         let fb_block_time = options.flashblocks_block_time_ms.unwrap_or(block_time_ms / 4);
+        let builder_bin = options.builder_bin.clone();
         let inner = BaseRethNodeClient::new(options, internal, port_manager, None);
         Self {
             inner,
+            builder_bin,
             flashblocks_client: None,
             flashblocks_port: None,
             block_time_ms,
@@ -320,6 +323,8 @@ impl ExecutionClient for BuilderClient {
     async fn run(&mut self) -> Result<(), BenchmarkError> {
         let ws_port = self.inner.port_manager.acquire()?;
         self.flashblocks_port = Some(ws_port);
+
+        self.inner.options.reth_bin = self.builder_bin.clone();
 
         self.inner.options.extra_args.extend([
             "--flashblocks.port".into(),

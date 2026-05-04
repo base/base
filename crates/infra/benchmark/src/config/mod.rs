@@ -14,6 +14,8 @@ pub struct BenchmarkConfig {
     pub description: Option<String>,
     pub block_time_ms: u64,
     pub num_blocks: u64,
+    pub gas_limit: Option<u64>,
+    pub rollup_config: Option<PathBuf>,
     pub parallel_tx_batches: Option<u64>,
     pub flashblocks: Option<FlashblocksConfig>,
     pub transaction_payloads: Vec<TransactionPayloadDef>,
@@ -216,6 +218,8 @@ mod tests {
                 tags: HashMap::new(),
                 variables: vec![],
             }],
+            gas_limit: None,
+            rollup_config: None,
         }
     }
 

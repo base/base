@@ -78,7 +78,8 @@ impl FakeMempool {
 type EngineClient = BaseEngineClient<RootProvider, RootProvider<Base>>;
 
 /// Thin wrapper over [`BaseEngineClient`] providing timeout-bounded Engine API
-/// calls and head tracking.
+/// calls and head tracking. Always uses the latest Engine API versions
+/// (FCU V3, getPayload V5, newPayload V4).
 pub struct BaseConsensusClient {
     engine: EngineClient,
     pub head_block_hash: B256,
@@ -103,7 +104,46 @@ impl BaseConsensusClient {
         Ok(Self { engine, head_block_hash: B256::ZERO, head_block_number: 0, head_block_timestamp: 0 })
     }
 
-    /// `engine_forkchoiceUpdatedV3` with a 10-second timeout.
+    /// Fetch the genesis block from `rpc_url` and seed head state from it.
+    pub async fn init_from_genesis(&mut self, rpc_url: &str) -> Result<(), BenchmarkError> {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "eth_getBlockByNumber",
+            "params": ["0x0", false],
+            "id": 1,
+        });
+        let resp: serde_json::Value = reqwest::Client::new()
+            .post(rpc_url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| BenchmarkError::EngineApi(format!("get genesis block failed: {e}")))?
+            .json()
+            .await
+            .map_err(|e| BenchmarkError::EngineApi(format!("get genesis block parse failed: {e}")))?;
+
+        let result = resp
+            .get("result")
+            .ok_or_else(|| BenchmarkError::EngineApi("genesis block: missing result".into()))?;
+        let hash: B256 = result["hash"]
+            .as_str()
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| BenchmarkError::EngineApi("genesis block: missing hash".into()))?;
+        let number: u64 = result["number"]
+            .as_str()
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            .ok_or_else(|| BenchmarkError::EngineApi("genesis block: missing number".into()))?;
+        let timestamp: u64 = result["timestamp"]
+            .as_str()
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            .ok_or_else(|| BenchmarkError::EngineApi("genesis block: missing timestamp".into()))?;
+
+        self.head_block_hash = hash;
+        self.head_block_number = number;
+        self.head_block_timestamp = timestamp;
+        Ok(())
+    }
+
     pub async fn update_fork_choice(
         &mut self,
         attrs: Option<BasePayloadAttributes>,
@@ -118,12 +158,11 @@ impl BaseConsensusClient {
             self.engine.fork_choice_updated_v3(state, attrs),
         )
         .await
-        .map_err(|_| BenchmarkError::Timeout("fork_choice_updated_v3 timed out".into()))?
-        .map_err(|e| BenchmarkError::EngineApi(format!("fork_choice_updated_v3 failed: {e}")))?;
+        .map_err(|_| BenchmarkError::Timeout("fork_choice_updated timed out".into()))?
+        .map_err(|e| BenchmarkError::EngineApi(format!("fork_choice_updated failed: {e}")))?;
         Ok(result.payload_id)
     }
 
-    /// `engine_getPayloadV4` with a 240-second timeout.
     pub async fn get_built_payload(
         &self,
         payload_id: PayloadId,
@@ -133,12 +172,11 @@ impl BaseConsensusClient {
             self.engine.get_payload_v4(payload_id),
         )
         .await
-        .map_err(|_| BenchmarkError::Timeout("get_payload_v4 timed out".into()))?
-        .map_err(|e| BenchmarkError::EngineApi(format!("get_payload_v4 failed: {e}")))?;
+        .map_err(|_| BenchmarkError::Timeout("get_payload timed out".into()))?
+        .map_err(|e| BenchmarkError::EngineApi(format!("get_payload failed: {e}")))?;
         Ok(envelope.execution_payload)
     }
 
-    /// `engine_newPayloadV4` with a 30-second timeout. Updates head on success.
     pub async fn new_payload(
         &mut self,
         payload: BaseExecutionPayloadV4,
@@ -153,8 +191,8 @@ impl BaseConsensusClient {
             self.engine.new_payload_v4(payload, beacon_root),
         )
         .await
-        .map_err(|_| BenchmarkError::Timeout("new_payload_v4 timed out".into()))?
-        .map_err(|e| BenchmarkError::EngineApi(format!("new_payload_v4 failed: {e}")))?;
+        .map_err(|_| BenchmarkError::Timeout("new_payload timed out".into()))?
+        .map_err(|e| BenchmarkError::EngineApi(format!("new_payload failed: {e}")))?;
 
         self.head_block_hash = block_hash;
         self.head_block_number = block_number;
@@ -189,7 +227,8 @@ impl SequencerConsensusClient {
         self.batch_send_txs(&txs).await?;
         let send_latency = send_start.elapsed();
 
-        let attrs = self.build_payload_attributes(gas_limit)?;
+        let next_timestamp = self.base.head_block_timestamp + 1;
+        let attrs = self.build_payload_attributes(gas_limit, next_timestamp)?;
 
         let fcu_start = Instant::now();
         let payload_id = self
@@ -259,10 +298,8 @@ impl SequencerConsensusClient {
         Ok(())
     }
 
-    fn build_payload_attributes(&self, gas_limit: u64) -> Result<BasePayloadAttributes, BenchmarkError> {
-        let timestamp = self.base.head_block_timestamp + 1;
+    fn build_payload_attributes(&self, gas_limit: u64, timestamp: u64) -> Result<BasePayloadAttributes, BenchmarkError> {
         let beacon_root = fake_beacon_root();
-
         let deposit_tx = build_l1_info_deposit_tx();
 
         Ok(BasePayloadAttributes {
@@ -337,10 +374,6 @@ impl SyncingConsensusClient {
     }
 }
 
-/// Construct an all-zero L1 block info deposit transaction (Jovian format).
-///
-/// Required in every payload's transaction list. Since the benchmark has no
-/// real L1 chain, all L1 fields are zero.
 fn build_l1_info_deposit_tx() -> Bytes {
     use alloy_rlp::Encodable;
 

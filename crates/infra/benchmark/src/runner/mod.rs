@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use alloy_rpc_types_engine::JwtSecret;
+use base_common_genesis::RollupConfig;
 use reqwest::Url;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -100,8 +101,24 @@ impl NetworkBenchmark {
             flashblocks_block_time_ms,
         };
 
-        let metrics_port = self.port_manager.acquire()?;
-        let chain_cfg_path = test_dir.path().join("rollup.json");
+        let chain_cfg_path = test_dir.path().join("genesis.json");
+        let rollup_cfg_path = test_dir.path().join("rollup.json");
+        if let Some(src) = self.config.rollup_config.as_ref() {
+            tokio::fs::copy(src, &rollup_cfg_path)
+                .await
+                .map_err(BenchmarkError::Io)?;
+            let raw = tokio::fs::read_to_string(&rollup_cfg_path)
+                .await
+                .map_err(BenchmarkError::Io)?;
+            let rollup: RollupConfig = serde_json::from_str(&raw)
+                .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?;
+            let genesis_json = genesis_json_from_rollup_config(&rollup);
+            let genesis_str = serde_json::to_string_pretty(&genesis_json)
+                .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
+            tokio::fs::write(&chain_cfg_path, genesis_str)
+                .await
+                .map_err(BenchmarkError::Io)?;
+        }
 
         let internal_options = InternalClientOptions {
             jwt_secret_path: jwt_path,
@@ -161,15 +178,28 @@ impl NetworkBenchmark {
             BenchmarkError::Config(format!("invalid auth url: {}", node.auth_rpc_url()))
         })?;
 
+        let rollup_cfg: Arc<RollupConfig> = if rollup_cfg_path.exists() {
+            let raw = tokio::fs::read_to_string(&rollup_cfg_path)
+                .await
+                .map_err(BenchmarkError::Io)?;
+            Arc::new(
+                serde_json::from_str(&raw)
+                    .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?,
+            )
+        } else {
+            Arc::new(RollupConfig::default())
+        };
+
         let jwt = JwtSecret::from_hex(hex::encode(JWT_SECRET))
             .map_err(|e| BenchmarkError::Config(format!("jwt error: {e}")))?;
-        let base = BaseConsensusClient::connect(auth_url, jwt, Default::default()).await?;
+        let mut base = BaseConsensusClient::connect(auth_url, jwt, rollup_cfg).await?;
+        base.init_from_genesis(node.rpc_url()).await?;
         let mut sequencer = SequencerConsensusClient::new(base, node.rpc_url().to_owned());
 
-        let mut metrics_collector = MetricsCollector::new(metrics_port);
+        let mut metrics_collector = MetricsCollector::new(node.metrics_port());
 
         let block_time = std::time::Duration::from_millis(self.config.block_time_ms);
-        let gas_limit = 30_000_000u64;
+        let gas_limit = self.config.gas_limit.unwrap_or(30_000_000);
 
         worker.start().await?;
 
@@ -187,7 +217,6 @@ impl NetworkBenchmark {
         node.stop().await?;
 
         self.port_manager.release(proxy_port);
-        self.port_manager.release(metrics_port);
 
         let violations = if let Some(mc) = &run.definition.metrics {
             check_thresholds(&block_metrics_vec, mc)
@@ -212,6 +241,58 @@ pub struct RunResult {
     pub id: String,
     pub block_metrics: Vec<BlockMetrics>,
     pub violations: Vec<ThresholdViolation>,
+}
+
+fn genesis_json_from_rollup_config(rollup: &RollupConfig) -> serde_json::Value {
+    let chain_id = rollup.l2_chain_id.id();
+    let timestamp = rollup.genesis.l2_time;
+
+    let mut config = serde_json::json!({
+        "chainId": chain_id,
+        "homesteadBlock": 0,
+        "eip150Block": 0,
+        "eip155Block": 0,
+        "eip158Block": 0,
+        "byzantiumBlock": 0,
+        "constantinopleBlock": 0,
+        "petersburgBlock": 0,
+        "istanbulBlock": 0,
+        "muirGlacierBlock": 0,
+        "berlinBlock": 0,
+        "londonBlock": 0,
+        "mergeForkBlock": 0,
+        "terminalTotalDifficulty": 0,
+        "terminalTotalDifficultyPassed": true,
+    });
+
+    macro_rules! set_if_some {
+        ($key:expr, $val:expr) => {
+            if let Some(v) = $val {
+                config[$key] = serde_json::json!(v);
+            }
+        };
+    }
+
+    set_if_some!("regolithTime", rollup.hardforks.regolith_time);
+    set_if_some!("canyonTime", rollup.hardforks.canyon_time);
+    set_if_some!("deltaTime", rollup.hardforks.delta_time);
+    set_if_some!("ecotoneTime", rollup.hardforks.ecotone_time);
+    set_if_some!("fjordTime", rollup.hardforks.fjord_time);
+    set_if_some!("graniteTime", rollup.hardforks.granite_time);
+    set_if_some!("holoceneTime", rollup.hardforks.holocene_time);
+    set_if_some!("isthmusTime", rollup.hardforks.isthmus_time);
+    set_if_some!("jovianTime", rollup.hardforks.jovian_time);
+
+    serde_json::json!({
+        "config": config,
+        "difficulty": "0x0",
+        "gasLimit": "0x1C9C380",
+        "timestamp": format!("0x{:x}", timestamp),
+        "alloc": {},
+        "number": "0x0",
+        "gasUsed": "0x0",
+        "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    })
 }
 
 #[cfg(test)]

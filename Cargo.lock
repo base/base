@@ -3357,6 +3357,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-benchmark"
+version = "0.1.0"
+dependencies = [
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
+ "async-trait",
+ "axum 0.8.9",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-flashblocks",
+ "base-common-genesis",
+ "base-common-network",
+ "base-common-rpc-types-engine",
+ "base-consensus-engine",
+ "base-jwt",
+ "base-test-utils",
+ "bytes",
+ "chrono",
+ "clap",
+ "eyre",
+ "flate2",
+ "futures",
+ "hex",
+ "nix 0.30.1",
+ "prometheus-parse",
+ "rand 0.9.4",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "base-blobs"
 version = "0.0.0"
 dependencies = [
@@ -15120,6 +15165,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "prometheus-parse"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "811031bea65e5a401fb2e1f37d802cca6601e204ac463809a3189352d13b78a5"
+dependencies = [
+ "chrono",
+ "itertools 0.12.1",
+ "once_cell",
+ "regex",
 ]
 
 [[package]]
