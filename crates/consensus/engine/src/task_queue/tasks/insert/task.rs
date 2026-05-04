@@ -83,7 +83,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     }
 
     /// Creates a new task to insert an unsafe payload and send insertion acknowledgement.
-    pub fn unsafe_payload_with_result(
+    pub const fn unsafe_payload_with_result(
         client: Arc<EngineClient_>,
         rollup_config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
