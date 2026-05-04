@@ -1,6 +1,14 @@
 # The risc0 toolchain ships an older rustc (1.91) than the workspace MSRV (1.93).
 # The --ignore-rust-version flag is required when invoking cargo build.
+#
+# IMPORTANT: Always use `just build` / `just bundle` for reproducible builds.
+# The Justfile sets RUSTFLAGS with --remap-path-prefix flags that ensure the
+# resulting ELF (and image ID) is identical regardless of checkout location.
+# Running cargo directly will produce a working but non-reproducible ELF.
 
 [build]
 # Tell getrandom 0.3 to use the "custom" backend provided by risc0-zkvm-platform.
+# Note: when RUSTFLAGS env var is set (as in the Justfile), it overrides this
+# config entirely — the Justfile includes this flag in its RUSTFLAGS.
 rustflags = ['--cfg', 'getrandom_backend="custom"']
+
