@@ -422,6 +422,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{TxKind, U256};
@@ -437,9 +439,9 @@ mod tests {
     use crate::{BasePooledTransaction, BaseTransactionValidator};
     #[tokio::test]
     async fn validate_base_transaction() {
-        let chain_spec = std::sync::Arc::new(BaseChainSpec::mainnet());
+        let chain_spec = Arc::new(BaseChainSpec::mainnet());
         let client = MockEthProvider::<BasePrimitives>::new()
-            .with_chain_spec(chain_spec.clone())
+            .with_chain_spec(Arc::clone(&chain_spec))
             .with_genesis_block();
         let evm_config = BaseEvmConfig::base(chain_spec);
         let validator = EthTransactionValidatorBuilder::new(client, evm_config)

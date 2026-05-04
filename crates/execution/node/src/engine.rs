@@ -303,6 +303,7 @@ mod tests {
     use alloy_primitives::{Address, B64, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use base_common_chains::ChainConfig;
+    use base_common_consensus::BaseTxEnvelope;
     use base_execution_chainspec::BaseChainSpec;
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::KeccakKeyHasher;
@@ -310,8 +311,8 @@ mod tests {
     use super::*;
     use crate::engine;
 
-    fn validator() -> BaseEngineValidator<Arc<BaseChainSpec>, NoopProvider, KeccakKeyHasher> {
-        BaseEngineValidator::new::<KeccakKeyHasher>(
+    fn validator() -> BaseEngineValidator<NoopProvider, BaseTxEnvelope, BaseChainSpec> {
+        BaseEngineValidator::<NoopProvider, BaseTxEnvelope, BaseChainSpec>::new::<KeccakKeyHasher>(
             Arc::new(BaseChainSpec::sepolia()),
             NoopProvider::default(),
         )

@@ -289,7 +289,7 @@ mod tests {
         let receipts_with_bloom =
             receipts.iter().map(TxReceipt::with_bloom_ref).collect::<Vec<_>>();
         let receipts_root =
-            calculate_receipt_root(&receipts_with_bloom, &BaseChainSpec::sepolia(), timestamp);
+            calculate_receipt_root(&receipts_with_bloom, BaseChainSpec::sepolia(), timestamp);
         let logs_bloom = receipts_with_bloom
             .iter()
             .fold(Bloom::ZERO, |bloom, receipt| bloom | receipt.bloom_ref());
@@ -658,7 +658,7 @@ mod tests {
 
         validate_block_post_execution(
             &header,
-            &BaseChainSpec::sepolia(),
+            BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
         )
@@ -683,7 +683,7 @@ mod tests {
         assert!(matches!(
             validate_block_post_execution(
                 &header,
-                &BaseChainSpec::sepolia(),
+                BaseChainSpec::sepolia(),
                 &result,
                 Some((invalid_receipts_root, logs_bloom)),
             )
@@ -705,7 +705,7 @@ mod tests {
 
         validate_block_post_execution(
             &header,
-            &BaseChainSpec::sepolia(),
+            BaseChainSpec::sepolia(),
             &result,
             Some(plain_precomputed_receipt_root_bloom(&receipts)),
         )
