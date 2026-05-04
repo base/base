@@ -12,7 +12,7 @@ L2_EL_BOOTNODE_P2P_KEY="${L2_EL_BOOTNODE_P2P_KEY:-111111111111111111111111111111
 L2_EL_BOOTNODE_ENODE_ID="${L2_EL_BOOTNODE_ENODE_ID:-4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1}"
 L2_EL_BOOTNODE_ENODE="${L2_EL_BOOTNODE_ENODE:-enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303}"
 L2_CL_BOOTNODE_P2P_KEY="${L2_CL_BOOTNODE_P2P_KEY:-2222222222222222222222222222222222222222222222222222222222222222}"
-L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/genesis/l2/cl-bootnode.enr}"
+L2_CL_BOOTNODE_ENR_PATH="${L2_CL_BOOTNODE_ENR_PATH:-/data/cl-bootnode.enr}"
 
 if [ -n "$L2_BASE_AZUL_BLOCK" ] && ! [[ "$L2_BASE_AZUL_BLOCK" =~ ^[0-9]+$ ]]; then
   echo "ERROR: L2_BASE_AZUL_BLOCK must be a non-negative integer when set, got: $L2_BASE_AZUL_BLOCK"
@@ -208,7 +208,7 @@ echo "$BUILDER_ENODE_ID" >"$OUTPUT_DIR/builder-enode-id.txt"
 printf "%s" "$L2_EL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/el-bootnode-p2p-key.txt"
 echo "$L2_EL_BOOTNODE_ENODE_ID" >"$OUTPUT_DIR/el-bootnode-enode-id.txt"
 echo "$L2_EL_BOOTNODE_ENODE" >"$OUTPUT_DIR/el-bootnode-enode.txt"
-echo "$L2_CL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/cl-bootnode-p2p-key.txt"
+printf "%s" "$L2_CL_BOOTNODE_P2P_KEY" >"$OUTPUT_DIR/cl-bootnode-p2p-key.txt"
 echo "$L2_CL_BOOTNODE_ENR_PATH" >"$OUTPUT_DIR/cl-bootnode-enr-path.txt"
 echo "$SEQ1_P2P_KEY" >"$OUTPUT_DIR/sequencer-1-p2p-key.txt"
 echo "$SEQ2_P2P_KEY" >"$OUTPUT_DIR/sequencer-2-p2p-key.txt"
