@@ -10,7 +10,6 @@ use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::AttributesBuilder;
 use base_consensus_rpc::SequencerAdminAPIError;
-use base_protocol::L2BlockInfo;
 use tokio::{
     select,
     sync::{mpsc, oneshot},
@@ -29,7 +28,7 @@ use crate::{
             error::SequencerActorError,
             origin_selector::OriginSelector,
             recovery::RecoveryModeGuard,
-            seal::PayloadSealer,
+            seal::{PayloadSealer, SealStepOutcome},
         },
     },
 };
@@ -66,14 +65,6 @@ pub struct SequencerActor<
     pub engine_client: Arc<SequencerEngineClient_>,
     /// Whether the sequencer is active.
     pub is_active: bool,
-    /// Expected [`L2BlockInfo`] parent for the next build.
-    ///
-    /// Set in the ticker arm when a seal succeeds (derived from the sealed envelope). Consumed
-    /// in the `Ok(true)` sealer arm via [`PayloadBuilder::build_on`], which is called after
-    /// `insert_unsafe_payload` has already been fire-and-forgot to the engine. This ordering
-    /// guarantees the engine's `InsertTask` is queued before `BuildTask`, so the EL always
-    /// builds on the correct (just-inserted) parent instead of the stale watch value.
-    pub next_build_parent: Option<L2BlockInfo>,
     /// Shared recovery mode flag.
     pub recovery_mode: RecoveryModeGuard,
     /// The rollup configuration.
@@ -318,7 +309,7 @@ where
                     }
                 } => {
                     match result {
-                        Ok(true) => {
+                        Ok(SealStepOutcome::Inserted(_)) => {
                             if let Some(sealer) = self.sealer.take() {
                                 Metrics::sequencer_seal_pipeline_duration()
                                     .record(sealer.started_at.elapsed());
@@ -339,32 +330,11 @@ where
                                     warn!(target: "sequencer", "Failed to send deferred stop_sequencer response");
                                 }
                             }
-                            // Build the next payload on the correct parent now that
-                            // insert_unsafe_payload has already been fire-and-forgot to the engine.
-                            // next_build_parent was computed from the sealed envelope in the ticker
-                            // arm; using it here ensures InsertTask is enqueued before BuildTask so
-                            // the EL builds on the just-inserted block instead of its grandparent.
                             if self.is_active {
-                                next_payload_to_seal =
-                                    if let Some(parent) = self.next_build_parent.take() {
-                                        let result = self.builder.build_on(parent).await?;
-                                        // If the build returned None (the just-inserted parent block
-                                        // is not yet indexed by the L2 provider — insert_unsafe_payload
-                                        // is fire-and-forgot), restore next_build_parent so the
-                                        // immediate ticker retry uses build_on with the known correct
-                                        // parent rather than the potentially stale watch head, which
-                                        // could cause the wrong block to be built.
-                                        if result.is_none() {
-                                            self.next_build_parent = Some(parent);
-                                            build_ticker.reset_immediately();
-                                        }
-                                        result
-                                    } else {
-                                        self.builder.build().await?
-                                    };
+                                next_payload_to_seal = self.builder.build().await?;
                             }
                         }
-                        Ok(false) => {}
+                        Ok(SealStepOutcome::Pending) => {}
                         Err(err) => {
                             let step = self.sealer.as_ref().map(|s| s.state.label()).unwrap_or("unknown");
                             warn!(target: "sequencer", error = ?err, step, "Seal step failed, will retry");
@@ -380,11 +350,6 @@ where
                 _ = build_ticker.tick(), if self.is_active && self.sealer.is_none() => {
                     if let Some(handle) = next_payload_to_seal.take() {
                         // Extract data needed after try_seal_handle consumes the handle.
-                        let parent_beacon_root = handle
-                            .attributes_with_parent
-                            .attributes()
-                            .payload_attributes
-                            .parent_beacon_block_root;
                         let handle_timestamp = handle
                             .attributes_with_parent
                             .attributes()
@@ -393,25 +358,6 @@ where
                         match self.try_seal_handle(handle).await? {
                             Some((new_sealer, dur)) => {
                                 last_seal_duration = dur;
-                                // Stash the expected parent for the next build. This is consumed
-                                // in the Ok(true) arm after insert_unsafe_payload is queued,
-                                // ensuring BuildTask is enqueued after InsertTask in the engine.
-                                self.next_build_parent = match L2BlockInfo::from_payload_and_genesis(
-                                    new_sealer.envelope.execution_payload.clone(),
-                                    parent_beacon_root,
-                                    &self.rollup_config.genesis,
-                                ) {
-                                    Ok(parent) => Some(parent),
-                                    Err(err) => {
-                                        warn!(
-                                            target: "sequencer",
-                                            error = ?err,
-                                            "Failed to derive L2BlockInfo from sealed payload; \
-                                             next build will fall back to unsafe head watch channel"
-                                        );
-                                        None
-                                    }
-                                };
                                 self.sealer = Some(new_sealer);
                                 // Schedule the next tick for the next block's target seal time.
                                 // Use the just-sealed block's timestamp; the next block's
@@ -422,9 +368,8 @@ where
                                     + Duration::from_secs(next_block_seconds)
                                     - last_seal_duration;
                                 build_ticker.reset_at(next_block_time);
-                                // Do not call build() here. The next payload is built in the
-                                // Ok(true) arm after insert_unsafe_payload has been queued,
-                                // so InsertTask always precedes BuildTask in the engine queue.
+                                // Do not call build() here. The next payload is built after the
+                                // engine acknowledges insertion of the sealed payload.
                             }
                             None => {
                                 // Stale build or non-fatal seal error: rebuild immediately on
@@ -447,22 +392,7 @@ where
                             }
                         }
                     } else {
-                        // No pre-built payload: bootstrap on first tick, or retry after the
-                        // Ok(true) arm's build_on failed due to the parent block not yet being
-                        // indexed (insert_unsafe_payload is fire-and-forgot). If next_build_parent
-                        // is set, use build_on with the known correct parent rather than reading
-                        // the potentially stale watch head, which could cause the wrong block to
-                        // be built. On failure restore next_build_parent and reset_immediately so
-                        // we retry as soon as the engine indexes the block.
-                        next_payload_to_seal = if let Some(parent) = self.next_build_parent.take() {
-                            let result = self.builder.build_on(parent).await?;
-                            if result.is_none() {
-                                self.next_build_parent = Some(parent);
-                            }
-                            result
-                        } else {
-                            self.builder.build().await?
-                        };
+                        next_payload_to_seal = self.builder.build().await?;
                         if let Some(ref payload) = next_payload_to_seal {
                             let next_block_seconds = payload
                                 .attributes_with_parent

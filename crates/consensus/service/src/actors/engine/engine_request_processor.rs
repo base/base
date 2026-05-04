@@ -7,8 +7,8 @@ use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
     BuildTask, ConsolidateInput, ConsolidateTask, DelegatedForkchoiceTask,
     DelegatedForkchoiceUpdate, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
-    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertPayloadSafety,
-    InsertTask, Metrics as EngineMetrics, SealTask,
+    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertTask,
+    InsertTaskResult, Metrics as EngineMetrics,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -18,7 +18,7 @@ use tokio::{
 
 use crate::{
     BuildRequest, Conductor, EngineClientError, EngineDerivationClient, EngineError,
-    GetPayloadRequest, NodeMode, ResetRequest, SealRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode, ResetRequest,
 };
 
 /// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.
@@ -48,11 +48,9 @@ pub enum EngineProcessingRequest {
     /// Request to process a received unsafe L2 block.
     ProcessUnsafeL2Block(Box<BaseExecutionPayloadEnvelope>),
     /// Request to process a locally produced sequencer unsafe L2 block.
-    ProcessLocalUnsafeL2Block(Box<BaseExecutionPayloadEnvelope>),
+    ProcessLocalUnsafeL2Block(Box<InsertUnsafePayloadRequest>),
     /// Request to reset the forkchoice.
     Reset(Box<ResetRequest>),
-    /// Request to seal a block.
-    Seal(Box<SealRequest>),
 }
 
 /// Classifies the bootstrap behavior for the [`EngineProcessor`].
@@ -243,12 +241,17 @@ where
         Ok(())
     }
 
-    fn enqueue_unsafe_payload_insert(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+    fn enqueue_unsafe_payload_insert(
+        &mut self,
+        envelope: BaseExecutionPayloadEnvelope,
+        result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+    ) {
         self.log_follower_upgrade_activation(&envelope);
-        let task = EngineTask::Insert(Box::new(InsertTask::unsafe_payload(
+        let task = EngineTask::Insert(Box::new(InsertTask::unsafe_payload_with_result(
             Arc::clone(&self.client),
             Arc::clone(&self.rollup),
             envelope,
+            result_tx,
         )));
         self.engine.enqueue(task);
     }
@@ -266,7 +269,7 @@ where
                 parent_hash = %envelope.execution_payload.parent_hash(),
                 "Validator enqueuing external unsafe payload"
             );
-            self.enqueue_unsafe_payload_insert(envelope);
+            self.enqueue_unsafe_payload_insert(envelope, None);
             return;
         }
 
@@ -283,7 +286,7 @@ where
                 max_external_unsafe_gap = EngineProcessorOptions::MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
                 "Sequencer enqueuing external unsafe payload within gap limit"
             );
-            self.enqueue_unsafe_payload_insert(envelope);
+            self.enqueue_unsafe_payload_insert(envelope, None);
             return;
         }
 
@@ -300,7 +303,8 @@ where
         );
     }
 
-    fn handle_local_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+    fn handle_local_unsafe_l2_block(&mut self, request: InsertUnsafePayloadRequest) {
+        let InsertUnsafePayloadRequest { envelope, result_tx } = request;
         debug!(
             target: "engine",
             block_number = envelope.execution_payload.block_number(),
@@ -308,7 +312,7 @@ where
             parent_hash = %envelope.execution_payload.parent_hash(),
             "Enqueuing local sequencer unsafe payload"
         );
-        self.enqueue_unsafe_payload_insert(envelope);
+        self.enqueue_unsafe_payload_insert(envelope, result_tx);
     }
 
     async fn mark_el_sync_complete_and_notify_derivation_actor(
@@ -737,18 +741,6 @@ where
                             reset_res?;
                         }
                     }
-                    EngineProcessingRequest::Seal(seal_request) => {
-                        let SealRequest { payload_id, attributes, result_tx } = *seal_request;
-                        let task = EngineTask::Seal(Box::new(SealTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            payload_id,
-                            attributes,
-                            InsertPayloadSafety::Unsafe,
-                            Some(result_tx),
-                        )));
-                        self.engine.enqueue(task);
-                    }
                 }
             }
         })
@@ -782,8 +774,8 @@ mod tests {
 
     use crate::{
         BuildRequest, EngineClientError, EngineProcessingRequest, EngineProcessor,
-        EngineProcessorOptions, EngineRequestReceiver, MockConductor, NodeMode, ResetRequest,
-        actors::engine::client::MockEngineDerivationClient,
+        EngineProcessorOptions, EngineRequestReceiver, InsertUnsafePayloadRequest, MockConductor,
+        NodeMode, ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Returns a default all-zero L2 block and its canonical hash.
@@ -1019,7 +1011,10 @@ mod tests {
             unsafe_payload_processor(node_mode, el_sync_finished, unsafe_head, safe_head);
 
         if local_payload {
-            processor.handle_local_unsafe_l2_block(envelope);
+            processor.handle_local_unsafe_l2_block(InsertUnsafePayloadRequest {
+                envelope,
+                result_tx: None,
+            });
         } else {
             processor.handle_external_unsafe_l2_block(envelope);
         }

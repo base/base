@@ -60,36 +60,21 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// next tick.
     pub async fn build(&mut self) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
         let unsafe_head = self.engine_client.get_unsafe_head().await?;
-        self.build_on(unsafe_head).await
-    }
-
-    /// Starts building the next L2 block on top of an explicit `parent`, returning a handle to
-    /// the in-flight payload.
-    ///
-    /// Unlike [`Self::build`], this bypasses the watch channel and uses the provided
-    /// `parent` directly. Call this when the correct parent is already known (e.g., the
-    /// block just sealed) to avoid racing against the engine's internal state update.
-    ///
-    /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
-    /// next tick.
-    pub async fn build_on(
-        &mut self,
-        parent: L2BlockInfo,
-    ) -> Result<Option<UnsealedPayloadHandle>, SequencerActorError> {
-        let Some(l1_origin) = self.get_next_payload_l1_origin(parent).await? else {
+        let Some(l1_origin) = self.get_next_payload_l1_origin(unsafe_head).await? else {
             return Ok(None);
         };
 
         info!(
             target: "sequencer",
-            parent_num = parent.block_info.number,
+            parent_num = unsafe_head.block_info.number,
             l1_origin_num = l1_origin.number,
             "Started sequencing new block"
         );
 
         let attributes_build_start = Instant::now();
 
-        let Some(attributes_with_parent) = self.build_attributes(parent, l1_origin).await? else {
+        let Some(attributes_with_parent) = self.build_attributes(unsafe_head, l1_origin).await?
+        else {
             return Ok(None);
         };
 

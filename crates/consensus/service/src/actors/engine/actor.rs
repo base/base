@@ -137,9 +137,6 @@ where
                         EngineActorRequest::GetPayloadRequest(get_payload_req) => {
                             send_engine_processing_request(EngineProcessingRequest::GetPayload(get_payload_req)).await?;
                         }
-                        EngineActorRequest::SealRequest(seal_req) => {
-                            send_engine_processing_request(EngineProcessingRequest::Seal(seal_req)).await?;
-                        }
                     }
                 }
             }
