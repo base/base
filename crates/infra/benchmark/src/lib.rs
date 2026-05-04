@@ -24,8 +24,21 @@ pub use snapshots::SnapshotManager;
 
 mod client;
 pub use client::{
-    setup_node, BuilderClient, BaseRethNodeClient, ClientOptions, ExecutionClient,
+    setup_node, BaseRethNodeClient, BuilderClient, ClientOptions, ExecutionClient,
     InternalClientOptions,
+};
+
+mod consensus;
+pub use consensus::{
+    BaseConsensusClient, FakeMempool, SequencerConsensusClient, SyncingConsensusClient,
+};
+
+mod metrics;
+pub use metrics::{
+    check_thresholds, write_metrics_json, BlockMetrics, MetricsCollector, Severity,
+    ThresholdViolation, GAS_PER_BLOCK, GAS_PER_SECOND, GET_PAYLOAD_LATENCY,
+    NEW_PAYLOAD_LATENCY, SEND_TXS_LATENCY, TRANSACTIONS_PER_BLOCK,
+    UPDATE_FORK_CHOICE_LATENCY,
 };
 
 mod flashblocks;

@@ -11,7 +11,12 @@ path = "src/bin/base_bench.rs"
 
 [dependencies]
 eyre.workspace = true
+alloy-rlp.workspace = true
+alloy-network.workspace = true
+alloy-provider.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-engine.workspace = true
 rand.workspace = true
 bytes.workspace = true
 flate2.workspace = true
@@ -33,6 +38,7 @@ prometheus-parse.workspace = true
 tokio-tungstenite.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 base-jwt.workspace = true
+base-common-network.workspace = true
 base-test-utils.workspace = true
 base-common-evm.workspace = true
 base-common-genesis.workspace = true
@@ -40,6 +46,9 @@ base-consensus-engine.workspace = true
 base-common-flashblocks.workspace = true
 base-common-consensus.workspace = true
 base-common-rpc-types-engine.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
 
 [lints]
 workspace = true

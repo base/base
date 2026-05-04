@@ -1,6 +1,6 @@
 ---
 status: in-progress
-phase: 4
+phase: 5
 updated: 2026-05-04
 ---
 
@@ -114,7 +114,7 @@ crates/infra/benchmark/
 - [x] 3.5 Tests — arg list completeness, websocket URL injection, builder default block time, dispatch. `FlashblocksClient` stub added to `src/flashblocks/mod.rs` (full impl in Phase 7)
 - 25 tests passing
 
-## Phase 4: Consensus Clients [PENDING]
+## Phase 4: Consensus Clients [COMPLETE]
 
 - [ ] 4.1 Implement `BaseConsensusClient` in `src/consensus/mod.rs`: wraps `BaseEngineClient<RootProvider, RootProvider<Base>>` built via `EngineClientBuilder { l2: auth_url, l2_jwt, l1_rpc: Url::parse("http://127.0.0.1:1").unwrap(), cfg }`. Fields: `head_block_hash: B256`, `head_block_number: u64`, `current_payload_id: Option<PayloadId>`. Methods:
   - `async update_fork_choice(&mut self, attrs: Option<BasePayloadAttributes>) -> Result<PayloadId>`: 10s timeout, `engine_forkchoiceUpdatedV3(ForkchoiceState { head, safe, finalized: all head_block_hash }, attrs)`.
