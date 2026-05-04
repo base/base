@@ -13,7 +13,7 @@ use tokio_tungstenite::{
     tungstenite::{Bytes, protocol::Message},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 use super::FlashblockTimes;
@@ -124,7 +124,7 @@ impl FlashblockTracker {
         match Flashblock::try_decode_message(bytes) {
             Ok(flashblock) => {
                 let tx_count = flashblock.diff.transactions.len();
-                trace!(index = flashblock.index, tx_count, "received flashblock");
+                debug!(index = flashblock.index, tx_count, "received flashblock");
 
                 let tx_hashes: Vec<TxHash> = flashblock
                     .diff
