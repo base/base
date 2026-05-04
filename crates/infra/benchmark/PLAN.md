@@ -1,6 +1,6 @@
 ---
-status: in-progress
-phase: 9
+status: complete
+phase: 10
 updated: 2026-05-04
 ---
 
@@ -206,7 +206,7 @@ crates/infra/benchmark/
 - [ ] 8.5 Implement `fund_test_account(&mut self)`: `eth_getBalance(prefund_address)`, if below `PREFUND_AMOUNT`: build `TxDeposit { from: Address::from([1u8; 20]), to: TxKind::Call(prefund_address), mint: Some(PREFUND_AMOUNT), value: PREFUND_AMOUNT, gas_limit: 1_000_000, ..Default::default() }`, encode with 0x7E prefix, inject via `FakeMempool`, propose one block, retry `eth_getTransactionReceipt` until confirmed.
 - [ ] 8.6 Tests: deposit tx RLP encoding. fund_test_account flow (with mock RPC).
 
-## Phase 9: Service Layer & Main [PENDING]
+## Phase 9: Service Layer & Main [COMPLETE]
 
 - [ ] 9.1 Implement `BenchmarkRollupConfig` in `src/rollup.rs`: `pub struct BenchmarkRollupConfig { genesis: Genesis }`. `pub fn build(&self, block_time: u64) -> RollupConfig`: populate from `params.rs` consts, all OP fork times = 0 (Bedrock/Regolith/Canyon/Delta/Ecotone/Fjord/Granite/Holocene/Isthmus/Jovian).
 - [ ] 9.2 Implement `setup_internal_directories(test_dir, genesis, snapshot_config) -> Result<SetupResult>` in `src/service.rs`: create `test_dir/metrics/`, generate 32-byte random JWT via `rand`, write hex to `test_dir/jwt_secret` via `base-jwt`, write genesis JSON to `test_dir/chain.json`. Call `SnapshotManager::ensure_snapshot()` if snapshot configured, else create empty datadir.

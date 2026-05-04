@@ -84,6 +84,23 @@ async fn main() {
         "starting base-bench",
     );
 
-    error!("benchmark runner not yet implemented");
-    std::process::exit(1);
+    let prefund_key = std::env::var("BASE_BENCH_PREFUND_KEY")
+        .unwrap_or_else(|_| base_benchmark::PREFUND_KEY.to_string());
+
+    let snapshot_dir = cli.root_dir.join("snapshots");
+
+    let args = base_benchmark::BenchmarkArgs {
+        config_path: cli.config.clone(),
+        output_dir: cli.output_dir.clone(),
+        reth_bin,
+        builder_bin,
+        load_test_bin,
+        prefund_key,
+        snapshot_dir,
+    };
+
+    if let Err(e) = base_benchmark::run_benchmark(args).await {
+        error!(error = %e, "benchmark failed");
+        std::process::exit(1);
+    }
 }
