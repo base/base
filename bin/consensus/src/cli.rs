@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    bootnode::Bootnode,
+    bootnode::{Bootnode, BootnodeEnr},
     metrics::{init_p2p_metrics, init_rollup_config_metrics},
 };
 
@@ -51,6 +51,7 @@ impl Cli {
             Commands::Node(node) => node.run(),
             Commands::Follow(follow) => follow.run(),
             Commands::Bootnode(bootnode) => bootnode.run(),
+            Commands::BootnodeEnr(bootnode_enr) => bootnode_enr.run(),
         }
     }
 }
@@ -70,6 +71,10 @@ pub enum Commands {
     /// Start a discovery-only consensus bootnode.
     #[command(name = "bootnode")]
     Bootnode(Bootnode),
+
+    /// Print the deterministic ENR for a consensus bootnode.
+    #[command(name = "bootnode-enr")]
+    BootnodeEnr(BootnodeEnr),
 }
 
 /// Follow CLI arguments.
@@ -460,6 +465,13 @@ mod tests {
         let cli = Cli::parse_from(["base-consensus", "bootnode"]);
 
         assert!(matches!(cli.command, Commands::Bootnode(_)));
+    }
+
+    #[test]
+    fn parses_bootnode_enr_command() {
+        let cli = Cli::parse_from(["base-consensus", "bootnode-enr"]);
+
+        assert!(matches!(cli.command, Commands::BootnodeEnr(_)));
     }
 
     /// Tests that clap correctly wires env vars into the signer fields and that the
