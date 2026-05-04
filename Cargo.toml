@@ -15,7 +15,6 @@ members = [
   "bin/prover/nitro-host",
   "bin/prover/nitro-enclave",
   "bin/prover/zk",
-  "crates/client/*",
   "crates/consensus/*",
   "crates/proof/mpt",
   "crates/proof/proof",
@@ -172,15 +171,6 @@ base-builder-core = { path = "crates/builder/core" }
 base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 
-# Client
-base-client-cli = { path = "crates/client/cli" }
-base-metering = { path = "crates/client/metering" }
-base-bundle-extension = { path = "crates/client/bundle" }
-base-proofs-extension = { path = "crates/client/proofs" }
-base-tx-forwarding = { path = "crates/client/tx-forwarding" }
-base-txpool-tracing = { path = "crates/client/txpool-tracing" }
-base-flashblocks-node = { path = "crates/client/flashblocks-node" }
-
 # Consensus
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 base-consensus-safedb = { path = "crates/consensus/safedb" }
@@ -200,17 +190,24 @@ base-node-core = { path = "crates/execution/node" }
 base-execution-cli = { path = "crates/execution/cli" }
 base-execution-evm = { path = "crates/execution/evm" }
 base-execution-rpc = { path = "crates/execution/rpc" }
+base-metering = { path = "crates/execution/metering" }
 base-node-runner = { path = "crates/execution/runner" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
+base-client-cli = { path = "crates/execution/client-cli" }
 base-engine-tree = { path = "crates/execution/engine-tree" }
 base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
+base-bundle-extension = { path = "crates/execution/bundle" }
+base-proofs-extension = { path = "crates/execution/proofs" }
 base-execution-storage = { path = "crates/execution/storage" }
+base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
+base-txpool-tracing = { path = "crates/execution/txpool-tracing" }
 base-execution-payload-builder = { path = "crates/execution/payload" }
+base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 
 # Infra
 based = { path = "crates/infra/based" }

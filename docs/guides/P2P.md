@@ -553,7 +553,7 @@ mutable state.
 ### CL startup flow from the command line
 
 When you launch the Base consensus binary, the P2P configuration comes from CLI flags defined in
-[`base-client-cli`](https://github.com/base/base/tree/main/crates/client/cli). The key flags include
+[`base-client-cli`](https://github.com/base/base/tree/main/crates/execution/client-cli). The key flags include
 `--p2p.listen.tcp` (default 9222) and `--p2p.listen.udp` (default 9223) for the local bind
 addresses, `--p2p.advertise.ip` for NAT (Network Address Translation) scenarios where the node is
 behind a router and its public IP address differs from its local IP, `--p2p.priv.path` for the
