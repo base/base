@@ -1,6 +1,6 @@
 ---
 status: in-progress
-phase: 8
+phase: 9
 updated: 2026-05-04
 ---
 
@@ -185,7 +185,7 @@ crates/infra/benchmark/
 - [ ] 7.3 Implement `FlashblockReplayServer` in `src/flashblocks/mod.rs`: Axum WebSocket server on port from `PortManager`. On client connect: replay each block's flashblocks with timed delays matching original cadence within block_time. `tokio::sync::broadcast` channel internally. `url() -> String`. `async stop()`.
 - [ ] 7.4 Tests: FlashblocksClient stores by block number. ReplayServer replays within block time window.
 
-## Phase 8: Network Benchmark Orchestration [PENDING]
+## Phase 8: Network Benchmark Orchestration [COMPLETE]
 
 - [ ] 8.1 Define `TestConfig` in `src/runner/mod.rs`: `params: BenchmarkDefinition`, `config: RollupConfig`, `genesis: Genesis`, `batcher_key: B256`, `prefund_private_key: B256`, `prefund_amount: U256`.
 - [ ] 8.2 Implement `NetworkBenchmark` in `src/runner/mod.rs`: fields `sequencer_client: Box<dyn ExecutionClient>`, `validator_client: Box<dyn ExecutionClient>`, `sequencer_metrics: Vec<BlockMetrics>`, `validator_metrics: Vec<BlockMetrics>`, `test_config: TestConfig`, `transaction_payload: TransactionPayloadDef`, `port_manager: Arc<PortManager>`, `flashblocks_block_time: Option<Duration>`. `async run(&mut self) -> Result<(), BenchmarkError>`.

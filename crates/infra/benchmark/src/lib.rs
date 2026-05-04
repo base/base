@@ -50,6 +50,9 @@ pub use payload::{LoadTestPayloadWorker, PayloadWorker};
 mod flashblocks;
 pub use flashblocks::{FlashblockReplayServer, FlashblocksClient};
 
+mod runner;
+pub use runner::{NetworkBenchmark, RunResult, RunnerOptions};
+
 mod params;
 pub use params::{
     prefund_amount, BATCH_INBOX_ADDRESS, BATCHER_KEY, CHANNEL_TIMEOUT, DEFAULT_GAS_LIMIT,
