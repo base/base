@@ -23,13 +23,13 @@ use crate::{
         SequencerEngineClient,
         engine::EngineClientError,
         sequencer::{
+            ScheduledTicker,
             build::{PayloadBuilder, UnsealedPayloadHandle},
             conductor::Conductor,
             error::SequencerActorError,
             origin_selector::OriginSelector,
             recovery::RecoveryModeGuard,
             seal::PayloadSealer,
-            ScheduledTicker,
         },
     },
 };
@@ -121,8 +121,7 @@ where
             .get_sealed_payload(handle.payload_id, handle.attributes_with_parent.clone())
             .await?;
 
-        Metrics::sequencer_block_building_seal_task_duration()
-            .record(seal_request_start.elapsed());
+        Metrics::sequencer_block_building_seal_task_duration().record(seal_request_start.elapsed());
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 

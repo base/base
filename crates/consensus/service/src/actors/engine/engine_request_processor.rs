@@ -616,9 +616,8 @@ where
                 // Full processor iteration window: drain + recv wait + request handling.
                 // Bounds the worst-case channel wait — any request arriving during this
                 // iteration waits at most this long before the next recv picks it up.
-                let _iter_timer = base_metrics::timed!(
-                    EngineMetrics::engine_processor_iteration_duration()
-                );
+                let _iter_timer =
+                    base_metrics::timed!(EngineMetrics::engine_processor_iteration_duration());
 
                 // Attempt to drain all outstanding tasks from the engine queue before adding new
                 // ones.

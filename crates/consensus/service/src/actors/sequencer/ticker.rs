@@ -59,8 +59,7 @@ impl ScheduledTicker {
     pub async fn tick(&mut self) -> Instant {
         let instant = self.interval.tick().await;
         if let Some(target) = self.target.take() {
-            let drift =
-                SystemTime::now().duration_since(target).unwrap_or(Duration::ZERO);
+            let drift = SystemTime::now().duration_since(target).unwrap_or(Duration::ZERO);
             Metrics::sequencer_ticker_drift_seconds().record(drift);
         }
         instant

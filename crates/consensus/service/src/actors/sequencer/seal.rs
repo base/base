@@ -108,9 +108,7 @@ impl PayloadSealer {
         };
 
         match &result {
-            Ok(_) => {
-                Metrics::sequencer_seal_step_duration(step_label).record(step_start.elapsed())
-            }
+            Ok(_) => Metrics::sequencer_seal_step_duration(step_label).record(step_start.elapsed()),
             Err(_) => Metrics::sequencer_seal_step_retries_total(step_label).increment(1),
         }
 

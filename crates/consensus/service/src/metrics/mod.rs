@@ -32,7 +32,7 @@ base_metrics::define_metrics! {
     sequencer_block_to_block_duration: histogram,
     #[describe("Wall-clock drift between the build-ticker target time and the actual fire time (>= 0; clamped to 0 when the ticker fires early)")]
     sequencer_ticker_drift_seconds: histogram,
-    #[describe("Wall-clock duration of the full seal pipeline (conductor commit → gossip → engine insert), measured from when the ticker picks up the pre-built handle until step() returns Ok(true). Excludes the EL build idle wait.")]
+    #[describe("Wall-clock duration of the full seal pipeline (conductor commit → gossip → engine insert), measured from PayloadSealer construction (after the EL seal response) until step() returns Ok(true). Excludes the EL build idle wait and the EL seal request.")]
     sequencer_seal_pipeline_duration: histogram,
     #[describe("Seal errors by fatality")]
     #[label(name = "fatal", default = ["true", "false"])]
