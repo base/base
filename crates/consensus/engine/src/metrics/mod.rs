@@ -51,6 +51,26 @@ base_metrics::define_metrics! {
     engine_finalize_duration_seconds: histogram,
     #[describe("Number of tasks currently pending in the engine task queue")]
     engine_task_queue_depth: gauge,
+    #[describe(
+        "Per-task wall-clock duration including CL-side retry/yield overhead (broader than engine_method_request_duration which only covers the reth round-trip)"
+    )]
+    #[label(
+        name = "task",
+        default = [
+            "insert",
+            "consolidate",
+            "delegated-forkchoice",
+            "build",
+            "finalize",
+            "seal",
+            "get-payload"
+        ]
+    )]
+    engine_task_duration: histogram,
+    #[describe(
+        "Wall-clock duration of one EngineProcessor loop iteration: drain + recv wait + request handling. Upper bound on per-request wait time in the EngineActor->EngineProcessor mpsc channel — a request arriving anywhere in the previous iteration waits at most this long before recv picks it up."
+    )]
+    engine_processor_iteration_duration: histogram,
 }
 
 impl Metrics {

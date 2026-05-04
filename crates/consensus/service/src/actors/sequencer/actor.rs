@@ -2,7 +2,7 @@
 
 use std::{
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 use alloy_primitives::B256;
@@ -29,6 +29,7 @@ use crate::{
             origin_selector::OriginSelector,
             recovery::RecoveryModeGuard,
             seal::PayloadSealer,
+            ScheduledTicker,
         },
     },
 };
@@ -120,7 +121,8 @@ where
             .get_sealed_payload(handle.payload_id, handle.attributes_with_parent.clone())
             .await?;
 
-        Metrics::sequencer_block_building_seal_task_duration().set(seal_request_start.elapsed());
+        Metrics::sequencer_block_building_seal_task_duration()
+            .record(seal_request_start.elapsed());
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 
@@ -270,7 +272,7 @@ where
 
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
         let mut build_ticker =
-            tokio::time::interval(Duration::from_secs(self.rollup_config.block_time));
+            ScheduledTicker::new(Duration::from_secs(self.rollup_config.block_time));
 
         self.update_metrics();
 
@@ -280,6 +282,9 @@ where
         // Admin API queries are serviced during this phase (see schedule_initial_reset).
         self.schedule_initial_reset(&mut next_payload_to_seal).await?;
         let mut last_seal_duration = Duration::from_secs(0);
+
+        let mut last_block_complete_at: Option<Instant> = None;
+
         loop {
             select! {
                 biased;
@@ -311,7 +316,18 @@ where
                 } => {
                     match result {
                         Ok(true) => {
-                            self.sealer = None;
+                            if let Some(sealer) = self.sealer.take() {
+                                Metrics::sequencer_seal_pipeline_duration()
+                                    .record(sealer.started_at.elapsed());
+                            }
+
+                            let now = Instant::now();
+                            if let Some(prev) = last_block_complete_at {
+                                Metrics::sequencer_block_to_block_duration()
+                                    .record(now.duration_since(prev));
+                            }
+                            last_block_complete_at = Some(now);
+
                             // Respond to a pending stop_sequencer request now that the
                             // in-flight seal is complete.
                             if let Some(tx) = self.pending_stop.take() {
@@ -402,10 +418,7 @@ where
                                 let next_block_time = UNIX_EPOCH
                                     + Duration::from_secs(next_block_seconds)
                                     - last_seal_duration;
-                                match next_block_time.duration_since(SystemTime::now()) {
-                                    Ok(duration) => build_ticker.reset_after(duration),
-                                    Err(_) => build_ticker.reset_immediately(),
-                                }
+                                build_ticker.reset_at(next_block_time);
                                 // Do not call build() here. The next payload is built in the
                                 // Ok(true) arm after insert_unsafe_payload has been queued,
                                 // so InsertTask always precedes BuildTask in the engine queue.
@@ -424,10 +437,7 @@ where
                                     let next_block_time = UNIX_EPOCH
                                         + Duration::from_secs(next_block_seconds)
                                         - last_seal_duration;
-                                    match next_block_time.duration_since(SystemTime::now()) {
-                                        Ok(duration) => build_ticker.reset_after(duration),
-                                        Err(_) => build_ticker.reset_immediately(),
-                                    }
+                                    build_ticker.reset_at(next_block_time);
                                 } else {
                                     build_ticker.reset_immediately();
                                 }
@@ -460,10 +470,7 @@ where
                             let next_block_time = UNIX_EPOCH
                                 + Duration::from_secs(next_block_seconds)
                                 - last_seal_duration;
-                            match next_block_time.duration_since(SystemTime::now()) {
-                                Ok(duration) => build_ticker.reset_after(duration),
-                                Err(_) => build_ticker.reset_immediately(),
-                            }
+                            build_ticker.reset_at(next_block_time);
                         } else {
                             build_ticker.reset_immediately();
                         }

@@ -51,9 +51,9 @@ mod sequencer;
 pub use sequencer::{
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
-    PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard, SealState,
-    SealStepError, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, UnsealedPayloadHandle,
+    PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
+    ScheduledTicker, SealState, SealStepError, SequencerActor, SequencerActorError,
+    SequencerAdminQuery, SequencerConfig, SequencerEngineClient, UnsealedPayloadHandle,
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};

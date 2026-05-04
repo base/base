@@ -246,6 +246,13 @@ impl<EngineClient_: EngineClient> EngineTaskExt for EngineTask<EngineClient_> {
     type Error = EngineTaskErrors;
 
     async fn execute(&self, state: &mut EngineState) -> Result<(), Self::Error> {
+        // Wall-clock duration of the entire retry loop (not per attempt), so the
+        // difference against `engine_method_request_duration{method}` isolates pure
+        // CL retry/yield overhead. Records on drop regardless of outcome
+        // (success / critical / reset / flush).
+        let label = self.task_metrics_label();
+        let _task_timer = base_metrics::timed!(Metrics::engine_task_duration(label));
+
         // Retry the task until it succeeds or a critical error occurs.
         while let Err(e) = self.execute_inner(state).await {
             let severity = e.severity();
