@@ -5,15 +5,16 @@ use alloy_genesis::ChainConfig;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
-use base_consensus_derive::{DataAvailabilityProvider, PipelineBuilder, StatefulAttributesBuilder};
+use base_consensus_derive::{
+    DataAvailabilityProvider, EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder,
+};
 use base_consensus_node::{GossipTransport, L1OriginSelector};
 use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
-    ActionBlobDataSource, ActionDataSource, ActionEngineClient, ActionL1ChainProvider,
-    ActionL2ChainProvider, ActionL2Source, ActionPipeline, BlobVerifierPipeline, L1Miner,
-    L1MinerConfig, L2Sequencer, SharedL1Chain, TestGossipTransport, TestRollupNode,
-    VerifierPipeline, block_info_from,
+    ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
+    ActionL2Source, ActionPipeline, L1Miner, L1MinerConfig, L2Sequencer, SharedL1Chain,
+    TestGossipTransport, TestRollupNode, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -137,37 +138,14 @@ impl ActionTestHarness {
         l1_chain: SharedL1Chain,
         p2p: TestGossipTransport,
     ) -> TestRollupNode<VerifierPipeline> {
+        let l1_provider = ActionL1ChainProvider::new(l1_chain.clone());
+        let blob_provider = ActionBlobProvider::new(l1_chain.clone());
         let dap_source =
-            ActionDataSource::new(l1_chain.clone(), self.rollup_config.batch_inbox_address);
-        self.build_node_inner(sequencer, l1_chain, p2p, dap_source)
-    }
-
-    /// Create a [`TestRollupNode`] wired to blob DA.
-    ///
-    /// Identical to [`create_test_rollup_node`] but uses
-    /// [`ActionBlobDataSource`] so the pipeline reads blobs from the L1 chain
-    /// instead of calldata.
-    ///
-    /// [`create_test_rollup_node`]: ActionTestHarness::create_test_rollup_node
-    pub fn create_blob_test_rollup_node(
-        &self,
-        sequencer: &L2Sequencer,
-        l1_chain: SharedL1Chain,
-        p2p: TestGossipTransport,
-    ) -> TestRollupNode<BlobVerifierPipeline> {
-        let dap_source =
-            ActionBlobDataSource::new(l1_chain.clone(), self.rollup_config.batch_inbox_address);
+            EthereumDataSource::new_from_parts(l1_provider, blob_provider, &self.rollup_config);
         self.build_node_inner(sequencer, l1_chain, p2p, dap_source)
     }
 
     /// Build a [`TestRollupNode`] for any data-availability source.
-    ///
-    /// Shared implementation for [`create_test_rollup_node`] and
-    /// [`create_blob_test_rollup_node`]; the two public methods differ only in
-    /// which `dap_source` they construct before delegating here.
-    ///
-    /// [`create_test_rollup_node`]: ActionTestHarness::create_test_rollup_node
-    /// [`create_blob_test_rollup_node`]: ActionTestHarness::create_blob_test_rollup_node
     fn build_node_inner<D>(
         &self,
         sequencer: &L2Sequencer,
@@ -224,7 +202,7 @@ impl ActionTestHarness {
     /// `(node, l1_chain)` for convenient L1-push-then-signal patterns.
     ///
     /// Wires `sequencer` to a fresh [`TestGossipTransport`] channel and builds the
-    /// full calldata derivation pipeline.
+    /// production-mode DA derivation pipeline.
     pub fn create_test_rollup_node_from_sequencer(
         &self,
         sequencer: &mut L2Sequencer,
@@ -232,22 +210,6 @@ impl ActionTestHarness {
     ) -> (TestRollupNode<VerifierPipeline>, SharedL1Chain) {
         let transport = self.create_supervised_p2p(sequencer);
         let node = self.create_test_rollup_node(sequencer, l1_chain.clone(), transport);
-        (node, l1_chain)
-    }
-
-    /// Create a blob-DA [`TestRollupNode`] wired to a sequencer's block-hash registry,
-    /// returning `(node, l1_chain)`.
-    ///
-    /// Identical to [`create_test_rollup_node_from_sequencer`] but uses blob DA.
-    ///
-    /// [`create_test_rollup_node_from_sequencer`]: ActionTestHarness::create_test_rollup_node_from_sequencer
-    pub fn create_blob_test_rollup_node_from_sequencer(
-        &self,
-        sequencer: &mut L2Sequencer,
-        l1_chain: SharedL1Chain,
-    ) -> (TestRollupNode<BlobVerifierPipeline>, SharedL1Chain) {
-        let transport = self.create_supervised_p2p(sequencer);
-        let node = self.create_blob_test_rollup_node(sequencer, l1_chain.clone(), transport);
         (node, l1_chain)
     }
 

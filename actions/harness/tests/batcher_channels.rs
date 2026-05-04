@@ -52,9 +52,9 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     // L1 block 1: submit only frame 0.
     batcher.stage_n_frames(&mut h.l1, 1);
-    let block_1_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_1_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     node.initialize().await;
     node.run_until_idle().await;
@@ -72,9 +72,9 @@ async fn channel_timeout_triggers_channel_invalidation() {
 
     // Submit the remaining frames — they should be silently ignored (channel timed out).
     batcher.stage_n_frames(&mut h.l1, frame_count - 1);
-    let block_5_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_5_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     let derived = node.run_until_idle().await;
     assert_eq!(derived, 0, "late frames after channel timeout must be ignored");
@@ -136,9 +136,9 @@ async fn channel_timeout_recovery_resubmits_successfully() {
 
     // L1 block 1: submit only frame 0 — channel stays incomplete.
     batcher.stage_n_frames(&mut h.l1, 1);
-    let block_1_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_1_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     node.initialize().await;
 
@@ -224,9 +224,9 @@ async fn interleaved_channels_correctly_reassembled() {
     }
 
     // Mine one L1 block containing all interleaved frames.
-    let block_num = h.l1.mine_block().number();
-    batcher_a.confirm_staged(block_num).await;
-    batcher_b.confirm_staged(block_num).await;
+    h.l1.mine_block();
+    batcher_a.confirm_staged(h.l1.tip()).await;
+    batcher_b.confirm_staged(h.l1.tip()).await;
 
     let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
@@ -283,9 +283,9 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     // L1 block 1: frame 0 only.
     batcher.stage_n_frames(&mut h.l1, 1);
-    let block_1_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_1_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     node.initialize().await;
     node.run_until_idle().await;
@@ -298,9 +298,9 @@ async fn multi_block_channel_assembles_across_l1_blocks() {
 
     // L1 block 2: remaining frames (well within channel_timeout).
     batcher.stage_n_frames(&mut h.l1, frame_count - 1);
-    let block_2_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_2_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     let derived = node.run_until_idle().await;
 
@@ -360,9 +360,9 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
 
     // L1 block 1: submit only frame 0.
     batcher.stage_n_frames(&mut h.l1, 1);
-    let block_1_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_1_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     node.initialize().await;
     node.run_until_idle().await;
@@ -380,14 +380,14 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     // the head event. The remaining frames are already in `pending`.
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(h.l1.latest_number()).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     // L1 block 3: submit the remaining frames.
     let remaining = batcher.pending_count();
     batcher.stage_n_frames(&mut h.l1, remaining);
-    let block_3_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_3_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     // Signal node for all L1 blocks. Track the total L2 blocks derived
     // to confirm exactly one block was produced across the 3-block span.

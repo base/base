@@ -44,7 +44,6 @@ base-common-rpc-types-engine = { workspace = true, features = ["std"] }
 base-common-consensus = { workspace = true, features = ["std", "evm"] }
 
 # base
-base-blobs.workspace = true
 base-runtime.workspace = true
 base-node-core.workspace = true
 base-test-utils.workspace = true
@@ -79,5 +78,6 @@ thiserror.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+base-blobs.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }

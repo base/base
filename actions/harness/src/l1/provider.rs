@@ -1,24 +1,18 @@
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use alloy_consensus::{Header, Receipt};
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::B256;
 use async_trait::async_trait;
-use base_consensus_derive::{
-    ChainProvider, DataAvailabilityProvider, PipelineError, PipelineErrorKind, PipelineResult,
-};
+use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind};
 use base_consensus_node::{L1OriginSelectorError, L1OriginSelectorProvider};
 use base_protocol::BlockInfo;
 
-use crate::{L1Block, miner::block_info_from};
+use crate::{L1Block, block_info_from};
 
 /// A shared, append-only view of the L1 chain for use by in-process providers.
 ///
-/// Both [`ActionL1ChainProvider`] and [`ActionDataSource`] hold a clone of this
-/// handle. Call [`SharedL1Chain::push`] after each `L1Miner::mine_block()` to
-/// keep the providers up to date.
+/// Call [`SharedL1Chain::push`] after each `L1Miner::mine_block()` to keep the
+/// providers up to date.
 #[derive(Debug, Clone, Default)]
 pub struct SharedL1Chain(Arc<Mutex<Vec<L1Block>>>);
 
@@ -99,8 +93,7 @@ impl From<L1ProviderError> for PipelineErrorKind {
 /// In-memory L1 chain provider backed by [`SharedL1Chain`].
 ///
 /// Implements [`ChainProvider`] for the derivation pipeline's traversal and
-/// attributes-builder stages. Receipts return empty since action tests do not
-/// track L1 receipts or system config updates.
+/// attributes-builder stages.
 #[derive(Debug, Clone)]
 pub struct ActionL1ChainProvider {
     chain: SharedL1Chain,
@@ -150,77 +143,12 @@ impl ChainProvider for ActionL1ChainProvider {
         &mut self,
         hash: B256,
     ) -> Result<(BlockInfo, Vec<alloy_consensus::TxEnvelope>), Self::Error> {
-        // The derivation pipeline reads batcher data via `DataAvailabilityProvider::next`,
-        // not via this method. Returning an empty transaction list is correct for the
-        // current action-test use case; returning real batcher txs here is not needed.
         self.chain.with(|blocks| {
             blocks
                 .iter()
                 .find(|b| b.hash() == hash)
-                .map(|b| (block_info_from(b), vec![]))
+                .map(|b| (block_info_from(b), b.transactions.clone()))
                 .ok_or(L1ProviderError::HashNotFound)
         })
-    }
-}
-
-/// In-memory data availability source backed by [`SharedL1Chain`].
-///
-/// Filters batcher transactions by `from == batcher_address && to == inbox_address`
-/// and returns their calldata one item at a time per L1 block.
-#[derive(Debug, Clone)]
-pub struct ActionDataSource {
-    chain: SharedL1Chain,
-    /// The expected batch inbox address.
-    inbox_address: Address,
-    /// Queued calldata for the current block.
-    pending: VecDeque<Bytes>,
-    /// Whether the current block's txs have been loaded.
-    open: bool,
-}
-
-impl ActionDataSource {
-    /// Create a new data source backed by the given shared chain.
-    pub const fn new(chain: SharedL1Chain, inbox_address: Address) -> Self {
-        Self { chain, inbox_address, pending: VecDeque::new(), open: false }
-    }
-
-    fn load_block(&mut self, block_ref: &BlockInfo, batcher_address: Address) {
-        self.chain.with(|blocks| {
-            if let Some(block) = blocks.get(block_ref.number as usize) {
-                let block_hash = block.hash();
-                // Guard against stale block_refs after a reorg: if the block at
-                // this height was replaced, its hash will differ.
-                if block_hash != block_ref.hash {
-                    return;
-                }
-                for tx in &block.batcher_txs {
-                    if tx.from == batcher_address && tx.to == self.inbox_address {
-                        self.pending.push_back(tx.input.clone());
-                    }
-                }
-            }
-        });
-        self.open = true;
-    }
-}
-
-#[async_trait]
-impl DataAvailabilityProvider for ActionDataSource {
-    type Item = Bytes;
-
-    async fn next(
-        &mut self,
-        block_ref: &BlockInfo,
-        batcher_address: Address,
-    ) -> PipelineResult<Self::Item> {
-        if !self.open {
-            self.load_block(block_ref, batcher_address);
-        }
-        self.pending.pop_front().ok_or_else(|| PipelineError::Eof.temp())
-    }
-
-    fn clear(&mut self) {
-        self.pending.clear();
-        self.open = false;
     }
 }

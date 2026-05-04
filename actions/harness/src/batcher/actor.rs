@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
+use alloy_primitives::B256;
+use alloy_signer_local::PrivateKeySigner;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleConfig, ThrottleController, ThrottleStrategy,
@@ -10,9 +12,10 @@ use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_protocol::{BatchType, L2BlockInfo};
 use base_runtime::TokioRuntime;
+use base_tx_manager::TxManager;
 use tokio_util::sync::CancellationToken;
 
-use crate::{ActionL2Source, L1Miner, L1MinerTxManager, L2BlockProvider};
+use crate::{ActionL2Source, L1Block, L1Miner, L1MinerTxManager, L2BlockProvider};
 
 /// Configuration for the [`Batcher`] actor.
 #[derive(Debug, Clone)]
@@ -27,16 +30,38 @@ pub struct BatcherConfig {
     pub batch_type: BatchType,
     /// Encoder configuration forwarded to [`BatchEncoder`].
     pub encoder: EncoderConfig,
+    /// L1 signer used to produce signed `TxEnvelope`s for production-mode DA tests.
+    ///
+    /// When changed via [`with_l1_signer`](BatcherConfig::with_l1_signer), the
+    /// signer address becomes [`batcher_address`](BatcherConfig::batcher_address)
+    /// so production calldata/blob sources can recover the expected sender.
+    pub l1_signer: PrivateKeySigner,
 }
 
 impl Default for BatcherConfig {
     fn default() -> Self {
+        let l1_signer = Self::default_l1_signer();
         Self {
-            batcher_address: alloy_primitives::Address::repeat_byte(0xBA),
+            batcher_address: l1_signer.address(),
             inbox_address: alloy_primitives::Address::repeat_byte(0xCA),
             batch_type: BatchType::Single,
             encoder: EncoderConfig::default(),
+            l1_signer,
         }
+    }
+}
+
+impl BatcherConfig {
+    /// Return the deterministic default L1 signer used by action tests.
+    pub fn default_l1_signer() -> PrivateKeySigner {
+        PrivateKeySigner::from_bytes(&B256::repeat_byte(0xBA)).expect("valid default L1 signer")
+    }
+
+    /// Configure a signer for production-mode L1 transaction construction.
+    pub fn with_l1_signer(mut self, signer: PrivateKeySigner) -> Self {
+        self.batcher_address = signer.address();
+        self.l1_signer = signer;
+        self
     }
 }
 
@@ -134,6 +159,7 @@ impl<S: L2BlockProvider> Batcher<S> {
         config: BatcherConfig,
         safe_head_rx: Option<tokio::sync::watch::Receiver<u64>>,
     ) -> Self {
+        let l1_chain_id = rollup_config.l1_chain_id;
         let rollup_config = Arc::new(rollup_config.clone());
         let mut encoder_config = config.encoder.clone();
         encoder_config.batch_type = config.batch_type;
@@ -145,8 +171,14 @@ impl<S: L2BlockProvider> Batcher<S> {
         // calls advance_l1_head() when the channel delivers an event.
         let (l1_source, l1_head_tx) = ChannelL1HeadSource::new();
 
-        let tx_manager = L1MinerTxManager::new(config.batcher_address, config.inbox_address)
-            .with_l1_head_tx(l1_head_tx);
+        let tx_manager =
+            L1MinerTxManager::new(config.l1_signer.clone(), config.inbox_address, l1_chain_id)
+                .with_l1_head_tx(l1_head_tx);
+        assert_eq!(
+            config.batcher_address,
+            tx_manager.sender_address(),
+            "BatcherConfig::batcher_address must match BatcherConfig::l1_signer"
+        );
 
         let cancel = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancel.clone());
@@ -267,10 +299,10 @@ impl<S: L2BlockProvider> Batcher<S> {
         self.tx_manager.drop_n(n)
     }
 
-    /// Fire receipts for all staged items at `block_number` and yield to let
+    /// Fire receipts for all staged items from `block` and yield to let
     /// the driver process confirmations and the L1 head event.
-    pub async fn confirm_staged(&self, block_number: u64) {
-        self.tx_manager.confirm_all(block_number);
+    pub async fn confirm_staged(&self, block: &L1Block) {
+        self.tx_manager.confirm_block(block);
         tokio::task::yield_now().await;
     }
 

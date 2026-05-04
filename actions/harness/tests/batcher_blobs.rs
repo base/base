@@ -2,11 +2,41 @@
 
 use std::sync::Arc;
 
+use alloy_primitives::{Bytes, U256};
 use base_action_harness::{
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L1MinerTxManager,
+    SharedL1Chain, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{BatchEncoder, BatchPipeline, DaType, EncoderConfig};
+use base_blobs::BlobEncoder;
+use base_protocol::Frame;
+use base_tx_manager::TxCandidate;
+
+fn submit_signed_blob_frames(
+    h: &mut ActionTestHarness,
+    batcher_cfg: &BatcherConfig,
+    frames: &[Arc<Frame>],
+    nonce: u64,
+) {
+    let blob = BlobEncoder::encode_packed(frames).expect("frames encode into a blob");
+    let candidate = TxCandidate {
+        to: Some(batcher_cfg.inbox_address),
+        tx_data: Bytes::new(),
+        value: U256::ZERO,
+        gas_limit: 0,
+        blobs: Arc::from(vec![blob]),
+    };
+    let tx_manager = L1MinerTxManager::new(
+        batcher_cfg.l1_signer.clone(),
+        batcher_cfg.inbox_address,
+        h.rollup_config.l1_chain_id,
+    );
+    let (tx, blobs) = tx_manager.sign_candidate(&candidate, nonce).expect("blob tx signs");
+    h.l1.submit_transaction(tx);
+    for (hash, blob) in blobs {
+        h.l1.enqueue_blob(hash, blob);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Blob DA end-to-end
@@ -30,7 +60,7 @@ async fn batcher_blob_da_end_to_end() {
         batcher.advance(&mut h.l1).await;
     }
 
-    let (mut node, _chain) = h.create_blob_test_rollup_node_from_sequencer(
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
@@ -75,7 +105,7 @@ async fn batcher_multi_blob_packing() {
         h.l1.tip().blob_sidecars.len()
     );
 
-    let (mut node, _chain) = h.create_blob_test_rollup_node_from_sequencer(
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
@@ -158,7 +188,7 @@ async fn batcher_da_switching() {
         blob_batcher.advance(&mut h.l1).await;
     }
 
-    let (mut node, _chain) = h.create_blob_test_rollup_node_from_sequencer(
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
@@ -183,7 +213,7 @@ async fn batcher_da_switching() {
 ///
 /// This is the blob-DA variant of
 /// `channel_timeout_triggers_channel_invalidation` in `batcher_channels.rs`.
-/// It uses `submit_blob_frames` instead of `submit_frames` throughout.
+/// It submits signed EIP-4844 transactions throughout.
 ///
 /// Setup:
 /// - `max_frame_size = 80` to force a multi-frame channel.
@@ -223,10 +253,10 @@ async fn blob_da_channel_timeout() {
         "expected multi-frame channel with max_frame_size=80, got {frame_count} frames"
     );
 
-    // Submit ONLY frame 0 as a blob sidecar in L1 block 1.
-    h.l1.submit_blob_frames(&frames[..1]);
+    // Submit ONLY frame 0 as a signed blob transaction in L1 block 1.
+    submit_signed_blob_frames(&mut h, &batcher_cfg, &frames[..1], 0);
 
-    let (mut node, chain) = h.create_blob_test_rollup_node_from_sequencer(
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
         &mut sequencer,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
@@ -248,7 +278,7 @@ async fn blob_da_channel_timeout() {
     }
 
     // Submit remaining frames as blobs — channel already timed out; silently dropped.
-    h.l1.submit_blob_frames(&frames[1..]);
+    submit_signed_blob_frames(&mut h, &batcher_cfg, &frames[1..], 1);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone()); // L1 block 5: late blob frames
 
@@ -260,7 +290,7 @@ async fn blob_da_channel_timeout() {
         BatchEncoder::new(Arc::new(h.rollup_config.clone()), batcher_cfg.encoder.clone());
     encoder2.add_block(block).expect("add_block should succeed");
     let fresh_frames = encoder2.encode_and_drain().expect("encode_and_drain should succeed");
-    h.l1.submit_blob_frames(&fresh_frames);
+    submit_signed_blob_frames(&mut h, &batcher_cfg, &fresh_frames, 2);
     h.l1.mine_block();
     chain.push(h.l1.tip().clone()); // L1 block 6: fresh blob channel with all frames
 

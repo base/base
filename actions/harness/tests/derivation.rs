@@ -6,13 +6,14 @@ use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, Bytes, U256};
 use base_action_harness::{
-    ActionDataSource, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
-    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, PendingTx,
-    SharedL1Chain, TestGossipTransport, TestRollupConfigBuilder, TestRollupNode, UserDeposit,
-    block_info_from,
+    ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
+    ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
+    TestGossipTransport, TestRollupConfigBuilder, TestRollupNode, UserDeposit, block_info_from,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
-use base_consensus_derive::{PipelineBuilder, StatefulAttributesBuilder, StepResult};
+use base_consensus_derive::{
+    EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder, StepResult,
+};
 use base_protocol::{BatchType, BlockInfo, DERIVATION_VERSION_0, L2BlockInfo};
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
@@ -963,11 +964,14 @@ async fn garbage_frame_data_ignored() {
         v.extend_from_slice(&[0xFF, 0xAB, 0x12, 0x34, 0x56, 0x78]);
         Bytes::from(v)
     };
-    h.l1.submit_tx(PendingTx {
-        from: batcher_cfg.batcher_address,
-        to: batcher_cfg.inbox_address,
-        input: garbage,
-    });
+    h.l1.submit_calldata_transaction(
+        &batcher_cfg.l1_signer,
+        h.rollup_config.l1_chain_id,
+        0,
+        batcher_cfg.inbox_address,
+        garbage,
+    )
+    .expect("garbage transaction signs");
     h.mine_and_push(&chain);
 
     let derived = node.run_until_idle().await;
@@ -1035,8 +1039,8 @@ async fn multi_frame_channel_reassembled() {
     // Stage all frames, mine one L1 block, and confirm.
     let n = batcher.pending_count();
     batcher.stage_n_frames(&mut h.l1, n);
-    let block_num = h.l1.mine_block().number();
-    batcher.confirm_staged(block_num).await;
+    h.l1.mine_block();
+    batcher.confirm_staged(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;
@@ -1253,11 +1257,14 @@ async fn garbage_payload_silently_ignored_then_valid_batch_derived(
     let block = sequencer.build_next_block_with_single_transaction().await;
 
     // L1 block 1: garbage frame only.
-    h.l1.submit_tx(PendingTx {
-        from: batcher_cfg.batcher_address,
-        to: batcher_cfg.inbox_address,
-        input: garbage.clone(),
-    });
+    h.l1.submit_calldata_transaction(
+        &batcher_cfg.l1_signer,
+        h.rollup_config.l1_chain_id,
+        0,
+        batcher_cfg.inbox_address,
+        garbage.clone(),
+    )
+    .expect("garbage transaction signs");
     h.l1.mine_block();
 
     // L1 block 2: valid batch.
@@ -1524,7 +1531,11 @@ async fn derive_chain_from_near_l1_genesis() {
     let rollup_arc = Arc::new(rollup_cfg.clone());
     let l1_chain_config = Arc::new(ChainConfig::default());
     let l1_provider = ActionL1ChainProvider::new(chain.clone());
-    let dap_source = ActionDataSource::new(chain.clone(), rollup_cfg.batch_inbox_address);
+    let dap_source = EthereumDataSource::new_from_parts(
+        ActionL1ChainProvider::new(chain.clone()),
+        ActionBlobProvider::new(chain.clone()),
+        &rollup_cfg,
+    );
     let l2_provider = ActionL2ChainProvider::from_genesis(&rollup_cfg);
 
     let attrs_builder = StatefulAttributesBuilder::new(
@@ -1576,7 +1587,7 @@ async fn single_l2_block_derived_from_blob() {
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the blob node AFTER mining so the snapshot contains the blob.
-    let (mut node, _chain) = h.create_blob_test_rollup_node_from_sequencer(
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );
@@ -1608,7 +1619,7 @@ async fn multiple_l2_blocks_derived_from_blob() {
     Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
 
     // Create the blob node.
-    let (mut node, _chain) = h.create_blob_test_rollup_node_from_sequencer(
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
         &mut builder,
         SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
     );

@@ -1,12 +1,14 @@
-use std::sync::Arc;
-
-use alloy_consensus::{Header, Receipt};
+use alloy_consensus::{
+    Header, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, Transaction,
+    TxEip1559, TxEnvelope, transaction::SignerRecoverable,
+};
 use alloy_eips::eip4844::Blob;
-use alloy_primitives::{Address, B256, Bytes, Log, LogData, U256};
-use base_batcher_encoder::FrameEncoder;
-use base_blobs::BlobEncoder;
+use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData, TxKind, U256};
+use alloy_rpc_types_eth::{Log as RpcLog, TransactionReceipt};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::SystemConfigUpdate;
-use base_protocol::{BlockInfo, Deposits, Frame};
+use base_protocol::{BlockInfo, Deposits};
 use tracing::info;
 
 use crate::Action;
@@ -68,46 +70,50 @@ impl Default for L1MinerConfig {
     }
 }
 
-/// A batcher transaction to be included in an L1 block.
-///
-/// Rollup batchers submit calldata transactions where:
-/// - `to` is the batch inbox address from the rollup config
-/// - `from` is the batcher's address
-/// - `input` is the frame-encoded batch data (version byte + encoded frames)
-///
-/// In real networks these are signed EIP-1559 transactions. The action
-/// harness uses unsigned representations since the derivation pipeline
-/// only needs the sender, recipient, and calldata — not a valid signature.
-#[derive(Debug, Clone)]
-pub struct PendingTx {
-    /// Address of the batcher account that submitted this transaction.
-    pub from: Address,
-    /// The batch inbox address this transaction was sent to.
-    pub to: Address,
-    /// Raw frame data: `[DERIVATION_VERSION_0] ++ encoded_frames`.
-    pub input: Bytes,
+/// Builder for production-shaped signed L1 test transactions.
+#[derive(Debug)]
+pub struct L1TxBuilder;
+
+impl L1TxBuilder {
+    /// Build a signed EIP-1559 calldata transaction.
+    pub fn signed_calldata(
+        signer: &PrivateKeySigner,
+        chain_id: u64,
+        nonce: u64,
+        to: Address,
+        input: Bytes,
+    ) -> Result<TxEnvelope, alloy_signer::Error> {
+        let tx = TxEip1559 {
+            chain_id,
+            nonce,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1_000_000,
+            gas_limit: 21_000,
+            to: TxKind::Call(to),
+            value: U256::ZERO,
+            input,
+            access_list: Default::default(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash())?;
+        Ok(TxEnvelope::Eip1559(tx.into_signed(signature)))
+    }
 }
 
 /// An L1 block produced by the [`L1Miner`].
 ///
 /// Mirrors the structure the derivation pipeline reads from L1: a block
-/// header (for timestamp, number, and hash chaining) together with the
-/// ordered list of batcher transactions that were submitted before the
-/// block was mined, and any receipts emitted during block execution.
+/// header (for timestamp, number, and hash chaining), ordered signed
+/// transaction bodies, matching receipts, and any EIP-4844 blob sidecars.
 #[derive(Debug, Clone)]
 pub struct L1Block {
     /// Consensus header.
     pub header: Header,
-    /// Batcher transactions included in this block, in submission order.
-    pub batcher_txs: Vec<PendingTx>,
-    /// Synthetic receipts carrying [`Log`]s that the derivation pipeline
-    /// should process (e.g. `ConfigUpdate` logs for [`SystemConfig`] changes).
-    ///
-    /// In the real chain every transaction produces a receipt; here we bundle
-    /// all test-emitted logs into a single receipt for simplicity.
-    ///
-    /// [`SystemConfig`]: base_common_genesis::SystemConfig
+    /// Signed L1 transactions included in this block, in submission order.
+    pub transactions: Vec<TxEnvelope>,
+    /// Consensus receipts for transactions included in this block.
     pub receipts: Vec<Receipt>,
+    /// Receipts for transactions included in this block.
+    pub transaction_receipts: Vec<TransactionReceipt>,
     /// EIP-4844 blob sidecars attached to this block.
     ///
     /// Each entry is a `(versioned_hash, blob_data)` pair. Action tests store
@@ -140,7 +146,7 @@ impl L1Block {
 /// `L1Miner` maintains an in-memory chain of [`L1Block`]s, starting from a
 /// genesis block at number 0, timestamp 0. Each call to [`mine_block`]
 /// (or [`Action::act`]) advances the chain by one block, draining any
-/// pending batcher transactions into the new block's body.
+/// pending signed transactions into the new block's body.
 ///
 /// The miner tracks safe and finalized head pointers via explicit movable
 /// numbers. Tests advance them with [`act_l1_safe_next`],
@@ -150,9 +156,9 @@ impl L1Block {
 ///
 /// [`reorg_to`] truncates the canonical chain back to a given block number,
 /// discarding all later blocks and returning them so tests can inspect which
-/// batcher transactions were reorged out. After a reorg the caller can submit
-/// new transactions and mine new blocks as normal — the new fork diverges
-/// from the reorg point.
+/// transactions were reorged out. After a reorg the caller can submit new
+/// transactions and mine new blocks as normal — the new fork diverges from the
+/// reorg point.
 ///
 /// To guarantee that post-reorg blocks have distinct hashes from the original
 /// blocks at the same heights (even when their contents happen to be
@@ -171,8 +177,8 @@ impl L1Block {
 pub struct L1Miner {
     /// All blocks produced so far, indexed by block number.
     blocks: Vec<L1Block>,
-    /// Batcher transactions waiting to be included in the next block.
-    pending: Vec<PendingTx>,
+    /// Signed transactions waiting to be included in the next block.
+    pending_transactions: Vec<TxEnvelope>,
     /// Logs to be wrapped into a single receipt in the next mined block.
     pending_logs: Vec<Log>,
     /// EIP-4844 blob sidecars to be attached to the next mined block.
@@ -203,13 +209,14 @@ impl L1Miner {
     pub fn new(config: L1MinerConfig) -> Self {
         let genesis = L1Block {
             header: Header { number: 0, timestamp: 0, ..Default::default() },
-            batcher_txs: vec![],
+            transactions: vec![],
             receipts: vec![],
+            transaction_receipts: vec![],
             blob_sidecars: vec![],
         };
         Self {
             blocks: vec![genesis],
-            pending: vec![],
+            pending_transactions: vec![],
             pending_logs: vec![],
             pending_blobs: vec![],
             config,
@@ -499,9 +506,9 @@ impl L1Miner {
         Ok(discarded)
     }
 
-    /// Return a slice of all pending transactions waiting to be mined.
-    pub fn pending_txs(&self) -> &[PendingTx] {
-        &self.pending
+    /// Return a slice of all pending signed transactions waiting to be mined.
+    pub fn pending_transactions(&self) -> &[TxEnvelope] {
+        &self.pending_transactions
     }
 
     /// Alias for [`latest`] — returns the current chain tip.
@@ -532,101 +539,130 @@ impl L1Miner {
         )
     }
 
-    /// Enqueue a batcher transaction for inclusion in the next mined block.
+    /// Enqueue a signed L1 transaction for inclusion in the next mined block.
     ///
-    /// The derivation pipeline filters L1 transactions by comparing the
-    /// `to` field against the batch inbox address in the rollup config, and
-    /// `from` against the expected batcher address. Both must be set
-    /// correctly for the pipeline to pick up the frames.
-    pub fn submit_tx(&mut self, tx: PendingTx) {
-        self.pending.push(tx);
+    /// Production-mode DA tests use this path so derivation receives the same
+    /// `TxEnvelope` shape it reads from an RPC-backed provider.
+    pub fn submit_transaction(&mut self, tx: TxEnvelope) {
+        self.pending_transactions.push(tx);
     }
 
-    /// Encode frames as calldata and enqueue them as pending L1 transactions.
-    ///
-    /// Each frame becomes one [`PendingTx`] with `from = batcher_addr` and
-    /// `to = inbox_addr`. The frames are included in the next [`mine_block`]
-    /// call.
-    ///
-    /// [`mine_block`]: L1Miner::mine_block
-    pub fn submit_calldata_frames(
+    /// Build and enqueue a signed calldata transaction for inclusion in the next mined block.
+    pub fn submit_calldata_transaction(
         &mut self,
-        frames: &[Arc<Frame>],
-        batcher_addr: Address,
-        inbox_addr: Address,
-    ) {
-        for frame in frames {
-            self.submit_tx(PendingTx {
-                from: batcher_addr,
-                to: inbox_addr,
-                input: FrameEncoder::to_calldata(frame),
-            });
-        }
+        signer: &PrivateKeySigner,
+        chain_id: u64,
+        nonce: u64,
+        to: Address,
+        input: Bytes,
+    ) -> Result<TxEnvelope, alloy_signer::Error> {
+        let tx = L1TxBuilder::signed_calldata(signer, chain_id, nonce, to, input)?;
+        self.submit_transaction(tx.clone());
+        Ok(tx)
     }
 
-    /// Encode frames as EIP-4844 blobs and enqueue them as pending blob sidecars.
-    ///
-    /// Each frame is packed into one blob. The blobs are attached to the next
-    /// [`mine_block`] call.
-    ///
-    /// [`mine_block`]: L1Miner::mine_block
-    pub fn submit_blob_frames(&mut self, frames: &[Arc<Frame>]) {
-        for frame in frames {
-            let blob = BlobEncoder::encode_packed(core::slice::from_ref(frame))
-                .expect("frame data fits within blob capacity");
-            self.enqueue_blob(B256::ZERO, blob);
-        }
-    }
-
-    /// Mine the next L1 block, consuming all pending batcher transactions.
+    /// Mine the next L1 block, consuming all pending signed transactions.
     ///
     /// The new block's `parent_hash` is set to the previous block's hash,
     /// and its timestamp advances by `block_time` seconds. All currently
-    /// pending batcher transactions, logs, and blob sidecars are drained
-    /// into the block body.
+    /// pending transactions, logs, and blob sidecars are drained into the
+    /// block body.
     pub fn mine_block(&mut self) -> &L1Block {
         let parent = self.latest();
         let parent_hash = parent.hash();
         let number = parent.header.number + 1;
         let timestamp = parent.header.timestamp + self.config.block_time;
 
-        let batcher_txs = core::mem::take(&mut self.pending);
+        let transactions = core::mem::take(&mut self.pending_transactions);
         let logs = core::mem::take(&mut self.pending_logs);
         let blob_sidecars = core::mem::take(&mut self.pending_blobs);
-        let receipts = if logs.is_empty() {
-            vec![]
-        } else {
-            vec![Receipt { status: true.into(), cumulative_gas_used: 0, logs }]
-        };
 
-        let block = L1Block {
-            header: Header {
-                number,
-                timestamp,
-                parent_hash,
-                // Approximate a realistic base fee so tests that inspect fee
-                // fields don't see a zero value.
-                base_fee_per_gas: Some(1_000_000_000),
-                // Stamp the current fork_id so that blocks produced on
-                // different forks always have distinct hashes, even when
-                // their number, timestamp, and parent hash are identical.
-                extra_data: Bytes::copy_from_slice(&self.fork_id.to_be_bytes()),
-                ..Default::default()
-            },
-            batcher_txs,
-            receipts,
-            blob_sidecars,
+        let header = Header {
+            number,
+            timestamp,
+            parent_hash,
+            // Approximate a realistic base fee so tests that inspect fee
+            // fields don't see a zero value.
+            base_fee_per_gas: Some(1_000_000_000),
+            // Stamp the current fork_id so that blocks produced on
+            // different forks always have distinct hashes, even when
+            // their number, timestamp, and parent hash are identical.
+            extra_data: Bytes::copy_from_slice(&self.fork_id.to_be_bytes()),
+            ..Default::default()
         };
+        let block_hash = header.hash_slow();
+        let receipts = Self::build_receipts(transactions.len(), logs);
+        let transaction_receipts =
+            Self::build_transaction_receipts(&transactions, block_hash, number);
+
+        let block = L1Block { header, transactions, receipts, transaction_receipts, blob_sidecars };
 
         info!(
             block_number = number,
             timestamp = timestamp,
-            pending_txs = block.batcher_txs.len(),
+            transactions = block.transactions.len(),
             "mined L1 block"
         );
 
         self.blocks.push(block);
         self.blocks.last().expect("just pushed")
+    }
+
+    /// Build consensus receipts for the in-memory chain provider.
+    pub fn build_receipts(transaction_count: usize, logs: Vec<Log>) -> Vec<Receipt> {
+        if transaction_count == 0 {
+            return if logs.is_empty() {
+                Vec::new()
+            } else {
+                vec![Receipt { status: true.into(), cumulative_gas_used: 21_000, logs }]
+            };
+        }
+
+        let mut pending_logs = Some(logs);
+        (0..transaction_count)
+            .map(|index| Receipt {
+                status: true.into(),
+                cumulative_gas_used: 21_000 * (index as u64 + 1),
+                logs: pending_logs.take().unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    /// Build production-shaped RPC receipts for a mined block.
+    pub fn build_transaction_receipts(
+        transactions: &[TxEnvelope],
+        block_hash: B256,
+        block_number: u64,
+    ) -> Vec<TransactionReceipt> {
+        transactions
+            .iter()
+            .enumerate()
+            .map(|(index, tx)| {
+                let gas_used = 21_000;
+                let receipt = Receipt::<RpcLog> {
+                    status: true.into(),
+                    cumulative_gas_used: gas_used * (index as u64 + 1),
+                    logs: Vec::new(),
+                };
+                TransactionReceipt {
+                    inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                        receipt,
+                        logs_bloom: Bloom::ZERO,
+                    }),
+                    transaction_hash: *tx.hash(),
+                    transaction_index: Some(index as u64),
+                    block_hash: Some(block_hash),
+                    block_number: Some(block_number),
+                    gas_used,
+                    effective_gas_price: 1_000_000_000,
+                    blob_gas_used: tx.blob_gas_used(),
+                    blob_gas_price: tx.blob_gas_used().map(|_| 1_000_000_000),
+                    from: tx.recover_signer().unwrap_or_default(),
+                    to: tx.to(),
+                    contract_address: None,
+                }
+            })
+            .collect()
     }
 }
 
@@ -648,10 +684,12 @@ impl Action for L1Miner {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Transaction, transaction::SignerRecoverable};
     use alloy_eips::eip4844::Blob;
     use alloy_primitives::{Address, B256, Bytes};
+    use alloy_signer_local::PrivateKeySigner;
 
-    use super::{L1Miner, PendingTx, ReorgError};
+    use super::{L1Miner, L1TxBuilder, ReorgError};
     use crate::Action;
 
     struct MinerFixture;
@@ -659,6 +697,15 @@ mod tests {
     impl MinerFixture {
         fn miner() -> L1Miner {
             L1Miner::default()
+        }
+
+        fn signer() -> PrivateKeySigner {
+            PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")
+        }
+
+        fn signed_tx(input: Bytes, nonce: u64, to: Address) -> alloy_consensus::TxEnvelope {
+            L1TxBuilder::signed_calldata(&Self::signer(), 1, nonce, to, input)
+                .expect("test transaction signs")
         }
     }
 
@@ -777,26 +824,28 @@ mod tests {
     }
 
     #[test]
-    fn pending_txs_included_in_next_block() {
+    fn pending_transactions_included_in_next_block() {
         let mut m = MinerFixture::miner();
-        m.submit_tx(PendingTx {
-            from: Address::ZERO,
-            to: Address::ZERO,
-            input: Bytes::from_static(b"\x00hello"),
-        });
+        let to = Address::repeat_byte(0x22);
+        let input = Bytes::from_static(b"\x00hello");
+        let expected_sender = MinerFixture::signer().address();
+        m.submit_transaction(MinerFixture::signed_tx(input.clone(), 0, to));
         m.mine_block();
-        assert_eq!(m.latest().batcher_txs.len(), 1);
-        assert_eq!(m.latest().batcher_txs[0].input, Bytes::from_static(b"\x00hello"));
+        assert_eq!(m.latest().transactions.len(), 1);
+        assert_eq!(m.latest().transactions[0].input(), &input);
+        assert_eq!(m.latest().transactions[0].to(), Some(to));
+        assert_eq!(m.latest().transactions[0].recover_signer().unwrap(), expected_sender);
+        assert_eq!(m.latest().transaction_receipts[0].from, expected_sender);
+        assert_eq!(m.latest().transaction_receipts[0].to, Some(to));
     }
 
     #[test]
-    fn pending_txs_cleared_after_mining() {
+    fn pending_transactions_cleared_after_mining() {
         let mut m = MinerFixture::miner();
-        m.submit_tx(PendingTx { from: Address::ZERO, to: Address::ZERO, input: Bytes::new() });
+        m.submit_transaction(MinerFixture::signed_tx(Bytes::new(), 0, Address::ZERO));
         m.mine_block();
         m.mine_block();
-        // Second block should have no batcher txs.
-        assert!(m.latest().batcher_txs.is_empty());
+        assert!(m.latest().transactions.is_empty());
     }
 
     #[test]
@@ -837,15 +886,12 @@ mod tests {
     }
 
     #[test]
-    fn reorg_returns_batcher_txs_from_discarded_blocks() {
+    fn reorg_returns_transactions_from_discarded_blocks() {
         let mut m = MinerFixture::miner();
         m.mine_block(); // 1 — empty
 
-        m.submit_tx(PendingTx {
-            from: Address::ZERO,
-            to: Address::ZERO,
-            input: Bytes::from_static(b"\x00batch"),
-        });
+        let input = Bytes::from_static(b"\x00batch");
+        m.submit_transaction(MinerFixture::signed_tx(input.clone(), 0, Address::ZERO));
         m.mine_block(); // 2 — contains the batch tx
 
         m.mine_block(); // 3 — empty
@@ -853,10 +899,10 @@ mod tests {
         let discarded = m.reorg_to(1).unwrap();
         // Block 2 contained the batch, block 3 was empty.
         assert_eq!(discarded[0].number(), 2);
-        assert_eq!(discarded[0].batcher_txs.len(), 1);
-        assert_eq!(discarded[0].batcher_txs[0].input, Bytes::from_static(b"\x00batch"));
+        assert_eq!(discarded[0].transactions.len(), 1);
+        assert_eq!(discarded[0].transactions[0].input(), &input);
         assert_eq!(discarded[1].number(), 3);
-        assert!(discarded[1].batcher_txs.is_empty());
+        assert!(discarded[1].transactions.is_empty());
     }
 
     #[test]

@@ -150,8 +150,8 @@ async fn holocene_non_sequential_frame_pruned_channel_never_completes() {
     batcher.stage_n_frames(&mut h.l1, 1); // frame 0
     batcher.drop_n_frames(1); // drop frame 1
     batcher.stage_n_frames(&mut h.l1, 1); // frame 2 (non-sequential)
-    let block_1_num = h.l1.mine_block().number();
-    batcher.confirm_staged(block_1_num).await;
+    h.l1.mine_block();
+    batcher.confirm_staged(h.l1.tip()).await;
     chain.push(h.l1.tip().clone()); // L1 block 1: frames 0 and 2
 
     node.initialize().await;
@@ -257,8 +257,8 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
 
     // L1 block 1: only frame 0 of channel A (channel is incomplete).
     batcher_a.stage_n_frames(&mut h.l1, 1); // frame 0 of channel A
-    let block_1_num = h.l1.mine_block().number();
-    batcher_a.confirm_staged(block_1_num).await;
+    h.l1.mine_block();
+    batcher_a.confirm_staged(h.l1.tip()).await;
     chain.push(h.l1.tip().clone()); // L1 block 1: frame 0 of channel A
 
     node.initialize().await;
@@ -278,8 +278,8 @@ async fn holocene_new_channel_abandons_incomplete_old_channel() {
     for _ in 0..n_b {
         batcher_b.stage_n_frames(&mut h.l1, 1);
     }
-    let block_2_num = h.l1.mine_block().number();
-    batcher_b.confirm_staged(block_2_num).await;
+    h.l1.mine_block();
+    batcher_b.confirm_staged(h.l1.tip()).await;
     chain.push(h.l1.tip().clone()); // L1 block 2: all frames of channel B
 
     node.run_until_idle().await;
@@ -360,8 +360,8 @@ async fn holocene_non_sequential_frame_pruned_then_recovery_succeeds() {
     batcher.stage_n_frames(&mut h.l1, 1); // frame 0
     batcher.drop_n_frames(1); // drop frame 1
     batcher.stage_n_frames(&mut h.l1, 1); // frame 2 (non-sequential)
-    let block_1_num = h.l1.mine_block().number();
-    batcher.confirm_staged(block_1_num).await;
+    h.l1.mine_block();
+    batcher.confirm_staged(h.l1.tip()).await;
     chain.push(h.l1.tip().clone());
 
     node.initialize().await;

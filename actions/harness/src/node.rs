@@ -8,9 +8,9 @@ use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
 use base_common_genesis::RollupConfig;
 use base_common_network::BaseEngineApi;
 use base_consensus_derive::{
-    ActivationSignal, DerivationPipeline, Pipeline, PipelineError, PipelineErrorKind,
-    PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver, StatefulAttributesBuilder,
-    StepResult,
+    ActivationSignal, DerivationPipeline, EthereumDataSource, Pipeline, PipelineError,
+    PipelineErrorKind, PolledAttributesQueueStage, ResetError, ResetSignal, SignalReceiver,
+    StatefulAttributesBuilder, StepResult,
 };
 use base_consensus_engine::EngineForkchoiceVersion;
 use base_consensus_safedb::{
@@ -19,8 +19,8 @@ use base_consensus_safedb::{
 use base_protocol::{AttributesWithParent, BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
-    ActionBlobDataSource, ActionDataSource, ActionEngineClient, ActionL1ChainProvider,
-    ActionL2ChainProvider, TestGossipTransport,
+    ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
+    TestGossipTransport,
 };
 
 /// The generic pipeline type used by [`TestRollupNode`] for any DA source `D`.
@@ -34,21 +34,13 @@ pub type ActionPipeline<D> = DerivationPipeline<
     ActionL2ChainProvider,
 >;
 
-/// The concrete pipeline type used by [`TestRollupNode`] with calldata DA.
+/// The production-mode DA provider used by [`VerifierPipeline`].
+pub type ProductionDaProvider = EthereumDataSource<ActionL1ChainProvider, ActionBlobProvider>;
+
+/// The concrete pipeline type used by [`TestRollupNode`] with production calldata/blob DA sources.
 pub type VerifierPipeline = DerivationPipeline<
     PolledAttributesQueueStage<
-        ActionDataSource,
-        ActionL1ChainProvider,
-        ActionL2ChainProvider,
-        StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
-    >,
-    ActionL2ChainProvider,
->;
-
-/// The concrete pipeline type used by [`TestRollupNode`] with blob DA.
-pub type BlobVerifierPipeline = DerivationPipeline<
-    PolledAttributesQueueStage<
-        ActionBlobDataSource,
+        ProductionDaProvider,
         ActionL1ChainProvider,
         ActionL2ChainProvider,
         StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,

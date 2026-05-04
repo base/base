@@ -293,9 +293,9 @@ async fn granite_channel_timeout_enforced() {
 
     // L1 block 1: submit only frame 0. Channel opens at block 1.
     batcher.stage_n_frames(&mut h.l1, 1);
-    let block_1_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(block_1_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     node.initialize().await;
     node.run_until_idle().await;
@@ -327,9 +327,9 @@ async fn granite_channel_timeout_enforced() {
     // incomplete channel starting from a non-zero frame number, which can also
     // never become ready. Either way, no L2 block is derived.
     batcher.stage_n_frames(&mut h.l1, frame_count - 1);
-    let late_block_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(late_block_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     let derived = node.run_until_idle().await;
     assert_eq!(

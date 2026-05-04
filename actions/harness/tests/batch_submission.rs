@@ -23,8 +23,8 @@ async fn batcher_mines_block_with_submissions() {
     assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
     // Default EncoderConfig uses DaType::Blob, so submissions appear as blob sidecars.
     assert!(
-        !h.l1.tip().batcher_txs.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
-        "mined block should contain batcher submissions (calldata or blobs)"
+        !h.l1.tip().transactions.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
+        "mined block should contain signed batcher submissions"
     );
 }
 
@@ -39,8 +39,8 @@ async fn batcher_span_batch_mode() {
 
     assert!(h.l1.latest_number() >= 1, "at least one L1 block should be mined");
     assert!(
-        !h.l1.tip().batcher_txs.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
-        "mined block should contain span batcher submissions (calldata or blobs)"
+        !h.l1.tip().transactions.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
+        "mined block should contain signed span batcher submissions"
     );
 }
 
@@ -122,9 +122,9 @@ async fn batcher_reorg_during_submission() {
     chain.push(h.l1.tip().clone());
 
     batcher.stage_n_frames(&mut h.l1, usize::MAX);
-    let recovery_num = h.l1.mine_block().number();
+    h.l1.mine_block();
     chain.push(h.l1.tip().clone());
-    batcher.confirm_staged(recovery_num).await;
+    batcher.confirm_staged(h.l1.tip()).await;
 
     // Verify the node re-derives L2 block 1 from the new-fork submission.
     node.initialize().await;
