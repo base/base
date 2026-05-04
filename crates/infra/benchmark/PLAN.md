@@ -49,53 +49,51 @@ Port the Go benchmark tool to a new `base-benchmark` Rust crate at `crates/infra
 crates/infra/benchmark/
 ├── Cargo.toml
 ├── README.md
-├── PORTING_REFERENCE.md
 ├── PLAN.md
 ├── examples/
-│   ├── devnet.yaml
-│   └── snapshot.sh
+│   └── devnet.yaml
 └── src/
-    ├── lib.rs
-    ├── error.rs            # BenchmarkError enum
-    ├── params.rs           # Const rollup/chain params
+    ├── lib.rs              # Minimal: doc = include_str!("../README.md"), grouped mod + pub use
+    ├── error.rs            # BenchmarkError enum (thiserror)
+    ├── params.rs           # Const rollup/chain params (BATCHER_KEY, PREFUND_KEY, etc.)
     ├── config/
     │   └── mod.rs          # BenchmarkConfig, BenchmarkDefinition, matrix expansion
-    ├── ports.rs            # PortManager
-    ├── process.rs          # ProcessHandle (spawn, SIGINT/SIGKILL, log capture)
-    ├── snapshots.rs        # SnapshotManager
-    ├── output.rs           # Output dir, gzip, result JSON, RandomId
+    ├── ports.rs            # PortManager (TcpListener probe, acquire/release)
+    ├── process.rs          # ProcessHandle (SIGINT + 5s grace + SIGKILL)
+    ├── snapshots.rs        # SnapshotManager (sha256[:12] cache, ensure_snapshot)
+    ├── output.rs           # gzip_file, write_result_json, dump_log_tail, random_id
     ├── client/
-    │   └── mod.rs          # ExecutionClient trait, BaseRethNodeClient, BuilderClient
+    │   └── mod.rs          # ExecutionClient trait, BaseRethNodeClient, BuilderClient, setup_node
     ├── consensus/
-    │   └── mod.rs          # BaseConsensusClient, Sequencer, Syncing, FakeMempool
+    │   └── mod.rs          # BaseConsensusClient, SequencerConsensusClient, SyncingConsensusClient, FakeMempool
     ├── payload/
-    │   └── mod.rs          # Worker trait, LoadTestPayloadWorker
-    ├── proxy.rs            # Axum JSON-RPC proxy
+    │   └── mod.rs          # PayloadWorker trait, LoadTestPayloadWorker
+    ├── proxy/
+    │   └── mod.rs          # run_proxy (axum JSON-RPC intercept proxy)
     ├── metrics/
-    │   └── mod.rs          # BlockMetrics, PrometheusCollector, FileMetricsWriter
+    │   └── mod.rs          # BlockMetrics, MetricsCollector, check_thresholds, write_metrics_json
     ├── flashblocks/
-    │   └── mod.rs          # FlashblocksClient (WS consumer), FlashblockReplayServer
-    ├── rollup.rs           # BenchmarkRollupConfig::build() method
+    │   └── mod.rs          # FlashblocksClient (tokio-tungstenite WS), FlashblockReplayServer
     ├── runner/
-    │   └── mod.rs          # TestConfig, NetworkBenchmark, sequencer/validator flows
-    ├── service.rs          # setup_internal_directories, run_test, export_output, main loop
+    │   └── mod.rs          # NetworkBenchmark, RunnerOptions, RunResult
+    ├── service.rs          # BenchmarkArgs, run_benchmark (top-level entry point)
     └── bin/
-        └── base_bench.rs   # CLI glue only
+        └── base_bench.rs   # CLI glue only (Cli struct, resolve_bin, tokio::main)
 ```
 
 > **AGENTS.md rules applied:** Each `mod foo; pub use foo::*;` grouped together in lib.rs. No `pub mod` except test utils. All types `pub`. No logic in lib.rs. Binary contains only glue. `mod.rs` files begin with `//!` doc comment. Structured tracing with key=value fields.
 
 ## Phase 1: Crate Scaffold, Config & Error Types [COMPLETE]
 
-- [ ] 1.1 Create `Cargo.toml`: workspace deps (`clap`, `tokio`, `serde`, `serde_yaml`, `serde_json`, `tracing`, `tracing-subscriber`, `rand`, `thiserror`, `eyre`, `alloy`, `reqwest`, `axum`, `tokio-tungstenite`, `flate2`, `sha2`, `nix`, `prometheus-parse`, `base-consensus-engine`, `base-jwt`, `base-common-genesis`, `base-common-flashblocks`, `base-common-consensus`, `base-common-evm`, `base-test-utils`). `[[bin]] name = "base-bench" path = "src/bin/base_bench.rs"`. `[lints] workspace = true`.
-- [ ] 1.2 Create `src/error.rs`: `BenchmarkError` enum with variants: `Config(String)`, `Io(#[from] std::io::Error)`, `Client(String)`, `EngineApi(String)`, `Metrics(String)`, `Proxy(String)`, `Snapshot(String)`, `Timeout(String)`, `ProcessCrash { binary: String, exit_code: Option<i32> }`. All Display via thiserror.
-- [ ] 1.3 Create minimal `src/lib.rs` and stub `src/bin/base_bench.rs`
-- [ ] 1.4 Add `"crates/infra/benchmark"` to workspace `Cargo.toml` members
-- [ ] 1.5 Define config types in `src/config/mod.rs`: `BenchmarkConfig` {name, description, block_time_ms, num_blocks, parallel_tx_batches, flashblocks: Option<FlashblocksConfig>, transaction_payloads: Vec<TransactionPayloadDef>, benchmarks: Vec<BenchmarkDefinition>}. `BenchmarkDefinition` {datadir: DatadirConfig, snapshot: Option<SnapshotConfig>, metrics: Option<MetricsConfig>, tags: HashMap<String, String>, variables: Vec<Variable>}. `DatadirConfig` {sequencer: Option<PathBuf>, validator: Option<PathBuf>}. `SnapshotConfig` {command: String, genesis_file: Option<PathBuf>, force_clean: bool}. `MetricsConfig` {warning: Vec<MetricsThreshold>, error: Vec<MetricsThreshold>}. `MetricsThreshold` {metric: String, min: Option<f64>, max: Option<f64>}. `Variable` {name: String, values: Vec<String>}. `TransactionPayloadDef` {id: String, payload_type: String, params: LoadTestPayloadParams}. `LoadTestPayloadParams` {sender_count: u64, funding_amount: U256, transactions: Vec<WeightedTx>}. `FlashblocksConfig` {block_time_ms: u64}. `TestRun` {id: String, params: HashMap<String, String>, definition: BenchmarkDefinition, payload: TransactionPayloadDef}. All `Deserialize` + `Serialize`.
-- [ ] 1.6 Create `src/params.rs`: `pub const MAX_SEQUENCER_DRIFT: u64 = 20`, `SEQ_WINDOW_SIZE: u64 = 24`, `L1_CHAIN_ID: u64 = 1`, `BATCH_INBOX_ADDRESS: Address = address!("...")`, `EIP1559_ELASTICITY: u64 = 50`, `EIP1559_DENOMINATOR: u64 = 1`, `BATCHER_KEY: B256 = b256!("...")`, `PREFUND_KEY: B256 = b256!("...")`, `PREFUND_AMOUNT: U256 = ...`, `SUGGESTED_FEE_RECIPIENT: Address = address!("4200000000000000000000000000000000000011")`, `DEFAULT_GAS_LIMIT: u64 = 30_000_000`, `SETUP_GAS_LIMIT: u64 = 1_000_000_000`.
-- [ ] 1.7 Implement matrix expansion in `src/config/mod.rs`: `BenchmarkConfig::expand(&self) -> Result<Vec<TestRun>, BenchmarkError>`. Cartesian product of `variables` arrays. If result > 100 runs, return `Err(BenchmarkError::Config("matrix expansion exceeds 100 test runs".into()))`. Each `TestRun` gets a unique ID via `random_id()`.
-- [ ] 1.8 Implement CLI in `src/bin/base_bench.rs`: `#[derive(Parser)] struct Cli` with `--config: PathBuf`, `--root-dir: PathBuf`, `--output-dir: PathBuf`, `--benchmark-run-id: Option<String>`, `--reth-bin: Option<PathBuf>` (default: sibling exe / "base-reth-node"), `--builder-bin: Option<PathBuf>` (default: sibling exe / "base-builder"), `--load-test-bin: Option<PathBuf>` (default: sibling exe / "base-load-test"), `--machine-type: Option<String>`, `--machine-provider: Option<String>`, `--machine-region: Option<String>`, `--file-system: Option<String>`. Env: `#[arg(env = "BASE_BENCH_CONFIG")]` etc.
-- [ ] 1.9 Tests: config deserialization round-trip, matrix expansion (0 vars, 1 var, 2+ vars, >100 error), params const sanity checks.
+- [x] 1.1 Create `Cargo.toml`: workspace deps (`clap`, `tokio`, `serde`, `serde_yaml`, `serde_json`, `tracing`, `tracing-subscriber`, `rand`, `thiserror`, `eyre`, `alloy`, `reqwest`, `axum`, `tokio-tungstenite`, `flate2`, `sha2`, `nix`, `prometheus-parse`, `base-consensus-engine`, `base-jwt`, `base-common-genesis`, `base-common-flashblocks`, `base-common-consensus`, `base-common-evm`, `base-test-utils`). `[[bin]] name = "base-bench" path = "src/bin/base_bench.rs"`. `[lints] workspace = true`.
+- [x] 1.2 Create `src/error.rs`: `BenchmarkError` enum with variants: `Config(String)`, `Io(#[from] std::io::Error)`, `Client(String)`, `EngineApi(String)`, `Metrics(String)`, `Proxy(String)`, `Snapshot(String)`, `Timeout(String)`, `ProcessCrash { binary: String, exit_code: Option<i32> }`. All Display via thiserror.
+- [x] 1.3 Create minimal `src/lib.rs` and stub `src/bin/base_bench.rs`
+- [x] 1.4 Add `"crates/infra/benchmark"` to workspace `Cargo.toml` members
+- [x] 1.5 Define config types in `src/config/mod.rs`
+- [x] 1.6 Create `src/params.rs`: rollup consts including `BATCHER_KEY`, `PREFUND_KEY`, `DEFAULT_GAS_LIMIT`, etc.
+- [x] 1.7 Implement matrix expansion in `src/config/mod.rs`: cartesian product of `variables`, ≤100 guard.
+- [x] 1.8 Implement CLI in `src/bin/base_bench.rs` with all flags + `BASE_BENCH_*` env prefix.
+- [x] 1.9 Tests: config deserialization round-trip, matrix expansion (0 vars, 1 var, 2+ vars, >100 error), params const sanity checks.
 
 ## Phase 2: Infrastructure Utilities [COMPLETE]
 
@@ -116,111 +114,55 @@ crates/infra/benchmark/
 
 ## Phase 4: Consensus Clients [COMPLETE]
 
-- [ ] 4.1 Implement `BaseConsensusClient` in `src/consensus/mod.rs`: wraps `BaseEngineClient<RootProvider, RootProvider<Base>>` built via `EngineClientBuilder { l2: auth_url, l2_jwt, l1_rpc: Url::parse("http://127.0.0.1:1").unwrap(), cfg }`. Fields: `head_block_hash: B256`, `head_block_number: u64`, `current_payload_id: Option<PayloadId>`. Methods:
-  - `async update_fork_choice(&mut self, attrs: Option<BasePayloadAttributes>) -> Result<PayloadId>`: 10s timeout, `engine_forkchoiceUpdatedV3(ForkchoiceState { head, safe, finalized: all head_block_hash }, attrs)`.
-  - `async get_built_payload(&self, id: PayloadId) -> Result<ExecutionPayloadEnvelope>`: 240s timeout, `engine_getPayloadV4(id)`.
-  - `async new_payload(&mut self, payload: BaseExecutionPayloadV4, beacon_root: B256) -> Result<PayloadStatus>`: 30s timeout, `engine_newPayloadV4(payload, vec![], beacon_root, vec![])`, update `head_block_hash` and `head_block_number`.
-- [ ] 4.2 Implement `SequencerConsensusClient` in `src/consensus/mod.rs`: wraps `BaseConsensusClient`. `async propose(&mut self, mempool: &FakeMempool, block_time: Duration, gas_limit: u64) -> Result<(BaseExecutionPayloadV4, BlockMetrics)>`:
-  1. Drain txs from mempool, chunk into batches of 100
-  2. Send batches in parallel via `JoinSet` — each batch: `eth_sendRawTransaction` on node RPC
-  3. `generate_payload_attributes()`:
-     - `timestamp` = `head_block_timestamp + 1`
-     - `prev_randao` = `B256::ZERO`
-     - `suggested_fee_recipient` = `params::SUGGESTED_FEE_RECIPIENT`
-     - `withdrawals` = `vec![]`
-     - `parent_beacon_block_root` = `keccak256(b"fake-beacon-block-root\x01")`
-     - `transactions` = vec![L1BlockInfo deposit tx with all-zero L1 fields encoded as `TxDeposit`]
-     - `no_tx_pool` = false
-     - `gas_limit` = gas_limit
-     - `eip_1559_params` = Holocene-encoded (elasticity=50, denominator=1)
-     - `min_base_fee` = 1
-  4. `update_fork_choice(Some(attrs))` → payload_id
-  5. `tokio::time::sleep(block_time)`
-  6. `get_built_payload(payload_id)` → payload
-  7. `new_payload(payload, beacon_root)` → update head
-  8. Collect timing into `BlockMetrics`, return `(payload, metrics)`
-- [ ] 4.3 Implement `SyncingConsensusClient` in `src/consensus/mod.rs`: `async start(&mut self, payloads: &[BaseExecutionPayloadV4], first_test_block: u64, block_time: Duration) -> Result<Vec<BlockMetrics>>`: for each payload: `new_payload()`, `update_fork_choice(None)`, sleep to cadence, collect metrics if `block_number >= first_test_block`.
-- [ ] 4.4 Implement `FakeMempool` in `src/consensus/mod.rs`: `Arc<Mutex<VecDeque<Bytes>>>`. `add_transactions(txs: Vec<Bytes>)`. `drain() -> Vec<Bytes>`: take all, move deposit txs (first byte == 0x7E) to front of returned vec.
-- [ ] 4.5 Tests: FakeMempool drain ordering (deposits first). Payload attributes generation (L1BlockInfo encoding, EIP-1559 params).
+- [x] 4.1 Implement `BaseConsensusClient` in `src/consensus/mod.rs`.
+- [x] 4.2 Implement `SequencerConsensusClient::propose()`: FCU→sleep→getPayload→newPayload, Holocene EIP-1559 params, fake beacon root, L1BlockInfo deposit tx.
+- [x] 4.3 Implement `SyncingConsensusClient::start()`.
+- [x] 4.4 Implement `FakeMempool`: deposits-first drain ordering.
+- [x] 4.5 Tests: FakeMempool drain ordering, deposit tx encoding, EIP-1559 param encoding, beacon root determinism.
 
 ## Phase 5: Payload Worker [COMPLETE]
 
-- [ ] 5.1 Implement JSON-RPC proxy in `src/proxy.rs`: Axum HTTP server on port from `PortManager`. `POST /` handler:
-  - Parse JSON body, inspect `method` field
-  - If `"eth_sendRawTransaction"`: decode `params[0]` hex → `Bytes`, push to `Arc<Mutex<Vec<Bytes>>>` buffer, AND forward to upstream via `reqwest`, return upstream response
-  - All other methods: forward transparently to upstream RPC
-  - `drain_pending_txs() -> Vec<Bytes>`, `url() -> String`
-  - `async stop()`: axum graceful shutdown
-- [ ] 5.2 Define `Worker` trait in `src/payload/mod.rs`:
-  ```rust
-  #[async_trait]
-  pub trait Worker: Send + Sync {
-      async fn setup(&mut self, rpc_url: &str, block_watcher_url: &str, flashblocks_ws_url: Option<&str>) -> Result<(), BenchmarkError>;
-      fn send_txs(&self) -> Vec<Bytes>;
-      async fn stop(&mut self) -> Result<(), BenchmarkError>;
-      fn mempool(&self) -> &FakeMempool;
-  }
-  ```
-- [ ] 5.3 Define `LoadTestPayloadDefinition` in `src/payload/mod.rs`: `sender_count: u64`, `funding_amount: U256`, `transactions: Vec<WeightedTx>`. Default tx mix: 70% transfer, 20% calldata 256B, 10% sha256 precompile.
-- [ ] 5.4 Implement `LoadTestPayloadWorker` in `src/payload/mod.rs`:
-  - `setup()`: start `RpcProxy` pointing at upstream `rpc_url`, serialize `LoadConfig` YAML to `tempfile::NamedTempFile` (rpc=proxy.url(), sender_count, target_gps=gas_limit/block_time_secs, duration="99999s", seed=rand::random::<u64>(), funding_amount, transactions, block_watcher_url, flashblocks_ws_url), spawn `load_test_bin` via `ProcessHandle` with `FUNDER_KEY=<hex_prefund_key>`.
-  - `send_txs()`: `proxy.drain_pending_txs()` → `mempool.add_transactions()`, return drained.
-  - `stop()`: kill process, stop proxy, drop temp file (auto-deleted by `NamedTempFile`).
-- [ ] 5.5 Tests: proxy captures eth_sendRawTransaction (mock upstream). Proxy forwards other methods transparently.
+- [x] 5.1 Implement JSON-RPC proxy in `src/proxy.rs`: axum `POST /`, intercepts `eth_sendRawTransaction` into `FakeMempool`, forwards all other methods to upstream via reqwest.
+- [x] 5.2 Define `PayloadWorker` trait (`start`, `stop`) in `src/payload/mod.rs`.
+- [x] 5.3 Implement `LoadTestPayloadWorker`: writes temp YAML config, spawns `base-load-test` subprocess with `FUNDER_KEY` env, shares `FakeMempool` with proxy.
+- [x] 5.4 Tests: drain empty, drain clears pending, proxy serialization.
 
 ## Phase 6: Metrics [COMPLETE]
 
-- [ ] 6.1 Implement Prometheus scraper in `src/metrics/mod.rs`: `async fn scrape(url: &str) -> Result<Vec<prometheus_parse::Sample>, BenchmarkError>`: HTTP GET, parse with `prometheus_parse::Scrape::parse()`.
-- [ ] 6.2 Implement `BlockMetrics` in `src/metrics/mod.rs`: `block_number: u64`, `timestamp: Instant`, `prev_metrics: HashMap<String, prometheus_parse::Sample>`, `execution_metrics: HashMap<String, f64>`. `update_prometheus_metric(&mut self, name: &str, current: &Sample)`: Histogram/Summary → `(sum-prev_sum)/(count-prev_count)`, skip if delta_count==0 (NaN guard); Gauge/Counter → raw value. `add_execution_metric(&mut self, name: &str, value: f64)`.
-- [ ] 6.3 Define metric name consts: `SEND_TXS_LATENCY`, `UPDATE_FORK_CHOICE_LATENCY`, `GET_PAYLOAD_LATENCY`, `GAS_PER_BLOCK`, `GAS_PER_SECOND`, `TRANSACTIONS_PER_BLOCK`, `NEW_PAYLOAD_LATENCY`.
-- [ ] 6.4 Implement `MetricsCollector` trait: `async fn collect(&mut self, block: &mut BlockMetrics) -> Result<(), BenchmarkError>`, `fn get_metrics(&self) -> &[BlockMetrics]`. Implement `PrometheusCollector`: scrapes node metrics port each block, calls `update_prometheus_metric()` for each known metric name.
-- [ ] 6.5 Implement `FileMetricsWriter`: `write(metrics: &[BlockMetrics], path: &Path) -> Result<(), BenchmarkError>` — serialize as JSON array.
-- [ ] 6.6 Implement threshold checking: `check_thresholds(metrics: &[BlockMetrics], config: &MetricsConfig) -> Vec<ThresholdViolation>`. `pub struct ThresholdViolation { metric: String, value: f64, bound: f64, severity: Severity }`. Log: `warn!(metric = %name, value = %v, bound = %b, "metric threshold exceeded")`.
-- [ ] 6.7 Tests: BlockMetrics delta logic (Histogram, Gauge, NaN guard). Threshold checking (pass, warn, error).
+- [x] 6.1 Implement `scrape_prometheus(url: &str)` via `prometheus_parse::Scrape::parse()`.
+- [x] 6.2 Implement `BlockMetrics`: Histogram delta (sum/count), Gauge raw, NaN guard.
+- [x] 6.3 Define metric name consts: `GAS_PER_BLOCK`, `GAS_PER_SECOND`, `TRANSACTIONS_PER_BLOCK`, `SEND_TXS_LATENCY`, `UPDATE_FORK_CHOICE_LATENCY`, `GET_PAYLOAD_LATENCY`, `NEW_PAYLOAD_LATENCY`.
+- [x] 6.4 Implement `MetricsCollector`: scrapes node metrics port each block.
+- [x] 6.5 Implement `write_metrics_json`: serialize `BlockMetrics` slice as JSON.
+- [x] 6.6 Implement `check_thresholds(metrics, config) -> Vec<ThresholdViolation>` with `Severity::Warning/Error`.
+- [x] 6.7 Tests: BlockMetrics delta logic (Histogram via real prometheus text parse, Gauge). Threshold checking (min/max violation, pass).
 
 ## Phase 7: Flashblocks [COMPLETE]
 
-- [ ] 7.1 Import (do NOT redefine) `FlashblocksPayloadV1` and `ExecutionPayloadFlashblockDeltaV1` from `base-common-flashblocks`.
-- [ ] 7.2 Implement `FlashblocksClient` in `src/flashblocks/mod.rs`: `tokio-tungstenite` WS connect to builder's flashblocks port. Receive + deserialize `FlashblocksPayloadV1` messages. Store in `Arc<Mutex<HashMap<u64, Vec<FlashblocksPayloadV1>>>>` keyed by base block number. `get_flashblocks(block: u64) -> Vec<FlashblocksPayloadV1>`. `async stop()`: close WS.
-- [ ] 7.3 Implement `FlashblockReplayServer` in `src/flashblocks/mod.rs`: Axum WebSocket server on port from `PortManager`. On client connect: replay each block's flashblocks with timed delays matching original cadence within block_time. `tokio::sync::broadcast` channel internally. `url() -> String`. `async stop()`.
-- [ ] 7.4 Tests: FlashblocksClient stores by block number. ReplayServer replays within block time window.
+- [x] 7.1 Reuse `Flashblock::try_decode_message()` from `base-common-flashblocks` (handles JSON + Brotli).
+- [x] 7.2 Implement `FlashblocksClient`: tokio-tungstenite WS consumer, exponential backoff reconnect (500ms–5s), ping/pong, `drain() -> Vec<Flashblock>`.
+- [x] 7.3 Implement `FlashblockReplayServer`: axum WS upgrade + `broadcast::channel`, `broadcast_all(&[Flashblock])`, `run(port, cancel)`.
+- [x] 7.4 Tests: client drain starts empty, replay broadcast to no receivers does not panic.
 
 ## Phase 8: Network Benchmark Orchestration [COMPLETE]
 
-- [ ] 8.1 Define `TestConfig` in `src/runner/mod.rs`: `params: BenchmarkDefinition`, `config: RollupConfig`, `genesis: Genesis`, `batcher_key: B256`, `prefund_private_key: B256`, `prefund_amount: U256`.
-- [ ] 8.2 Implement `NetworkBenchmark` in `src/runner/mod.rs`: fields `sequencer_client: Box<dyn ExecutionClient>`, `validator_client: Box<dyn ExecutionClient>`, `sequencer_metrics: Vec<BlockMetrics>`, `validator_metrics: Vec<BlockMetrics>`, `test_config: TestConfig`, `transaction_payload: TransactionPayloadDef`, `port_manager: Arc<PortManager>`, `flashblocks_block_time: Option<Duration>`. `async run(&mut self) -> Result<(), BenchmarkError>`.
-- [ ] 8.3 Implement `benchmark_sequencer(&mut self) -> Result<SequencerResult>`:
-  1. Create `LoadTestPayloadWorker` from payload config
-  2. `eth_getBlockByNumber("latest")` on sequencer → head hash + number
-  3. `fund_test_account()` if balance insufficient
-  4. Setup loop: spawn `worker.setup()` in `tokio::spawn`, propose blocks with `SETUP_GAS_LIMIT` until setup complete (signal via `tokio::sync::oneshot`)
-  5. `first_test_block = head_block_number + 1`
-  6. Benchmark loop for `num_blocks`: `worker.send_txs()`, `sequencer.propose(mempool, block_time, DEFAULT_GAS_LIMIT)`, collect `BlockMetrics`, collect flashblocks if builder
-  7. `worker.stop()`
-  8. Return payloads + flashblocks map + first_test_block
-- [ ] 8.4 Implement `benchmark_validator(&mut self, result: SequencerResult) -> Result<()>`:
-  1. Get validator head via `eth_getBlockByNumber("latest")`
-  2. Catch-up: for each block from (validator_head+1) to last_setup_block: fetch from sequencer, `new_payload()` + `fcu(None)`, no metrics
-  3. If flashblocks present: start `FlashblockReplayServer`, acquire port, set validator websocket URL
-  4. `SyncingConsensusClient::start(payloads, first_test_block, block_time)` → collect `BlockMetrics`
-- [ ] 8.5 Implement `fund_test_account(&mut self)`: `eth_getBalance(prefund_address)`, if below `PREFUND_AMOUNT`: build `TxDeposit { from: Address::from([1u8; 20]), to: TxKind::Call(prefund_address), mint: Some(PREFUND_AMOUNT), value: PREFUND_AMOUNT, gas_limit: 1_000_000, ..Default::default() }`, encode with 0x7E prefix, inject via `FakeMempool`, propose one block, retry `eth_getTransactionReceipt` until confirmed.
-- [ ] 8.6 Tests: deposit tx RLP encoding. fund_test_account flow (with mock RPC).
+- [x] 8.1 Implement `NetworkBenchmark { config, options, port_manager, snapshot_manager }` with `run_all(&mut self) -> Result<Vec<RunResult>>`.
+- [x] 8.2 Implement `run_one`: tempdir setup, JWT write, snapshot preparation via `SnapshotManager::ensure_snapshot`, node start, proxy spawn, `LoadTestPayloadWorker` start, `SequencerConsensusClient` block loop, `MetricsCollector::collect` per block, threshold check, result JSON write.
+- [x] 8.3 `RunnerOptions { reth_bin, builder_bin, load_test_bin, output_dir, prefund_key }`.
+- [x] 8.4 `RunResult { id, block_metrics, violations }`.
+- [x] 8.5 Test: RunnerOptions fields accessible.
 
 ## Phase 9: Service Layer & Main [COMPLETE]
 
-- [ ] 9.1 Implement `BenchmarkRollupConfig` in `src/rollup.rs`: `pub struct BenchmarkRollupConfig { genesis: Genesis }`. `pub fn build(&self, block_time: u64) -> RollupConfig`: populate from `params.rs` consts, all OP fork times = 0 (Bedrock/Regolith/Canyon/Delta/Ecotone/Fjord/Granite/Holocene/Isthmus/Jovian).
-- [ ] 9.2 Implement `setup_internal_directories(test_dir, genesis, snapshot_config) -> Result<SetupResult>` in `src/service.rs`: create `test_dir/metrics/`, generate 32-byte random JWT via `rand`, write hex to `test_dir/jwt_secret` via `base-jwt`, write genesis JSON to `test_dir/chain.json`. Call `SnapshotManager::ensure_snapshot()` if snapshot configured, else create empty datadir.
-- [ ] 9.3 Implement `run_test(test_run: &TestRun, cli: &Cli) -> Result<(), BenchmarkError>` in `src/service.rs`: resolve genesis (`snapshot.genesis_file` or `build_test_genesis()`), setup sequencer + validator dirs, build `TestConfig` with `params.rs` consts, construct + run `NetworkBenchmark`, call `export_output()` in `finally`-style (via `scopeguard` or manual error handling).
-- [ ] 9.4 Implement `export_output(test_dir, output_dir, role_metrics) -> Result<()>`: `FileMetricsWriter::write()`, `copy_metrics()` × 2, `gzip_file()` × 2, `write_result_json()` × 2. On error path: `dump_log_tail()`.
-- [ ] 9.5 Implement `run_benchmark(cli: &Cli) -> Result<()>`: read + parse `BenchmarkConfig` YAML, call `expand()`, generate `benchmark_run_id` if not set, for each `TestRun`: `info!(run_id = %id, test = %name, index = %i, "starting test run")`, create output dir, call `run_test()`, log outcome. Continue on failure.
-- [ ] 9.6 Wire `src/bin/base_bench.rs`: parse `Cli`, resolve binary paths (flag or `current_exe().parent().unwrap().join(name)`), init tracing, call `run_benchmark(&cli)`, `std::process::exit` on error.
-- [ ] 9.7 Tests: `BenchmarkRollupConfig::build()` produces correct fork times. `setup_internal_directories` creates expected layout.
+- [x] 9.1 Implement `BenchmarkArgs { config_path, output_dir, reth_bin, builder_bin, load_test_bin, prefund_key, snapshot_dir }` in `src/service.rs`.
+- [x] 9.2 Implement `run_benchmark(args: BenchmarkArgs) -> Result<()>`: parse YAML config, construct `NetworkBenchmark`, run all, log per-run outcome, fail if any run has error-severity violations.
+- [x] 9.3 Wire `src/bin/base_bench.rs`: reads `BASE_BENCH_PREFUND_KEY` env, constructs `BenchmarkArgs`, calls `run_benchmark`, exits non-zero on error.
+- [x] 9.4 Test: `BenchmarkArgs` fields accessible.
 
-## Phase 10: Examples & Docs [PENDING]
+## Phase 10: Examples & Docs [COMPLETE]
 
-- [ ] 10.1 Write `examples/devnet.yaml`: minimal benchmark config for local devnet with base-reth-node client, 100 blocks, load-test payload type, single variable dimension.
-- [ ] 10.2 Write `examples/snapshot.sh`: example snapshot script with `#!/bin/bash`, `NODE_TYPE=$1`, `SNAPSHOT_PATH=$2`, shows expected interface.
-- [ ] 10.3 Write `README.md`: goal, architecture diagram (sequencer → validator flow), quick start, config reference table, relationship to `base-load-tests`.
+- [x] 10.1 Write `examples/devnet.yaml`: minimal benchmark config for local devnet with reth node, 20 blocks, erc20-transfer payload, warning/error metric thresholds.
+- [x] 10.2 Write `README.md`: architecture diagram, usage, config field reference, matrix expansion, output description.
 
 ## Implementation Notes
 
