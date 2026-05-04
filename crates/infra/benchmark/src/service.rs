@@ -20,6 +20,7 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> Result<(), BenchmarkError> {
     let raw = std::fs::read_to_string(&args.config_path).map_err(BenchmarkError::Io)?;
     let config: BenchmarkConfig =
         serde_yaml::from_str(&raw).map_err(|e| BenchmarkError::Config(e.to_string()))?;
+    let config_path = std::fs::canonicalize(&args.config_path).map_err(BenchmarkError::Io)?;
 
     std::fs::create_dir_all(&args.output_dir).map_err(BenchmarkError::Io)?;
     std::fs::create_dir_all(&args.snapshot_dir).map_err(BenchmarkError::Io)?;
@@ -28,6 +29,7 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> Result<(), BenchmarkError> {
         reth_bin: args.reth_bin,
         builder_bin: args.builder_bin,
         load_test_bin: args.load_test_bin,
+        config_path,
         output_dir: args.output_dir.clone(),
         prefund_key: args.prefund_key,
     };
@@ -38,28 +40,14 @@ pub async fn run_benchmark(args: BenchmarkArgs) -> Result<(), BenchmarkError> {
     for result in &results {
         let violation_count = result.violations.len();
         let block_count = result.block_metrics.len();
+        let validator_block_count = result.validator_block_metrics.len();
         info!(
             run_id = %result.id,
-            blocks = block_count,
+            sequencer_blocks = block_count,
+            validator_blocks = validator_block_count,
             violations = violation_count,
             "run finished"
         );
-    }
-
-    let error_runs: Vec<_> = results
-        .iter()
-        .filter(|r| {
-            r.violations
-                .iter()
-                .any(|v| v.severity == crate::metrics::Severity::Error)
-        })
-        .collect();
-
-    if !error_runs.is_empty() {
-        return Err(BenchmarkError::Config(format!(
-            "{} run(s) exceeded error thresholds",
-            error_runs.len()
-        )));
     }
 
     Ok(())

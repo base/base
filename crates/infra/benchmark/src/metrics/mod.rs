@@ -9,7 +9,7 @@ use tracing::warn;
 use crate::error::BenchmarkError;
 
 pub const SEND_TXS_LATENCY: &str = "latency/send_txs";
-pub const UPDATE_FORK_CHOICE_LATENCY: &str = "latency/update_fork_choice";
+pub const UPDATE_FORK_CHOICE_LATENCY: &str = "latency/fork_choice_updated";
 pub const GET_PAYLOAD_LATENCY: &str = "latency/get_payload";
 pub const NEW_PAYLOAD_LATENCY: &str = "latency/new_payload";
 pub const GAS_PER_BLOCK: &str = "gas/per_block";

@@ -17,7 +17,7 @@ use tokio::task::JoinSet;
 use tracing::info;
 
 use crate::error::BenchmarkError;
-use crate::metrics::BlockMetrics;
+use crate::metrics::{BlockMetrics, MetricsCollector};
 use crate::params;
 
 const FAKE_BEACON_ROOT_PREIMAGE: &[u8] = b"fake-beacon-block-root\x01";
@@ -221,6 +221,7 @@ impl SequencerConsensusClient {
         block_time: Duration,
         gas_limit: u64,
     ) -> Result<(BaseExecutionPayloadV4, BlockMetrics), BenchmarkError> {
+        let build_start = Instant::now();
         let txs = mempool.drain();
 
         let send_start = Instant::now();
@@ -238,17 +239,26 @@ impl SequencerConsensusClient {
             .ok_or_else(|| BenchmarkError::EngineApi("FCU returned no payload_id".into()))?;
         let fcu_latency = fcu_start.elapsed();
 
+        let sleep_start = Instant::now();
         tokio::time::sleep(block_time).await;
+        let sleep_duration = sleep_start.elapsed();
 
         let get_start = Instant::now();
         let payload = self.base.get_built_payload(payload_id).await?;
         let get_latency = get_start.elapsed();
+        let build_duration = build_start.elapsed().saturating_sub(sleep_duration);
 
         let beacon_root = fake_beacon_root();
         self.base.new_payload(payload.clone(), beacon_root).await?;
 
         let gas_used = payload.payload_inner.payload_inner.payload_inner.gas_used;
         let tx_count = payload.payload_inner.payload_inner.payload_inner.transactions.len() as u64;
+        let build_duration_secs = build_duration.as_secs_f64();
+        let gas_per_second = if build_duration_secs > 0.0 {
+            gas_used as f64 / build_duration_secs
+        } else {
+            0.0
+        };
 
         info!(
             block = %self.base.head_block_number,
@@ -260,10 +270,11 @@ impl SequencerConsensusClient {
         );
 
         let mut metrics = BlockMetrics::new(self.base.head_block_number);
-        metrics.add_execution_metric(crate::metrics::SEND_TXS_LATENCY, send_latency.as_secs_f64());
-        metrics.add_execution_metric(crate::metrics::UPDATE_FORK_CHOICE_LATENCY, fcu_latency.as_secs_f64());
-        metrics.add_execution_metric(crate::metrics::GET_PAYLOAD_LATENCY, get_latency.as_secs_f64());
+        metrics.add_execution_metric(crate::metrics::SEND_TXS_LATENCY, send_latency.as_nanos() as f64);
+        metrics.add_execution_metric(crate::metrics::UPDATE_FORK_CHOICE_LATENCY, fcu_latency.as_nanos() as f64);
+        metrics.add_execution_metric(crate::metrics::GET_PAYLOAD_LATENCY, get_latency.as_nanos() as f64);
         metrics.add_execution_metric(crate::metrics::GAS_PER_BLOCK, gas_used as f64);
+        metrics.add_execution_metric(crate::metrics::GAS_PER_SECOND, gas_per_second);
         metrics.add_execution_metric(crate::metrics::TRANSACTIONS_PER_BLOCK, tx_count as f64);
 
         Ok((payload, metrics))
@@ -337,6 +348,7 @@ impl SyncingConsensusClient {
         payloads: &[BaseExecutionPayloadV4],
         first_test_block: u64,
         block_time: Duration,
+        metrics_collector: &mut MetricsCollector,
     ) -> Result<Vec<BlockMetrics>, BenchmarkError> {
         let beacon_root = fake_beacon_root();
         let mut collected = Vec::new();
@@ -362,10 +374,19 @@ impl SyncingConsensusClient {
                     payload.payload_inner.payload_inner.payload_inner.transactions.len() as u64;
 
                 let mut metrics = BlockMetrics::new(block_number);
-                metrics.add_execution_metric(crate::metrics::NEW_PAYLOAD_LATENCY, new_payload_latency.as_secs_f64());
-                metrics.add_execution_metric(crate::metrics::UPDATE_FORK_CHOICE_LATENCY, fcu_latency.as_secs_f64());
+                let new_payload_duration_secs = new_payload_latency.as_secs_f64();
+                let gas_per_second = if new_payload_duration_secs > 0.0 {
+                    gas_used as f64 / new_payload_duration_secs
+                } else {
+                    0.0
+                };
+
+                metrics.add_execution_metric(crate::metrics::NEW_PAYLOAD_LATENCY, new_payload_latency.as_nanos() as f64);
+                metrics.add_execution_metric(crate::metrics::UPDATE_FORK_CHOICE_LATENCY, fcu_latency.as_nanos() as f64);
                 metrics.add_execution_metric(crate::metrics::GAS_PER_BLOCK, gas_used as f64);
+                metrics.add_execution_metric(crate::metrics::GAS_PER_SECOND, gas_per_second);
                 metrics.add_execution_metric(crate::metrics::TRANSACTIONS_PER_BLOCK, tx_count as f64);
+                metrics_collector.collect(&mut metrics).await?;
                 collected.push(metrics);
             }
         }

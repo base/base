@@ -19,6 +19,7 @@ alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
 rand.workspace = true
 bytes.workspace = true
+chrono.workspace = true
 flate2.workspace = true
 hex.workspace = true
 nix = { workspace = true, features = ["signal", "process"] }
@@ -48,9 +49,6 @@ base-consensus-engine.workspace = true
 base-common-flashblocks.workspace = true
 base-common-consensus.workspace = true
 base-common-rpc-types-engine.workspace = true
-
-[dev-dependencies]
-chrono.workspace = true
 
 [lints]
 workspace = true

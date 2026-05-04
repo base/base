@@ -12,13 +12,14 @@ use tracing::{info, warn};
 
 use crate::client::{setup_node, ClientOptions, InternalClientOptions};
 use crate::config::{BenchmarkConfig, TestRun};
-use crate::consensus::{BaseConsensusClient, FakeMempool, SequencerConsensusClient};
+use crate::consensus::{
+    BaseConsensusClient, FakeMempool, SequencerConsensusClient, SyncingConsensusClient,
+};
 use crate::error::BenchmarkError;
 use crate::metrics::{
-    check_thresholds, write_metrics_json, BlockMetrics, MetricsCollector, Severity,
-    ThresholdViolation,
+    check_thresholds, BlockMetrics, MetricsCollector, Severity, ThresholdViolation,
 };
-use crate::output::write_result_json;
+use crate::output::{write_metadata_json, write_metrics_file};
 use crate::payload::{LoadTestPayloadWorker, PayloadWorker};
 use crate::ports::PortManager;
 use crate::proxy::run_proxy;
@@ -30,6 +31,7 @@ pub struct RunnerOptions {
     pub reth_bin: PathBuf,
     pub builder_bin: PathBuf,
     pub load_test_bin: PathBuf,
+    pub config_path: PathBuf,
     pub output_dir: PathBuf,
     pub prefund_key: String,
 }
@@ -93,13 +95,23 @@ impl NetworkBenchmark {
 
         let flashblocks_block_time_ms = self.config.flashblocks.as_ref().map(|f| f.block_time_ms);
 
-        let client_options = ClientOptions {
+        let mut client_options = ClientOptions {
             node_type: run.definition.node_type.clone(),
             extra_args: vec![],
             reth_bin: self.options.reth_bin.clone(),
             builder_bin: self.options.builder_bin.clone(),
             flashblocks_block_time_ms,
         };
+        if let Some(node_args) = run.definition.node_args.as_deref() {
+            client_options
+                .extra_args
+                .extend(node_args.split_whitespace().map(ToString::to_string));
+        }
+
+        let sequencer_log_dir = self.options.output_dir.join("sequencer");
+        let validator_log_dir = self.options.output_dir.join("validator");
+        std::fs::create_dir_all(&sequencer_log_dir)?;
+        std::fs::create_dir_all(&validator_log_dir)?;
 
         let chain_cfg_path = test_dir.path().join("genesis.json");
         let rollup_cfg_path = test_dir.path().join("rollup.json");
@@ -124,7 +136,7 @@ impl NetworkBenchmark {
             jwt_secret_path: jwt_path,
             chain_cfg_path: chain_cfg_path.clone(),
             data_dir_path: data_dir,
-            test_dir_path: test_dir.path().to_path_buf(),
+            test_dir_path: sequencer_log_dir,
             jwt_secret: JWT_SECRET,
             metrics_path: test_dir.path().join("metrics"),
         };
@@ -192,7 +204,7 @@ impl NetworkBenchmark {
 
         let jwt = JwtSecret::from_hex(hex::encode(JWT_SECRET))
             .map_err(|e| BenchmarkError::Config(format!("jwt error: {e}")))?;
-        let mut base = BaseConsensusClient::connect(auth_url, jwt, rollup_cfg).await?;
+        let mut base = BaseConsensusClient::connect(auth_url, jwt, Arc::clone(&rollup_cfg)).await?;
         base.init_from_genesis(node.rpc_url()).await?;
         let mut sequencer = SequencerConsensusClient::new(base, node.rpc_url().to_owned());
 
@@ -204,12 +216,14 @@ impl NetworkBenchmark {
         worker.start().await?;
 
         let mut block_metrics_vec = Vec::with_capacity(self.config.num_blocks as usize);
+        let mut payloads = Vec::with_capacity(self.config.num_blocks as usize);
 
         for _block_num in 0..self.config.num_blocks {
-            let (_payload, mut block_metrics) =
+            let (payload, mut block_metrics) =
                 sequencer.propose(&mempool, block_time, gas_limit).await?;
             metrics_collector.collect(&mut block_metrics).await?;
             block_metrics_vec.push(block_metrics);
+            payloads.push(payload);
         }
 
         worker.stop().await?;
@@ -218,6 +232,56 @@ impl NetworkBenchmark {
 
         self.port_manager.release(proxy_port);
 
+        let validator_data_dir = test_dir.path().join("validator-data");
+        std::fs::create_dir_all(&validator_data_dir)?;
+
+        let validator_client_options = ClientOptions {
+            node_type: "base-reth-node".to_string(),
+            extra_args: vec![],
+            reth_bin: self.options.reth_bin.clone(),
+            builder_bin: self.options.builder_bin.clone(),
+            flashblocks_block_time_ms: None,
+        };
+        let validator_internal_options = InternalClientOptions {
+            jwt_secret_path: test_dir.path().join("jwt.hex"),
+            chain_cfg_path: chain_cfg_path.clone(),
+            data_dir_path: validator_data_dir,
+            test_dir_path: validator_log_dir,
+            jwt_secret: JWT_SECRET,
+            metrics_path: test_dir.path().join("validator-metrics"),
+        };
+        let mut validator_node = setup_node(
+            validator_client_options,
+            validator_internal_options,
+            Arc::clone(&self.port_manager),
+            self.config.block_time_ms,
+        );
+
+        validator_node.run().await?;
+
+        let validator_auth_url: Url = validator_node.auth_rpc_url().parse().map_err(|_| {
+            BenchmarkError::Config(format!(
+                "invalid validator auth url: {}",
+                validator_node.auth_rpc_url()
+            ))
+        })?;
+        let validator_jwt = JwtSecret::from_hex(hex::encode(JWT_SECRET))
+            .map_err(|e| BenchmarkError::Config(format!("validator jwt error: {e}")))?;
+        let mut validator_base =
+            BaseConsensusClient::connect(validator_auth_url, validator_jwt, Arc::clone(&rollup_cfg))
+                .await?;
+        validator_base
+            .init_from_genesis(validator_node.rpc_url())
+            .await?;
+        let mut validator = SyncingConsensusClient::new(validator_base);
+        let mut validator_metrics_collector =
+            MetricsCollector::new(validator_node.metrics_port());
+        let validator_metrics = validator
+            .start(&payloads, 1, block_time, &mut validator_metrics_collector)
+            .await?;
+
+        validator_node.stop().await?;
+
         let violations = if let Some(mc) = &run.definition.metrics {
             check_thresholds(&block_metrics_vec, mc)
         } else {
@@ -225,13 +289,23 @@ impl NetworkBenchmark {
         };
 
         let success = violations.iter().all(|v| v.severity != Severity::Error);
-        let error_msg = if success { None } else { Some("threshold violations") };
-        write_result_json(&self.options.output_dir, "sequencer", &run.id, success, error_msg)?;
+        write_metrics_file(&self.options.output_dir, "sequencer", &block_metrics_vec)?;
+        write_metrics_file(&self.options.output_dir, "validator", &validator_metrics)?;
+        write_metadata_json(
+            &self.options.output_dir,
+            &self.options.config_path,
+            &run,
+            &self.config,
+            &block_metrics_vec,
+            &validator_metrics,
+            success,
+        )?;
         info!(run_id = %run.id, "run complete");
 
         Ok(RunResult {
             id: run.id,
             block_metrics: block_metrics_vec,
+            validator_block_metrics: validator_metrics,
             violations,
         })
     }
@@ -240,6 +314,7 @@ impl NetworkBenchmark {
 pub struct RunResult {
     pub id: String,
     pub block_metrics: Vec<BlockMetrics>,
+    pub validator_block_metrics: Vec<BlockMetrics>,
     pub violations: Vec<ThresholdViolation>,
 }
 
@@ -305,11 +380,10 @@ mod tests {
             reth_bin: PathBuf::from("/bin/reth"),
             builder_bin: PathBuf::from("/bin/builder"),
             load_test_bin: PathBuf::from("/bin/load-test"),
+            config_path: PathBuf::from("/tmp/config.yaml"),
             output_dir: PathBuf::from("/tmp/bench"),
             prefund_key: "0xdef".into(),
         };
         assert_eq!(opts.reth_bin, PathBuf::from("/bin/reth"));
     }
 }
-
-

@@ -70,6 +70,8 @@ pub struct BenchmarkDefinition {
     pub snapshot: Option<SnapshotConfig>,
     pub metrics: Option<MetricsConfig>,
     #[serde(default)]
+    pub node_args: Option<String>,
+    #[serde(default)]
     pub tags: HashMap<String, String>,
     #[serde(default)]
     pub variables: Vec<Variable>,
@@ -215,6 +217,7 @@ mod tests {
                 datadir: DatadirConfig::default(),
                 snapshot: None,
                 metrics: None,
+                node_args: None,
                 tags: HashMap::new(),
                 variables: vec![],
             }],
