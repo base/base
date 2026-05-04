@@ -12,7 +12,7 @@ This section describes the component roles used by the Azul proof system.
 - [Proposer](./proposer): creates new checkpoint proposals.
 - [Registrar](./registrar): maintains the onchain registry of accepted TEE signer identities.
 - [TEE Provers](./tee-provers): produce Nitro Enclave-backed proofs for the common proposal path.
-- [ZK Provers](./zk-provers): produce permissionless proofs for proposal and dispute paths.
+- [ZK Prover](./zk-prover): produces permissionless proofs for proposal and dispute paths.
 - [Contracts](./contracts): verify proof material, track game state, and release withdrawals and
   bonds according to the game result.
 
