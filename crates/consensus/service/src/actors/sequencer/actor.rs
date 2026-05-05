@@ -309,7 +309,7 @@ where
                     }
                 } => {
                     match result {
-                        Ok(SealStepOutcome::Inserted(_)) => {
+                        Ok(SealStepOutcome::Inserted(inserted_head)) => {
                             if let Some(sealer) = self.sealer.take() {
                                 Metrics::sequencer_seal_pipeline_duration()
                                     .record(sealer.started_at.elapsed());
@@ -331,7 +331,10 @@ where
                                 }
                             }
                             if self.is_active {
-                                next_payload_to_seal = self.builder.build().await?;
+                                next_payload_to_seal = self.builder.build_on(inserted_head).await?;
+                                if next_payload_to_seal.is_none() {
+                                    build_ticker.reset_immediately();
+                                }
                             }
                         }
                         Ok(SealStepOutcome::Pending) => {}

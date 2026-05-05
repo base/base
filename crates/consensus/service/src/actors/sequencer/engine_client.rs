@@ -41,7 +41,7 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope>;
 
     /// Submits the sealed payload to the engine for insertion (`new_payload` + FCU), returning the
-    /// inserted unsafe head after the engine and unsafe-head watch channel have both advanced.
+    /// inserted unsafe head after the engine acknowledges insertion.
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
@@ -213,23 +213,14 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
             }
         };
 
-        let mut unsafe_head_rx = self.unsafe_head_rx.clone();
-        loop {
-            let unsafe_head = *unsafe_head_rx.borrow_and_update();
-            if unsafe_head == inserted_head {
-                trace!(
-                    target: "sequencer",
-                    block_number = inserted_head.block_info.number,
-                    block_hash = %inserted_head.block_info.hash,
-                    "Insert unsafe payload acknowledged"
-                );
-                return Ok(inserted_head);
-            }
+        trace!(
+            target: "sequencer",
+            block_number = inserted_head.block_info.number,
+            block_hash = %inserted_head.block_info.hash,
+            "Insert unsafe payload acknowledged"
+        );
 
-            unsafe_head_rx.changed().await.map_err(|_| {
-                EngineClientError::ResponseError("unsafe head channel closed.".to_string())
-            })?;
-        }
+        Ok(inserted_head)
     }
 }
 
@@ -239,10 +230,7 @@ mod tests {
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L2BlockInfo};
-    use tokio::{
-        sync::{mpsc, watch},
-        task::yield_now,
-    };
+    use tokio::sync::{mpsc, watch};
 
     use super::{QueuedSequencerEngineClient, SequencerEngineClient};
     use crate::EngineActorRequest;
@@ -277,9 +265,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_unsafe_payload_waits_for_engine_ack_and_watch_update() {
+    async fn insert_unsafe_payload_returns_engine_ack() {
         let (request_tx, mut request_rx) = mpsc::channel(1);
-        let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let inserted_head = l2_head(1);
         let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx);
 
@@ -293,10 +281,6 @@ mod tests {
         let result_tx = request.result_tx.expect("insert result sender");
         result_tx.send(Ok(inserted_head)).await.expect("send insert result");
 
-        yield_now().await;
-        assert!(!insert_handle.is_finished());
-
-        unsafe_head_tx.send(inserted_head).expect("send unsafe head");
         let result = insert_handle.await.expect("insert task");
 
         assert_eq!(result.expect("insert result"), inserted_head);

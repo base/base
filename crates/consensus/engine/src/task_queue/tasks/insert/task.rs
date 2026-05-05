@@ -87,14 +87,14 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         client: Arc<EngineClient_>,
         rollup_config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
-        result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+        result_tx: mpsc::Sender<InsertTaskResult>,
     ) -> Self {
         Self {
             client,
             rollup_config,
             envelope,
             payload_safety: InsertPayloadSafety::Unsafe,
-            result_tx,
+            result_tx: Some(result_tx),
         }
     }
 
