@@ -23,12 +23,9 @@ use sp1_sdk::{
 };
 use tracing::{error, info, warn};
 
-use crate::backends::{
-    op_succinct::provider::{OpSuccinctProvider, WitnessParams},
-    traits::{
-        BackendConfig, BackendType, ProofProcessingResult, ProveResult, ProvingBackend,
-        SessionStatus,
-    },
+use super::provider::{OpSuccinctProvider, WitnessParams};
+use crate::backends::traits::{
+    BackendConfig, BackendType, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
 };
 
 /// SP1 Network proving backend.

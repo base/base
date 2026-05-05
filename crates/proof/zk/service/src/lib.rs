@@ -2,10 +2,10 @@
 #![recursion_limit = "256"]
 
 mod backends;
-pub use backends::op_succinct;
 pub use backends::{
     ArtifactClientWrapper, ArtifactStorageConfig, BackendConfig, BackendRegistry, BackendType,
-    L1HeadCalculator, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
+    ClusterBackend, L1HeadCalculator, MockBackend, NetworkBackend, OpSuccinctProvider,
+    ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus, WitnessParams,
 };
 
 pub mod metrics;
