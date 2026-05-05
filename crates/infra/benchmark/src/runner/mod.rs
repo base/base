@@ -124,7 +124,8 @@ impl NetworkBenchmark {
                 .map_err(BenchmarkError::Io)?;
             let rollup: RollupConfig = serde_json::from_str(&raw)
                 .map_err(|e| BenchmarkError::Config(format!("invalid rollup config: {e}")))?;
-            let genesis_json = genesis_json_from_rollup_config(&rollup);
+            let genesis_json =
+                genesis_json_from_rollup_config(&rollup, &self.options.prefund_key);
             let genesis_str = serde_json::to_string_pretty(&genesis_json)
                 .map_err(|e| BenchmarkError::Config(format!("genesis json error: {e}")))?;
             tokio::fs::write(&chain_cfg_path, genesis_str)
@@ -136,7 +137,7 @@ impl NetworkBenchmark {
             jwt_secret_path: jwt_path,
             chain_cfg_path: chain_cfg_path.clone(),
             data_dir_path: data_dir,
-            test_dir_path: sequencer_log_dir,
+            test_dir_path: sequencer_log_dir.clone(),
             jwt_secret: JWT_SECRET,
             metrics_path: test_dir.path().join("metrics"),
         };
@@ -183,6 +184,7 @@ impl NetworkBenchmark {
             None,
             run.payload.params.clone(),
             self.options.prefund_key.clone(),
+            Some(sequencer_log_dir.join("load-test.log")),
             mempool.clone(),
         );
 
@@ -214,6 +216,22 @@ impl NetworkBenchmark {
         let gas_limit = self.config.gas_limit.unwrap_or(30_000_000);
 
         worker.start().await?;
+
+        // Setup phase: propose blocks (unmeasured) until the load test finishes
+        // funding wallets and signals ready via stdout.
+        let mut ready = std::pin::pin!(worker.wait_until_ready());
+        loop {
+            tokio::select! {
+                biased;
+                result = &mut ready => {
+                    result?;
+                    break;
+                }
+                result = sequencer.propose(&mempool, block_time, gas_limit) => {
+                    result?;
+                }
+            }
+        }
 
         let mut block_metrics_vec = Vec::with_capacity(self.config.num_blocks as usize);
         let mut payloads = Vec::with_capacity(self.config.num_blocks as usize);
@@ -318,9 +336,15 @@ pub struct RunResult {
     pub violations: Vec<ThresholdViolation>,
 }
 
-fn genesis_json_from_rollup_config(rollup: &RollupConfig) -> serde_json::Value {
+fn genesis_json_from_rollup_config(
+    rollup: &RollupConfig,
+    prefund_key: &str,
+) -> serde_json::Value {
     let chain_id = rollup.l2_chain_id.id();
-    let timestamp = rollup.genesis.l2_time;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time after epoch")
+        .as_secs();
 
     let mut config = serde_json::json!({
         "chainId": chain_id,
@@ -358,12 +382,31 @@ fn genesis_json_from_rollup_config(rollup: &RollupConfig) -> serde_json::Value {
     set_if_some!("isthmusTime", rollup.hardforks.isthmus_time);
     set_if_some!("jovianTime", rollup.hardforks.jovian_time);
 
+    let alloc = {
+        use alloy_signer_local::PrivateKeySigner;
+        let key = prefund_key.trim_start_matches("0x");
+        let signer = PrivateKeySigner::from_bytes(
+            &alloy_primitives::hex::decode(key)
+                .expect("valid hex prefund key")
+                .as_slice()
+                .try_into()
+                .expect("32-byte private key"),
+        )
+        .expect("valid private key");
+        let addr = format!("{:?}", signer.address());
+        serde_json::json!({
+            addr: {
+                "balance": "0x3635C9ADC5DEA00000000",
+            }
+        })
+    };
+
     serde_json::json!({
         "config": config,
         "difficulty": "0x0",
         "gasLimit": "0x1C9C380",
         "timestamp": format!("0x{:x}", timestamp),
-        "alloc": {},
+        "alloc": alloc,
         "number": "0x0",
         "gasUsed": "0x0",
         "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",

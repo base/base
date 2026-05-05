@@ -1,0 +1,37 @@
+name: flashblocks-300mgas
+description: 300Mgas blocks with flashblocks enabled, 20 blocks
+
+block_time_ms: 2000
+num_blocks: 20
+gas_limit: 300000000
+rollup_config: /home/meyer9/base/.devnet/l2/configs/rollup-conductor.json
+
+flashblocks:
+  block_time_ms: 250
+
+transaction_payloads:
+  - id: mixed-load
+    type: load-test
+    params:
+      sender_count: 10
+      funding_amount: "1000000000000000"
+      transactions:
+        - weight: 7
+          type: transfer
+        - weight: 2
+          type: calldata
+          max_size: 256
+        - weight: 1
+          type: precompile
+          target: sha256
+
+benchmarks:
+  - node_type: builder
+    datadir: {}
+    metrics:
+      warning:
+        - metric: gas_per_block
+          min: 100000000
+      error:
+        - metric: gas_per_block
+          min: 50000000

@@ -228,7 +228,12 @@ impl SequencerConsensusClient {
         self.batch_send_txs(&txs).await?;
         let send_latency = send_start.elapsed();
 
-        let next_timestamp = self.base.head_block_timestamp + 1;
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time after epoch")
+            .as_secs();
+        let block_time_secs = block_time.as_secs().max(1);
+        let next_timestamp = now_secs + block_time_secs;
         let attrs = self.build_payload_attributes(gas_limit, next_timestamp)?;
 
         let fcu_start = Instant::now();
@@ -249,7 +254,10 @@ impl SequencerConsensusClient {
         let build_duration = build_start.elapsed().saturating_sub(sleep_duration);
 
         let beacon_root = fake_beacon_root();
+        let block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
         self.base.new_payload(payload.clone(), beacon_root).await?;
+        self.base.head_block_hash = block_hash;
+        self.base.update_fork_choice(None).await?;
 
         let gas_used = payload.payload_inner.payload_inner.payload_inner.gas_used;
         let tx_count = payload.payload_inner.payload_inner.payload_inner.transactions.len() as u64;
@@ -301,7 +309,14 @@ impl SequencerConsensusClient {
             let url = self.rpc_url.clone();
             let c = client.clone();
             set.spawn(async move {
-                let _ = c.post(&url).json(&batch).send().await;
+                match c.post(&url).json(&batch).send().await {
+                    Ok(resp) => {
+                        if let Ok(body) = resp.text().await {
+                            tracing::debug!(response = %body, "batch_send_txs response");
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "batch_send_txs http error"),
+                }
             });
         }
 
@@ -396,17 +411,21 @@ impl SyncingConsensusClient {
 }
 
 fn build_l1_info_deposit_tx() -> Bytes {
+    use alloy_primitives::address;
     use alloy_rlp::Encodable;
+    use base_protocol::L1BlockInfoEcotone;
+
+    let l1_info_calldata = L1BlockInfoEcotone::default().encode_calldata();
 
     let deposit = TxDeposit {
         source_hash: B256::ZERO,
-        from: Address::ZERO,
-        to: TxKind::Call(Address::ZERO),
+        from: address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001"),
+        to: TxKind::Call(address!("4200000000000000000000000000000000000015")),
         mint: 0,
         value: U256::ZERO,
         gas_limit: 1_000_000,
         is_system_transaction: true,
-        input: Bytes::from(vec![0u8; 64]),
+        input: l1_info_calldata,
     };
 
     let mut rlp_buf = Vec::new();

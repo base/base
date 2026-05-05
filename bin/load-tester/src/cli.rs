@@ -233,7 +233,6 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     // Install signal handling before any long-running work so shutdown can
     // stop the run loop and still drain funded accounts.
     let stop_flag = runner.stop_flag();
-    install_signal_handler(stop_flag);
 
     let run_result = run_test_phases(
         &mut runner,
@@ -246,6 +245,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         real_token_setup.as_ref(),
         &mp,
         load_config.duration,
+        stop_flag,
     )
     .await;
 
@@ -374,6 +374,7 @@ async fn run_test_phases(
     real_token_setup: Option<&RealTokenSetup>,
     mp: &indicatif::MultiProgress,
     duration: Option<Duration>,
+    stop_flag: Arc<std::sync::atomic::AtomicBool>,
 ) -> LoadResult<MetricsSummary> {
     if runner.txpool_node_count() > 0 {
         println!("Clearing txpool sender transactions...");

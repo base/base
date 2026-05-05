@@ -1,6 +1,7 @@
 //! Child process lifecycle management with graceful SIGINT shutdown.
 
 use std::fs::File;
+use std::os::unix::process::CommandExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -8,16 +9,16 @@ use std::time::Duration;
 
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdout, Command};
 use tracing::{info, warn};
 
 use crate::error::BenchmarkError;
 
-/// A running child process with stdout/stderr redirected to files.
 pub struct ProcessHandle {
     binary: PathBuf,
     args: Vec<String>,
     env: Vec<(String, String)>,
+    pipe_stdout: bool,
     stdout_file: File,
     stderr_file: File,
     child: Option<Child>,
@@ -32,16 +33,41 @@ impl ProcessHandle {
         stdout_file: File,
         stderr_file: File,
     ) -> Self {
-        Self { binary, args, env, stdout_file, stderr_file, child: None }
+        Self { binary, args, env, pipe_stdout: false, stdout_file, stderr_file, child: None }
+    }
+
+    pub fn with_piped_stdout(mut self) -> Self {
+        self.pipe_stdout = true;
+        self
+    }
+
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.child.as_mut()?.stdout.take()
     }
 
     /// Spawn the child process.
     pub async fn start(&mut self) -> Result<(), BenchmarkError> {
-        let stdout: Stdio = self.stdout_file.try_clone()?.into();
+        let stdout: Stdio = if self.pipe_stdout {
+            Stdio::piped()
+        } else {
+            self.stdout_file.try_clone()?.into()
+        };
         let stderr: Stdio = self.stderr_file.try_clone()?.into();
 
         let mut cmd = Command::new(&self.binary);
-        cmd.args(&self.args).stdout(stdout).stderr(stderr).kill_on_drop(false);
+        cmd.args(&self.args)
+            .stdout(stdout)
+            .stderr(stderr)
+            .kill_on_drop(false)
+            .process_group(0);
+        unsafe {
+            cmd.pre_exec(|| {
+                let mut sigset = std::mem::zeroed::<libc::sigset_t>();
+                libc::sigemptyset(&mut sigset);
+                libc::pthread_sigmask(libc::SIG_SETMASK, &sigset, std::ptr::null_mut());
+                Ok(())
+            });
+        }
         for (key, val) in &self.env {
             cmd.env(key, val);
         }

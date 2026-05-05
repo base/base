@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use reqwest::Url;
 use tempfile::NamedTempFile;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Mutex;
 use tracing::info;
 
@@ -28,11 +29,12 @@ struct LoadTestConfig<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     flashblocks_ws_url: Option<String>,
     duration: &'static str,
+    sender_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    funding_amount: Option<&'a str>,
     transactions: &'a [WeightedTx],
 }
 
-/// Runs `base-load-test` as a subprocess; transactions are intercepted by the
-/// proxy and accumulated in the shared [`FakeMempool`].
 pub struct LoadTestPayloadWorker {
     bin: PathBuf,
     rpc_proxy_url: Url,
@@ -40,9 +42,12 @@ pub struct LoadTestPayloadWorker {
     flashblocks_ws_url: Option<String>,
     params: LoadTestPayloadParams,
     funder_key: String,
+    log_path: Option<PathBuf>,
     pub mempool: FakeMempool,
     handle: Mutex<Option<ProcessHandle>>,
     config_file: Mutex<Option<NamedTempFile>>,
+    stdout_reader:
+        Mutex<Option<BufReader<tokio::process::ChildStdout>>>,
 }
 
 impl LoadTestPayloadWorker {
@@ -53,6 +58,7 @@ impl LoadTestPayloadWorker {
         flashblocks_ws_url: Option<String>,
         params: LoadTestPayloadParams,
         funder_key: String,
+        log_path: Option<PathBuf>,
         mempool: FakeMempool,
     ) -> Self {
         Self {
@@ -62,9 +68,11 @@ impl LoadTestPayloadWorker {
             flashblocks_ws_url,
             params,
             funder_key,
+            log_path,
             mempool,
             handle: Mutex::new(None),
             config_file: Mutex::new(None),
+            stdout_reader: Mutex::new(None),
         }
     }
 }
@@ -77,6 +85,8 @@ impl PayloadWorker for LoadTestPayloadWorker {
             block_watcher_url: self.block_watcher_url.clone(),
             flashblocks_ws_url: self.flashblocks_ws_url.clone(),
             duration: "99999s",
+            sender_count: self.params.sender_count,
+            funding_amount: self.params.funding_amount.as_deref(),
             transactions: &self.params.transactions,
         };
 
@@ -92,16 +102,25 @@ impl PayloadWorker for LoadTestPayloadWorker {
         let config_path = tmp.path().to_path_buf();
 
         let dev_null = File::open("/dev/null").map_err(BenchmarkError::Io)?;
-        let stderr_tmp = tempfile::tempfile().map_err(BenchmarkError::Io)?;
+        let stderr_file = match &self.log_path {
+            Some(p) => File::create(p).map_err(BenchmarkError::Io)?,
+            None => tempfile::tempfile().map_err(BenchmarkError::Io)?,
+        };
 
         let mut handle = ProcessHandle::new(
             self.bin.clone(),
             vec![config_path.to_string_lossy().into_owned()],
             vec![("FUNDER_KEY".into(), self.funder_key.clone())],
             dev_null,
-            stderr_tmp,
-        );
+            stderr_file,
+        )
+        .with_piped_stdout();
         handle.start().await?;
+
+        let stdout = handle
+            .take_stdout()
+            .ok_or_else(|| BenchmarkError::Client("load-test stdout pipe missing".into()))?;
+        *self.stdout_reader.lock().await = Some(BufReader::new(stdout));
 
         info!(bin = %self.bin.display(), "load-test subprocess started");
 
@@ -117,6 +136,33 @@ impl PayloadWorker for LoadTestPayloadWorker {
             info!("load-test subprocess stopped");
         }
         Ok(())
+    }
+}
+
+impl LoadTestPayloadWorker {
+    pub async fn wait_until_ready(&self) -> Result<(), BenchmarkError> {
+        let mut guard = self.stdout_reader.lock().await;
+        let reader = guard.as_mut().ok_or_else(|| {
+            BenchmarkError::Client("load-test not started".into())
+        })?;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = reader.read_line(&mut line).await.map_err(BenchmarkError::Io)?;
+            if n == 0 {
+                return Err(BenchmarkError::Client(
+                    "load-test exited before signalling ready".into(),
+                ));
+            }
+            let trimmed = line.trim_end();
+            if !trimmed.is_empty() {
+                info!(line = %trimmed, "load-test");
+            }
+            if trimmed == "Accounts funded." {
+                info!("load-test setup complete, starting benchmark");
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -136,6 +182,7 @@ mod tests {
                 transactions: vec![],
             },
             "0xdeadbeef".into(),
+            None,
             FakeMempool::new(),
         )
     }

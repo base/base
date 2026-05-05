@@ -141,7 +141,9 @@ pub struct WeightedTx {
     pub weight: u64,
     #[serde(rename = "type")]
     pub tx_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
 }
 
