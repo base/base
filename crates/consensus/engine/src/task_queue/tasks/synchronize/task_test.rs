@@ -6,7 +6,7 @@ use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum
 use base_common_genesis::RollupConfig;
 
 use crate::{
-    EngineTaskExt, SynchronizeTask,
+    SynchronizeTask,
     state::EngineSyncStateUpdate,
     test_utils::{TestEngineStateBuilder, test_block_info, test_engine_client_builder},
 };

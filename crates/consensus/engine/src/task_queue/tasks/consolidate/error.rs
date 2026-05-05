@@ -3,8 +3,8 @@
 use thiserror::Error;
 
 use crate::{
-    BuildTaskError, EngineTaskError, SealTaskError, SynchronizeTaskError,
-    task_queue::tasks::{BuildAndSealError, task::EngineTaskErrorSeverity},
+    BuildTaskError, EngineTaskError, EngineTaskErrorSeverity, SealTaskError, SynchronizeTaskError,
+    task_queue::tasks::BuildAndSealError,
 };
 
 /// An error that occurs when consolidating the engine state.

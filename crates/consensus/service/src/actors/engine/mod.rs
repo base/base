@@ -10,7 +10,7 @@ mod config;
 pub use config::EngineConfig;
 
 mod error;
-pub use error::EngineError;
+pub use error::{EngineError, EngineOperationError};
 
 mod request;
 pub use request::{

@@ -27,7 +27,7 @@ The engine owns state directly. Engine actor request paths call `Engine` methods
 ```
 
 - **Automatic Forkchoice Handling**: [`Engine::build`](crate::Engine::build) automatically performs forkchoice updates during block building, eliminating the need for explicit forkchoice management in user code.
-- **Internal Synchronization**: [`SynchronizeTask`](crate::SynchronizeTask) handles internal execution layer synchronization and is primarily used by direct engine methods and other tasks rather than directly by users.
+- **Internal Synchronization**: [`SynchronizeTask`](crate::SynchronizeTask) handles internal execution layer synchronization and is primarily used by direct engine methods rather than directly by users.
 - **Serialized Execution**: The engine actor owns one mutable [`Engine`](crate::Engine), so each request updates execution-layer state before the next request is processed.
 
 ## Engine API Compatibility
@@ -46,7 +46,7 @@ Version selection follows Base hardfork activation times (Bedrock, Canyon, Delta
 
 ## Module Organization
 
-- **Task Queue** - Engine state owner and operation logic via [`Engine`](crate::Engine)
+- **Engine** - State owner and operation logic via [`Engine`](crate::Engine)
 - **Client** - HTTP client for Engine API communication via [`EngineClient`](crate::EngineClient)
 - **State** - Engine state management and synchronization via [`EngineState`](crate::EngineState)
 - **Versions** - Engine API version selection via [`EngineForkchoiceVersion`](crate::EngineForkchoiceVersion),
@@ -75,7 +75,7 @@ Call engine operations through `Engine`:
 use base_consensus_engine::{Engine, EngineClient};
 
 let client = EngineClient::new(engine_url, jwt_secret)?;
-let mut engine = Engine::new(initial_state, state_tx, queue_tx);
+let mut engine = Engine::new(initial_state, state_tx);
 
 engine.insert_unsafe_payload(client, rollup_config, payload).await?;
 ```

@@ -4,7 +4,7 @@ use alloy_rpc_types_engine::PayloadStatusEnum;
 use alloy_transport::{RpcError, TransportErrorKind};
 use thiserror::Error;
 
-use crate::{EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
+use crate::{EngineTaskError, EngineTaskErrorSeverity};
 
 /// An error that occurs when running the [`crate::SynchronizeTask`].
 #[derive(Debug, Error)]

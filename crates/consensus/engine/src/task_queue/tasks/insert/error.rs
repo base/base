@@ -5,9 +5,7 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_rpc_types_engine::BasePayloadError;
 use base_protocol::FromBlockError;
 
-use crate::{
-    EngineTaskError, SynchronizeTaskError, task_queue::tasks::task::EngineTaskErrorSeverity,
-};
+use crate::{EngineTaskError, EngineTaskErrorSeverity, SynchronizeTaskError};
 
 /// An error that occurs when inserting a payload into the execution engine.
 #[derive(Debug, thiserror::Error)]

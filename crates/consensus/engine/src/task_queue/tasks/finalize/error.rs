@@ -4,9 +4,7 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use base_protocol::FromBlockError;
 use thiserror::Error;
 
-use crate::{
-    EngineTaskError, SynchronizeTaskError, task_queue::tasks::task::EngineTaskErrorSeverity,
-};
+use crate::{EngineTaskError, EngineTaskErrorSeverity, SynchronizeTaskError};
 
 /// An error that occurs when running [`crate::Engine::finalize`].
 #[derive(Debug, Error)]

@@ -6,10 +6,7 @@ use base_protocol::FromBlockError;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use crate::{
-    EngineTaskError, InsertTaskError, SynchronizeTaskError,
-    task_queue::tasks::task::EngineTaskErrorSeverity,
-};
+use crate::{EngineTaskError, EngineTaskErrorSeverity, InsertTaskError, SynchronizeTaskError};
 
 /// An error that occurs when running the [`crate::SealTask`].
 #[derive(Debug, Error)]

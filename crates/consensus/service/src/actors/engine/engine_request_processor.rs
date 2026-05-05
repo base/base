@@ -6,7 +6,7 @@ use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
     Engine, EngineClient, EngineSyncStateUpdate, EngineTaskError, EngineTaskErrorSeverity,
-    EngineTaskErrors, Metrics as EngineMetrics, SealTaskError,
+    Metrics as EngineMetrics, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -14,6 +14,7 @@ use tokio::{
     task::JoinHandle,
 };
 
+use super::EngineOperationError;
 use crate::{
     BuildRequest, Conductor, EngineActorRequest, EngineClientError, EngineDerivationClient,
     EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
@@ -76,9 +77,7 @@ impl fmt::Debug for EngineProcessorOptions {
     }
 }
 
-/// Responsible for managing the operations sent to the execution layer's Engine API. To accomplish
-/// this, it uses the [`Engine`] task queue to order Engine API  interactions based off of
-/// the [`Ord`] implementation of [`EngineTask`].
+/// Responsible for managing the operations sent to the execution layer's Engine API.
 #[derive(Debug)]
 pub struct EngineProcessor<EngineClient_, DerivationClient>
 where
@@ -114,12 +113,12 @@ where
     /// FCU with zeroed safe/finalized so that normal EL sync is not disrupted.
     conductor: Option<Arc<dyn Conductor>>,
 
-    /// The [`RollupConfig`] used to build tasks.
+    /// The [`RollupConfig`] used for engine operations.
     rollup: Arc<RollupConfig>,
-    /// An [`EngineClient`] used for creating engine tasks.
+    /// An [`EngineClient`] used for engine operations.
     client: Arc<EngineClient_>,
-    /// The [`Engine`] task queue.
-    engine: Engine<EngineClient_>,
+    /// The [`Engine`] state owner.
+    engine: Engine,
 }
 
 impl<EngineClient_, DerivationClient> EngineProcessor<EngineClient_, DerivationClient>
@@ -132,7 +131,7 @@ where
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         derivation_client: DerivationClient,
-        engine: Engine<EngineClient_>,
+        engine: Engine,
         options: EngineProcessorOptions,
     ) -> Self {
         Self {
@@ -170,66 +169,8 @@ where
         Ok(())
     }
 
-    /// Handles an [`EngineTaskErrors`] according to its severity.
-    async fn handle_engine_task_error(&mut self, err: EngineTaskErrors) -> Result<(), EngineError> {
-        let severity = err.severity();
-        if severity == EngineTaskErrorSeverity::Critical {
-            error!(target: "engine", ?err, "Critical engine task error");
-            return Err(err.into());
-        }
-
-        self.handle_engine_task_error_severity(severity, format!("{err:?}")).await
-    }
-
-    async fn handle_engine_task_error_severity(
-        &mut self,
-        severity: EngineTaskErrorSeverity,
-        error: String,
-    ) -> Result<(), EngineError> {
-        match severity {
-            EngineTaskErrorSeverity::Critical => {
-                error!(target: "engine", %error, "Critical engine task error");
-                Err(EngineError::CriticalEngineTask(error))
-            }
-            EngineTaskErrorSeverity::Reset => {
-                warn!(target: "engine", %error, "Received reset request");
-                self.reset().await
-            }
-            EngineTaskErrorSeverity::Flush => {
-                // This error is encountered when the payload is marked INVALID
-                // by the engine api. Post-holocene, the payload is replaced by
-                // a "deposits-only" block and re-executed. At the same time,
-                // the channel and any remaining buffered batches are flushed.
-                warn!(target: "engine", %error, "Invalid payload, Flushing derivation pipeline.");
-                match self.derivation_client.send_signal(Signal::FlushChannel).await {
-                    Ok(_) => {
-                        debug!(target: "engine", "Sent flush signal to derivation actor");
-                        Ok(())
-                    }
-                    Err(err) => {
-                        error!(target: "engine", ?err, "Failed to send flush signal to the derivation actor.");
-                        Err(EngineError::ChannelClosed)
-                    }
-                }
-            }
-            EngineTaskErrorSeverity::Temporary => {
-                trace!(target: "engine", %error, "Temporary engine task error");
-                Ok(())
-            }
-        }
-    }
-
-    /// Drains the inner [`Engine`] task queue and attempts to update the safe head.
-    async fn drain(&mut self) -> Result<(), EngineError> {
-        match self.engine.drain().await {
-            Ok(_) => {
-                trace!(target: "engine", "[ENGINE] tasks drained");
-            }
-            Err(err) => {
-                self.handle_engine_task_error(err).await?;
-            }
-        }
-
+    /// Publishes engine state changes observed after direct engine operations.
+    async fn publish_engine_state_updates(&mut self) -> Result<(), EngineError> {
         self.send_derivation_actor_safe_head_if_updated().await?;
 
         if !self.el_sync_complete && self.engine.state().el_sync_finished {
@@ -239,6 +180,55 @@ where
         Ok(())
     }
 
+    async fn handle_engine_operation_error(
+        &mut self,
+        err: EngineOperationError,
+    ) -> Result<(), EngineError> {
+        let severity = err.severity();
+        if severity == EngineTaskErrorSeverity::Critical {
+            error!(target: "engine", ?err, "Critical engine operation error");
+            return Err(err.into());
+        }
+
+        self.handle_engine_operation_error_severity(severity, format!("{err:?}")).await
+    }
+
+    async fn handle_engine_operation_error_severity(
+        &mut self,
+        severity: EngineTaskErrorSeverity,
+        error: String,
+    ) -> Result<(), EngineError> {
+        match severity {
+            EngineTaskErrorSeverity::Critical => {
+                error!(target: "engine", %error, "Critical engine operation error");
+                Err(EngineError::CriticalEngineOperation(error))
+            }
+            EngineTaskErrorSeverity::Reset => {
+                warn!(target: "engine", %error, "Received reset request");
+                self.reset().await
+            }
+            EngineTaskErrorSeverity::Flush => {
+                // This error is encountered when the payload is marked INVALID by the engine API.
+                // Post-Holocene, the payload is replaced by a deposits-only block and
+                // re-executed. At the same time, buffered batches are flushed.
+                warn!(target: "engine", %error, "Invalid payload, flushing derivation pipeline");
+                match self.derivation_client.send_signal(Signal::FlushChannel).await {
+                    Ok(_) => {
+                        debug!(target: "engine", "Sent flush signal to derivation actor");
+                        Ok(())
+                    }
+                    Err(err) => {
+                        error!(target: "engine", ?err, "Failed to send flush signal to the derivation actor");
+                        Err(EngineError::ChannelClosed)
+                    }
+                }
+            }
+            EngineTaskErrorSeverity::Temporary => {
+                trace!(target: "engine", %error, "Temporary engine operation error");
+                Ok(())
+            }
+        }
+    }
     async fn insert_external_unsafe_payload(
         &mut self,
         envelope: BaseExecutionPayloadEnvelope,
@@ -249,7 +239,7 @@ where
             .insert_unsafe_payload(Arc::clone(&self.client), Arc::clone(&self.rollup), envelope)
             .await
         {
-            self.handle_engine_task_error(EngineTaskErrors::Insert(err)).await?;
+            self.handle_engine_operation_error(EngineOperationError::Insert(err)).await?;
         }
 
         Ok(())
@@ -343,7 +333,7 @@ where
             }
             None => {
                 if let Err(err) = result {
-                    self.handle_engine_task_error(EngineTaskErrors::Insert(err)).await?;
+                    self.handle_engine_operation_error(EngineOperationError::Insert(err)).await?;
                 }
             }
         }
@@ -535,7 +525,7 @@ where
                     }
                 }
                 Err(err) => {
-                    warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first task");
+                    warn!(target: "engine", ?err, "Engine startup bootstrap failed; will initialize on first request");
                 }
             }
         } else if let Some(head) = head {
@@ -629,7 +619,7 @@ where
             //     causing every subsequent engine_newPayload to return Syncing and the node to
             //     enter an infinite reset loop. Instead we seed the watch channel from reth's
             //     current head directly; derivation will issue its own FCU once the first Reset
-            //     task arrives.
+            //     reset request arrives.
             let reth_head = self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await;
             let at_genesis = match &reth_head {
                 Ok(Some(head)) => head.block_info.hash == self.rollup.genesis.l2.hash,
@@ -653,19 +643,15 @@ where
             }
 
             loop {
-                // Full processor iteration window: drain + recv wait + request handling.
+                // Full processor iteration window: publish updates + recv wait + request handling.
                 // Bounds the worst-case channel wait — any request arriving during this
                 // iteration waits at most this long before the next recv picks it up.
                 let _iter_timer =
                     base_metrics::timed!(EngineMetrics::engine_processor_iteration_duration());
 
-                // Attempt to drain all outstanding tasks from the engine queue before adding new
-                // ones.
-                base_metrics::time!(EngineMetrics::engine_processor_drain_duration_seconds(), {
-                    self.drain().await.inspect_err(
-                        |err| error!(target: "engine", ?err, "Failed to drain engine tasks"),
-                    )
-                })?;
+                self.publish_engine_state_updates().await.inspect_err(
+                    |err| error!(target: "engine", ?err, "Failed to publish engine state updates"),
+                )?;
 
                 // If the unsafe head has updated, propagate it to the outbound channels.
                 if let Some(unsafe_head_tx) = self.unsafe_head_tx.as_ref() {
@@ -706,7 +692,8 @@ where
                                     .send(Err(err))
                                     .await
                                     .map_err(|_| EngineError::ChannelClosed)?;
-                                self.handle_engine_task_error_severity(severity, error).await?;
+                                self.handle_engine_operation_error_severity(severity, error)
+                                    .await?;
                             }
                         }
                     }
@@ -726,10 +713,10 @@ where
                         let error =
                             result.as_ref().err().map(|err| (err.severity(), format!("{err:?}")));
                         result_tx.send(result).await.map_err(|err| {
-                            EngineTaskErrors::Seal(SealTaskError::MpscSend(Box::new(err)))
+                            EngineOperationError::Seal(SealTaskError::MpscSend(Box::new(err)))
                         })?;
                         if let Some((severity, error)) = error {
-                            self.handle_engine_task_error_severity(severity, error).await?;
+                            self.handle_engine_operation_error_severity(severity, error).await?;
                         }
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
@@ -742,8 +729,10 @@ where
                             )
                             .await
                         {
-                            self.handle_engine_task_error(EngineTaskErrors::Consolidate(err))
-                                .await?;
+                            self.handle_engine_operation_error(EngineOperationError::Consolidate(
+                                err,
+                            ))
+                            .await?;
                         }
                     }
                     EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(update) => {
@@ -756,9 +745,9 @@ where
                             )
                             .await
                         {
-                            self.handle_engine_task_error(EngineTaskErrors::DelegatedForkchoice(
-                                err,
-                            ))
+                            self.handle_engine_operation_error(
+                                EngineOperationError::DelegatedForkchoice(err),
+                            )
                             .await?;
                         }
                     }
@@ -774,7 +763,8 @@ where
                             )
                             .await
                         {
-                            self.handle_engine_task_error(EngineTaskErrors::Finalize(err)).await?;
+                            self.handle_engine_operation_error(EngineOperationError::Finalize(err))
+                                .await?;
                         }
                     }
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
@@ -955,8 +945,7 @@ mod tests {
         }
         let initial_state = initial_state_builder.build();
         let (state_tx, _) = watch::channel(initial_state);
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(initial_state, state_tx, queue_tx);
+        let engine = Engine::new(initial_state, state_tx);
         let unsafe_head_tx = if node_mode.is_sequencer() {
             let (tx, _) = watch::channel(L2BlockInfo::default());
             Some(tx)
@@ -1190,7 +1179,7 @@ mod tests {
         );
 
         let mut mock_derivation = MockEngineDerivationClient::new();
-        // Called by send_derivation_actor_safe_head_if_updated in the first drain() loop:
+        // Called by send_derivation_actor_safe_head_if_updated in the first processor loop:
         // safe_head is advanced to block_90 so it differs from last_safe_head_sent.
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
         // Called by mark_el_sync_complete_and_notify_derivation_actor after el_sync_finished
@@ -1198,8 +1187,7 @@ mod tests {
         mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let engine = Engine::new(EngineState::default(), state_tx);
 
         // Sequencer mode: unsafe_head_tx is Some. No conductor → standalone sequencer → active.
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
@@ -1264,8 +1252,7 @@ mod tests {
         // notify_sync_completed must NOT be called: el_sync_finished is still false.
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let engine = Engine::new(EngineState::default(), state_tx);
 
         // Sequencer mode (unsafe_head_tx = Some). No conductor → standalone sequencer → active.
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
@@ -1343,8 +1330,7 @@ mod tests {
         mock_conductor.expect_leader().returning(|| Ok(false));
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let engine = Engine::new(EngineState::default(), state_tx);
 
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());
 
@@ -1418,8 +1404,7 @@ mod tests {
         let mock_derivation = MockEngineDerivationClient::new();
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let engine = Engine::new(EngineState::default(), state_tx);
 
         // Validator mode: unsafe_head_tx = None.
         let processor = EngineProcessor::new(
@@ -1438,7 +1423,7 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = processor.start(req_rx);
 
-        // Close the channel so the task exits after bootstrap + one drain.
+        // Close the channel so the task exits after bootstrap + one processor loop.
         drop(req_tx);
         let _ = handle.await;
 
@@ -1487,8 +1472,7 @@ mod tests {
         let mock_derivation = MockEngineDerivationClient::new();
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let engine = Engine::new(EngineState::default(), state_tx);
 
         let processor = EngineProcessor::new(
             Arc::clone(&client),
@@ -1506,7 +1490,7 @@ mod tests {
         let (req_tx, req_rx) = mpsc::channel(8);
         let handle = processor.start(req_rx);
 
-        // Close the channel so the task exits after bootstrap + one drain.
+        // Close the channel so the task exits after bootstrap + one processor loop.
         drop(req_tx);
         let _ = handle.await;
 
@@ -1549,8 +1533,7 @@ mod tests {
         let config = Arc::new(RollupConfig::default());
         let derivation_client = MockEngineDerivationClient::new();
         let (state_tx, _) = watch::channel(base_consensus_engine::EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(base_consensus_engine::EngineState::default(), state_tx, queue_tx);
+        let engine = Engine::new(base_consensus_engine::EngineState::default(), state_tx);
         let unsafe_head_tx = if is_sequencer {
             let (tx, _) = watch::channel(L2BlockInfo::default());
             Some(tx)
@@ -1709,8 +1692,7 @@ mod tests {
         mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
 
         let (state_tx, state_rx) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let engine = Engine::new(EngineState::default(), state_tx);
 
         // Validator mode: unsafe_head_tx = None.
         let processor = EngineProcessor::new(
@@ -1811,8 +1793,7 @@ mod tests {
             .with_el_sync_finished(true)
             .build();
         let (state_tx, _state_rx) = watch::channel(initial_state);
-        let (queue_tx, queue_rx) = watch::channel(0usize);
-        let engine = Engine::new(initial_state, state_tx, queue_tx);
+        let engine = Engine::new(initial_state, state_tx);
 
         let processor = EngineProcessor::new(
             Arc::clone(&client),
@@ -1858,13 +1839,6 @@ mod tests {
             .expect("timed out waiting for FlushChannel signal")
             .expect("signal channel closed before FlushChannel was sent");
         assert!(matches!(received, Signal::FlushChannel));
-
-        // Queue must drain back to zero — proves the poisoned task was popped, not re-queued.
-        let mut queue_rx = queue_rx;
-        tokio::time::timeout(std::time::Duration::from_secs(5), queue_rx.wait_for(|n| *n == 0))
-            .await
-            .expect("queue length never returned to zero")
-            .expect("queue length watch closed before draining");
 
         // Clean shutdown: dropping the request channel makes start() exit with ChannelClosed.
         // The mockall `times(1)` expectation is verified on drop of `mock_derivation` inside

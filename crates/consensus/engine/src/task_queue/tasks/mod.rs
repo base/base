@@ -1,7 +1,7 @@
-//! Tasks to update the engine state.
+//! Direct engine operation helpers.
 
-mod task;
-pub use task::{EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, EngineTaskExt};
+mod severity;
+pub use severity::{EngineTaskError, EngineTaskErrorSeverity};
 
 mod synchronize;
 pub use synchronize::{SynchronizeTask, SynchronizeTaskError};

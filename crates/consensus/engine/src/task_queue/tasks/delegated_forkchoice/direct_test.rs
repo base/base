@@ -1,4 +1,4 @@
-//! Tests for delegated forkchoice direct execution.
+//! Tests for delegated forkchoice updates.
 
 use std::sync::Arc;
 

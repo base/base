@@ -17,8 +17,6 @@ pub struct EngineRpcProcessor<EngineClient_: EngineClient> {
     rollup_config: Arc<RollupConfig>,
     /// Receiver for [`EngineState`] updates.
     engine_state_receiver: watch::Receiver<EngineState>,
-    /// Receiver for engine queue length updates.
-    engine_queue_length_receiver: watch::Receiver<usize>,
 }
 
 impl<EngineClient_> EngineRpcProcessor<EngineClient_>
@@ -78,12 +76,7 @@ where
                 trace!(target: "engine", ?req, "Received engine query.");
 
                 if let Err(e) = req
-                    .handle(
-                        &self.engine_state_receiver,
-                        &self.engine_queue_length_receiver,
-                        &self.engine_client,
-                        &self.rollup_config,
-                    )
+                    .handle(&self.engine_state_receiver, &self.engine_client, &self.rollup_config)
                     .await
                 {
                     warn!(target: "engine", err = ?e, "Failed to handle engine query.");

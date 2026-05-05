@@ -1,7 +1,7 @@
 //! Prometheus metrics collection for engine operations.
 //!
 //! Provides metric identifiers and labels for monitoring engine performance,
-//! task execution, and block progression through safety levels.
+//! operation execution, and block progression through safety levels.
 
 base_metrics::define_metrics! {
     base_node
@@ -11,7 +11,7 @@ base_metrics::define_metrics! {
     #[describe("Seconds behind wall clock for each blockchain head ref")]
     #[label(label)]
     block_refs_latency: gauge,
-    #[describe("Engine tasks successfully executed")]
+    #[describe("Engine operations successfully executed")]
     #[label(
         name = "task",
         default = [
@@ -25,7 +25,7 @@ base_metrics::define_metrics! {
         ]
     )]
     engine_task_count: counter,
-    #[describe("Engine tasks failed")]
+    #[describe("Engine operations failed")]
     #[label(
         name = "task",
         default = [
@@ -47,12 +47,10 @@ base_metrics::define_metrics! {
     engine_reset_count: counter,
     #[describe("Payloads dropped because unsafe head changed between build and seal")]
     sequencer_unsafe_head_changed_total: counter,
-    #[describe("Total duration of the finalize task in seconds")]
+    #[describe("Total duration of finalize operations in seconds")]
     engine_finalize_duration_seconds: histogram,
-    #[describe("Number of tasks currently pending in the engine task queue")]
-    engine_task_queue_depth: gauge,
     #[describe(
-        "Per-task wall-clock duration including CL-side retry/yield overhead (broader than engine_method_request_duration which only covers the reth round-trip)"
+        "Per-operation wall-clock duration including CL-side retry/yield overhead (broader than engine_method_request_duration which only covers the reth round-trip)"
     )]
     #[label(
         name = "task",
@@ -68,7 +66,7 @@ base_metrics::define_metrics! {
     )]
     engine_task_duration: histogram,
     #[describe(
-        "Wall-clock duration of one EngineProcessor loop iteration: drain + recv wait + request handling. Upper bound on per-request wait time in the EngineActor->EngineProcessor mpsc channel — a request arriving anywhere in the previous iteration waits at most this long before recv picks it up."
+        "Wall-clock duration of one EngineProcessor loop iteration: publish updates + recv wait + request handling. Upper bound on per-request wait time in the EngineActor->EngineProcessor mpsc channel — a request arriving anywhere in the previous iteration waits at most this long before recv picks it up."
     )]
     engine_processor_iteration_duration: histogram,
     #[describe("Wall-clock duration of EngineProcessor task queue draining before receiving a new request")]

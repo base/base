@@ -1,8 +1,7 @@
-//! A task for importing a block that has already been started.
+//! Payload sealing helper for importing a block that has already been started.
 use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::PayloadId;
-use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::{AttributesWithParent, L2BlockInfo};
@@ -11,12 +10,12 @@ use tokio::sync::mpsc;
 
 use super::SealTaskError;
 use crate::{
-    Engine, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety,
+    Engine, EngineClient, EngineState, InsertPayloadSafety,
     InsertTaskError::{self},
     task_queue::build_and_seal,
 };
 
-/// Task for block sealing and canonicalization.
+/// Helper for block sealing and canonicalization.
 ///
 /// The [`SealTask`] handles the following parts of the block building workflow:
 ///
@@ -62,7 +61,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         payload_id: PayloadId,
         payload_attrs: AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        Engine::<EngineClient_>::fetch_payload(cfg, engine, payload_id, &payload_attrs).await
+        Engine::fetch_payload(cfg, engine, payload_id, &payload_attrs).await
     }
 
     /// Inserts a payload into the engine with Holocene fallback support.
@@ -78,7 +77,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         state: &mut EngineState,
         new_payload: BaseExecutionPayloadEnvelope,
     ) -> Result<(), SealTaskError> {
-        match Engine::<EngineClient_>::insert_payload_with_state(
+        match Engine::insert_payload_with_state(
             state,
             Arc::clone(&self.engine),
             Arc::clone(&self.cfg),
@@ -105,13 +104,13 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
                 // First build the deposits-only payload, then seal it
                 let deposits_only_attrs = self.attributes.as_deposits_only();
 
-                return match build_and_seal(
+                return match Box::pin(build_and_seal(
                     state,
                     Arc::clone(&self.engine),
                     Arc::clone(&self.cfg),
                     deposits_only_attrs.clone(),
                     self.payload_safety,
-                )
+                ))
                 .await
                 {
                     Ok(_) => {
@@ -188,7 +187,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
     /// This allows the original caller to handle errors, removing that burden from the engine,
     /// which may not know the caller's intent or retry preferences. If the original caller did not
     /// provide a mechanism to get notified of updates, handle the error in the default manner in
-    /// the task queue logic.
+    /// direct engine operation logic.
     async fn send_channel_result_or_get_error(
         &self,
         res: Result<BaseExecutionPayloadEnvelope, SealTaskError>,
@@ -203,15 +202,8 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
 
         Ok(())
     }
-}
-
-#[async_trait]
-impl<EngineClient_: EngineClient> EngineTaskExt for SealTask<EngineClient_> {
-    type Output = ();
-
-    type Error = SealTaskError;
-
-    async fn execute(&self, state: &mut EngineState) -> Result<(), SealTaskError> {
+    /// Seals the payload and optionally reports the result to the caller.
+    pub async fn execute(&self, state: &mut EngineState) -> Result<(), SealTaskError> {
         debug!(
             target: "engine",
             txs = self.attributes.attributes().transactions.as_ref().map_or(0, |txs| txs.len()),
