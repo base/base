@@ -135,6 +135,25 @@ impl Bootnodes {
 }
 
 impl ChainConfig {
+    /// CLI chain name for Base Mainnet.
+    pub const MAINNET_NAME: &'static str = "base";
+    /// CLI chain name for Base Sepolia.
+    pub const SEPOLIA_NAME: &'static str = "base-sepolia";
+    /// Legacy CLI chain name for Base Sepolia.
+    pub const SEPOLIA_ALIAS: &'static str = "base_sepolia";
+    /// CLI chain name for Base Zeronet.
+    pub const ZERONET_NAME: &'static str = "base-zeronet";
+    /// CLI chain name for the local Base devnet.
+    pub const DEVNET_NAME: &'static str = "dev";
+    /// All chain names accepted by Base chain parsers.
+    pub const SUPPORTED_NAMES: &'static [&'static str] = &[
+        Self::MAINNET_NAME,
+        Self::SEPOLIA_ALIAS,
+        Self::SEPOLIA_NAME,
+        Self::ZERONET_NAME,
+        Self::DEVNET_NAME,
+    ];
+
     /// Base Mainnet chain configuration.
     pub const fn mainnet() -> &'static Self {
         &MAINNET
@@ -158,6 +177,17 @@ impl ChainConfig {
     /// Returns all known chain configurations, including devnet.
     pub const fn all() -> [&'static Self; 4] {
         [&MAINNET, &SEPOLIA, &DEVNET, &ZERONET]
+    }
+
+    /// Looks up a chain config by CLI chain name.
+    pub fn by_name(name: &str) -> Option<&'static Self> {
+        match name {
+            Self::MAINNET_NAME => Some(Self::mainnet()),
+            Self::SEPOLIA_NAME | Self::SEPOLIA_ALIAS => Some(Self::sepolia()),
+            Self::ZERONET_NAME => Some(Self::zeronet()),
+            Self::DEVNET_NAME => Some(Self::devnet()),
+            _ => None,
+        }
     }
 
     /// Looks up a chain config by L2 chain ID.
@@ -520,5 +550,13 @@ mod tests {
         // Guard against drift between the hardcoded `FeeConfig::BASE_MAINNET` constant
         // (used as a serde default) and the canonical `ChainConfig::mainnet().fee_config()`.
         assert_eq!(ChainConfig::mainnet().fee_config(), FeeConfig::base_mainnet());
+    }
+
+    #[test]
+    fn supported_chain_names_resolve() {
+        for name in ChainConfig::SUPPORTED_NAMES {
+            assert!(ChainConfig::by_name(name).is_some(), "{name} should resolve");
+        }
+        assert_eq!(ChainConfig::by_name(ChainConfig::SEPOLIA_ALIAS), Some(ChainConfig::sepolia()));
     }
 }

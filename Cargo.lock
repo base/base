@@ -3956,6 +3956,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "backon",
+ "base-common-chains",
  "base-common-consensus",
  "base-execution-chainspec",
  "base-execution-consensus",

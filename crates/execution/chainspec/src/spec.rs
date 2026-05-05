@@ -19,10 +19,6 @@ use reth_primitives_traits::SealedHeader;
 
 use crate::{ChainUpgradesExt, compute_jovian_base_fee, decode_holocene_base_fee};
 
-/// All supported chain names for the CLI.
-pub const SUPPORTED_CHAINS: &[&str] =
-    &["base", "base_sepolia", "base-sepolia", "base-zeronet", "dev"];
-
 /// Genesis info extracted from a Base genesis config.
 #[derive(Default, Debug)]
 pub struct GenesisInfo {
@@ -130,13 +126,7 @@ impl BaseChainSpec {
 
     /// Parses a chain name into an [`BaseChainSpec`], if recognized.
     pub fn parse_chain(s: &str) -> Option<Arc<Self>> {
-        let cfg = match s {
-            "dev" => ChainConfig::devnet(),
-            "base" => ChainConfig::mainnet(),
-            "base_sepolia" | "base-sepolia" => ChainConfig::sepolia(),
-            "base-zeronet" => ChainConfig::zeronet(),
-            _ => return None,
-        };
+        let cfg = ChainConfig::by_name(s)?;
         Some(Arc::new(
             Self::try_from(cfg).expect("recognized Base chain config must build a valid chainspec"),
         ))
@@ -155,8 +145,10 @@ impl TryFrom<&ChainConfig> for BaseChainSpec {
         let genesis = serde_json::from_str(cfg.genesis_json)?;
         let hardforks = base_common_chains::ChainUpgrades::new(BaseUpgrade::forks_for(cfg))
             .to_chain_hardforks();
-        let genesis_header =
-            SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks));
+        let genesis_header = match cfg.genesis_l2_hash {
+            B256::ZERO => SealedHeader::seal_slow(Self::make_genesis_header(&genesis, &hardforks)),
+            hash => SealedHeader::new(Self::make_genesis_header(&genesis, &hardforks), hash),
+        };
         let fee_config = cfg.fee_config();
         let base_fee_params = BaseFeeParamsKind::Variable(
             vec![

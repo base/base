@@ -20,4 +20,4 @@ mod hardforks;
 pub use hardforks::ChainUpgradesExt;
 
 mod spec;
-pub use spec::{BaseChainSpec, GenesisInfo, SUPPORTED_CHAINS};
+pub use spec::{BaseChainSpec, GenesisInfo};
