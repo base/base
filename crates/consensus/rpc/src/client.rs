@@ -77,6 +77,10 @@ pub enum SequencerAdminAPIError {
     #[error("Error receiving response: response channel closed.")]
     ResponseError,
 
+    /// Timed out waiting for an actor response.
+    #[error("Timed out waiting for response.")]
+    ResponseTimeout,
+
     /// Sequencer stopped successfully, followed by some error.
     #[error("Sequencer stopped successfully, followed by error: {0}.")]
     ErrorAfterSequencerWasStopped(String),

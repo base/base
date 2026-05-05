@@ -17,7 +17,8 @@ pub use engine::{
 
 mod rpc;
 pub use rpc::{
-    QueuedEngineRpcClient, QueuedSequencerAdminAPIClient, RpcActor, RpcActorError, RpcContext,
+    QueuedEngineRpcClient, QueuedRpcClientOptions, QueuedSequencerAdminAPIClient, RpcActor,
+    RpcActorError, RpcContext,
 };
 
 mod derivation;

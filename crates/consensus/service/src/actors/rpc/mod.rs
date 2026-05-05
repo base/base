@@ -3,6 +3,9 @@
 mod actor;
 pub use actor::{RpcActor, RpcContext};
 
+mod client_options;
+pub use client_options::QueuedRpcClientOptions;
+
 mod engine_rpc_client;
 pub use engine_rpc_client::QueuedEngineRpcClient;
 
