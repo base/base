@@ -953,162 +953,192 @@ mod tests {
         )
     }
 
+    struct UnsafePayloadProcessingCase {
+        node_mode: NodeMode,
+        el_sync_finished: bool,
+        unsafe_head: L2BlockInfo,
+        safe_head: Option<L2BlockInfo>,
+        local_payload: bool,
+        envelope: BaseExecutionPayloadEnvelope,
+        expect_unsafe_head_advance: bool,
+        expect_handler_error: bool,
+    }
+
     #[rstest]
     #[case::sequencer_inserts_contiguous_external_payload(
-        NodeMode::Sequencer,
-        true,
-        l2_head(10, B256::with_last_byte(10)),
-        None,
-        false,
-        unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)),
-        true,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(10, B256::with_last_byte(10)),
+            safe_head: None,
+            local_payload: false,
+            envelope: unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)),
+            expect_unsafe_head_advance: true,
+            expect_handler_error: false,
+        }
     )]
     #[case::sequencer_inserts_near_tip_external_payload_when_safe_is_behind(
-        NodeMode::Sequencer,
-        true,
-        l2_head(1_940_222, B256::with_last_byte(22)),
-        Some(l2_head(1_940_222, B256::with_last_byte(22))),
-        false,
-        unsafe_payload(1_940_265, B256::with_last_byte(64), B256::with_last_byte(65)),
-        true,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(1_940_222, B256::with_last_byte(22)),
+            safe_head: Some(l2_head(1_940_222, B256::with_last_byte(22))),
+            local_payload: false,
+            envelope: unsafe_payload(1_940_265, B256::with_last_byte(64), B256::with_last_byte(65)),
+            expect_unsafe_head_advance: true,
+            expect_handler_error: false,
+        }
     )]
     #[case::sequencer_inserts_observed_restart_gap_external_payload(
-        NodeMode::Sequencer,
-        true,
-        l2_head(1_939_909, B256::with_last_byte(9)),
-        None,
-        false,
-        unsafe_payload(1_940_000, B256::with_last_byte(99), B256::with_last_byte(100)),
-        true,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(1_939_909, B256::with_last_byte(9)),
+            safe_head: None,
+            local_payload: false,
+            envelope: unsafe_payload(1_940_000, B256::with_last_byte(99), B256::with_last_byte(100)),
+            expect_unsafe_head_advance: true,
+            expect_handler_error: false,
+        }
     )]
     #[case::sequencer_inserts_external_payload_at_gap_boundary(
-        NodeMode::Sequencer,
-        true,
-        l2_head(1_000, B256::with_last_byte(10)),
-        None,
-        false,
-        unsafe_payload(
-            1_000 + EngineProcessorOptions::MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
-            B256::with_last_byte(50),
-            B256::with_last_byte(51),
-        ),
-        true,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(1_000, B256::with_last_byte(10)),
+            safe_head: None,
+            local_payload: false,
+            envelope: unsafe_payload(
+                1_000 + EngineProcessorOptions::MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
+                B256::with_last_byte(50),
+                B256::with_last_byte(51),
+            ),
+            expect_unsafe_head_advance: true,
+            expect_handler_error: false,
+        }
     )]
     #[case::sequencer_drops_external_payload_beyond_gap_boundary(
-        NodeMode::Sequencer,
-        true,
-        l2_head(1_000, B256::with_last_byte(10)),
-        None,
-        false,
-        unsafe_payload(
-            1_000 + EngineProcessorOptions::MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP + 1,
-            B256::with_last_byte(50),
-            B256::with_last_byte(51),
-        ),
-        false,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(1_000, B256::with_last_byte(10)),
+            safe_head: None,
+            local_payload: false,
+            envelope: unsafe_payload(
+                1_000 + EngineProcessorOptions::MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP + 1,
+                B256::with_last_byte(50),
+                B256::with_last_byte(51),
+            ),
+            expect_unsafe_head_advance: false,
+            expect_handler_error: false,
+        }
     )]
     #[case::sequencer_drops_deep_sync_external_payload(
-        NodeMode::Sequencer,
-        true,
-        l2_head(878_765, B256::with_last_byte(10)),
-        None,
-        false,
-        unsafe_payload(1_936_802, B256::with_last_byte(50), B256::with_last_byte(51)),
-        false,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(878_765, B256::with_last_byte(10)),
+            safe_head: None,
+            local_payload: false,
+            envelope: unsafe_payload(1_936_802, B256::with_last_byte(50), B256::with_last_byte(51)),
+            expect_unsafe_head_advance: false,
+            expect_handler_error: false,
+        }
     )]
     #[case::sequencer_drops_stale_external_payload(
-        NodeMode::Sequencer,
-        true,
-        l2_head(10, B256::with_last_byte(10)),
-        None,
-        false,
-        unsafe_payload(10, B256::with_last_byte(9), B256::with_last_byte(10)),
-        false,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(10, B256::with_last_byte(10)),
+            safe_head: None,
+            local_payload: false,
+            envelope: unsafe_payload(10, B256::with_last_byte(9), B256::with_last_byte(10)),
+            expect_unsafe_head_advance: false,
+            expect_handler_error: false,
+        }
     )]
     #[case::sequencer_inserts_external_next_block_with_parent_mismatch(
-        NodeMode::Sequencer,
-        true,
-        l2_head(10, B256::with_last_byte(10)),
-        None,
-        false,
-        unsafe_payload(11, B256::with_last_byte(99), B256::with_last_byte(11)),
-        true,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(10, B256::with_last_byte(10)),
+            safe_head: None,
+            local_payload: false,
+            envelope: unsafe_payload(11, B256::with_last_byte(99), B256::with_last_byte(11)),
+            expect_unsafe_head_advance: true,
+            expect_handler_error: false,
+        }
     )]
     #[case::sequencer_cl_sync_preserves_local_unsafe_payload_insertion(
-        NodeMode::Sequencer,
-        true,
-        l2_head(10, B256::with_last_byte(10)),
-        Some(l2_head(9, B256::with_last_byte(9))),
-        true,
-        unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)),
-        true,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(10, B256::with_last_byte(10)),
+            safe_head: Some(l2_head(9, B256::with_last_byte(9))),
+            local_payload: true,
+            envelope: unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)),
+            expect_unsafe_head_advance: true,
+            expect_handler_error: false,
+        }
     )]
     #[case::local_sequencer_processes_old_unsafe_payload_without_gap_limit(
-        NodeMode::Sequencer,
-        true,
-        l2_head(10_000, B256::with_last_byte(10)),
-        None,
-        true,
-        unsafe_payload(6_400, B256::with_last_byte(99), B256::with_last_byte(100)),
-        false,
-        true
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Sequencer,
+            el_sync_finished: true,
+            unsafe_head: l2_head(10_000, B256::with_last_byte(10)),
+            safe_head: None,
+            local_payload: true,
+            envelope: unsafe_payload(6_400, B256::with_last_byte(99), B256::with_last_byte(100)),
+            expect_unsafe_head_advance: false,
+            expect_handler_error: true,
+        }
     )]
     #[case::validator_preserves_immediate_unsafe_payload_insertion(
-        NodeMode::Validator,
-        false,
-        l2_head(10, B256::with_last_byte(10)),
-        None,
-        false,
-        unsafe_payload(12, B256::with_last_byte(11), B256::with_last_byte(12)),
-        true,
-        false
+        UnsafePayloadProcessingCase {
+            node_mode: NodeMode::Validator,
+            el_sync_finished: false,
+            unsafe_head: l2_head(10, B256::with_last_byte(10)),
+            safe_head: None,
+            local_payload: false,
+            envelope: unsafe_payload(12, B256::with_last_byte(11), B256::with_last_byte(12)),
+            expect_unsafe_head_advance: true,
+            expect_handler_error: false,
+        }
     )]
     #[tokio::test]
     async fn unsafe_payload_processing_inserts_or_drops_payload(
-        #[case] node_mode: NodeMode,
-        #[case] el_sync_finished: bool,
-        #[case] unsafe_head: L2BlockInfo,
-        #[case] safe_head: Option<L2BlockInfo>,
-        #[case] local_payload: bool,
-        #[case] envelope: BaseExecutionPayloadEnvelope,
-        #[case] expect_unsafe_head_advance: bool,
-        #[case] expect_handler_error: bool,
+        #[case] test_case: UnsafePayloadProcessingCase,
     ) {
-        let expected_unsafe_head = if expect_unsafe_head_advance {
+        let expected_unsafe_head = if test_case.expect_unsafe_head_advance {
             L2BlockInfo::from_payload_and_genesis(
-                envelope.execution_payload.clone(),
-                envelope.parent_beacon_block_root,
+                test_case.envelope.execution_payload.clone(),
+                test_case.envelope.parent_beacon_block_root,
                 &RollupConfig::default().genesis,
             )
             .expect("test payload should convert to L2BlockInfo")
         } else {
-            unsafe_head
+            test_case.unsafe_head
         };
 
-        let mut processor =
-            unsafe_payload_processor(node_mode, el_sync_finished, unsafe_head, safe_head);
+        let mut processor = unsafe_payload_processor(
+            test_case.node_mode,
+            test_case.el_sync_finished,
+            test_case.unsafe_head,
+            test_case.safe_head,
+        );
 
-        let result = if local_payload {
+        let result = if test_case.local_payload {
             processor
                 .handle_local_unsafe_l2_block(InsertUnsafePayloadRequest {
-                    envelope,
+                    envelope: test_case.envelope,
                     result_tx: None,
                 })
                 .await
         } else {
-            processor.handle_external_unsafe_l2_block(envelope).await
+            processor.handle_external_unsafe_l2_block(test_case.envelope).await
         };
 
-        assert_eq!(result.is_err(), expect_handler_error, "{result:?}");
+        assert_eq!(result.is_err(), test_case.expect_handler_error, "{result:?}");
 
         assert_eq!(processor.engine.state().sync_state.unsafe_head(), expected_unsafe_head);
     }

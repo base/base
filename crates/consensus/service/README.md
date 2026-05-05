@@ -67,7 +67,7 @@ The engine actor is the hub of the service. All other actors that need to affect
 
 `ProcessUnsafeL2BlockRequest` is fire-and-forget. It takes a `BaseExecutionPayloadEnvelope` received from the P2P network or follow-node delegation, calls `engine_api::new_payload`, then calls `engine_api::forkchoice_updated` to make the block the new unsafe head.
 
-`ProcessLocalUnsafeL2BlockRequest` inserts a locally produced sequencer payload and acknowledges the inserted unsafe head after `engine_api::new_payload`, `engine_api::forkchoice_updated`, and the unsafe-head watch update have completed.
+`ProcessLocalUnsafeL2BlockRequest` inserts a locally produced sequencer payload and acknowledges the inserted unsafe head after `engine_api::new_payload` and `engine_api::forkchoice_updated` complete. The sequencer engine client then waits for the unsafe-head watch channel to publish that same head before returning to the sealer.
 
 `ProcessSafeL2SignalRequest` takes a `ConsolidateInput` from the derivation actor — either a derived set of `AttributesWithParent` or a delegated `L2BlockInfo` — and runs the safe-head consolidation path: attributes are forwarded to `engine_api::forkchoice_updated`, and the resulting safe head is sent back to the derivation actor via the `QueuedEngineDerivationClient`.
 
