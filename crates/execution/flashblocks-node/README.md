@@ -13,34 +13,38 @@ This crate provides the Flashblocks extension for the Base node, which enables r
 
 To integrate the Flashblocks extension into your node, use the `install_ext` method on your `BaseNodeRunner`:
 
-```rust
-use base_client_node::BaseNodeRunner;
-use base_flashblocks_node::{FlashblocksConfig, FlashblocksExtension};
+```rust,ignore
+use base_flashblocks::FlashblocksConfig;
+use base_flashblocks_node::FlashblocksExtension;
+use base_node_runner::BaseNodeRunner;
 
 let mut runner = BaseNodeRunner::new(rollup_args);
 
 // Create flashblocks configuration
-let flashblocks_config: Option<FlashblocksConfig> = args.into();
+let flashblocks_config = FlashblocksConfig::new(flashblocks_url, max_pending_blocks_depth);
 
 // Install the flashblocks extension (should be installed last as it uses replace_configured)
-runner.install_ext::<FlashblocksExtension>(flashblocks_config);
+runner.install_ext::<FlashblocksExtension>(Some(flashblocks_config));
 
-let handle = runner.run(builder);
+runner.run(builder).await?;
 ```
+
+If Flashblocks should be disabled, install the extension with `None` or skip installing it.
 
 ### CLI Arguments
 
 When running the node binary, Flashblocks can be configured with the following CLI arguments:
 
-- `--websocket-url <WEBSOCKET_URL>`: The WebSocket URL to stream flashblock updates from (required to enable Flashblocks)
+- `--flashblocks-url <WEBSOCKET_URL>`: The WebSocket URL to stream flashblock updates from (required to enable Flashblocks; `--websocket-url` is accepted as an alias)
 - `--max-pending-blocks-depth <MAX_PENDING_BLOCKS_DEPTH>`: Maximum number of pending flashblocks to retain in memory (default: 3)
+- `--flashblocks.cached-execution`: Enable cached execution through the flashblocks-aware engine validator
 
 ### Example
 
 ```bash
 # Run the Base node with Flashblocks enabled
 base-node \
-  --websocket-url ws://flashblock-service:8080 \
+  --flashblocks-url ws://flashblock-service:8080 \
   --max-pending-blocks-depth 5
 ```
 
