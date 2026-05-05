@@ -1,4 +1,4 @@
-//! Tests for [`DelegatedForkchoiceTask::execute`].
+//! Tests for delegated forkchoice direct execution.
 
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use base_common_rpc_types::Transaction as BaseTransaction;
 use base_protocol::{BlockInfo, L2BlockInfo};
 
 use crate::{
-    DelegatedForkchoiceTask, DelegatedForkchoiceUpdate, EngineTaskExt,
+    DelegatedForkchoiceUpdate, Engine,
     test_utils::{TestEngineStateBuilder, test_block_info, test_engine_client_builder},
 };
 
@@ -63,16 +63,17 @@ async fn syncing_safe_update_skips_finalization_beyond_actual_safe() {
         .with_el_sync_finished(false)
         .build();
 
-    let task = DelegatedForkchoiceTask::new(
+    Engine::delegated_forkchoice_with_state(
+        &mut state,
         client,
         Arc::new(RollupConfig::default()),
         DelegatedForkchoiceUpdate {
             safe_l2: delegated_safe,
             finalized_l2_number: Some(delegated_safe_number),
         },
-    );
-
-    task.execute(&mut state).await.expect("delegated forkchoice should not fail");
+    )
+    .await
+    .expect("delegated forkchoice should not fail");
 
     assert_eq!(
         state.sync_state.safe_head(),

@@ -17,12 +17,11 @@ use crate::{
 /// The [`SynchronizeTask`] performs `engine_forkchoiceUpdated` calls to synchronize
 /// the execution layer's forkchoice state with the rollup node's view. This task
 /// operates without payload attributes and is primarily used internally by other
-/// engine tasks rather than being directly enqueued by users.
+/// direct engine operations rather than being directly enqueued by users.
 ///
 /// ## Usage Patterns
 ///
-/// - **Internal Synchronization**: Called by direct insert/consolidate processing and
-///   [`FinalizeTask`]
+/// - **Internal Synchronization**: Called by direct insert/consolidate/finalize processing
 /// - **Engine Reset**: Used during engine resets to establish initial forkchoice state
 /// - **Safe Head Updates**: Synchronizes safe and finalized head changes
 ///
@@ -32,7 +31,6 @@ use crate::{
 /// explicitly handled within direct build processing, eliminating the need for explicit
 /// forkchoice management in most user scenarios.
 ///
-/// [`FinalizeTask`]: crate::FinalizeTask
 #[derive(Debug, Clone, Constructor)]
 pub struct SynchronizeTask<EngineClient_: EngineClient> {
     /// The engine client.

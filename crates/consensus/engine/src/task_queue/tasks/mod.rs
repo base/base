@@ -1,9 +1,7 @@
 //! Tasks to update the engine state.
 
 mod task;
-pub use task::{
-    EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, EngineTaskExt,
-};
+pub use task::{EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, EngineTaskExt};
 
 mod synchronize;
 pub use synchronize::{SynchronizeTask, SynchronizeTaskError};
@@ -21,12 +19,10 @@ mod consolidate;
 pub use consolidate::{ConsolidateInput, ConsolidateTaskError};
 
 mod delegated_forkchoice;
-pub use delegated_forkchoice::{
-    DelegatedForkchoiceTask, DelegatedForkchoiceTaskError, DelegatedForkchoiceUpdate,
-};
+pub use delegated_forkchoice::{DelegatedForkchoiceTaskError, DelegatedForkchoiceUpdate};
 
 mod finalize;
-pub use finalize::{FinalizeTask, FinalizeTaskError};
+pub use finalize::FinalizeTaskError;
 
 mod util;
 pub(super) use util::{BuildAndSealError, build_and_seal};

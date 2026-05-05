@@ -1,10 +1,10 @@
-//! Follow-node delegated forkchoice task and its associated types.
+//! Follow-node delegated forkchoice update and error types.
 
 mod error;
 pub use error::DelegatedForkchoiceTaskError;
 
-mod task;
-pub use task::{DelegatedForkchoiceTask, DelegatedForkchoiceUpdate};
+mod update;
+pub use update::DelegatedForkchoiceUpdate;
 
 #[cfg(test)]
-mod task_test;
+mod direct_test;

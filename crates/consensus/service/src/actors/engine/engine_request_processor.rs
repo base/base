@@ -5,9 +5,8 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    DelegatedForkchoiceTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
-    EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask,
-    Metrics as EngineMetrics, SealTaskError,
+    Engine, EngineClient, EngineSyncStateUpdate, EngineTaskError, EngineTaskErrorSeverity,
+    EngineTaskErrors, Metrics as EngineMetrics, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -704,25 +703,35 @@ where
                         }
                     }
                     EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(update) => {
-                        let task = EngineTask::DelegatedForkchoice(Box::new(
-                            DelegatedForkchoiceTask::new(
+                        if let Err(err) = self
+                            .engine
+                            .delegated_forkchoice(
                                 Arc::clone(&self.client),
                                 Arc::clone(&self.rollup),
                                 *update,
-                            ),
-                        ));
-                        self.engine.enqueue(task);
+                            )
+                            .await
+                        {
+                            self.handle_engine_task_error(EngineTaskErrors::DelegatedForkchoice(
+                                err,
+                            ))
+                            .await?;
+                        }
                     }
                     EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
                         finalized_l2_block_number,
                     ) => {
-                        // Finalize the L2 block at the provided block number.
-                        let task = EngineTask::Finalize(Box::new(FinalizeTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            *finalized_l2_block_number,
-                        )));
-                        self.engine.enqueue(task);
+                        if let Err(err) = self
+                            .engine
+                            .finalize(
+                                Arc::clone(&self.client),
+                                Arc::clone(&self.rollup),
+                                *finalized_l2_block_number,
+                            )
+                            .await
+                        {
+                            self.handle_engine_task_error(EngineTaskErrors::Finalize(err)).await?;
+                        }
                     }
                     EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                         self.handle_external_unsafe_l2_block(*envelope).await?;

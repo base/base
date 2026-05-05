@@ -1,4 +1,4 @@
-//! Error types for the delegated forkchoice task.
+//! Error types for delegated forkchoice updates.
 
 use thiserror::Error;
 
@@ -7,7 +7,7 @@ use crate::{
     task_queue::tasks::task::EngineTaskErrorSeverity,
 };
 
-/// An error returned by the delegated follow-node forkchoice task.
+/// An error returned by a delegated follow-node forkchoice update.
 #[derive(Debug, Error)]
 pub enum DelegatedForkchoiceTaskError {
     /// Consolidation failed while applying the delegated safe head.

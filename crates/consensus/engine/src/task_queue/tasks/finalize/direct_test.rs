@@ -1,4 +1,4 @@
-//! Tests for [`FinalizeTask::execute`].
+//! Tests for finalization direct execution.
 
 use std::sync::Arc;
 
@@ -8,9 +8,10 @@ use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum
 use alloy_rpc_types_eth::Block as RpcBlock;
 use base_common_genesis::{ChainGenesis, RollupConfig};
 use base_common_rpc_types::Transaction as BaseTransaction;
+use rstest::rstest;
 
 use crate::{
-    EngineTaskExt, FinalizeTask, FinalizeTaskError,
+    Engine, FinalizeTaskError,
     test_utils::{TestEngineStateBuilder, test_block_info, test_engine_client_builder},
 };
 
@@ -22,7 +23,7 @@ const BASE_SEPOLIA_GENESIS_HASH: B256 =
 const BASE_MAINNET_GENESIS_HASH: B256 =
     b256!("f712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd");
 
-/// Construct a minimal default genesis block for testing [`FinalizeTask`].
+/// Construct a minimal default genesis block for testing finalization.
 ///
 /// Returns a default all-zero RPC block (number = 0, no transactions) paired with
 /// the canonical hash produced by `hash_slow()` on its consensus form. Use the
@@ -54,89 +55,92 @@ fn valid_fcu(hash: B256) -> ForkchoiceUpdated {
     }
 }
 
+#[derive(Debug)]
+enum ExpectedFinalizeError {
+    BlockNotSafe,
+    BlockNotFound(u64),
+    FromBlock,
+    ForkchoiceUpdateFailed,
+}
+
+impl ExpectedFinalizeError {
+    fn matches(&self, result: &Result<(), FinalizeTaskError>) -> bool {
+        match (self, result) {
+            (Self::BlockNotSafe, Err(FinalizeTaskError::BlockNotSafe)) => true,
+            (Self::BlockNotFound(expected), Err(FinalizeTaskError::BlockNotFound(actual))) => {
+                expected == actual
+            }
+            (Self::FromBlock, Err(FinalizeTaskError::FromBlock(_))) => true,
+            (Self::ForkchoiceUpdateFailed, Err(FinalizeTaskError::ForkchoiceUpdateFailed(_))) => {
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum GenesisFinalizeFailure {
+    HashMismatch,
+    MissingFcu,
+}
+
+#[rstest]
+#[case::block_not_safe(5, 10, ExpectedFinalizeError::BlockNotSafe)]
+#[case::block_not_found(10, 7, ExpectedFinalizeError::BlockNotFound(7))]
 #[tokio::test]
-async fn block_not_safe_returns_error() {
-    // safe_head = 5, block_number = 10 → task fails before fetching the block.
+async fn direct_finalize_block_validation_errors(
+    #[case] safe_head: u64,
+    #[case] block_number: u64,
+    #[case] expected: ExpectedFinalizeError,
+) {
     let client = test_engine_client_builder().build();
-    let head = test_block_info(5);
+    let head = test_block_info(safe_head);
     let mut state =
         TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
 
-    let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 10);
-    let result = task.execute(&mut state).await;
+    let result = Engine::finalize_with_state(
+        &mut state,
+        Arc::new(client),
+        Arc::new(RollupConfig::default()),
+        block_number,
+    )
+    .await;
 
-    assert!(
-        matches!(result, Err(FinalizeTaskError::BlockNotSafe)),
-        "expected BlockNotSafe, got {result:?}"
-    );
+    assert!(expected.matches(&result), "expected {expected:?}, got {result:?}");
 }
 
+#[rstest]
+#[case::genesis_hash_mismatch(
+    GenesisFinalizeFailure::HashMismatch,
+    ExpectedFinalizeError::FromBlock
+)]
+#[case::missing_fcu(
+    GenesisFinalizeFailure::MissingFcu,
+    ExpectedFinalizeError::ForkchoiceUpdateFailed
+)]
 #[tokio::test]
-async fn block_not_found_returns_error() {
-    // safe_head = 10, block_number = 7, no block registered → mock returns None.
-    let client = test_engine_client_builder().build();
-    let head = test_block_info(10);
-    let mut state =
-        TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
-
-    let task = FinalizeTask::new(Arc::new(client), Arc::new(RollupConfig::default()), 7);
-    let result = task.execute(&mut state).await;
-
-    assert!(
-        matches!(result, Err(FinalizeTaskError::BlockNotFound(7))),
-        "expected BlockNotFound(7), got {result:?}"
-    );
-}
-
-#[tokio::test]
-async fn from_block_error_on_genesis_hash_mismatch() {
-    // Configure genesis.l2.hash = BASE_SEPOLIA_GENESIS_HASH but provide a default
-    // all-zero block, whose hash_slow() will not equal the real Base Sepolia genesis
-    // hash. from_block_and_genesis returns InvalidGenesisHash → FinalizeTaskError::FromBlock.
-    let (block, _) = make_genesis_block();
-    let cfg = genesis_rollup_cfg(BASE_SEPOLIA_GENESIS_HASH);
+async fn direct_finalize_genesis_errors(
+    #[case] failure: GenesisFinalizeFailure,
+    #[case] expected: ExpectedFinalizeError,
+) {
+    let (block, hash) = make_genesis_block();
+    let cfg = match failure {
+        GenesisFinalizeFailure::HashMismatch => genesis_rollup_cfg(BASE_SEPOLIA_GENESIS_HASH),
+        GenesisFinalizeFailure::MissingFcu => genesis_rollup_cfg(hash),
+    };
 
     let client = test_engine_client_builder()
         .with_config(Arc::clone(&cfg))
         .with_l2_block(BlockId::Number(BlockNumberOrTag::Number(0)), block)
         .build();
-
     let head = test_block_info(0);
     let mut state =
         TestEngineStateBuilder::new().with_safe_head(head).with_unsafe_head(head).build();
 
-    let task = FinalizeTask::new(Arc::new(client), cfg, 0);
-    let result = task.execute(&mut state).await;
+    let result = Engine::finalize_with_state(&mut state, Arc::new(client), cfg, 0).await;
 
-    assert!(
-        matches!(result, Err(FinalizeTaskError::FromBlock(_))),
-        "expected FromBlock on genesis hash mismatch, got {result:?}"
-    );
-}
-
-#[tokio::test]
-async fn fcu_failure_propagates_as_forkchoice_update_failed() {
-    // Provide a valid genesis block and matching config but do NOT configure a FCU
-    // response. SynchronizeTask fails with a transport error → ForkchoiceUpdateFailed.
-    // The FCU call uses the Base Sepolia genesis hash in the forkchoice state.
-    let (block, hash) = make_genesis_block();
-    let cfg = genesis_rollup_cfg(hash);
-
-    let client = test_engine_client_builder()
-        .with_config(Arc::clone(&cfg))
-        .with_l2_block(BlockId::Number(BlockNumberOrTag::Number(0)), block)
-        // fork_choice_updated_v3 intentionally NOT configured → transport error.
-        .build();
-
-    let mut state = TestEngineStateBuilder::new().build();
-
-    let task = FinalizeTask::new(Arc::new(client), cfg, 0);
-    let result = task.execute(&mut state).await;
-
-    assert!(
-        matches!(result, Err(FinalizeTaskError::ForkchoiceUpdateFailed(_))),
-        "expected ForkchoiceUpdateFailed, got {result:?}"
-    );
+    assert!(expected.matches(&result), "expected {expected:?}, got {result:?}");
 }
 
 #[tokio::test]
@@ -158,8 +162,9 @@ async fn success_updates_engine_state_finalized_head() {
     // calls FCU. After execution the finalized_head must reflect the new block.
     let mut state = TestEngineStateBuilder::new().build();
 
-    let task = FinalizeTask::new(Arc::new(client), Arc::clone(&cfg), 0);
-    task.execute(&mut state).await.expect("FinalizeTask should succeed");
+    Engine::finalize_with_state(&mut state, Arc::new(client), Arc::clone(&cfg), 0)
+        .await
+        .expect("finalization should succeed");
 
     assert_eq!(
         state.sync_state.finalized_head().block_info.hash,
