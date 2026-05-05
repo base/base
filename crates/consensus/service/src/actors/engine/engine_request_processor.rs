@@ -336,10 +336,17 @@ where
                 .await
         };
 
-        if let Some(result_tx) = result_tx
-            && result_tx.send(result).await.is_err()
-        {
-            warn!(target: "engine", "Sending insert result failed");
+        match result_tx {
+            Some(result_tx) => {
+                if result_tx.send(result).await.is_err() {
+                    warn!(target: "engine", "Sending insert result failed");
+                }
+            }
+            None => {
+                if let Err(err) = result {
+                    self.handle_engine_task_error(EngineTaskErrors::Insert(err)).await?;
+                }
+            }
         }
 
         Ok(())
@@ -954,7 +961,8 @@ mod tests {
         None,
         false,
         unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)),
-        true
+        true,
+        false
     )]
     #[case::sequencer_inserts_near_tip_external_payload_when_safe_is_behind(
         NodeMode::Sequencer,
@@ -963,7 +971,8 @@ mod tests {
         Some(l2_head(1_940_222, B256::with_last_byte(22))),
         false,
         unsafe_payload(1_940_265, B256::with_last_byte(64), B256::with_last_byte(65)),
-        true
+        true,
+        false
     )]
     #[case::sequencer_inserts_observed_restart_gap_external_payload(
         NodeMode::Sequencer,
@@ -972,7 +981,8 @@ mod tests {
         None,
         false,
         unsafe_payload(1_940_000, B256::with_last_byte(99), B256::with_last_byte(100)),
-        true
+        true,
+        false
     )]
     #[case::sequencer_inserts_external_payload_at_gap_boundary(
         NodeMode::Sequencer,
@@ -985,7 +995,8 @@ mod tests {
             B256::with_last_byte(50),
             B256::with_last_byte(51),
         ),
-        true
+        true,
+        false
     )]
     #[case::sequencer_drops_external_payload_beyond_gap_boundary(
         NodeMode::Sequencer,
@@ -998,6 +1009,7 @@ mod tests {
             B256::with_last_byte(50),
             B256::with_last_byte(51),
         ),
+        false,
         false
     )]
     #[case::sequencer_drops_deep_sync_external_payload(
@@ -1007,6 +1019,7 @@ mod tests {
         None,
         false,
         unsafe_payload(1_936_802, B256::with_last_byte(50), B256::with_last_byte(51)),
+        false,
         false
     )]
     #[case::sequencer_drops_stale_external_payload(
@@ -1016,6 +1029,7 @@ mod tests {
         None,
         false,
         unsafe_payload(10, B256::with_last_byte(9), B256::with_last_byte(10)),
+        false,
         false
     )]
     #[case::sequencer_inserts_external_next_block_with_parent_mismatch(
@@ -1025,7 +1039,8 @@ mod tests {
         None,
         false,
         unsafe_payload(11, B256::with_last_byte(99), B256::with_last_byte(11)),
-        true
+        true,
+        false
     )]
     #[case::sequencer_cl_sync_preserves_local_unsafe_payload_insertion(
         NodeMode::Sequencer,
@@ -1034,7 +1049,8 @@ mod tests {
         Some(l2_head(9, B256::with_last_byte(9))),
         true,
         unsafe_payload(11, B256::with_last_byte(10), B256::with_last_byte(11)),
-        true
+        true,
+        false
     )]
     #[case::local_sequencer_processes_old_unsafe_payload_without_gap_limit(
         NodeMode::Sequencer,
@@ -1043,7 +1059,8 @@ mod tests {
         None,
         true,
         unsafe_payload(6_400, B256::with_last_byte(99), B256::with_last_byte(100)),
-        false
+        false,
+        true
     )]
     #[case::validator_preserves_immediate_unsafe_payload_insertion(
         NodeMode::Validator,
@@ -1052,7 +1069,8 @@ mod tests {
         None,
         false,
         unsafe_payload(12, B256::with_last_byte(11), B256::with_last_byte(12)),
-        true
+        true,
+        false
     )]
     #[tokio::test]
     async fn unsafe_payload_processing_inserts_or_drops_payload(
@@ -1063,6 +1081,7 @@ mod tests {
         #[case] local_payload: bool,
         #[case] envelope: BaseExecutionPayloadEnvelope,
         #[case] expect_unsafe_head_advance: bool,
+        #[case] expect_handler_error: bool,
     ) {
         let expected_unsafe_head = if expect_unsafe_head_advance {
             L2BlockInfo::from_payload_and_genesis(
@@ -1078,20 +1097,18 @@ mod tests {
         let mut processor =
             unsafe_payload_processor(node_mode, el_sync_finished, unsafe_head, safe_head);
 
-        if local_payload {
+        let result = if local_payload {
             processor
                 .handle_local_unsafe_l2_block(InsertUnsafePayloadRequest {
                     envelope,
                     result_tx: None,
                 })
                 .await
-                .expect("local unsafe payload handling should not fail");
         } else {
-            processor
-                .handle_external_unsafe_l2_block(envelope)
-                .await
-                .expect("external unsafe payload handling should not fail");
-        }
+            processor.handle_external_unsafe_l2_block(envelope).await
+        };
+
+        assert_eq!(result.is_err(), expect_handler_error, "{result:?}");
 
         assert_eq!(processor.engine.state().sync_state.unsafe_head(), expected_unsafe_head);
     }

@@ -331,9 +331,10 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         require_unsafe_head_advance: bool,
     ) -> InsertTaskResult {
         let time_start = Instant::now();
-        let parent_beacon_block_root = envelope.parent_beacon_block_root.unwrap_or_default();
-        let insert_time_start = Instant::now();
-        let (response, block): (_, BaseBlock) = match envelope.execution_payload.clone() {
+        let BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload } = envelope;
+        let parent_beacon_block_root = parent_beacon_block_root.unwrap_or_default();
+        let new_payload_start = Instant::now();
+        let (response, block): (_, BaseBlock) = match execution_payload {
             BaseExecutionPayload::V1(payload) => {
                 let block = BaseExecutionPayload::V1(payload.clone())
                     .try_into_block()
@@ -352,27 +353,23 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 };
                 (client.new_payload_v2(payload_input).await, block)
             }
-            BaseExecutionPayload::V3(payload) => (
-                client.new_payload_v3(payload, parent_beacon_block_root).await,
-                envelope
-                    .execution_payload
-                    .clone()
+            BaseExecutionPayload::V3(payload) => {
+                let block = BaseExecutionPayload::V3(payload.clone())
                     .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
                         CancunPayloadFields::new(parent_beacon_block_root, vec![]),
                     ))
-                    .map_err(InsertTaskError::FromBlockError)?,
-            ),
-            BaseExecutionPayload::V4(payload) => (
-                client.new_payload_v4(payload, parent_beacon_block_root).await,
-                envelope
-                    .execution_payload
-                    .clone()
+                    .map_err(InsertTaskError::FromBlockError)?;
+                (client.new_payload_v3(payload, parent_beacon_block_root).await, block)
+            }
+            BaseExecutionPayload::V4(payload) => {
+                let block = BaseExecutionPayload::V4(payload.clone())
                     .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
                         CancunPayloadFields::new(parent_beacon_block_root, vec![]),
                         PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
                     ))
-                    .map_err(InsertTaskError::FromBlockError)?,
-            ),
+                    .map_err(InsertTaskError::FromBlockError)?;
+                (client.new_payload_v4(payload, parent_beacon_block_root).await, block)
+            }
         };
 
         let response = match response {
@@ -390,7 +387,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         if !Self::check_new_payload_status(&response.status) {
             return Err(InsertTaskError::UnexpectedPayloadStatus(response.status));
         }
-        let insert_duration = insert_time_start.elapsed();
+        let new_payload_duration = new_payload_start.elapsed();
 
         let advances_safe_head = payload_safety.advances_safe_head();
         let new_block_ref = L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)
@@ -421,7 +418,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             number = new_block_ref.block_info.number,
             payload_safety = payload_safety.as_label(),
             total_duration = ?total_duration,
-            insert_duration = ?insert_duration,
+            new_payload_duration = ?new_payload_duration,
             "Inserted new payload"
         );
 
