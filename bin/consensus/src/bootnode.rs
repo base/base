@@ -288,8 +288,11 @@ impl BootnodeP2PArgs {
             })?;
         }
 
-        fs::write(path, format!("{enr}\n"))
-            .wrap_err_with(|| format!("Failed to write bootnode ENR to {}", path.display()))?;
+        let tmp = path.with_extension("enr.tmp");
+        fs::write(&tmp, format!("{enr}\n"))
+            .wrap_err_with(|| format!("Failed to write bootnode ENR to {}", tmp.display()))?;
+        fs::rename(&tmp, path)
+            .wrap_err_with(|| format!("Failed to rename bootnode ENR to {}", path.display()))?;
         info!(target: "rollup_node::bootnode", path = %path.display(), "Wrote bootnode ENR");
         Ok(())
     }
@@ -505,6 +508,7 @@ mod tests {
 
         let written = std::fs::read_to_string(output).expect("ENR output should be readable");
         assert_eq!(written, format!("{enr}\n"));
+        assert!(!dir.path().join("nested").join("bootnode.enr.tmp").exists());
     }
 
     #[test]
