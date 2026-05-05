@@ -5,9 +5,9 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    BuildTask, ConsolidateTask, DelegatedForkchoiceTask, Engine, EngineClient,
-    EngineSyncStateUpdate, EngineTask, EngineTaskError, EngineTaskErrorSeverity, FinalizeTask,
-    GetPayloadTask, InsertTask, InsertTaskResult, Metrics as EngineMetrics,
+    ConsolidateTask, DelegatedForkchoiceTask, Engine, EngineClient, EngineSyncStateUpdate,
+    EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask,
+    InsertTask, InsertTaskResult, Metrics as EngineMetrics, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -171,6 +171,41 @@ where
         Ok(())
     }
 
+    /// Handles an [`EngineTaskErrors`] according to its severity.
+    async fn handle_engine_task_error(&mut self, err: EngineTaskErrors) -> Result<(), EngineError> {
+        match err.severity() {
+            EngineTaskErrorSeverity::Critical => {
+                error!(target: "engine", ?err, "Critical error draining engine tasks");
+                Err(err.into())
+            }
+            EngineTaskErrorSeverity::Reset => {
+                warn!(target: "engine", ?err, "Received reset request");
+                self.reset().await
+            }
+            EngineTaskErrorSeverity::Flush => {
+                // This error is encountered when the payload is marked INVALID
+                // by the engine api. Post-holocene, the payload is replaced by
+                // a "deposits-only" block and re-executed. At the same time,
+                // the channel and any remaining buffered batches are flushed.
+                warn!(target: "engine", ?err, "Invalid payload, Flushing derivation pipeline.");
+                match self.derivation_client.send_signal(Signal::FlushChannel).await {
+                    Ok(_) => {
+                        debug!(target: "engine", "Sent flush signal to derivation actor");
+                        Ok(())
+                    }
+                    Err(err) => {
+                        error!(target: "engine", ?err, "Failed to send flush signal to the derivation actor.");
+                        Err(EngineError::ChannelClosed)
+                    }
+                }
+            }
+            EngineTaskErrorSeverity::Temporary => {
+                trace!(target: "engine", ?err, "Temporary error draining engine tasks");
+                Ok(())
+            }
+        }
+    }
+
     /// Drains the inner [`Engine`] task queue and attempts to update the safe head.
     async fn drain(&mut self) -> Result<(), EngineError> {
         match self.engine.drain().await {
@@ -178,35 +213,7 @@ where
                 trace!(target: "engine", "[ENGINE] tasks drained");
             }
             Err(err) => {
-                match err.severity() {
-                    EngineTaskErrorSeverity::Critical => {
-                        error!(target: "engine", ?err, "Critical error draining engine tasks");
-                        return Err(err.into());
-                    }
-                    EngineTaskErrorSeverity::Reset => {
-                        warn!(target: "engine", ?err, "Received reset request");
-                        self.reset().await?;
-                    }
-                    EngineTaskErrorSeverity::Flush => {
-                        // This error is encountered when the payload is marked INVALID
-                        // by the engine api. Post-holocene, the payload is replaced by
-                        // a "deposits-only" block and re-executed. At the same time,
-                        // the channel and any remaining buffered batches are flushed.
-                        warn!(target: "engine", ?err, "Invalid payload, Flushing derivation pipeline.");
-                        match self.derivation_client.send_signal(Signal::FlushChannel).await {
-                            Ok(_) => {
-                                debug!(target: "engine", "Sent flush signal to derivation actor")
-                            }
-                            Err(err) => {
-                                error!(target: "engine", ?err, "Failed to send flush signal to the derivation actor.");
-                                return Err(EngineError::ChannelClosed);
-                            }
-                        }
-                    }
-                    EngineTaskErrorSeverity::Temporary => {
-                        trace!(target: "engine", ?err, "Temporary error draining engine tasks");
-                    }
-                }
+                self.handle_engine_task_error(err).await?;
             }
         }
 
@@ -639,25 +646,38 @@ where
                 match request {
                     EngineActorRequest::BuildRequest(build_request) => {
                         let BuildRequest { attributes, result_tx } = *build_request;
-                        let task = EngineTask::Build(Box::new(BuildTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            attributes,
-                            Some(result_tx),
-                        )));
-                        self.engine.enqueue(task);
+                        match self
+                            .engine
+                            .build(Arc::clone(&self.client), Arc::clone(&self.rollup), attributes)
+                            .await
+                        {
+                            Ok(payload_id) => {
+                                result_tx
+                                    .send(payload_id)
+                                    .await
+                                    .map_err(|_| EngineError::ChannelClosed)?;
+                            }
+                            Err(err) => {
+                                self.handle_engine_task_error(EngineTaskErrors::Build(err)).await?;
+                            }
+                        }
                     }
                     EngineActorRequest::GetPayloadRequest(get_payload_request) => {
                         let GetPayloadRequest { payload_id, attributes, result_tx } =
                             *get_payload_request;
-                        let task = EngineTask::GetPayload(Box::new(GetPayloadTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            payload_id,
-                            attributes,
-                            Some(result_tx),
-                        )));
-                        self.engine.enqueue(task);
+                        let result = self
+                            .engine
+                            .get_payload(
+                                Arc::clone(&self.client),
+                                Arc::clone(&self.rollup),
+                                payload_id,
+                                attributes,
+                            )
+                            .await;
+
+                        result_tx.send(result).await.map_err(|err| {
+                            EngineTaskErrors::Seal(SealTaskError::MpscSend(Box::new(err)))
+                        })?;
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
