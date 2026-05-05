@@ -217,6 +217,7 @@ services:
       - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}/udp" # Discovery
     volumes:
       - ../../.devnet/l2/cl-bootnode:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes
       - ../../.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-consensus
     command:
@@ -243,7 +244,7 @@ services:
       default:
         ipv4_address: ${L2_CL_BOOTNODE_ADVERTISE_IP}
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_CL_BOOTNODE_P2P_PORT}"]
+      test: ["CMD", "test", "-s", "${L2_CL_BOOTNODE_ENR_PATH}"]
       interval: 250ms
       timeout: 1s
       retries: 240
@@ -259,11 +260,14 @@ services:
     depends_on:
       setup-l2:
         condition: service_completed_successfully
+      base-el-bootnode:
+        condition: service_started
     ports:
       - "${L2_BUILDER_HTTP_PORT}:${L2_BUILDER_HTTP_PORT}"           # HTTP RPC
       - "${L2_BUILDER_WS_PORT}:${L2_BUILDER_WS_PORT}"               # WebSocket
       - "${L2_BUILDER_AUTH_PORT}:${L2_BUILDER_AUTH_PORT}"           # Auth RPC (Engine API)
       - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}"             # P2P
+      - "${L2_BUILDER_P2P_PORT}:${L2_BUILDER_P2P_PORT}/udp"         # Discovery
       - "${L2_BUILDER_FLASHBLOCKS_PORT}:${L2_BUILDER_FLASHBLOCKS_PORT}"  # Flashblocks
       - "${L2_BUILDER_METRICS_PORT}:${L2_BUILDER_METRICS_PORT}"     # Metrics
     volumes:
@@ -295,9 +299,10 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_BUILDER_P2P_PORT}
       - --discovery.port=${L2_BUILDER_P2P_PORT}
+      - --nat=extip:${L2_BUILDER_ADVERTISE_IP}
       - --p2p-secret-key-hex=${BUILDER_P2P_KEY}
-      - --trusted-peers=enode://${SEQ1_ENODE_ID}@base-sequencer-1:${L2_SEQ1_P2P_PORT}
-      - --trusted-peers=enode://${SEQ2_ENODE_ID}@base-sequencer-2:${L2_SEQ2_P2P_PORT}
+      - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_BUILDER_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
@@ -315,6 +320,9 @@ services:
       timeout: 1s
       retries: 240
       start_period: 250ms
+    networks:
+      default:
+        ipv4_address: ${L2_BUILDER_ADVERTISE_IP}
     restart: unless-stopped
 
   base-builder-cl:
@@ -326,6 +334,8 @@ services:
     depends_on:
       base-builder:
         condition: service_healthy
+      base-cl-bootnode:
+        condition: service_healthy
     ports:
       - "${L2_BUILDER_CL_RPC_PORT}:${L2_BUILDER_CL_RPC_PORT}"       # RPC
       - "${L2_BUILDER_CL_P2P_PORT}:${L2_BUILDER_CL_P2P_PORT}"       # P2P TCP
@@ -333,6 +343,7 @@ services:
       - "${L2_BUILDER_CL_METRICS_PORT}:${L2_BUILDER_CL_METRICS_PORT}"  # Metrics
     volumes:
       - ../../.devnet/l2/builder-cl:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-consensus
@@ -366,6 +377,8 @@ services:
       - base-builder-cl
       - --p2p.priv.path
       - /genesis/l2/builder-p2p-key.txt
+      - --p2p.bootnodes-file
+      - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --metrics.enabled
       - --metrics.addr
       - "0.0.0.0"
@@ -431,11 +444,14 @@ services:
     depends_on:
       setup-l2:
         condition: service_completed_successfully
+      base-el-bootnode:
+        condition: service_started
     ports:
       - "${L2_CLIENT_HTTP_PORT}:${L2_CLIENT_HTTP_PORT}"     # HTTP RPC
       - "${L2_CLIENT_WS_PORT}:${L2_CLIENT_WS_PORT}"         # WebSocket
       - "${L2_CLIENT_AUTH_PORT}:${L2_CLIENT_AUTH_PORT}"     # Auth RPC (Engine API)
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}"       # P2P
+      - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}/udp"   # Discovery
       - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
     volumes:
       - ../../.devnet/l2/client:/data
@@ -467,6 +483,7 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
+      - --nat=extip:${L2_CLIENT_ADVERTISE_IP}
       - --metrics=0.0.0.0:${L2_CLIENT_METRICS_PORT}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=4
@@ -474,7 +491,8 @@ services:
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600
       - --flashblocks-url=ws://base-builder:${L2_BUILDER_FLASHBLOCKS_PORT}
-      - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
+      - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
       - --rollup.sequencer=http://base-builder:${L2_BUILDER_HTTP_PORT}
       - --enable-metering
       - --metering.gas-limit=${METERING_GAS_LIMIT}
@@ -490,6 +508,9 @@ services:
       timeout: 1s
       retries: 240
       start_period: 250ms
+    networks:
+      default:
+        ipv4_address: ${L2_CLIENT_ADVERTISE_IP}
     restart: unless-stopped
 
   base-client-cl:
@@ -503,6 +524,8 @@ services:
         condition: service_healthy
       base-builder-cl:
         condition: service_healthy
+      base-cl-bootnode:
+        condition: service_healthy
     ports:
       - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
       - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # P2P TCP
@@ -510,6 +533,7 @@ services:
       - "${L2_CLIENT_CL_METRICS_PORT}:${L2_CLIENT_CL_METRICS_PORT}"  # Metrics
     volumes:
       - ../../.devnet/l2/client-cl:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-consensus
@@ -546,8 +570,8 @@ services:
       - "0.0.0.0"
       - --metrics.port
       - "${L2_CLIENT_CL_METRICS_PORT}"
-      - --p2p.bootnodes
-      - enode://${BUILDER_ENODE_ID}@base-builder-cl:${L2_BUILDER_CL_P2P_PORT}
+      - --p2p.bootnodes-file
+      - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --p2p.scoring
       - Off
       - --l1.verifier-confs

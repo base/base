@@ -10,6 +10,8 @@ x-sequencer-el-base: &sequencer-el-base
   depends_on:
     setup-l2:
       condition: service_completed_successfully
+    base-el-bootnode:
+      condition: service_started
   restart: unless-stopped
 
 x-sequencer-cl-base: &sequencer-cl-base
@@ -81,6 +83,8 @@ services:
       - base-builder-cl
       - --p2p.priv.path
       - /genesis/l2/builder-p2p-key.txt
+      - --p2p.bootnodes-file
+      - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --metrics.enabled
       - --metrics.addr
       - "0.0.0.0"
@@ -132,6 +136,7 @@ services:
       - "${L2_SEQ1_WS_PORT}:${L2_SEQ1_WS_PORT}"                         # WebSocket
       - "${L2_SEQ1_AUTH_PORT}:${L2_SEQ1_AUTH_PORT}"                     # Auth RPC (Engine API)
       - "${L2_SEQ1_P2P_PORT}:${L2_SEQ1_P2P_PORT}"                       # P2P
+      - "${L2_SEQ1_P2P_PORT}:${L2_SEQ1_P2P_PORT}/udp"                   # Discovery
       - "${L2_SEQ1_FLASHBLOCKS_PORT}:${L2_SEQ1_FLASHBLOCKS_PORT}"       # Flashblocks
       - "${L2_SEQ1_METRICS_PORT}:${L2_SEQ1_METRICS_PORT}"               # Metrics
     volumes:
@@ -162,9 +167,10 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_SEQ1_P2P_PORT}
       - --discovery.port=${L2_SEQ1_P2P_PORT}
+      - --nat=extip:${L2_SEQ1_ADVERTISE_IP}
       - --p2p-secret-key-hex=${SEQ1_P2P_KEY}
-      - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
-      - --trusted-peers=enode://${SEQ2_ENODE_ID}@base-sequencer-2:${L2_SEQ2_P2P_PORT}
+      - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_SEQ1_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
@@ -178,6 +184,9 @@ services:
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_SEQ1_HTTP_PORT}"]
       <<: *sequencer-healthcheck
+    networks:
+      default:
+        ipv4_address: ${L2_SEQ1_ADVERTISE_IP}
 
   base-sequencer-1-cl:
     <<: *sequencer-cl-base
@@ -187,6 +196,8 @@ services:
         condition: service_healthy
       base-builder-cl:
         condition: service_healthy
+      base-cl-bootnode:
+        condition: service_healthy
     ports:
       - "${L2_SEQ1_CL_RPC_PORT}:${L2_SEQ1_CL_RPC_PORT}"               # RPC
       - "${L2_SEQ1_CL_P2P_PORT}:${L2_SEQ1_CL_P2P_PORT}"               # P2P TCP
@@ -194,6 +205,7 @@ services:
       - "${L2_SEQ1_CL_METRICS_PORT}:${L2_SEQ1_CL_METRICS_PORT}"       # Metrics
     volumes:
       - ../../.devnet/l2/sequencer-1-cl:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
     command:
@@ -240,8 +252,8 @@ services:
       - http://op-conductor-1:${CONDUCTOR1_RPC_PORT}
       - --p2p.sequencer.key
       - ${SEQUENCER_KEY}
-      - --p2p.bootnodes
-      - enode://${BUILDER_ENODE_ID}@base-builder-cl:${L2_BUILDER_CL_P2P_PORT}
+      - --p2p.bootnodes-file
+      - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --p2p.scoring
       - Off
     healthcheck:
@@ -256,6 +268,7 @@ services:
       - "${L2_SEQ2_WS_PORT}:${L2_SEQ2_WS_PORT}"                         # WebSocket
       - "${L2_SEQ2_AUTH_PORT}:${L2_SEQ2_AUTH_PORT}"                     # Auth RPC (Engine API)
       - "${L2_SEQ2_P2P_PORT}:${L2_SEQ2_P2P_PORT}"                       # P2P
+      - "${L2_SEQ2_P2P_PORT}:${L2_SEQ2_P2P_PORT}/udp"                   # Discovery
       - "${L2_SEQ2_FLASHBLOCKS_PORT}:${L2_SEQ2_FLASHBLOCKS_PORT}"       # Flashblocks
       - "${L2_SEQ2_METRICS_PORT}:${L2_SEQ2_METRICS_PORT}"               # Metrics
     volumes:
@@ -286,9 +299,10 @@ services:
       - --authrpc.jwtsecret=/genesis/jwt.hex
       - --port=${L2_SEQ2_P2P_PORT}
       - --discovery.port=${L2_SEQ2_P2P_PORT}
+      - --nat=extip:${L2_SEQ2_ADVERTISE_IP}
       - --p2p-secret-key-hex=${SEQ2_P2P_KEY}
-      - --trusted-peers=enode://${BUILDER_ENODE_ID}@base-builder:${L2_BUILDER_P2P_PORT}
-      - --trusted-peers=enode://${SEQ1_ENODE_ID}@base-sequencer-1:${L2_SEQ1_P2P_PORT}
+      - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
       - --flashblocks.addr=0.0.0.0
       - --flashblocks.port=${L2_SEQ2_FLASHBLOCKS_PORT}
       - --flashblocks.block-time=200
@@ -302,6 +316,9 @@ services:
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_SEQ2_HTTP_PORT}"]
       <<: *sequencer-healthcheck
+    networks:
+      default:
+        ipv4_address: ${L2_SEQ2_ADVERTISE_IP}
 
   base-sequencer-2-cl:
     <<: *sequencer-cl-base
@@ -311,6 +328,8 @@ services:
         condition: service_healthy
       base-builder-cl:
         condition: service_healthy
+      base-cl-bootnode:
+        condition: service_healthy
     ports:
       - "${L2_SEQ2_CL_RPC_PORT}:${L2_SEQ2_CL_RPC_PORT}"               # RPC
       - "${L2_SEQ2_CL_P2P_PORT}:${L2_SEQ2_CL_P2P_PORT}"               # P2P TCP
@@ -318,6 +337,7 @@ services:
       - "${L2_SEQ2_CL_METRICS_PORT}:${L2_SEQ2_CL_METRICS_PORT}"       # Metrics
     volumes:
       - ../../.devnet/l2/sequencer-2-cl:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
     command:
@@ -364,8 +384,8 @@ services:
       - http://op-conductor-2:${CONDUCTOR2_RPC_PORT}
       - --p2p.sequencer.key
       - ${SEQUENCER_KEY}
-      - --p2p.bootnodes
-      - enode://${BUILDER_ENODE_ID}@base-builder-cl:${L2_BUILDER_CL_P2P_PORT}
+      - --p2p.bootnodes-file
+      - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --p2p.scoring
       - Off
     healthcheck:

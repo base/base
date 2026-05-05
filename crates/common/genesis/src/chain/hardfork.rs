@@ -13,12 +13,16 @@ pub struct HardforkConfig {
     /// Active if `azul` != None && L2 block timestamp >= `Some(azul)`, inactive otherwise.
     #[cfg_attr(feature = "serde", serde(alias = "v1", skip_serializing_if = "Option::is_none"))]
     pub azul: Option<u64>,
+    /// `beryl` sets the activation time for the Beryl network upgrade.
+    /// Active if `beryl` != None && L2 block timestamp >= `Some(beryl)`, inactive otherwise.
+    #[cfg_attr(feature = "serde", serde(alias = "v2", skip_serializing_if = "Option::is_none"))]
+    pub beryl: Option<u64>,
 }
 
 impl HardforkConfig {
     /// Returns true if no Base-specific hardforks are configured.
     pub const fn is_empty(&self) -> bool {
-        self.azul.is_none()
+        self.azul.is_none() && self.beryl.is_none()
     }
 }
 
@@ -124,6 +128,7 @@ impl HardForkConfig {
             ("Isthmus", self.isthmus_time),
             ("Jovian", self.jovian_time),
             ("Azul", self.base.azul),
+            ("Beryl", self.base.beryl),
         ]
         .into_iter()
     }
@@ -239,7 +244,7 @@ mod tests {
             pectra_blob_schedule_time: Some(8),
             isthmus_time: Some(9),
             jovian_time: Some(10),
-            base: HardforkConfig { azul: Some(11) },
+            base: HardforkConfig { azul: Some(11), beryl: Some(12) },
         };
 
         let mut iter = hardforks.iter();
@@ -254,6 +259,7 @@ mod tests {
         assert_eq!(iter.next(), Some(("Isthmus", Some(9))));
         assert_eq!(iter.next(), Some(("Jovian", Some(10))));
         assert_eq!(iter.next(), Some(("Azul", Some(11))));
+        assert_eq!(iter.next(), Some(("Beryl", Some(12))));
         assert_eq!(iter.next(), None);
     }
 }

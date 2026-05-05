@@ -168,19 +168,27 @@ impl ActionEngineClient {
         set_ts!("isthmusTime", hf.isthmus_time);
         set_ts!("jovianTime", hf.jovian_time);
 
-        // V1 requires Osaka (the EL counterpart). Both must be set together.
-        match hf.base.azul {
-            Some(ts) => {
-                genesis.config.osaka_time = Some(ts);
-                genesis
-                    .config
-                    .extra_fields
-                    .insert("base".to_string(), serde_json::json!({ "azul": ts }));
-            }
-            None => {
-                genesis.config.osaka_time = None;
-                genesis.config.extra_fields.remove("base");
-            }
+        if let Some(beryl) = hf.base.beryl {
+            let azul = hf.base.azul.expect("beryl requires azul to be configured");
+            assert!(
+                azul <= beryl,
+                "azul activation timestamp ({azul}) must be <= beryl activation timestamp ({beryl})",
+            );
+        }
+
+        // Base Azul requires Osaka (the EL counterpart).
+        genesis.config.osaka_time = hf.base.azul;
+        let mut base = serde_json::Map::new();
+        if let Some(ts) = hf.base.azul {
+            base.insert("azul".to_string(), serde_json::json!(ts));
+        }
+        if let Some(ts) = hf.base.beryl {
+            base.insert("beryl".to_string(), serde_json::json!(ts));
+        }
+        if base.is_empty() {
+            genesis.config.extra_fields.remove("base");
+        } else {
+            genesis.config.extra_fields.insert("base".to_string(), base.into());
         }
 
         genesis

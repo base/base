@@ -54,6 +54,9 @@ pub enum BaseSpecId {
     /// Base Azul spec id.
     #[strum(serialize = "Azul")]
     AZUL,
+    /// Beryl spec id.
+    #[strum(serialize = "Beryl")]
+    BERYL,
 }
 
 impl BaseSpecId {
@@ -64,7 +67,7 @@ impl BaseSpecId {
             Self::CANYON => SpecId::SHANGHAI,
             Self::ECOTONE | Self::FJORD | Self::GRANITE | Self::HOLOCENE => SpecId::CANCUN,
             Self::ISTHMUS | Self::JOVIAN => SpecId::PRAGUE,
-            Self::AZUL => SpecId::OSAKA,
+            Self::AZUL | Self::BERYL => SpecId::OSAKA,
         }
     }
 
@@ -85,7 +88,9 @@ impl BaseSpecId {
     /// This is only intended to be used after the Bedrock, when hardforks are activated by
     /// timestamp.
     pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
-        if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
+        if chain_spec.is_beryl_active_at_timestamp(timestamp) {
+            Self::BERYL
+        } else if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
             Self::AZUL
         } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
             Self::JOVIAN
@@ -226,6 +231,27 @@ mod tests {
                     (BaseSpecId::HOLOCENE, true),
                     (BaseSpecId::ISTHMUS, true),
                     (BaseSpecId::JOVIAN, true),
+                ],
+            ),
+            (
+                BaseSpecId::BERYL,
+                vec![
+                    (SpecId::OSAKA, true),
+                    (SpecId::PRAGUE, true),
+                    (SpecId::SHANGHAI, true),
+                    (SpecId::CANCUN, true),
+                    (SpecId::MERGE, true),
+                ],
+                vec![
+                    (BaseSpecId::BEDROCK, true),
+                    (BaseSpecId::REGOLITH, true),
+                    (BaseSpecId::CANYON, true),
+                    (BaseSpecId::ECOTONE, true),
+                    (BaseSpecId::FJORD, true),
+                    (BaseSpecId::HOLOCENE, true),
+                    (BaseSpecId::ISTHMUS, true),
+                    (BaseSpecId::JOVIAN, true),
+                    (BaseSpecId::AZUL, true),
                 ],
             ),
         ];

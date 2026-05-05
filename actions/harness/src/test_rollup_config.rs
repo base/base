@@ -146,6 +146,14 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Sets the Beryl activation timestamp.
+    ///
+    /// Beryl is a standalone Base-specific fork, independent of the OP cascade chain.
+    pub const fn with_beryl_at(mut self, t: u64) -> Self {
+        self.config.hardforks.base.beryl = Some(t);
+        self
+    }
+
     /// Activates every scheduled fork from genesis for tests that need it.
     ///
     /// `base_mainnet` intentionally keeps the harness's existing "Canyon through
@@ -162,6 +170,7 @@ impl TestRollupConfigBuilder {
         self.config.hardforks.isthmus_time = Some(0);
         self.config.hardforks.jovian_time = Some(0);
         self.config.hardforks.base.azul = Some(0);
+        self.config.hardforks.base.beryl = Some(0);
         self
     }
 

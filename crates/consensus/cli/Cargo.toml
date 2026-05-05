@@ -58,3 +58,4 @@ serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 rstest.workspace = true
+tempfile.workspace = true

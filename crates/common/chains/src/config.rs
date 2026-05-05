@@ -51,6 +51,8 @@ pub struct ChainConfig {
     pub jovian_timestamp: u64,
     /// Base Azul activation timestamp (optional).
     pub azul_timestamp: Option<u64>,
+    /// Beryl activation timestamp (optional).
+    pub beryl_timestamp: Option<u64>,
 
     // Genesis
     /// L1 genesis block hash.
@@ -222,7 +224,7 @@ impl ChainConfig {
             pectra_blob_schedule_time: self.pectra_blob_schedule_timestamp,
             isthmus_time: Some(self.isthmus_timestamp),
             jovian_time: Some(self.jovian_timestamp),
-            base: HardforkConfig { azul: self.azul_timestamp },
+            base: HardforkConfig { azul: self.azul_timestamp, beryl: self.beryl_timestamp },
         }
     }
 
@@ -316,6 +318,7 @@ const MAINNET: ChainConfig = ChainConfig {
     isthmus_timestamp: 1_746_806_401,
     jovian_timestamp: 1_764_691_201,
     azul_timestamp: Some(1_779_386_400),
+    beryl_timestamp: None,
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
     genesis_l1_number: 17_481_768,
@@ -387,6 +390,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     isthmus_timestamp: 1_744_905_600,
     jovian_timestamp: 1_763_568_001,
     azul_timestamp: Some(1_776_708_000),
+    beryl_timestamp: None,
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
     genesis_l1_number: 4_370_868,
@@ -449,6 +453,7 @@ const DEVNET: ChainConfig = ChainConfig {
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
     azul_timestamp: Some(0),
+    beryl_timestamp: None,
 
     genesis_l1_hash: B256::ZERO,
     genesis_l1_number: 0,
@@ -500,6 +505,7 @@ const ZERONET: ChainConfig = ChainConfig {
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
     azul_timestamp: Some(1_775_152_800),
+    beryl_timestamp: None,
 
     genesis_l1_hash: b256!("b7d4b69971ff31d5179be5e1b83f5a4f438f4cd1db886a6630623b7047f32cfd"),
     genesis_l1_number: 2_450_277,

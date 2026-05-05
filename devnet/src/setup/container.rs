@@ -27,8 +27,8 @@ pub const EL_BOOTNODE_ENODE: &str = "enode://4f355bdcb7cc0af728ef3cceb9615d90684
 /// Consensus-layer bootnode private key.
 pub const CL_BOOTNODE_P2P_KEY: &str =
     "2222222222222222222222222222222222222222222222222222222222222222";
-/// Consensus-layer bootnode ENR output path in the bootnode data volume.
-pub const CL_BOOTNODE_ENR_PATH: &str = "/data/cl-bootnode.enr";
+/// Consensus-layer bootnode ENR output path in the shared bootnode volume.
+pub const CL_BOOTNODE_ENR_PATH: &str = "/bootnodes/cl-bootnode.enr";
 
 #[derive(Debug, Clone)]
 /// Output of the L1 genesis generation.

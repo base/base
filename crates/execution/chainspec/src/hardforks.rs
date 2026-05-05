@@ -71,6 +71,11 @@ impl ChainUpgradesExt for ChainUpgrades {
             forks.push((BaseUpgrade::Azul.boxed(), azul));
         }
 
+        let beryl = self[BaseUpgrade::Beryl];
+        if !matches!(beryl, ForkCondition::Never) {
+            forks.push((BaseUpgrade::Beryl.boxed(), beryl));
+        }
+
         ChainHardforks::new(forks)
     }
 }

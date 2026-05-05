@@ -329,6 +329,7 @@ impl From<Genesis> for BaseChainSpec {
         // Time-based hardforks
         // L1 hardforks are mapped to the activation timestamps of the corresponding Base hardforks
         let azul_time = genesis_info.base.azul;
+        let beryl_time = genesis_info.base.beryl;
         let time_hardfork_opts = [
             (BaseUpgrade::Regolith.boxed(), genesis_info.regolith_time),
             (EthereumHardfork::Shanghai.boxed(), genesis_info.canyon_time),
@@ -343,6 +344,7 @@ impl From<Genesis> for BaseChainSpec {
             (BaseUpgrade::Jovian.boxed(), genesis_info.jovian_time),
             (EthereumHardfork::Osaka.boxed(), azul_time),
             (BaseUpgrade::Azul.boxed(), azul_time),
+            (BaseUpgrade::Beryl.boxed(), beryl_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts
@@ -689,7 +691,8 @@ mod tests {
         "isthmusTime": 53,
         "jovianTime": 54,
         "base": {
-          "v1": 55
+          "v1": 55,
+          "v2": 60
         },
         "optimism": {
           "eip1559Elasticity": 60,
@@ -727,6 +730,8 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(EthereumHardfork::Osaka, 98));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 54));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Azul, 55));
+        assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 59));
+        assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Beryl, 60));
     }
 
     #[test]
@@ -918,7 +923,7 @@ mod tests {
                     (String::from("holoceneTime"), 0.into()),
                     (String::from("isthmusTime"), 0.into()),
                     (String::from("jovianTime"), 0.into()),
-                    (String::from("base"), serde_json::json!({ "v1": 0 })),
+                    (String::from("base"), serde_json::json!({ "v1": 0, "v2": 0 })),
                 ]
                 .into_iter()
                 .collect(),
@@ -959,6 +964,7 @@ mod tests {
             BaseUpgrade::Jovian.boxed(),
             EthereumHardfork::Osaka.boxed(),
             BaseUpgrade::Azul.boxed(),
+            BaseUpgrade::Beryl.boxed(),
         ];
 
         for (expected, actual) in expected_hardforks.iter().zip(hardforks.iter()) {

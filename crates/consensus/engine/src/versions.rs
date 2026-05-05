@@ -119,7 +119,7 @@ mod tests {
             hardforks: HardForkConfig {
                 ecotone_time: Some(20),
                 jovian_time: Some(30),
-                base: HardforkConfig { azul: Some(40) },
+                base: HardforkConfig { azul: Some(40), beryl: Some(50) },
                 ..Default::default()
             },
             ..Default::default()

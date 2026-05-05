@@ -30,6 +30,10 @@ down:
 status:
     ./etc/scripts/devnet/status.sh
 
+# Shows peer counts and unsafe L2 height for each L2 node
+peer-status:
+    ./etc/scripts/devnet/peer-status.sh
+
 # Shows devnet container status
 ps *services:
     docker compose {{ _env }} {{ _ha }} ps {{ services }}

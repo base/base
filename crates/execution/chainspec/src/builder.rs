@@ -131,6 +131,13 @@ impl BaseChainSpecBuilder {
         self
     }
 
+    /// Enable Beryl at genesis.
+    pub fn beryl_activated(mut self) -> Self {
+        self = self.azul_activated();
+        self.inner = self.inner.with_fork(BaseUpgrade::Beryl, ForkCondition::Timestamp(0));
+        self
+    }
+
     /// Build the resulting [`BaseChainSpec`].
     ///
     /// # Panics

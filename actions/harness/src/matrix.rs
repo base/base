@@ -27,6 +27,7 @@ static FORK_PROGRESSION: &[(&str, ForkSetter)] = &[
     ("isthmus", |h| h.isthmus_time = Some(0)),
     ("jovian", |h| h.jovian_time = Some(0)),
     ("azul", |h| h.base.azul = Some(0)),
+    ("beryl", |h| h.base.beryl = Some(0)),
 ];
 
 /// Named hardfork schedules for parametrizing harness tests across protocol upgrades.
@@ -54,7 +55,7 @@ impl ForkMatrix {
 
     /// Returns the cumulative inherited rollup hardforks from Isthmus onward.
     ///
-    /// Base-specific forks (e.g. `azul`) are excluded.
+    /// Base-specific forks (e.g. `azul` and `beryl`) are excluded.
     pub fn from_isthmus() -> Self {
         Self::all().retain(|_, h| h.isthmus_time.is_some() && h.base.is_empty())
     }
@@ -185,6 +186,7 @@ mod tests {
                 "isthmus",
                 "jovian",
                 "azul",
+                "beryl",
             ]
         );
     }
@@ -257,6 +259,12 @@ mod tests {
                 "azul" => {
                     assert!(cfg.is_jovian_active(0));
                     assert!(cfg.is_base_azul_active(0));
+                    assert!(!cfg.is_beryl_active(0));
+                }
+                "beryl" => {
+                    assert!(cfg.is_jovian_active(0));
+                    assert!(cfg.is_base_azul_active(0));
+                    assert!(cfg.is_beryl_active(0));
                 }
                 _ => unreachable!("unexpected fork {fork_name}"),
             }

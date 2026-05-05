@@ -81,6 +81,7 @@ fn specs_from_config(cfg: &ChainConfig) -> Vec<UpgradeSpec> {
         UpgradeSpec { name: "Isthmus", timestamp: Some(cfg.isthmus_timestamp) },
         UpgradeSpec { name: "Jovian", timestamp: Some(cfg.jovian_timestamp) },
         UpgradeSpec { name: "Azul", timestamp: cfg.azul_timestamp },
+        UpgradeSpec { name: "Beryl", timestamp: cfg.beryl_timestamp },
     ]
 }
 
