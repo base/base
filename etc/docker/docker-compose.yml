@@ -195,6 +195,12 @@ services:
     networks:
       default:
         ipv4_address: ${L2_EL_BOOTNODE_ADVERTISE_IP}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "readlink /proc/1/exe | grep -q /app/base-client"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   base-cl-bootnode:
@@ -211,7 +217,7 @@ services:
       - "${L2_CL_BOOTNODE_P2P_PORT}:${L2_CL_BOOTNODE_P2P_PORT}/udp" # Discovery
     volumes:
       - ../../.devnet/l2/cl-bootnode:/data
-      - ../../.devnet/l2/configs:/genesis/l2
+      - ../../.devnet/l2/configs:/genesis/l2:ro
     entrypoint: /app/base-consensus
     command:
       - bootnode
@@ -236,6 +242,12 @@ services:
     networks:
       default:
         ipv4_address: ${L2_CL_BOOTNODE_ADVERTISE_IP}
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_CL_BOOTNODE_P2P_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
     restart: unless-stopped
 
   base-builder:
@@ -640,6 +652,8 @@ services:
     restart: unless-stopped
 
 networks:
+  # Fixed bootnode ENRs depend on stable in-network IPs. Override
+  # L2_BOOTNODE_DOCKER_SUBNET if this subnet conflicts with the host.
   default:
     ipam:
       config:
