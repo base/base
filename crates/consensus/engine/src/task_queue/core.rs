@@ -763,8 +763,10 @@ mod tests {
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
-    use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2};
-    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
+    use alloy_rpc_types_engine::{
+        ExecutionPayloadV1, ExecutionPayloadV2, ForkchoiceUpdated, PayloadId, PayloadStatus,
+        PayloadStatusEnum,
+    };
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};

@@ -336,10 +336,10 @@ where
                 .await
         };
 
-        if let Some(result_tx) = result_tx {
-            if result_tx.send(result).await.is_err() {
-                warn!(target: "engine", "Sending insert result failed");
-            }
+        if let Some(result_tx) = result_tx
+            && result_tx.send(result).await.is_err()
+        {
+            warn!(target: "engine", "Sending insert result failed");
         }
 
         Ok(())
