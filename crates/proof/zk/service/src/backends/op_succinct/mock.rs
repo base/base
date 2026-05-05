@@ -21,7 +21,7 @@ use sp1_sdk::{
 use tracing::info;
 use uuid::Uuid;
 
-use super::traits::{
+use crate::backends::traits::{
     BackendType, ProofProcessingResult, ProveResult, ProvingBackend, SessionStatus,
 };
 

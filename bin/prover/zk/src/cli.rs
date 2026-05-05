@@ -8,10 +8,9 @@ use base_zk_client::prover_service_server::ProverServiceServer as ProtoProverSer
 use base_zk_db::{DatabaseConfig, ProofRequestRepo};
 use base_zk_outbox::{DatabaseOutboxReader, OutboxProcessor};
 use base_zk_service::{
-    ArtifactClientWrapper, ArtifactStorageConfig, BackendConfig, BackendRegistry, MockBackend,
-    NetworkBackend, OpSuccinctBackend, OpSuccinctProvider, ProofRequestManager,
-    ProverServiceServer, ProverWorkerPool, ProxyConfigs, RateLimitConfig, StatusPoller,
-    start_all_proxies,
+    ArtifactClientWrapper, ArtifactStorageConfig, BackendConfig, BackendRegistry,
+    ProofRequestManager, ProverServiceServer, ProverWorkerPool, ProxyConfigs, RateLimitConfig,
+    StatusPoller, op_succinct, start_all_proxies,
 };
 use clap::Parser;
 use eyre::eyre;
@@ -212,7 +211,7 @@ impl ZkArgs {
 
         if self.prover_mode == "mock" {
             info!("SP1_PROVER=mock: using MockBackend (instant fake proofs, no cluster)");
-            let mock_backend = MockBackend::new(range_vk, agg_vk);
+            let mock_backend = op_succinct::MockBackend::new(range_vk, agg_vk);
             backend_registry.register(Arc::new(mock_backend));
         } else if self.prover_mode == "network" {
             info!("SP1_PROVER=network: using Succinct SP1 Network backend");
@@ -222,7 +221,7 @@ impl ZkArgs {
                     .await
                     .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
             );
-            let provider = OpSuccinctProvider::new(fetcher);
+            let provider = op_succinct::OpSuccinctProvider::new(fetcher);
 
             let fulfillment_strategy =
                 base_proof_succinct_host_utils::network::parse_fulfillment_strategy(
@@ -271,7 +270,7 @@ impl ZkArgs {
                 timeout_hours: self.sp1_cluster_timeout_hours,
             };
 
-            let backend = Arc::new(NetworkBackend::new(provider, config));
+            let backend = Arc::new(op_succinct::NetworkBackend::new(provider, config));
             backend_registry.register(backend);
         } else {
             info!("SP1_PROVER=cluster: using Succinct cluster backend");
@@ -282,7 +281,7 @@ impl ZkArgs {
                     .await
                     .map_err(|e| eyre!("failed to create OPSuccinctDataFetcher: {e}"))?,
             );
-            let provider = OpSuccinctProvider::new(fetcher);
+            let provider = op_succinct::OpSuccinctProvider::new(fetcher);
 
             // Create SP1 cluster gRPC client.
             let cluster_rpc = self
@@ -314,7 +313,7 @@ impl ZkArgs {
                 range_vk,
             };
 
-            let backend = Arc::new(OpSuccinctBackend::new(provider, config));
+            let backend = Arc::new(op_succinct::ClusterBackend::new(provider, config));
             backend_registry.register(backend);
         }
 

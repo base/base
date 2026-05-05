@@ -28,32 +28,32 @@ use crate::backends::traits::{
     ProvingBackend, SessionStatus,
 };
 
-/// Succinct proving backend.
+/// SP1 Cluster proving backend.
 #[derive(Clone)]
-pub struct OpSuccinctBackend {
+pub struct ClusterBackend {
     provider: OpSuccinctProvider,
     config: BackendConfig,
 }
 
-impl fmt::Debug for OpSuccinctBackend {
+impl fmt::Debug for ClusterBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OpSuccinctBackend").finish_non_exhaustive()
+        f.debug_struct("ClusterBackend").finish_non_exhaustive()
     }
 }
 
-impl OpSuccinctBackend {
+impl ClusterBackend {
     /// Create a new backend with a pre-initialized provider and config.
     pub fn new(provider: OpSuccinctProvider, config: BackendConfig) -> Self {
         assert!(
             matches!(config, BackendConfig::OpSuccinct { .. }),
-            "OpSuccinctBackend requires BackendConfig::OpSuccinct"
+            "ClusterBackend requires BackendConfig::OpSuccinct"
         );
         Self { provider, config }
     }
 }
 
 #[async_trait]
-impl ProvingBackend for OpSuccinctBackend {
+impl ProvingBackend for ClusterBackend {
     fn backend_type(&self) -> BackendType {
         BackendType::OpSuccinct
     }
@@ -326,7 +326,7 @@ fn format_cluster_failure(req: &ClusterProtoProofRequest) -> String {
     parts.join("; ")
 }
 
-impl OpSuccinctBackend {
+impl ClusterBackend {
     async fn verify_artifacts(
         &self,
         cluster_client: &sp1_cluster_common::client::ClusterServiceClient,
@@ -772,7 +772,7 @@ mod tests {
     #[test]
     fn test_determine_status_no_sessions_returns_pending() {
         let result =
-            OpSuccinctBackend::determine_status(ProofType::OpSuccinctSp1ClusterCompressed, &[]);
+            ClusterBackend::determine_status(ProofType::OpSuccinctSp1ClusterCompressed, &[]);
         assert_eq!(result.status, ProofStatus::Pending);
         assert!(result.error_message.is_none());
     }
@@ -780,17 +780,15 @@ mod tests {
     #[test]
     fn test_determine_status_no_sessions_snark_returns_pending() {
         let result =
-            OpSuccinctBackend::determine_status(ProofType::OpSuccinctSp1ClusterSnarkGroth16, &[]);
+            ClusterBackend::determine_status(ProofType::OpSuccinctSp1ClusterSnarkGroth16, &[]);
         assert_eq!(result.status, ProofStatus::Pending);
     }
 
     #[test]
     fn test_determine_status_compressed_all_completed_returns_succeeded() {
         let sessions = vec![make_session(SessionType::Stark, DbSessionStatus::Completed)];
-        let result = OpSuccinctBackend::determine_status(
-            ProofType::OpSuccinctSp1ClusterCompressed,
-            &sessions,
-        );
+        let result =
+            ClusterBackend::determine_status(ProofType::OpSuccinctSp1ClusterCompressed, &sessions);
         assert_eq!(result.status, ProofStatus::Succeeded);
         assert!(result.error_message.is_none());
     }
@@ -798,20 +796,16 @@ mod tests {
     #[test]
     fn test_determine_status_compressed_running_returns_running() {
         let sessions = vec![make_session(SessionType::Stark, DbSessionStatus::Running)];
-        let result = OpSuccinctBackend::determine_status(
-            ProofType::OpSuccinctSp1ClusterCompressed,
-            &sessions,
-        );
+        let result =
+            ClusterBackend::determine_status(ProofType::OpSuccinctSp1ClusterCompressed, &sessions);
         assert_eq!(result.status, ProofStatus::Running);
     }
 
     #[test]
     fn test_determine_status_compressed_failed_returns_failed() {
         let sessions = vec![make_failed_session(SessionType::Stark, "OOM")];
-        let result = OpSuccinctBackend::determine_status(
-            ProofType::OpSuccinctSp1ClusterCompressed,
-            &sessions,
-        );
+        let result =
+            ClusterBackend::determine_status(ProofType::OpSuccinctSp1ClusterCompressed, &sessions);
         assert_eq!(result.status, ProofStatus::Failed);
         assert_eq!(result.error_message.as_deref(), Some("OOM"));
     }
@@ -822,7 +816,7 @@ mod tests {
             make_session(SessionType::Stark, DbSessionStatus::Completed),
             make_session(SessionType::Snark, DbSessionStatus::Completed),
         ];
-        let result = OpSuccinctBackend::determine_status(
+        let result = ClusterBackend::determine_status(
             ProofType::OpSuccinctSp1ClusterSnarkGroth16,
             &sessions,
         );
@@ -832,7 +826,7 @@ mod tests {
     #[test]
     fn test_determine_status_snark_only_stark_completed_returns_running() {
         let sessions = vec![make_session(SessionType::Stark, DbSessionStatus::Completed)];
-        let result = OpSuccinctBackend::determine_status(
+        let result = ClusterBackend::determine_status(
             ProofType::OpSuccinctSp1ClusterSnarkGroth16,
             &sessions,
         );
@@ -845,7 +839,7 @@ mod tests {
             make_session(SessionType::Stark, DbSessionStatus::Completed),
             make_session(SessionType::Snark, DbSessionStatus::Running),
         ];
-        let result = OpSuccinctBackend::determine_status(
+        let result = ClusterBackend::determine_status(
             ProofType::OpSuccinctSp1ClusterSnarkGroth16,
             &sessions,
         );
@@ -855,7 +849,7 @@ mod tests {
     #[test]
     fn test_determine_status_snark_stark_failed_returns_failed() {
         let sessions = vec![make_failed_session(SessionType::Stark, "cluster timeout")];
-        let result = OpSuccinctBackend::determine_status(
+        let result = ClusterBackend::determine_status(
             ProofType::OpSuccinctSp1ClusterSnarkGroth16,
             &sessions,
         );
@@ -869,7 +863,7 @@ mod tests {
             make_session(SessionType::Stark, DbSessionStatus::Completed),
             make_failed_session(SessionType::Snark, "aggregation error"),
         ];
-        let result = OpSuccinctBackend::determine_status(
+        let result = ClusterBackend::determine_status(
             ProofType::OpSuccinctSp1ClusterSnarkGroth16,
             &sessions,
         );
@@ -883,10 +877,8 @@ mod tests {
             make_session(SessionType::Stark, DbSessionStatus::Completed),
             make_failed_session(SessionType::Snark, "failure wins"),
         ];
-        let result = OpSuccinctBackend::determine_status(
-            ProofType::OpSuccinctSp1ClusterCompressed,
-            &sessions,
-        );
+        let result =
+            ClusterBackend::determine_status(ProofType::OpSuccinctSp1ClusterCompressed, &sessions);
         assert_eq!(result.status, ProofStatus::Failed);
     }
 }

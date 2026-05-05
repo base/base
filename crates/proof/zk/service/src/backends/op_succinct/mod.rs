@@ -1,7 +1,13 @@
-//! Succinct proving backend using the SP1 cluster.
+//! OP Succinct proving backends.
 
-mod backend;
-pub use backend::OpSuccinctBackend;
+mod cluster;
+pub use cluster::ClusterBackend;
+
+mod mock;
+pub use mock::MockBackend;
+
+mod network;
+pub use network::NetworkBackend;
 
 mod provider;
 pub use provider::{OpSuccinctProvider, WitnessParams};

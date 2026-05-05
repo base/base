@@ -1,13 +1,6 @@
 //! Proving backends for ZK proof generation.
 
-mod mock;
-pub use mock::MockBackend;
-
-mod network;
-pub use network::NetworkBackend;
-
-mod op_succinct;
-pub use op_succinct::{OpSuccinctBackend, OpSuccinctProvider, WitnessParams};
+pub mod op_succinct;
 
 mod traits;
 pub use traits::{

@@ -23,8 +23,8 @@ use sp1_sdk::{
 };
 use tracing::{error, info, warn};
 
-use super::{
-    OpSuccinctProvider, WitnessParams,
+use crate::backends::{
+    op_succinct::provider::{OpSuccinctProvider, WitnessParams},
     traits::{
         BackendConfig, BackendType, ProofProcessingResult, ProveResult, ProvingBackend,
         SessionStatus,
