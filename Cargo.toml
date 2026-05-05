@@ -201,7 +201,6 @@ base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-bundle-extension = { path = "crates/execution/bundle" }
 base-proofs-extension = { path = "crates/execution/proofs" }
-base-execution-storage = { path = "crates/execution/storage" }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }

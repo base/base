@@ -4180,18 +4180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-storage"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "base-common-consensus",
- "reth-codecs",
- "reth-prune-types",
- "reth-stages-types",
- "reth-storage-api",
-]
-
-[[package]]
 name = "base-execution-trie"
 version = "0.0.0"
 dependencies = [
@@ -4551,7 +4539,6 @@ dependencies = [
  "base-execution-exex",
  "base-execution-payload-builder",
  "base-execution-rpc",
- "base-execution-storage",
  "base-execution-trie",
  "base-execution-txpool",
  "base-node-core",
@@ -4582,6 +4569,7 @@ dependencies = [
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
  "reth-stages-types",
+ "reth-storage-api",
  "reth-tasks",
  "reth-tracing",
  "reth-transaction-pool",
@@ -4614,7 +4602,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-payload-builder",
  "base-execution-rpc",
- "base-execution-storage",
  "base-execution-txpool",
  "base-node-core",
  "base-node-runner",

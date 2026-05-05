@@ -25,6 +25,9 @@ pub use node::*;
 pub mod rpc;
 pub use rpc::BaseEngineApiBuilder;
 
+mod storage;
+pub use storage::BaseStorage;
+
 pub mod version;
 pub use version::CLIENT_NAME;
 

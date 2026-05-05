@@ -27,7 +27,6 @@ use base_execution_rpc::{
     miner::BaseMinerExtApi,
     witness::BaseDebugWitnessApi,
 };
-use base_execution_storage::BaseStorage;
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,
     BaseTransactionValidator, TimestampedTransaction,
@@ -72,7 +71,7 @@ use reth_trie_common::KeccakKeyHasher;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    BaseEngineApiBuilder, BaseEngineTypes,
+    BaseEngineApiBuilder, BaseEngineTypes, BaseStorage,
     args::{RollupArgs, TxpoolOrdering},
     engine::BaseEngineValidator,
 };
