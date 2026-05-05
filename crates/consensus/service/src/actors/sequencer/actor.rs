@@ -297,6 +297,10 @@ where
                     self.handle_admin_query(&mut next_payload_to_seal, query).await;
 
                     if !active_before && self.is_active {
+                        // Clear the previous completion timestamp so the first block
+                        // after a stop->start cycle does not record the entire idle
+                        // period as sequencer_block_to_block_duration.
+                        last_block_complete_at = None;
                         build_ticker.reset_immediately();
                     }
                 }
