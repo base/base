@@ -78,11 +78,36 @@ RISC0_SKIP_BUILD_KERNELS=1 cargo run \
     --output <output-path.r0bf>
 ```
 
-## Version pinning
+## Reproducibility
+
+The image ID is a hash of the ELF binary. For the same source code to always
+produce the same image ID, the ELF must be byte-identical across builds.
+Two things ensure this:
+
+### Dependency pinning
 
 The `risc0-zkvm` dependency is pinned to an exact version (`=x.y.z`) in
-`Cargo.toml` to ensure the image ID is reproducible. The `Cargo.lock` is
-committed for the same reason.
+`Cargo.toml` and the `Cargo.lock` is committed, so dependency resolution is
+deterministic.
+
+### Path remapping
+
+Rust embeds absolute file paths into the binary for panic messages (e.g.
+`panicked at /Users/you/project/src/foo.rs:42`). These paths change depending
+on where the repository is checked out, which produces a different ELF hash
+and therefore a different image ID — even from identical source code.
+
+The Justfile passes `--remap-path-prefix` flags via `RUSTFLAGS` to normalize
+these paths:
+
+- The repository checkout path is remapped to `/build`
+- The Cargo registry (`$CARGO_HOME`) is remapped to `/registry`
+
+**Always use `just build` / `just bundle`** to get reproducible builds. Running
+`cargo +risc0 build` directly will produce a working ELF but with
+machine-specific paths baked in.
+
+### Bumping versions
 
 When bumping risc0 versions, you **must** rebuild the ELF, re-upload to
 IPFS, and update the image ID in both the registrar config and the on-chain

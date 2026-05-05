@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use audit_archiver_lib::{
-    BundleEvent, BundleEventPublisher, BundleEventS3Reader, KafkaAuditArchiver,
-    KafkaAuditLogReader, KafkaBundleEventPublisher, S3EventReaderWriter,
+    AuditArchiver, BundleEvent, BundleEventPublisher, BundleEventS3Reader, KafkaAuditLogReader,
+    KafkaBundleEventPublisher, S3EventReaderWriter,
 };
 use base_bundles::{BundleExtensions, test_utils::create_bundle_from_txn_data};
 use uuid::Uuid;
@@ -31,7 +31,7 @@ async fn system_test_kafka_publisher_s3_archiver_integration() -> anyhow::Result
         publisher.publish(event.clone()).await?;
     }
 
-    let mut consumer = KafkaAuditArchiver::new(
+    let mut consumer = AuditArchiver::new(
         KafkaAuditLogReader::new(harness.kafka_consumer, topic.to_string())?,
         s3_writer.clone(),
         1,

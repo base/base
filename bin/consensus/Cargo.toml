@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 # workspace
 base-cli-utils.workspace = true
-base-client-cli.workspace = true
+base-consensus-cli.workspace = true
 
 # alloy
 alloy-chains.workspace = true
@@ -58,3 +58,4 @@ serde_json.workspace = true
 
 [dev-dependencies]
 rstest.workspace = true
+tempfile.workspace = true

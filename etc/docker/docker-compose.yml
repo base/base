@@ -162,6 +162,11 @@ services:
       - CHALLENGER_ADDR=${CHALLENGER_ADDR}
       - BUILDER_P2P_KEY=${BUILDER_P2P_KEY}
       - BUILDER_ENODE_ID=${BUILDER_ENODE_ID}
+      - L2_EL_BOOTNODE_P2P_KEY=${L2_EL_BOOTNODE_P2P_KEY}
+      - L2_EL_BOOTNODE_ENODE_ID=${L2_EL_BOOTNODE_ENODE_ID}
+      - L2_EL_BOOTNODE_ENODE=${L2_EL_BOOTNODE_ENODE}
+      - L2_CL_BOOTNODE_P2P_KEY=${L2_CL_BOOTNODE_P2P_KEY}
+      - L2_CL_BOOTNODE_ENR_PATH=${L2_CL_BOOTNODE_ENR_PATH}
     entrypoint: ["/usr/local/bin/setup-l2.sh"]
 
   base-builder:
@@ -218,6 +223,7 @@ services:
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
       - --txpool.nolocals
+      - --rollup.txpool-max-inflight-delegated-slots=4
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --color=never
@@ -382,6 +388,7 @@ services:
       - --discovery.port=${L2_CLIENT_P2P_PORT}
       - --metrics=0.0.0.0:${L2_CLIENT_METRICS_PORT}
       - --txpool.nolocals
+      - --rollup.txpool-max-inflight-delegated-slots=4
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --rpc.eth-proof-window=1209600

@@ -6,10 +6,10 @@ use alloy_chains::Chain;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
-use base_client_cli::{
+use base_common_chains::Registry;
+use base_consensus_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
-use base_common_chains::Registry;
 use base_consensus_node::{
     DelegateL2Client, EngineConfig, FollowNode, L1Config, L1ConfigBuilder, NodeMode,
     RollupNodeBuilder,
@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    bootnode::Bootnode,
+    bootnode::{Bootnode, BootnodeEnr},
     metrics::{init_p2p_metrics, init_rollup_config_metrics},
 };
 
@@ -51,6 +51,7 @@ impl Cli {
             Commands::Node(node) => node.run(),
             Commands::Follow(follow) => follow.run(),
             Commands::Bootnode(bootnode) => bootnode.run(),
+            Commands::BootnodeEnr(bootnode_enr) => bootnode_enr.run(),
         }
     }
 }
@@ -70,6 +71,10 @@ pub enum Commands {
     /// Start a discovery-only consensus bootnode.
     #[command(name = "bootnode")]
     Bootnode(Bootnode),
+
+    /// Print the deterministic ENR for a consensus bootnode.
+    #[command(name = "bootnode-enr")]
+    BootnodeEnr(BootnodeEnr),
 }
 
 /// Follow CLI arguments.
@@ -431,7 +436,7 @@ mod tests {
 
     use alloy_chains::Chain;
     use alloy_primitives::B256;
-    use base_client_cli::{P2PArgs, SignerArgs};
+    use base_consensus_cli::{P2PArgs, SignerArgs};
     use base_consensus_node::NodeMode;
     use rstest::rstest;
     use url::Url;
@@ -460,6 +465,13 @@ mod tests {
         let cli = Cli::parse_from(["base-consensus", "bootnode"]);
 
         assert!(matches!(cli.command, Commands::Bootnode(_)));
+    }
+
+    #[test]
+    fn parses_bootnode_enr_command() {
+        let cli = Cli::parse_from(["base-consensus", "bootnode-enr"]);
+
+        assert!(matches!(cli.command, Commands::BootnodeEnr(_)));
     }
 
     /// Tests that clap correctly wires env vars into the signer fields and that the

@@ -1,8 +1,10 @@
 //! Ingress RPC binary entry point.
 
+use std::time::Duration;
+
 use alloy_provider::ProviderBuilder;
 use audit_archiver_lib::{
-    AuditConnector, BundleEvent, KafkaBundleEventPublisher, load_kafka_config_from_file,
+    AuditConnector, BundleEvent, RpcBundleEventPublisher, load_kafka_config_from_file,
 };
 use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
@@ -15,7 +17,7 @@ use ingress_rpc_lib::{
 use jsonrpsee::server::Server;
 use rdkafka::{ClientConfig, producer::FutureProducer};
 use tokio::sync::{broadcast, mpsc};
-use tracing::info;
+use tracing::{info, warn};
 
 base_cli_utils::define_log_args!("TIPS_INGRESS");
 base_cli_utils::define_metrics_args!("TIPS_INGRESS", 9002);
@@ -82,15 +84,24 @@ async fn main() -> anyhow::Result<()> {
 
     let queue = KafkaMessageQueue::new(queue_producer);
 
-    let audit_client_config =
-        ClientConfig::from_iter(load_kafka_config_from_file(&config.audit_kafka_properties)?);
+    if config.audit_kafka_properties.is_some() || config.audit_topic.is_some() {
+        warn!(
+            "audit_kafka_properties / audit_topic CLI args are deprecated and ignored; \
+             audit events are now published over RPC via --audit-rpc-url"
+        );
+    }
 
-    let audit_producer: FutureProducer = audit_client_config.create()?;
-
-    let audit_publisher =
-        KafkaBundleEventPublisher::new(audit_producer, config.audit_topic.clone());
+    let audit_publisher = RpcBundleEventPublisher::new(
+        config.audit_rpc_url.as_str(),
+        Duration::from_secs(config.audit_rpc_timeout_secs),
+    )?;
     let (audit_tx, audit_rx) = mpsc::channel::<BundleEvent>(config.audit_channel_capacity);
-    AuditConnector::connect(audit_rx, audit_publisher);
+    AuditConnector::connect_batched(
+        audit_rx,
+        audit_publisher,
+        config.audit_batch_max_size,
+        Duration::from_millis(config.audit_batch_max_wait_ms),
+    );
 
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);

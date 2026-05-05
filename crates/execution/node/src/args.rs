@@ -68,6 +68,12 @@ pub struct RollupArgs {
     #[arg(long = "rollup.txpool-ordering", default_value = "coinbase-tip")]
     pub txpool_ordering: TxpoolOrdering,
 
+    /// Maximum number of inflight EIP-7702 delegated account transactions per sender in the
+    /// txpool. Reth defaults to 1, which prevents delegated accounts from submitting multiple
+    /// transactions within a block (e.g. buy + approve in a single Flashblock).
+    #[arg(long = "rollup.txpool-max-inflight-delegated-slots", default_value_t = 1)]
+    pub max_inflight_delegated_slots: usize,
+
     /// If true, initialize external-proofs exex to save and serve trie nodes to provide proofs
     /// faster.
     #[arg(
@@ -146,6 +152,7 @@ impl Default for RollupArgs {
             sequencer_headers: Vec::new(),
             min_suggested_priority_fee: 1_000_000,
             txpool_ordering: TxpoolOrdering::default(),
+            max_inflight_delegated_slots: 1,
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_window: 1_296_000,
@@ -228,6 +235,18 @@ mod tests {
             "--rollup.compute-pending-block",
             "--rollup.sequencer-http",
             "http://host:port",
+        ])
+        .args;
+        assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn test_parse_max_inflight_delegated_slots() {
+        let expected_args = RollupArgs { max_inflight_delegated_slots: 4, ..Default::default() };
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--rollup.txpool-max-inflight-delegated-slots",
+            "4",
         ])
         .args;
         assert_eq!(args, expected_args);

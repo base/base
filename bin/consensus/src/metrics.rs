@@ -1,7 +1,7 @@
 //! CLI Options Metrics
 
-use base_client_cli::P2PArgs;
 use base_common_genesis::RollupConfig;
+use base_consensus_cli::P2PArgs;
 
 use crate::bootnode::BootnodeP2PArgs;
 

@@ -35,10 +35,10 @@ pub use actors::{
     PendingStopSender, PoolActivation, QueuedDerivationEngineClient, QueuedEngineDerivationClient,
     QueuedEngineRpcClient, QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient,
     QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient,
-    RecoveryModeGuard, ResetRequest, RpcActor, RpcActorError, RpcContext, SealRequest, SealState,
-    SealStepError, SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerConfig,
-    SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
-    UnsealedPayloadHandle,
+    RecoveryModeGuard, ResetRequest, RpcActor, RpcActorError, RpcContext, ScheduledTicker,
+    SealRequest, SealState, SealStepError, SequencerActor, SequencerActorError,
+    SequencerAdminQuery, SequencerConfig, SequencerEngineClient, UnsafePayloadGossipClient,
+    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
 };
 
 mod metrics;

@@ -16,6 +16,11 @@ pub struct DevnetPorts {
     /// L1 CL P2P port
     pub l1_cl_p2p: u16,
 
+    /// L2 Execution bootnode P2P port
+    pub l2_el_bootnode_p2p: u16,
+    /// L2 Consensus bootnode P2P port
+    pub l2_cl_bootnode_p2p: u16,
+
     /// L2 Builder HTTP RPC port
     pub l2_builder_http: u16,
     /// L2 Builder WebSocket port
@@ -63,6 +68,9 @@ impl DevnetPorts {
             l1_p2p: 4303,
             l1_cl_http: 4052,
             l1_cl_p2p: 4900,
+
+            l2_el_bootnode_p2p: 9303,
+            l2_cl_bootnode_p2p: 9003,
 
             l2_builder_http: 7545,
             l2_builder_ws: 7546,

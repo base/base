@@ -18,8 +18,9 @@ use crate::{
     storage::EventWriter,
 };
 
-/// Archives audit events from Kafka to S3 storage.
-pub struct KafkaAuditArchiver<R, W>
+/// Archives audit events from a generic [`EventReader`] (Kafka, RPC, etc.) to
+/// an [`EventWriter`] (typically S3) via a worker pool.
+pub struct AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,
@@ -29,17 +30,17 @@ where
     _phantom: PhantomData<W>,
 }
 
-impl<R, W> fmt::Debug for KafkaAuditArchiver<R, W>
+impl<R, W> fmt::Debug for AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("KafkaAuditArchiver").finish_non_exhaustive()
+        f.debug_struct("AuditArchiver").finish_non_exhaustive()
     }
 }
 
-impl<R, W> KafkaAuditArchiver<R, W>
+impl<R, W> AuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter + Clone + Send + 'static,

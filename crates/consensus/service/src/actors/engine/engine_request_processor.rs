@@ -8,7 +8,7 @@ use base_consensus_engine::{
     BuildTask, ConsolidateInput, ConsolidateTask, DelegatedForkchoiceTask,
     DelegatedForkchoiceUpdate, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
     EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertPayloadSafety,
-    InsertTask, SealTask,
+    InsertTask, Metrics as EngineMetrics, SealTask,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -613,6 +613,12 @@ where
             }
 
             loop {
+                // Full processor iteration window: drain + recv wait + request handling.
+                // Bounds the worst-case channel wait — any request arriving during this
+                // iteration waits at most this long before the next recv picks it up.
+                let _iter_timer =
+                    base_metrics::timed!(EngineMetrics::engine_processor_iteration_duration());
+
                 // Attempt to drain all outstanding tasks from the engine queue before adding new
                 // ones.
                 self.drain().await.inspect_err(

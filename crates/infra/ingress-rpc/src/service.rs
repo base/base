@@ -368,8 +368,8 @@ mod tests {
             tx_submission_method: TxSubmissionMethod::Mempool,
             ingress_kafka_properties: String::new(),
             ingress_topic: String::new(),
-            audit_kafka_properties: String::new(),
-            audit_topic: String::new(),
+            audit_kafka_properties: Some(String::new()),
+            audit_topic: Some(String::new()),
             send_transaction_default_lifetime_seconds: 300,
             simulation_rpc: mock_server.uri().parse().unwrap(),
             block_time_milliseconds: 1000,
@@ -382,6 +382,10 @@ mod tests {
             bundle_cache_ttl: 20,
             audit_channel_capacity: 512,
             send_to_builder: false,
+            audit_batch_max_size: 100,
+            audit_batch_max_wait_ms: 1000,
+            audit_rpc_timeout_secs: 5,
+            audit_rpc_url: Url::parse("http://localhost:9000").unwrap(),
         }
     }
 

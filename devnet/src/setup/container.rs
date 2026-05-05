@@ -17,6 +17,18 @@ const DEPLOY_TIMEOUT_SECS: u64 = 300;
 
 /// Builder enode ID
 pub const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
+/// Execution-layer bootnode private key.
+pub const EL_BOOTNODE_P2P_KEY: &str =
+    "1111111111111111111111111111111111111111111111111111111111111111";
+/// Execution-layer bootnode enode ID.
+pub const EL_BOOTNODE_ENODE_ID: &str = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1";
+/// Execution-layer bootnode enode URL used by Docker devnet.
+pub const EL_BOOTNODE_ENODE: &str = "enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303";
+/// Consensus-layer bootnode private key.
+pub const CL_BOOTNODE_P2P_KEY: &str =
+    "2222222222222222222222222222222222222222222222222222222222222222";
+/// Consensus-layer bootnode ENR output path used by Docker devnet.
+pub const CL_BOOTNODE_ENR_PATH: &str = "/genesis/l2/cl-bootnode.enr";
 
 #[derive(Debug, Clone)]
 /// Output of the L1 genesis generation.
@@ -218,6 +230,11 @@ impl SetupContainer {
             .with_env_var("CHALLENGER_ADDR", format!("{:#x}", CHALLENGER.address))
             .with_env_var("BUILDER_P2P_KEY", format!("{:#x}", BUILDER.private_key))
             .with_env_var("BUILDER_ENODE_ID", BUILDER_ENODE_ID)
+            .with_env_var("L2_EL_BOOTNODE_P2P_KEY", EL_BOOTNODE_P2P_KEY)
+            .with_env_var("L2_EL_BOOTNODE_ENODE_ID", EL_BOOTNODE_ENODE_ID)
+            .with_env_var("L2_EL_BOOTNODE_ENODE", EL_BOOTNODE_ENODE)
+            .with_env_var("L2_CL_BOOTNODE_P2P_KEY", CL_BOOTNODE_P2P_KEY)
+            .with_env_var("L2_CL_BOOTNODE_ENR_PATH", CL_BOOTNODE_ENR_PATH)
             .with_mount(Mount::bind_mount(l2_output_mount, "/output/l2"))
             .with_mount(Mount::bind_mount(shared_mount, "/shared"))
             .with_cmd(["setup-l2.sh"])

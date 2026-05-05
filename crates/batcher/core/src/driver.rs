@@ -424,10 +424,14 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU64, Ordering},
+        },
         time::Duration,
     };
 
+    use alloy_primitives::Address;
     use base_batcher_encoder::{BatchSubmission, DaType, SubmissionId};
     use base_blobs::BlobEncoder;
     use base_protocol::{ChannelId, Frame};
@@ -435,6 +439,8 @@ mod tests {
         Cancellation, Clock, Spawner,
         deterministic::{Config, Runner},
     };
+    use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError};
+    use tokio::sync::oneshot;
 
     use crate::test_utils::{
         DriverFixture, ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager,
@@ -452,6 +458,48 @@ mod tests {
             channel_id: ChannelId::default(),
             da_type: DaType::Blob,
             frames: vec![Arc::new(Frame { data: vec![0u8; data_len], ..Frame::default() })],
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct TxpoolBlockedState {
+        sends: AtomicU64,
+        cancellations: AtomicU64,
+    }
+
+    #[derive(Debug, Clone)]
+    struct TxpoolBlockedOnceTxManager {
+        state: Arc<TxpoolBlockedState>,
+    }
+
+    impl TxManager for TxpoolBlockedOnceTxManager {
+        async fn send(&self, _: TxCandidate) -> SendResponse {
+            Err(TxManagerError::AlreadyReserved)
+        }
+
+        fn send_async(
+            &self,
+            _: TxCandidate,
+        ) -> impl std::future::Future<Output = SendHandle> + Send {
+            self.state.sends.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = oneshot::channel();
+            let _ = tx.send(Err(TxManagerError::AlreadyReserved));
+            std::future::ready(SendHandle::new(rx))
+        }
+
+        fn cancel_tx(
+            &self,
+        ) -> impl std::future::Future<Output = base_tx_manager::TxManagerResult<()>> + Send
+        {
+            let state = Arc::clone(&self.state);
+            async move {
+                state.cancellations.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        fn sender_address(&self) -> Address {
+            Address::ZERO
         }
     }
 
@@ -662,6 +710,43 @@ mod tests {
                 recorded.lock().unwrap().l1_heads,
                 vec![7, 7],
                 "blob 2 must be confirmed once blob 1 frees the permit"
+            );
+        });
+    }
+
+    /// `AlreadyReserved` means another transaction owns the sender nonce slot.
+    /// The driver must requeue the submission, mark the txpool blocked, and
+    /// call `cancel_tx` before accepting more submissions.
+    #[test]
+    fn test_txpool_blocked_requeues_and_attempts_recovery() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let recorded = Arc::new(Mutex::new(Recorded::default()));
+            let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+            pipeline.submissions.push_back(SubmissionStub::stub());
+
+            let state = Arc::new(TxpoolBlockedState::default());
+            let tx_manager = TxpoolBlockedOnceTxManager { state: Arc::clone(&state) };
+
+            let handle = ctx.spawn(DriverFixture::build(ctx.clone(), pipeline, tx_manager).run());
+
+            ctx.sleep(Duration::from_millis(50)).await;
+            ctx.cancel();
+
+            assert!(handle.await.unwrap().is_ok(), "driver should exit cleanly on cancellation");
+            assert_eq!(
+                recorded.lock().unwrap().requeued,
+                vec![SubmissionId(0)],
+                "txpool-blocked submissions must be requeued"
+            );
+            assert_eq!(
+                state.sends.load(Ordering::SeqCst),
+                1,
+                "driver must stop submitting while txpool is blocked"
+            );
+            assert_eq!(
+                state.cancellations.load(Ordering::SeqCst),
+                1,
+                "driver must attempt txpool recovery with cancel_tx"
             );
         });
     }

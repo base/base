@@ -17,10 +17,18 @@ Flashblocks state management for Base nodes. Subscribes to flashblocks and combi
 
 ## RPC Extensions
 
-This crate provides extended Ethereum RPC subscriptions for pending state:
+This crate provides pending-state-aware Ethereum RPC implementations used by
+`base-flashblocks-node`:
 
-- **`eth_subscribe("newPendingBlock")`**: Subscribe to pending block updates from flashblocks.
-- **`eth_subscribe("newPendingReceipts")`**: Subscribe to pending transaction receipts.
+- **`eth_getBlockByNumber("pending", ...)`**: returns the latest pending block built from flashblocks.
+- **`eth_getTransactionReceipt`** and **`eth_getTransactionByHash`**: check canonical data first, then flashblocks pending state.
+- **`eth_getBalance`**, **`eth_getTransactionCount`**, **`eth_call`**, **`eth_estimateGas`**, and **`eth_simulateV1`**: use flashblocks pending state when requested with the `pending` tag.
+- **`eth_getLogs`**: combines historical logs with pending flashblock logs when the range ends at `pending`.
+- **`eth_getBlockTransactionCountByNumber("pending")`**: returns the transaction count from the latest pending flashblock state.
+- **`eth_sendRawTransactionSync`**: sends a raw transaction and waits for inclusion in flashblocks or the canonical chain.
+- **`eth_subscribe("newFlashblocks")`**: streams pending block updates from flashblocks.
+- **`eth_subscribe("pendingLogs", filter)`**: streams logs from the latest flashblock.
+- **`eth_subscribe("newFlashblockTransactions", ...)`**: streams transaction hashes or full transactions from the latest flashblock.
 
 ## Usage
 
@@ -34,18 +42,33 @@ base-flashblocks = { git = "https://github.com/base/base" }
 Subscribe to flashblocks and process state updates:
 
 ```rust,ignore
-use base_flashblocks::{FlashblocksSubscriber, FlashblocksState, StateProcessor};
+use std::sync::Arc;
 
-// Create subscriber and connect to flashblocks endpoint
-let subscriber = FlashblocksSubscriber::new(flashblocks_url);
+use base_flashblocks::{
+    FlashblocksAPI, FlashblocksState, FlashblocksSubscriber, PendingBlocksAPI,
+};
+use url::Url;
 
-// Process incoming flashblocks
-let processor = StateProcessor::new(state.clone());
-processor.process(flashblock)?;
+let flashblocks_url = Url::parse("ws://127.0.0.1:1111")?;
+let state = Arc::new(FlashblocksState::new(3));
 
-// Access pending state
-let pending_block = state.pending_block();
-let pending_receipts = state.pending_receipts();
+// Start the state processor after a node provider is available.
+state.start(provider.clone());
+
+// Connect to the builder's flashblocks WebSocket and forward decoded payloads into state.
+let mut subscriber = FlashblocksSubscriber::new(Arc::clone(&state), flashblocks_url);
+subscriber.start();
+
+// Read the current pending snapshot.
+let pending_blocks = state.get_pending_blocks();
+let pending_block = pending_blocks.get_block(true);
+
+// Subscribe to future pending snapshot updates.
+let mut updates = state.subscribe_to_flashblocks();
+while let Ok(pending) = updates.recv().await {
+    let block = pending.get_latest_block(true);
+    println!("pending block: {}", block.header.number);
+}
 ```
 
 ## License

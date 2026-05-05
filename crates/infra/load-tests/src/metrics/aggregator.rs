@@ -3,8 +3,8 @@ use std::{collections::HashMap, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics, ThroughputMetrics,
-    ThroughputPercentiles, ThroughputSample, TransactionMetrics,
+    BlockRange, ConfigSummary, FlashblocksLatencyMetrics, GasMetrics, LatencyMetrics,
+    ThroughputMetrics, ThroughputPercentiles, ThroughputSample, TransactionMetrics,
 };
 
 /// Aggregates raw transaction metrics into summary statistics.
@@ -46,8 +46,18 @@ impl<'a> MetricsAggregator<'a> {
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
             throughput_timeseries: throughput_samples.to_vec(),
             gas: self.compute_gas(),
+            block_range: self.compute_block_range(),
             top_failure_reasons,
         }
+    }
+
+    fn compute_block_range(&self) -> BlockRange {
+        let mut iter = self.transactions.iter().filter_map(|t| t.block_number);
+        let Some(first) = iter.next() else {
+            return BlockRange::default();
+        };
+        let (min, max) = iter.fold((first, first), |(lo, hi), b| (lo.min(b), hi.max(b)));
+        BlockRange { first_block: Some(min), last_block: Some(max), block_count: max - min + 1 }
     }
 
     fn compute_block_latency(&self) -> LatencyMetrics {
@@ -203,6 +213,8 @@ pub struct MetricsSummary {
     pub throughput_timeseries: Vec<ThroughputSample>,
     /// Gas usage statistics.
     pub gas: GasMetrics,
+    /// Range of blocks containing confirmed test transactions.
+    pub block_range: BlockRange,
     /// Top failure reasons sorted by count descending (max 3).
     pub top_failure_reasons: Vec<(String, u64)>,
 }

@@ -20,6 +20,9 @@ pub use recovery::RecoveryModeGuard;
 mod seal;
 pub use seal::{PayloadSealer, SealState, SealStepError};
 
+mod ticker;
+pub use ticker::ScheduledTicker;
+
 mod pool;
 pub use pool::PoolActivation;
 

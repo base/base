@@ -45,11 +45,13 @@ impl LocalNode {
 }
 
 impl LocalNode {
-    /// Build the local node ENR. This should contain the information we wish to
+    /// Builds the local node ENR advertised by the discovery service.
+    ///
+    /// This should contain the information we wish to
     /// broadcast to the other nodes in the network. See
     /// [the op-node implementation](https://github.com/ethereum-optimism/optimism/blob/174e55f0a1e73b49b80a561fd3fedd4fea5770c6/op-node/p2p/discovery.go#L61-L97)
-    /// for the go equivalent
-    fn build_enr(self, chain_id: u64) -> Result<Enr, discv5::enr::Error> {
+    /// for the go equivalent.
+    pub fn build_enr(self, chain_id: u64) -> Result<Enr, discv5::enr::Error> {
         let base_enr = BaseEnr::from_chain_id(chain_id);
         let mut base_enr_data = Vec::new();
         base_enr.encode(&mut base_enr_data);

@@ -26,6 +26,7 @@ alloy-rpc-types-eth = { workspace = true, features = ["std"] }
 # base
 base-metrics.workspace = true
 base-common-signer.workspace = true
+base-runtime = { workspace = true, features = ["tokio"] }
 
 # misc
 url.workspace = true
@@ -46,6 +47,7 @@ alloy-signer.workspace = true
 alloy-json-rpc.workspace = true
 alloy-node-bindings.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
+base-runtime = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }
 
 [features]
