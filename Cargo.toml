@@ -172,6 +172,7 @@ base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
 
 # Consensus
+base-consensus-cli = { path = "crates/consensus/cli" }
 base-consensus-rpc = { path = "crates/consensus/rpc" }
 base-consensus-safedb = { path = "crates/consensus/safedb" }
 base-protocol = { path = "crates/consensus/protocol", default-features = false }
@@ -195,7 +196,6 @@ base-node-runner = { path = "crates/execution/runner" }
 base-execution-exex = { path = "crates/execution/exex" }
 base-execution-trie = { path = "crates/execution/trie" }
 base-txpool-rpc = { path = "crates/execution/txpool-rpc" }
-base-client-cli = { path = "crates/execution/client-cli" }
 base-engine-tree = { path = "crates/execution/engine-tree" }
 base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }

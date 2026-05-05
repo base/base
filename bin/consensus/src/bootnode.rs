@@ -9,7 +9,7 @@ use std::{
 use alloy_chains::Chain;
 use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
-use base_client_cli::L2ConfigFile;
+use base_consensus_cli::L2ConfigFile;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
 use base_consensus_peers::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};

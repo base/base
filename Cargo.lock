@@ -3254,41 +3254,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-client-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-engine",
- "alloy-signer",
- "alloy-signer-local",
- "base-common-chains",
- "base-common-genesis",
- "base-consensus-derive",
- "base-consensus-disc",
- "base-consensus-gossip",
- "base-consensus-node",
- "base-consensus-peers",
- "base-consensus-providers",
- "base-consensus-rpc",
- "base-consensus-sources",
- "base-jwt",
- "clap",
- "discv5",
- "eyre",
- "libp2p",
- "reqwest 0.13.2",
- "rstest",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "base-common-chains"
 version = "0.0.0"
 dependencies = [
@@ -3523,10 +3488,10 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "base-cli-utils",
- "base-client-cli",
  "base-common-chains",
  "base-common-genesis",
  "base-common-network",
+ "base-consensus-cli",
  "base-consensus-disc",
  "base-consensus-node",
  "base-consensus-peers",
@@ -3542,6 +3507,41 @@ dependencies = [
  "serde_json",
  "strum",
  "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-consensus-cli"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-engine",
+ "alloy-signer",
+ "alloy-signer-local",
+ "base-common-chains",
+ "base-common-genesis",
+ "base-consensus-derive",
+ "base-consensus-disc",
+ "base-consensus-gossip",
+ "base-consensus-node",
+ "base-consensus-peers",
+ "base-consensus-providers",
+ "base-consensus-rpc",
+ "base-consensus-sources",
+ "base-jwt",
+ "clap",
+ "discv5",
+ "eyre",
+ "libp2p",
+ "reqwest 0.13.2",
+ "rstest",
+ "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "url",

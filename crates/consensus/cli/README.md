@@ -1,10 +1,10 @@
-# `base-client-cli`
+# `base-consensus-cli`
 
-CLI argument types for Base node consensus clients.
+CLI argument types for Base consensus clients.
 
 ## Overview
 
-This crate provides reusable CLI argument types for configuring Base node consensus clients:
+This crate provides reusable CLI argument types for configuring Base consensus clients:
 
 - **`L1ClientArgs`**: L1 execution client RPC configuration
 - **`L2ClientArgs`**: L2 engine API configuration with JWT handling
@@ -15,11 +15,11 @@ This crate provides reusable CLI argument types for configuring Base node consen
 
 ```toml
 [dependencies]
-base-client-cli = { workspace = true }
+base-consensus-cli = { workspace = true }
 ```
 
 ```rust
-use base_client_cli::{L1ClientArgs, L2ClientArgs};
+use base_consensus_cli::{L1ClientArgs, L2ClientArgs};
 use clap::Parser;
 
 #[derive(Parser)]

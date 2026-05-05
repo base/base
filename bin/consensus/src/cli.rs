@@ -6,7 +6,7 @@ use alloy_chains::Chain;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
-use base_client_cli::{
+use base_consensus_cli::{
     L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
 };
 use base_common_chains::Registry;
@@ -436,7 +436,7 @@ mod tests {
 
     use alloy_chains::Chain;
     use alloy_primitives::B256;
-    use base_client_cli::{P2PArgs, SignerArgs};
+    use base_consensus_cli::{P2PArgs, SignerArgs};
     use base_consensus_node::NodeMode;
     use rstest::rstest;
     use url::Url;

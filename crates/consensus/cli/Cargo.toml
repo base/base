@@ -1,6 +1,6 @@
 [package]
-name = "base-client-cli"
-description = "CLI argument types for Base node consensus clients"
+name = "base-consensus-cli"
+description = "CLI argument types for Base consensus clients"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
