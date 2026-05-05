@@ -38,13 +38,25 @@ impl QueuedSequencerAdminAPIClient {
         &self,
         response_rx: oneshot::Receiver<Result<T, SequencerAdminAPIError>>,
     ) -> Result<T, SequencerAdminAPIError> {
-        let receive =
-            async { response_rx.await.map_err(|_| SequencerAdminAPIError::ResponseError)? };
+        let receive = async {
+            response_rx.await.map_err(|_| {
+                error!(
+                    target: "sequencer_admin",
+                    "Failed to receive response from sequencer admin rpc"
+                );
+                SequencerAdminAPIError::ResponseError
+            })?
+        };
 
         if let Some(timeout) = self.options.request_timeout {
-            tokio::time::timeout(timeout, receive)
-                .await
-                .map_err(|_| SequencerAdminAPIError::ResponseTimeout)?
+            tokio::time::timeout(timeout, receive).await.map_err(|_| {
+                error!(
+                    target: "sequencer_admin",
+                    timeout_ms = timeout.as_millis() as u64,
+                    "Timed out waiting for sequencer admin rpc response"
+                );
+                SequencerAdminAPIError::ResponseTimeout
+            })?
         } else {
             receive.await
         }

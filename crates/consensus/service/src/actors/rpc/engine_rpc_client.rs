@@ -82,7 +82,7 @@ impl QueuedEngineRpcClient {
                 error!(
                     target: "block_engine",
                     response_name,
-                    timeout_ms = timeout.as_millis(),
+                    timeout_ms = timeout.as_millis() as u64,
                     "Timed out waiting for engine rpc response"
                 );
                 ErrorObject::owned(
