@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use super::SealTaskError;
 use crate::{
-    Engine, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety, InsertTask,
+    Engine, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety,
     InsertTaskError::{self},
     task_queue::build_and_seal,
 };
@@ -21,13 +21,10 @@ use crate::{
 /// The [`SealTask`] handles the following parts of the block building workflow:
 ///
 /// 1. **Payload Construction**: Retrieves the built payload using `engine_getPayload`
-/// 2. **Block Import**: Imports the payload using [`InsertTask`] for canonicalization
+/// 2. **Block Import**: Imports the payload using direct engine insert logic
 ///
 /// ## Error Handling
 ///
-/// The task delegates to [`InsertTaskError`] for payload import failures.
-///
-/// [`InsertTask`]: crate::InsertTask
 /// [`InsertTaskError`]: crate::InsertTaskError
 #[derive(Debug, Clone, Constructor)]
 pub struct SealTask<EngineClient_: EngineClient> {
@@ -71,7 +68,7 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
     /// Inserts a payload into the engine with Holocene fallback support.
     ///
     /// This function handles:
-    /// 1. Executing the `InsertTask` to import the payload
+    /// 1. Executing the direct insert path to import the payload
     /// 2. Handling deposits-only payload failures
     /// 3. Holocene fallback via `build_and_seal` if needed
     ///
@@ -81,14 +78,14 @@ impl<EngineClient_: EngineClient> SealTask<EngineClient_> {
         state: &mut EngineState,
         new_payload: BaseExecutionPayloadEnvelope,
     ) -> Result<(), SealTaskError> {
-        // Insert the new block into the engine.
-        match InsertTask::new(
+        match Engine::<EngineClient_>::insert_payload_with_state(
+            state,
             Arc::clone(&self.engine),
             Arc::clone(&self.cfg),
             new_payload.clone(),
             self.payload_safety,
+            false,
         )
-        .execute(state)
         .await
         {
             Err(InsertTaskError::UnexpectedPayloadStatus(e))

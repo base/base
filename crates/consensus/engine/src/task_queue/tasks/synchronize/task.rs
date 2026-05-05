@@ -21,7 +21,7 @@ use crate::{
 ///
 /// ## Usage Patterns
 ///
-/// - **Internal Synchronization**: Called by [`InsertTask`], [`ConsolidateTask`], and
+/// - **Internal Synchronization**: Called by direct insert processing, [`ConsolidateTask`], and
 ///   [`FinalizeTask`]
 /// - **Engine Reset**: Used during engine resets to establish initial forkchoice state
 /// - **Safe Head Updates**: Synchronizes safe and finalized head changes
@@ -32,7 +32,6 @@ use crate::{
 /// explicitly handled within direct build processing, eliminating the need for explicit
 /// forkchoice management in most user scenarios.
 ///
-/// [`InsertTask`]: crate::InsertTask
 /// [`ConsolidateTask`]: crate::ConsolidateTask  
 /// [`FinalizeTask`]: crate::FinalizeTask
 #[derive(Debug, Clone, Constructor)]

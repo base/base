@@ -1,6 +1,4 @@
-//! Contains the error types for the [`InsertTask`].
-//!
-//! [InsertTask]: crate::InsertTask
+//! Contains error types for direct engine insert operations.
 
 use alloy_rpc_types_engine::PayloadStatusEnum;
 use alloy_transport::{RpcError, TransportErrorKind};
@@ -11,9 +9,7 @@ use crate::{
     EngineTaskError, SynchronizeTaskError, task_queue::tasks::task::EngineTaskErrorSeverity,
 };
 
-/// An error that occurs when running the [`InsertTask`].
-///
-/// [InsertTask]: crate::InsertTask
+/// An error that occurs when inserting a payload into the execution engine.
 #[derive(Debug, thiserror::Error)]
 pub enum InsertTaskError {
     /// Error converting a payload into a block.

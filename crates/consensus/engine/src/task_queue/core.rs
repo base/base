@@ -2,11 +2,16 @@
 
 use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
 
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_rpc_types_engine::{
-    ExecutionPayload, INVALID_FORK_CHOICE_STATE_ERROR, PayloadId, PayloadStatusEnum,
+    CancunPayloadFields, ExecutionPayload, ExecutionPayloadInputV2,
+    INVALID_FORK_CHOICE_STATE_ERROR, PayloadId, PayloadStatusEnum, PraguePayloadFields,
 };
+use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+use base_common_rpc_types_engine::{
+    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
+};
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
 use tokio::sync::watch::Sender;
@@ -15,8 +20,9 @@ use super::EngineTaskExt;
 use crate::{
     BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
     EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, Metrics, SealTaskError, SyncStartError, SynchronizeTask,
-    SynchronizeTaskError, find_starting_forkchoice, task_queue::EngineTaskErrors,
+    EngineTaskErrorSeverity, InsertPayloadSafety, InsertTaskError, InsertTaskResult, Metrics,
+    SealTaskError, SyncStartError, SynchronizeTask, SynchronizeTaskError, find_starting_forkchoice,
+    task_queue::EngineTaskErrors,
 };
 
 /// The [`Engine`] task queue.
@@ -218,6 +224,213 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         }
 
         Self::fetch_payload(cfg, engine, payload_id, payload_attrs).await
+    }
+
+    /// Inserts an external unsafe payload, retrying temporary failures like queued insert tasks did.
+    pub async fn insert_unsafe_payload(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> InsertTaskResult {
+        self.insert_payload_with_retry(client, config, envelope, InsertPayloadSafety::Unsafe).await
+    }
+
+    /// Inserts a local sequencer unsafe payload once and returns the insertion result.
+    pub async fn insert_local_unsafe_payload(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> InsertTaskResult {
+        let _task_timer =
+            base_metrics::timed!(Metrics::engine_task_duration(Metrics::INSERT_TASK_LABEL));
+
+        let result = Self::insert_payload_with_state(
+            &mut self.state,
+            client,
+            config,
+            envelope,
+            InsertPayloadSafety::Unsafe,
+            true,
+        )
+        .await;
+
+        self.state_sender.send_replace(self.state);
+        Metrics::engine_task_count(Metrics::INSERT_TASK_LABEL).increment(1);
+        if let Err(err) = &result {
+            Metrics::engine_task_failure(Metrics::INSERT_TASK_LABEL, err.severity().as_label())
+                .increment(1);
+        }
+
+        result
+    }
+
+    /// Inserts a payload and retries temporary failures.
+    pub async fn insert_payload_with_retry(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+        payload_safety: InsertPayloadSafety,
+    ) -> InsertTaskResult {
+        let _task_timer =
+            base_metrics::timed!(Metrics::engine_task_duration(Metrics::INSERT_TASK_LABEL));
+
+        loop {
+            match Self::insert_payload_with_state(
+                &mut self.state,
+                Arc::clone(&client),
+                Arc::clone(&config),
+                envelope.clone(),
+                payload_safety,
+                false,
+            )
+            .await
+            {
+                Ok(inserted_head) => {
+                    self.state_sender.send_replace(self.state);
+                    Metrics::engine_task_count(Metrics::INSERT_TASK_LABEL).increment(1);
+                    return Ok(inserted_head);
+                }
+                Err(err) => {
+                    let severity = err.severity();
+                    Metrics::engine_task_failure(Metrics::INSERT_TASK_LABEL, severity.as_label())
+                        .increment(1);
+
+                    match severity {
+                        EngineTaskErrorSeverity::Temporary => {
+                            trace!(target: "engine", error = %err, "Temporary engine error");
+                            yield_now().await;
+                        }
+                        EngineTaskErrorSeverity::Critical => {
+                            error!(target: "engine", error = %err, "Critical engine error");
+                            return Err(err);
+                        }
+                        EngineTaskErrorSeverity::Reset => {
+                            warn!(target: "engine", "Engine requested derivation reset");
+                            return Err(err);
+                        }
+                        EngineTaskErrorSeverity::Flush => {
+                            warn!(target: "engine", "Engine requested derivation flush");
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Inserts a payload into the execution engine using the provided state.
+    pub async fn insert_payload_with_state(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        rollup_config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+        payload_safety: InsertPayloadSafety,
+        require_unsafe_head_advance: bool,
+    ) -> InsertTaskResult {
+        let time_start = Instant::now();
+        let parent_beacon_block_root = envelope.parent_beacon_block_root.unwrap_or_default();
+        let insert_time_start = Instant::now();
+        let (response, block): (_, BaseBlock) = match envelope.execution_payload.clone() {
+            BaseExecutionPayload::V1(payload) => {
+                let block = BaseExecutionPayload::V1(payload.clone())
+                    .try_into_block()
+                    .map_err(InsertTaskError::FromBlockError)?;
+                let payload_input =
+                    ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
+                (client.new_payload_v2(payload_input).await, block)
+            }
+            BaseExecutionPayload::V2(payload) => {
+                let block = BaseExecutionPayload::V2(payload.clone())
+                    .try_into_block()
+                    .map_err(InsertTaskError::FromBlockError)?;
+                let payload_input = ExecutionPayloadInputV2 {
+                    execution_payload: payload.payload_inner,
+                    withdrawals: Some(payload.withdrawals),
+                };
+                (client.new_payload_v2(payload_input).await, block)
+            }
+            BaseExecutionPayload::V3(payload) => (
+                client.new_payload_v3(payload, parent_beacon_block_root).await,
+                envelope
+                    .execution_payload
+                    .clone()
+                    .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
+                        CancunPayloadFields::new(parent_beacon_block_root, vec![]),
+                    ))
+                    .map_err(InsertTaskError::FromBlockError)?,
+            ),
+            BaseExecutionPayload::V4(payload) => (
+                client.new_payload_v4(payload, parent_beacon_block_root).await,
+                envelope
+                    .execution_payload
+                    .clone()
+                    .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
+                        CancunPayloadFields::new(parent_beacon_block_root, vec![]),
+                        PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+                    ))
+                    .map_err(InsertTaskError::FromBlockError)?,
+            ),
+        };
+
+        let response = match response {
+            Ok(resp) => resp,
+            Err(e) => {
+                warn!(
+                    target: "engine",
+                    error = %e,
+                    payload_safety = payload_safety.as_label(),
+                    "Failed to insert new payload"
+                );
+                return Err(InsertTaskError::InsertFailed(e));
+            }
+        };
+        if !Self::check_new_payload_status(&response.status) {
+            return Err(InsertTaskError::UnexpectedPayloadStatus(response.status));
+        }
+        let insert_duration = insert_time_start.elapsed();
+
+        let advances_safe_head = payload_safety.advances_safe_head();
+        let new_block_ref = L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)
+            .map_err(InsertTaskError::L2BlockInfoConstruction)?;
+
+        SynchronizeTask::new(
+            Arc::clone(&client),
+            Arc::clone(&rollup_config),
+            EngineSyncStateUpdate {
+                unsafe_head: Some(new_block_ref),
+                local_safe_head: advances_safe_head.then_some(new_block_ref),
+                safe_head: advances_safe_head.then_some(new_block_ref),
+                ..Default::default()
+            },
+        )
+        .execute(state)
+        .await?;
+
+        if require_unsafe_head_advance && state.sync_state.unsafe_head() != new_block_ref {
+            return Err(InsertTaskError::ForkchoiceUpdateDidNotAdvance);
+        }
+
+        let total_duration = time_start.elapsed();
+
+        info!(
+            target: "engine",
+            hash = %new_block_ref.block_info.hash,
+            number = new_block_ref.block_info.number,
+            payload_safety = payload_safety.as_label(),
+            total_duration = ?total_duration,
+            insert_duration = ?insert_duration,
+            "Inserted new payload"
+        );
+
+        Ok(new_block_ref)
+    }
+
+    /// Checks the response of the `engine_newPayload` call.
+    pub const fn check_new_payload_status(status: &PayloadStatusEnum) -> bool {
+        matches!(status, PayloadStatusEnum::Valid | PayloadStatusEnum::Syncing)
     }
 
     /// Validates a forkchoice update status returned while starting a build.
@@ -548,9 +761,14 @@ pub enum EngineResetError {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_primitives::FixedBytes;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
+    use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::RollupConfig;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_protocol::L1BlockInfoBedrock;
     use tokio::sync::watch;
 
     use crate::{
@@ -677,6 +895,68 @@ mod tests {
         }
     }
 
+    fn valid_payload_status() -> PayloadStatus {
+        PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: Some(B256::ZERO) }
+    }
+
+    fn l1_info_deposit_tx() -> Vec<u8> {
+        BaseTxEnvelope::from(TxDeposit {
+            input: L1BlockInfoBedrock::default().encode_calldata(),
+            ..Default::default()
+        })
+        .encoded_2718()
+    }
+
+    fn bedrock_payload(block_number: u64) -> BaseExecutionPayload {
+        BaseExecutionPayload::V1(ExecutionPayloadV1 {
+            parent_hash: B256::ZERO,
+            fee_recipient: Address::ZERO,
+            state_root: B256::ZERO,
+            receipts_root: B256::ZERO,
+            logs_bloom: Bloom::ZERO,
+            prev_randao: B256::ZERO,
+            block_number,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 1,
+            extra_data: Default::default(),
+            base_fee_per_gas: U256::ZERO,
+            block_hash: B256::with_last_byte(block_number as u8),
+            transactions: vec![l1_info_deposit_tx().into()],
+        })
+    }
+
+    fn canyon_payload(block_number: u64) -> BaseExecutionPayload {
+        BaseExecutionPayload::V2(ExecutionPayloadV2 {
+            payload_inner: ExecutionPayloadV1 {
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::ZERO,
+                prev_randao: B256::ZERO,
+                block_number,
+                gas_limit: 30_000_000,
+                gas_used: 0,
+                timestamp: 1_704_992_401,
+                extra_data: Default::default(),
+                base_fee_per_gas: U256::ZERO,
+                block_hash: B256::with_last_byte(block_number as u8),
+                transactions: vec![l1_info_deposit_tx().into()],
+            },
+            withdrawals: vec![],
+        })
+    }
+
+    fn test_insert_client() -> Arc<crate::test_utils::MockEngineClient> {
+        Arc::new(
+            test_engine_client_builder()
+                .with_new_payload_v2_response(valid_payload_status())
+                .with_fork_choice_updated_v3_response(valid_fcu())
+                .build(),
+        )
+    }
+
     #[tokio::test]
     async fn build_with_state_returns_payload_id() {
         let payload_id = PayloadId::new([1u8; 8]);
@@ -735,6 +1015,117 @@ mod tests {
         .await;
 
         assert!(matches!(result, Err(SealTaskError::GetPayloadFailed(_))));
+    }
+
+    #[tokio::test]
+    async fn bedrock_payload_uses_new_payload_v2_with_no_withdrawals() {
+        let client = test_insert_client();
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload(1),
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+
+        Engine::insert_payload_with_state(
+            &mut state,
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            envelope,
+            InsertPayloadSafety::Unsafe,
+            false,
+        )
+        .await
+        .expect("bedrock payload should be imported with engine_newPayloadV2");
+
+        let payload_input = client
+            .last_new_payload_v2()
+            .await
+            .expect("new_payload_v2 should record the payload input");
+        assert!(
+            payload_input.withdrawals.is_none(),
+            "bedrock payload must keep withdrawals unset when sent via engine_newPayloadV2"
+        );
+    }
+
+    #[tokio::test]
+    async fn canyon_payload_uses_new_payload_v2_with_withdrawals() {
+        let client = test_insert_client();
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: canyon_payload(1),
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+
+        Engine::insert_payload_with_state(
+            &mut state,
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            envelope,
+            InsertPayloadSafety::Unsafe,
+            false,
+        )
+        .await
+        .expect("canyon payload should be imported with engine_newPayloadV2");
+
+        let payload_input = client
+            .last_new_payload_v2()
+            .await
+            .expect("new_payload_v2 should record the payload input");
+        assert_eq!(
+            payload_input.withdrawals,
+            Some(vec![]),
+            "canyon payload must preserve withdrawals when sent via engine_newPayloadV2"
+        );
+    }
+
+    #[tokio::test]
+    async fn unsafe_payload_insert_advances_only_unsafe_head() {
+        let client = test_insert_client();
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload(2),
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+
+        Engine::insert_payload_with_state(
+            &mut state,
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            envelope,
+            InsertPayloadSafety::Unsafe,
+            false,
+        )
+        .await
+        .expect("unsafe payload should be inserted");
+
+        assert_eq!(state.sync_state.unsafe_head().block_info.number, 2);
+        assert_eq!(state.sync_state.local_safe_head().block_info.number, 0);
+        assert_eq!(state.sync_state.safe_head().block_info.number, 0);
+    }
+
+    #[tokio::test]
+    async fn safe_payload_insert_advances_safe_heads() {
+        let client = test_insert_client();
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload(3),
+        };
+        let mut state = TestEngineStateBuilder::new().build();
+
+        Engine::insert_payload_with_state(
+            &mut state,
+            Arc::clone(&client),
+            Arc::new(RollupConfig::default()),
+            envelope,
+            InsertPayloadSafety::Safe,
+            false,
+        )
+        .await
+        .expect("safe payload should be inserted");
+
+        assert_eq!(state.sync_state.unsafe_head().block_info.number, 3);
+        assert_eq!(state.sync_state.local_safe_head().block_info.number, 3);
+        assert_eq!(state.sync_state.safe_head().block_info.number, 3);
     }
 
     #[tokio::test]

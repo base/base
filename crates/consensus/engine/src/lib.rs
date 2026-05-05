@@ -14,7 +14,7 @@ pub use task_queue::{
     BuildTaskError, ConsolidateInput, ConsolidateTask, ConsolidateTaskError, Engine,
     EngineBuildError, EngineResetError, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
     EngineTaskErrors, EngineTaskExt, FinalizeTask, FinalizeTaskError, InsertPayloadSafety,
-    InsertTask, InsertTaskError, InsertTaskResult, SealTask, SealTaskError, SynchronizeTask,
+    InsertTaskError, InsertTaskResult, SealTask, SealTaskError, SynchronizeTask,
     SynchronizeTaskError,
 };
 
