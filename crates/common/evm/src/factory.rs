@@ -7,8 +7,8 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, BasePrecompiles, BaseTransaction, BaseTransactionError,
-    Builder, DefaultBase, OpSpecId,
+    BaseContext, BaseEvm, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
+    BaseTransactionError, Builder, DefaultBase,
 };
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
@@ -27,14 +27,14 @@ impl EvmFactory for BaseEvmFactory {
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
         EVMError<DBError, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
-    type Spec = OpSpecId;
+    type Spec = BaseSpecId;
     type BlockEnv = BlockEnv;
     type Precompiles = PrecompilesMap;
 
     fn create_evm<DB: Database>(
         &self,
         db: DB,
-        input: EvmEnv<OpSpecId>,
+        input: EvmEnv<BaseSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
         Context::base()
@@ -51,7 +51,7 @@ impl EvmFactory for BaseEvmFactory {
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
         &self,
         db: DB,
-        input: EvmEnv<OpSpecId>,
+        input: EvmEnv<BaseSpecId>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;

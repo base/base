@@ -353,8 +353,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, Builder,
-        DefaultBase, L1BlockInfo, OpSpecId,
+        AlloyReceiptBuilder, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseSpecId,
+        Builder, DefaultBase, L1BlockInfo,
     };
 
     #[test]
@@ -449,7 +449,7 @@ mod tests {
                 gas_limit,
                 ..Default::default()
             })
-            .modify_cfg_chained(|cfg| cfg.spec = OpSpecId::JOVIAN);
+            .modify_cfg_chained(|cfg| cfg.spec = BaseSpecId::JOVIAN);
 
         let evm = ctx.build_with_inspector(NoOpInspector {});
 

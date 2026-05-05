@@ -1,4 +1,4 @@
-//! Contains the `[OpSpecId]` type and its implementation.
+//! Contains the `[BaseSpecId]` type and its implementation.
 
 use alloy_consensus::BlockHeader;
 use base_common_chains::Upgrades;
@@ -22,7 +22,7 @@ use revm::primitives::hardfork::SpecId;
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(non_camel_case_types)]
-pub enum OpSpecId {
+pub enum BaseSpecId {
     /// Bedrock spec id.
     #[strum(serialize = "Bedrock")]
     BEDROCK = 100,
@@ -56,8 +56,8 @@ pub enum OpSpecId {
     AZUL,
 }
 
-impl OpSpecId {
-    /// Converts the [`OpSpecId`] into a [`SpecId`].
+impl BaseSpecId {
+    /// Converts the [`BaseSpecId`] into a [`SpecId`].
     pub const fn into_eth_spec(self) -> SpecId {
         match self {
             Self::BEDROCK | Self::REGOLITH => SpecId::MERGE,
@@ -68,17 +68,17 @@ impl OpSpecId {
         }
     }
 
-    /// Checks if the [`OpSpecId`] is enabled in the other [`OpSpecId`].
+    /// Checks if the [`BaseSpecId`] is enabled in the other [`BaseSpecId`].
     pub const fn is_enabled_in(self, other: Self) -> bool {
         other as u8 <= self as u8
     }
 
-    /// Parses the [`OpSpecId`] from the chain spec and block header.
+    /// Parses the [`BaseSpecId`] from the chain spec and block header.
     pub fn from_header(chain_spec: impl Upgrades, header: impl BlockHeader) -> Self {
         Self::from_timestamp(chain_spec, header.timestamp())
     }
 
-    /// Returns the revm [`OpSpecId`] at the given timestamp.
+    /// Returns the [`BaseSpecId`] at the given timestamp.
     ///
     /// # Note
     ///
@@ -109,8 +109,8 @@ impl OpSpecId {
     }
 }
 
-impl From<OpSpecId> for SpecId {
-    fn from(spec: OpSpecId) -> Self {
+impl From<BaseSpecId> for SpecId {
+    fn from(spec: BaseSpecId) -> Self {
         spec.into_eth_spec()
     }
 }
@@ -122,31 +122,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_op_spec_id_eth_spec_compatibility() {
-        // Define test cases: (OpSpecId, enabled in ETH specs, enabled in OP specs)
+    fn test_base_spec_id_eth_spec_compatibility() {
+        // Define test cases: (BaseSpecId, enabled in ETH specs, enabled in Base specs)
         let test_cases = [
             (
-                OpSpecId::BEDROCK,
+                BaseSpecId::BEDROCK,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, false),
                     (SpecId::CANCUN, false),
                     (SpecId::default(), false),
                 ],
-                vec![(OpSpecId::BEDROCK, true), (OpSpecId::REGOLITH, false)],
+                vec![(BaseSpecId::BEDROCK, true), (BaseSpecId::REGOLITH, false)],
             ),
             (
-                OpSpecId::REGOLITH,
+                BaseSpecId::REGOLITH,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, false),
                     (SpecId::CANCUN, false),
                     (SpecId::default(), false),
                 ],
-                vec![(OpSpecId::BEDROCK, true), (OpSpecId::REGOLITH, true)],
+                vec![(BaseSpecId::BEDROCK, true), (BaseSpecId::REGOLITH, true)],
             ),
             (
-                OpSpecId::CANYON,
+                BaseSpecId::CANYON,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, true),
@@ -154,13 +154,13 @@ mod tests {
                     (SpecId::default(), false),
                 ],
                 vec![
-                    (OpSpecId::BEDROCK, true),
-                    (OpSpecId::REGOLITH, true),
-                    (OpSpecId::CANYON, true),
+                    (BaseSpecId::BEDROCK, true),
+                    (BaseSpecId::REGOLITH, true),
+                    (BaseSpecId::CANYON, true),
                 ],
             ),
             (
-                OpSpecId::ECOTONE,
+                BaseSpecId::ECOTONE,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, true),
@@ -168,14 +168,14 @@ mod tests {
                     (SpecId::default(), false),
                 ],
                 vec![
-                    (OpSpecId::BEDROCK, true),
-                    (OpSpecId::REGOLITH, true),
-                    (OpSpecId::CANYON, true),
-                    (OpSpecId::ECOTONE, true),
+                    (BaseSpecId::BEDROCK, true),
+                    (BaseSpecId::REGOLITH, true),
+                    (BaseSpecId::CANYON, true),
+                    (BaseSpecId::ECOTONE, true),
                 ],
             ),
             (
-                OpSpecId::FJORD,
+                BaseSpecId::FJORD,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, true),
@@ -183,15 +183,15 @@ mod tests {
                     (SpecId::default(), false),
                 ],
                 vec![
-                    (OpSpecId::BEDROCK, true),
-                    (OpSpecId::REGOLITH, true),
-                    (OpSpecId::CANYON, true),
-                    (OpSpecId::ECOTONE, true),
-                    (OpSpecId::FJORD, true),
+                    (BaseSpecId::BEDROCK, true),
+                    (BaseSpecId::REGOLITH, true),
+                    (BaseSpecId::CANYON, true),
+                    (BaseSpecId::ECOTONE, true),
+                    (BaseSpecId::FJORD, true),
                 ],
             ),
             (
-                OpSpecId::JOVIAN,
+                BaseSpecId::JOVIAN,
                 vec![
                     (SpecId::PRAGUE, true),
                     (SpecId::SHANGHAI, true),
@@ -199,17 +199,17 @@ mod tests {
                     (SpecId::MERGE, true),
                 ],
                 vec![
-                    (OpSpecId::BEDROCK, true),
-                    (OpSpecId::REGOLITH, true),
-                    (OpSpecId::CANYON, true),
-                    (OpSpecId::ECOTONE, true),
-                    (OpSpecId::FJORD, true),
-                    (OpSpecId::HOLOCENE, true),
-                    (OpSpecId::ISTHMUS, true),
+                    (BaseSpecId::BEDROCK, true),
+                    (BaseSpecId::REGOLITH, true),
+                    (BaseSpecId::CANYON, true),
+                    (BaseSpecId::ECOTONE, true),
+                    (BaseSpecId::FJORD, true),
+                    (BaseSpecId::HOLOCENE, true),
+                    (BaseSpecId::ISTHMUS, true),
                 ],
             ),
             (
-                OpSpecId::AZUL,
+                BaseSpecId::AZUL,
                 vec![
                     (SpecId::OSAKA, true),
                     (SpecId::PRAGUE, true),
@@ -218,47 +218,47 @@ mod tests {
                     (SpecId::MERGE, true),
                 ],
                 vec![
-                    (OpSpecId::BEDROCK, true),
-                    (OpSpecId::REGOLITH, true),
-                    (OpSpecId::CANYON, true),
-                    (OpSpecId::ECOTONE, true),
-                    (OpSpecId::FJORD, true),
-                    (OpSpecId::HOLOCENE, true),
-                    (OpSpecId::ISTHMUS, true),
-                    (OpSpecId::JOVIAN, true),
+                    (BaseSpecId::BEDROCK, true),
+                    (BaseSpecId::REGOLITH, true),
+                    (BaseSpecId::CANYON, true),
+                    (BaseSpecId::ECOTONE, true),
+                    (BaseSpecId::FJORD, true),
+                    (BaseSpecId::HOLOCENE, true),
+                    (BaseSpecId::ISTHMUS, true),
+                    (BaseSpecId::JOVIAN, true),
                 ],
             ),
         ];
 
-        for (op_spec, eth_tests, op_tests) in test_cases {
+        for (base_spec, eth_tests, base_tests) in test_cases {
             // Test ETH spec compatibility
             for (eth_spec, expected) in eth_tests {
                 assert_eq!(
-                    op_spec.into_eth_spec().is_enabled_in(eth_spec),
+                    base_spec.into_eth_spec().is_enabled_in(eth_spec),
                     expected,
                     "{:?} should {} be enabled in ETH {:?}",
-                    op_spec,
+                    base_spec,
                     if expected { "" } else { "not " },
                     eth_spec
                 );
             }
 
-            // Test OP spec compatibility
-            for (other_op_spec, expected) in op_tests {
+            // Test Base spec compatibility
+            for (other_base_spec, expected) in base_tests {
                 assert_eq!(
-                    op_spec.is_enabled_in(other_op_spec),
+                    base_spec.is_enabled_in(other_base_spec),
                     expected,
-                    "{:?} should {} be enabled in OP {:?}",
-                    op_spec,
+                    "{:?} should {} be enabled in Base {:?}",
+                    base_spec,
                     if expected { "" } else { "not " },
-                    other_op_spec
+                    other_base_spec
                 );
             }
         }
     }
 
     #[test]
-    fn default_op_spec_id() {
-        assert_eq!(OpSpecId::default(), OpSpecId::ISTHMUS);
+    fn default_base_spec_id() {
+        assert_eq!(BaseSpecId::default(), BaseSpecId::ISTHMUS);
     }
 }

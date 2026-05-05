@@ -2,8 +2,8 @@
 
 use alloy_evm::{Database, EvmEnv, EvmFactory};
 use base_common_evm::{
-    BaseContext, BaseEvm, BaseHaltReason, BaseTransaction, BaseTransactionError, Builder,
-    DefaultBase, OpSpecId,
+    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
+    Builder, DefaultBase,
 };
 use revm::{
     Context, Inspector,
@@ -38,14 +38,14 @@ impl EvmFactory for ZkvmOpEvmFactory {
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
         EVMError<DBError, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
-    type Spec = OpSpecId;
+    type Spec = BaseSpecId;
     type BlockEnv = BlockEnv;
     type Precompiles = OpZkvmPrecompiles;
 
     fn create_evm<DB: Database>(
         &self,
         db: DB,
-        input: EvmEnv<OpSpecId>,
+        input: EvmEnv<BaseSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
         Context::base()
@@ -60,7 +60,7 @@ impl EvmFactory for ZkvmOpEvmFactory {
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
         &self,
         db: DB,
-        input: EvmEnv<OpSpecId>,
+        input: EvmEnv<BaseSpecId>,
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;

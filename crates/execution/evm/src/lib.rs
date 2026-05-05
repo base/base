@@ -19,7 +19,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::{BasePrimitives, DepositReceiptExt, EIP1559ParamError};
 use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
-    BaseTransaction, BaseTxEnv, OpSpecId,
+    BaseSpecId, BaseTransaction, BaseTxEnv,
 };
 use base_execution_chainspec::BaseChainSpec;
 use reth_chainspec::EthChainSpec;
@@ -59,10 +59,10 @@ mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
 fn build_cfg_env(
-    spec: OpSpecId,
+    spec: BaseSpecId,
     timestamp: u64,
     chain_spec: &(impl Upgrades + EthChainSpec),
-) -> CfgEnv<OpSpecId> {
+) -> CfgEnv<BaseSpecId> {
     let mut cfg_env =
         CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
 
@@ -74,8 +74,11 @@ fn build_cfg_env(
 }
 
 /// Builds an [`EvmEnv`] for a given block header using [`base_common_evm`]'s spec resolution.
-fn build_evm_env(header: &Header, chain_spec: &(impl Upgrades + EthChainSpec)) -> EvmEnv<OpSpecId> {
-    let spec = OpSpecId::from_header(chain_spec, header);
+fn build_evm_env(
+    header: &Header,
+    chain_spec: &(impl Upgrades + EthChainSpec),
+) -> EvmEnv<BaseSpecId> {
+    let spec = BaseSpecId::from_header(chain_spec, header);
     let cfg_env = build_cfg_env(spec, header.timestamp, chain_spec);
 
     let blob_excess_gas_and_price = spec
@@ -105,8 +108,8 @@ fn build_next_evm_env(
     attributes: &BaseNextBlockEnvAttributes,
     base_fee_per_gas: u64,
     chain_spec: &(impl Upgrades + EthChainSpec),
-) -> EvmEnv<OpSpecId> {
-    let spec = OpSpecId::from_timestamp(chain_spec, attributes.timestamp);
+) -> EvmEnv<BaseSpecId> {
+    let spec = BaseSpecId::from_timestamp(chain_spec, attributes.timestamp);
     let cfg_env = build_cfg_env(spec, attributes.timestamp, chain_spec);
 
     let blob_excess_gas_and_price = spec
@@ -209,7 +212,7 @@ where
                     + TransactionEnv
                     + BaseTxEnv,
             Precompiles = PrecompilesMap,
-            Spec = OpSpecId,
+            Spec = BaseSpecId,
             BlockEnv = BlockEnv,
         > + Debug,
     Self: Send + Sync + Unpin + Clone + 'static,
@@ -228,7 +231,7 @@ where
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &Header) -> Result<EvmEnv<OpSpecId>, Self::Error> {
+    fn evm_env(&self, header: &Header) -> Result<EvmEnv<BaseSpecId>, Self::Error> {
         Ok(build_evm_env(header, self.chain_spec()))
     }
 
@@ -236,7 +239,7 @@ where
         &self,
         parent: &Header,
         attributes: &Self::NextBlockEnvCtx,
-    ) -> Result<EvmEnv<OpSpecId>, Self::Error> {
+    ) -> Result<EvmEnv<BaseSpecId>, Self::Error> {
         let base_fee =
             self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default();
 
@@ -286,7 +289,7 @@ where
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();
 
-        let spec = OpSpecId::from_timestamp(self.chain_spec(), timestamp);
+        let spec = BaseSpecId::from_timestamp(self.chain_spec(), timestamp);
         let cfg_env = build_cfg_env(spec, timestamp, self.chain_spec());
 
         let blob_excess_gas_and_price = spec
@@ -354,7 +357,7 @@ mod tests {
         map::{AddressMap, B256Map, HashMap},
     };
     use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
-    use base_common_evm::OpSpecId;
+    use base_common_evm::BaseSpecId;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use reth_chainspec::ChainSpec;
     use reth_evm::execute::ProviderError;
@@ -388,7 +391,7 @@ mod tests {
         let evm_config = BaseEvmConfig::base(chain_spec);
         let header = Header { timestamp: 0, ..Default::default() };
         let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
-        assert_eq!(cfg_env.spec, OpSpecId::AZUL);
+        assert_eq!(cfg_env.spec, BaseSpecId::AZUL);
         assert_eq!(cfg_env.tx_gas_limit_cap, Some(MAX_TX_GAS_LIMIT_OSAKA));
     }
 
@@ -440,8 +443,9 @@ mod tests {
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
         // Create a custom configuration environment with a chain ID of 111
-        let cfg =
-            CfgEnv::new().with_chain_id(111).with_spec_and_mainnet_gas_params(OpSpecId::default());
+        let cfg = CfgEnv::new()
+            .with_chain_id(111)
+            .with_spec_and_mainnet_gas_params(BaseSpecId::default());
 
         let evm_env = EvmEnv { cfg_env: cfg.clone(), ..Default::default() };
 
@@ -480,7 +484,7 @@ mod tests {
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
         let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new().with_spec_and_mainnet_gas_params(OpSpecId::ECOTONE),
+            cfg_env: CfgEnv::new().with_spec_and_mainnet_gas_params(BaseSpecId::ECOTONE),
             ..Default::default()
         };
 
@@ -508,8 +512,9 @@ mod tests {
         let evm_config = test_evm_config();
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
-        let cfg =
-            CfgEnv::new().with_chain_id(111).with_spec_and_mainnet_gas_params(OpSpecId::default());
+        let cfg = CfgEnv::new()
+            .with_chain_id(111)
+            .with_spec_and_mainnet_gas_params(BaseSpecId::default());
         let block = BlockEnv::default();
         let evm_env = EvmEnv { block_env: block, cfg_env: cfg.clone() };
 
@@ -546,7 +551,7 @@ mod tests {
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
         let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new().with_spec_and_mainnet_gas_params(OpSpecId::ECOTONE),
+            cfg_env: CfgEnv::new().with_spec_and_mainnet_gas_params(BaseSpecId::ECOTONE),
             ..Default::default()
         };
 

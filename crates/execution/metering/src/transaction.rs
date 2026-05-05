@@ -1,7 +1,7 @@
 use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_eips::Encodable2718;
 use alloy_primitives::U256;
-use base_common_evm::{L1BlockInfo, OpSpecId};
+use base_common_evm::{BaseSpecId, L1BlockInfo};
 use derive_more::Display;
 use reth_primitives_traits::Account;
 
@@ -42,7 +42,7 @@ pub fn validate_tx<T: Transaction + Encodable2718>(
 
     // Base-specific checks to see whether the sender can cover the L1 gas cost.
     // Reference: https://github.com/paradigmxyz/reth/blob/6aa73f14808491aae77fc7c6eb4f0aa63bef7e6e/crates/optimism/txpool/src/validator.rs#L219
-    let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(&data, OpSpecId::ISTHMUS);
+    let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(&data, BaseSpecId::ISTHMUS);
     let l1_cost = txn_cost.saturating_add(l1_cost_addition);
     if l1_cost > account.balance {
         return Err(TxValidationError::InsufficientFundsForL1Gas(l1_cost, account.balance));
@@ -125,7 +125,7 @@ mod tests {
 
         let max_fee = tx.max_fee_per_gas().saturating_mul(tx.gas_limit() as u128);
         let txn_cost = tx.value().saturating_add(U256::from(max_fee));
-        let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(tx.input(), OpSpecId::ISTHMUS);
+        let l1_cost_addition = l1_block_info.calculate_tx_l1_cost(tx.input(), BaseSpecId::ISTHMUS);
         let l1_cost = txn_cost.saturating_add(l1_cost_addition);
 
         let signature = signer.sign_transaction_sync(&mut tx).unwrap();

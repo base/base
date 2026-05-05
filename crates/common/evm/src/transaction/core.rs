@@ -287,7 +287,7 @@ mod tests {
             .source_hash(B256::from([1u8; 32]))
             .build()
             .unwrap();
-        // Verify transaction type (deposit transactions should have tx_type based on OpSpecId)
+        // Verify transaction type (deposit transactions should have tx_type based on BaseSpecId)
         // The tx_type is derived from the transaction structure, not set manually
         // Verify common fields access
         assert_eq!(op_tx.gas_limit(), 10);

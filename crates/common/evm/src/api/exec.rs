@@ -4,17 +4,17 @@ use revm::{
     state::EvmState,
 };
 
-use crate::{BaseTransactionError, L1BlockInfo, OpSpecId, transaction::BaseTxTr};
+use crate::{BaseSpecId, BaseTransactionError, L1BlockInfo, transaction::BaseTxTr};
 
 /// Trait alias for the context type required by [`BaseEvm`][crate::BaseEvm].
 ///
 /// Satisfied by [`crate::BaseContext`] for any database, binding the transaction type to
-/// [`BaseTxTr`], the spec to [`OpSpecId`], and the chain extension to [`L1BlockInfo`].
+/// [`BaseTxTr`], the spec to [`BaseSpecId`], and the chain extension to [`L1BlockInfo`].
 pub trait BaseContextTr:
     ContextTr<
         Journal: JournalTr<State = EvmState>,
         Tx: BaseTxTr,
-        Cfg: Cfg<Spec = OpSpecId>,
+        Cfg: Cfg<Spec = BaseSpecId>,
         Chain = L1BlockInfo,
     >
 {
@@ -24,7 +24,7 @@ impl<T> BaseContextTr for T where
     T: ContextTr<
             Journal: JournalTr<State = EvmState>,
             Tx: BaseTxTr,
-            Cfg: Cfg<Spec = OpSpecId>,
+            Cfg: Cfg<Spec = BaseSpecId>,
             Chain = L1BlockInfo,
         >
 {

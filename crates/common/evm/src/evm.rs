@@ -23,8 +23,8 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseHaltReason, BasePrecompiles, BaseTransaction, BaseTransactionError, OpSpecId,
-    handler::BaseHandler,
+    BaseContext, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
+    BaseTransactionError, handler::BaseHandler,
 };
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
@@ -41,7 +41,7 @@ type InnerEvm<DB, I, P> = RevmEvm<
 ///
 /// Parameterized over a database [`DB`], inspector [`I`], and precompile set [`P`]
 /// (defaulting to [`BasePrecompiles`]). All Base-specific context configuration —
-/// [`OpSpecId`], [`BaseTransaction`], and [`crate::L1BlockInfo`] — is fixed by [`BaseContext`].
+/// [`BaseSpecId`], [`BaseTransaction`], and [`crate::L1BlockInfo`] — is fixed by [`BaseContext`].
 ///
 /// The `inspect` flag controls whether [`Inspector`] callbacks are invoked during
 /// [`Evm::transact`]. When `false`, the inspector is present in the type but silent,
@@ -358,7 +358,7 @@ where
     type Tx = BaseTransaction<TxEnv>;
     type Error = EVMError<DB::Error, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
-    type Spec = OpSpecId;
+    type Spec = BaseSpecId;
     type BlockEnv = BlockEnv;
     type Precompiles = P;
     type Inspector = I;
@@ -427,9 +427,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseEvmFactory, JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
-        JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
-        JOVIAN_PAIRING_MAX_INPUT_SIZE, OpSpecId,
+        BaseEvmFactory, BaseSpecId, JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE,
+        JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
+        JOVIAN_PAIRING_MAX_INPUT_SIZE,
     };
 
     #[rstest]
@@ -440,7 +440,7 @@ mod tests {
     fn precompile_jovian_at_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
+            EvmEnv::new(CfgEnv::new_with_spec(BaseSpecId::JOVIAN), BlockEnv::default()),
         );
         let (precompiles, ctx) = (&mut evm.inner.precompiles, &mut evm.inner.ctx);
         let precompile = precompiles.get(&address).unwrap();
@@ -465,7 +465,7 @@ mod tests {
     fn precompile_jovian_over_max_input(#[case] address: Address, #[case] max_size: usize) {
         let mut evm = BaseEvmFactory::default().create_evm(
             EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(OpSpecId::JOVIAN), BlockEnv::default()),
+            EvmEnv::new(CfgEnv::new_with_spec(BaseSpecId::JOVIAN), BlockEnv::default()),
         );
         let (precompiles, ctx) = (&mut evm.inner.precompiles, &mut evm.inner.ctx);
         let precompile = precompiles.get(&address).unwrap();

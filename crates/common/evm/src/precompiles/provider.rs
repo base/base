@@ -10,7 +10,7 @@ use revm::{
 };
 
 use super::{bls12_381, bn254_pair};
-use crate::OpSpecId;
+use crate::BaseSpecId;
 
 /// Base precompile provider.
 #[derive(Debug, Clone)]
@@ -18,23 +18,23 @@ pub struct BasePrecompiles {
     /// Inner precompile provider is the same as Ethereum's.
     inner: EthPrecompiles,
     /// Spec id of the precompile provider.
-    spec: OpSpecId,
+    spec: BaseSpecId,
 }
 
 impl BasePrecompiles {
-    /// Create a new precompile provider with the given [`OpSpecId`].
+    /// Create a new precompile provider with the given [`BaseSpecId`].
     #[inline]
-    pub fn new_with_spec(spec: OpSpecId) -> Self {
+    pub fn new_with_spec(spec: BaseSpecId) -> Self {
         let precompiles = match spec {
-            spec @ (OpSpecId::BEDROCK
-            | OpSpecId::REGOLITH
-            | OpSpecId::CANYON
-            | OpSpecId::ECOTONE) => Precompiles::new(spec.into_eth_spec().into()),
-            OpSpecId::FJORD => Self::fjord(),
-            OpSpecId::GRANITE | OpSpecId::HOLOCENE => Self::granite(),
-            OpSpecId::ISTHMUS => Self::isthmus(),
-            OpSpecId::JOVIAN => Self::jovian(),
-            OpSpecId::AZUL => Self::azul(),
+            spec @ (BaseSpecId::BEDROCK
+            | BaseSpecId::REGOLITH
+            | BaseSpecId::CANYON
+            | BaseSpecId::ECOTONE) => Precompiles::new(spec.into_eth_spec().into()),
+            BaseSpecId::FJORD => Self::fjord(),
+            BaseSpecId::GRANITE | BaseSpecId::HOLOCENE => Self::granite(),
+            BaseSpecId::ISTHMUS => Self::isthmus(),
+            BaseSpecId::JOVIAN => Self::jovian(),
+            BaseSpecId::AZUL => Self::azul(),
         };
 
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
@@ -129,7 +129,7 @@ impl BasePrecompiles {
 
 impl<CTX> PrecompileProvider<CTX> for BasePrecompiles
 where
-    CTX: ContextTr<Cfg: Cfg<Spec = OpSpecId>>,
+    CTX: ContextTr<Cfg: Cfg<Spec = BaseSpecId>>,
 {
     type Output = InterpreterResult;
 
@@ -164,7 +164,7 @@ where
 
 impl Default for BasePrecompiles {
     fn default() -> Self {
-        Self::new_with_spec(OpSpecId::JOVIAN)
+        Self::new_with_spec(BaseSpecId::JOVIAN)
     }
 }
 
@@ -179,7 +179,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        OpSpecId,
+        BaseSpecId,
         precompiles::{bls12_381, bn254_pair},
     };
 
@@ -206,7 +206,7 @@ mod tests {
         input
     }
 
-    fn assert_jovian_input_limits(spec: OpSpecId) {
+    fn assert_jovian_input_limits(spec: BaseSpecId) {
         let precompiles = BasePrecompiles::new_with_spec(spec);
         let bn254_pair_precompile = precompiles.precompiles().get(&bn254::pair::ADDRESS).unwrap();
 
@@ -245,18 +245,18 @@ mod tests {
 
     #[test]
     fn test_get_jovian_precompile_with_bad_input_len() {
-        assert_jovian_input_limits(OpSpecId::JOVIAN);
+        assert_jovian_input_limits(BaseSpecId::JOVIAN);
     }
 
     #[test]
     fn test_get_azul_precompile_with_bad_input_len() {
-        assert_jovian_input_limits(OpSpecId::AZUL);
+        assert_jovian_input_limits(BaseSpecId::AZUL);
     }
 
     #[test]
     fn test_get_azul_precompile_with_osaka_rules() {
-        let jovian_precompiles = BasePrecompiles::new_with_spec(OpSpecId::JOVIAN);
-        let azul_precompiles = BasePrecompiles::new_with_spec(OpSpecId::AZUL);
+        let jovian_precompiles = BasePrecompiles::new_with_spec(BaseSpecId::JOVIAN);
+        let azul_precompiles = BasePrecompiles::new_with_spec(BaseSpecId::AZUL);
 
         let jovian_p256 =
             jovian_precompiles.precompiles().get(secp256r1::P256VERIFY.address()).unwrap();
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_default_precompiles_matches_jovian() {
-        let jovian = BasePrecompiles::new_with_spec(OpSpecId::JOVIAN).inner.precompiles;
+        let jovian = BasePrecompiles::new_with_spec(BaseSpecId::JOVIAN).inner.precompiles;
         let default = BasePrecompiles::default().inner.precompiles;
         assert_eq!(jovian.len(), default.len());
 

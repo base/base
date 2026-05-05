@@ -4,7 +4,7 @@ use core::fmt::Debug;
 use alloy_consensus::Sealed;
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded, revm::context::BlockEnv};
 use alloy_primitives::B256;
-use base_common_evm::{BaseTxEnv, OpSpecId};
+use base_common_evm::{BaseSpecId, BaseTxEnv};
 use base_consensus_derive::EthereumDataSource;
 use base_proof::{
     BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
@@ -27,7 +27,7 @@ impl<P, H, F> Prologue<P, H, F>
 where
     P: PreimageOracleClient + Send + Sync + Clone + Debug + 'static,
     H: HintWriterClient + Send + Sync + Clone + Debug + 'static,
-    F: EvmFactory<Spec = OpSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
+    F: EvmFactory<Spec = BaseSpecId, BlockEnv = BlockEnv> + Send + Sync + Clone + Debug + 'static,
     F::Tx: FromTxWithEncoded<base_common_consensus::BaseTxEnvelope>
         + FromRecoveredTx<base_common_consensus::BaseTxEnvelope>
         + BaseTxEnv,

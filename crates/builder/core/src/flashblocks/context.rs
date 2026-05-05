@@ -13,7 +13,7 @@ use base_access_lists::FBALBuilderDb;
 use base_bundles::{MeterBundleResponse, RejectedTransaction, RejectionReason};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseReceipt, BaseTransactionSigned, DepositReceipt, OpTxType};
-use base_common_evm::{BaseReceiptBuilder, L1BlockInfo, OpSpecId};
+use base_common_evm::{BaseReceiptBuilder, BaseSpecId, L1BlockInfo};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
@@ -285,7 +285,7 @@ pub struct BasePayloadBuilderCtx {
     /// How to build the payload.
     pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTransactionSigned>>,
     /// Evm Settings
-    pub evm_env: EvmEnv<OpSpecId>,
+    pub evm_env: EvmEnv<BaseSpecId>,
     /// Block env attributes for the current block.
     pub block_env_attributes: BaseNextBlockEnvAttributes,
     /// Marker to check whether the job has been cancelled.

@@ -4,7 +4,7 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
-use base_common_evm::OpSpecId;
+use base_common_evm::BaseSpecId;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_mpt::TrieHinter;
@@ -30,12 +30,12 @@ where
     /// Returns the active [`EvmEnv`] for the executor.
     pub(crate) fn evm_env(
         &self,
-        spec_id: OpSpecId,
+        spec_id: BaseSpecId,
         parent_header: &Header,
         payload_attrs: &BasePayloadAttributes,
         base_fee_params: &BaseFeeParams,
         min_base_fee: u64,
-    ) -> ExecutorResult<EvmEnv<OpSpecId>> {
+    ) -> ExecutorResult<EvmEnv<BaseSpecId>> {
         let block_env = self.prepare_block_env(
             spec_id,
             parent_header,
@@ -48,10 +48,10 @@ where
     }
 
     /// Returns the active [`CfgEnv`] for the executor.
-    pub(crate) fn evm_cfg_env(&self, timestamp: u64) -> CfgEnv<OpSpecId> {
+    pub(crate) fn evm_cfg_env(&self, timestamp: u64) -> CfgEnv<BaseSpecId> {
         CfgEnv::new()
             .with_chain_id(self.config.l2_chain_id.id())
-            .with_spec_and_mainnet_gas_params(OpSpecId::from_timestamp(self.config, timestamp))
+            .with_spec_and_mainnet_gas_params(BaseSpecId::from_timestamp(self.config, timestamp))
     }
 
     fn next_block_base_fee(
@@ -92,7 +92,7 @@ where
     /// Prepares a [`BlockEnv`] with the given [`BasePayloadAttributes`].
     pub(crate) fn prepare_block_env(
         &self,
-        spec_id: OpSpecId,
+        spec_id: BaseSpecId,
         parent_header: &Header,
         payload_attrs: &BasePayloadAttributes,
         base_fee_params: &BaseFeeParams,
@@ -105,7 +105,7 @@ where
         // from the parent header via the EIP-4844 formula would diverge from canonical
         // state whenever `parent.blob_gas_used` is non-zero, breaking proof generation.
         let blob_excess_gas_and_price = spec_id
-            .is_enabled_in(OpSpecId::ECOTONE)
+            .is_enabled_in(BaseSpecId::ECOTONE)
             .then_some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 });
 
         let next_block_base_fee = self
@@ -166,7 +166,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_eips::eip1559::BaseFeeParams;
     use alloy_primitives::Sealable;
-    use base_common_evm::{BaseEvmFactory, OpSpecId};
+    use base_common_evm::{BaseEvmFactory, BaseSpecId};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_proof_mpt::NoopTrieHinter;
@@ -181,7 +181,7 @@ mod tests {
     /// fail proof generation. See the parent `prepare_block_env` for the full context.
     #[test]
     fn blob_excess_gas_and_price_is_constant() {
-        // `prepare_block_env` is called with an explicit `OpSpecId`, so the rollup config is
+        // `prepare_block_env` is called with an explicit `BaseSpecId`, so the rollup config is
         // only consulted by `next_block_base_fee` for the Jovian gate — defaults are fine.
         let config = RollupConfig::default();
 
@@ -214,7 +214,7 @@ mod tests {
 
         let block_env = builder
             .prepare_block_env(
-                OpSpecId::ISTHMUS,
+                BaseSpecId::ISTHMUS,
                 &parent,
                 &payload_attrs,
                 &BaseFeeParams { max_change_denominator: 250, elasticity_multiplier: 6 },

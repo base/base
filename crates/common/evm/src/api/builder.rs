@@ -6,12 +6,12 @@ use revm::{
     interpreter::interpreter::EthInterpreter,
 };
 
-use crate::{BaseContext, BaseEvm, BasePrecompiles, OpSpecId};
+use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId};
 
 /// Trait that allows constructing a [`BaseEvm`] from a [`BaseContext`].
 ///
 /// Implemented for [`BaseContext<DB>`] of any database. The resulting [`BaseEvm`]
-/// uses [`BasePrecompiles`] for the active [`OpSpecId`]; call
+/// uses [`BasePrecompiles`] for the active [`BaseSpecId`]; call
 /// [`BaseEvm::with_precompiles`] afterwards to substitute a custom precompile set.
 pub trait Builder: Sized {
     /// The database type of the context.
@@ -32,7 +32,7 @@ impl<DB: Database> Builder for BaseContext<DB> {
     type Db = DB;
 
     fn build_base(self) -> BaseEvm<DB, ()> {
-        let spec: OpSpecId = self.cfg.spec;
+        let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
             revm::context::Evm {
                 ctx: self,
@@ -46,7 +46,7 @@ impl<DB: Database> Builder for BaseContext<DB> {
     }
 
     fn build_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<DB, INSP> {
-        let spec: OpSpecId = self.cfg.spec;
+        let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
             revm::context::Evm {
                 ctx: self,

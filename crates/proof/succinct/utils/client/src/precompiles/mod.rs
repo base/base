@@ -3,7 +3,7 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, Bytes};
-use base_common_evm::{BasePrecompiles, OpSpecId};
+use base_common_evm::{BasePrecompiles, BaseSpecId};
 use revm::{
     context::{Cfg, ContextTr},
     handler::{EthPrecompiles, PrecompileProvider},
@@ -61,7 +61,7 @@ pub mod cycle_tracker {
     }
 }
 
-fn get_or_create_precompiles(spec: OpSpecId) -> &'static Precompiles {
+fn get_or_create_precompiles(spec: BaseSpecId) -> &'static Precompiles {
     BasePrecompiles::new_with_spec(spec).precompiles()
 }
 
@@ -86,14 +86,14 @@ const fn get_precompile_tracker_name(id: &PrecompileId) -> Option<&'static str> 
 pub struct OpZkvmPrecompiles {
     /// The default [`EthPrecompiles`] provider.
     inner: EthPrecompiles,
-    /// The [`OpSpecId`] of the precompiles.
-    spec: OpSpecId,
+    /// The [`BaseSpecId`] of the precompiles.
+    spec: BaseSpecId,
 }
 
 impl OpZkvmPrecompiles {
-    /// Create a new precompile provider with the given [`OpSpecId`].
+    /// Create a new precompile provider with the given [`BaseSpecId`].
     #[inline]
-    pub fn new_with_spec(spec: OpSpecId) -> Self {
+    pub fn new_with_spec(spec: BaseSpecId) -> Self {
         let precompiles = get_or_create_precompiles(spec);
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
     }
@@ -101,7 +101,7 @@ impl OpZkvmPrecompiles {
 
 impl<CTX> PrecompileProvider<CTX> for OpZkvmPrecompiles
 where
-    CTX: ContextTr<Cfg: Cfg<Spec = OpSpecId>>,
+    CTX: ContextTr<Cfg: Cfg<Spec = BaseSpecId>>,
 {
     type Output = InterpreterResult;
 
@@ -214,17 +214,17 @@ mod tests {
 
     type TestContext = BaseContext<EmptyDB>;
 
-    const ALL_OP_SPECS: [OpSpecId; 10] = [
-        OpSpecId::BEDROCK,
-        OpSpecId::REGOLITH,
-        OpSpecId::CANYON,
-        OpSpecId::ECOTONE,
-        OpSpecId::FJORD,
-        OpSpecId::GRANITE,
-        OpSpecId::HOLOCENE,
-        OpSpecId::ISTHMUS,
-        OpSpecId::JOVIAN,
-        OpSpecId::AZUL,
+    const ALL_BASE_SPECS: [BaseSpecId; 10] = [
+        BaseSpecId::BEDROCK,
+        BaseSpecId::REGOLITH,
+        BaseSpecId::CANYON,
+        BaseSpecId::ECOTONE,
+        BaseSpecId::FJORD,
+        BaseSpecId::GRANITE,
+        BaseSpecId::HOLOCENE,
+        BaseSpecId::ISTHMUS,
+        BaseSpecId::JOVIAN,
+        BaseSpecId::AZUL,
     ];
 
     /// Creates a [`CallInputs`] with `bytecode_address` set to the given address
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn test_precompile_lookup_uses_bytecode_address() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
 
         // SHA256 precompile at address 0x02
         let sha256_addr = revm::precompile::u64_to_address(2);
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn test_run_nonexistent_precompile() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
 
         let fake_addr = Address::from_slice(&[0xFFu8; 20]);
         let call_inputs = create_call_inputs(fake_addr, Bytes::new(), u64::MAX);
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn test_run_out_of_gas() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
 
         let sha256_addr = revm::precompile::u64_to_address(2);
         let call_inputs = create_call_inputs(sha256_addr, Bytes::from_static(b"test"), 0);
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_run_with_shared_buffer_empty() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::BEDROCK);
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
 
         let sha256_addr = revm::precompile::u64_to_address(2);
         let call_inputs = CallInputs {
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_zkvm_precompiles_match_base_evm_precompiles() {
-        for spec in ALL_OP_SPECS {
+        for spec in ALL_BASE_SPECS {
             let base_precompiles = BasePrecompiles::new_with_spec(spec);
             let zkvm_precompiles = OpZkvmPrecompiles::new_with_spec(spec);
 
@@ -462,8 +462,8 @@ mod tests {
     fn test_azul_uses_osaka_p256verify() {
         let p256_addr = *secp256r1::P256VERIFY.address();
 
-        let jovian_set = get_or_create_precompiles(OpSpecId::JOVIAN);
-        let azul_set = get_or_create_precompiles(OpSpecId::AZUL);
+        let jovian_set = get_or_create_precompiles(BaseSpecId::JOVIAN);
+        let azul_set = get_or_create_precompiles(BaseSpecId::AZUL);
 
         let jovian_p256 = jovian_set.get(&p256_addr).expect("JOVIAN must have P256VERIFY");
         let azul_p256 = azul_set.get(&p256_addr).expect("AZUL must have P256VERIFY");

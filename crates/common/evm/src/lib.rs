@@ -6,7 +6,7 @@
 extern crate alloc;
 
 mod spec;
-pub use spec::OpSpecId;
+pub use spec::BaseSpecId;
 
 mod result;
 pub use result::BaseHaltReason;
