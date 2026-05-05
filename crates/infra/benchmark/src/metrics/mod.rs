@@ -45,6 +45,53 @@ impl BlockMetrics {
         self.execution_metrics.insert(name.to_string(), value);
     }
 
+    /// For every `<base>_sum` / `<base>_count` Counter pair, computes
+    /// `delta_sum / delta_count` relative to the previous scrape and inserts
+    /// the result as `<base>_avg`. Matches the Go runner's per-interval histogram logic.
+    pub fn compute_delta_averages(&mut self) {
+        use prometheus_parse::Value;
+
+        let sum_keys: Vec<String> = self
+            .execution_metrics
+            .keys()
+            .filter(|k| k.ends_with("_sum"))
+            .cloned()
+            .collect();
+
+        for sum_key in sum_keys {
+            let base = &sum_key[..sum_key.len() - 4];
+            let count_key = format!("{base}_count");
+
+            let cur_sum = match self.execution_metrics.get(&sum_key).copied() {
+                Some(v) => v,
+                None => continue,
+            };
+            let cur_count = match self.execution_metrics.get(&count_key).copied() {
+                Some(v) => v,
+                None => continue,
+            };
+
+            let prev_sum = self
+                .prev_prometheus
+                .get(&sum_key)
+                .and_then(|s| if let Value::Counter(v) | Value::Gauge(v) | Value::Untyped(v) = s.value { Some(v) } else { None })
+                .unwrap_or(0.0);
+            let prev_count = self
+                .prev_prometheus
+                .get(&count_key)
+                .and_then(|s| if let Value::Counter(v) | Value::Gauge(v) | Value::Untyped(v) = s.value { Some(v) } else { None })
+                .unwrap_or(0.0);
+
+            let delta_count = cur_count - prev_count;
+            if delta_count > 0.0 {
+                let avg = (cur_sum - prev_sum) / delta_count;
+                if !avg.is_nan() {
+                    self.execution_metrics.insert(format!("{base}_avg"), avg);
+                }
+            }
+        }
+    }
+
     /// Update a metric from a new Prometheus sample, computing deltas for
     /// Histogram and Summary types (deltaSum / deltaCount).
     ///
@@ -162,6 +209,7 @@ impl MetricsCollector {
         for sample in &samples {
             block.update_prometheus_metric(&sample.metric, sample);
         }
+        block.compute_delta_averages();
         Ok(())
     }
 
