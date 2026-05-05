@@ -250,6 +250,11 @@ impl<S: L2BlockProvider> Batcher<S> {
         self.tx_manager.pending_count()
     }
 
+    /// Returns the number of submitted frame transactions waiting for inclusion receipts.
+    pub fn staged_count(&self) -> usize {
+        self.tx_manager.staged_count()
+    }
+
     /// Submit the first `n` pending frame txs/blobs to the L1 miner's queue
     /// without mining. Returns the actual count staged.
     pub fn stage_n_frames(&self, l1: &mut L1Miner, n: usize) -> usize {

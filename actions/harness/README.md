@@ -31,10 +31,10 @@ store, P2P transport, conductor behavior, and finality/reset orchestration.
 
 | Component | Production Code Exercised | Harness-Owned Boundary | Main Production Gap |
 | --- | --- | --- | --- |
-| L1 chain and miner | Alloy `Header`, block hash chaining, signed `TxEnvelope` bodies, consensus receipts consumed by derivation, RPC-shaped transaction receipts for batcher confirmations | `L1Miner`, `L1Block`, manual reorg/safe/finalized heads | No tx pool, contract execution, full gas accounting, or beacon sidecar service |
+| L1 chain and miner | Alloy `Header`, block hash chaining, signed `TxEnvelope` bodies, consensus receipts consumed by derivation, RPC-shaped transaction receipts and log metadata for batcher confirmations and L1 events | `L1Miner`, `L1Block`, manual reorg/safe/finalized heads | No tx pool, contract execution, full gas accounting, or beacon sidecar service |
 | L1 calldata DA | Verifier nodes use `EthereumDataSource` and production `CalldataSource` over signed tx bodies | In-memory `ActionL1ChainProvider` backed by `SharedL1Chain` | RPC paging/provider edge cases are not covered by the default action path |
 | L1 blob DA | Verifier nodes use `EthereumDataSource`, production `BlobSource`, versioned hashes from signed EIP-4844 txs, and `ActionBlobProvider` sidecar lookup | Blob sidecars are stored in `L1Block::blob_sidecars` rather than fetched from a beacon API | Beacon API behavior, blob retention windows, and sidecar transport are not modeled |
-| Batcher | `BatchDriver`, `BatchEncoder`, channel manager behavior, span/single batch encoding, signed calldata/blob tx construction | `L1MinerTxManager`, in-memory L2/L1 event channels, synthetic inclusion receipts | Submission does not use a real RPC tx manager, replacement, fee bumping, inclusion polling, or production receipt polling |
+| Batcher | `BatchDriver`, `BatchEncoder`, channel manager behavior, span/single batch encoding, signed calldata/blob tx construction | `L1MinerTxManager`, in-memory L2/L1 event channels, synthetic inclusion receipts | Submission does not use a real RPC tx manager, replacement, fee bumping, or production receipt polling against an RPC provider |
 | Sequencer | L1 origin selection, attributes building, payload construction, real signed L2 user txs | Test actor lifecycle and manual stepping | No real node service loop, txpool/RPC ingress, engine transport, or production unsafe block scheduling |
 | Engine | `BasePayloadBuilder`, Base EVM config, temporary Reth database, state-root comparison | `ActionEngineClient` implements only the Engine API behavior tests need | Simplified payload statuses, forkchoice handling, transaction pool, networking, persistence lifecycle, and Engine API edge cases |
 | Verifier and derivation | Real derivation pipeline, attributes queue, reset signals, payload application, `SafeDB` | `TestRollupNode` orchestration and manual L1 push/signals | Reset/finality/unsafe-head flow is test-scripted rather than driven by production driver loops and online providers |
@@ -69,12 +69,14 @@ new tests:
 - Blob DA computes versioned hashes from signed EIP-4844 transactions and
   fetches matching blobs through `ActionBlobProvider`, but the sidecars still
   live in memory instead of behind a beacon API.
-- Receipts are synthetic. They preserve block hash, block number, transaction
-  index, sender, recipient, gas fields, and blob gas markers for signed
-  transactions, but they do not come from L1 contract execution.
-- Derivation logs can still be enqueued directly on `L1Miner`. That is useful
-  for focused derivation tests, but it does not prove the emitting contract
-  path.
+- Receipts are synthetic. They preserve block hash, block number, timestamp,
+  transaction index, log index, sender, recipient, gas fields, bloom filters,
+  and blob gas markers for signed transactions, but they do not come from L1
+  contract execution.
+- Derivation logs can still be enqueued directly on `L1Miner`. The harness now
+  wraps each enqueued log in a signed synthetic L1 event transaction and attaches
+  the log to that transaction's receipt. This is useful for focused derivation
+  tests, but it still does not prove the emitting contract path.
 - Finality, safe-head movement, resets, and reorgs are explicit test actions.
   They are not yet driven through the same online driver and consensus-client
   signals production receives.
@@ -107,26 +109,51 @@ pipeline sees production-shaped L1 data by default.
 
 ### 2. Production-Shaped Receipts and L1 Events
 
-Continue improving receipts and events until system-config, deposit, and
-portal-event tests look like real L1 blocks:
+Current behavior:
 
-- Preserve richer transaction metadata where derivation or the batcher depends
-  on it.
-- Add helpers for deploying or simulating the specific L1 contracts whose
-  events derivation consumes.
-- Keep direct log enqueueing available only for tests that explicitly need to
-  isolate derivation from L1 execution.
+- `enqueue_batcher_update`, gas-config updates, operator-fee updates, and
+  deposits all flow through signed synthetic L1 event transactions.
+- Consensus receipts expose the logs to derivation on the same transaction index
+  as the synthetic event transaction.
+- RPC transaction receipts preserve block hash, block number, block timestamp,
+  transaction hash, transaction index, global log index, sender, recipient, gas
+  fields, blob gas markers, and receipt/header blooms.
+- Direct `enqueue_log` remains available as an explicit test escape hatch, but
+  it no longer creates loose no-transaction receipts.
+
+Remaining gaps:
+
+- The harness does not execute `SystemConfig`, `OptimismPortal`, or other L1
+  contracts; event helpers still encode their expected logs directly.
+- `ActionL1BlockFetcher::get_logs` is still intentionally narrow. Tests that
+  require real `eth_getLogs` filtering should use an opt-in external L1 smoke
+  mode or extend this fetcher deliberately.
 
 ### 3. Tx Manager Realism
 
 Keep `BatchDriver` as the production owner, but make the adapter look more
 like the production transaction manager:
 
-- Model nonces, replacement, submission failure, delayed inclusion, and receipt
-  polling explicitly.
-- Distinguish RPC submission success from L1 inclusion.
-- Link blob submissions to the same transaction body and receipt observed by
-  derivation.
+Current behavior:
+
+- `send_async` signs each candidate with the batcher L1 signer and assigns a
+  monotonic nonce.
+- Submissions move from pending to staged when the harness submits them to
+  `L1Miner`.
+- A staged submission only resolves when `confirm_block` observes a matching
+  transaction receipt. If a block does not include the transaction, the
+  submission remains staged so tests can model delayed inclusion.
+- Blob submissions link the signed EIP-4844 transaction, versioned hashes,
+  sidecars, and mined receipt observed by derivation.
+- Explicit reorg and submission-failure helpers still fire failed receipts so
+  the production `BatchDriver` requeues frames.
+
+Remaining gaps:
+
+- There is no real RPC tx manager, mempool, replacement, fee bumping,
+  cancellation, or timeout policy.
+- Receipt polling is driven by explicit test calls instead of a background RPC
+  polling task.
 
 ### 4. Optional External L1 Smoke Mode
 
@@ -158,8 +185,11 @@ The production-shaped synthetic L1/DA implementation is now the default:
 3. Build direct L1 test transactions with `L1TxBuilder` or
    `L1Miner::submit_calldata_transaction` so calldata tests still exercise
    signer recovery and inbox filtering.
-4. Continue productionizing receipts, tx-manager behavior, and L1 event shape
-   without pulling in an external L1 process by default.
+4. Use the L1 event helpers for system-config, operator-fee, and deposit tests
+   so derivation reads logs from signed transaction receipts.
+5. Use `Batcher::stage_n_frames`, `Batcher::confirm_staged`, and
+   `Batcher::staged_count` when a test needs to distinguish submission from L1
+   inclusion.
 
 This keeps action tests fast while moving the critical DA boundary closer to
 production.
@@ -175,3 +205,7 @@ production.
 - 2026-05-04: Removed the legacy direct DA transaction path. Verifier nodes now
   use production-shaped signed L1 transactions by default, and batcher
   confirmations resolve against receipts from the mined `L1Block`.
+- 2026-05-05: Converted synthetic L1 events into signed event transactions with
+  per-transaction consensus receipts, RPC log metadata, and receipt/header
+  blooms. Updated `L1MinerTxManager` so staged submissions keep polling across
+  blocks that do not include their receipt.

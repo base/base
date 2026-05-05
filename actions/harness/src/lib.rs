@@ -12,8 +12,8 @@ pub use conductor::{ConductorState, TestConductor, TestConductorHandle};
 mod l1;
 pub use l1::{
     ActionBlobProvider, ActionL1BlockFetcher, ActionL1ChainProvider, ActionL1FetcherError, L1Block,
-    L1Miner, L1MinerConfig, L1ProviderError, L1TxBuilder, ReorgError, SharedL1Chain, UserDeposit,
-    block_info_from, l1_block_to_rpc,
+    L1Miner, L1MinerConfig, L1PendingTransaction, L1ProviderError, L1TxBuilder, ReorgError,
+    SharedL1Chain, UserDeposit, block_info_from, l1_block_to_rpc,
 };
 
 mod l2;

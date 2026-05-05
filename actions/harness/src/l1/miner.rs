@@ -1,6 +1,6 @@
 use alloy_consensus::{
-    Header, Receipt, ReceiptEnvelope, ReceiptWithBloom, SignableTransaction, Transaction,
-    TxEip1559, TxEnvelope, transaction::SignerRecoverable,
+    Header, Receipt, ReceiptEnvelope, SignableTransaction, Transaction, TxEip1559, TxEnvelope,
+    transaction::{SignerRecoverable, TransactionMeta},
 };
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData, TxKind, U256};
@@ -12,6 +12,8 @@ use base_protocol::{BlockInfo, Deposits};
 use tracing::info;
 
 use crate::Action;
+
+const EVENT_TX_CHAIN_ID: u64 = 0;
 
 /// Convert an [`L1Block`] reference to a [`BlockInfo`].
 pub fn block_info_from(block: &L1Block) -> BlockInfo {
@@ -99,6 +101,22 @@ impl L1TxBuilder {
     }
 }
 
+/// A signed L1 transaction waiting to be mined, with the logs its receipt should carry.
+#[derive(Debug, Clone)]
+pub struct L1PendingTransaction {
+    /// Signed L1 transaction body.
+    pub envelope: TxEnvelope,
+    /// Consensus logs emitted by this transaction.
+    pub logs: Vec<Log>,
+}
+
+impl L1PendingTransaction {
+    /// Create a pending L1 transaction with logs for its eventual receipt.
+    pub const fn new(envelope: TxEnvelope, logs: Vec<Log>) -> Self {
+        Self { envelope, logs }
+    }
+}
+
 /// An L1 block produced by the [`L1Miner`].
 ///
 /// Mirrors the structure the derivation pipeline reads from L1: a block
@@ -178,9 +196,7 @@ pub struct L1Miner {
     /// All blocks produced so far, indexed by block number.
     blocks: Vec<L1Block>,
     /// Signed transactions waiting to be included in the next block.
-    pending_transactions: Vec<TxEnvelope>,
-    /// Logs to be wrapped into a single receipt in the next mined block.
-    pending_logs: Vec<Log>,
+    pending_transactions: Vec<L1PendingTransaction>,
     /// EIP-4844 blob sidecars to be attached to the next mined block.
     pending_blobs: Vec<(B256, Box<Blob>)>,
     /// Configuration.
@@ -202,6 +218,10 @@ pub struct L1Miner {
     /// [`act_l1_finalize_next`]: L1Miner::act_l1_finalize_next
     /// [`act_l1_finalize`]: L1Miner::act_l1_finalize
     finalized_number: u64,
+    /// Deterministic signer used for synthetic L1 event transactions.
+    event_signer: PrivateKeySigner,
+    /// Next nonce for synthetic L1 event transactions.
+    event_nonce: u64,
 }
 
 impl L1Miner {
@@ -217,25 +237,37 @@ impl L1Miner {
         Self {
             blocks: vec![genesis],
             pending_transactions: vec![],
-            pending_logs: vec![],
             pending_blobs: vec![],
             config,
             fork_id: 0,
             safe_number: 0,
             finalized_number: 0,
+            event_signer: PrivateKeySigner::from_bytes(&B256::repeat_byte(0xE1))
+                .expect("valid event signer"),
+            event_nonce: 0,
         }
     }
 
-    /// Queue a [`Log`] to be included in a synthetic receipt in the next
+    /// Queue a [`Log`] as a signed synthetic L1 event transaction in the next
     /// mined block.
     ///
-    /// Logs are wrapped into a single [`Receipt`] during [`mine_block`], which
-    /// is how the derivation pipeline receives `ConfigUpdate` events and other
-    /// L1-emitted signals.
+    /// The harness does not execute L1 contracts, so event helpers create a
+    /// signed transaction to the emitting contract and attach the log to that
+    /// transaction's receipt. This keeps derivation-facing receipts shaped like
+    /// production blocks while preserving deterministic in-memory tests.
     ///
     /// [`mine_block`]: L1Miner::mine_block
     pub fn enqueue_log(&mut self, log: Log) {
-        self.pending_logs.push(log);
+        let tx = L1TxBuilder::signed_calldata(
+            &self.event_signer,
+            EVENT_TX_CHAIN_ID,
+            self.event_nonce,
+            log.address,
+            Bytes::new(),
+        )
+        .expect("event transaction signs");
+        self.event_nonce += 1;
+        self.submit_transaction_with_logs(tx, vec![log]);
     }
 
     /// Queue an EIP-4844 blob sidecar for inclusion in the next mined block.
@@ -506,9 +538,9 @@ impl L1Miner {
         Ok(discarded)
     }
 
-    /// Return a slice of all pending signed transactions waiting to be mined.
-    pub fn pending_transactions(&self) -> &[TxEnvelope] {
-        &self.pending_transactions
+    /// Return all pending signed transactions waiting to be mined.
+    pub fn pending_transactions(&self) -> impl ExactSizeIterator<Item = &TxEnvelope> {
+        self.pending_transactions.iter().map(|tx| &tx.envelope)
     }
 
     /// Alias for [`latest`] — returns the current chain tip.
@@ -544,7 +576,12 @@ impl L1Miner {
     /// Production-mode DA tests use this path so derivation receives the same
     /// `TxEnvelope` shape it reads from an RPC-backed provider.
     pub fn submit_transaction(&mut self, tx: TxEnvelope) {
-        self.pending_transactions.push(tx);
+        self.submit_transaction_with_logs(tx, Vec::new());
+    }
+
+    /// Enqueue a signed L1 transaction with logs for its eventual receipt.
+    pub fn submit_transaction_with_logs(&mut self, tx: TxEnvelope, logs: Vec<Log>) {
+        self.pending_transactions.push(L1PendingTransaction::new(tx, logs));
     }
 
     /// Build and enqueue a signed calldata transaction for inclusion in the next mined block.
@@ -573,14 +610,19 @@ impl L1Miner {
         let number = parent.header.number + 1;
         let timestamp = parent.header.timestamp + self.config.block_time;
 
-        let transactions = core::mem::take(&mut self.pending_transactions);
-        let logs = core::mem::take(&mut self.pending_logs);
+        let pending_transactions = core::mem::take(&mut self.pending_transactions);
+        let transactions =
+            pending_transactions.iter().map(|pending| pending.envelope.clone()).collect::<Vec<_>>();
+        let transaction_logs =
+            pending_transactions.into_iter().map(|pending| pending.logs).collect::<Vec<_>>();
         let blob_sidecars = core::mem::take(&mut self.pending_blobs);
+        let logs_bloom: Bloom = transaction_logs.iter().flat_map(|logs| logs.iter()).collect();
 
         let header = Header {
             number,
             timestamp,
             parent_hash,
+            logs_bloom,
             // Approximate a realistic base fee so tests that inspect fee
             // fields don't see a zero value.
             base_fee_per_gas: Some(1_000_000_000),
@@ -591,9 +633,14 @@ impl L1Miner {
             ..Default::default()
         };
         let block_hash = header.hash_slow();
-        let receipts = Self::build_receipts(transactions.len(), logs);
-        let transaction_receipts =
-            Self::build_transaction_receipts(&transactions, block_hash, number);
+        let receipts = Self::build_receipts(&transaction_logs);
+        let transaction_receipts = Self::build_transaction_receipts(
+            &transactions,
+            &transaction_logs,
+            block_hash,
+            number,
+            timestamp,
+        );
 
         let block = L1Block { header, transactions, receipts, transaction_receipts, blob_sidecars };
 
@@ -609,21 +656,14 @@ impl L1Miner {
     }
 
     /// Build consensus receipts for the in-memory chain provider.
-    pub fn build_receipts(transaction_count: usize, logs: Vec<Log>) -> Vec<Receipt> {
-        if transaction_count == 0 {
-            return if logs.is_empty() {
-                Vec::new()
-            } else {
-                vec![Receipt { status: true.into(), cumulative_gas_used: 21_000, logs }]
-            };
-        }
-
-        let mut pending_logs = Some(logs);
-        (0..transaction_count)
-            .map(|index| Receipt {
+    pub fn build_receipts(transaction_logs: &[Vec<Log>]) -> Vec<Receipt> {
+        transaction_logs
+            .iter()
+            .enumerate()
+            .map(|(index, logs)| Receipt {
                 status: true.into(),
                 cumulative_gas_used: 21_000 * (index as u64 + 1),
-                logs: pending_logs.take().unwrap_or_default(),
+                logs: logs.clone(),
             })
             .collect()
     }
@@ -631,24 +671,36 @@ impl L1Miner {
     /// Build production-shaped RPC receipts for a mined block.
     pub fn build_transaction_receipts(
         transactions: &[TxEnvelope],
+        transaction_logs: &[Vec<Log>],
         block_hash: B256,
         block_number: u64,
+        timestamp: u64,
     ) -> Vec<TransactionReceipt> {
+        let mut previous_log_count = 0;
         transactions
             .iter()
             .enumerate()
             .map(|(index, tx)| {
                 let gas_used = 21_000;
+                let tx_logs = transaction_logs.get(index).cloned().unwrap_or_default();
+                let meta = TransactionMeta {
+                    tx_hash: *tx.hash(),
+                    index: index as u64,
+                    block_hash,
+                    block_number,
+                    base_fee: Some(1_000_000_000),
+                    excess_blob_gas: None,
+                    timestamp,
+                };
+                let rpc_logs = RpcLog::collect_for_receipt(previous_log_count, meta, tx_logs);
+                previous_log_count += rpc_logs.len();
                 let receipt = Receipt::<RpcLog> {
                     status: true.into(),
                     cumulative_gas_used: gas_used * (index as u64 + 1),
-                    logs: Vec::new(),
+                    logs: rpc_logs,
                 };
                 TransactionReceipt {
-                    inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
-                        receipt,
-                        logs_bloom: Bloom::ZERO,
-                    }),
+                    inner: ReceiptEnvelope::Legacy(receipt.with_bloom()),
                     transaction_hash: *tx.hash(),
                     transaction_index: Some(index as u64),
                     block_hash: Some(block_hash),
@@ -686,7 +738,7 @@ impl Action for L1Miner {
 mod tests {
     use alloy_consensus::{Transaction, transaction::SignerRecoverable};
     use alloy_eips::eip4844::Blob;
-    use alloy_primitives::{Address, B256, Bytes};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, Log, LogData};
     use alloy_signer_local::PrivateKeySigner;
 
     use super::{L1Miner, L1TxBuilder, ReorgError};
@@ -706,6 +758,10 @@ mod tests {
         fn signed_tx(input: Bytes, nonce: u64, to: Address) -> alloy_consensus::TxEnvelope {
             L1TxBuilder::signed_calldata(&Self::signer(), 1, nonce, to, input)
                 .expect("test transaction signs")
+        }
+
+        fn log(address: Address, topic: B256) -> Log {
+            Log { address, data: LogData::new_unchecked(vec![topic], Bytes::from_static(b"event")) }
         }
     }
 
@@ -846,6 +902,43 @@ mod tests {
         m.mine_block();
         m.mine_block();
         assert!(m.latest().transactions.is_empty());
+    }
+
+    #[test]
+    fn enqueued_logs_are_mined_as_signed_event_transaction_receipts() {
+        let mut m = MinerFixture::miner();
+        let first = MinerFixture::log(Address::repeat_byte(0x51), B256::repeat_byte(0x01));
+        let second = MinerFixture::log(Address::repeat_byte(0x52), B256::repeat_byte(0x02));
+
+        m.enqueue_log(first.clone());
+        m.enqueue_log(second.clone());
+        assert_eq!(m.pending_transactions().len(), 2);
+
+        m.mine_block();
+        let block = m.latest();
+        assert_eq!(block.transactions.len(), 2);
+        assert_eq!(block.transactions[0].to(), Some(first.address));
+        assert_eq!(block.transactions[1].to(), Some(second.address));
+        assert_eq!(block.receipts[0].logs, vec![first.clone()]);
+        assert_eq!(block.receipts[1].logs, vec![second.clone()]);
+        assert_ne!(block.header.logs_bloom, Bloom::ZERO);
+
+        let first_receipt = &block.transaction_receipts[0];
+        let second_receipt = &block.transaction_receipts[1];
+        assert_ne!(*first_receipt.inner.logs_bloom(), Bloom::ZERO);
+        assert_ne!(*second_receipt.inner.logs_bloom(), Bloom::ZERO);
+        assert_eq!(first_receipt.logs()[0].inner, first);
+        assert_eq!(first_receipt.logs()[0].block_hash, Some(block.hash()));
+        assert_eq!(first_receipt.logs()[0].block_number, Some(block.number()));
+        assert_eq!(first_receipt.logs()[0].block_timestamp, Some(block.timestamp()));
+        assert_eq!(first_receipt.logs()[0].transaction_hash, Some(*block.transactions[0].hash()));
+        assert_eq!(first_receipt.logs()[0].transaction_index, Some(0));
+        assert_eq!(first_receipt.logs()[0].log_index, Some(0));
+
+        assert_eq!(second_receipt.logs()[0].inner, second);
+        assert_eq!(second_receipt.logs()[0].transaction_hash, Some(*block.transactions[1].hash()));
+        assert_eq!(second_receipt.logs()[0].transaction_index, Some(1));
+        assert_eq!(second_receipt.logs()[0].log_index, Some(1));
     }
 
     #[test]

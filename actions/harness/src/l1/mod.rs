@@ -2,7 +2,8 @@
 
 mod miner;
 pub use miner::{
-    L1Block, L1Miner, L1MinerConfig, L1TxBuilder, ReorgError, UserDeposit, block_info_from,
+    L1Block, L1Miner, L1MinerConfig, L1PendingTransaction, L1TxBuilder, ReorgError, UserDeposit,
+    block_info_from,
 };
 
 mod provider;

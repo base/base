@@ -125,6 +125,11 @@ impl L1MinerTxManager {
         self.inner.lock().unwrap().pending.len()
     }
 
+    /// Returns the number of submitted transactions waiting for inclusion receipts.
+    pub fn staged_count(&self) -> usize {
+        self.inner.lock().unwrap().staged.len()
+    }
+
     /// Schedule the next `n` [`send_async`] calls to immediately resolve with
     /// [`TxManagerError::Rpc`], causing the [`BatchDriver`] to requeue the
     /// associated frames in the encoder pipeline.
@@ -168,32 +173,38 @@ impl L1MinerTxManager {
         count
     }
 
-    /// Fire receipt oneshots for all staged items and (if configured) publish
-    /// an [`L1HeadEvent::NewHead`] for `block`.
+    /// Fire receipt oneshots for staged items included in `block` and (if configured)
+    /// publish an [`L1HeadEvent::NewHead`].
     ///
-    /// Call this after `l1.mine_block()` with the returned block so that
-    /// the [`BatchDriver`] receives correct receipts.
+    /// Staged items without receipts in `block` remain staged. This models the
+    /// production transaction manager's receipt polling: RPC submission can succeed
+    /// before the transaction is included by L1.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub fn confirm_block(&self, block: &L1Block) {
-        let staged = {
+        let responses = {
             let mut inner = self.inner.lock().unwrap();
-            inner.staged.drain(..).collect::<Vec<_>>()
+            let staged = core::mem::take(&mut inner.staged);
+            let mut still_staged = Vec::new();
+            let mut responses = Vec::new();
+            for p in staged {
+                let tx_hash = *p.envelope.hash();
+                if let Some(receipt) = block
+                    .transaction_receipts
+                    .iter()
+                    .find(|receipt| receipt.transaction_hash == tx_hash)
+                    .cloned()
+                {
+                    responses.push((p.responder, Ok(receipt)));
+                } else {
+                    still_staged.push(p);
+                }
+            }
+            inner.staged = still_staged;
+            responses
         };
-        for p in staged {
-            let tx_hash = *p.envelope.hash();
-            let response = block
-                .transaction_receipts
-                .iter()
-                .find(|receipt| receipt.transaction_hash == tx_hash)
-                .cloned()
-                .ok_or_else(|| {
-                    TxManagerError::Rpc(format!(
-                        "mined block {} missing receipt for transaction {tx_hash}",
-                        block.number()
-                    ))
-                });
-            let _ = p.responder.send(response);
+        for (responder, response) in responses {
+            let _ = responder.send(response);
         }
         if let Some(tx) = &self.l1_head_tx {
             let _ = tx.send(L1HeadEvent::NewHead(block.number()));
@@ -380,5 +391,59 @@ impl TxManager for L1MinerTxManager {
 
     fn sender_address(&self) -> Address {
         self.signer.address()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, B256, Bytes, U256};
+    use alloy_signer_local::PrivateKeySigner;
+    use base_tx_manager::{TxCandidate, TxManager};
+
+    use super::L1MinerTxManager;
+    use crate::L1Miner;
+
+    struct TxManagerFixture;
+
+    impl TxManagerFixture {
+        fn signer() -> PrivateKeySigner {
+            PrivateKeySigner::from_bytes(&B256::repeat_byte(0x11)).expect("valid test signer")
+        }
+
+        fn candidate(to: Address) -> TxCandidate {
+            TxCandidate {
+                tx_data: Bytes::from_static(b"\x00frame"),
+                to: Some(to),
+                gas_limit: 21_000,
+                value: U256::ZERO,
+                ..Default::default()
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn confirm_block_keeps_unincluded_staged_submission_polling() {
+        let inbox = Address::repeat_byte(0x42);
+        let manager = L1MinerTxManager::new(TxManagerFixture::signer(), inbox, 1);
+        let mut l1 = L1Miner::default();
+
+        let handle = manager.send_async(TxManagerFixture::candidate(inbox)).await;
+        assert_eq!(manager.pending_count(), 1);
+        assert_eq!(manager.stage_n_to_l1(&mut l1, 1), 1);
+        assert_eq!(manager.pending_count(), 0);
+        assert_eq!(manager.staged_count(), 1);
+
+        let genesis = l1.tip().clone();
+        manager.confirm_block(&genesis);
+        assert_eq!(manager.staged_count(), 1);
+
+        let block = l1.mine_block().clone();
+        manager.confirm_block(&block);
+        assert_eq!(manager.staged_count(), 0);
+
+        let receipt = handle.await.expect("staged transaction should confirm");
+        assert_eq!(receipt.block_number, Some(block.number()));
+        assert_eq!(receipt.transaction_index, Some(0));
+        assert_eq!(receipt.to, Some(inbox));
     }
 }
