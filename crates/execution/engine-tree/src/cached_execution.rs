@@ -306,11 +306,10 @@ mod tests {
         builder.build().expect("test pending blocks should build")
     }
 
-    const fn stub_execution_result() -> ExecutionResult<BaseHaltReason> {
+    fn stub_execution_result() -> ExecutionResult<BaseHaltReason> {
         ExecutionResult::Success {
             reason: revm::context::result::SuccessReason::Stop,
-            gas_used: 21_000,
-            gas_refunded: 0,
+            gas: revm::context::result::ResultGas::new_with_state_gas(21_000, 0, 0, 0),
             logs: Vec::new(),
             output: revm::context::result::Output::Call(Bytes::new()),
         }
@@ -366,6 +365,7 @@ mod tests {
                 inner: Recovered::new_unchecked(envelope, Address::ZERO),
                 block_hash: Some(B256::ZERO),
                 block_number: Some(block_number),
+                block_timestamp: None,
                 transaction_index: Some(0),
                 effective_gas_price: Some(1_000_000_000),
             },

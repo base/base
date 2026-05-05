@@ -20,7 +20,6 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, error::BasePayloadBuilderError,
-    payload::EthPayloadBuilderAttributes,
 };
 use base_execution_txpool::{
     BundleTransaction, TimestampedTransaction, estimated_da_size::DataAvailabilitySized,
@@ -283,7 +282,7 @@ pub struct BasePayloadBuilderCtx {
     /// The chainspec
     pub chain_spec: Arc<BaseChainSpec>,
     /// How to build the payload.
-    pub config: PayloadConfig<OpPayloadBuilderAttributes<BaseTransactionSigned>>,
+    pub config: PayloadConfig<BasePayloadBuilderAttributes<BaseTransactionSigned>>,
     /// Evm Settings
     pub evm_env: EvmEnv<BaseSpecId>,
     /// Block env attributes for the current block.
@@ -331,7 +330,7 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Returns the builder attributes.
-    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<BaseTransactionSigned> {
+    pub(super) const fn attributes(&self) -> &BasePayloadBuilderAttributes<BaseTransactionSigned> {
         &self.config.attributes
     }
 
@@ -1135,7 +1134,7 @@ impl BasePayloadBuilderCtx {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-use alloy_primitives::B256;
+use base_execution_payload_builder::payload::EthPayloadBuilderAttributes;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl BasePayloadBuilderCtx {

@@ -223,7 +223,8 @@ mod tests {
             scheme: CallScheme::Call,
             is_static: false,
             return_memory_offset: 0..0,
-            known_bytecode: None,
+            known_bytecode: Default::default(),
+            reservoir: 0,
         }
     }
 
@@ -308,7 +309,8 @@ mod tests {
             scheme: CallScheme::Call,
             is_static: false,
             return_memory_offset: 0..0,
-            known_bytecode: None,
+            known_bytecode: Default::default(),
+            reservoir: 0,
         };
 
         let result = precompiles.run(&mut ctx, &call_inputs).unwrap();
@@ -493,13 +495,18 @@ mod tests {
 
         // Legacy P256VERIFY costs 3,450 gas. With 5,000 gas it should succeed.
         assert!(
-            jovian_p256.execute(&[], 5_000).is_ok(),
+            jovian_p256.execute(&[], 5_000, 0).is_ok(),
             "JOVIAN P256VERIFY must succeed with 5,000 gas (legacy pricing, 3,450 base fee)",
         );
 
         // Osaka P256VERIFY costs 6,900 gas. With 5,000 gas it must fail with OOG.
+        let result =
+            azul_p256.execute(&[], 5_000, 0).expect("execute should not return a fatal error");
         assert!(
-            matches!(azul_p256.execute(&[], 5_000), Err(PrecompileError::OutOfGas)),
+            matches!(
+                result.status,
+                revm_precompile::PrecompileStatus::Halt(revm_precompile::PrecompileHalt::OutOfGas)
+            ),
             "AZUL P256VERIFY must fail with 5,000 gas (Osaka pricing, 6,900 base fee)",
         );
     }

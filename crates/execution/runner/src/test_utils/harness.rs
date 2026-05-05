@@ -13,7 +13,7 @@ use base_common_network::Base;
 use base_common_rpc_types::GenesisInfo;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_payload_builder::OpPayloadBuilderAttributes;
+use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_test_utils::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
@@ -181,7 +181,7 @@ impl TestHarness {
         let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
             | (base_fee_params.elasticity_multiplier as u64);
 
-        let payload_attributes = OpPayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+        let payload_attributes = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
             parent_hash,
             BasePayloadAttributes {
                 payload_attributes: PayloadAttributes {

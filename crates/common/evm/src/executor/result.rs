@@ -21,4 +21,8 @@ impl<H, T> TxResultTrait for BaseTxResult<H, T> {
     fn result(&self) -> &ResultAndState<Self::HaltReason> {
         &self.inner.result
     }
+
+    fn into_result(self) -> ResultAndState<Self::HaltReason> {
+        self.inner.result
+    }
 }

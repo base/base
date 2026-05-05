@@ -1,5 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
+use base_common_consensus::BaseTxEnvelope;
 use base_execution_exex::BaseProofsExEx;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_execution_rpc::{

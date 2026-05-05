@@ -31,6 +31,7 @@ fn rpc_transaction(tx: BaseTxEnvelope, block_number: u64) -> BaseTransaction {
             inner: Recovered::new_unchecked(tx, Address::ZERO),
             block_hash: None,
             block_number: Some(block_number),
+            block_timestamp: None,
             effective_gas_price: Some(0),
             transaction_index: Some(0),
         },

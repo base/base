@@ -35,7 +35,7 @@ use base_consensus_node::{EngineClientError as NodeEngineClientError, SequencerE
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{
-    BaseBuiltPayload, BasePayloadBuilder, OpPayloadBuilderAttributes,
+    BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes,
 };
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::BaseNode;
@@ -329,7 +329,7 @@ impl ActionEngineClient {
                 (genesis_hash, genesis_header)
             });
 
-        let builder_attrs = OpPayloadBuilderAttributes::try_new(effective_parent_hash, attrs, 3)
+        let builder_attrs = BasePayloadBuilderAttributes::try_new(effective_parent_hash, attrs, 3)
             .map_err(|e| {
                 TransportError::from(TransportErrorKind::custom_str(&format!(
                     "failed to create builder attributes: {e}"

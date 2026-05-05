@@ -33,7 +33,7 @@ async fn test_testsuite_op_assert_mine_block() -> Result<()> {
             vec![],
             Some(B256::ZERO),
             // TODO: refactor once we have actions to generate payload attributes.
-            OpPayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+            BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
                 B256::ZERO,
                 BasePayloadAttributes {
                     payload_attributes: alloy_rpc_types_engine::PayloadAttributes {
@@ -84,7 +84,7 @@ async fn test_testsuite_op_assert_mine_block_isthmus_activated() -> Result<()> {
             vec![],
             Some(B256::ZERO),
             // TODO: refactor once we have actions to generate payload attributes.
-            OpPayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
+            BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(
                 B256::ZERO,
                 BasePayloadAttributes {
                     payload_attributes: alloy_rpc_types_engine::PayloadAttributes {

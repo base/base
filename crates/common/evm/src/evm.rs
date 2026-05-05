@@ -3,10 +3,21 @@ use core::ops::{Deref, DerefMut};
 use alloy_evm::{Database, Evm, EvmEnv};
 use alloy_primitives::{Address, Bytes};
 use revm::{
-    ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
-    context::{BlockEnv, CfgEnv, TxEnv},
-    context_interface::result::{EVMError, ResultAndState},
-    handler::{PrecompileProvider, instructions::EthInstructions},
+    DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm,
+    InspectSystemCallEvm, Inspector, SystemCallEvm,
+    context::{
+        BlockEnv, CfgEnv, ContextError, ContextSetters, Evm as RevmEvm, FrameStack, TxEnv,
+        result::ExecResultAndState,
+    },
+    context_interface::{
+        ContextTr, JournalTr,
+        result::{EVMError, ExecutionResult, ResultAndState},
+    },
+    handler::{
+        EthFrame, EvmTr, FrameInitOrResult, Handler, ItemOrResult, PrecompileProvider,
+        SystemCallTx, evm::FrameTr, instructions::EthInstructions,
+    },
+    inspector::{InspectorEvmTr, InspectorHandler, JournalExt},
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
     state::EvmState,
 };

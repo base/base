@@ -20,7 +20,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use alloy_provider::{Provider, ProviderBuilder};
+use alloy_provider::{Provider, RootProvider};
 use base_bundles::MeterBundleResponse;
 use base_common_network::Base;
 use clap::Args;
@@ -166,7 +166,7 @@ impl BuilderConnector {
                             break;
                         };
                         let builder = builder.clone();
-                        let url = Arc::clone(&rpc_url);
+                        let url = rpc_url.clone();
                         join_set.spawn(async move {
                             match builder
                                 .client()

@@ -523,7 +523,7 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
     use base_common_consensus::BasePrimitives;
-    use base_execution_payload_builder::{OpPayloadBuilderAttributes, PayloadPrimitives};
+    use base_execution_payload_builder::{BasePayloadBuilderAttributes, PayloadPrimitives};
     use rand::rng;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_primitives_traits::SealedBlock;
@@ -667,7 +667,7 @@ mod tests {
     where
         N: PayloadPrimitives,
     {
-        type Attributes = OpPayloadBuilderAttributes<N::SignedTx>;
+        type Attributes = BasePayloadBuilderAttributes<N::SignedTx>;
         type BuiltPayload = MockPayload;
 
         async fn try_build(
@@ -737,7 +737,7 @@ mod tests {
         );
 
         // this is not nice but necessary
-        let mut attr = OpPayloadBuilderAttributes::default();
+        let mut attr = BasePayloadBuilderAttributes::default();
         attr.payload_attributes.parent = client.latest_header()?.unwrap().hash();
 
         {

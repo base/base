@@ -9,7 +9,7 @@ use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
         ExecutableTx, GasOutput, OnStateHook, StateChangePostBlockSource, StateChangeSource,
-        StateDB, SystemCaller, TxResult as TxResultTrait,
+        StateDB, SystemCaller,
         state_changes::{balance_increment_state, post_block_balance_increments},
     },
     eth::{EthTxResult, receipt_builder::ReceiptBuilderCtx},
@@ -27,29 +27,6 @@ use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseReceiptBuilder, BaseTxEnv, BaseTxResult,
     DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
 };
-
-/// The result of executing an OP transaction.
-#[derive(Debug)]
-pub struct BaseTxResult<H, T> {
-    /// The inner result of the transaction execution.
-    pub inner: EthTxResult<H, T>,
-    /// Whether the transaction is a deposit transaction.
-    pub is_deposit: bool,
-    /// The sender of the transaction.
-    pub sender: Address,
-}
-
-impl<H, T> TxResultTrait for BaseTxResult<H, T> {
-    type HaltReason = H;
-
-    fn result(&self) -> &ResultAndState<Self::HaltReason> {
-        &self.inner.result
-    }
-
-    fn into_result(self) -> ResultAndState<Self::HaltReason> {
-        self.inner.result
-    }
-}
 
 /// Block executor for Base.
 #[derive(Debug)]

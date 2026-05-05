@@ -9,7 +9,7 @@ use base_common_consensus::{BaseTxEnvelope, BaseTypedTransaction, TxDeposit};
 use base_common_network::Base;
 use base_common_rpc_types::Transaction;
 use base_common_rpc_types_engine::BasePayloadAttributes;
-use base_execution_payload_builder::OpPayloadBuilderAttributes;
+use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use chrono::Utc;
 
 use super::{
@@ -320,7 +320,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     async fn fcu(&self, attribs: BasePayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
         let latest = self.latest().await?.header.hash;
-        let attribs = OpPayloadBuilderAttributes::<BaseTxEnvelope>::try_new(latest, attribs, 3)?;
+        let attribs = BasePayloadBuilderAttributes::<BaseTxEnvelope>::try_new(latest, attribs, 3)?;
         let response = self.engine_api.update_forkchoice(latest, latest, Some(attribs)).await?;
 
         Ok(response)

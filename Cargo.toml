@@ -285,8 +285,8 @@ base-runtime = { path = "crates/utilities/runtime", default-features = false }
 revm = { version = "38.0.0", default-features = false }
 revm-bytecode = { version = "10.0.0", default-features = false }
 revm-database = { version = "13.0.0", default-features = false }
-revm-inspectors = { version = "0.34.3", default-features = false }
-revm-precompile = { version = "32.0.0", default-features = false }
+revm-inspectors = { version = "0.39.0", default-features = false }
+revm-precompile = { version = "34.0.0", default-features = false }
 revm-primitives = { version = "23.0.0", default-features = false }
 revm-context-interface = { version = "17.0.1", default-features = false }
 

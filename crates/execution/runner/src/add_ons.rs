@@ -7,7 +7,7 @@ use base_execution_payload_builder::{
 use base_execution_rpc::{
     config::{BaseEthConfigApiServer, BaseEthConfigHandler},
     eth::BaseEthApiBuilder,
-    miner::{MinerApiExtServer, BaseMinerExtApi},
+    miner::{BaseMinerExtApi, MinerApiExtServer},
     witness::BaseDebugWitnessApi,
 };
 use base_execution_txpool::BasePooledTx;
@@ -222,7 +222,7 @@ where
             ctx.node.task_executor().clone(),
             builder,
         );
-        let miner_ext = OpMinerExtApi::new(da_config, gas_limit_config);
+        let miner_ext = BaseMinerExtApi::new(da_config, gas_limit_config);
 
         rpc_add_ons
             .launch_add_ons_with(ctx, move |container| {
