@@ -1,6 +1,6 @@
 //! The [`Engine`] is a task queue that receives and executes [`EngineTask`]s.
 
-use std::{collections::BinaryHeap, sync::Arc};
+use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 
 use base_common_genesis::RollupConfig;
 use base_protocol::{BaseBlockConversionError, L2BlockInfo};
@@ -36,7 +36,9 @@ pub struct Engine<EngineClient_: EngineClient> {
     /// A sender that can be used to notify the engine actor of task queue length changes.
     task_queue_length: Sender<usize>,
     /// The task queue.
-    tasks: BinaryHeap<EngineTask<EngineClient_>>,
+    tasks: BinaryHeap<(EngineTask<EngineClient_>, Reverse<u64>)>,
+    /// Monotonic sequence number used to preserve FIFO order within equal-priority tasks.
+    next_task_sequence: u64,
 }
 
 impl<EngineClient_: EngineClient> Engine<EngineClient_> {
@@ -46,7 +48,13 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         state_sender: Sender<EngineState>,
         task_queue_length: Sender<usize>,
     ) -> Self {
-        Self { state: initial_state, state_sender, task_queue_length, tasks: BinaryHeap::default() }
+        Self {
+            state: initial_state,
+            state_sender,
+            task_queue_length,
+            tasks: BinaryHeap::default(),
+            next_task_sequence: 0,
+        }
     }
 
     /// Returns a reference to the inner [`EngineState`].
@@ -67,7 +75,10 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// Enqueues a new [`EngineTask`] for execution.
     /// Updates the queue length and notifies listeners of the change.
     pub fn enqueue(&mut self, task: EngineTask<EngineClient_>) {
-        self.tasks.push(task);
+        let sequence = self.next_task_sequence;
+        self.next_task_sequence =
+            self.next_task_sequence.checked_add(1).expect("engine task sequence overflow");
+        self.tasks.push((task, Reverse(sequence)));
         self.task_queue_length.send_replace(self.tasks.len());
         Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
     }
@@ -164,6 +175,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// Clears the task queue.
     pub fn clear(&mut self) {
         self.tasks.clear();
+        self.next_task_sequence = 0;
+        self.task_queue_length.send_replace(0);
+        Metrics::engine_task_queue_depth().set(0.0);
     }
 
     /// Attempts to drain the queue by executing all [`EngineTask`]s in-order. If any task returns
@@ -171,7 +185,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// the error is returned.
     pub async fn drain(&mut self) -> Result<(), EngineTaskErrors> {
         // Drain tasks in order of priority, halting on errors for a retry to be attempted.
-        while let Some(task) = self.tasks.peek() {
+        while let Some((task, _)) = self.tasks.peek() {
             // Execute the task
             task.execute(&mut self.state).await?;
 
@@ -207,13 +221,14 @@ pub enum EngineResetError {
 mod tests {
     use std::sync::Arc;
 
-    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
+    use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
     use base_common_genesis::RollupConfig;
     use tokio::sync::watch;
 
     use crate::{
-        Engine, EngineState, EngineSyncStateUpdate,
-        test_utils::{test_block_info, test_engine_client_builder},
+        BuildTask, Engine, EngineState, EngineSyncStateUpdate, EngineTask, GetPayloadTask,
+        InsertPayloadSafety, SealTask,
+        test_utils::{TestAttributesBuilder, test_block_info, test_engine_client_builder},
     };
 
     fn syncing_fcu() -> ForkchoiceUpdated {
@@ -234,6 +249,122 @@ mod tests {
             },
             payload_id: None,
         }
+    }
+
+    fn test_engine() -> Engine<crate::test_utils::MockEngineClient> {
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        Engine::new(EngineState::default(), state_tx, queue_tx)
+    }
+
+    #[test]
+    fn equal_priority_build_tasks_are_fifo() {
+        let client = Arc::new(test_engine_client_builder().build());
+        let cfg = Arc::new(RollupConfig::default());
+        let mut engine = test_engine();
+
+        let first_timestamp = 1;
+        let second_timestamp = 2;
+
+        engine.enqueue(EngineTask::Build(Box::new(BuildTask::new(
+            Arc::clone(&client),
+            Arc::clone(&cfg),
+            TestAttributesBuilder::new().with_timestamp(first_timestamp).build(),
+            None,
+        ))));
+        engine.enqueue(EngineTask::Build(Box::new(BuildTask::new(
+            Arc::clone(&client),
+            Arc::clone(&cfg),
+            TestAttributesBuilder::new().with_timestamp(second_timestamp).build(),
+            None,
+        ))));
+
+        let (first, _) = engine.tasks.pop().expect("first task should be queued");
+        let (second, _) = engine.tasks.pop().expect("second task should be queued");
+
+        match first {
+            EngineTask::Build(task) => {
+                assert_eq!(
+                    task.attributes.attributes().payload_attributes.timestamp,
+                    first_timestamp
+                );
+            }
+            other => panic!("expected first build task, got {other:?}"),
+        }
+
+        match second {
+            EngineTask::Build(task) => {
+                assert_eq!(
+                    task.attributes.attributes().payload_attributes.timestamp,
+                    second_timestamp
+                );
+            }
+            other => panic!("expected second build task, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn equal_priority_seal_and_get_payload_tasks_are_fifo() {
+        let client = Arc::new(test_engine_client_builder().build());
+        let cfg = Arc::new(RollupConfig::default());
+        let attributes = TestAttributesBuilder::new().build();
+        let mut engine = test_engine();
+        let first_payload_id = PayloadId::new([1; 8]);
+        let second_payload_id = PayloadId::new([2; 8]);
+
+        engine.enqueue(EngineTask::Seal(Box::new(SealTask::new(
+            Arc::clone(&client),
+            Arc::clone(&cfg),
+            first_payload_id,
+            attributes.clone(),
+            InsertPayloadSafety::Unsafe,
+            None,
+        ))));
+        engine.enqueue(EngineTask::GetPayload(Box::new(GetPayloadTask::new(
+            Arc::clone(&client),
+            Arc::clone(&cfg),
+            second_payload_id,
+            attributes,
+            None,
+        ))));
+
+        let (first, _) = engine.tasks.pop().expect("first task should be queued");
+        let (second, _) = engine.tasks.pop().expect("second task should be queued");
+
+        match first {
+            EngineTask::Seal(task) => {
+                assert_eq!(task.payload_id, first_payload_id);
+            }
+            other => panic!("expected first seal task, got {other:?}"),
+        }
+
+        match second {
+            EngineTask::GetPayload(task) => {
+                assert_eq!(task.payload_id, second_payload_id);
+            }
+            other => panic!("expected second get-payload task, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clear_publishes_zero_queue_length() {
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, queue_rx) = watch::channel(0usize);
+        let client = Arc::new(test_engine_client_builder().build());
+        let cfg = Arc::new(RollupConfig::default());
+        let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+
+        engine.enqueue(EngineTask::Build(Box::new(BuildTask::new(
+            client,
+            cfg,
+            TestAttributesBuilder::new().build(),
+            None,
+        ))));
+        assert_eq!(*queue_rx.borrow(), 1);
+
+        engine.clear();
+
+        assert_eq!(*queue_rx.borrow(), 0);
     }
 
     #[tokio::test]
