@@ -17,6 +17,7 @@ base-common-genesis.workspace = true
 base-protocol = {workspace = true, features = ["serde", "std"]}
 
 # alloy
+alloy-json-rpc.workspace = true
 alloy-network.workspace = true
 alloy-pubsub.workspace = true
 alloy-transport.workspace = true

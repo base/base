@@ -1,7 +1,7 @@
 //! A task for building a new block and importing it.
 use std::{sync::Arc, time::Instant};
 
-use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
+use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadId, PayloadStatusEnum};
 use async_trait::async_trait;
 use base_common_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
@@ -128,7 +128,15 @@ impl<EngineClient_: EngineClient> BuildTask<EngineClient_> {
         }
         .map_err(|e| {
             error!(target: "engine_builder", error = %e, "Forkchoice update failed");
-            BuildTaskError::EngineBuildError(EngineBuildError::AttributesInsertionFailed(e))
+            let error = e
+                .as_error_resp()
+                .and_then(|e| {
+                    (e.code == INVALID_FORK_CHOICE_STATE_ERROR as i64)
+                        .then_some(EngineBuildError::ForkchoiceStateInvalid)
+                })
+                .unwrap_or_else(|| EngineBuildError::AttributesInsertionFailed(e));
+
+            BuildTaskError::EngineBuildError(error)
         })?;
 
         Self::validate_forkchoice_status(update.payload_status.status)?;

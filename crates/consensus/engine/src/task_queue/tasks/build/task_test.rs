@@ -2,8 +2,11 @@
 
 use std::sync::Arc;
 
+use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::FixedBytes;
-use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum};
+use alloy_rpc_types_engine::{
+    ForkchoiceUpdated, INVALID_FORK_CHOICE_STATE_ERROR, PayloadId, PayloadStatus, PayloadStatusEnum,
+};
 use base_common_genesis::RollupConfig;
 use rstest::rstest;
 use thiserror::Error;
@@ -11,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     BuildTask, BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
-    EngineState, EngineTaskExt,
+    EngineState, EngineTaskError, EngineTaskErrorSeverity, EngineTaskExt,
     test_utils::{
         MockEngineClientBuilder, TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
         test_engine_client_builder,
@@ -54,6 +57,8 @@ enum TestErr {
     EngineSyncing,
     #[error("FinalizedAheadOfUnsafe.")]
     FinalizedAheadOfUnsafe,
+    #[error("ForkchoiceStateInvalid.")]
+    ForkchoiceStateInvalid,
     #[error("InvalidPayload.")]
     InvalidPayload,
     #[error("MissingPayloadId.")]
@@ -77,6 +82,7 @@ async fn wrapped_execute<EngineClient_: EngineClient>(
             }
             EngineBuildError::EngineSyncing => Err(TestErr::EngineSyncing),
             EngineBuildError::FinalizedAheadOfUnsafe(_, _) => Err(TestErr::FinalizedAheadOfUnsafe),
+            EngineBuildError::ForkchoiceStateInvalid => Err(TestErr::ForkchoiceStateInvalid),
             EngineBuildError::InvalidPayload(_) => Err(TestErr::InvalidPayload),
             EngineBuildError::MissingPayloadId => Err(TestErr::MissingPayloadId),
             EngineBuildError::UnexpectedPayloadStatus(_) => Err(TestErr::Unexpected),
@@ -166,4 +172,71 @@ async fn test_execute_variants(
             );
         }
     }
+}
+
+fn configure_fcu_error(
+    b: MockEngineClientBuilder,
+    fcu_version: EngineForkchoiceVersion,
+    error: ErrorPayload,
+    cfg: &mut RollupConfig,
+    attributes_timestamp: u64,
+) -> MockEngineClientBuilder {
+    match fcu_version {
+        EngineForkchoiceVersion::V2 => {
+            cfg.hardforks.ecotone_time = Some(attributes_timestamp + 1);
+            b.with_fork_choice_updated_v2_error(error)
+        }
+        EngineForkchoiceVersion::V3 => {
+            cfg.hardforks.ecotone_time = Some(attributes_timestamp);
+            b.with_fork_choice_updated_v3_error(error)
+        }
+    }
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_invalid_forkchoice_state_triggers_reset(
+    #[values(EngineForkchoiceVersion::V2, EngineForkchoiceVersion::V3)]
+    fcu_version: EngineForkchoiceVersion,
+) {
+    let parent_block = test_block_info(0);
+    let unsafe_block = test_block_info(1);
+    let attributes_timestamp = unsafe_block.block_info.timestamp;
+
+    let mut cfg = RollupConfig::default();
+
+    let error = ErrorPayload {
+        code: INVALID_FORK_CHOICE_STATE_ERROR as i64,
+        message: "Invalid fork choice state".into(),
+        data: None,
+    };
+
+    let engine_client = configure_fcu_error(
+        test_engine_client_builder(),
+        fcu_version,
+        error,
+        &mut cfg,
+        attributes_timestamp,
+    )
+    .build();
+
+    let attributes = TestAttributesBuilder::new()
+        .with_parent(parent_block)
+        .with_timestamp(attributes_timestamp)
+        .build();
+
+    let task = BuildTask::new(Arc::new(engine_client), Arc::new(cfg), attributes, None);
+
+    let mut state = TestEngineStateBuilder::new()
+        .with_unsafe_head(unsafe_block)
+        .with_safe_head(parent_block)
+        .with_finalized_head(parent_block)
+        .build();
+
+    let result = wrapped_execute(&task, &mut state).await;
+
+    assert_eq!(result, Err(TestErr::ForkchoiceStateInvalid));
+
+    let err = BuildTaskError::EngineBuildError(EngineBuildError::ForkchoiceStateInvalid);
+    assert_eq!(err.severity(), EngineTaskErrorSeverity::Reset);
 }

@@ -29,6 +29,9 @@ pub enum EngineBuildError {
     /// The forkchoice update call to the engine api failed.
     #[error("Failed to build payload attributes in the engine. Forkchoice RPC error: {0}")]
     AttributesInsertionFailed(#[from] RpcError<TransportErrorKind>),
+    /// The engine returned an invalid forkchoice state error.
+    #[error("Invalid forkchoice state")]
+    ForkchoiceStateInvalid,
     /// The inserted payload is invalid.
     #[error("The inserted payload is invalid: {0}")]
     InvalidPayload(String),
@@ -66,6 +69,9 @@ impl EngineTaskError for BuildTaskError {
             | Self::EngineBuildError(EngineBuildError::MissingPayloadId)
             | Self::EngineBuildError(EngineBuildError::EngineSyncing) => {
                 EngineTaskErrorSeverity::Temporary
+            }
+            Self::EngineBuildError(EngineBuildError::ForkchoiceStateInvalid) => {
+                EngineTaskErrorSeverity::Reset
             }
             Self::MpscSend(_) => EngineTaskErrorSeverity::Critical,
         }

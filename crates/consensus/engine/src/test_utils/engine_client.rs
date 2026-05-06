@@ -3,6 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
+use alloy_json_rpc::ErrorPayload;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, BlockHash, StorageKey};
 use alloy_provider::{EthGetBlock, ProviderCall, RpcWithBlock};
@@ -56,6 +57,12 @@ pub struct MockEngineStorage {
     pub fork_choice_updated_v2_response: Option<ForkchoiceUpdated>,
     /// Storage for `fork_choice_updated_v3` responses.
     pub fork_choice_updated_v3_response: Option<ForkchoiceUpdated>,
+
+    // Version-specific fork_choice_updated error overrides
+    /// Error to return for `fork_choice_updated_v2` instead of a response.
+    pub fork_choice_updated_v2_error: Option<ErrorPayload>,
+    /// Error to return for `fork_choice_updated_v3` instead of a response.
+    pub fork_choice_updated_v3_error: Option<ErrorPayload>,
 
     // Version-specific get_payload responses
     /// Storage for execution payload envelope v2 responses.
@@ -173,6 +180,18 @@ impl MockEngineClientBuilder {
     /// Sets the `fork_choice_updated_v3` response.
     pub fn with_fork_choice_updated_v3_response(mut self, response: ForkchoiceUpdated) -> Self {
         self.storage.fork_choice_updated_v3_response = Some(response);
+        self
+    }
+
+    /// Sets an error to return for `fork_choice_updated_v2`.
+    pub fn with_fork_choice_updated_v2_error(mut self, error: ErrorPayload) -> Self {
+        self.storage.fork_choice_updated_v2_error = Some(error);
+        self
+    }
+
+    /// Sets an error to return for `fork_choice_updated_v3`.
+    pub fn with_fork_choice_updated_v3_error(mut self, error: ErrorPayload) -> Self {
+        self.storage.fork_choice_updated_v3_error = Some(error);
         self
     }
 
@@ -546,6 +565,9 @@ impl BaseEngineApi for MockEngineClient {
         _payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         let storage = self.storage.read().await;
+        if let Some(error) = storage.fork_choice_updated_v2_error.clone() {
+            return Err(TransportError::ErrorResp(error));
+        }
         storage.fork_choice_updated_v2_response.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "fork_choice_updated_v2 was called but no v2 response configured. \
@@ -560,6 +582,9 @@ impl BaseEngineApi for MockEngineClient {
         _payload_attributes: Option<BasePayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         let storage = self.storage.read().await;
+        if let Some(error) = storage.fork_choice_updated_v3_error.clone() {
+            return Err(TransportError::ErrorResp(error));
+        }
         storage.fork_choice_updated_v3_response.clone().ok_or_else(|| {
             TransportError::from(TransportErrorKind::custom_str(
                 "fork_choice_updated_v3 was called but no v3 response configured. \
