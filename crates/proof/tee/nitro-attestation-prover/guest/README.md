@@ -11,7 +11,7 @@ check` invocations for everyone who doesn't have that toolchain installed.
 
 ## Quick start
 
-Build the Docker image (once), then build the ELF and bundle it:
+Build the Docker image (once), then build and verify:
 
 ```sh
 # From the repository root:
@@ -21,26 +21,7 @@ docker build --platform=linux/amd64 \
     -t nitro-guest-builder \
     crates/proof/tee/nitro-attestation-prover/guest
 
-# 2. Build ELF, bundle into R0BF, and compute image ID
-docker run --rm --platform=linux/amd64 \
-    -v "$(pwd)":/build/base \
-    nitro-guest-builder
-```
-
-Step 2 prints the **image ID** and writes two artifacts:
-
-| Artifact | Path | Description |
-|---|---|---|
-| Raw ELF | `target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest` | The compiled guest binary |
-| R0BF bundle | `target/base-proof-tee-nitro-verifier-guest.r0bf` | ELF + risc0 v1compat kernel (uploaded to IPFS) |
-
-### Verifying your build
-
-Use `just verify` to print all hashes and optionally compare against the
-production IPFS upload in a single command:
-
-```sh
-# 3. Verify local build hashes only
+# 2. Build and verify (automatically builds if artifacts don't exist)
 docker run --rm --platform=linux/amd64 \
     -v "$(pwd)":/build/base \
     nitro-guest-builder verify
@@ -53,7 +34,8 @@ docker run --rm --platform=linux/amd64 \
     nitro-guest-builder verify "<IPFS_GATEWAY_URL>"
 ```
 
-This prints three distinct values:
+Step 2 automatically runs the full build if artifacts don't exist yet
+(subsequent runs skip the build and just print hashes). It outputs:
 
 | Value | What it is | Used for |
 |---|---|---|
@@ -63,6 +45,13 @@ This prints three distinct values:
 
 When an IPFS URL is provided, the command also downloads the remote R0BF
 and checks it matches your local bundle, printing `MATCH` or `MISMATCH`.
+
+The build produces two artifacts:
+
+| Artifact | Path |
+|---|---|
+| Raw ELF | `target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest` |
+| R0BF bundle | `target/base-proof-tee-nitro-verifier-guest.r0bf` |
 
 ### Apple Silicon note
 

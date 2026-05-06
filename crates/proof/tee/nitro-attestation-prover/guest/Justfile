@@ -71,25 +71,25 @@ bundle: build
         target/riscv32im-risc0-zkvm-elf/release/{{ guest }} \
         --output target/{{ guest }}.r0bf
 
-# Verify build artifacts and optionally compare against a remote IPFS upload.
-# Prints the ELF hash, R0BF hash, and image ID. If an IPFS URL is provided,
-# downloads the remote R0BF and checks it matches the local bundle.
+# Build, verify, and optionally compare against a remote IPFS upload.
+# If build artifacts don't exist yet, automatically runs the full build
+# first. Prints the ELF hash, R0BF hash, and image ID. If an IPFS URL
+# is provided, downloads the remote R0BF and checks it matches the
+# local bundle.
 #
 # Usage:
-#   just verify                     # local hashes only
+#   just verify                     # build (if needed) + local hashes
 #   just verify "https://..."       # also compare against IPFS
 verify ipfs_url="":
     #!/usr/bin/env bash
     set -euo pipefail
     elf="target/riscv32im-risc0-zkvm-elf/release/{{ guest }}"
     r0bf="target/{{ guest }}.r0bf"
-    if [ ! -f "$elf" ]; then
-        echo "error: ELF not found at $elf — run 'just bundle' first." >&2
-        exit 1
-    fi
-    if [ ! -f "$r0bf" ]; then
-        echo "error: R0BF not found at $r0bf — run 'just bundle' first." >&2
-        exit 1
+    if [ ! -f "$elf" ] || [ ! -f "$r0bf" ]; then
+        echo "Build artifacts not found — running full build..."
+        echo ""
+        just bundle
+        echo ""
     fi
     echo "=== Raw ELF hash ==="
     sha256sum "$elf"
