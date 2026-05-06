@@ -475,6 +475,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "flaky: depends on live mainnet bootstrap nodes responding"]
     async fn test_online_discv5_driver_bootstrap_mainnet() {
         base_cli_utils::init_test_tracing();
 
