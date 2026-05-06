@@ -309,18 +309,15 @@ where
                             info!(stopped = true, "batcher paused via admin");
                         }
                         AdminCommand::Resume => {
-                            let safe_head =
-                                self.safe_head_rx.as_ref().map(|rx| *rx.borrow());
-                            if let Some(n) = safe_head {
-                                self.source.reset_catchup(n + 1);
-                                info!(
-                                    stopped = false,
-                                    catchup_from = %(n + 1),
-                                    "batcher resumed via admin, catching up from safe head"
-                                );
-                            } else {
-                                info!(stopped = false, "batcher resumed via admin");
-                            }
+                            let safe_head = self.safe_head_rx.as_ref()
+                                .map(|rx| *rx.borrow())
+                                .unwrap_or(0);
+                            self.source.reset_catchup(safe_head + 1);
+                            info!(
+                                stopped = false,
+                                catchup_from = %(safe_head + 1),
+                                "batcher resumed via admin, catching up from safe head"
+                            );
                             self.stopped = false;
                         }
                         AdminCommand::SetThrottle { strategy, config } => {
