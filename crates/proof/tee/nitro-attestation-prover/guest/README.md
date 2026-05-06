@@ -25,13 +25,39 @@ docker build --platform=linux/amd64 \
 docker run --rm --platform=linux/amd64 \
     -v "$(pwd)":/build/base \
     nitro-guest-builder
-
-# 3. Verify the ELF hash
-shasum -a 256 crates/proof/tee/nitro-attestation-prover/guest/target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest
 ```
 
-The output shows the **image ID** and writes the bundled R0BF file to
-`target/base-proof-tee-nitro-verifier-guest.r0bf`.
+Step 2 prints the **image ID** and writes two artifacts:
+
+| Artifact | Path | Description |
+|---|---|---|
+| Raw ELF | `target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest` | The compiled guest binary |
+| R0BF bundle | `target/base-proof-tee-nitro-verifier-guest.r0bf` | ELF + risc0 v1compat kernel (uploaded to IPFS) |
+
+### Verifying your build
+
+Compare your local build against another builder and against the production
+IPFS upload. There are three distinct hashes — make sure you compare like
+with like:
+
+```sh
+# 3a. Hash the raw ELF (compare with other builders' ELF hash)
+shasum -a 256 crates/proof/tee/nitro-attestation-prover/guest/target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest
+
+# 3b. Hash the R0BF bundle (compare with the production IPFS upload)
+shasum -a 256 crates/proof/tee/nitro-attestation-prover/guest/target/base-proof-tee-nitro-verifier-guest.r0bf
+
+# 3c. Download the R0BF from IPFS and verify it matches your local bundle.
+#     Obtain the IPFS gateway URL from the config service
+#     (the --boundless-verifier-program-url value).
+curl -fsSL -o /tmp/guest-remote.r0bf "<IPFS_GATEWAY_URL>"
+shasum -a 256 /tmp/guest-remote.r0bf
+# This should match the hash from step 3b.
+```
+
+The **image ID** printed by step 2 is a third value — it is risc0's own hash
+of the ELF (not a SHA-256). This is the value used on-chain and in the
+registrar `--image-id` config.
 
 ### Apple Silicon note
 
