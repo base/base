@@ -71,6 +71,54 @@ bundle: build
         target/riscv32im-risc0-zkvm-elf/release/{{ guest }} \
         --output target/{{ guest }}.r0bf
 
+# Verify build artifacts and optionally compare against a remote IPFS upload.
+# Prints the ELF hash, R0BF hash, and image ID. If an IPFS URL is provided,
+# downloads the remote R0BF and checks it matches the local bundle.
+#
+# Usage:
+#   just verify                     # local hashes only
+#   just verify "https://..."       # also compare against IPFS
+verify ipfs_url="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    elf="target/riscv32im-risc0-zkvm-elf/release/{{ guest }}"
+    r0bf="target/{{ guest }}.r0bf"
+    if [ ! -f "$elf" ]; then
+        echo "error: ELF not found at $elf — run 'just bundle' first." >&2
+        exit 1
+    fi
+    if [ ! -f "$r0bf" ]; then
+        echo "error: R0BF not found at $r0bf — run 'just bundle' first." >&2
+        exit 1
+    fi
+    echo "=== Raw ELF hash ==="
+    sha256sum "$elf"
+    echo ""
+    echo "=== R0BF bundle hash ==="
+    sha256sum "$r0bf"
+    echo ""
+    echo "=== Image ID ==="
+    RISC0_SKIP_BUILD_KERNELS=1 cargo run -q \
+        --manifest-path tools/compute-image-id/Cargo.toml -- "$elf" 2>&1 \
+        | grep "Image ID"
+    if [ -n "{{ ipfs_url }}" ]; then
+        echo ""
+        echo "=== Remote IPFS comparison ==="
+        tmp=$(mktemp)
+        curl -fsSL -o "$tmp" "{{ ipfs_url }}"
+        remote_hash=$(sha256sum "$tmp" | cut -d' ' -f1)
+        local_hash=$(sha256sum "$r0bf" | cut -d' ' -f1)
+        rm "$tmp"
+        echo "Local R0BF:  $local_hash"
+        echo "Remote R0BF: $remote_hash"
+        if [ "$local_hash" = "$remote_hash" ]; then
+            echo "MATCH — remote IPFS file is identical to local build."
+        else
+            echo "MISMATCH — remote IPFS file differs from local build!" >&2
+            exit 1
+        fi
+    fi
+
 # Install the pinned risc0 toolchain via rzup
 install-toolchain:
     rzup install rust {{ expected_risc0_rust }}

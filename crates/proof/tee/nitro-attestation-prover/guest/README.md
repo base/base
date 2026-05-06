@@ -36,28 +36,33 @@ Step 2 prints the **image ID** and writes two artifacts:
 
 ### Verifying your build
 
-Compare your local build against another builder and against the production
-IPFS upload. There are three distinct hashes — make sure you compare like
-with like:
+Use `just verify` to print all hashes and optionally compare against the
+production IPFS upload in a single command:
 
 ```sh
-# 3a. Hash the raw ELF (compare with other builders' ELF hash)
-shasum -a 256 crates/proof/tee/nitro-attestation-prover/guest/target/riscv32im-risc0-zkvm-elf/release/base-proof-tee-nitro-verifier-guest
+# 3. Verify local build hashes only
+docker run --rm --platform=linux/amd64 \
+    -v "$(pwd)":/build/base \
+    nitro-guest-builder verify
 
-# 3b. Hash the R0BF bundle (compare with the production IPFS upload)
-shasum -a 256 crates/proof/tee/nitro-attestation-prover/guest/target/base-proof-tee-nitro-verifier-guest.r0bf
-
-# 3c. Download the R0BF from IPFS and verify it matches your local bundle.
-#     Obtain the IPFS gateway URL from the config service
-#     (the --boundless-verifier-program-url value).
-curl -fsSL -o /tmp/guest-remote.r0bf "<IPFS_GATEWAY_URL>"
-shasum -a 256 /tmp/guest-remote.r0bf
-# This should match the hash from step 3b.
+# Or: also verify the production IPFS upload matches your local build.
+# Obtain the IPFS gateway URL from the config service
+# (the --boundless-verifier-program-url value).
+docker run --rm --platform=linux/amd64 \
+    -v "$(pwd)":/build/base \
+    nitro-guest-builder verify "<IPFS_GATEWAY_URL>"
 ```
 
-The **image ID** printed by step 2 is a third value — it is risc0's own hash
-of the ELF (not a SHA-256). This is the value used on-chain and in the
-registrar `--image-id` config.
+This prints three distinct values:
+
+| Value | What it is | Used for |
+|---|---|---|
+| **Raw ELF hash** | SHA-256 of the compiled guest binary | Comparing builds across machines |
+| **R0BF bundle hash** | SHA-256 of the bundled file (ELF + risc0 kernel) | Verifying the IPFS upload |
+| **Image ID** | risc0's own hash of the ELF (not a SHA-256) | On-chain config and registrar `--image-id` |
+
+When an IPFS URL is provided, the command also downloads the remote R0BF
+and checks it matches your local bundle, printing `MATCH` or `MISMATCH`.
 
 ### Apple Silicon note
 
