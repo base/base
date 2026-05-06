@@ -80,35 +80,20 @@ gh release download r0.1.91.1 --repo risc0/rust \
 The Dockerfile detects and uses the pre-downloaded file automatically.
 The tarball is git-ignored and can be deleted after the image is built.
 
-## Full workflow
+## Deploying to production
 
-### 1. Build and bundle
+After building and verifying (see Quick Start above):
 
-```sh
-docker run --rm --platform=linux/amd64 \
-    -v /path/to/base-repo:/build/base \
-    nitro-guest-builder
-```
+1. **Upload to IPFS**: Upload `target/base-proof-tee-nitro-verifier-guest.r0bf`
+   to IPFS (e.g. via Pinata). Note the resulting gateway URL.
 
-This runs two steps inside the container:
-- **Build**: compiles the guest ELF with `cargo +risc0` for `riscv32im-risc0-zkvm-elf`
-- **Bundle**: combines the raw ELF with the risc0 v1compat kernel into R0BF
-  (RISC Zero Binary Format) and computes the image ID
+2. **Update configuration**: Three values must all match the same build:
 
-### 2. Upload to IPFS
-
-Upload the bundled R0BF file (`target/base-proof-tee-nitro-verifier-guest.r0bf`)
-to IPFS (e.g. via Pinata). Note the resulting gateway URL.
-
-### 3. Update configuration
-
-Three values must all match the same build:
-
-| Where | Value |
-|---|---|
-| Registrar CLI `--image-id` | Image ID printed by the build |
-| Registrar CLI `--boundless-verifier-program-url` | IPFS gateway URL from step 2 |
-| On-chain `TEEProverRegistry` contract | Same image ID, set via admin transaction |
+   | Where | Value |
+   |---|---|
+   | Registrar CLI `--image-id` | Image ID printed by the build |
+   | Registrar CLI `--boundless-verifier-program-url` | IPFS gateway URL from step 1 |
+   | On-chain `TEEProverRegistry` contract | Same image ID, set via admin transaction |
 
 ## Other Docker commands
 
