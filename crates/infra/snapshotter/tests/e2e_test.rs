@@ -1,10 +1,13 @@
 //! E2E tests for the snapshotter upload flow using `MinIO`.
 
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use base_snappy::{ContainerManager, DockerContainerManager, LatestPointer, SnapshotUploader};
+use base_snapshotter::{ContainerManager, DockerContainerManager, LatestPointer, SnapshotUploader};
 use bollard::{
     Docker,
     models::ContainerCreateBody,
@@ -20,41 +23,45 @@ mod common;
 use common::TestHarness;
 
 struct MockContainerManager {
-    stop_called: std::sync::atomic::AtomicBool,
-    start_called: std::sync::atomic::AtomicBool,
+    running: AtomicBool,
+    stop_called: AtomicBool,
+    start_called: AtomicBool,
 }
 
 impl MockContainerManager {
     const fn new() -> Self {
         Self {
-            stop_called: std::sync::atomic::AtomicBool::new(false),
-            start_called: std::sync::atomic::AtomicBool::new(false),
+            running: AtomicBool::new(true),
+            stop_called: AtomicBool::new(false),
+            start_called: AtomicBool::new(false),
         }
     }
 
     fn was_stopped(&self) -> bool {
-        self.stop_called.load(std::sync::atomic::Ordering::Relaxed)
+        self.stop_called.load(Ordering::Relaxed)
     }
 
     fn was_started(&self) -> bool {
-        self.start_called.load(std::sync::atomic::Ordering::Relaxed)
+        self.start_called.load(Ordering::Relaxed)
     }
 }
 
 #[async_trait]
 impl ContainerManager for MockContainerManager {
     async fn stop(&self, _container_name: &str) -> Result<()> {
-        self.stop_called.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running.store(false, Ordering::Relaxed);
+        self.stop_called.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     async fn start(&self, _container_name: &str) -> Result<()> {
-        self.start_called.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.running.store(true, Ordering::Relaxed);
+        self.start_called.store(true, Ordering::Relaxed);
         Ok(())
     }
 
     async fn is_running(&self, _container_name: &str) -> Result<bool> {
-        Ok(!self.stop_called.load(std::sync::atomic::Ordering::Relaxed))
+        Ok(self.running.load(Ordering::Relaxed))
     }
 }
 
@@ -184,7 +191,7 @@ async fn upload_artifacts_to_minio() -> Result<()> {
     let output_dir = tmp.path().join("output");
     let files = create_fake_snapshot(&output_dir, 1_000_000)?;
 
-    let run_prefix = uploader.upload(&output_dir, &files, 1_000_000).await?;
+    let run_prefix = uploader.upload(&output_dir, &files, 1_000_000, 1700000000).await?;
 
     assert!(
         run_prefix.starts_with("mainnet/1000000-"),
@@ -278,7 +285,7 @@ async fn latest_pointer_updated_after_upload() -> Result<()> {
     let output_dir = tmp.path().join("output");
     let files = create_fake_snapshot(&output_dir, 500_000)?;
 
-    let run_prefix = uploader.upload(&output_dir, &files, 500_000).await?;
+    let run_prefix = uploader.upload(&output_dir, &files, 500_000, 1700000000).await?;
 
     let latest_obj = harness
         .storage_client
@@ -311,7 +318,7 @@ async fn upload_with_empty_prefix() -> Result<()> {
     let output_dir = tmp.path().join("output");
     let files = create_fake_snapshot(&output_dir, 100)?;
 
-    let run_prefix = uploader.upload(&output_dir, &files, 100).await?;
+    let run_prefix = uploader.upload(&output_dir, &files, 100, 1700000000).await?;
 
     assert!(
         run_prefix.starts_with("100-"),
@@ -353,7 +360,7 @@ async fn mock_container_manager_tracks_calls() -> Result<()> {
 #[serial]
 async fn orchestrator_always_restarts_on_failure() -> Result<()> {
     let harness = TestHarness::new().await?;
-    let manager = MockContainerManager::new();
+    let manager = std::sync::Arc::new(MockContainerManager::new());
     let uploader = SnapshotUploader::new(
         harness.storage_client.clone(),
         harness.bucket_name.clone(),
@@ -362,7 +369,7 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
 
     let tmp = tempfile::tempdir()?;
 
-    let config = base_snappy::SnapshotterConfig {
+    let config = base_snapshotter::SnapshotterConfig {
         container_name: "fake-el".to_string(),
         source_datadir: tmp.path().join("nonexistent-datadir"),
         output_dir: tmp.path().join("output"),
@@ -373,14 +380,20 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
         blocks_per_file: Some(500_000),
         snapshot_threads: None,
         docker_socket: "/var/run/docker.sock".to_string(),
-        endpoint_url: None,
-        region: "auto".to_string(),
+        s3_config_type: base_snapshotter::S3ConfigType::Aws,
+        s3_endpoint: None,
+        s3_region: "us-east-1".to_string(),
+        s3_access_key_id: None,
+        s3_secret_access_key: None,
     };
 
-    let snapshotter = base_snappy::Snapshotter::new(manager, uploader, config);
+    let snapshotter =
+        base_snapshotter::Snapshotter::new(std::sync::Arc::clone(&manager), uploader, config);
 
     let result = snapshotter.run().await;
     assert!(result.is_err(), "should fail because source_datadir doesn't exist");
+    assert!(manager.was_stopped(), "container should have been stopped");
+    assert!(manager.was_started(), "container should always be restarted even on failure");
 
     Ok(())
 }
@@ -433,7 +446,7 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
         harness.bucket_name.clone(),
         "e2e-test".to_string(),
     );
-    let run_prefix = uploader.upload(&output_dir, &files, 1_000_000).await?;
+    let run_prefix = uploader.upload(&output_dir, &files, 1_000_000, 1700000000).await?;
 
     let manifest_key = format!("{run_prefix}/manifest.json");
     let manifest_obj = harness

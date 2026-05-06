@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod config;
-pub use config::SnapshotterConfig;
+pub use config::{S3ConfigType, SnapshotterConfig};
 
 mod container;
 pub use container::{ContainerManager, DockerContainerManager};

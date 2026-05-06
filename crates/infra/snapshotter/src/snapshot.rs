@@ -55,7 +55,7 @@ impl SnapshotGenerator {
         );
 
         let cmd = SnapshotManifestCommand::parse_from(args);
-        cmd.execute().map_err(|e| anyhow::anyhow!("{e:#}"))?;
+        cmd.execute().map_err(|e| anyhow::anyhow!(e)).context("SnapshotManifestCommand failed")?;
 
         let files = collect_output_files(output_dir)?;
         info!(file_count = files.len(), "snapshot generation complete");

@@ -1,6 +1,9 @@
 //! Orchestrates the full snapshot lifecycle with a restart safety guard.
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Context, Result, bail};
 use tracing::{error, info};
@@ -44,12 +47,12 @@ impl<C: ContainerManager> Snapshotter<C> {
     /// 4. Uploads to S3/R2
     /// 5. Restarts the EL container (always, even on failure)
     pub async fn run(&self) -> Result<()> {
-        self.container_manager
-            .stop(&self.config.container_name)
-            .await
-            .context("failed to stop EL container")?;
+        let stop_result = self.container_manager.stop(&self.config.container_name).await;
 
-        let result = self.generate_and_upload().await;
+        let result = match stop_result {
+            Ok(()) => self.generate_and_upload().await,
+            Err(e) => Err(e).context("failed to stop EL container"),
+        };
 
         let restart_result = self.container_manager.start(&self.config.container_name).await;
 
@@ -87,15 +90,27 @@ impl<C: ContainerManager> Snapshotter<C> {
     /// Generates snapshot archives and uploads them. Separated from `run` so
     /// the restart guard logic stays clean.
     async fn generate_and_upload(&self) -> Result<()> {
-        let run_output_dir = create_run_output_dir(&self.config.output_dir)?;
+        let run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-        let files = SnapshotGenerator::generate(
-            &self.config.source_datadir,
-            &run_output_dir,
-            self.config.chain_id,
-            self.config.block,
-            self.config.blocks_per_file,
-        )
+        let run_output_dir = create_run_output_dir(&self.config.output_dir, run_timestamp)?;
+
+        let source_datadir = self.config.source_datadir.clone();
+        let output_dir_for_gen = run_output_dir.clone();
+        let chain_id = self.config.chain_id;
+        let block = self.config.block;
+        let blocks_per_file = self.config.blocks_per_file;
+
+        let files = tokio::task::spawn_blocking(move || {
+            SnapshotGenerator::generate(
+                &source_datadir,
+                &output_dir_for_gen,
+                chain_id,
+                block,
+                blocks_per_file,
+            )
+        })
+        .await
+        .context("snapshot generation task panicked")?
         .context("snapshot generation failed")?;
 
         if files.is_empty() {
@@ -105,7 +120,7 @@ impl<C: ContainerManager> Snapshotter<C> {
         let block = extract_block_from_manifest(&run_output_dir)?;
 
         self.uploader
-            .upload(&run_output_dir, &files, block)
+            .upload(&run_output_dir, &files, block, run_timestamp)
             .await
             .context("snapshot upload failed")?;
 
@@ -128,9 +143,8 @@ fn extract_block_from_manifest(output_dir: &std::path::Path) -> Result<u64> {
     manifest["block"].as_u64().ok_or_else(|| anyhow::anyhow!("manifest.json missing 'block' field"))
 }
 
-/// Creates a unique run output directory with a timestamp suffix.
-fn create_run_output_dir(base: &std::path::Path) -> Result<PathBuf> {
-    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+/// Creates a unique run output directory using the provided timestamp.
+fn create_run_output_dir(base: &std::path::Path, timestamp: u64) -> Result<PathBuf> {
     let run_dir = base.join(format!("run-{timestamp}"));
     std::fs::create_dir_all(&run_dir)
         .with_context(|| format!("failed to create run dir {}", run_dir.display()))?;

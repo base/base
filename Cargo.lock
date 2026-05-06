@@ -5943,7 +5943,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-snappy"
+name = "base-snapshotter"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -5965,16 +5965,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-snappy-bin"
+name = "base-snapshotter-bin"
 version = "0.0.0"
 dependencies = [
  "anyhow",
  "aws-config",
+ "aws-credential-types",
  "aws-sdk-s3",
- "base-snappy",
+ "base-snapshotter",
  "clap",
  "rayon",
  "tokio",
+ "tracing",
  "tracing-subscriber 0.3.23",
 ]
 

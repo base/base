@@ -1,4 +1,4 @@
-# `base-snappy`
+# `base-snapshotter`
 
 Sidecar for generating and uploading reth node snapshots to S3-compatible storage.
 
@@ -18,14 +18,17 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-snappy = { workspace = true }
+base-snapshotter = { workspace = true }
 ```
 
 ```rust,ignore
-use base_snappy::{Snapshotter, SnapshotterConfig};
+use base_snapshotter::{DockerContainerManager, Snapshotter, SnapshotUploader, SnapshotterConfig};
 
 let config = SnapshotterConfig::parse();
-let snapshotter = Snapshotter::from_config(config).await?;
+let container_manager = DockerContainerManager::new(&config.docker_socket)?;
+
+// ... create s3_client and uploader ...
+let snapshotter = Snapshotter::new(container_manager, uploader, config);
 snapshotter.run().await?;
 ```
 

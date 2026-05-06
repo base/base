@@ -1,5 +1,5 @@
 [package]
-name = "base-snappy"
+name = "base-snapshotter"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,10 +13,12 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 bollard = { workspace = true }
+futures = { workspace = true }
 tracing = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 reth-cli-commands = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["std", "derive"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }

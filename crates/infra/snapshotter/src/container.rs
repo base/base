@@ -1,5 +1,7 @@
 //! Container lifecycle management via the Docker socket.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use bollard::{
@@ -8,7 +10,7 @@ use bollard::{
         InspectContainerOptions, StartContainerOptions, StopContainerOptionsBuilder,
     },
 };
-use tracing::{info, warn};
+use tracing::info;
 
 /// Manages the lifecycle of a container (stop/start with state verification).
 #[async_trait]
@@ -21,6 +23,21 @@ pub trait ContainerManager: Send + Sync {
 
     /// Returns `true` if the container is currently running.
     async fn is_running(&self, container_name: &str) -> Result<bool>;
+}
+
+#[async_trait]
+impl<T: ContainerManager> ContainerManager for Arc<T> {
+    async fn stop(&self, container_name: &str) -> Result<()> {
+        (**self).stop(container_name).await
+    }
+
+    async fn start(&self, container_name: &str) -> Result<()> {
+        (**self).start(container_name).await
+    }
+
+    async fn is_running(&self, container_name: &str) -> Result<bool> {
+        (**self).is_running(container_name).await
+    }
 }
 
 /// Docker-based container manager that communicates via the Docker socket.
@@ -71,7 +88,7 @@ impl ContainerManager for DockerContainerManager {
 
         let running = self.is_running(container_name).await?;
         if !running {
-            warn!(container = %container_name, "container not running after start request");
+            bail!("container {container_name} is not running after start request");
         }
 
         info!(container = %container_name, "container started");

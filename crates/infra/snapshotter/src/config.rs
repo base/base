@@ -2,18 +2,21 @@
 
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+/// How the S3/R2 client is configured.
+#[derive(Debug, Clone, ValueEnum)]
+pub enum S3ConfigType {
+    /// Uses the standard AWS credential chain (IAM roles, env vars, `~/.aws/credentials`).
+    Aws,
+    /// Explicit endpoint, access key, and secret key via CLI args or env vars.
+    Manual,
+}
 
 /// Configuration for the snapshotter sidecar.
-///
-/// R2/S3 credentials are read from standard AWS environment variables:
-/// - `AWS_ACCESS_KEY_ID`
-/// - `AWS_SECRET_ACCESS_KEY`
-/// - `AWS_ENDPOINT_URL` (required for R2)
-/// - `AWS_REGION` (defaults to `auto` for R2)
 #[derive(Debug, Parser)]
 #[command(
-    name = "base-snappy",
+    name = "base-snapshotter",
     about = "Snapshot and upload reth node data to S3-compatible storage"
 )]
 pub struct SnapshotterConfig {
@@ -61,11 +64,23 @@ pub struct SnapshotterConfig {
     #[arg(long, default_value = "/var/run/docker.sock")]
     pub docker_socket: String,
 
-    /// S3 endpoint URL (for R2 or `MinIO`). Can also be set via `AWS_ENDPOINT_URL`.
-    #[arg(long, env = "AWS_ENDPOINT_URL")]
-    pub endpoint_url: Option<String>,
+    /// S3 client configuration mode.
+    #[arg(long, env = "SNAPSHOTTER_S3_CONFIG_TYPE", default_value = "aws")]
+    pub s3_config_type: S3ConfigType,
 
-    /// AWS region. Defaults to `auto` for R2.
-    #[arg(long, env = "AWS_REGION", default_value = "auto")]
-    pub region: String,
+    /// S3 endpoint URL (for R2 or `MinIO`). Required for `manual` config type.
+    #[arg(long, env = "SNAPSHOTTER_S3_ENDPOINT")]
+    pub s3_endpoint: Option<String>,
+
+    /// S3 region.
+    #[arg(long, env = "SNAPSHOTTER_S3_REGION", default_value = "us-east-1")]
+    pub s3_region: String,
+
+    /// S3 access key ID. Required for `manual` config type.
+    #[arg(long, env = "SNAPSHOTTER_S3_ACCESS_KEY_ID")]
+    pub s3_access_key_id: Option<String>,
+
+    /// S3 secret access key. Required for `manual` config type.
+    #[arg(long, env = "SNAPSHOTTER_S3_SECRET_ACCESS_KEY")]
+    pub s3_secret_access_key: Option<String>,
 }
