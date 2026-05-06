@@ -22,8 +22,11 @@ serde = { workspace = true, features = ["std", "derive"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 
 [dev-dependencies]
+futures = { workspace = true }
 tempfile = { workspace = true }
+bollard = { workspace = true }
+serial_test = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-testcontainers = { workspace = true, features = ["blocking"] }
+testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 testcontainers-modules = { workspace = true, features = ["minio"] }

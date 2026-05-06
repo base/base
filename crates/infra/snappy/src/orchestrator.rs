@@ -87,18 +87,13 @@ impl<C: ContainerManager> Snapshotter<C> {
     /// Generates snapshot archives and uploads them. Separated from `run` so
     /// the restart guard logic stays clean.
     async fn generate_and_upload(&self) -> Result<()> {
-        let block = self
-            .config
-            .block
-            .ok_or_else(|| anyhow::anyhow!("--block is required for snapshot generation"))?;
-
         let run_output_dir = create_run_output_dir(&self.config.output_dir)?;
 
         let files = SnapshotGenerator::generate(
             &self.config.source_datadir,
             &run_output_dir,
             self.config.chain_id,
-            block,
+            self.config.block,
             self.config.blocks_per_file,
         )
         .context("snapshot generation failed")?;
@@ -106,6 +101,8 @@ impl<C: ContainerManager> Snapshotter<C> {
         if files.is_empty() {
             bail!("snapshot generation produced no files");
         }
+
+        let block = extract_block_from_manifest(&run_output_dir)?;
 
         self.uploader
             .upload(&run_output_dir, &files, block)
@@ -119,6 +116,16 @@ impl<C: ContainerManager> Snapshotter<C> {
 
         Ok(())
     }
+}
+
+/// Reads the block number from the generated `manifest.json`.
+fn extract_block_from_manifest(output_dir: &std::path::Path) -> Result<u64> {
+    let manifest_path = output_dir.join("manifest.json");
+    let content = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&content).context("failed to parse manifest.json")?;
+    manifest["block"].as_u64().ok_or_else(|| anyhow::anyhow!("manifest.json missing 'block' field"))
 }
 
 /// Creates a unique run output directory with a timestamp suffix.
