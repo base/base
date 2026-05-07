@@ -1,6 +1,14 @@
-//! S3-compatible upload for snapshot artifacts.
+//! S3-compatible upload for snapshot artifacts with diff-based optimization.
+//!
+//! Static file chunks (e.g. `headers-0-499999.tar.zst`) are immutable for finalized
+//! block ranges — only the chunk covering the current tip changes between snapshots.
+//! The uploader compares local file sizes against existing remote objects and skips
+//! uploads for chunks that already exist with a matching size.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use aws_sdk_s3::{
@@ -21,6 +29,49 @@ const MULTIPART_THRESHOLD: u64 = 100 * 1024 * 1024;
 
 /// Part size for multipart uploads (100 `MiB`).
 const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Determines whether a snapshot component is re-uploaded every run
+/// or can be skipped when the remote copy already matches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadStrategy {
+    /// Always upload regardless of remote state (mdbx, rocksdb, proofs).
+    AlwaysUpload,
+    /// Skip upload if the remote object exists with the same size (static file chunks).
+    DiffBySize,
+}
+
+/// Classifies a snapshot filename into its upload strategy.
+///
+/// Static file chunks follow the pattern `{component}-{start}-{end}.tar.zst`
+/// (e.g. `headers-0-499999.tar.zst`). These are immutable for finalized block
+/// ranges and only the tip chunk changes between snapshots.
+///
+/// Everything else (state, rocksdb, manifest) is always uploaded.
+pub fn classify_upload_strategy(filename: &str) -> UploadStrategy {
+    if is_static_file_chunk(filename) {
+        UploadStrategy::DiffBySize
+    } else {
+        UploadStrategy::AlwaysUpload
+    }
+}
+
+/// Returns `true` if the filename matches the static file chunk pattern:
+/// `{component}-{start}-{end}.tar.zst`. `rocksdb_incdices` is the prefix for
+/// `RocksDB`, `state` is the prefix for MDBX.
+fn is_static_file_chunk(filename: &str) -> bool {
+    let Some(stem) = filename.strip_suffix(".tar.zst") else {
+        return false;
+    };
+
+    let parts: Vec<&str> = stem.rsplitn(3, '-').collect();
+    if parts.len() < 3 {
+        return false;
+    }
+
+    let end_ok = parts[0].parse::<u64>().is_ok();
+    let start_ok = parts[1].parse::<u64>().is_ok();
+    end_ok && start_ok
+}
 
 /// Metadata written to `latest.json` after a successful upload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,11 +98,12 @@ impl SnapshotUploader {
         Self { client, bucket, prefix }
     }
 
-    /// Uploads all files from the output directory to S3 under a unique run prefix.
+    /// Uploads snapshot artifacts with diff-based optimization.
     ///
-    /// The run prefix is `{prefix}/{block}-{timestamp}/`. After all archives are
-    /// uploaded, `manifest.json` is uploaded last, and finally `latest.json` is
-    /// written at `{prefix}/latest.json` as an atomic pointer to this run.
+    /// The run prefix is `{prefix}/{block}-{timestamp}/`. Static file chunks that
+    /// already exist remotely with the same size are skipped. State, rocksdb, and
+    /// manifest are always re-uploaded. `manifest.json` is uploaded last, and
+    /// `latest.json` is written as an atomic pointer to this run.
     pub async fn upload(
         &self,
         output_dir: &Path,
@@ -72,17 +124,44 @@ impl SnapshotUploader {
             "uploading snapshot artifacts"
         );
 
+        let remote_objects = self.list_remote_objects(&run_prefix).await?;
+
         let manifest_path = output_dir.join("manifest.json");
-        let mut non_manifest = Vec::new();
+        let mut to_upload = Vec::new();
+        let mut skipped = 0u64;
 
         for file in files {
             if file == &manifest_path {
                 continue;
             }
-            non_manifest.push(file.clone());
+
+            let file_name =
+                file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+
+            let local_size = std::fs::metadata(file)?.len();
+            let strategy = classify_upload_strategy(&file_name);
+
+            if strategy == UploadStrategy::DiffBySize
+                && let Some(&remote_size) = remote_objects.get(&file_name) {
+                    if remote_size == local_size {
+                        debug!(file = %file_name, size = local_size, "skipping (remote size matches)");
+                        skipped += 1;
+                        continue;
+                    }
+                    debug!(
+                        file = %file_name,
+                        local_size,
+                        remote_size,
+                        "re-uploading (size mismatch)"
+                    );
+                }
+
+            to_upload.push(file.clone());
         }
 
-        stream::iter(non_manifest)
+        info!(uploading = to_upload.len(), skipped, "diff analysis complete");
+
+        stream::iter(to_upload)
             .map(|file| {
                 let run_prefix = &run_prefix;
                 async move { self.upload_file(&file, run_prefix).await }
@@ -98,8 +177,46 @@ impl SnapshotUploader {
         let pointer = LatestPointer { prefix: run_prefix.clone(), block, timestamp };
         self.write_latest_pointer(&pointer).await?;
 
-        info!(run_prefix = %run_prefix, block, "upload complete");
+        info!(run_prefix = %run_prefix, block, skipped, "upload complete");
         Ok(run_prefix)
+    }
+
+    /// Lists all objects under `run_prefix/` in the bucket, returning filename → size.
+    async fn list_remote_objects(&self, run_prefix: &str) -> Result<HashMap<String, u64>> {
+        let prefix_with_slash = format!("{run_prefix}/");
+        let mut remote = HashMap::new();
+        let mut continuation_token = None;
+
+        loop {
+            let mut req =
+                self.client.list_objects_v2().bucket(&self.bucket).prefix(&prefix_with_slash);
+
+            if let Some(token) = continuation_token.take() {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req
+                .send()
+                .await
+                .with_context(|| format!("failed to list objects under {prefix_with_slash}"))?;
+
+            for obj in resp.contents() {
+                if let Some(key) = obj.key() {
+                    let filename = key.strip_prefix(&prefix_with_slash).unwrap_or(key).to_string();
+                    let size = obj.size.unwrap_or(0) as u64;
+                    remote.insert(filename, size);
+                }
+            }
+
+            if resp.is_truncated() == Some(true) {
+                continuation_token = resp.next_continuation_token().map(String::from);
+            } else {
+                break;
+            }
+        }
+
+        debug!(count = remote.len(), "listed remote objects");
+        Ok(remote)
     }
 
     /// Uploads a single file, using multipart upload for files above the threshold.
@@ -282,5 +399,61 @@ impl SnapshotUploader {
             .with_context(|| format!("failed to write latest pointer at {key}"))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn static_file_chunks_are_diff_eligible() {
+        assert_eq!(
+            classify_upload_strategy("headers-0-499999.tar.zst"),
+            UploadStrategy::DiffBySize
+        );
+        assert_eq!(
+            classify_upload_strategy("transactions-500000-999999.tar.zst"),
+            UploadStrategy::DiffBySize
+        );
+        assert_eq!(
+            classify_upload_strategy("receipts-9500000-9999999.tar.zst"),
+            UploadStrategy::DiffBySize
+        );
+        assert_eq!(
+            classify_upload_strategy("account_changesets-0-499999.tar.zst"),
+            UploadStrategy::DiffBySize
+        );
+        assert_eq!(
+            classify_upload_strategy("storage_changesets-1000000-1499999.tar.zst"),
+            UploadStrategy::DiffBySize
+        );
+        assert_eq!(
+            classify_upload_strategy("transaction_senders-0-499999.tar.zst"),
+            UploadStrategy::DiffBySize
+        );
+    }
+
+    #[test]
+    fn non_chunk_files_always_upload() {
+        assert_eq!(classify_upload_strategy("state.tar.zst"), UploadStrategy::AlwaysUpload);
+        assert_eq!(
+            classify_upload_strategy("rocksdb_indices.tar.zst"),
+            UploadStrategy::AlwaysUpload
+        );
+        assert_eq!(classify_upload_strategy("manifest.json"), UploadStrategy::AlwaysUpload);
+        assert_eq!(classify_upload_strategy("latest.json"), UploadStrategy::AlwaysUpload);
+        assert_eq!(classify_upload_strategy("random-file.txt"), UploadStrategy::AlwaysUpload);
+    }
+
+    #[test]
+    fn is_static_file_chunk_edge_cases() {
+        assert!(!is_static_file_chunk("state.tar.zst"));
+        assert!(!is_static_file_chunk("headers.tar.zst"));
+        assert!(!is_static_file_chunk("headers-abc-def.tar.zst"));
+        assert!(!is_static_file_chunk("headers-0-499999.tar.gz"));
+        assert!(!is_static_file_chunk("headers-0-499999"));
+        assert!(is_static_file_chunk("headers-0-499999.tar.zst"));
+        assert!(is_static_file_chunk("custom_component-100-200.tar.zst"));
     }
 }

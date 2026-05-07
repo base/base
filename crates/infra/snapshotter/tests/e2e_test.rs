@@ -1,7 +1,7 @@
 //! E2E tests for the snapshotter upload flow using `MinIO`.
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -337,6 +337,210 @@ async fn upload_with_empty_prefix() -> Result<()> {
     assert_eq!(pointer.block, 100, "latest pointer block should be 100");
 
     Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let run_prefix = "diff-test/1000000-1700000000";
+
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "diff-test".to_string(),
+    );
+
+    let s3 = &harness.storage_client;
+    let bucket = &harness.bucket_name;
+
+    // Pre-seed R2 with finalized static file chunks from a previous snapshot run.
+    // These represent block ranges that are fully finalized and should NOT be re-uploaded.
+    let preexisting: &[(&str, &[u8])] = &[
+        ("headers-0-499999.tar.zst", b"finalized-headers-0"),
+        ("headers-500000-999999.tar.zst", b"finalized-headers-1"),
+        ("transactions-0-499999.tar.zst", b"finalized-txs-0"),
+        ("transactions-500000-999999.tar.zst", b"finalized-txs-1"),
+        ("receipts-0-499999.tar.zst", b"finalized-receipts-0"),
+        ("receipts-500000-999999.tar.zst", b"finalized-receipts-1"),
+        ("account_changesets-0-499999.tar.zst", b"finalized-acc-cs-0"),
+        ("storage_changesets-0-499999.tar.zst", b"finalized-stor-cs-0"),
+    ];
+
+    for (name, data) in preexisting {
+        let key = format!("{run_prefix}/{name}");
+        s3.put_object()
+            .bucket(bucket)
+            .key(&key)
+            .body(aws_sdk_s3::primitives::ByteStream::from(data.to_vec()))
+            .send()
+            .await?;
+    }
+
+    let tmp = tempfile::tempdir()?;
+    let output_dir = tmp.path().join("output");
+    std::fs::create_dir_all(&output_dir)?;
+
+    let manifest = serde_json::json!({
+        "block": 1_000_000,
+        "chain_id": 8453,
+        "storage_version": 2,
+        "reth_version": "2.1.0 (d58c6e3)",
+        "components": {
+            "state": {"file": "state.tar.zst", "size": 100, "decompressed_size": 200, "output_files": []},
+            "rocksdb_indices": {"file": "rocksdb_indices.tar.zst", "size": 50, "decompressed_size": 100, "output_files": []},
+            "headers": {"blocks_per_file": 500000, "total_blocks": 1000000, "chunk_sizes": [20, 20], "chunk_decompressed_sizes": [], "chunk_output_files": []},
+            "transactions": {"blocks_per_file": 500000, "total_blocks": 1000000, "chunk_sizes": [30, 30], "chunk_decompressed_sizes": [], "chunk_output_files": []},
+            "receipts": {"blocks_per_file": 500000, "total_blocks": 1000000, "chunk_sizes": [15, 15], "chunk_decompressed_sizes": [], "chunk_output_files": []},
+            "account_changesets": {"blocks_per_file": 500000, "total_blocks": 1000000, "chunk_sizes": [18, 18], "chunk_decompressed_sizes": [], "chunk_output_files": []},
+            "storage_changesets": {"blocks_per_file": 500000, "total_blocks": 1000000, "chunk_sizes": [22, 22], "chunk_decompressed_sizes": [], "chunk_output_files": []}
+        }
+    });
+    std::fs::write(output_dir.join("manifest.json"), serde_json::to_string_pretty(&manifest)?)?;
+
+    // AlwaysUpload: mdbx state + rocksdb (always re-uploaded, content changes every snapshot)
+    std::fs::write(output_dir.join("state.tar.zst"), b"new-mdbx-state-data")?;
+    std::fs::write(output_dir.join("rocksdb_indices.tar.zst"), b"new-rocksdb-data")?;
+
+    // DiffBySize: finalized chunks with SAME size as remote → should be SKIPPED
+    for (name, data) in preexisting {
+        std::fs::write(output_dir.join(name), *data)?;
+    }
+
+    // DiffBySize: tip chunks that are NEW (don't exist in remote) → should be UPLOADED
+    std::fs::write(output_dir.join("headers-1000000-1499999.tar.zst"), b"new-tip-headers")?;
+    std::fs::write(output_dir.join("transactions-1000000-1499999.tar.zst"), b"new-tip-txs")?;
+    std::fs::write(output_dir.join("receipts-1000000-1499999.tar.zst"), b"new-tip-receipts")?;
+    std::fs::write(output_dir.join("account_changesets-500000-999999.tar.zst"), b"new-tip-acc-cs")?;
+    std::fs::write(
+        output_dir.join("storage_changesets-500000-999999.tar.zst"),
+        b"new-tip-stor-cs",
+    )?;
+
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&output_dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file())
+        .collect();
+    files.sort_unstable();
+
+    uploader.upload(&output_dir, &files, 1_000_000, 1_700_000_000).await?;
+
+    // Verify AlwaysUpload: mdbx state re-uploaded
+    let state_body = get_object_bytes(s3, bucket, &format!("{run_prefix}/state.tar.zst")).await?;
+    assert_eq!(state_body, b"new-mdbx-state-data", "mdbx state should always be re-uploaded");
+
+    // Verify AlwaysUpload: rocksdb re-uploaded
+    let rocksdb_body =
+        get_object_bytes(s3, bucket, &format!("{run_prefix}/rocksdb_indices.tar.zst")).await?;
+    assert_eq!(rocksdb_body, b"new-rocksdb-data", "rocksdb should always be re-uploaded");
+
+    // Verify DiffBySize SKIPPED: finalized chunks retain original content
+    for (name, original_data) in preexisting {
+        let body = get_object_bytes(s3, bucket, &format!("{run_prefix}/{name}")).await?;
+        assert_eq!(
+            body.as_slice(),
+            *original_data,
+            "finalized chunk {name} should be skipped (content unchanged)"
+        );
+    }
+
+    // Verify DiffBySize UPLOADED: new tip chunks exist
+    let tip_checks: &[(&str, &[u8])] = &[
+        ("headers-1000000-1499999.tar.zst", b"new-tip-headers"),
+        ("transactions-1000000-1499999.tar.zst", b"new-tip-txs"),
+        ("receipts-1000000-1499999.tar.zst", b"new-tip-receipts"),
+        ("account_changesets-500000-999999.tar.zst", b"new-tip-acc-cs"),
+        ("storage_changesets-500000-999999.tar.zst", b"new-tip-stor-cs"),
+    ];
+    for (name, expected) in tip_checks {
+        let body = get_object_bytes(s3, bucket, &format!("{run_prefix}/{name}")).await?;
+        assert_eq!(body.as_slice(), *expected, "tip chunk {name} should be uploaded");
+    }
+
+    // Verify manifest always uploaded
+    let manifest_body =
+        get_object_bytes(s3, bucket, &format!("{run_prefix}/manifest.json")).await?;
+    let parsed: serde_json::Value = serde_json::from_slice(&manifest_body)?;
+    assert_eq!(parsed["block"], 1_000_000, "manifest should be uploaded with correct block");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let run_prefix = "overwrite-test/2000000-1700000000";
+
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "overwrite-test".to_string(),
+    );
+
+    let s3 = &harness.storage_client;
+    let bucket = &harness.bucket_name;
+
+    // Pre-seed R2 with stale state and rocksdb from a previous snapshot
+    let stale: &[(&str, &[u8])] = &[
+        ("state.tar.zst", b"old-mdbx-snapshot-from-yesterday"),
+        ("rocksdb_indices.tar.zst", b"old-rocksdb-from-yesterday"),
+    ];
+    for (name, data) in stale {
+        let key = format!("{run_prefix}/{name}");
+        s3.put_object()
+            .bucket(bucket)
+            .key(&key)
+            .body(aws_sdk_s3::primitives::ByteStream::from(data.to_vec()))
+            .send()
+            .await?;
+    }
+
+    let tmp = tempfile::tempdir()?;
+    let output_dir = tmp.path().join("output");
+    std::fs::create_dir_all(&output_dir)?;
+
+    let manifest = serde_json::json!({
+        "block": 2_000_000, "chain_id": 8453, "storage_version": 2,
+        "components": {
+            "state": {"file": "state.tar.zst", "size": 100, "decompressed_size": 200, "output_files": []},
+            "rocksdb_indices": {"file": "rocksdb_indices.tar.zst", "size": 50, "decompressed_size": 100, "output_files": []}
+        }
+    });
+    std::fs::write(output_dir.join("manifest.json"), serde_json::to_string(&manifest)?)?;
+    std::fs::write(output_dir.join("state.tar.zst"), b"fresh-mdbx-state")?;
+    std::fs::write(output_dir.join("rocksdb_indices.tar.zst"), b"fresh-rocksdb")?;
+
+    let files = vec![
+        output_dir.join("manifest.json"),
+        output_dir.join("rocksdb_indices.tar.zst"),
+        output_dir.join("state.tar.zst"),
+    ];
+
+    uploader.upload(&output_dir, &files, 2_000_000, 1_700_000_000).await?;
+
+    // Verify state was overwritten, not skipped
+    let state_body = get_object_bytes(s3, bucket, &format!("{run_prefix}/state.tar.zst")).await?;
+    assert_eq!(
+        state_body, b"fresh-mdbx-state",
+        "state.tar.zst should be overwritten even though it existed in R2"
+    );
+
+    // Verify rocksdb was overwritten, not skipped
+    let rocksdb_body =
+        get_object_bytes(s3, bucket, &format!("{run_prefix}/rocksdb_indices.tar.zst")).await?;
+    assert_eq!(
+        rocksdb_body, b"fresh-rocksdb",
+        "rocksdb_indices.tar.zst should be overwritten even though it existed in R2"
+    );
+
+    Ok(())
+}
+
+async fn get_object_bytes(client: &aws_sdk_s3::Client, bucket: &str, key: &str) -> Result<Vec<u8>> {
+    let resp = client.get_object().bucket(bucket).key(key).send().await?;
+    let bytes = resp.body.collect().await?.into_bytes();
+    Ok(bytes.to_vec())
 }
 
 #[tokio::test]
