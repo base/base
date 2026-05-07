@@ -55,6 +55,9 @@ sp1-cluster-utils.workspace = true
 [dev-dependencies]
 reqwest = { version = "0.12.4", features = ["json"] }
 rustls = { version = "0.23", features = ["ring"] }
+base-proof-preimage.workspace = true
+tempfile.workspace = true
+gag = "1.0"
 
 [build-dependencies]
 base-proof-succinct-build-utils.workspace = true
