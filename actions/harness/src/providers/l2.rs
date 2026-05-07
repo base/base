@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::map::HashMap;
@@ -40,11 +40,11 @@ impl From<L2ProviderError> for PipelineErrorKind {
 #[derive(Debug, Clone, Default)]
 pub struct ActionL2ChainProvider {
     /// L2 blocks by block number.
-    blocks: HashMap<u64, L2BlockInfo>,
+    blocks: Arc<Mutex<HashMap<u64, L2BlockInfo>>>,
     /// Op blocks (headers + txs) by block number, needed for batch validation.
-    op_blocks: HashMap<u64, BaseBlock>,
+    op_blocks: Arc<Mutex<HashMap<u64, BaseBlock>>>,
     /// System configs by L2 block number.
-    system_configs: HashMap<u64, SystemConfig>,
+    system_configs: Arc<Mutex<HashMap<u64, SystemConfig>>>,
 }
 
 impl ActionL2ChainProvider {
@@ -87,17 +87,17 @@ impl ActionL2ChainProvider {
 
     /// Insert a known L2 block into the provider.
     pub fn insert_block(&mut self, block: L2BlockInfo) {
-        self.blocks.insert(block.block_info.number, block);
+        self.blocks.lock().expect("L2 blocks lock poisoned").insert(block.block_info.number, block);
     }
 
     /// Insert a known L2 block with transactions into the provider.
     pub fn insert_op_block(&mut self, number: u64, block: BaseBlock) {
-        self.op_blocks.insert(number, block);
+        self.op_blocks.lock().expect("L2 op blocks lock poisoned").insert(number, block);
     }
 
     /// Insert a system config for the given L2 block number.
     pub fn insert_system_config(&mut self, number: u64, config: SystemConfig) {
-        self.system_configs.insert(number, config);
+        self.system_configs.lock().expect("L2 system configs lock poisoned").insert(number, config);
     }
 }
 
@@ -109,11 +109,21 @@ impl BatchValidationProvider for ActionL2ChainProvider {
         &mut self,
         number: u64,
     ) -> Result<L2BlockInfo, L2ProviderError> {
-        self.blocks.get(&number).copied().ok_or(L2ProviderError::BlockNotFound(number))
+        self.blocks
+            .lock()
+            .expect("L2 blocks lock poisoned")
+            .get(&number)
+            .copied()
+            .ok_or(L2ProviderError::BlockNotFound(number))
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, L2ProviderError> {
-        self.op_blocks.get(&number).cloned().ok_or(L2ProviderError::BlockNotFound(number))
+        self.op_blocks
+            .lock()
+            .expect("L2 op blocks lock poisoned")
+            .get(&number)
+            .cloned()
+            .ok_or(L2ProviderError::BlockNotFound(number))
     }
 }
 
@@ -127,7 +137,8 @@ impl L2ChainProvider for ActionL2ChainProvider {
         _rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, L2ProviderError> {
         // Walk back from `number` to find the nearest config at or before this block.
-        let config = (0..=number).rev().find_map(|n| self.system_configs.get(&n).copied());
+        let system_configs = self.system_configs.lock().expect("L2 system configs lock poisoned");
+        let config = (0..=number).rev().find_map(|n| system_configs.get(&n).copied());
         config.ok_or(L2ProviderError::SystemConfigNotFound(number))
     }
 }

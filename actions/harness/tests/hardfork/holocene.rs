@@ -6,6 +6,7 @@ use base_action_harness::{
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
 use base_common_genesis::HardForkConfig;
+use base_consensus_derive::StepResult;
 
 // ---------------------------------------------------------------------------
 // A. Basic derivation through the Holocene activation boundary
@@ -77,6 +78,158 @@ async fn holocene_derivation_crosses_activation_boundary() {
         4,
         "all 4 L2 blocks must derive through the Holocene boundary"
     );
+}
+
+/// Holocene activation clears pre-Holocene channel-bank state. A frame 0 from
+/// before activation must not combine with the remaining frames after
+/// activation.
+#[tokio::test]
+async fn holocene_activation_flushes_buffered_pre_holocene_channel_data() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig {
+            max_frame_size: 80,
+            da_type: DaType::Calldata,
+            ..EncoderConfig::default()
+        },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_hardforks(HardForkConfig {
+            canyon_time: Some(0),
+            delta_time: Some(0),
+            ecotone_time: Some(0),
+            fjord_time: Some(0),
+            granite_time: Some(0),
+            holocene_time: Some(24),
+            ..Default::default()
+        })
+        .with_channel_timeout(10)
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block_with_single_transaction().await;
+
+    let mut source = ActionL2Source::new();
+    source.push(block.clone());
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.encode_only().await;
+    assert!(
+        batcher.pending_count() >= 2,
+        "test requires at least two frames; got {}",
+        batcher.pending_count()
+    );
+
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    batcher.stage_n_frames(&mut h.l1, 1);
+    h.l1.mine_block();
+    batcher.confirm_staged(h.l1.tip()).await;
+    chain.push(h.l1.tip().clone());
+
+    node.initialize().await;
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 0, "pre-Holocene frame 0 alone must not derive");
+    assert_eq!(node.l2_safe_number(), 0);
+
+    h.mine_and_push(&chain);
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 0, "activation block has no complete batch");
+    assert_eq!(node.l2_safe_number(), 0);
+
+    let remaining = batcher.pending_count();
+    assert!(remaining > 0, "test requires post-Holocene remainder frames");
+    batcher.stage_n_frames(&mut h.l1, remaining);
+    h.l1.mine_block();
+    batcher.confirm_staged(h.l1.tip()).await;
+    chain.push(h.l1.tip().clone());
+
+    let derived = node.run_until_idle().await;
+    assert_eq!(
+        derived, 0,
+        "post-activation remainder must not combine with pre-activation frame 0"
+    );
+    assert_eq!(node.l2_safe_number(), 0);
+
+    let mut recovery_source = ActionL2Source::new();
+    recovery_source.push(block);
+    Batcher::new(recovery_source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+    chain.push(h.l1.tip().clone());
+
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 1, "fresh post-activation channel should recover derivation");
+    assert_eq!(node.l2_safe_number(), 1);
+}
+
+/// After reorging from a post-Holocene L1 origin back before Holocene,
+/// derivation must use pre-Holocene future-batch buffering again.
+#[tokio::test]
+async fn holocene_reorg_backward_restores_pre_holocene_batch_buffering() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_hardforks(HardForkConfig {
+            canyon_time: Some(0),
+            delta_time: Some(0),
+            ecotone_time: Some(0),
+            fjord_time: Some(0),
+            granite_time: Some(0),
+            holocene_time: Some(48),
+            ..Default::default()
+        })
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+    node.initialize().await;
+
+    for _ in 0..4 {
+        h.mine_and_push(&chain);
+    }
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 0, "empty pre/post-Holocene L1 blocks should not derive L2");
+
+    h.l1.reorg_to(0).expect("reorg to genesis");
+    chain.truncate_to(0);
+    node.act_reset(h.l2_genesis()).await;
+
+    let mut blocks = sequencer.build_next_blocks_with_single_transactions(2).await;
+    let block_1 = blocks.remove(0);
+    let block_2 = blocks.remove(0);
+
+    h.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_2]).await;
+    let (_, hit) = node
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("future pre-Holocene batch should not error");
+    assert!(!hit, "future batch should buffer without deriving before its parent");
+    assert_eq!(node.l2_safe_number(), 0);
+
+    h.submit_l2_blocks(&chain, batcher_cfg, vec![block_1]).await;
+    let (_, hit) = node
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("expected block 1 after parent batch arrives");
+    assert!(hit, "block 1 should derive after its batch arrives");
+    assert_eq!(node.l2_safe_number(), 1);
+
+    let (_, hit) = node
+        .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+        .await
+        .expect("expected buffered block 2 after block 1");
+    assert!(hit, "buffered block 2 should derive after block 1 is safe");
+    assert_eq!(node.l2_safe_number(), 2);
 }
 
 // ---------------------------------------------------------------------------

@@ -90,6 +90,23 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Activates all forks from Canyon through Granite at genesis, leaving Holocene
+    /// and later as `None`.
+    ///
+    /// Replaces the entire hardfork schedule. Use when a test needs the last
+    /// pre-Holocene cumulative schedule.
+    pub fn through_granite(mut self) -> Self {
+        self.config.hardforks = HardForkConfig {
+            canyon_time: Some(0),
+            delta_time: Some(0),
+            ecotone_time: Some(0),
+            fjord_time: Some(0),
+            granite_time: Some(0),
+            ..Default::default()
+        };
+        self
+    }
+
     /// Activates all forks from Canyon through Holocene at genesis, leaving Isthmus
     /// and later as `None`.
     ///
