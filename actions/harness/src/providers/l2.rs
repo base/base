@@ -54,7 +54,7 @@ impl ActionL2ChainProvider {
     /// fields, and the genesis [`SystemConfig`] is taken from
     /// `rollup_config.genesis.system_config`.
     pub fn from_genesis(rollup_config: &RollupConfig) -> Self {
-        let mut provider = Self::default();
+        let provider = Self::default();
 
         let genesis_l2 = L2BlockInfo {
             block_info: BlockInfo {
@@ -86,17 +86,17 @@ impl ActionL2ChainProvider {
     }
 
     /// Insert a known L2 block into the provider.
-    pub fn insert_block(&mut self, block: L2BlockInfo) {
+    pub fn insert_block(&self, block: L2BlockInfo) {
         self.blocks.lock().expect("L2 blocks lock poisoned").insert(block.block_info.number, block);
     }
 
     /// Insert a known L2 block with transactions into the provider.
-    pub fn insert_op_block(&mut self, number: u64, block: BaseBlock) {
+    pub fn insert_op_block(&self, number: u64, block: BaseBlock) {
         self.op_blocks.lock().expect("L2 op blocks lock poisoned").insert(number, block);
     }
 
     /// Insert a system config for the given L2 block number.
-    pub fn insert_system_config(&mut self, number: u64, config: SystemConfig) {
+    pub fn insert_system_config(&self, number: u64, config: SystemConfig) {
         self.system_configs.lock().expect("L2 system configs lock poisoned").insert(number, config);
     }
 }

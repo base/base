@@ -645,14 +645,8 @@ impl L1Miner {
         let pending_transactions = core::mem::take(&mut self.pending_transactions);
         let transactions =
             pending_transactions.iter().map(|pending| pending.envelope.clone()).collect::<Vec<_>>();
-        let transaction_results = pending_transactions
-            .into_iter()
-            .map(|pending| (pending.logs, pending.success))
-            .collect::<Vec<_>>();
-        let transaction_logs =
-            transaction_results.iter().map(|(logs, _)| logs.clone()).collect::<Vec<_>>();
-        let transaction_statuses =
-            transaction_results.iter().map(|(_, success)| *success).collect::<Vec<_>>();
+        let (transaction_logs, transaction_statuses): (Vec<_>, Vec<_>) =
+            pending_transactions.into_iter().map(|pending| (pending.logs, pending.success)).unzip();
         let blob_sidecars = core::mem::take(&mut self.pending_blobs);
         let logs_bloom: Bloom = transaction_logs.iter().flat_map(|logs| logs.iter()).collect();
 
@@ -705,11 +699,16 @@ impl L1Miner {
         transaction_logs: &[Vec<Log>],
         transaction_statuses: &[bool],
     ) -> Vec<Receipt> {
+        debug_assert_eq!(
+            transaction_logs.len(),
+            transaction_statuses.len(),
+            "transaction_logs and transaction_statuses must have the same length"
+        );
         transaction_logs
             .iter()
             .enumerate()
             .map(|(index, logs)| Receipt {
-                status: transaction_statuses.get(index).copied().unwrap_or(true).into(),
+                status: transaction_statuses[index].into(),
                 cumulative_gas_used: 21_000 * (index as u64 + 1),
                 logs: logs.clone(),
             })
@@ -744,13 +743,23 @@ impl L1Miner {
         block_number: u64,
         timestamp: u64,
     ) -> Vec<TransactionReceipt> {
+        debug_assert_eq!(
+            transactions.len(),
+            transaction_logs.len(),
+            "transactions and transaction_logs must have the same length"
+        );
+        debug_assert_eq!(
+            transaction_logs.len(),
+            transaction_statuses.len(),
+            "transaction_logs and transaction_statuses must have the same length"
+        );
         let mut previous_log_count = 0;
         transactions
             .iter()
             .enumerate()
             .map(|(index, tx)| {
                 let gas_used = 21_000;
-                let tx_logs = transaction_logs.get(index).cloned().unwrap_or_default();
+                let tx_logs = transaction_logs[index].clone();
                 let meta = TransactionMeta {
                     tx_hash: *tx.hash(),
                     index: index as u64,
@@ -763,7 +772,7 @@ impl L1Miner {
                 let rpc_logs = RpcLog::collect_for_receipt(previous_log_count, meta, tx_logs);
                 previous_log_count += rpc_logs.len();
                 let receipt = Receipt::<RpcLog> {
-                    status: transaction_statuses.get(index).copied().unwrap_or(true).into(),
+                    status: transaction_statuses[index].into(),
                     cumulative_gas_used: gas_used * (index as u64 + 1),
                     logs: rpc_logs,
                 };
