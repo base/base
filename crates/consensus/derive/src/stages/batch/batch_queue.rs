@@ -111,10 +111,13 @@ where
         // Note: epoch origin can now be one block ahead of the L2 Safe Head
         // This is in the case where we auto generate all batches in an epoch & advance the epoch
         // but don't advance the L2 Safe Head's epoch
-        if parent.l1_origin != epoch.id() && parent.l1_origin.number != epoch.number - 1 {
+        let previous_epoch = epoch.number.checked_sub(1);
+        if parent.l1_origin != epoch.id()
+            && previous_epoch.is_none_or(|number| parent.l1_origin.number != number)
+        {
             return Err(PipelineErrorKind::Reset(ResetError::L1OriginMismatch(
                 parent.l1_origin.number,
-                epoch.number - 1,
+                previous_epoch.unwrap_or(epoch.number),
             )));
         }
 
@@ -728,6 +731,24 @@ mod tests {
         };
         let result = bq.derive_next_batch(false, parent).await.unwrap_err();
         assert_eq!(result, PipelineError::MissingOrigin.crit());
+    }
+
+    #[tokio::test]
+    async fn test_derive_next_batch_epoch_zero_parent_ahead_does_not_underflow() {
+        let cfg = Arc::new(RollupConfig::default());
+        let mock = TestNextBatchProvider::new(vec![]);
+        let fetcher = TestL2ChainProvider::default();
+        let mut bq = BatchQueue::new(cfg, mock, fetcher);
+        bq.origin = Some(BlockInfo::default());
+        bq.l1_blocks.push(BlockInfo::default());
+
+        let parent = L2BlockInfo {
+            l1_origin: BlockNumHash { number: 1, ..Default::default() },
+            ..Default::default()
+        };
+        let result = bq.derive_next_batch(false, parent).await.unwrap_err();
+
+        assert_eq!(result, PipelineErrorKind::Reset(ResetError::L1OriginMismatch(1, 0)));
     }
 
     #[tokio::test]
