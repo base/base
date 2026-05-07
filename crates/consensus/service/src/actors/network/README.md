@@ -1,54 +1,64 @@
 # Network actor
 
-The network actor is responsible for handling interactions with the p2p layer of the base-node, specifically the libp2p gossip driver and the discv5 handler.
+The network actor owns the consensus node's P2P boundary: libp2p gossipsub
+for unsafe-block propagation and discv5 for peer discovery. Production code
+constructs it from a `NetworkBuilder`; tests can bypass sockets by calling
+`NetworkActor::with_transport` with an in-process `GossipTransport`.
 
 ### Example
 
 > **Warning**
 >
-> Notice, the socket address uses `0.0.0.0`.
-> If you are experiencing issues connecting to peers for discovery,
-> check to make sure you are not using the loopback address,
-> `127.0.0.1` aka "localhost", which can prevent outward facing connections.
+> Bind and advertise an outward-facing address when joining a real network.
+> Using `127.0.0.1` or `localhost` prevents other peers from connecting back
+> to your node.
 
-```rust,no_run
+```rust,ignore
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
 use alloy_primitives::address;
-use tokio_util::sync::CancellationToken;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
-use base_consensus_service::{NetworkActor};
-use libp2p::Multiaddr;
+use base_consensus_service::{
+    NetworkActor, NetworkBuilder, NetworkConfig, NetworkEngineClient, NodeActor,
+};
 use discv5::enr::CombinedKey;
+use libp2p::{Multiaddr, multiaddr::Protocol};
+use tokio_util::sync::CancellationToken;
 
-#[tokio::main]
-async fn main() {
-    // Construct the Network
-    let signer = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+async fn run_network<E>(engine_client: E) -> eyre::Result<()>
+where
+    E: NetworkEngineClient + 'static,
+{
+    let unsafe_block_signer = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     let gossip = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 9099);
-    let mut gossip_addr = Multiaddr::from(gossip.ip());
-    gossip_addr.push(libp2p::multiaddr::Protocol::Tcp(gossip.port()));
-    let advertise_ip = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+    let mut gossip_addr = Multiaddr::empty();
+    gossip_addr.push(Protocol::Ip4(Ipv4Addr::UNSPECIFIED));
+    gossip_addr.push(Protocol::Tcp(gossip.port()));
 
     let CombinedKey::Secp256k1(k256_key) = CombinedKey::generate_secp256k1() else {
-        unreachable!()
+        unreachable!();
     };
-    let disc = LocalNode::new(k256_key, advertise_ip, 9097, 9098);
+    let discovery = LocalNode::new(k256_key, IpAddr::V4(Ipv4Addr::UNSPECIFIED), 9097, 9098);
 
-    // The unsafe blocks are sent by the network actor to `blocks_rx`. This channel receiver can be
-    // used by external actors/modules to handle incoming unsafe blocks.
-    let (blocks, blocks_rx) = tokio::sync::mpsc::channel(1024);
-
-    let (inbound_data, network) = NetworkActor::new(NetworkActor::builder(Config::new(
+    let config = NetworkConfig::new(
         RollupConfig::default(),
-        disc,
+        discovery,
         gossip_addr,
-        signer
-    )));
+        unsafe_block_signer,
+    );
+    let builder = NetworkBuilder::from(config);
+    let cancellation = CancellationToken::new();
 
-    // This will start the p2p stack of the base-node (ie the libp2p gossip and discovery layers)
-    network.start(NetworkContext { blocks, cancellation: CancellationToken::new() }).await?;
+    let (inbound, network) =
+        NetworkActor::new(engine_client, cancellation.clone(), builder).await?;
+
+    tokio::spawn(network.start(()));
+
+    // Other actors use these senders to update signer state, publish unsafe
+    // payloads, and route P2P/admin RPC requests into the network actor.
+    inbound.signer.send(unsafe_block_signer).await?;
+
+    Ok(())
 }
 ```
-
-[!WARNING]: ###example

@@ -111,7 +111,7 @@ The network actor manages the libp2p gossipsub swarm and the discv5 discovery da
 
 The `GossipTransport` trait abstracts the transport backend. The production implementation is `NetworkHandler`, which wraps a `GossipDriver<ConnectionGater>` (the libp2p swarm), a `Discv5Handler`, an `mpsc::Receiver<Enr>` from discovery, a `watch::Sender<Address>` for the signer broadcast, and optionally a `BlockSignerHandler`. The `NetworkHandler::publish()` method signs the payload, constructs a `NetworkPayloadEnvelope`, and publishes it to the correct gossipsub topic based on the payload timestamp relative to hardfork activation. `NetworkHandler::next_unsafe_block()` runs a `select!` that drains gossipsub events through `GossipDriver::handle_event()`, dials newly discovered peers from the ENR receiver, and periodically inspects peer scores to disconnect and ban peers below the configured ban threshold.
 
-The `NetworkDriver::build()` produces the `NetworkHandler` by starting the libp2p swarm, resolving the local external address from the TCP listen multiaddr, updating the discv5 ENR socket, starting the discv5 daemon, and wiring together the peer score interval.
+`NetworkBuilder::build()` produces a `NetworkDriver`. `NetworkDriver::start()` then starts the libp2p swarm, resolves the local external address from the TCP listen multiaddr, updates the discv5 ENR socket, starts the discv5 daemon, and wires together the peer score interval before returning the `NetworkHandler`.
 
 ## L1 Watcher Actor
 

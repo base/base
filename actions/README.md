@@ -42,22 +42,23 @@ actions/
     src/
     ├── lib.rs                  public API (re-exports)
     ├── action.rs               Action trait, L2BlockProvider trait
-    ├── miner.rs                L1Miner, L1 blocks, PendingTx, reorgs
-    ├── l2.rs                   L2Sequencer, ActionL2Source, TestAccount
     ├── harness.rs              ActionTestHarness
     ├── matrix.rs               ForkMatrix (upgrade combinations)
     ├── test_rollup_config.rs   TestRollupConfigBuilder
-    ├── p2p.rs                  SupervisedP2P, TestGossipTransport
     ├── engine.rs               ActionEngineClient
+    ├── l1/
+    │   ├── miner.rs            L1Miner, L1 blocks, signed txs, receipts, reorgs
+    │   ├── provider.rs         SharedL1Chain, ActionL1ChainProvider
+    │   ├── block_fetcher.rs    ActionL1BlockFetcher
+    │   └── blob.rs             ActionBlobProvider
+    ├── l2.rs                   L2Sequencer, ActionL2Source, TestAccount
+    ├── p2p.rs                  SupervisedP2P, TestGossipTransport
     ├── node.rs                 TestRollupNode, derivation / verifier pipelines
     ├── batcher/
     │   ├── actor.rs            Batcher actor
     │   └── tx_manager.rs       L1MinerTxManager (inbox submission)
-    └── providers/              L1 / L2 / blob sources for pipelines
-        ├── l1.rs               SharedL1Chain, ActionL1ChainProvider, ActionDataSource
-        ├── l1_block_fetcher.rs ActionL1BlockFetcher
-        ├── l2.rs               ActionL2ChainProvider
-        └── blob.rs             ActionBlobDataSource, blob DA
+    └── providers/
+        └── l2.rs               ActionL2ChainProvider
     tests/                      integration tests - one scenario per module (subdirs when grouped)
 ```
 
@@ -69,7 +70,7 @@ actor's source file.
 
 ## How actors work
 
-Every actor implements the `Action` trait:
+The simplest actors implement the `Action` trait:
 
 ```rust
 pub trait Action {
@@ -80,42 +81,45 @@ pub trait Action {
 ```
 
 `act()` performs one discrete step and returns a typed result. Tests can call
-`act()` directly, or call the actor's more descriptive methods (e.g.
-`L1Miner::mine_block()`). The trait exists so a test harness can drive a
-heterogeneous list of actors uniformly when that is useful.
+`act()` directly for actors that implement the trait, or call more descriptive
+methods such as `L1Miner::mine_block()` and `Batcher::advance()`. The trait
+exists so a test harness can drive a heterogeneous list of simple actors
+uniformly when that is useful.
 
-Actors are plain Rust structs. They own their state and do not communicate
-through shared memory, channels, or async runtimes. If one actor needs to
-write to another — for example the batcher needs to submit a transaction to
-the L1 miner — it takes a mutable reference to the target actor. The borrow
-checker enforces that only one actor mutates state at a time, which eliminates
-a whole class of test flakiness that plagues Go's goroutine-based approach.
+Actors are plain Rust structs. They own their state, and tests drive their
+public methods directly. Simple actors mutate each other through explicit
+references. Production-shaped actors use channels or background tasks when
+that is part of the behavior under test; for example, `Batcher` owns a
+background `BatchDriver` task and exposes methods that let tests stage,
+mine, confirm, fail, or reorg L1 submissions at precise points.
 
 
 ## L1Miner
 
 `L1Miner` maintains an in-memory chain of `L1Block`s. Each block holds a
-consensus `Header` (number, timestamp, parent hash, base fee) and a list of
-`PendingTx` entries representing the batcher transactions included in that
-block.
+consensus `Header`, ordered signed `TxEnvelope` bodies, matching consensus and
+RPC-shaped receipts, and optional EIP-4844 blob sidecars. This is the shape
+the production derivation pipeline reads from L1.
 
-When the batcher wants to submit a batch to L1, it calls
-`L1Miner::submit_tx(PendingTx { from, to, input })`. The miner accumulates
-pending transactions and drains them into the next block when `mine_block()`
-is called. This mirrors what happens on a real L1: the batcher broadcasts a
-signed transaction, it enters the mempool, and the next block proposer
-includes it.
+When the batcher wants to submit data to L1, `L1MinerTxManager` signs the
+candidate as an EIP-1559 or EIP-4844 transaction and stages it for the miner.
+The miner drains staged transactions into the next block when `mine_block()`
+is called. Tests can also enqueue synthetic L1 events such as deposits,
+system-config updates, gas updates, and operator-fee updates; those helpers
+wrap each log in a signed transaction and attach the log to that
+transaction's receipt.
 
 The block header uses `alloy_consensus::Header` and calls `hash_slow()` to
 compute parent hashes, so the in-memory chain has a realistic hash structure
 that the derivation pipeline can traverse.
 
-Safe and finalized head pointers lag behind the latest head by 32 and 64
-blocks respectively, approximating Ethereum's post-merge consensus behaviour.
+Safe and finalized head pointers are explicit test state. Tests advance or set
+them with `act_l1_safe_next`, `act_l1_finalize_next`, `act_l1_safe`, and
+`act_l1_finalize`, which keeps finality and reorg scenarios deterministic.
 Tests that need more control can read `block_by_number()` directly.
 
 
-## PendingTx and the derivation pipeline
+## Signed L1 data and the derivation pipeline
 
 On a real network, batcher transactions are EIP-1559 transactions where:
 
@@ -128,69 +132,74 @@ The derivation pipeline's L1 retrieval stage filters L1 transactions by
 comparing `to` against the batch inbox address and `from` against the expected
 batcher address. It then extracts `input` as raw frame data.
 
-`PendingTx` in the harness captures exactly those three fields. No
-cryptographic signing is required for action tests because the derivation
-pipeline does not verify signatures — it only reads the sender address and
-calldata. When we later wire up a derivation actor in action tests, the
-`L1Block::batcher_txs` field provides the same interface that a real provider
-would give the pipeline.
+The harness now models that boundary with signed L1 transactions instead of a
+loose transaction shortcut. `BatcherConfig` carries a deterministic L1 signer,
+and `L1MinerTxManager` uses it to build signed calldata or blob submissions.
+`ActionL1ChainProvider` returns those signed transaction bodies to
+`EthereumDataSource`, while `ActionBlobProvider` serves blob sidecars by
+versioned hash. The derivation pipeline therefore exercises the production
+calldata and blob DA sources even though the underlying L1 chain is still
+in-memory.
 
 
-## MockL2Source and MockL2Block
+## ActionL2Source and BaseBlock
 
 The batcher actor needs to read L2 blocks in order to know what to batch.
-`MockL2Source` is a `VecDeque<MockL2Block>` that the batcher drains. Tests
-pre-populate the source either by calling `generate()` (which creates
-sequential blocks with incrementing numbers and timestamps) or by constructing
-`MockL2Block` values manually when they need specific field values.
+`ActionL2Source` is a `VecDeque<BaseBlock>` that implements
+`L2BlockProvider`. Tests usually fill it with blocks produced by
+`L2Sequencer`, which uses the production L1 origin selector, attributes
+builder, and in-process engine client. Each block therefore contains a real
+L1-info deposit transaction and signed user transactions, rather than a
+batcher-only mock shape.
 
-`MockL2Block` carries only the fields the batcher inspects: block number,
-parent hash, timestamp, the L1 origin (epoch number and hash), and raw encoded
-transactions. It does not wrap a full `SealedBlock` or `BasePayloadAttributes`
-because the batcher does not need the rest of the block structure.
+`ActionTestHarness::create_l2_source(n)` is the shortcut for building a source
+with `n` sequenced blocks. Tests that need precise block contents can create
+an empty `ActionL2Source`, build blocks through `L2Sequencer`, and push them
+manually.
 
 
-## Batcher actor (coming next)
+## Batcher actor
 
-The batcher will drain `MockL2Block`s from the `L2BlockProvider`, construct a
-`SingleBatch` per block using `base_protocol::SingleBatch`, feed those batches
-into a `base_comp::ChannelOut<BrotliCompressor>` at `BrotliLevel::Brotli10`
-(the compression level Base uses in production), and call
-`L1Miner::submit_tx()` for each output frame.
+`Batcher` drains `BaseBlock`s from an `L2BlockProvider` and forwards them to a
+production `BatchDriver` running in a background tokio task. The driver owns a
+`BatchEncoder`, channel manager behavior, calldata/blob frame construction,
+and submission flow. The harness-owned boundary is `L1MinerTxManager`, which
+turns the driver's transaction candidates into signed L1 transactions and
+lets tests control when those transactions are staged, mined, confirmed,
+failed, or reorged.
 
-The frame encoding follows the rollup derivation spec:
-
-```
-[DERIVATION_VERSION_0] ++ channel_id (16 B) ++ frame_number (2 B)
-    ++ frame_data_length (4 B) ++ frame_data ++ is_last (1 B)
-```
-
-Using `base_comp::ChannelOut` directly (rather than a wrapper) means the
-action tests exercise the same code path as the real batcher — if there is a
-bug in frame encoding or compression, an action test will catch it.
+For the common happy path, call `batcher.advance(&mut h.l1).await`: it drains
+the L2 source, flushes the encoder, mines one L1 block, and confirms the
+resulting receipts. For more exact scenarios, use `encode_only`,
+`stage_n_frames`, `confirm_staged`, `fail_next_n_submissions`, `reorg`, and
+`wait_until_requeued`.
 
 
 ## Writing a test
 
 ```rust
-use base_action_harness::{Action, ActionTestHarness, MockL2Block, PendingTx};
-use alloy_primitives::{Address, Bytes};
+use base_action_harness::{ActionTestHarness, Batcher, BatcherConfig};
 
-#[test]
-fn example_action_test() {
+#[tokio::test]
+async fn example_action_test() {
     let mut h = ActionTestHarness::default();
+    let batcher_cfg = BatcherConfig::default();
 
-    // Step 1: mine some L1 blocks.
+    // Step 1: mine some L1 context.
     h.mine_l1_blocks(3);
     assert_eq!(h.l1.latest_number(), 3);
 
-    // Step 2: generate mock L2 blocks and submit a batch.
-    h.generate_l2_blocks(5);
-    // (batcher.advance() will go here once the batcher actor is implemented)
+    // Step 2: build real L2 blocks and batch them into one L1 block.
+    let source = h.create_l2_source(5).await;
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg);
+    batcher.advance(&mut h.l1).await;
 
-    // Step 3: mine another L1 block to include the batcher tx.
-    h.l1.mine_block();
-    assert_eq!(h.l1.latest().batcher_txs.len(), 1);
+    // Step 3: inspect the signed L1 submissions.
+    assert!(h.l1.latest_number() >= 4);
+    assert!(
+        !h.l1.tip().transactions.is_empty() || !h.l1.tip().blob_sidecars.is_empty(),
+        "mined block should contain signed batcher submissions"
+    );
 }
 ```
 
