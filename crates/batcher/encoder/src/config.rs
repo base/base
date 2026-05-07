@@ -71,7 +71,7 @@ pub struct EncoderConfig {
     /// to avoid creating a small leftover frame. Also passed to the `ShadowCompressor`
     /// as the ratio hint used when operating in [`BatchType::Single`] mode.
     ///
-    /// Default: `0.6` (matches op-batcher's `--approx-compr-ratio` default).
+    /// Default: `0.6` (matches the reference batcher's `--approx-compr-ratio` default).
     pub approx_compr_ratio: f64,
 
     /// Maximum serialized size of a single L1 calldata transaction in bytes.
@@ -84,7 +84,7 @@ pub struct EncoderConfig {
     /// This is a no-op when [`da_type`] is [`DaType::Blob`], since the blob size is
     /// the binding constraint for blob DA.
     ///
-    /// Default: `None` (no cap; op-batcher equivalent default is 120,000 bytes).
+    /// Default: `None` (no cap; reference batcher equivalent default is 120,000 bytes).
     ///
     /// [`max_frame_size`]: EncoderConfig::max_frame_size
     /// [`da_type`]: EncoderConfig::da_type

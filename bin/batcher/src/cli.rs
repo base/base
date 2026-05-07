@@ -135,7 +135,7 @@ pub(crate) struct BatcherArgs {
     ///
     /// Only relevant when `--batch-type=span`. Should be slightly below the
     /// typical observed ratio to avoid creating a small leftover frame.
-    /// Matches op-batcher's `--approx-compr-ratio` default.
+    /// Matches the reference batcher's `--approx-compr-ratio` default.
     #[arg(long = "approx-compr-ratio", default_value = "0.6", env = "BATCHER_APPROX_COMPR_RATIO")]
     pub approx_compr_ratio: f64,
 
@@ -162,7 +162,7 @@ pub(crate) struct BatcherArgs {
     /// DA backlog threshold in bytes at which throttling activates.
     ///
     /// When the estimated unsubmitted DA backlog exceeds this value, the batcher
-    /// signals the sequencer to reduce block throughput. Matches op-batcher's
+    /// signals the sequencer to reduce block throughput. Matches the reference batcher's
     /// `--throttle-threshold` default of 1 MB.
     #[arg(
         long = "throttle-threshold",
@@ -173,7 +173,7 @@ pub(crate) struct BatcherArgs {
 
     /// Disable DA throttling.
     ///
-    /// By default throttling is enabled (matching op-batcher behaviour). Pass
+    /// By default throttling is enabled (matching reference batcher behavior). Pass
     /// this flag to submit batches at full rate regardless of DA backlog.
     #[arg(long = "no-throttle", env = "BATCHER_NO_THROTTLE")]
     pub no_throttle: bool,
@@ -185,7 +185,7 @@ pub(crate) struct BatcherArgs {
     /// advances the L2 block cursor past data already pending on L1. This avoids
     /// re-submitting frames after an unclean shutdown. Maximum value is 128.
     ///
-    /// A value of 0 (default) disables the scan. Matches op-batcher's
+    /// A value of 0 (default) disables the scan. Matches the reference batcher's
     /// `--check-recent-txs-depth` flag.
     #[arg(
         long = "check-recent-txs-depth",
@@ -198,7 +198,7 @@ pub(crate) struct BatcherArgs {
     /// Maximum serialized size of a single L1 calldata transaction in bytes.
     ///
     /// Safety cap that prevents oversized calldata transactions from being rejected
-    /// by the mempool. No-op for blob DA. Equivalent to op-batcher's
+    /// by the mempool. No-op for blob DA. Equivalent to the reference batcher's
     /// `--max-l1-tx-size-bytes` (default 120,000 bytes). Omit to disable the cap.
     #[arg(long = "max-l1-tx-size-bytes", env = "BATCHER_MAX_L1_TX_SIZE_BYTES")]
     pub max_l1_tx_size_bytes: Option<usize>,
@@ -230,7 +230,7 @@ pub(crate) struct BatcherArgs {
     /// Polls `optimism_syncStatus` on the poll interval until both `current_l1`
     /// and `unsafe_l2` heads are non-zero. Useful when the batcher is started
     /// alongside a fresh node so it does not race the node's initial sync.
-    /// Matches op-batcher's `--wait-node-sync`.
+    /// Matches the reference batcher's `--wait-node-sync`.
     #[arg(long = "wait-node-sync", env = "BATCHER_WAIT_NODE_SYNC")]
     pub wait_node_sync: bool,
 
@@ -248,7 +248,7 @@ pub(crate) struct BatcherArgs {
     ///
     /// By default, when DA-backlog throttling activates, the encoder is forced
     /// to emit blob-typed submissions even if `--data-availability-type=calldata`
-    /// is configured (matching op-batcher's behaviour, since blobs amortise DA
+    /// is configured (matching reference batcher behavior, since blobs amortise DA
     /// cost more efficiently under congestion). Pass this flag to keep the
     /// configured DA type regardless of throttle state. No-op for blob-configured
     /// batchers.

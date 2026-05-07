@@ -19,7 +19,7 @@ mod tests {
 
     use crate::{BaseEvmConfig, BaseRethReceiptBuilder};
 
-    fn create_op_state_provider() -> StateProviderTest {
+    fn create_base_state_provider() -> StateProviderTest {
         let mut db = StateProviderTest::default();
 
         let l1_block_contract_account =
@@ -68,7 +68,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut db = create_op_state_provider();
+        let mut db = create_base_state_provider();
 
         let addr = Address::ZERO;
         let account = Account { balance: U256::MAX, ..Account::default() };
@@ -142,7 +142,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut db = create_op_state_provider();
+        let mut db = create_base_state_provider();
         let addr = Address::ZERO;
         let account = Account { balance: U256::MAX, ..Account::default() };
 

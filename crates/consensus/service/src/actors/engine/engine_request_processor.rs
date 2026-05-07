@@ -418,7 +418,7 @@ where
 
     /// Bootstrap path for pure validators.
     ///
-    /// Seeds engine state from reth's current head so `op_syncStatus` never returns
+    /// Seeds engine state from reth's current head so sync-status RPC never returns
     /// zeros, but intentionally skips sending a forkchoice update.  `el_sync_finished`
     /// is left `false` and will be set by the first gossip `InsertTask` FCU.
     async fn bootstrap_validator(&mut self, head: Option<L2BlockInfo>) {
@@ -576,7 +576,7 @@ where
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
             // Bootstrap: pre-populate the unsafe_head_tx watch channel so that external callers
-            // (admin_startSequencer, op_syncStatus) never observe a zero hash.
+            // (admin_startSequencer, sync-status RPC) never observe a zero hash.
             //
             // We gate on whether reth's current head is at the rollup genesis:
             //

@@ -4,14 +4,14 @@
 # Fetches real L1/L2 data from RPCs and sends a `prover_prove` request
 # to the locally running nitro prover server (started via `just tee nitro-local`).
 #
-# Uses `optimism_outputAtBlock` on the OP rollup node to get canonical output
+# Uses `optimism_outputAtBlock` on the Base consensus node to get canonical output
 # roots and L2 block references, rather than recomputing them manually.
 #
 # Usage:
 #   ./etc/scripts/local/test-nitro-prover.sh
 #
 # Environment variables (defaults match `just tee nitro-local`):
-#   OP_NODE_URL     - OP rollup node RPC         (default: base mainnet reth proofs)
+#   CONSENSUS_NODE_URL - Base consensus node RPC (default: base mainnet reth proofs)
 #   L1_ETH_URL      - L1 execution RPC           (default: https://ethereum-rpc.publicnode.com)
 #   PROVER_RPC_URL  - Prover JSON-RPC endpoint   (default: http://localhost:8000)
 
@@ -20,7 +20,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-OP_NODE_URL="${OP_NODE_URL:?must set OP_NODE_URL}"
+CONSENSUS_NODE_URL="${CONSENSUS_NODE_URL:?must set CONSENSUS_NODE_URL}"
 L1_ETH_URL="${L1_ETH_URL:?must set L1_ETH_URL}"
 PROVER_RPC_URL="${PROVER_RPC_URL:-http://localhost:8000}"
 BLOCK_RANGE="${BLOCK_RANGE:-10}"
@@ -45,7 +45,7 @@ hex() {
 #   claimed = safe head (already fully derived, so all L1 batch data exists)
 #   agreed  = safe head - 10 (the prover re-derives 10 blocks)
 # ---------------------------------------------------------------------------
-sync_status=$(rpc "$OP_NODE_URL" "optimism_syncStatus" "[]")
+sync_status=$(rpc "$CONSENSUS_NODE_URL" "optimism_syncStatus" "[]")
 safe_l2_number=$(echo "$sync_status" | jq -r '.safe_l2.number')
 CLAIMED_L2_BLOCK_NUMBER=$((safe_l2_number))
 AGREED_L2_BLOCK_NUMBER=$((CLAIMED_L2_BLOCK_NUMBER - BLOCK_RANGE))
@@ -59,7 +59,7 @@ echo "    Claimed L2 block (safe head): $CLAIMED_L2_BLOCK_NUMBER"
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Fetching agreed L2 output at block $AGREED_L2_BLOCK_NUMBER ---"
-agreed_output=$(rpc "$OP_NODE_URL" "optimism_outputAtBlock" "[\"$(hex "$AGREED_L2_BLOCK_NUMBER")\"]")
+agreed_output=$(rpc "$CONSENSUS_NODE_URL" "optimism_outputAtBlock" "[\"$(hex "$AGREED_L2_BLOCK_NUMBER")\"]")
 AGREED_L2_OUTPUT_ROOT=$(echo "$agreed_output" | jq -r '.outputRoot')
 AGREED_L2_HEAD_HASH=$(echo "$agreed_output" | jq -r '.blockRef.hash')
 agreed_state_root=$(echo "$agreed_output" | jq -r '.stateRoot')
@@ -76,7 +76,7 @@ echo "  blockRef.l1origin:      $agreed_l1_origin_number"
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Fetching claimed L2 output at block $CLAIMED_L2_BLOCK_NUMBER ---"
-claimed_output=$(rpc "$OP_NODE_URL" "optimism_outputAtBlock" "[\"$(hex "$CLAIMED_L2_BLOCK_NUMBER")\"]")
+claimed_output=$(rpc "$CONSENSUS_NODE_URL" "optimism_outputAtBlock" "[\"$(hex "$CLAIMED_L2_BLOCK_NUMBER")\"]")
 CLAIMED_L2_OUTPUT_ROOT=$(echo "$claimed_output" | jq -r '.outputRoot')
 claimed_block_hash=$(echo "$claimed_output" | jq -r '.blockRef.hash')
 claimed_state_root=$(echo "$claimed_output" | jq -r '.stateRoot')

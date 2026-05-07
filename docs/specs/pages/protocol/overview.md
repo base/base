@@ -248,16 +248,16 @@ graph LR
     DGF(<a href="./fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
     FDG(<a href="./fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
     Challengers(Challengers)
-    OP(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+    Portal(<a href="./bridging/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
 
     Proposer -->|submit output root| DGF
     DGF -->|create game| FDG
     Challengers -->|challenge / defend| FDG
-    FDG -->|resolved result| OP
+    FDG -->|resolved result| Portal
 
     classDef l1 stroke:#bbf,stroke-width:2px;
     classDef systemUser stroke:#f9a,stroke-width:2px;
-    class DGF,FDG,OP l1;
+    class DGF,FDG,Portal l1;
     class Proposer,Challengers systemUser;
 ```
 

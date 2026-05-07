@@ -522,7 +522,7 @@ mod tests {
 
         discovery = discovery.init().await.expect("Failed to initialize discovery service");
 
-        // There are no ENRs for op mainnet in the bootstore.
+        // There are no Base mainnet ENRs in the bootstore.
         // If an ENR is added, this check will fail.
         Discv5Driver::bootstrap_peers(
             discovery.bootstore,

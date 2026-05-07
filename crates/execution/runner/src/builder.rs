@@ -25,7 +25,7 @@ type BaseComponents = <BaseComponentsBuilder as NodeComponentsBuilder<BaseNodeTy
 /// payload service builder), this type is identical regardless of which payload service is used.
 pub type BaseNodeAdapter = NodeAdapter<BaseNodeTypes, BaseComponents>;
 
-/// Convenience alias for the OP Eth API type exposed by the reth RPC add-ons.
+/// Convenience alias for the Base Eth API type exposed by the reth RPC add-ons.
 type BaseEthApi = <ConcreteBaseAddOns as RethRpcAddOns<BaseNodeAdapter>>::EthApi;
 
 /// Convenience alias for the full Base node handle produced after launch.

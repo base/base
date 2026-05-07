@@ -151,7 +151,7 @@ pub enum FromBlockError {
     BlockInfoDecodeError(#[from] DecodeError),
     /// Failed to convert [`BaseExecutionPayload`] to [`BaseBlock`].
     #[error(transparent)]
-    OpPayload(#[from] BasePayloadError),
+    BasePayload(#[from] BasePayloadError),
 }
 
 impl PartialEq<Self> for FromBlockError {
@@ -180,7 +180,7 @@ impl L2BlockInfo {
         Self { block_info, l1_origin, seq_num }
     }
 
-    /// Constructs an [`L2BlockInfo`] from a given OP [`Block`] and [`ChainGenesis`].
+    /// Constructs an [`L2BlockInfo`] from a given Base [`Block`] and [`ChainGenesis`].
     pub fn from_block_and_genesis<T: AsRef<BaseTxEnvelope>>(
         block: &Block<T>,
         genesis: &ChainGenesis,
@@ -373,7 +373,7 @@ mod tests {
             l2: BlockNumHash { hash: B256::from([5; 32]), number: 1 },
             ..Default::default()
         };
-        let op_block = BaseBlock {
+        let base_block = BaseBlock {
             header: Header {
                 number: 1,
                 parent_hash: B256::from([2; 32]),
@@ -382,7 +382,7 @@ mod tests {
             },
             body: Default::default(),
         };
-        let err = L2BlockInfo::from_block_and_genesis(&op_block, &genesis).unwrap_err();
+        let err = L2BlockInfo::from_block_and_genesis(&base_block, &genesis).unwrap_err();
         assert_eq!(err, FromBlockError::InvalidGenesisHash);
     }
 

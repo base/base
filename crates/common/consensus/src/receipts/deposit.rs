@@ -305,7 +305,7 @@ pub(super) mod serde_bincode_compat {
         fn from(value: &'a super::DepositReceipt<T>) -> Self {
             Self {
                 logs: Cow::Borrowed(&value.inner.logs),
-                // OP has no post state root variant
+                // Base has no post-state-root variant.
                 status: value.inner.status.coerce_status(),
                 cumulative_gas_used: value.inner.cumulative_gas_used,
                 deposit_nonce: value.deposit_nonce,

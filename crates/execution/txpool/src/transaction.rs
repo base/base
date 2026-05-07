@@ -45,7 +45,7 @@ pub fn unix_time_millis() -> u128 {
     }
 }
 
-/// Pool transaction for OP.
+/// Pool transaction for Base.
 ///
 /// This type wraps the actual transaction and caches values that are frequently used by the pool.
 /// For payload building this lazily tracks values that are required during payload building:

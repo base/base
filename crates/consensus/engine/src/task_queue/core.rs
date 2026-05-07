@@ -123,7 +123,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             }
         }
 
-        // Broadcast the updated state so watch-channel subscribers (e.g. op_syncStatus RPC)
+        // Broadcast the updated state so watch-channel subscribers (e.g. sync-status RPC)
         // see the new forkchoice immediately, without waiting for a task to pass through drain().
         self.state_sender.send_replace(self.state);
 
@@ -134,7 +134,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
 
     /// Seeds the engine sync state from an external source without sending a forkchoice update.
     ///
-    /// Pre-populates the [`EngineState`] watch channel so that callers such as `op_syncStatus`
+    /// Pre-populates the [`EngineState`] watch channel so that callers such as sync-status RPC
     /// never observe zeros during the bootstrap window. `el_sync_finished` is left unchanged —
     /// the engine has not confirmed validity via FCU and the existing reset-deferral logic must
     /// continue to gate on it.

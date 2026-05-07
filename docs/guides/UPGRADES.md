@@ -30,7 +30,7 @@ hardfork!(
     #[derive(Default)]
     BaseUpgrade {
         // ... existing variants ...
-        /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
+        /// Jovian: Base network upgrade.
         Jovian,
         /// Azul: First Base-specific network upgrade.
         Azul,   // <-- add here

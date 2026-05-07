@@ -137,7 +137,7 @@ impl Default for InMemoryProofsStorage {
 }
 
 impl InMemoryProofsStorage {
-    /// Create a new in-memory op proofs storage instance
+    /// Create a new in-memory Base proofs storage instance.
     pub fn new() -> Self {
         Self { inner: Arc::new(RwLock::new(InMemoryStorageInner::default())) }
     }

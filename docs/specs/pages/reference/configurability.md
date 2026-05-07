@@ -34,7 +34,7 @@ There are four categories of Base configuration:
 | [Sequencing Window Size](glossary.md#sequencing-window) | Max batch submission gap before L1 fallback triggers. 3,600 L1 blocks (12 hours at 12s L1 block time). | Static |
 | Start Block | L1 block where `SystemConfig` was first initialized | [L1 Proxy Admin](#admin-roles) |
 | Superchain Target | `SuperchainConfig` and `ProtocolVersions` addresses for cross-L2 config. Mainnet or Sepolia. | Static |
-| Governance Token | OP governance token. Disabled. | n/a |
+| Governance Token | Governance token support is disabled. | n/a |
 | [Operator Fee Params](../upgrades/isthmus/exec-engine.md#operator-fee) | Operator fee scalar and constant for fee calculation. Standard values are 0; non-zero for non-standard configurations such as op-succinct. | [System Config Owner](#admin-roles) |
 | [DA Footprint Gas Scalar](../upgrades/jovian/exec-engine.md#DA-footprint-block-limit) | Scalar for DA footprint calculation | [System Config Owner](#admin-roles) |
 | [Minimum Base Fee](../upgrades/jovian/exec-engine.md#minimum-base-fee) | Minimum base fee on L2 | [System Config Owner](#admin-roles) |

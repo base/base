@@ -293,7 +293,7 @@ where
             // Spec:
             // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
             should_override_builder: false,
-            // No blobs for OP.
+            // No blobs for Base execution payloads.
             blobs_bundle: BlobsBundleV1 { blobs: vec![], commitments: vec![], proofs: vec![] },
             parent_beacon_block_root,
         }
@@ -331,7 +331,7 @@ where
             // Spec:
             // <https://github.com/ethereum/execution-apis/blob/fe8e13c288c592ec154ce25c534e26cb7ce0530d/src/engine/cancun.md#specification-2>
             should_override_builder: false,
-            // No blobs for OP.
+            // No blobs for Base execution payloads.
             blobs_bundle: BlobsBundleV1 { blobs: vec![], commitments: vec![], proofs: vec![] },
             parent_beacon_block_root,
             execution_requests: vec![],

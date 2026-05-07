@@ -89,9 +89,9 @@ pub struct MonitoringConfig {
     pub flashblocks_ws: Url,
     /// L1 Ethereum JSON-RPC endpoint URL.
     pub l1_rpc: Url,
-    /// Optional OP-Node JSON-RPC endpoint URL.
+    /// Optional Base consensus node JSON-RPC endpoint URL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub op_node_rpc: Option<Url>,
+    pub consensus_node_rpc: Option<Url>,
     /// L1 `SystemConfig` contract address.
     pub system_config: Address,
     /// L1 batcher address for blob attribution.
@@ -145,7 +145,7 @@ struct MonitoringConfigOverride {
     rpc: Option<Url>,
     flashblocks_ws: Option<Url>,
     l1_rpc: Option<Url>,
-    op_node_rpc: Option<Url>,
+    consensus_node_rpc: Option<Url>,
     #[serde(default)]
     system_config: Option<Address>,
     #[serde(default)]
@@ -190,7 +190,7 @@ impl MonitoringConfig {
             rpc: Url::parse("https://mainnet.base.org").unwrap(),
             flashblocks_ws: Url::parse("wss://mainnet.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-rpc.publicnode.com").unwrap(),
-            op_node_rpc: None,
+            consensus_node_rpc: None,
             system_config: rollup.l1_system_config_address,
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
             l1_blob_target: 14,
@@ -209,7 +209,7 @@ impl MonitoringConfig {
             rpc: Url::parse("https://sepolia.base.org").unwrap(),
             flashblocks_ws: Url::parse("wss://sepolia.flashblocks.base.org/ws").unwrap(),
             l1_rpc: Url::parse("https://ethereum-sepolia-rpc.publicnode.com").unwrap(),
-            op_node_rpc: None,
+            consensus_node_rpc: None,
             system_config: rollup.l1_system_config_address,
             batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
             l1_blob_target: 14,
@@ -233,7 +233,7 @@ impl MonitoringConfig {
             rpc: Url::parse("http://localhost:7545").unwrap(),
             flashblocks_ws: Url::parse("ws://localhost:7111").unwrap(),
             l1_rpc: Url::parse("http://localhost:4545").unwrap(),
-            op_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
+            consensus_node_rpc: Some(Url::parse("http://localhost:7549").unwrap()),
             // These will be populated by fetch_rollup_config
             system_config: Address::ZERO,
             batcher_address: None,
@@ -288,11 +288,11 @@ impl MonitoringConfig {
     }
 
     /// Fetches the rollup config from the consensus node via the `optimism_rollupConfig` RPC method.
-    async fn fetch_rollup_config(op_node_url: &Url) -> Result<RollupConfig> {
-        let provider = ProviderBuilder::new()
-            .connect(op_node_url.as_str())
-            .await
-            .with_context(|| format!("Failed to connect to consensus node at {op_node_url}"))?;
+    async fn fetch_rollup_config(consensus_node_url: &Url) -> Result<RollupConfig> {
+        let provider =
+            ProviderBuilder::new().connect(consensus_node_url.as_str()).await.with_context(
+                || format!("Failed to connect to consensus node at {consensus_node_url}"),
+            )?;
 
         let config: RollupConfig =
             provider
@@ -357,9 +357,10 @@ impl MonitoringConfig {
     async fn load_devnet() -> Result<Self> {
         let mut config = Self::devnet_base();
 
-        let op_node_url = config.op_node_rpc.as_ref().expect("devnet should have op_node_rpc");
+        let consensus_node_url =
+            config.consensus_node_rpc.as_ref().expect("devnet should have consensus_node_rpc");
 
-        let rollup_config = Self::fetch_rollup_config(op_node_url).await.with_context(
+        let rollup_config = Self::fetch_rollup_config(consensus_node_url).await.with_context(
             || "Failed to fetch rollup config from consensus node. Is the devnet running?",
         )?;
 
@@ -391,7 +392,7 @@ impl MonitoringConfig {
             rpc: overrides.rpc.unwrap_or(base.rpc),
             flashblocks_ws: overrides.flashblocks_ws.unwrap_or(base.flashblocks_ws),
             l1_rpc: overrides.l1_rpc.unwrap_or(base.l1_rpc),
-            op_node_rpc: overrides.op_node_rpc.or(base.op_node_rpc),
+            consensus_node_rpc: overrides.consensus_node_rpc.or(base.consensus_node_rpc),
             system_config: overrides.system_config.unwrap_or(base.system_config),
             batcher_address: overrides.batcher_address.or(base.batcher_address),
             l1_blob_target: overrides.l1_blob_target.unwrap_or(base.l1_blob_target),
@@ -430,8 +431,8 @@ mod tests {
         assert_eq!(devnet.rpc.as_str(), "http://localhost:7545/");
         assert_eq!(devnet.flashblocks_ws.as_str(), "ws://localhost:7111/");
         assert_eq!(devnet.l1_rpc.as_str(), "http://localhost:4545/");
-        assert!(devnet.op_node_rpc.is_some());
-        assert_eq!(devnet.op_node_rpc.unwrap().as_str(), "http://localhost:7549/");
+        assert!(devnet.consensus_node_rpc.is_some());
+        assert_eq!(devnet.consensus_node_rpc.unwrap().as_str(), "http://localhost:7549/");
     }
 
     #[tokio::test]

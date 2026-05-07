@@ -1107,7 +1107,7 @@ mod tests {
         };
         let fetcher = TestL2ChainProvider {
             blocks: vec![block_nine, block_seven],
-            op_blocks: vec![block, second],
+            base_blocks: vec![block, second],
             ..Default::default()
         };
         let mut bq = BatchQueue::new(cfg, mock, fetcher);
