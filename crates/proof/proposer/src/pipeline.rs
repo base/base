@@ -938,6 +938,7 @@ where
         self.fetch_canonical_roots_with(blocks, false).await
     }
 
+    /// Concurrently fetches canonical output roots, bypassing the output cache.
     async fn fetch_fresh_canonical_roots(
         &self,
         blocks: Vec<u64>,
@@ -945,10 +946,13 @@ where
         self.fetch_canonical_roots_with(blocks, true).await
     }
 
+    /// Concurrently fetches canonical output roots with configurable cache usage.
+    ///
+    /// When `bypass_cache` is true, each root is fetched directly from the rollup node.
     async fn fetch_canonical_roots_with(
         &self,
         blocks: Vec<u64>,
-        fresh: bool,
+        bypass_cache: bool,
     ) -> Result<HashMap<u64, B256>, ProposerError> {
         if blocks.is_empty() {
             return Ok(HashMap::new());
@@ -957,7 +961,7 @@ where
             .map(|block_number| {
                 let rollup = &self.rollup_client;
                 async move {
-                    let output = if fresh {
+                    let output = if bypass_cache {
                         rollup.fresh_output_at_block(block_number).await
                     } else {
                         rollup.output_at_block(block_number).await
