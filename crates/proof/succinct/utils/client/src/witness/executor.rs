@@ -173,21 +173,21 @@ pub trait WitnessExecutor {
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
 
-        if output_root != boot.claimed_l2_output_root {
-            return Err(anyhow!(
-                "Failed to validate L2 block #{number} with claimed output root {claimed_output_root}. Got {output_root} instead",
-                number = safe_head.block_info.number,
-                output_root = output_root,
-                claimed_output_root = boot.claimed_l2_output_root,
-            ));
-        }
-
         let derived_l2_block_number = safe_head.block_info.number;
         if derived_l2_block_number != boot.claimed_l2_block_number {
             return Err(anyhow!(
                 "Failed to validate claimed L2 block number {claimed}. Derivation only reached L2 block #{derived}",
                 claimed = boot.claimed_l2_block_number,
                 derived = derived_l2_block_number,
+            ));
+        }
+
+        if output_root != boot.claimed_l2_output_root {
+            return Err(anyhow!(
+                "Failed to validate L2 block #{number} with claimed output root {claimed_output_root}. Got {output_root} instead",
+                number = derived_l2_block_number,
+                output_root = output_root,
+                claimed_output_root = boot.claimed_l2_output_root,
             ));
         }
 
