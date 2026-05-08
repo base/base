@@ -230,6 +230,7 @@ mod tests {
     use crate::cli::{
         AdminArgs, Cli, HealthArgs, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli,
     };
+    use crate::constants::PROPOSAL_TIMEOUT;
 
     fn minimal_cli() -> Cli {
         Cli {
@@ -294,6 +295,16 @@ mod tests {
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.rpc_timeout, Duration::from_secs(30));
         assert_eq!(config.max_parallel_proofs, 1);
+        assert_eq!(config.tx_manager.as_ref().unwrap().tx_send_timeout, PROPOSAL_TIMEOUT);
+    }
+
+    #[test]
+    fn test_explicit_zero_tx_send_timeout_disables_tx_manager_timeout() {
+        let mut cli = minimal_cli();
+        cli.proposer.tx_manager.tx_send_timeout = Duration::ZERO;
+        let config = ProposerConfig::from_cli(cli).unwrap();
+
+        assert_eq!(config.tx_manager.as_ref().unwrap().tx_send_timeout, Duration::ZERO);
     }
 
     #[test]

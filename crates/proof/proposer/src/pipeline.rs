@@ -49,7 +49,6 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     Metrics,
-    constants::PROPOSAL_TIMEOUT,
     driver::{DriverConfig, RecoveredState},
     error::ProposerError,
     output_proposer::OutputProposer,
@@ -1164,26 +1163,20 @@ where
             "Proposing output (creating dispute game)"
         );
 
-        // Submit with timeout.
         let mut propose_timer = base_metrics::timed!(Metrics::proposal_l1_tx_duration_seconds());
-        let propose_result = tokio::time::timeout(
-            PROPOSAL_TIMEOUT,
-            self.output_proposer.propose_output(
-                aggregate_proposal,
-                parent_address,
-                &intermediate_roots,
-            ),
-        )
-        .await;
+        let propose_result = self
+            .output_proposer
+            .propose_output(aggregate_proposal, parent_address, &intermediate_roots)
+            .await;
 
         match propose_result {
-            Ok(Ok(())) => {
+            Ok(()) => {
                 drop(propose_timer);
                 info!(target_block, "Dispute game created successfully");
                 Metrics::l2_output_proposals_total().increment(1);
                 Ok(())
             }
-            Ok(Err(e)) => {
+            Err(e) => {
                 if e.is_game_already_exists() {
                     drop(propose_timer);
                     info!(
@@ -1195,13 +1188,6 @@ where
                     propose_timer.disarm();
                     Err(SubmitAction::Failed(e))
                 }
-            }
-            Err(_) => {
-                propose_timer.disarm();
-                Err(SubmitAction::Failed(ProposerError::Internal(format!(
-                    "dispute game creation timed out after {}s",
-                    PROPOSAL_TIMEOUT.as_secs()
-                ))))
             }
         }
     }
@@ -1305,6 +1291,7 @@ mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256};
+    use async_trait::async_trait;
     use base_proof_primitives::{ProofResult, Proposal, ProverClient};
     use rstest::rstest;
     use tokio_util::sync::CancellationToken;
@@ -1468,6 +1455,24 @@ mod tests {
         block_interval: u64,
         intermediate_block_interval: u64,
     ) -> TestPipeline {
+        recovery_pipeline_full_with_output_proposer(
+            factory,
+            output_roots,
+            anchor_block,
+            block_interval,
+            intermediate_block_interval,
+            Arc::new(MockOutputProposer),
+        )
+    }
+
+    fn recovery_pipeline_full_with_output_proposer(
+        factory: MockDisputeGameFactory,
+        output_roots: HashMap<u64, B256>,
+        anchor_block: u64,
+        block_interval: u64,
+        intermediate_block_interval: u64,
+        output_proposer: Arc<dyn OutputProposer>,
+    ) -> TestPipeline {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
@@ -1501,7 +1506,7 @@ mod tests {
             anchor_registry,
             Arc::new(factory),
             Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
+            output_proposer,
             cancel,
         )
     }
@@ -2116,6 +2121,24 @@ mod tests {
         ProofResult::Tee { aggregate_proposal: aggregate, proposals }
     }
 
+    #[derive(Debug)]
+    struct DelayedOutputProposer {
+        delay: Duration,
+    }
+
+    #[async_trait]
+    impl OutputProposer for DelayedOutputProposer {
+        async fn propose_output(
+            &self,
+            _proposal: &Proposal,
+            _parent_address: Address,
+            _intermediate_roots: &[B256],
+        ) -> Result<(), ProposerError> {
+            tokio::time::sleep(self.delay).await;
+            Ok(())
+        }
+    }
+
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_validate_and_submit_intermediate_roots_match() {
         // MockRollupClient returns B256::repeat_byte(n) for blocks without
@@ -2126,6 +2149,29 @@ mod tests {
         let result =
             pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
         assert!(result.is_ok(), "all roots match, submission should succeed");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_validate_and_submit_does_not_apply_outer_timeout() {
+        let pipeline = recovery_pipeline_full_with_output_proposer(
+            MockDisputeGameFactory::with_games(vec![]),
+            HashMap::new(),
+            TEST_ANCHOR_BLOCK,
+            SUBMIT_BLOCK_INTERVAL,
+            SUBMIT_INTERMEDIATE_INTERVAL,
+            Arc::new(DelayedOutputProposer {
+                delay: crate::constants::PROPOSAL_TIMEOUT + Duration::from_secs(1),
+            }),
+        );
+        let proof_result = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+
+        let result =
+            pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
+
+        assert!(
+            result.is_ok(),
+            "submission should rely on tx-manager timeout, not an outer timeout"
+        );
     }
 
     #[rstest]
