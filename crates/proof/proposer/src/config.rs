@@ -227,10 +227,12 @@ mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
-    use crate::cli::{
-        AdminArgs, Cli, HealthArgs, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli,
+    use crate::{
+        cli::{
+            AdminArgs, Cli, HealthArgs, LogArgs, MetricsArgs, ProposerArgs, SignerCli, TxManagerCli,
+        },
+        constants::PROPOSAL_TIMEOUT,
     };
-    use crate::constants::PROPOSAL_TIMEOUT;
 
     fn minimal_cli() -> Cli {
         Cli {
