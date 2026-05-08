@@ -415,7 +415,8 @@ async fn test_step_pending_proof_skips_prove_block() {
 
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
-    // Step 1: proof is initiated but not ready (Unspecified) → session stored.
+    // Step 1: proof is initiated → session stored in AwaitingProof. The mock's
+    // proof_status is not polled this tick (pending_proofs is empty at poll time).
     driver.step().await.unwrap();
     assert!(
         driver.pending_proofs.contains_key(&addr(0)),
