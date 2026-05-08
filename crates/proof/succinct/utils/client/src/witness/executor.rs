@@ -32,7 +32,7 @@ pub async fn get_inputs_for_pipeline<O>(
     oracle: Arc<O>,
 ) -> Result<(
     BootInfo,
-    Option<(Arc<RwLock<PipelineCursor>>, OracleL1ChainProvider<O>, OracleL2ChainProvider<O>)>,
+    (Arc<RwLock<PipelineCursor>>, OracleL1ChainProvider<O>, OracleL2ChainProvider<O>),
     u64,
 )>
 where
@@ -90,7 +90,7 @@ where
     .await?;
     l2_provider.set_cursor(Arc::clone(&cursor));
 
-    Ok((boot_clone, Some((cursor, l1_provider, l2_provider)), safe_head_number))
+    Ok((boot_clone, (cursor, l1_provider, l2_provider), safe_head_number))
 }
 
 /// Constructs a derivation pipeline and executes block derivation.

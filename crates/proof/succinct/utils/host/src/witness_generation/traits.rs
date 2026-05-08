@@ -56,26 +56,24 @@ pub trait WitnessGenerator {
         let beacon =
             OnlineBlobStore { provider: blob_provider.clone(), store: Arc::clone(&blob_data) };
 
-        let (boot_info, input, _safe_head_number) =
+        let (boot_info, (cursor, l1_provider, l2_provider), _safe_head_number) =
             get_inputs_for_pipeline(Arc::clone(&oracle)).await?;
-        if let Some((cursor, l1_provider, l2_provider)) = input {
-            let rollup_config = Arc::new(boot_info.rollup_config.clone());
-            let l1_config = Arc::new(boot_info.l1_config.clone());
-            let pipeline = self
-                .get_executor()
-                .create_pipeline(
-                    rollup_config,
-                    l1_config,
-                    Arc::clone(&cursor),
-                    Arc::clone(&oracle),
-                    beacon,
-                    l1_provider.clone(),
-                    l2_provider.clone(),
-                )
-                .await
-                .unwrap();
-            let _ = self.get_executor().run(boot_info, pipeline, cursor, l2_provider).await?;
-        }
+        let rollup_config = Arc::new(boot_info.rollup_config.clone());
+        let l1_config = Arc::new(boot_info.l1_config.clone());
+        let pipeline = self
+            .get_executor()
+            .create_pipeline(
+                rollup_config,
+                l1_config,
+                Arc::clone(&cursor),
+                Arc::clone(&oracle),
+                beacon,
+                l1_provider.clone(),
+                l2_provider.clone(),
+            )
+            .await
+            .unwrap();
+        let _ = self.get_executor().run(boot_info, pipeline, cursor, l2_provider).await?;
 
         let witness = Self::WitnessData::from_parts(
             preimage_witness_store.lock().unwrap().clone(),

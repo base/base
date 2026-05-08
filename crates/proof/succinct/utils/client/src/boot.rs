@@ -40,6 +40,8 @@ impl BootInfoStruct {
         l2_block_number: u64,
         intermediate_roots: Vec<B256>,
     ) -> Self {
+        // Defense-in-depth: witness execution validates this before constructing the committed
+        // public inputs, and this assert preserves that invariant for any direct caller.
         assert_eq!(
             l2_block_number, boot_info.claimed_l2_block_number,
             "derived L2 block number must match claimed L2 block number"
