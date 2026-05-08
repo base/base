@@ -22,7 +22,7 @@ use reth_node_api::{
     validate_version_specific_fields,
 };
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SignedTransaction};
-use reth_provider::StateProviderFactory;
+use reth_provider::{StateProvider, StateProviderFactory};
 use reth_trie_common::{HashedPostState, KeyHasher};
 
 /// The types used in the Base beacon consensus engine.
@@ -110,6 +110,32 @@ where
     pub fn chain_spec(&self) -> &ChainSpec {
         self.inner.chain_spec()
     }
+
+    /// Verifies Isthmus withdrawals root against the given parent state provider.
+    pub fn validate_block_post_execution_with_state<DB, H>(
+        &self,
+        state_updates: &HashedPostState,
+        state: DB,
+        header: H,
+    ) -> Result<(), ConsensusError>
+    where
+        DB: StateProvider,
+        H: BlockHeader,
+    {
+        if !self.chain_spec().is_isthmus_active_at_timestamp(header.timestamp()) {
+            return Ok(());
+        }
+
+        let predeploy_storage_updates = state_updates
+            .storages
+            .get(&self.hashed_addr_l2tol1_msg_passer)
+            .cloned()
+            .unwrap_or_default();
+        isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, state, header)
+            .map_err(|err| {
+                ConsensusError::Other(format!("failed to verify block post-execution: {err}"))
+            })
+    }
 }
 
 impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
@@ -126,29 +152,16 @@ where
         state_updates: &HashedPostState,
         block: &RecoveredBlock<Self::Block>,
     ) -> Result<(), ConsensusError> {
-        if self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
-            let Ok(state) = self.provider.state_by_block_hash(block.parent_hash()) else {
-                // FIXME: we don't necessarily have access to the parent block here because the
-                // parent block isn't necessarily part of the canonical chain yet. Instead this
-                // function should receive the list of in memory blocks as input
-                return Ok(());
-            };
-            let predeploy_storage_updates = state_updates
-                .storages
-                .get(&self.hashed_addr_l2tol1_msg_passer)
-                .cloned()
-                .unwrap_or_default();
-            isthmus::verify_withdrawals_root_prehashed(
-                predeploy_storage_updates,
-                state,
-                block.header(),
-            )
-            .map_err(|err| {
-                ConsensusError::Other(format!("failed to verify block post-execution: {err}"))
-            })?
+        if !self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
+            return Ok(());
         }
 
-        Ok(())
+        let state = self.provider.state_by_block_hash(block.parent_hash()).map_err(|err| {
+            ConsensusError::Other(format!(
+                "failed to load parent state for Isthmus withdrawals root validation: {err}"
+            ))
+        })?;
+        self.validate_block_post_execution_with_state(state_updates, state, block.header())
     }
 
     fn convert_payload_to_block(

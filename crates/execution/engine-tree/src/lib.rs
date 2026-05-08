@@ -9,4 +9,4 @@ pub use cached_execution::{
 };
 
 mod validator;
-pub use validator::{BaseEngineValidator, BaseEngineValidatorBuilder};
+pub use validator::{BaseEngineValidator, BaseEngineValidatorBuilder, PayloadValidatorWithState};
