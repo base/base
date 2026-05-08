@@ -1216,6 +1216,14 @@ where
                         "Game already exists, next tick will load fresh state from chain"
                     );
                     Err(SubmitAction::GameAlreadyExists)
+                } else if e.is_l1_origin_too_old() {
+                    propose_timer.disarm();
+                    warn!(
+                        error = %e,
+                        target_block,
+                        "Proof L1 origin is too old, discarding proof to re-prove"
+                    );
+                    Err(SubmitAction::Discard(e))
                 } else {
                     propose_timer.disarm();
                     Err(SubmitAction::Failed(e))
@@ -2318,6 +2326,21 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct L1OriginTooOldOutputProposer;
+
+    #[async_trait]
+    impl OutputProposer for L1OriginTooOldOutputProposer {
+        async fn propose_output(
+            &self,
+            _proposal: &Proposal,
+            _parent_address: Address,
+            _intermediate_roots: &[B256],
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::L1OriginTooOld)
+        }
+    }
+
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_validate_and_submit_intermediate_roots_match() {
         // MockRollupClient returns B256::repeat_byte(n) for blocks without
@@ -2350,6 +2373,27 @@ mod tests {
         assert!(
             result.is_ok(),
             "submission should rely on tx-manager timeout, not an outer timeout"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_validate_and_submit_discards_l1_origin_too_old() {
+        let pipeline = recovery_pipeline_full_with_output_proposer(
+            MockDisputeGameFactory::with_games(vec![]),
+            HashMap::new(),
+            TEST_ANCHOR_BLOCK,
+            SUBMIT_BLOCK_INTERVAL,
+            SUBMIT_INTERMEDIATE_INTERVAL,
+            Arc::new(L1OriginTooOldOutputProposer),
+        );
+        let proof_result = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+
+        let result =
+            pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
+
+        assert!(
+            matches!(result, Err(SubmitAction::Discard(ProposerError::L1OriginTooOld))),
+            "stale L1 origin should discard the proof, got {result:?}"
         );
     }
 

@@ -9,7 +9,7 @@
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
 
 use crate::{
@@ -23,6 +23,9 @@ sol! {
     /// Each game instance is a clone created by `DisputeGameFactory.create()`.
     #[sol(rpc)]
     interface IAggregateVerifier {
+        /// Error returned when the proof's L1 origin is older than the EIP-2935 history window.
+        error L1OriginTooOld(uint256 l1OriginNumber, uint256 currentBlock);
+
         /// Returns the root claim (output root) of this game.
         function rootClaim() external pure returns (bytes32);
 
@@ -252,6 +255,11 @@ pub trait AggregateVerifierClient: Send + Sync {
         asr_address: Address,
         game_address: Address,
     ) -> Result<AnchorPreflight, ContractError>;
+}
+
+/// The 4-byte selector for `L1OriginTooOld()`.
+pub const fn l1_origin_too_old_selector() -> [u8; 4] {
+    IAggregateVerifier::L1OriginTooOld::SELECTOR
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -780,6 +788,13 @@ mod tests {
     fn test_encode_claim_credit_calldata_has_selector() {
         let calldata = encode_claim_credit_calldata();
         assert_eq!(&calldata[..4], &IAggregateVerifier::claimCreditCall::SELECTOR);
+    }
+
+    #[test]
+    fn test_l1_origin_too_old_selector() {
+        let selector = l1_origin_too_old_selector();
+        assert_eq!(selector.len(), 4);
+        assert_ne!(selector, [0u8; 4]);
     }
 
     #[test]
