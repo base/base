@@ -935,6 +935,21 @@ where
         &self,
         blocks: Vec<u64>,
     ) -> Result<HashMap<u64, B256>, ProposerError> {
+        self.fetch_canonical_roots_with(blocks, false).await
+    }
+
+    async fn fetch_fresh_canonical_roots(
+        &self,
+        blocks: Vec<u64>,
+    ) -> Result<HashMap<u64, B256>, ProposerError> {
+        self.fetch_canonical_roots_with(blocks, true).await
+    }
+
+    async fn fetch_canonical_roots_with(
+        &self,
+        blocks: Vec<u64>,
+        fresh: bool,
+    ) -> Result<HashMap<u64, B256>, ProposerError> {
         if blocks.is_empty() {
             return Ok(HashMap::new());
         }
@@ -942,11 +957,12 @@ where
             .map(|block_number| {
                 let rollup = &self.rollup_client;
                 async move {
-                    rollup
-                        .output_at_block(block_number)
-                        .await
-                        .map(|out| (block_number, out.output_root))
-                        .map_err(ProposerError::Rpc)
+                    let output = if fresh {
+                        rollup.fresh_output_at_block(block_number).await
+                    } else {
+                        rollup.output_at_block(block_number).await
+                    };
+                    output.map(|out| (block_number, out.output_root)).map_err(ProposerError::Rpc)
                 }
             })
             .buffered(self.config.recovery_scan_concurrency)
@@ -1063,7 +1079,7 @@ where
         // JIT validation: check that the proved output root still matches canonical.
         let canonical_output = self
             .rollup_client
-            .output_at_block(target_block)
+            .fresh_output_at_block(target_block)
             .await
             .map_err(|e| SubmitAction::Failed(ProposerError::Rpc(e)))?;
 
@@ -1091,13 +1107,15 @@ where
             .extract_intermediate_roots(starting_block_number, proposals, &intermediate_blocks)
             .map_err(SubmitAction::Failed)?;
 
-        // Fetch canonical roots for non-target intermediate blocks only;
-        // the target block was already fetched for the JIT check above.
+        // Fetch fresh canonical roots for non-target intermediate blocks only;
+        // the target block was already fetched fresh for the JIT check above.
         let non_target_blocks: Vec<u64> =
             intermediate_blocks.iter().copied().filter(|&b| b != target_block).collect();
 
-        let mut canonical_map: HashMap<u64, B256> =
-            self.fetch_canonical_roots(non_target_blocks).await.map_err(SubmitAction::Failed)?;
+        let mut canonical_map: HashMap<u64, B256> = self
+            .fetch_fresh_canonical_roots(non_target_blocks)
+            .await
+            .map_err(SubmitAction::Failed)?;
         canonical_map.insert(target_block, canonical_output.output_root);
 
         for (root, block) in intermediate_roots.iter().zip(intermediate_blocks.iter()) {

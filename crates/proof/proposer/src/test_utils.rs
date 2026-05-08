@@ -128,6 +128,9 @@ impl RollupProvider for MockRollupClient {
             .unwrap_or_else(|| B256::repeat_byte(block_number as u8));
         Ok(OutputAtBlock { output_root: root, block_ref: test_l2_block_ref(block_number, root) })
     }
+    async fn fresh_output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        self.output_at_block(block_number).await
+    }
 }
 
 /// Mock anchor state registry contract client for tests.
