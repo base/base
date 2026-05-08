@@ -15,7 +15,10 @@
 //!    TEE proof first (`nullify()`), falling back to ZK `nullify()`.
 //!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
@@ -134,6 +137,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
 impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T, C> {
     /// Maximum number of times a failed proof job will be retried before being dropped.
     pub const MAX_PROOF_RETRIES: u32 = 3;
+    /// Maximum wall-clock time to wait for a proof session before treating it as failed.
+    pub const MAX_PROOF_DURATION: Duration = Duration::from_secs(30 * 60);
 
     /// Creates a new driver with the given components.
     pub fn new(config: DriverConfig, components: DriverComponents<L2, P, T, C>) -> Self {
@@ -694,7 +699,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         // Poll proof status first — if still pending, skip the contract
         // calls that check game liveness. This avoids 3 RPC round-trips
         // per tick for proofs that are not yet ready.
-        let proof_update = self.pending_proofs.poll(game_address, &*self.zk_prover).await?;
+        let proof_update =
+            self.pending_proofs.poll(game_address, &*self.zk_prover, Self::MAX_PROOF_DURATION).await?;
         match &proof_update {
             Some(ProofUpdate::Pending) => {
                 debug!(game = %game_address, "proof not ready, will retry next tick");
@@ -876,7 +882,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                     "proof job re-initiated"
                 );
                 if let Some(p) = self.pending_proofs.get_mut(&game_address) {
-                    p.phase = ProofPhase::AwaitingProof { session_id: response.session_id };
+                    p.phase = ProofPhase::AwaitingProof {
+                        session_id: response.session_id,
+                        started_at: Instant::now(),
+                    };
                 }
             }
             Err(e) => {

@@ -7,7 +7,7 @@
 //! Each entry also carries a [`DisputeIntent`] that determines whether the
 //! completed proof will be submitted via `challenge()` or `nullify()` on-chain.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::{Duration, Instant}};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::PROOF_TYPE_ZK;
@@ -74,6 +74,8 @@ pub enum ProofPhase {
     AwaitingProof {
         /// Session ID returned by the ZK proof service.
         session_id: String,
+        /// Wall-clock time at which the proof request was initiated.
+        started_at: Instant,
     },
     /// Proof obtained — receipt bytes are ready for nullification submission.
     ReadyToSubmit {
@@ -115,7 +117,7 @@ impl PendingProof {
     }
 
     /// Creates a new `PendingProof` in the `AwaitingProof` phase.
-    pub const fn awaiting(
+    pub fn awaiting(
         session_id: String,
         invalid_index: u64,
         expected_root: B256,
@@ -123,7 +125,7 @@ impl PendingProof {
         intent: DisputeIntent,
     ) -> Self {
         Self {
-            phase: ProofPhase::AwaitingProof { session_id },
+            phase: ProofPhase::AwaitingProof { session_id, started_at: Instant::now() },
             kind: ProofKind::Zk { prove_request },
             invalid_index,
             expected_root,
@@ -242,6 +244,7 @@ impl PendingProofs {
         &mut self,
         game: Address,
         zk_prover: &P,
+        max_proof_duration: Duration,
     ) -> eyre::Result<Option<ProofUpdate>> {
         let pending = match self.0.get(&game) {
             Some(p) => p,
@@ -249,7 +252,7 @@ impl PendingProofs {
         };
 
         let session_id = match &pending.phase {
-            ProofPhase::AwaitingProof { session_id } => session_id.clone(),
+            ProofPhase::AwaitingProof { session_id, .. } => session_id.clone(),
             ProofPhase::ReadyToSubmit { proof_bytes } => {
                 return Ok(Some(ProofUpdate::Ready(proof_bytes.clone())));
             }
@@ -288,7 +291,20 @@ impl PendingProofs {
                 ProofUpdate::NeedsRetry
             }
             Ok(ProofJobStatus::Created | ProofJobStatus::Pending | ProofJobStatus::Running) => {
-                ProofUpdate::Pending
+                let timed_out =
+                    if let ProofPhase::AwaitingProof { started_at, .. } = &pending.phase {
+                        started_at.elapsed() > max_proof_duration
+                    } else {
+                        false
+                    };
+                if timed_out {
+                    warn!(game = %game, "proof session timed out, will retry");
+                    pending.retry_count += 1;
+                    pending.phase = ProofPhase::NeedsRetry;
+                    ProofUpdate::NeedsRetry
+                } else {
+                    ProofUpdate::Pending
+                }
             }
             Ok(ProofJobStatus::Unspecified) | Err(_) => {
                 warn!(raw_status = response.status, game = %game, "unexpected proof job status, treating as retryable failure");

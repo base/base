@@ -9,8 +9,8 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     BondManager, ChallengeSubmitter, DisputeIntent, Driver, DriverComponents, DriverConfig,
-    GameScanner, L1HeadProvider, OutputValidator, PendingProof, ProofPhase, ScannerConfig,
-    TeeConfig,
+    GameScanner, L1HeadProvider, OutputValidator, PendingProof, PendingProofs, ProofPhase,
+    ProofUpdate, ScannerConfig, TeeConfig,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
         MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider,
@@ -1510,4 +1510,109 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
         "no proof should be initiated when checkpoint count mismatches — \
          the error should be surfaced, not silently swallowed"
     );
+}
+
+// ── Fix A: unexpected status codes treated as retryable failures ──────────
+
+fn minimal_prove_request(session_id: &str) -> base_zk_client::ProveBlockRequest {
+    base_zk_client::ProveBlockRequest {
+        start_block_number: 0,
+        number_of_blocks_to_prove: 1,
+        sequence_window: None,
+        proof_type: ProofType::SnarkGroth16.into(),
+        session_id: Some(session_id.to_string()),
+        prover_address: None,
+        l1_head: None,
+        intermediate_root_interval: None,
+    }
+}
+
+#[tokio::test]
+async fn test_poll_unspecified_status_triggers_retry() {
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "unspecified-session".to_string(),
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Unspecified as i32,
+            ..Default::default()
+        }),
+    });
+
+    let mut proofs = PendingProofs::new();
+    proofs.insert(
+        addr(0),
+        PendingProof::awaiting(
+            "unspecified-session".to_string(),
+            0,
+            B256::ZERO,
+            minimal_prove_request("unspecified-session"),
+            DisputeIntent::Challenge,
+        ),
+    );
+
+    let update = proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
+    assert!(matches!(update, Some(ProofUpdate::NeedsRetry)), "Unspecified should trigger NeedsRetry");
+    let entry = proofs.get(&addr(0)).unwrap();
+    assert_eq!(entry.retry_count, 1);
+    assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
+}
+
+// ── Fix B: wall-clock timeout on AwaitingProof ────────────────────────────
+
+#[tokio::test]
+async fn test_poll_running_within_timeout_stays_pending() {
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "running-session".to_string(),
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Running as i32,
+            ..Default::default()
+        }),
+    });
+
+    let mut proofs = PendingProofs::new();
+    proofs.insert(
+        addr(0),
+        PendingProof::awaiting(
+            "running-session".to_string(),
+            0,
+            B256::ZERO,
+            minimal_prove_request("running-session"),
+            DisputeIntent::Challenge,
+        ),
+    );
+
+    let update = proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
+    assert!(matches!(update, Some(ProofUpdate::Pending)), "Running within timeout should stay Pending");
+    let entry = proofs.get(&addr(0)).unwrap();
+    assert_eq!(entry.retry_count, 0);
+    assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
+}
+
+#[tokio::test]
+async fn test_poll_running_timeout_triggers_retry() {
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "stuck-session".to_string(),
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Running as i32,
+            ..Default::default()
+        }),
+    });
+
+    let mut proofs = PendingProofs::new();
+    proofs.insert(
+        addr(0),
+        PendingProof::awaiting(
+            "stuck-session".to_string(),
+            0,
+            B256::ZERO,
+            minimal_prove_request("stuck-session"),
+            DisputeIntent::Challenge,
+        ),
+    );
+
+    // Zero timeout: already expired on the first poll.
+    let update = proofs.poll(addr(0), &*zk, Duration::ZERO).await.unwrap();
+    assert!(matches!(update, Some(ProofUpdate::NeedsRetry)), "Timed-out Running should trigger NeedsRetry");
+    let entry = proofs.get(&addr(0)).unwrap();
+    assert_eq!(entry.retry_count, 1);
+    assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
 }
