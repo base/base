@@ -307,6 +307,7 @@ mod tests {
     #[case::lookback_games("--lookback-games", "0", "lookback-games")]
     #[case::bond_discovery_interval("--bond-discovery-interval", "0s", "bond-discovery-interval")]
     #[case::anchor_update_retention("--anchor-update-retention", "0s", "anchor-update-retention")]
+    #[case::max_proof_duration("--max-proof-duration", "0s", "max-proof-duration")]
     fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] field: &str) {
         let all_args = [&LOCAL_SIGNER_ARGS[..], &[flag, value]].concat();
         let cli = cli_from_args(&all_args);
