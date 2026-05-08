@@ -13,15 +13,16 @@ use std::{
 
 use alloy_primitives::B256;
 use base_proof_rpc::{RollupClient, RollupClientConfig, RollupProvider};
+use serde_json::Value;
 use url::Url;
 
 fn repeated_hash(byte: &str) -> String {
     format!("0x{}", byte.repeat(32))
 }
 
-fn output_response(output_root: &str, block_number: u64) -> String {
+fn output_response(id: &Value, output_root: &str, block_number: u64) -> String {
     format!(
-        r#"{{"jsonrpc":"2.0","id":1,"result":{{"outputRoot":"{output_root}","blockRef":{{"hash":"0x3333333333333333333333333333333333333333333333333333333333333333","number":{block_number},"parentHash":"0x2222222222222222222222222222222222222222222222222222222222222222","timestamp":1234567890,"l1origin":{{"hash":"0x1111111111111111111111111111111111111111111111111111111111111111","number":100}},"sequenceNumber":0}}}}}}"#
+        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"outputRoot":"{output_root}","blockRef":{{"hash":"0x3333333333333333333333333333333333333333333333333333333333333333","number":{block_number},"parentHash":"0x2222222222222222222222222222222222222222222222222222222222222222","timestamp":1234567890,"l1origin":{{"hash":"0x1111111111111111111111111111111111111111111111111111111111111111","number":100}},"sequenceNumber":0}}}}}}"#
     )
 }
 
@@ -57,6 +58,13 @@ fn read_http_request(stream: &mut TcpStream) -> String {
     String::from_utf8(bytes).expect("request is UTF-8")
 }
 
+fn request_id(request: &str) -> Value {
+    let body_start = request.find("\r\n\r\n").expect("request has body separator") + 4;
+    let body: Value = serde_json::from_str(&request[body_start..]).expect("request body is JSON");
+
+    body.get("id").cloned().expect("request has JSON-RPC id")
+}
+
 fn start_output_rpc(
     roots: Vec<String>,
     block_number: u64,
@@ -75,9 +83,10 @@ fn start_output_rpc(
                 request.contains(&format!("0x{block_number:x}")),
                 "request did not ask for block {block_number}: {request}"
             );
+            let id = request_id(&request);
 
             calls_for_thread.fetch_add(1, Ordering::SeqCst);
-            let body = output_response(&root, block_number);
+            let body = output_response(&id, &root, block_number);
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
