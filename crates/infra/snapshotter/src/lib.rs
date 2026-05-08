@@ -17,7 +17,7 @@ mod snapshot;
 pub use snapshot::SnapshotGenerator;
 
 mod upload;
-pub use upload::{LatestPointer, SnapshotUploader, UploadStrategy};
+pub use upload::{SnapshotUploader, UploadStrategy};
 
 mod orchestrator;
 pub use orchestrator::Snapshotter;

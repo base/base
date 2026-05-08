@@ -117,10 +117,8 @@ impl<C: ContainerManager> Snapshotter<C> {
             bail!("snapshot generation produced no files");
         }
 
-        let block = extract_block_from_manifest(&run_output_dir)?;
-
         self.uploader
-            .upload(&run_output_dir, &files, block, run_timestamp)
+            .upload(&run_output_dir, &files, run_timestamp)
             .await
             .context("snapshot upload failed")?;
 
@@ -131,16 +129,6 @@ impl<C: ContainerManager> Snapshotter<C> {
 
         Ok(())
     }
-}
-
-/// Reads the block number from the generated `manifest.json`.
-fn extract_block_from_manifest(output_dir: &std::path::Path) -> Result<u64> {
-    let manifest_path = output_dir.join("manifest.json");
-    let content = std::fs::read_to_string(&manifest_path)
-        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-    let manifest: serde_json::Value =
-        serde_json::from_str(&content).context("failed to parse manifest.json")?;
-    manifest["block"].as_u64().ok_or_else(|| anyhow::anyhow!("manifest.json missing 'block' field"))
 }
 
 /// Creates a unique run output directory using the provided timestamp.

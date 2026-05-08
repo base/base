@@ -1,9 +1,13 @@
 //! S3-compatible upload for snapshot artifacts with diff-based optimization.
 //!
-//! Static file chunks (e.g. `headers-0-499999.tar.zst`) are immutable for finalized
-//! block ranges — only the chunk covering the current tip changes between snapshots.
-//! The uploader compares local file sizes against existing remote objects and skips
-//! uploads for chunks that already exist with a matching size.
+//! Artifacts are split into two areas within the bucket:
+//!
+//! - `{prefix}/static_files/` — static file chunks that are immutable for finalized
+//!   block ranges. Only the tip chunk changes between snapshots. The uploader
+//!   compares local sizes against existing remote objects and skips unchanged chunks.
+//!
+//! - `{prefix}/{date}/` — per-run directory for mdbx state, rocksdb, and the manifest.
+//!   These are always re-uploaded since they change every snapshot.
 
 use std::{
     collections::HashMap,
@@ -13,13 +17,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use aws_sdk_s3::{
     Client as S3Client,
-    error::SdkError,
-    operation::get_object::GetObjectError,
     primitives::ByteStream,
     types::{CompletedMultipartUpload, CompletedPart},
 };
 use futures::stream::{self, StreamExt, TryStreamExt};
-use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 /// Maximum number of concurrent file uploads.
@@ -36,9 +37,9 @@ const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
 /// or can be skipped when the remote copy already matches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UploadStrategy {
-    /// Always upload regardless of remote state (mdbx, rocksdb, proofs).
+    /// Always upload to the per-run date directory (mdbx, rocksdb, manifest).
     AlwaysUpload,
-    /// Skip upload if the remote object exists with the same size (static file chunks).
+    /// Upload to `static_files/`, skipping if the remote object has the same size.
     DiffBySize,
 }
 
@@ -56,8 +57,7 @@ impl UploadStrategy {
 }
 
 /// Returns `true` if the filename matches the static file chunk pattern:
-/// `{component}-{start}-{end}.tar.zst`. `rocksdb_indices` and `state` do not match
-/// this pattern and are classified as `AlwaysUpload`.
+/// `{component}-{start}-{end}.tar.zst`.
 fn is_static_file_chunk(filename: &str) -> bool {
     let Some(stem) = filename.strip_suffix(".tar.zst") else {
         return false;
@@ -71,17 +71,6 @@ fn is_static_file_chunk(filename: &str) -> bool {
     let end_ok = parts[0].parse::<u64>().is_ok();
     let start_ok = parts[1].parse::<u64>().is_ok();
     end_ok && start_ok
-}
-
-/// Metadata written to `latest.json` after a successful upload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LatestPointer {
-    /// The run prefix where this snapshot's artifacts live.
-    pub prefix: String,
-    /// Block number of the snapshot.
-    pub block: u64,
-    /// Unix timestamp of the upload.
-    pub timestamp: u64,
 }
 
 /// Uploads snapshot artifacts to an S3-compatible store (R2, `MinIO`, etc.).
@@ -100,44 +89,32 @@ impl SnapshotUploader {
 
     /// Uploads snapshot artifacts with diff-based optimization.
     ///
-    /// Reads `latest.json` to find the previous run's prefix and lists objects
-    /// under it. Static file chunks that exist in the previous run with the same
-    /// size are skipped — they're immutable for finalized block ranges. State,
-    /// rocksdb, and manifest are always re-uploaded to the new run prefix.
-    /// `manifest.json` is uploaded last, then `latest.json` is updated.
+    /// Static file chunks go to `{prefix}/static_files/` and are skipped if the
+    /// remote object already exists with the same size. State, rocksdb, and
+    /// manifest go to `{prefix}/{date}/` and are always re-uploaded.
+    /// `manifest.json` is uploaded last as the "snapshot complete" signal.
     pub async fn upload(
         &self,
         output_dir: &Path,
         files: &[PathBuf],
-        block: u64,
         timestamp: u64,
     ) -> Result<String> {
-        let run_prefix = if self.prefix.is_empty() {
-            format!("{block}-{timestamp}")
-        } else {
-            format!("{}/{block}-{timestamp}", self.prefix)
-        };
+        let static_prefix = self.static_files_prefix();
+        let run_prefix = self.run_prefix(timestamp);
 
         info!(
             run_prefix = %run_prefix,
+            static_prefix = %static_prefix,
             file_count = files.len(),
             bucket = %self.bucket,
             "uploading snapshot artifacts"
         );
 
-        let remote_objects = match self.read_latest_pointer().await? {
-            Some(prev) => {
-                info!(previous_prefix = %prev.prefix, previous_block = prev.block, "found previous snapshot");
-                self.list_remote_objects(&prev.prefix).await?
-            }
-            None => {
-                info!("no previous snapshot found, uploading all files");
-                HashMap::new()
-            }
-        };
+        let remote_static_files = self.list_remote_objects(&static_prefix).await?;
 
         let manifest_path = output_dir.join("manifest.json");
-        let mut to_upload = Vec::new();
+        let mut static_uploads = Vec::new();
+        let mut run_uploads = Vec::new();
         let mut skipped = 0u64;
 
         for file in files {
@@ -145,38 +122,50 @@ impl SnapshotUploader {
                 continue;
             }
 
-            let file_name =
-                file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let file_name = file
+                .file_name()
+                .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file.display()))?
+                .to_string_lossy()
+                .to_string();
 
-            let local_size = std::fs::metadata(file)?.len();
+            let local_size = tokio::fs::metadata(file).await?.len();
             let strategy = UploadStrategy::classify(&file_name);
 
-            if strategy == UploadStrategy::DiffBySize
-                && let Some(&remote_size) = remote_objects.get(&file_name)
-            {
-                if remote_size == local_size {
-                    debug!(file = %file_name, size = local_size, "skipping (remote size matches)");
-                    skipped += 1;
-                    continue;
+            match strategy {
+                UploadStrategy::DiffBySize => {
+                    if let Some(&remote_size) = remote_static_files.get(&file_name) {
+                        if remote_size == local_size {
+                            debug!(file = %file_name, size = local_size, "skipping static file (size matches)");
+                            skipped += 1;
+                            continue;
+                        }
+                        debug!(file = %file_name, local_size, remote_size, "re-uploading static file (size mismatch)");
+                    }
+                    static_uploads.push(file.clone());
                 }
-                debug!(
-                    file = %file_name,
-                    local_size,
-                    remote_size,
-                    "re-uploading (size mismatch)"
-                );
+                UploadStrategy::AlwaysUpload => {
+                    run_uploads.push(file.clone());
+                }
             }
-
-            to_upload.push(file.clone());
         }
 
-        info!(uploading = to_upload.len(), skipped, "diff analysis complete");
+        info!(
+            static_uploads = static_uploads.len(),
+            run_uploads = run_uploads.len(),
+            skipped,
+            "diff analysis complete"
+        );
 
-        stream::iter(to_upload)
-            .map(|file| {
-                let run_prefix = &run_prefix;
-                async move { self.upload_file(&file, run_prefix).await }
-            })
+        let static_prefix_ref = &static_prefix;
+        stream::iter(static_uploads)
+            .map(|file| async move { self.upload_file(&file, static_prefix_ref).await })
+            .buffer_unordered(MAX_CONCURRENT_UPLOADS)
+            .try_collect::<Vec<()>>()
+            .await?;
+
+        let run_prefix_ref = &run_prefix;
+        stream::iter(run_uploads)
+            .map(|file| async move { self.upload_file(&file, run_prefix_ref).await })
             .buffer_unordered(MAX_CONCURRENT_UPLOADS)
             .try_collect::<Vec<()>>()
             .await?;
@@ -185,50 +174,31 @@ impl SnapshotUploader {
             self.upload_file(&manifest_path, &run_prefix).await?;
         }
 
-        let pointer = LatestPointer { prefix: run_prefix.clone(), block, timestamp };
-        self.write_latest_pointer(&pointer).await?;
-
-        info!(run_prefix = %run_prefix, block, skipped, "upload complete");
+        info!(run_prefix = %run_prefix, skipped, "upload complete");
         Ok(run_prefix)
     }
 
-    /// Reads the `latest.json` pointer from the bucket, returning `None` if it doesn't exist.
-    async fn read_latest_pointer(&self) -> Result<Option<LatestPointer>> {
-        let key = if self.prefix.is_empty() {
-            "latest.json".to_string()
+    /// Returns the `{prefix}/static_files` key prefix.
+    fn static_files_prefix(&self) -> String {
+        if self.prefix.is_empty() {
+            "static_files".to_string()
         } else {
-            format!("{}/latest.json", self.prefix)
-        };
-
-        match self.client.get_object().bucket(&self.bucket).key(&key).send().await {
-            Ok(resp) => {
-                let body = resp.body.collect().await?.into_bytes();
-                let pointer: LatestPointer = serde_json::from_slice(&body)
-                    .with_context(|| format!("failed to parse {key}"))?;
-                Ok(Some(pointer))
-            }
-            Err(err) => match &err {
-                SdkError::ServiceError(e) if matches!(e.err(), GetObjectError::NoSuchKey(_)) => {
-                    Ok(None)
-                }
-                _ => {
-                    let err_str = err.to_string();
-                    if err_str.contains("NoSuchKey")
-                        || err_str.contains("404")
-                        || err_str.contains("NotFound")
-                    {
-                        Ok(None)
-                    } else {
-                        Err(anyhow::anyhow!(err)).with_context(|| format!("failed to read {key}"))
-                    }
-                }
-            },
+            format!("{}/static_files", self.prefix)
         }
     }
 
-    /// Lists all objects under `run_prefix/` in the bucket, returning filename → size.
-    async fn list_remote_objects(&self, run_prefix: &str) -> Result<HashMap<String, u64>> {
-        let prefix_with_slash = format!("{run_prefix}/");
+    /// Returns the `{prefix}/{timestamp}` key prefix for a run.
+    fn run_prefix(&self, timestamp: u64) -> String {
+        if self.prefix.is_empty() {
+            timestamp.to_string()
+        } else {
+            format!("{}/{timestamp}", self.prefix)
+        }
+    }
+
+    /// Lists all objects under a prefix in the bucket, returning filename → size.
+    async fn list_remote_objects(&self, prefix: &str) -> Result<HashMap<String, u64>> {
+        let prefix_with_slash = format!("{prefix}/");
         let mut remote = HashMap::new();
         let mut continuation_token = None;
 
@@ -248,7 +218,7 @@ impl SnapshotUploader {
             for obj in resp.contents() {
                 if let Some(key) = obj.key() {
                     let filename = key.strip_prefix(&prefix_with_slash).unwrap_or(key).to_string();
-                    let size = obj.size.unwrap_or(0).try_into().unwrap_or(0);
+                    let size: u64 = obj.size.unwrap_or(0).try_into().unwrap_or(0);
                     remote.insert(filename, size);
                 }
             }
@@ -260,19 +230,19 @@ impl SnapshotUploader {
             }
         }
 
-        debug!(count = remote.len(), "listed remote objects");
+        debug!(prefix = %prefix, count = remote.len(), "listed remote objects");
         Ok(remote)
     }
 
     /// Uploads a single file, using multipart upload for files above the threshold.
-    async fn upload_file(&self, file_path: &Path, run_prefix: &str) -> Result<()> {
+    async fn upload_file(&self, file_path: &Path, dest_prefix: &str) -> Result<()> {
         let file_name = file_path
             .file_name()
             .ok_or_else(|| anyhow::anyhow!("invalid file path: {}", file_path.display()))?
             .to_string_lossy();
 
-        let key = format!("{run_prefix}/{file_name}");
-        let file_size = std::fs::metadata(file_path)?.len();
+        let key = format!("{dest_prefix}/{file_name}");
+        let file_size = tokio::fs::metadata(file_path).await?.len();
 
         if file_size > MULTIPART_THRESHOLD {
             debug!(key = %key, size = file_size, "uploading file (multipart)");
@@ -420,31 +390,6 @@ impl SnapshotUploader {
 
         Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
     }
-
-    /// Writes the `latest.json` pointer at `{prefix}/latest.json`.
-    async fn write_latest_pointer(&self, pointer: &LatestPointer) -> Result<()> {
-        let key = if self.prefix.is_empty() {
-            "latest.json".to_string()
-        } else {
-            format!("{}/latest.json", self.prefix)
-        };
-
-        let body = serde_json::to_vec_pretty(pointer)?;
-
-        debug!(key = %key, block = pointer.block, "writing latest pointer");
-
-        self.client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&key)
-            .body(ByteStream::from(body))
-            .content_type("application/json")
-            .send()
-            .await
-            .with_context(|| format!("failed to write latest pointer at {key}"))?;
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -487,7 +432,6 @@ mod tests {
             UploadStrategy::AlwaysUpload
         );
         assert_eq!(UploadStrategy::classify("manifest.json"), UploadStrategy::AlwaysUpload);
-        assert_eq!(UploadStrategy::classify("latest.json"), UploadStrategy::AlwaysUpload);
         assert_eq!(UploadStrategy::classify("random-file.txt"), UploadStrategy::AlwaysUpload);
     }
 
