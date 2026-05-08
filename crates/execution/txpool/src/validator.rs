@@ -212,6 +212,18 @@ where
             };
             let cost = valid_tx.transaction().cost().saturating_add(cost_addition);
 
+            if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
+                let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
+                    l1_block_info.da_footprint_gas_scalar.unwrap_or_default() as u64,
+                );
+                if da_footprint > self.inner.block_gas_limit() {
+                    return TransactionValidationOutcome::Invalid(
+                        valid_tx.into_transaction(),
+                        InvalidTransactionError::GasLimitTooHigh.into(),
+                    );
+                }
+            }
+
             // Checks for max cost
             if cost > balance {
                 return TransactionValidationOutcome::Invalid(
