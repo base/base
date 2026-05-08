@@ -41,7 +41,7 @@ pub async fn run_range_program<E>(
     ////////////////////////////////////////////////////////////////
     let (boot_info, input, l2_pre_block_number) =
         get_inputs_for_pipeline(Arc::clone(&oracle)).await.unwrap();
-    let (boot_info, intermediate_roots) = match input {
+    let (boot_info, l2_block_number, intermediate_roots) = match input {
         Some((cursor, l1_provider, l2_provider)) => {
             let rollup_config = Arc::new(boot_info.rollup_config.clone());
             let l1_config = Arc::new(boot_info.l1_config.clone());
@@ -61,8 +61,16 @@ pub async fn run_range_program<E>(
 
             executor.run(boot_info, pipeline, cursor, l2_provider).await.unwrap()
         }
-        None => (boot_info, Vec::new()),
+        None => {
+            let l2_block_number = boot_info.claimed_l2_block_number;
+            (boot_info, l2_block_number, Vec::new())
+        }
     };
 
-    sp1_zkvm::io::commit(&BootInfoStruct::new(boot_info, l2_pre_block_number, intermediate_roots));
+    sp1_zkvm::io::commit(&BootInfoStruct::new(
+        boot_info,
+        l2_pre_block_number,
+        l2_block_number,
+        intermediate_roots,
+    ));
 }
