@@ -116,8 +116,10 @@ where
             modules.merge(P2pRpc::new(p2p_network).into_rpc())?;
         }
 
-        // Build the admin rpc module.
-        if let Some(network_admin) = network_admin {
+        // Build the admin rpc module, gated on the `--rpc.enable-admin` flag.
+        if self.config.admin_enabled()
+            && let Some(network_admin) = network_admin
+        {
             modules
                 .merge(AdminRpc::new(self.sequencer_admin_rpc_client, network_admin).into_rpc())?;
         }
