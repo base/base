@@ -19,7 +19,7 @@ use alloy_evm::Evm;
 use alloy_primitives::B256;
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType,
+    BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType, Predeploys,
 };
 use base_common_evm::{
     BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseHaltReason,
@@ -29,7 +29,7 @@ use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::FlashblocksState;
-use base_node_core::{BaseEngineTypes, engine::BaseEngineValidator as BasePayloadValidator};
+use base_node_core::{BaseEngineTypes, engine::verify_isthmus_withdrawals_root};
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, LazyOverlay};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{
@@ -72,7 +72,7 @@ use reth_revm::{
     database::StateProviderDatabase,
     db::{State, states::bundle_state::BundleRetention},
 };
-use reth_trie::{HashedPostState, StateRoot, updates::TrieUpdates};
+use reth_trie::{HashedPostState, KeccakKeyHasher, KeyHasher, StateRoot, updates::TrieUpdates};
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
 use revm_primitives::Address;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
@@ -80,39 +80,6 @@ use tracing::{debug, debug_span, error, info, instrument, trace, warn};
 use crate::cached_execution::{
     CachedExecutionProvider, CachedExecutor, FlashblocksCachedExecutionProvider,
 };
-
-/// Base payload validators that can verify post-execution rules against an explicit parent state.
-pub trait PayloadValidatorWithState<Types: PayloadTypes>:
-    PayloadValidator<Types, Block = BaseBlock>
-{
-    /// Verifies payload post-execution rules against the parent state provider used for execution.
-    fn validate_block_post_execution_with_state<DB>(
-        &self,
-        state_updates: &HashedPostState,
-        state: DB,
-        block: &RecoveredBlock<BaseBlock>,
-    ) -> Result<(), ConsensusError>
-    where
-        DB: StateProvider;
-}
-
-impl<Types, P, Tx> PayloadValidatorWithState<Types> for BasePayloadValidator<P, Tx, BaseChainSpec>
-where
-    Types: PayloadTypes,
-    Self: PayloadValidator<Types, Block = BaseBlock>,
-{
-    fn validate_block_post_execution_with_state<DB>(
-        &self,
-        state_updates: &HashedPostState,
-        state: DB,
-        block: &RecoveredBlock<BaseBlock>,
-    ) -> Result<(), ConsensusError>
-    where
-        DB: StateProvider,
-    {
-        Self::verify_isthmus_withdrawals_root(self, state_updates, state, block.header())
-    }
-}
 
 /// A helper type that provides reusable payload validation logic for network-specific validators.
 ///
@@ -147,6 +114,8 @@ where
     metrics: EngineApiMetrics,
     /// Validator for the payload.
     validator: V,
+    /// Hashed L2-to-L1 message passer predeploy address used by Isthmus withdrawals validation.
+    hashed_addr_l2tol1_msg_passer: B256,
     /// Cached execution provider.
     cached_execution_provider: C,
     /// Changeset cache for in-memory trie changesets
@@ -186,7 +155,7 @@ where
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new<KH: KeyHasher>(
         provider: P,
         consensus: Arc<dyn FullConsensus<BasePrimitives>>,
         evm_config: Evm,
@@ -215,6 +184,7 @@ where
             invalid_block_hook,
             metrics: EngineApiMetrics::default(),
             validator,
+            hashed_addr_l2tol1_msg_passer: KH::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER),
             changeset_cache,
             cached_execution_provider,
             runtime,
@@ -387,7 +357,7 @@ where
         mut ctx: TreeCtx<'_, BasePrimitives>,
     ) -> ValidationOutcome<BasePrimitives, InsertPayloadError<BaseBlock>>
     where
-        V: PayloadValidatorWithState<T>,
+        V: PayloadValidator<T, Block = BaseBlock>,
         Evm: ConfigureEngineEvm<ExecutionData, Primitives = BasePrimitives>,
     {
         /// A helper macro that returns the block in case there was an error
@@ -1103,7 +1073,7 @@ where
         receipt_root_bloom: Option<ReceiptRootBloom>,
     ) -> Result<HashedPostState, InsertBlockErrorKind>
     where
-        V: PayloadValidatorWithState<T>,
+        V: PayloadValidator<T, Block = BaseBlock>,
     {
         let start = Instant::now();
 
@@ -1142,15 +1112,18 @@ where
         drop(_enter);
 
         let _enter = debug_span!(target: "engine::tree::payload_validator", "validate_block_post_execution_with_state").entered();
-        // State-aware post-execution validation only applies from Isthmus onward.
+        // Avoid building parent state before Isthmus; the verifier repeats this gate for direct
+        // callers that already have a parent state provider.
         if self.provider.chain_spec().is_isthmus_active_at_timestamp(block.header().timestamp()) {
             // Build a fresh parent-state provider for validation instead of reusing the execution
             // provider, which may be wrapped with execution caches.
             let parent_state_provider = parent_state_provider_builder.build()?;
-            if let Err(err) = self.validator.validate_block_post_execution_with_state(
+            if let Err(err) = verify_isthmus_withdrawals_root(
+                self.provider.chain_spec().as_ref(),
+                self.hashed_addr_l2tol1_msg_passer,
                 &hashed_state,
                 parent_state_provider,
-                block,
+                block.header(),
             ) {
                 // call post-block hook
                 self.on_invalid_block(parent_block, block, output, None, ctx.state_mut());
@@ -1524,7 +1497,7 @@ where
         + ChainSpecProvider<ChainSpec = BaseChainSpec>
         + Clone
         + 'static,
-    V: PayloadValidatorWithState<Types>,
+    V: PayloadValidator<Types, Block = BaseBlock>,
     Evm: ConfigureEngineEvm<
             ExecutionData,
             Primitives = BasePrimitives,
@@ -1636,7 +1609,7 @@ where
     <<Node as FullNodeTypes>::Types as NodeTypes>::Payload:
         PayloadTypes<ExecutionData = ExecutionData>,
     EV: PayloadValidatorBuilder<Node>,
-    EV::Validator: PayloadValidatorWithState<<Node::Types as NodeTypes>::Payload>,
+    EV::Validator: PayloadValidator<<Node::Types as NodeTypes>::Payload, Block = BaseBlock>,
 {
     type EngineValidator = BaseEngineValidator<
         Node::Provider,
@@ -1654,7 +1627,7 @@ where
         let validator = self.payload_validator_builder.build(ctx).await?;
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
         let invalid_block_hook = ctx.create_invalid_block_hook(&data_dir).await?;
-        Ok(BaseEngineValidator::new(
+        Ok(BaseEngineValidator::new::<KeccakKeyHasher>(
             ctx.node.provider().clone(),
             std::sync::Arc::new(ctx.node.consensus().clone()),
             ctx.node.evm_config().clone(),

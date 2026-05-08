@@ -110,32 +110,30 @@ where
     pub fn chain_spec(&self) -> &ChainSpec {
         self.inner.chain_spec()
     }
+}
 
-    /// Verifies Isthmus withdrawals root against the given parent state provider.
-    pub fn verify_isthmus_withdrawals_root<DB, H>(
-        &self,
-        state_updates: &HashedPostState,
-        state: DB,
-        header: H,
-    ) -> Result<(), ConsensusError>
-    where
-        DB: StateProvider,
-        H: BlockHeader,
-    {
-        if !self.chain_spec().is_isthmus_active_at_timestamp(header.timestamp()) {
-            return Ok(());
-        }
-
-        let predeploy_storage_updates = state_updates
-            .storages
-            .get(&self.hashed_addr_l2tol1_msg_passer)
-            .cloned()
-            .unwrap_or_default();
-        isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, state, header)
-            .map_err(|err| {
-                ConsensusError::Other(format!("failed to verify block post-execution: {err}"))
-            })
+/// Verifies the Isthmus withdrawals root against the supplied parent state provider.
+pub fn verify_isthmus_withdrawals_root<DB, H, ChainSpec>(
+    chain_spec: &ChainSpec,
+    hashed_msg_passer_addr: B256,
+    state_updates: &HashedPostState,
+    state: DB,
+    header: H,
+) -> Result<(), ConsensusError>
+where
+    DB: StateProvider,
+    H: BlockHeader,
+    ChainSpec: Upgrades,
+{
+    if !chain_spec.is_isthmus_active_at_timestamp(header.timestamp()) {
+        return Ok(());
     }
+
+    let predeploy_storage_updates =
+        state_updates.storages.get(&hashed_msg_passer_addr).cloned().unwrap_or_default();
+    isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, state, header).map_err(
+        |err| ConsensusError::Other(format!("failed to verify block post-execution: {err}")),
+    )
 }
 
 impl<P, Tx, ChainSpec, Types> PayloadValidator<Types> for BaseEngineValidator<P, Tx, ChainSpec>
@@ -152,6 +150,8 @@ where
         state_updates: &HashedPostState,
         block: &RecoveredBlock<Self::Block>,
     ) -> Result<(), ConsensusError> {
+        // Avoid loading parent state before Isthmus; the verifier repeats this gate for direct
+        // callers that already have a parent state provider.
         if !self.chain_spec().is_isthmus_active_at_timestamp(block.timestamp()) {
             return Ok(());
         }
@@ -161,7 +161,13 @@ where
                 "failed to load parent state for Isthmus withdrawals root validation: {err}"
             ))
         })?;
-        self.verify_isthmus_withdrawals_root(state_updates, state, block.header())
+        verify_isthmus_withdrawals_root(
+            self.chain_spec(),
+            self.hashed_addr_l2tol1_msg_passer,
+            state_updates,
+            state,
+            block.header(),
+        )
     }
 
     fn convert_payload_to_block(
