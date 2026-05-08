@@ -3890,6 +3890,7 @@ dependencies = [
 name = "base-engine-tree"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
  "alloy-consensus",
  "alloy-eip7928",
  "alloy-eips",
@@ -3913,6 +3914,7 @@ dependencies = [
  "reth-chain-state",
  "reth-chainspec",
  "reth-consensus",
+ "reth-db-common",
  "reth-engine-primitives",
  "reth-engine-tree",
  "reth-errors",
