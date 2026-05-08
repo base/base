@@ -119,7 +119,11 @@ where
 
         // SAFETY: The batch reader must be set above.
         let next_batch = self.next_batch.as_mut().expect("Batch reader must be set");
-        match next_batch.decompress() {
+        let decompress_result =
+            base_metrics::time!(Metrics::pipeline_batch_decompress_duration_seconds(), {
+                next_batch.decompress()
+            });
+        match decompress_result {
             Ok(()) => {
                 // Record the decompressed size and type.
                 let size = next_batch.decompressed.len() as f64;
@@ -139,7 +143,11 @@ where
         }
 
         // Read the next batch from the reader's decompressed data
-        match next_batch.next_batch(self.cfg.as_ref()).ok_or(PipelineError::NotEnoughData.temp()) {
+        let batch_result =
+            base_metrics::time!(Metrics::pipeline_batch_decode_duration_seconds(), {
+                next_batch.next_batch(self.cfg.as_ref())
+            });
+        match batch_result.ok_or(PipelineError::NotEnoughData.temp()) {
             Ok(batch) => {
                 Metrics::pipeline_read_batches(batch.to_string()).increment(1.0);
                 Ok(batch)

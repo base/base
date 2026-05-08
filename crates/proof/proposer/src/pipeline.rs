@@ -719,12 +719,14 @@ where
             .await
             .map_err(|e| ProposerError::Contract(format!("recovery game_count failed: {e}")))?;
 
-        // Read the anchor root early so it can be included in the cache key.
-        let anchor = self
+        // Read the anchor root and anchor game from one L1 snapshot so
+        // recovery cannot combine an old root with a newer anchor game.
+        let anchor_snapshot = self
             .anchor_registry
-            .get_anchor_root()
+            .anchor_snapshot()
             .await
-            .map_err(|e| ProposerError::Contract(format!("get_anchor_root failed: {e}")))?;
+            .map_err(|e| ProposerError::Contract(format!("anchor_snapshot failed: {e}")))?;
+        let anchor = anchor_snapshot.anchor_root;
 
         // The cached tip is valid as long as the anchor hasn't advanced past
         // it. The anchor advances when games resolve (~every 20 min after the
@@ -763,11 +765,19 @@ where
                 );
                 cached.state
             }
-            _ => RecoveredState {
-                parent_address: self.config.driver.anchor_state_registry_address,
-                output_root: anchor.root,
-                l2_block_number: anchor.l2_block_number,
-            },
+            _ => {
+                let parent_address = if anchor_snapshot.anchor_game.is_zero() {
+                    self.config.driver.anchor_state_registry_address
+                } else {
+                    anchor_snapshot.anchor_game
+                };
+
+                RecoveredState {
+                    parent_address,
+                    output_root: anchor.root,
+                    l2_block_number: anchor.l2_block_number,
+                }
+            }
         };
 
         let state = self.forward_walk(&start).await?;
@@ -1399,6 +1409,23 @@ mod tests {
         MockDisputeGameFactory,
     >;
 
+    #[derive(Debug)]
+    struct SnapshotOnlyAnchorStateRegistry {
+        snapshot: base_proof_contracts::AnchorSnapshot,
+    }
+
+    #[async_trait::async_trait]
+    impl AnchorStateRegistryClient for SnapshotOnlyAnchorStateRegistry {
+        async fn anchor_snapshot(
+            &self,
+        ) -> std::result::Result<
+            base_proof_contracts::AnchorSnapshot,
+            base_proof_contracts::ContractError,
+        > {
+            Ok(self.snapshot)
+        }
+    }
+
     fn test_pipeline(
         pipeline_config: PipelineConfig,
         safe_block_number: u64,
@@ -1415,8 +1442,10 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
         let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
         ProvingPipeline::new(
@@ -1473,6 +1502,45 @@ mod tests {
         intermediate_block_interval: u64,
         output_proposer: Arc<dyn OutputProposer>,
     ) -> TestPipeline {
+        recovery_pipeline_full_with_anchor_game_and_output_proposer(
+            factory,
+            output_roots,
+            anchor_block,
+            Address::ZERO,
+            block_interval,
+            intermediate_block_interval,
+            output_proposer,
+        )
+    }
+
+    fn recovery_pipeline_full_with_anchor_game(
+        factory: MockDisputeGameFactory,
+        output_roots: HashMap<u64, B256>,
+        anchor_block: u64,
+        anchor_game: Address,
+        block_interval: u64,
+        intermediate_block_interval: u64,
+    ) -> TestPipeline {
+        recovery_pipeline_full_with_anchor_game_and_output_proposer(
+            factory,
+            output_roots,
+            anchor_block,
+            anchor_game,
+            block_interval,
+            intermediate_block_interval,
+            Arc::new(MockOutputProposer),
+        )
+    }
+
+    fn recovery_pipeline_full_with_anchor_game_and_output_proposer(
+        factory: MockDisputeGameFactory,
+        output_roots: HashMap<u64, B256>,
+        anchor_block: u64,
+        anchor_game: Address,
+        block_interval: u64,
+        intermediate_block_interval: u64,
+        output_proposer: Arc<dyn OutputProposer>,
+    ) -> TestPipeline {
         let cancel = CancellationToken::new();
         let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
         let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
@@ -1483,8 +1551,10 @@ mod tests {
             output_roots,
             max_safe_block: None,
         });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(anchor_block) });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(anchor_block),
+            anchor_game,
+        });
 
         ProvingPipeline::new(
             PipelineConfig {
@@ -1588,6 +1658,87 @@ mod tests {
         assert!(cache.is_some(), "cache should still be populated");
     }
 
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_cold_start_uses_anchor_game_after_anchor_advance() {
+        let anchor_game = proxy_addr(0);
+        let anchor_block = TEST_BLOCK_INTERVAL;
+
+        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        factory.game_count_override = Some(1);
+        let pipeline = recovery_pipeline_full_with_anchor_game(
+            factory,
+            HashMap::new(),
+            anchor_block,
+            anchor_game,
+            TEST_BLOCK_INTERVAL,
+            TEST_BLOCK_INTERVAL,
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        assert_eq!(state.parent_address, anchor_game, "advanced anchor game should be the parent");
+        assert_eq!(state.l2_block_number, anchor_block, "should propose after the live anchor");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_recovery_reads_anchor_root_and_game_from_one_snapshot() {
+        let anchor_game = proxy_addr(0);
+        let anchor_root = B256::repeat_byte(0xAA);
+        let anchor_block = TEST_BLOCK_INTERVAL;
+        let cancel = CancellationToken::new();
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover: Arc<dyn ProverClient> =
+            Arc::new(MockProver { delay: MOCK_PROVER_DELAY, block_interval: TEST_BLOCK_INTERVAL });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(TEST_BLOCK_INTERVAL * 2, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: None,
+        });
+        let anchor_registry = Arc::new(SnapshotOnlyAnchorStateRegistry {
+            snapshot: base_proof_contracts::AnchorSnapshot {
+                anchor_root: base_proof_contracts::AnchorRoot {
+                    root: anchor_root,
+                    l2_block_number: anchor_block,
+                },
+                anchor_game,
+            },
+        });
+        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        factory.game_count_override = Some(1);
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 4,
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    block_interval: TEST_BLOCK_INTERVAL,
+                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                    ..Default::default()
+                },
+            },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            Arc::new(factory),
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel,
+        );
+
+        let mut cache: Option<CachedRecovery> = None;
+        let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
+
+        assert_eq!(state.parent_address, anchor_game);
+        assert_eq!(state.output_root, anchor_root);
+        assert_eq!(state.l2_block_number, anchor_block);
+    }
+
     // ---- Recovery: forward walk ----
 
     #[rstest]
@@ -1675,8 +1826,10 @@ mod tests {
             output_roots,
             max_safe_block: Some(TEST_BLOCK_INTERVAL * 2),
         });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
 
         let pipeline = ProvingPipeline::new(
             PipelineConfig {
@@ -1933,8 +2086,10 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
         let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
         let pipeline = ProvingPipeline::new(
@@ -2005,8 +2160,10 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK) });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
         let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
         let pipeline = ProvingPipeline::new(
