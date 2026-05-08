@@ -500,7 +500,7 @@ mod tests {
         let file_contents = &(&*file_contents)[..file_contents.len() - 1];
         let data = alloy_primitives::hex::decode(file_contents).unwrap();
         let bytes: alloy_primitives::Bytes = data.into();
-        BatchReader::new(bytes, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize)
+        BatchReader::new(bytes, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize, true)
     }
 
     #[test]

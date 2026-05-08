@@ -63,14 +63,18 @@ where
                 self.prev.next_data().await?.ok_or(PipelineError::ChannelReaderEmpty.temp())?;
 
             let origin = self.prev.origin().ok_or(PipelineError::MissingOrigin.crit())?;
-            let max_rlp_bytes_per_channel = if self.cfg.is_fjord_active(origin.timestamp) {
+            let fjord_active = self.cfg.is_fjord_active(origin.timestamp);
+            let max_rlp_bytes_per_channel = if fjord_active {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD
             } else {
                 RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK
             };
 
-            self.next_batch =
-                Some(BatchReader::new(&channel[..], max_rlp_bytes_per_channel as usize));
+            self.next_batch = Some(BatchReader::new(
+                &channel[..],
+                max_rlp_bytes_per_channel as usize,
+                fjord_active,
+            ));
             Metrics::pipeline_batch_reader_set().set(1);
         }
         Ok(())
@@ -224,6 +228,7 @@ mod tests {
         reader.next_batch = Some(BatchReader::new(
             new_compressed_batch_data(),
             RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+            true,
         ));
         reader.flush_channel().await.unwrap();
         assert!(reader.next_batch.is_none());
@@ -236,6 +241,7 @@ mod tests {
         reader.next_batch = Some(BatchReader::new(
             vec![0x00, 0x01, 0x02],
             RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+            true,
         ));
         assert!(!reader.prev.reset);
         reader.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();

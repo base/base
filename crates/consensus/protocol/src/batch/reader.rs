@@ -42,6 +42,9 @@ pub struct BatchReader {
     pub max_rlp_bytes_per_channel: usize,
     /// Whether brotli decompression was used.
     pub brotli_used: bool,
+    /// Whether brotli channels are accepted. Must reflect the L1-origin activation state, not
+    /// the L2 batch timestamp — those can legitimately lag the activation boundary.
+    pub brotli_supported: bool,
 }
 
 impl BatchReader {
@@ -54,9 +57,9 @@ impl BatchReader {
     /// Brotli Compression Channel Version.
     pub const CHANNEL_VERSION_BROTLI: u8 = 1;
 
-    /// Creates a new [`BatchReader`] from the given data and max decompressed RLP bytes per
-    /// channel.
-    pub fn new<T>(data: T, max_rlp_bytes_per_channel: usize) -> Self
+    /// Creates a new [`BatchReader`] from the given data, the max decompressed RLP bytes per
+    /// channel, and whether brotli channels are accepted (see [`Self::brotli_supported`]).
+    pub fn new<T>(data: T, max_rlp_bytes_per_channel: usize, brotli_supported: bool) -> Self
     where
         T: Into<Vec<u8>>,
     {
@@ -66,6 +69,7 @@ impl BatchReader {
             cursor: 0,
             max_rlp_bytes_per_channel,
             brotli_used: false,
+            brotli_supported,
         }
     }
 
@@ -85,7 +89,8 @@ impl BatchReader {
                     || (compression_type & 0x0F) == Self::ZLIB_RESERVED_COMPRESSION_METHOD
                 {
                     self.decompress_zlib(data)
-                } else if compression_type == Self::CHANNEL_VERSION_BROTLI {
+                } else if compression_type == Self::CHANNEL_VERSION_BROTLI && self.brotli_supported
+                {
                     self.decompress_brotli(data)
                 } else {
                     Err(DecompressionError::UnsupportedType(compression_type))
@@ -135,11 +140,6 @@ impl BatchReader {
             return None;
         };
 
-        // Confirm that brotli decompression was performed *after* the Fjord hardfork.
-        if self.brotli_used && !cfg.is_fjord_active(batch.timestamp()) {
-            return None;
-        }
-
         // Advance the cursor on the reader.
         self.cursor = self.decompressed.len() - decompressed_reader.len();
         Some(batch)
@@ -169,7 +169,7 @@ mod tests {
         let raw = new_compressed_batch_data();
         let decompressed_len = decompress_to_vec_zlib(&raw).unwrap().len();
         let mut reader =
-            BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK as usize);
+            BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK as usize, false);
         reader.next_batch(&RollupConfig::default()).unwrap();
         assert_eq!(reader.cursor, decompressed_len);
     }
@@ -179,7 +179,7 @@ mod tests {
         let raw = new_compressed_batch_data();
         let decompressed_len = decompress_to_vec_zlib(&raw).unwrap().len();
         let mut reader =
-            BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize);
+            BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize, true);
         reader
             .next_batch(&RollupConfig {
                 hardforks: HardForkConfig { fjord_time: Some(0), ..Default::default() },
@@ -187,6 +187,30 @@ mod tests {
             })
             .unwrap();
         assert_eq!(reader.cursor, decompressed_len);
+    }
+
+    #[test]
+    fn test_brotli_unsupported_rejected_at_decompress() {
+        let raw = vec![BatchReader::CHANNEL_VERSION_BROTLI, 0xff, 0xff, 0xff];
+        let mut reader =
+            BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_BEDROCK as usize, false);
+        match reader.decompress() {
+            Err(DecompressionError::UnsupportedType(byte)) => {
+                assert_eq!(byte, BatchReader::CHANNEL_VERSION_BROTLI);
+            }
+            other => panic!("expected UnsupportedType, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_brotli_supported_attempts_brotli_decode() {
+        let raw = vec![BatchReader::CHANNEL_VERSION_BROTLI, 0xff, 0xff, 0xff];
+        let mut reader =
+            BatchReader::new(raw, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize, true);
+        match reader.decompress() {
+            Err(DecompressionError::BrotliError(_)) => {}
+            other => panic!("expected BrotliError, got {other:?}"),
+        }
     }
 
     /// Builds zlib-compressed channel data containing `n` copies of the same
@@ -211,7 +235,7 @@ mod tests {
 
         // Set limit below decompressed size — should truncate, not error.
         let limit = decompressed_len / 2;
-        let mut reader = BatchReader::new(raw, limit);
+        let mut reader = BatchReader::new(raw, limit, false);
         assert!(reader.decompress().is_ok());
         assert_eq!(reader.decompressed.len(), limit);
     }
@@ -223,7 +247,7 @@ mod tests {
         let single_batch_len = full_len / n;
 
         // Full decompression should yield all n batches.
-        let mut reader = BatchReader::new(compressed.clone(), full_len);
+        let mut reader = BatchReader::new(compressed.clone(), full_len, false);
         let mut count = 0;
         while reader.next_batch(&RollupConfig::default()).is_some() {
             count += 1;
@@ -232,7 +256,7 @@ mod tests {
 
         // Truncate to just under the last batch — should yield n-1 batches.
         let limit = full_len - 1;
-        let mut reader = BatchReader::new(compressed, limit);
+        let mut reader = BatchReader::new(compressed, limit, false);
         let mut count = 0;
         while reader.next_batch(&RollupConfig::default()).is_some() {
             count += 1;

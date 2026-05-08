@@ -160,7 +160,8 @@ impl RecentTxScanner {
     ) {
         let Some(data) = channel.frame_data() else { return };
         let max_rlp = rollup_config.max_rlp_bytes_per_channel(inclusion_timestamp) as usize;
-        let mut reader = BatchReader::new(data.to_vec(), max_rlp);
+        let brotli_supported = rollup_config.is_fjord_active(inclusion_timestamp);
+        let mut reader = BatchReader::new(data.to_vec(), max_rlp, brotli_supported);
         while let Some(batch) = reader.next_batch(rollup_config) {
             let last_timestamp = match &batch {
                 Batch::Single(sb) => sb.timestamp,
