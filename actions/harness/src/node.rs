@@ -165,6 +165,8 @@ pub struct TestRollupNode<P: Pipeline + SignalReceiver + Debug + Send = Verifier
     rollup_config: Arc<RollupConfig>,
     /// redb-backed safe head database for assertion-level testing.
     safe_db: Arc<SafeDB>,
+    /// Shared L2 chain provider backing reset walkback and batch validation.
+    l2_provider: ActionL2ChainProvider,
 }
 
 impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
@@ -185,6 +187,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
         p2p: TestGossipTransport,
         safe_head: L2BlockInfo,
         rollup_config: Arc<RollupConfig>,
+        l2_provider: ActionL2ChainProvider,
     ) -> Self {
         let safedb_dir =
             tempfile::TempDir::new().expect("TestRollupNode: failed to create safedb temp dir");
@@ -207,6 +210,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             derived_l1_info_txs: Vec::new(),
             rollup_config,
             safe_db,
+            l2_provider,
         }
     }
 
@@ -378,14 +382,17 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             .safe_head_reset(l2_safe_head)
             .await
             .expect("TestRollupNode: safe_db reset failed");
-        // Replace the engine with a fresh instance: the stateful EVM must restart
-        // from genesis to correctly re-execute the new fork's blocks.
-        self.engine = ActionEngineClient::new(
-            Arc::clone(&self.rollup_config),
-            l2_safe_head,
-            self.engine.block_hash_registry(),
-            self.engine.l1_chain(),
-        );
+        if l2_safe_head.block_info.number == 0 {
+            // Replace the engine with a fresh instance when resetting all the way
+            // to genesis: the stateful EVM must restart from genesis to correctly
+            // re-execute the new fork's blocks.
+            self.engine = ActionEngineClient::new(
+                Arc::clone(&self.rollup_config),
+                l2_safe_head,
+                self.engine.block_hash_registry(),
+                self.engine.l1_chain(),
+            );
+        }
     }
 
     /// Inject an unsafe L2 block directly, as if received via P2P gossip.
@@ -681,6 +688,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             l1_origin,
             seq_num,
         };
+        self.l2_provider.insert_block(self.safe_head);
         self.safe_head_history.push((self.safe_head, l1_origin.number));
         // `attrs.derived_from` carries the full L1 BlockInfo set by the pipeline's
         // AttributesQueueStage. It is always `Some` for attributes produced by the

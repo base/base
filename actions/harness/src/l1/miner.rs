@@ -108,12 +108,19 @@ pub struct L1PendingTransaction {
     pub envelope: TxEnvelope,
     /// Consensus logs emitted by this transaction.
     pub logs: Vec<Log>,
+    /// Whether the transaction receipt succeeded.
+    pub success: bool,
 }
 
 impl L1PendingTransaction {
     /// Create a pending L1 transaction with logs for its eventual receipt.
     pub const fn new(envelope: TxEnvelope, logs: Vec<Log>) -> Self {
-        Self { envelope, logs }
+        Self { envelope, logs, success: true }
+    }
+
+    /// Create a pending L1 transaction with logs and an explicit receipt status.
+    pub const fn new_with_status(envelope: TxEnvelope, logs: Vec<Log>, success: bool) -> Self {
+        Self { envelope, logs, success }
     }
 }
 
@@ -258,6 +265,12 @@ impl L1Miner {
     ///
     /// [`mine_block`]: L1Miner::mine_block
     pub fn enqueue_log(&mut self, log: Log) {
+        self.enqueue_log_with_status(log, true);
+    }
+
+    /// Queue a [`Log`] as a signed synthetic L1 event transaction with an
+    /// explicit receipt status in the next mined block.
+    pub fn enqueue_log_with_status(&mut self, log: Log, success: bool) {
         let tx = L1TxBuilder::signed_calldata(
             &self.event_signer,
             EVENT_TX_CHAIN_ID,
@@ -267,7 +280,7 @@ impl L1Miner {
         )
         .expect("event transaction signs");
         self.event_nonce += 1;
-        self.submit_transaction_with_logs(tx, vec![log]);
+        self.submit_transaction_with_logs_and_status(tx, vec![log], success);
     }
 
     /// Queue an EIP-4844 blob sidecar for inclusion in the next mined block.
@@ -386,6 +399,12 @@ impl L1Miner {
     /// The derivation pipeline reads this from L1 receipts to include the
     /// deposit in the corresponding L2 block's attribute set.
     pub fn enqueue_user_deposit(&mut self, deposit: &UserDeposit) {
+        self.enqueue_user_deposit_with_status(deposit, true);
+    }
+
+    /// Queue a `TransactionDeposited` log for the next mined block with an
+    /// explicit receipt status.
+    pub fn enqueue_user_deposit_with_status(&mut self, deposit: &UserDeposit, success: bool) {
         // opaqueData: mint(32) + value(32) + gas_limit(8) + isCreation(1) + calldata
         let opaque_len = 32 + 32 + 8 + 1 + deposit.data.len();
         let opaque_padded = opaque_len.div_ceil(32) * 32;
@@ -407,18 +426,21 @@ impl L1Miner {
         let mut to_topic = [0u8; 32];
         to_topic[12..32].copy_from_slice(deposit.to.as_slice());
 
-        self.enqueue_log(Log {
-            address: deposit.deposit_contract,
-            data: LogData::new_unchecked(
-                vec![
-                    Deposits::EVENT_ABI_HASH,
-                    B256::from(from_topic),
-                    B256::from(to_topic),
-                    Deposits::EVENT_VERSION_0,
-                ],
-                log_data.into(),
-            ),
-        });
+        self.enqueue_log_with_status(
+            Log {
+                address: deposit.deposit_contract,
+                data: LogData::new_unchecked(
+                    vec![
+                        Deposits::EVENT_ABI_HASH,
+                        B256::from(from_topic),
+                        B256::from(to_topic),
+                        Deposits::EVENT_VERSION_0,
+                    ],
+                    log_data.into(),
+                ),
+            },
+            success,
+        );
     }
 
     /// Return the most recently mined block.
@@ -581,7 +603,17 @@ impl L1Miner {
 
     /// Enqueue a signed L1 transaction with logs for its eventual receipt.
     pub fn submit_transaction_with_logs(&mut self, tx: TxEnvelope, logs: Vec<Log>) {
-        self.pending_transactions.push(L1PendingTransaction::new(tx, logs));
+        self.submit_transaction_with_logs_and_status(tx, logs, true);
+    }
+
+    /// Enqueue a signed L1 transaction with logs and an explicit receipt status.
+    pub fn submit_transaction_with_logs_and_status(
+        &mut self,
+        tx: TxEnvelope,
+        logs: Vec<Log>,
+        success: bool,
+    ) {
+        self.pending_transactions.push(L1PendingTransaction::new_with_status(tx, logs, success));
     }
 
     /// Build and enqueue a signed calldata transaction for inclusion in the next mined block.
@@ -613,8 +645,8 @@ impl L1Miner {
         let pending_transactions = core::mem::take(&mut self.pending_transactions);
         let transactions =
             pending_transactions.iter().map(|pending| pending.envelope.clone()).collect::<Vec<_>>();
-        let transaction_logs =
-            pending_transactions.into_iter().map(|pending| pending.logs).collect::<Vec<_>>();
+        let (transaction_logs, transaction_statuses): (Vec<_>, Vec<_>) =
+            pending_transactions.into_iter().map(|pending| (pending.logs, pending.success)).unzip();
         let blob_sidecars = core::mem::take(&mut self.pending_blobs);
         let logs_bloom: Bloom = transaction_logs.iter().flat_map(|logs| logs.iter()).collect();
 
@@ -633,10 +665,11 @@ impl L1Miner {
             ..Default::default()
         };
         let block_hash = header.hash_slow();
-        let receipts = Self::build_receipts(&transaction_logs);
-        let transaction_receipts = Self::build_transaction_receipts(
+        let receipts = Self::build_receipts_with_status(&transaction_logs, &transaction_statuses);
+        let transaction_receipts = Self::build_transaction_receipts_with_status(
             &transactions,
             &transaction_logs,
+            &transaction_statuses,
             block_hash,
             number,
             timestamp,
@@ -657,11 +690,25 @@ impl L1Miner {
 
     /// Build consensus receipts for the in-memory chain provider.
     pub fn build_receipts(transaction_logs: &[Vec<Log>]) -> Vec<Receipt> {
+        let statuses = vec![true; transaction_logs.len()];
+        Self::build_receipts_with_status(transaction_logs, &statuses)
+    }
+
+    /// Build consensus receipts for the in-memory chain provider with explicit statuses.
+    pub fn build_receipts_with_status(
+        transaction_logs: &[Vec<Log>],
+        transaction_statuses: &[bool],
+    ) -> Vec<Receipt> {
+        debug_assert_eq!(
+            transaction_logs.len(),
+            transaction_statuses.len(),
+            "transaction_logs and transaction_statuses must have the same length"
+        );
         transaction_logs
             .iter()
             .enumerate()
             .map(|(index, logs)| Receipt {
-                status: true.into(),
+                status: transaction_statuses[index].into(),
                 cumulative_gas_used: 21_000 * (index as u64 + 1),
                 logs: logs.clone(),
             })
@@ -676,13 +723,43 @@ impl L1Miner {
         block_number: u64,
         timestamp: u64,
     ) -> Vec<TransactionReceipt> {
+        let statuses = vec![true; transactions.len()];
+        Self::build_transaction_receipts_with_status(
+            transactions,
+            transaction_logs,
+            &statuses,
+            block_hash,
+            block_number,
+            timestamp,
+        )
+    }
+
+    /// Build production-shaped RPC receipts for a mined block with explicit statuses.
+    pub fn build_transaction_receipts_with_status(
+        transactions: &[TxEnvelope],
+        transaction_logs: &[Vec<Log>],
+        transaction_statuses: &[bool],
+        block_hash: B256,
+        block_number: u64,
+        timestamp: u64,
+    ) -> Vec<TransactionReceipt> {
+        debug_assert_eq!(
+            transactions.len(),
+            transaction_logs.len(),
+            "transactions and transaction_logs must have the same length"
+        );
+        debug_assert_eq!(
+            transaction_logs.len(),
+            transaction_statuses.len(),
+            "transaction_logs and transaction_statuses must have the same length"
+        );
         let mut previous_log_count = 0;
         transactions
             .iter()
             .enumerate()
             .map(|(index, tx)| {
                 let gas_used = 21_000;
-                let tx_logs = transaction_logs.get(index).cloned().unwrap_or_default();
+                let tx_logs = transaction_logs[index].clone();
                 let meta = TransactionMeta {
                     tx_hash: *tx.hash(),
                     index: index as u64,
@@ -695,7 +772,7 @@ impl L1Miner {
                 let rpc_logs = RpcLog::collect_for_receipt(previous_log_count, meta, tx_logs);
                 previous_log_count += rpc_logs.len();
                 let receipt = Receipt::<RpcLog> {
-                    status: true.into(),
+                    status: transaction_statuses[index].into(),
                     cumulative_gas_used: gas_used * (index as u64 + 1),
                     logs: rpc_logs,
                 };

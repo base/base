@@ -59,6 +59,8 @@ pub struct BatchEncoder {
     /// transaction bytes for each block pushed in `step()`, and reset to zero when the
     /// accumulator is drained. Avoids an O(N·M) re-scan of the accumulator on every step.
     span_raw_bytes: usize,
+    /// Estimated DA bytes for blocks currently staged in `span_accumulator`.
+    span_da_backlog_bytes: u64,
     /// L1 head block number when the first block was accumulated into the current span
     /// (Span mode only). Used by `check_channel_timeout()` to detect when the span has
     /// been open too long and must be flushed, since `current_channel` is `None` between
@@ -84,6 +86,7 @@ impl fmt::Debug for BatchEncoder {
             .field("next_id", &self.next_id)
             .field("span_accumulator_len", &self.span_accumulator.len())
             .field("span_raw_bytes", &self.span_raw_bytes)
+            .field("span_da_backlog_bytes", &self.span_da_backlog_bytes)
             .field("span_opened_at_l1", &self.span_opened_at_l1)
             .finish_non_exhaustive()
     }
@@ -111,9 +114,21 @@ impl BatchEncoder {
             rng: SmallRng::from_os_rng(),
             span_accumulator: Vec::new(),
             span_raw_bytes: 0,
+            span_da_backlog_bytes: 0,
             span_opened_at_l1: None,
             blob_override: false,
         }
+    }
+
+    /// Estimate the DA bytes represented by non-deposit transactions in `block`.
+    fn block_da_backlog_bytes(block: &BaseBlock) -> u64 {
+        block
+            .body
+            .transactions
+            .iter()
+            .filter(|tx| !matches!(tx, BaseTxEnvelope::Deposit(_)))
+            .map(|tx| tx.encode_2718_len() as u64)
+            .sum()
     }
 
     /// Step the encoder until idle, force-close the current channel, and return
@@ -197,6 +212,7 @@ impl BatchEncoder {
                         }).is_ok();
                         if ok {
                             open.blocks_added += total;
+                            open.da_backlog_bytes += self.span_da_backlog_bytes;
                         }
                         ok
                     })
@@ -205,6 +221,7 @@ impl BatchEncoder {
                 if add_ok {
                     self.span_accumulator.clear();
                     self.span_raw_bytes = 0;
+                    self.span_da_backlog_bytes = 0;
                     self.span_opened_at_l1 = None;
                 } else {
                     // Discard the channel we just opened so that the drain logic below
@@ -260,6 +277,7 @@ impl BatchEncoder {
         let frame_count = frames.len();
         let duration_blocks = self.l1_head.saturating_sub(opened_at_l1);
         let compressed_bytes: usize = frames.iter().map(|f| f.data.len()).sum();
+        let closed_da_backlog_bytes = u64::try_from(compressed_bytes).unwrap_or(u64::MAX);
 
         debug!(
             channel_id = ?channel_id,
@@ -289,6 +307,7 @@ impl BatchEncoder {
             frames,
             cursor: 0,
             block_range,
+            da_backlog_bytes: closed_da_backlog_bytes,
             pending_confirmations: 0,
             confirmed_count: 0,
         });
@@ -312,8 +331,12 @@ impl BatchEncoder {
         debug!(channel_id = ?id, l1_head = %self.l1_head, "opened new channel");
         BatcherMetrics::channel_opened_total().increment(1);
 
-        self.current_channel =
-            Some(OpenChannel { out: channel_out, opened_at_l1: self.l1_head, blocks_added: 0 });
+        self.current_channel = Some(OpenChannel {
+            out: channel_out,
+            opened_at_l1: self.l1_head,
+            blocks_added: 0,
+            da_backlog_bytes: 0,
+        });
     }
 
     /// Check if the current channel (or span accumulator) has timed out and close it if so.
@@ -382,6 +405,7 @@ impl BatchPipeline for BatchEncoder {
 
         // Get the block at the cursor.
         let block = &self.blocks[self.block_cursor];
+        let block_da_backlog_bytes = Self::block_da_backlog_bytes(block);
 
         // Convert block to a SingleBatch. Failure here is fatal: skipping the block
         // would produce a gap in the L2 block sequence submitted to L1.
@@ -398,6 +422,7 @@ impl BatchPipeline for BatchEncoder {
                 let block_raw_bytes = Self::SPAN_BATCH_PER_BLOCK_OVERHEAD
                     + single_batch.transactions.iter().map(|tx| tx.len()).sum::<usize>();
                 self.span_raw_bytes += block_raw_bytes;
+                self.span_da_backlog_bytes += block_da_backlog_bytes;
                 self.span_accumulator.push((single_batch, seq_num));
                 self.block_cursor += 1;
 
@@ -454,6 +479,7 @@ impl BatchPipeline for BatchEncoder {
                 Ok(match open.out.add_batch(batch) {
                     Ok(()) => {
                         open.blocks_added += 1;
+                        open.da_backlog_bytes += block_da_backlog_bytes;
                         self.block_cursor += 1;
 
                         debug!(
@@ -681,6 +707,7 @@ impl BatchPipeline for BatchEncoder {
         self.pending.clear();
         self.span_accumulator.clear();
         self.span_raw_bytes = 0;
+        self.span_da_backlog_bytes = 0;
         self.span_opened_at_l1 = None;
         // Intentionally not resetting `next_id`: keeping it monotonically
         // increasing across resets means post-reset submissions can never
@@ -722,13 +749,23 @@ impl BatchPipeline for BatchEncoder {
     }
 
     fn da_backlog_bytes(&self) -> u64 {
-        self.blocks
+        let pending_blocks = self
+            .blocks
             .iter()
             .skip(self.block_cursor)
-            .flat_map(|b| &b.body.transactions)
-            .filter(|tx| !matches!(tx, BaseTxEnvelope::Deposit(_)))
-            .map(|tx| tx.encode_2718_len() as u64)
-            .sum()
+            .map(Self::block_da_backlog_bytes)
+            .fold(0u64, u64::saturating_add);
+        let open_channel = self.current_channel.as_ref().map_or(0, |open| open.da_backlog_bytes);
+        let ready_channels = self
+            .ready_channels
+            .iter()
+            .map(|channel| channel.da_backlog_bytes)
+            .fold(0u64, u64::saturating_add);
+
+        pending_blocks
+            .saturating_add(self.span_da_backlog_bytes)
+            .saturating_add(open_channel)
+            .saturating_add(ready_channels)
     }
 
     fn set_blob_override(&mut self, active: bool) {
@@ -778,6 +815,18 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    fn make_user_tx_chain(len: usize) -> Vec<BaseBlock> {
+        let mut parent_hash = B256::ZERO;
+        (0..len)
+            .map(|number| {
+                let mut block = make_block_with_user_tx(parent_hash);
+                block.header.number = number as u64;
+                parent_hash = block.header.hash_slow();
+                block
+            })
+            .collect()
     }
 
     fn default_encoder() -> BatchEncoder {
@@ -884,6 +933,73 @@ mod tests {
         let backlog = encoder.da_backlog_bytes();
         // The backlog should only count the user tx, not the deposit.
         assert!(backlog > 0);
+    }
+
+    #[test]
+    fn test_da_backlog_counts_single_blocks_after_encoding_and_closing() {
+        let mut encoder = default_encoder();
+        for block in make_user_tx_chain(3) {
+            encoder.add_block(block).unwrap();
+        }
+
+        let queued_backlog = encoder.da_backlog_bytes();
+        assert!(queued_backlog > 0);
+
+        for _ in 0..3 {
+            assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        }
+
+        assert_eq!(encoder.block_cursor, 3);
+        assert!(encoder.current_channel.is_some());
+        assert_eq!(encoder.da_backlog_bytes(), queued_backlog);
+
+        encoder.force_close_channel();
+        assert!(encoder.current_channel.is_none());
+        assert!(!encoder.ready_channels.is_empty());
+        assert!(encoder.da_backlog_bytes() > 0);
+
+        let mut submissions = Vec::new();
+        while let Some(submission) = encoder.next_submission() {
+            submissions.push(submission.id);
+        }
+        assert!(!submissions.is_empty());
+        assert!(encoder.da_backlog_bytes() > 0, "in-flight submissions still consume DA backlog");
+
+        for id in submissions {
+            encoder.confirm(id, 0);
+        }
+        assert_eq!(encoder.da_backlog_bytes(), 0);
+    }
+
+    #[test]
+    fn test_da_backlog_counts_span_blocks_before_flush() {
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: 130_044,
+            max_channel_duration: 1000,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::new(RollupConfig::default()), config);
+        for block in make_user_tx_chain(3) {
+            encoder.add_block(block).unwrap();
+        }
+
+        let queued_backlog = encoder.da_backlog_bytes();
+        assert!(queued_backlog > 0);
+
+        for _ in 0..3 {
+            assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
+        }
+
+        assert_eq!(encoder.block_cursor, 3);
+        assert!(encoder.current_channel.is_none());
+        assert_eq!(encoder.span_accumulator.len(), 3);
+        assert_eq!(encoder.da_backlog_bytes(), queued_backlog);
+
+        encoder.force_close_channel();
+        assert!(encoder.span_accumulator.is_empty());
+        assert!(!encoder.ready_channels.is_empty());
+        assert!(encoder.da_backlog_bytes() > 0);
     }
 
     #[test]
