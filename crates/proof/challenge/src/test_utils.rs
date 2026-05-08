@@ -727,6 +727,21 @@ pub fn build_test_header_and_account(
     block_number: u64,
     storage_hash: B256,
 ) -> (ConsensusHeader, EIP1186AccountProofResponse) {
+    build_test_header_and_account_for_address(
+        block_number,
+        storage_hash,
+        Predeploys::L2_TO_L1_MESSAGE_PASSER,
+    )
+}
+
+/// Builds a consensus header and account proof response pair for `address`.
+/// The returned header's `state_root` is the trie root that the account proof
+/// verifies against.
+pub fn build_test_header_and_account_for_address(
+    block_number: u64,
+    storage_hash: B256,
+    address: Address,
+) -> (ConsensusHeader, EIP1186AccountProofResponse) {
     let account = TrieAccount {
         nonce: 0,
         balance: U256::ZERO,
@@ -736,7 +751,7 @@ pub fn build_test_header_and_account(
     let mut encoded = Vec::with_capacity(account.length());
     account.encode(&mut encoded);
 
-    let account_key = Nibbles::unpack(keccak256(Predeploys::L2_TO_L1_MESSAGE_PASSER));
+    let account_key = Nibbles::unpack(keccak256(address));
     let mut hb = HashBuilder::default().with_proof_retainer(ProofRetainer::new(vec![account_key]));
     hb.add_leaf(account_key, &encoded);
     let state_root = hb.root();
@@ -746,7 +761,7 @@ pub fn build_test_header_and_account(
 
     let header = ConsensusHeader { number: block_number, state_root, ..Default::default() };
     let account_result = EIP1186AccountProofResponse {
-        address: Predeploys::L2_TO_L1_MESSAGE_PASSER,
+        address,
         account_proof,
         balance: U256::ZERO,
         code_hash: B256::ZERO,
