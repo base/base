@@ -10,6 +10,8 @@ base_metrics::define_metrics! {
     derivation_critical_errors: counter,
     #[describe("Wall-clock duration of a single derivation pipeline step() call")]
     derivation_pipeline_step_duration_seconds: histogram,
+    #[describe("Wall-clock duration the derivation actor waits for an inbound request")]
+    derivation_actor_inbound_recv_wait_duration_seconds: histogram,
     #[describe("Tracks sequencer state flags")]
     #[label(active)]
     #[label(recovery)]

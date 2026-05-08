@@ -79,4 +79,8 @@ pub trait RollupProvider: Send + Sync {
 
     /// Gets the output root at a specific L2 block via `optimism_outputAtBlock`.
     async fn output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock>;
+
+    /// Gets the output root at a specific L2 block via `optimism_outputAtBlock`,
+    /// bypassing any local cache.
+    async fn fresh_output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock>;
 }

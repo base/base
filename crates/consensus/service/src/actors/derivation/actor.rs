@@ -356,10 +356,14 @@ where
     async fn start(mut self, _: Self::StartData) -> Result<(), Self::Error> {
         info!(target: "derivation", "Starting derivation");
         loop {
+            let mut recv_timer = base_metrics::timed!(
+                Metrics::derivation_actor_inbound_recv_wait_duration_seconds()
+            );
             select! {
                 biased;
 
                 _ = self.cancellation_token.cancelled() => {
+                    recv_timer.disarm();
                     info!(
                         target: "derivation",
                         "Received shutdown signal. Exiting derivation task."
@@ -367,6 +371,7 @@ where
                     return Ok(());
                 }
                 req = self.inbound_request_rx.recv() => {
+                    recv_timer.stop();
                     let Some(request_type) = req else {
                         error!(target: "derivation", "DerivationActor inbound request receiver closed unexpectedly");
                         self.cancellation_token.cancel();

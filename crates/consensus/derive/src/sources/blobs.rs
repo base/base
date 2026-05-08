@@ -113,11 +113,11 @@ where
             return Ok(());
         }
 
-        let info = self
-            .chain_provider
-            .block_info_and_transactions_by_hash(block_ref.hash)
-            .await
-            .map_err(Into::into)?;
+        let info = base_metrics::time!(
+            Metrics::pipeline_data_availability_l1_fetch_duration_seconds("blobs"),
+            { self.chain_provider.block_info_and_transactions_by_hash(block_ref.hash).await }
+        )
+        .map_err(Into::into)?;
 
         let (mut data, blob_hashes) = self.extract_blob_data(info.1, batcher_address);
 
@@ -132,32 +132,31 @@ where
         //   BlobNotFound  -> PipelineErrorKind::Reset   (missed/orphaned slot)
         //   Backend       -> PipelineErrorKind::Temporary (transient, retry)
         //   others        -> PipelineErrorKind::Critical
-        let blobs = self
-            .blob_fetcher
-            .get_and_validate_blobs(block_ref, &blob_hashes)
-            .await
-            .map_err(Into::<PipelineErrorKind>::into)
-            .inspect_err(|kind| match kind {
-                PipelineErrorKind::Reset(_) => {
-                    warn!(
-                        target: "blob_source",
-                        block_hash = %block_ref.hash,
-                        block_number = block_ref.number,
-                        timestamp = block_ref.timestamp,
-                        "Blobs permanently unavailable (missed/orphaned beacon slot); \
-                         triggering pipeline reset"
-                    );
-                }
-                _ => {
-                    warn!(
-                        target: "blob_source",
-                        block_hash = %block_ref.hash,
-                        block_number = block_ref.number,
-                        timestamp = block_ref.timestamp,
-                        "Failed to fetch blobs: {kind}"
-                    );
-                }
-            })?;
+        let blobs = base_metrics::time!(Metrics::pipeline_blob_fetch_duration_seconds(), {
+            self.blob_fetcher.get_and_validate_blobs(block_ref, &blob_hashes).await
+        })
+        .map_err(Into::<PipelineErrorKind>::into)
+        .inspect_err(|kind| match kind {
+            PipelineErrorKind::Reset(_) => {
+                warn!(
+                    target: "blob_source",
+                    block_hash = %block_ref.hash,
+                    block_number = block_ref.number,
+                    timestamp = block_ref.timestamp,
+                    "Blobs permanently unavailable (missed/orphaned beacon slot); \
+                     triggering pipeline reset"
+                );
+            }
+            _ => {
+                warn!(
+                    target: "blob_source",
+                    block_hash = %block_ref.hash,
+                    block_number = block_ref.number,
+                    timestamp = block_ref.timestamp,
+                    "Failed to fetch blobs: {kind}"
+                );
+            }
+        })?;
 
         // Fill the blob pointers.
         let mut blob_index = 0;

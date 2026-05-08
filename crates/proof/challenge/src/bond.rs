@@ -175,6 +175,9 @@ impl<C: Clock> BondManager<C> {
     /// waiting for its best-effort anchor update to finish.
     const DEFAULT_ANCHOR_UPDATE_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 
+    /// How long to wait before retrying a reverted withdraw attempt.
+    const WITHDRAW_REVERT_RETRY_DELAY: Duration = Duration::from_secs(60);
+
     /// `DEFENDER_WINS` game status constant.
     const STATUS_DEFENDER_WINS: u8 = 2;
 
@@ -879,6 +882,7 @@ impl<C: Clock> BondManager<C> {
             submitter,
             "unlock",
             BondPhase::AwaitingDelay { unlocked_at: self.clock.now() },
+            None,
         )
         .await
     }
@@ -892,7 +896,7 @@ impl<C: Clock> BondManager<C> {
         // Fall back to 7 days if the onchain delay has not been read yet.
         // If the real delay is shorter, the withdraw attempt will simply
         // succeed earlier than expected. If longer, the attempt will revert
-        // and be retried on the next poll tick.
+        // and be retried after a short backoff.
         let delay = self.weth_delay.unwrap_or_else(|| {
             debug!(game = %game_address, "WETH delay not yet known, using default 7 days");
             Self::DEFAULT_WETH_DELAY
@@ -931,18 +935,27 @@ impl<C: Clock> BondManager<C> {
             return Ok(Some(RemovalReason::Completed));
         }
 
-        self.submit_claim_credit(game_address, submitter, "withdraw", BondPhase::Completed).await
+        self.submit_claim_credit(
+            game_address,
+            submitter,
+            "withdraw",
+            BondPhase::Completed,
+            Some(Self::WITHDRAW_REVERT_RETRY_DELAY),
+        )
+        .await
     }
 
     /// Submits a `claimCredit()` transaction and transitions to the given
-    /// phase on success. Returns `Ok(Some(Completed))` when the success
-    /// phase is [`BondPhase::Completed`].
+    /// phase on success. If `revert_retry_delay` is set, a reverted
+    /// transaction backs off by that duration before retrying. Returns
+    /// `Ok(Some(Completed))` when the success phase is [`BondPhase::Completed`].
     async fn submit_claim_credit(
         &mut self,
         game_address: Address,
         submitter: &dyn BondTransactionSubmitter,
         step: &str,
         success_phase: BondPhase,
+        revert_retry_delay: Option<Duration>,
     ) -> eyre::Result<Option<RemovalReason>> {
         let calldata = encode_claim_credit_calldata();
         ChallengerMetrics::claim_credit_tx_submitted_total().increment(1);
@@ -970,6 +983,21 @@ impl<C: Clock> BondManager<C> {
                 );
                 ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
                     .increment(1);
+                if let Some(retry_delay) = revert_retry_delay
+                    && matches!(&e, crate::ChallengeSubmitError::TxReverted { .. })
+                {
+                    let delay = self.weth_delay.unwrap_or(Self::DEFAULT_WETH_DELAY);
+                    let retry_delay = retry_delay.min(delay);
+                    let elapsed_before_retry = delay.saturating_sub(retry_delay);
+                    let unlocked_at = self.clock.now().saturating_sub(elapsed_before_retry);
+                    info!(
+                        game = %game_address,
+                        retry_delay_secs = retry_delay.as_secs(),
+                        step,
+                        "claimCredit reverted, backing off before retry"
+                    );
+                    self.set_phase(game_address, BondPhase::AwaitingDelay { unlocked_at });
+                }
                 Ok(None)
             }
         }
@@ -1000,7 +1028,7 @@ impl<C: Clock> BondManager<C> {
     /// conservative lower bound. The unlock must have occurred after
     /// resolve, so this may cause one early withdrawal attempt that
     /// reverts, but is strictly better than resetting to "now" (which
-    /// would re-impose the full delay after every restart).
+    /// would re-impose the full delay after every retry).
     fn estimate_unlock_time(clock: &C, resolved_at: u64) -> Duration {
         Self::unix_to_monotonic(clock, resolved_at, clock.wall_clock_unix_secs())
     }
@@ -1438,6 +1466,74 @@ mod tests {
         let result = mgr.check_delay(game, unlocked_at);
         assert!(result.is_ok());
         assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::AwaitingDelay { .. }));
+    }
+
+    #[tokio::test]
+    async fn reverted_withdraw_backs_off_before_retrying() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let game = addr(0);
+        let wall_unix = 2_000_000_000;
+        let resolved_at = wall_unix - 3_600;
+        let monotonic_secs = 3_700;
+        let delay = Duration::from_secs(3_600);
+        let clock = FixedClock { monotonic: Duration::from_secs(monotonic_secs), wall_unix };
+        let stale_unlocked_at =
+            BondManager::<FixedClock>::estimate_unlock_time(&clock, resolved_at);
+
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
+        mgr.set_weth_delay(delay);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(game, BondPhase::AwaitingDelay { unlocked_at: stale_unlocked_at });
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.resolved_at = resolved_at;
+        state.bond_unlocked = true;
+        state.bond_claimed = false;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![Err(
+            crate::ChallengeSubmitError::TxReverted { tx_hash: B256::ZERO },
+        )]);
+
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none());
+        assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsWithdraw));
+        assert!(submitter.recorded_calls().is_empty());
+
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none());
+        assert_eq!(submitter.recorded_calls().len(), 1);
+        let expected_unlocked_at = Duration::from_secs(monotonic_secs).saturating_sub(
+            delay.saturating_sub(BondManager::<FixedClock>::WITHDRAW_REVERT_RETRY_DELAY),
+        );
+        assert!(
+            matches!(
+                mgr.tracked.get(&game).unwrap().phase,
+                BondPhase::AwaitingDelay { unlocked_at }
+                    if unlocked_at == expected_unlocked_at
+            ),
+            "withdraw revert should back off without restarting the full delay"
+        );
+        assert_ne!(
+            expected_unlocked_at,
+            Duration::from_secs(monotonic_secs),
+            "withdraw revert must not model a fresh DelayedWETH unlock"
+        );
+
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none());
+        assert_eq!(
+            submitter.recorded_calls().len(),
+            1,
+            "next poll should wait in AwaitingDelay instead of submitting again"
+        );
     }
 
     #[test]

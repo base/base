@@ -14,6 +14,15 @@ pub enum ContractError {
         source: alloy_contract::Error,
     },
 
+    /// A provider request failed before a contract call was constructed.
+    #[error("{context}: {source}")]
+    Provider {
+        /// Human-readable label for the failed provider request.
+        context: String,
+        /// The underlying Alloy transport error.
+        source: alloy_transport::TransportError,
+    },
+
     /// A value returned by the contract failed a validation check.
     #[error("{0}")]
     Validation(String),
