@@ -31,6 +31,13 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
     type Error = FinalizeTaskError;
 
     async fn execute(&self, state: &mut EngineState) -> Result<(), FinalizeTaskError> {
+        // Monotonicity guard: BinaryHeap does not define ordering between same-variant tasks,
+        // so a stale FinalizeTask with a lower block number may be popped after a higher one
+        // has already been executed. Skip it to prevent finalized_head from regressing.
+        if self.block_number < state.sync_state.finalized_head().block_info.number {
+            return Ok(());
+        }
+
         // Sanity check that the block that is being finalized is at least safe.
         if state.sync_state.safe_head().block_info.number < self.block_number {
             return Err(FinalizeTaskError::BlockNotSafe);
