@@ -13,6 +13,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, sol};
+use base_common_network::Base;
 use base_tx_manager::NonceManager;
 use futures::{StreamExt, stream};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -981,7 +982,7 @@ impl LoadRunner {
         info!(url = %self.config.query_rpc, "starting block watcher");
         let block_watcher_task = Some(
             BlockWatcher::new(
-                self.config.query_rpc.clone(),
+                RootProvider::<Base>::new_http(self.config.query_rpc.clone()),
                 results_tracker.clone(),
                 self.cancel_token.clone(),
             )

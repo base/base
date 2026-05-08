@@ -308,6 +308,10 @@ services:
       - --flashblocks.block-time=200
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_BUILDER_METRICS_PORT}
+      - --builder.enable-resource-metering
+      - --builder.flashblock-execution-time-budget-us=${METERING_EXECUTION_TIME_US}
+      - --builder.block-state-root-gas-limit=${BUILDER_BLOCK_STATE_ROOT_GAS_LIMIT}
+      - --builder.max-rejected-txs-per-block=${BUILDER_MAX_REJECTED_TXS_PER_BLOCK}
       - --txpool.nolocals
       - --rollup.txpool-max-inflight-delegated-slots=32768
       - --txpool.pending-max-count=200000

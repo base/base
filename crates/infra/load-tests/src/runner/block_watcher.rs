@@ -8,7 +8,6 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use base_common_network::Base;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
-use url::Url;
 
 use super::{BlockObservation, BlockReceipt, ResultsTracker};
 
@@ -23,7 +22,6 @@ const INITIAL_BLOCK_LOOKBACK: u64 = 8;
 /// Tracks canonical blocks and their receipts.
 #[derive(Debug)]
 pub struct BlockWatcher {
-    url: Url,
     provider: RootProvider<Base>,
     results_tracker: ResultsTracker,
     cancel_token: CancellationToken,
@@ -31,9 +29,12 @@ pub struct BlockWatcher {
 
 impl BlockWatcher {
     /// Creates a new [`BlockWatcher`].
-    pub fn new(url: Url, results_tracker: ResultsTracker, cancel_token: CancellationToken) -> Self {
-        let provider = RootProvider::<Base>::new_http(url.clone());
-        Self { url, provider, results_tracker, cancel_token }
+    pub const fn new(
+        provider: RootProvider<Base>,
+        results_tracker: ResultsTracker,
+        cancel_token: CancellationToken,
+    ) -> Self {
+        Self { provider, results_tracker, cancel_token }
     }
 
     /// Spawns the watcher as a background task.
@@ -44,7 +45,7 @@ impl BlockWatcher {
     }
 
     async fn run(&self) {
-        info!(url = %self.url, "starting block watcher");
+        info!("started block watcher");
 
         let mut backoff = Duration::from_millis(100);
         let max_backoff = Duration::from_secs(5);

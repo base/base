@@ -658,6 +658,11 @@ impl SubmissionPipeline {
                                 attempt,
                                 "nonce too low during batch submission"
                             );
+                            // On retry, a nonce-too-low response usually means a prior attempt
+                            // was accepted but its response was lost. Treat it as submitted so we
+                            // do not return a consumed nonce; if another transaction consumed the
+                            // nonce, the optimistic pending entry expires through the normal
+                            // confirmation timeout.
                             if attempt > 0 {
                                 let tx_hash = signed.tx_hash;
                                 submitted += Self::record_submitted(

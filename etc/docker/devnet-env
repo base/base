@@ -172,10 +172,12 @@ L2_BASE_AZUL_BLOCK=20
 
 # Metering Resource Limits
 # Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.
-# These preserve the builder's current 10-flashblock targets: 30M gas / block,
-# ~786KB DA / block, ~200ms state root / block, and 2s execution / flashblock.
-METERING_GAS_LIMIT=30000000
-METERING_EXECUTION_TIME_US=2000000
-METERING_STATE_ROOT_TIME_US=200000
-METERING_DA_BYTES=786430
+# These preserve the builder's current 10-flashblock targets: 60M gas / block,
+# ~1.5MB DA / block, ~1s state root / block, and 5s execution / flashblock.
+METERING_GAS_LIMIT=60000000
+METERING_EXECUTION_TIME_US=5000000
+METERING_STATE_ROOT_TIME_US=1000000
+METERING_DA_BYTES=1572860
 METERING_TARGET_FLASHBLOCKS_PER_BLOCK=10
+BUILDER_BLOCK_STATE_ROOT_GAS_LIMIT=600000000
+BUILDER_MAX_REJECTED_TXS_PER_BLOCK=20000

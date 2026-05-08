@@ -7,7 +7,6 @@
 # HTTP submission endpoints. Batches are distributed across all configured URLs.
 transaction_submission_rpcs:
   - "http://localhost:7545"
-  - "http://localhost:8545"
 
 # RPC endpoint for reads and balance checks
 query_rpc: "http://localhost:8545"
@@ -24,7 +23,7 @@ flashblocks_ws: "ws://localhost:7111"
 sender_count: 100
 
 # Target gas per second (~100 simple transfers)
-target_gps: 12500000
+target_gps: 20000000
 
 # Keep local devnet RPC pressure batched while leaving enough in-flight room
 # for block receipt confirmation to provide backpressure.
