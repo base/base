@@ -262,10 +262,6 @@ impl PendingProofs {
             GetProofRequest { session_id, receipt_type: Some(ReceiptType::OnChainSnark as i32) };
 
         let response = zk_prover.get_proof(request).await?;
-        let status = ProofJobStatus::try_from(response.status).unwrap_or_else(|_| {
-            warn!(raw_status = response.status, game = %game, "unrecognized proof job status");
-            ProofJobStatus::Unspecified
-        });
 
         // Re-borrow after the await point.
         let pending = match self.0.get_mut(&game) {
@@ -273,8 +269,8 @@ impl PendingProofs {
             None => return Ok(None),
         };
 
-        let update = match status {
-            ProofJobStatus::Succeeded => {
+        let update = match ProofJobStatus::try_from(response.status) {
+            Ok(ProofJobStatus::Succeeded) => {
                 let mut raw = Vec::with_capacity(1 + response.receipt.len());
                 raw.push(PROOF_TYPE_ZK);
                 raw.extend_from_slice(&response.receipt);
@@ -285,13 +281,21 @@ impl PendingProofs {
 
                 update
             }
-            ProofJobStatus::Failed => {
+            Ok(ProofJobStatus::Failed) => {
                 warn!(game = %game, error_message = ?response.error_message, "proof job failed");
                 pending.retry_count += 1;
                 pending.phase = ProofPhase::NeedsRetry;
                 ProofUpdate::NeedsRetry
             }
-            _ => ProofUpdate::Pending,
+            Ok(ProofJobStatus::Created | ProofJobStatus::Pending | ProofJobStatus::Running) => {
+                ProofUpdate::Pending
+            }
+            Ok(ProofJobStatus::Unspecified) | Err(_) => {
+                warn!(raw_status = response.status, game = %game, "unexpected proof job status, treating as retryable failure");
+                pending.retry_count += 1;
+                pending.phase = ProofPhase::NeedsRetry;
+                ProofUpdate::NeedsRetry
+            }
         };
 
         Ok(Some(update))
