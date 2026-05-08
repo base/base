@@ -11,15 +11,15 @@ default:
 
 # Stops devnet, deletes data, and starts fresh (3-node HA conductor cluster)
 up: down _build-setup-image (_build-rust-images "devnet" "dev")
-    docker compose {{ _env }} {{ _ha }} up -d --no-build --scale contender=0
+    docker compose {{ _env }} {{ _ha }} up -d --no-build
 
 # Stops devnet, deletes data, and starts fresh with a single sequencer (no conductor)
 up-single: down _build-setup-image (_build-rust-images "devnet" "dev")
-    docker compose {{ _env }} {{ _base }} up -d --no-build --scale contender=0
+    docker compose {{ _env }} {{ _base }} up -d --no-build
 
 # Stops devnet, deletes data, and starts fresh with profiling (Pyroscope + optimized builds)
 profiling: down _build-setup-image (_build-rust-images "devnet" "profiling")
-    docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build --scale contender=0
+    docker compose {{ _env }} {{ _ha }} --profile profiling up -d --no-build
 
 # Stops devnet and deletes all data
 down:
@@ -49,14 +49,6 @@ smoke:
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 
-# Starts the contender load generator
-load:
-    docker compose {{ _base }} up -d --no-deps contender
-
-# Stops the contender load generator
-load-down:
-    docker compose {{ _base }} down contender
-
 # Stream FB's from the builder via websocket
 flashblocks:
     @command -v flashblocks-websocket-client >/dev/null 2>&1 || go install github.com/danyalprout/flashblocks-websocket-client@latest
@@ -84,7 +76,7 @@ conductor:
 
 # Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
 ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
-    docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml up -d --no-build --scale contender=0
+    docker compose {{ _env }} {{ _ha }} -f etc/docker/docker-compose.ingress.yml up -d --no-build
 
 # Stops devnet+ingress and deletes all data
 ingress-down:

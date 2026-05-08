@@ -13,8 +13,8 @@ use base_protocol::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
 
 use crate::{
     ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
-    ActionL2Source, ActionPipeline, L1Miner, L1MinerConfig, L2Sequencer, SharedL1Chain,
-    TestGossipTransport, TestRollupNode, VerifierPipeline, block_info_from,
+    ActionL2Source, ActionPipeline, Batcher, BatcherConfig, L1Miner, L1MinerConfig, L2Sequencer,
+    SharedL1Chain, TestGossipTransport, TestRollupNode, VerifierPipeline, block_info_from,
 };
 
 /// Top-level test harness that owns all actors for a single action test.
@@ -73,6 +73,21 @@ impl ActionTestHarness {
     /// newly mined block for use in pipeline signals.
     pub fn mine_and_push(&mut self, chain: &SharedL1Chain) -> BlockInfo {
         self.l1.mine_block();
+        chain.push(self.l1.tip().clone());
+        block_info_from(self.l1.tip())
+    }
+
+    /// Submit L2 blocks through the batcher, then publish the mined L1 block.
+    ///
+    /// Returns the [`BlockInfo`] for the L1 block that carried the batcher submission.
+    pub async fn submit_l2_blocks(
+        &mut self,
+        chain: &SharedL1Chain,
+        batcher_cfg: BatcherConfig,
+        blocks: impl IntoIterator<Item = BaseBlock>,
+    ) -> BlockInfo {
+        let source = ActionL2Source::from_blocks(blocks);
+        Batcher::new(source, &self.rollup_config, batcher_cfg).advance(&mut self.l1).await;
         chain.push(self.l1.tip().clone());
         block_info_from(self.l1.tip())
     }
@@ -176,7 +191,7 @@ impl ActionTestHarness {
             .origin(genesis_l1)
             .chain_provider(l1_provider)
             .dap_source(dap_source)
-            .l2_chain_provider(l2_provider)
+            .l2_chain_provider(l2_provider.clone())
             .builder(attrs_builder)
             .build_polled();
 
@@ -195,7 +210,7 @@ impl ActionTestHarness {
             l1_chain,
         );
 
-        TestRollupNode::new(pipeline, engine, p2p, safe_head, rollup_config)
+        TestRollupNode::new(pipeline, engine, p2p, safe_head, rollup_config, l2_provider)
     }
 
     /// Create a [`TestRollupNode`] wired to a sequencer's block-hash registry, returning

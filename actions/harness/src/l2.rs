@@ -168,6 +168,13 @@ impl ActionL2Source {
         Self { blocks: VecDeque::new() }
     }
 
+    /// Create a source containing the supplied blocks in iteration order.
+    pub fn from_blocks(blocks: impl IntoIterator<Item = BaseBlock>) -> Self {
+        let mut source = Self::new();
+        source.extend(blocks);
+        source
+    }
+
     /// Push a block to the back of the queue.
     pub fn push(&mut self, block: BaseBlock) {
         self.blocks.push_back(block);
@@ -181,6 +188,18 @@ impl ActionL2Source {
     /// Return `true` if the source has been fully drained.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
+    }
+}
+
+impl Extend<BaseBlock> for ActionL2Source {
+    fn extend<T: IntoIterator<Item = BaseBlock>>(&mut self, iter: T) {
+        self.blocks.extend(iter);
+    }
+}
+
+impl FromIterator<BaseBlock> for ActionL2Source {
+    fn from_iter<T: IntoIterator<Item = BaseBlock>>(iter: T) -> Self {
+        Self::from_blocks(iter)
     }
 }
 
@@ -503,6 +522,18 @@ impl L2Sequencer {
             account.create_eip1559_tx(self.rollup_config.l2_chain_id.id())
         };
         self.build_next_block_with_transactions(vec![tx]).await
+    }
+
+    /// Build `count` sequential L2 blocks with one user transaction each.
+    pub async fn build_next_blocks_with_single_transactions(
+        &mut self,
+        count: u64,
+    ) -> Vec<BaseBlock> {
+        let mut blocks = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            blocks.push(self.build_next_block_with_single_transaction().await);
+        }
+        blocks
     }
 
     /// Build the next L2 block and advance the internal head.

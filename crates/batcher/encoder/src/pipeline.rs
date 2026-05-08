@@ -81,8 +81,9 @@ pub trait BatchPipeline: Send {
 
     /// Returns the estimated DA backlog in bytes.
     ///
-    /// Sum of estimated byte lengths for blocks in the input queue that have not yet been
-    /// submitted to L1 (excluding deposit transactions).
+    /// Sum of unsafe DA bytes that have not yet been submitted to L1, including
+    /// pending block estimates, open channel estimates, and closed channel frame bytes.
+    /// Deposit transactions are excluded from block estimates.
     fn da_backlog_bytes(&self) -> u64;
 
     /// Force the next [`next_submission`](Self::next_submission) calls to emit

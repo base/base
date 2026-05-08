@@ -63,7 +63,8 @@ actions/
 ```
 
 All actors live in the single `base-action-harness` crate. Action tests are
-integration tests in `harness/tests/`, one file per scenario. Unit tests for
+integration tests in `harness/tests/`; related scenarios may be grouped under a
+shared integration-test target with one module per scenario. Unit tests for
 individual actor internals live as inline `#[cfg(test)]` blocks inside the
 actor's source file.
 

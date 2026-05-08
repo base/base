@@ -4,18 +4,26 @@ use std::sync::Arc;
 
 use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, Log, LogData, U256};
 use alloy_signer_local::PrivateKeySigner;
 use base_action_harness::{
     ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestGossipTransport, TestRollupConfigBuilder, TestRollupNode, UserDeposit, block_info_from,
+    TestGossipTransport, TestRollupConfigBuilder, TestRollupNode, UserDeposit, VerifierError,
+    block_info_from,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
+use base_common_genesis::SystemConfigUpdate;
 use base_consensus_derive::{
-    EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder, StepResult,
+    EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
+    StatefulAttributesBuilder, StepResult,
 };
-use base_protocol::{BatchType, BlockInfo, DERIVATION_VERSION_0, L2BlockInfo};
+use base_protocol::{
+    BatchType, BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo,
+};
+
+mod holocene_span_batches;
+mod node;
 
 /// The derivation pipeline reads a single batcher frame from L1 and derives
 /// the corresponding L2 block, advancing the safe head from genesis (0) to 1.
@@ -196,6 +204,47 @@ async fn reorg_reverts_derived_safe_head() {
     assert_eq!(node.l2_safe_number(), 0, "safe head reverted to genesis");
 }
 
+/// Resetting to a non-genesis safe head must walk back through the node's
+/// derived L2 history and then continue deriving from that safe head.
+#[tokio::test]
+async fn non_genesis_reset_walkback_preserves_derivation_state() {
+    const INITIAL_BLOCKS: u64 = 6;
+
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let initial_blocks = sequencer.build_next_blocks_with_single_transactions(INITIAL_BLOCKS).await;
+    assert_eq!(sequencer.head().l1_origin.number, 0, "blocks should stay in the genesis epoch");
+
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+    h.submit_l2_blocks(&chain, batcher_cfg.clone(), initial_blocks).await;
+
+    node.initialize().await;
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, INITIAL_BLOCKS as usize, "initial blocks should derive");
+    assert_eq!(node.l2_safe_number(), INITIAL_BLOCKS);
+    let reset_safe_head = node.l2_safe();
+
+    node.act_reset(reset_safe_head).await;
+    assert_eq!(node.l2_safe_number(), INITIAL_BLOCKS, "reset should preserve chosen safe head");
+
+    let block_7 = sequencer.build_next_block_with_single_transaction().await;
+    h.submit_l2_blocks(&chain, batcher_cfg, vec![block_7]).await;
+    let derived = node.run_until_idle().await;
+
+    assert_eq!(derived, 1, "node should continue deriving after non-genesis reset");
+    assert_eq!(node.l2_safe_number(), INITIAL_BLOCKS + 1);
+}
+
 /// After a reorg, the batcher resubmits the lost frame in a new L1 block on
 /// the canonical fork. The verifier must re-derive the same L2 block from the
 /// new inclusion block, recovering the safe head back to 1.
@@ -260,6 +309,112 @@ async fn reorg_and_resubmit_rederives_l2_block() {
 
     assert_eq!(rederived, 1, "L2 block 1 re-derived from resubmitted batch");
     assert_eq!(node.l2_safe_number(), 1, "safe head recovered to 1");
+}
+
+/// The traversal stage detects an L1 reorg before tests manually reset the node.
+#[tokio::test]
+async fn traversal_detects_l1_reorg_before_manual_reset() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg).build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block_1 = sequencer.build_next_block_with_single_transaction().await;
+
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+    h.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block_1.clone()]).await;
+
+    node.initialize().await;
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 1, "block 1 should derive on the original fork");
+    assert_eq!(node.l2_safe_number(), 1);
+
+    h.l1.reorg_to(0).expect("reorg to genesis");
+    chain.truncate_to(0);
+    h.mine_and_push(&chain);
+    h.mine_and_push(&chain);
+
+    let result = node.act_l2_pipeline_step().await;
+    assert!(result.is_err(), "pipeline should surface the detected L1 reorg");
+    assert_eq!(node.l2_safe_number(), 1, "safe head should not move before reset");
+
+    node.act_reset(h.l2_genesis()).await;
+    h.submit_l2_blocks(&chain, batcher_cfg, vec![block_1]).await;
+    let derived = node.run_until_idle().await;
+
+    assert_eq!(derived, 1, "resubmitted block should derive after manual reset");
+    assert_eq!(node.l2_safe_number(), 1);
+}
+
+/// A partial channel frame from an orphaned L1 fork must not combine with the
+/// remaining frames from the canonical fork after reset.
+#[tokio::test]
+async fn orphaned_partial_channel_does_not_combine_with_canonical_remainder() {
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig {
+            max_frame_size: 80,
+            da_type: DaType::Calldata,
+            ..EncoderConfig::default()
+        },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .through_granite()
+        .with_channel_timeout(10)
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block_with_single_transaction().await;
+
+    let mut source = ActionL2Source::new();
+    source.push(block);
+    let mut batcher = Batcher::new(source, &h.rollup_config, batcher_cfg.clone());
+    batcher.encode_only().await;
+    assert!(
+        batcher.pending_count() >= 2,
+        "test requires at least two frames; got {}",
+        batcher.pending_count()
+    );
+
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+
+    batcher.stage_n_frames(&mut h.l1, 1);
+    h.l1.mine_block();
+    batcher.confirm_staged(h.l1.tip()).await;
+    chain.push(h.l1.tip().clone());
+
+    node.initialize().await;
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 0, "orphaned frame 0 alone must not derive");
+    assert_eq!(node.l2_safe_number(), 0);
+
+    h.l1.reorg_to(0).expect("reorg to genesis");
+    chain.truncate_to(0);
+
+    let remaining = batcher.pending_count();
+    assert!(remaining > 0, "test requires canonical remainder frames");
+    batcher.stage_n_frames(&mut h.l1, remaining);
+    h.l1.mine_block();
+    batcher.confirm_staged(h.l1.tip()).await;
+    chain.push(h.l1.tip().clone());
+
+    node.act_reset(h.l2_genesis()).await;
+    let derived = node.run_until_idle().await;
+
+    assert_eq!(derived, 0, "canonical remainder must not combine with orphaned pre-reset frame");
+    assert_eq!(node.l2_safe_number(), 0, "safe head must remain at genesis");
 }
 
 /// The canonical chain flip-flops between two competing forks (A and B) three
@@ -546,6 +701,123 @@ async fn l1_deposit_included_in_derived_l2_block() {
     assert_eq!(node.l2_safe().l1_origin.number, 0, "L2 block 1 references epoch 0");
 }
 
+/// A malformed deposit log from the configured portal is a critical derivation
+/// error when the L2 epoch advances to that L1 block.
+#[tokio::test]
+async fn malformed_deposit_log_fails_epoch_derivation() {
+    let deposit_contract = Address::repeat_byte(0xDD);
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_deposit_contract(deposit_contract)
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    h.l1.enqueue_log(Log {
+        address: deposit_contract,
+        data: LogData::new_unchecked(vec![Deposits::EVENT_ABI_HASH], Bytes::default()),
+    });
+    h.l1.mine_block();
+
+    let mut clean_blocks = h.l1.chain().to_vec();
+    clean_blocks[1].receipts.clear();
+    let l1_chain = SharedL1Chain::from_blocks(clean_blocks);
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let blocks = sequencer.build_next_blocks_with_single_transactions(6).await;
+    assert_eq!(sequencer.head().l1_origin.number, 1, "block 6 should enter L1 epoch 1");
+
+    {
+        let source = ActionL2Source::from_blocks(blocks);
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+    }
+
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+    node.initialize().await;
+
+    for expected_safe_head in 1..=5 {
+        let (_, hit) = node
+            .act_l2_pipeline_until(|r| matches!(r, StepResult::PreparedAttributes), 500)
+            .await
+            .expect("pre-epoch-change block should derive");
+        assert!(hit, "expected L2 block {expected_safe_head} to derive");
+        assert_eq!(node.l2_safe_number(), expected_safe_head);
+    }
+
+    let err = node
+        .act_l2_pipeline_until(|_| false, 500)
+        .await
+        .expect_err("malformed deposit log should fail derivation");
+    let VerifierError::Pipeline(kind) = err else {
+        panic!("expected pipeline error for malformed deposit log");
+    };
+    assert!(matches!(
+        *kind,
+        PipelineErrorKind::Critical(PipelineError::BadEncoding(
+            PipelineEncodingError::DepositDecodeError(DepositDecodeError::UnexpectedTopicsLen(1))
+        ))
+    ));
+    assert_eq!(node.l2_safe_number(), 5, "bad deposit must not advance block 6");
+}
+
+/// A valid deposit log in a failed L1 receipt is ignored when deriving the
+/// first L2 block in that L1 epoch.
+#[tokio::test]
+async fn failed_receipt_deposit_log_is_ignored() {
+    let deposit_contract = Address::repeat_byte(0xDD);
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_deposit_contract(deposit_contract)
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    h.l1.enqueue_user_deposit_with_status(
+        &UserDeposit {
+            deposit_contract,
+            from: Address::repeat_byte(0xAA),
+            to: Address::repeat_byte(0xBB),
+            mint: 0,
+            value: U256::from(1_000_000_000_000_000_000u128),
+            gas_limit: 100_000,
+            data: vec![],
+        },
+        false,
+    );
+    h.l1.mine_block();
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let blocks = sequencer.build_next_blocks_with_single_transactions(6).await;
+    assert_eq!(sequencer.head().l1_origin.number, 1, "block 6 should enter L1 epoch 1");
+
+    {
+        let source = ActionL2Source::from_blocks(blocks);
+        Batcher::new(source, &h.rollup_config, batcher_cfg.clone()).advance(&mut h.l1).await;
+    }
+
+    let (mut node, _chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+    node.initialize().await;
+
+    let derived = node.run_until_idle().await;
+    assert_eq!(derived, 6, "all blocks should derive when failed receipt deposit is skipped");
+    assert_eq!(node.l2_safe_number(), 6);
+    assert_eq!(node.l2_safe().l1_origin.number, 1, "block 6 should be in L1 epoch 1");
+
+    let block_6 = node.derived_block(6).expect("block 6 derived");
+    assert_eq!(block_6.tx_count, 2, "failed receipt deposit must not add a deposit tx");
+    assert_eq!(block_6.user_tx_count, 1, "normal sequencer tx should remain");
+}
+
 /// After a batcher-address rotation committed to L1 via a `ConfigUpdate` log,
 /// frames from the old batcher address are silently ignored and frames from
 /// the new address are derived normally.
@@ -644,6 +916,46 @@ async fn batcher_key_rotation_accepts_new_batcher() {
     let derived_b = node.run_until_idle().await;
     assert_eq!(derived_b, 1, "batcher B frame must be derived after key rotation");
     assert_eq!(node.l2_safe_number(), 3, "safe head advances to 3");
+}
+
+/// A malformed system-config update log is skipped without changing the active
+/// batcher address or blocking later derivation.
+#[tokio::test]
+async fn malformed_system_config_update_is_ignored() {
+    let l1_sys_cfg_addr = Address::repeat_byte(0xCC);
+    let batcher_cfg = BatcherConfig {
+        encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+        ..BatcherConfig::default()
+    };
+    let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+        .with_l1_system_config_address(l1_sys_cfg_addr)
+        .build();
+    let mut h = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+    let l1_chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let mut sequencer = h.create_l2_sequencer(l1_chain);
+    let block = sequencer.build_next_block_with_single_transaction().await;
+
+    h.l1.enqueue_log(Log {
+        address: l1_sys_cfg_addr,
+        data: LogData::new_unchecked(vec![SystemConfigUpdate::TOPIC], Bytes::default()),
+    });
+    h.l1.mine_block();
+
+    let (mut node, chain) = h.create_test_rollup_node_from_sequencer(
+        &mut sequencer,
+        SharedL1Chain::from_blocks(h.l1.chain().to_vec()),
+    );
+    node.initialize().await;
+
+    let malformed_update_derived = node.run_until_idle().await;
+    assert_eq!(malformed_update_derived, 0, "malformed config-only block has no batch");
+
+    h.submit_l2_blocks(&chain, batcher_cfg.clone(), vec![block]).await;
+    let derived = node.run_until_idle().await;
+
+    assert_eq!(derived, 1, "original batcher must still be accepted after malformed update");
+    assert_eq!(node.l2_safe_number(), 1);
 }
 
 /// Derive 6 L2 blocks all belonging to the same L1 epoch (genesis).
@@ -1551,14 +1863,15 @@ async fn derive_chain_from_near_l1_genesis() {
         .origin(l1_genesis_info)
         .chain_provider(l1_provider)
         .dap_source(dap_source)
-        .l2_chain_provider(l2_provider)
+        .l2_chain_provider(l2_provider.clone())
         .builder(attrs_builder)
         .build_polled();
     let (_, p2p) = TestGossipTransport::channel();
     let engine =
         ActionEngineClient::new(Arc::clone(&rollup_arc), genesis_head, block_hashes, chain);
 
-    let mut node = TestRollupNode::new(pipeline, engine, p2p, genesis_head, rollup_arc);
+    let mut node =
+        TestRollupNode::new(pipeline, engine, p2p, genesis_head, rollup_arc, l2_provider);
     node.initialize().await;
 
     // Step the pipeline until it derives both L2 blocks.
