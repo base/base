@@ -133,22 +133,14 @@ impl RollupProvider for MockRollupClient {
 /// Mock anchor state registry contract client for tests.
 #[derive(Debug)]
 pub struct MockAnchorStateRegistry {
-    /// The anchor root returned by `get_anchor_root()`.
+    /// The anchor root returned by `anchor_snapshot()`.
     pub anchor_root: AnchorRoot,
-    /// The anchor game returned by `anchor_game()`.
+    /// The anchor game returned by `anchor_snapshot()`.
     pub anchor_game: Address,
 }
 
 #[async_trait]
 impl AnchorStateRegistryClient for MockAnchorStateRegistry {
-    async fn get_anchor_root(&self) -> Result<AnchorRoot, ContractError> {
-        Ok(self.anchor_root)
-    }
-
-    async fn anchor_game(&self) -> Result<Address, ContractError> {
-        Ok(self.anchor_game)
-    }
-
     async fn anchor_snapshot(&self) -> Result<AnchorSnapshot, ContractError> {
         Ok(AnchorSnapshot { anchor_root: self.anchor_root, anchor_game: self.anchor_game })
     }

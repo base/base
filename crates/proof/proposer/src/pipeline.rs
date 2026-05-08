@@ -1429,21 +1429,6 @@ mod tests {
 
     #[async_trait::async_trait]
     impl AnchorStateRegistryClient for SnapshotOnlyAnchorStateRegistry {
-        async fn get_anchor_root(
-            &self,
-        ) -> std::result::Result<
-            base_proof_contracts::AnchorRoot,
-            base_proof_contracts::ContractError,
-        > {
-            panic!("recovery must use anchor_snapshot() for anchor root")
-        }
-
-        async fn anchor_game(
-            &self,
-        ) -> std::result::Result<Address, base_proof_contracts::ContractError> {
-            panic!("recovery must use anchor_snapshot() for anchor game")
-        }
-
         async fn anchor_snapshot(
             &self,
         ) -> std::result::Result<

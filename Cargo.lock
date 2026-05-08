@@ -4708,6 +4708,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-sol-types",
+ "alloy-transport",
  "async-trait",
  "futures",
  "rstest",

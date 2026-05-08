@@ -104,13 +104,6 @@ impl AnchorPreflight {
 /// Async trait for reading anchor state.
 #[async_trait]
 pub trait AnchorStateRegistryClient: Send + Sync {
-    /// Returns the current anchor root.
-    async fn get_anchor_root(&self) -> Result<AnchorRoot, ContractError>;
-
-    /// Returns the current anchor game, or `Address::ZERO` when the registry is
-    /// still at its starting anchor.
-    async fn anchor_game(&self) -> Result<Address, ContractError>;
-
     /// Returns the current anchor root and anchor game from one L1 snapshot.
     async fn anchor_snapshot(&self) -> Result<AnchorSnapshot, ContractError>;
 }
@@ -134,41 +127,11 @@ impl AnchorStateRegistryContractClient {
 
 #[async_trait]
 impl AnchorStateRegistryClient for AnchorStateRegistryContractClient {
-    async fn get_anchor_root(&self) -> Result<AnchorRoot, ContractError> {
-        let result = self.contract.getAnchorRoot().call().await.map_err(|e| {
-            ContractError::Call { context: "getAnchorRoot failed".into(), source: e }
-        })?;
-
-        let l2_block_number: u64 = result.l2SequenceNumber.try_into().map_err(|_| {
-            ContractError::Validation("anchor l2SequenceNumber overflows u64".into())
-        })?;
-
-        tracing::info!(
-            root = ?result.root,
-            l2_block_number,
-            "Read anchor root from AnchorStateRegistry"
-        );
-
-        Ok(AnchorRoot { root: result.root, l2_block_number })
-    }
-
-    async fn anchor_game(&self) -> Result<Address, ContractError> {
-        let result =
-            self.contract.anchorGame().call().await.map_err(|e| ContractError::Call {
-                context: "anchorGame failed".into(),
-                source: e,
-            })?;
-
-        tracing::info!(anchor_game = %result, "Read anchor game from AnchorStateRegistry");
-
-        Ok(result)
-    }
-
     async fn anchor_snapshot(&self) -> Result<AnchorSnapshot, ContractError> {
         let block_number =
-            self.provider.get_block_number().await.map_err(|e| ContractError::Call {
+            self.provider.get_block_number().await.map_err(|e| ContractError::Provider {
                 context: "get block number for anchor snapshot failed".into(),
-                source: alloy_contract::Error::TransportError(e),
+                source: e,
             })?;
 
         let (anchor, anchor_game) = futures::try_join!(
