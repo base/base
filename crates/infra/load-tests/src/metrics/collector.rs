@@ -19,6 +19,7 @@ pub struct MetricsCollector {
     failed_count: u64,
     failure_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
+    block_receipt_delay_rolling: RollingWindow,
     flashblocks_rolling: RollingWindow,
     throughput_samples: Vec<ThroughputSample>,
 }
@@ -32,6 +33,7 @@ impl MetricsCollector {
             failed_count: 0,
             failure_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
+            block_receipt_delay_rolling: RollingWindow::new(),
             flashblocks_rolling: RollingWindow::new(),
             throughput_samples: Vec::new(),
         }
@@ -54,6 +56,9 @@ impl MetricsCollector {
         if let Some(flashblocks_latency) = metrics.flashblocks_latency {
             self.flashblocks_rolling.push_latency(flashblocks_latency, at);
         }
+        if let Some(block_receipt_delay) = metrics.block_receipt_delay {
+            self.block_receipt_delay_rolling.push_latency(block_receipt_delay, at);
+        }
         self.transactions.push(metrics);
     }
 
@@ -63,8 +68,7 @@ impl MetricsCollector {
         *self.failure_reasons.entry(reason.to_string()).or_insert(0) += 1;
     }
 
-    /// Records multiple failures with the same reason (e.g. expired txs
-    /// reported in bulk after the confirmer shuts down).
+    /// Records multiple failures with the same reason.
     pub fn record_failures(&mut self, reason: &str, count: u64) {
         self.failed_count += count;
         *self.failure_reasons.entry(reason.to_string()).or_insert(0) += count;
@@ -108,6 +112,7 @@ impl MetricsCollector {
         self.failed_count = 0;
         self.failure_reasons.clear();
         self.rolling = RollingWindow::new();
+        self.block_receipt_delay_rolling = RollingWindow::new();
         self.flashblocks_rolling = RollingWindow::new();
         self.throughput_samples.clear();
     }
@@ -143,6 +148,13 @@ impl MetricsCollector {
     /// Rolling 30s flashblocks (p50, p99).
     pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.flashblocks_rolling.p50_p99()
+    }
+
+    /// Rolling 30s block receipt delay (p50, p99).
+    pub fn rolling_block_receipt_delay_p50_p99(
+        &mut self,
+    ) -> (std::time::Duration, std::time::Duration) {
+        self.block_receipt_delay_rolling.p50_p99()
     }
 
     /// Returns the average gas used per confirmed transaction.

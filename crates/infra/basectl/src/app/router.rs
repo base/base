@@ -15,8 +15,6 @@ pub enum ViewId {
     Conductor,
     /// Proof system monitor (dispute games, anchor state).
     Proofs,
-    /// Load test runner and metrics viewer.
-    LoadTest,
     /// Network upgrade activation countdown and history.
     Upgrades,
 }

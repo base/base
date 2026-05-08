@@ -2,6 +2,6 @@
 
 mod client;
 pub use client::{
-    BatchRpcClient, BatchSendResult, ReceiptProvider, RpcClient, WalletProvider,
-    create_wallet_provider,
+    BatchRpcClient, BatchSendResult, QueryProvider, RPC_TIMEOUT, RpcProviders, RpcResultExt,
+    TxpoolAdminClient, WalletProvider, create_wallet_provider,
 };

@@ -1,0 +1,41 @@
+[package]
+name = "base-load-tester-bin"
+description = "Base Load Tester Binary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-load-tester"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-network.workspace = true
+alloy-rpc-types.workspace = true
+alloy-primitives.workspace = true
+alloy-provider = { workspace = true }
+alloy-signer-local = { workspace = true }
+
+# base
+base-cli-utils.workspace = true
+base-load-tests.workspace = true
+
+# display
+indicatif.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+# misc
+url.workspace = true
+eyre.workspace = true
+tracing.workspace = true
+futures.workspace = true
+tokio-util.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+tokio = { workspace = true, features = ["macros", "rt", "signal", "time"] }

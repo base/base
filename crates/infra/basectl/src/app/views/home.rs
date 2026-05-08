@@ -75,13 +75,6 @@ const MENU_ITEMS: &[MenuItem] = &[
         view_id: Some(ViewId::Proofs),
     },
     MenuItem {
-        key: 'l',
-        label: "Load Test",
-        description: "Run load tests and view live metrics",
-        badge: None,
-        view_id: Some(ViewId::LoadTest),
-    },
-    MenuItem {
         key: 'u',
         label: "Upgrades",
         description: "Network upgrade activation countdown and history",
@@ -97,7 +90,6 @@ const KEYBINDINGS: &[Keybinding] = &[
     Keybinding { key: "d", description: "DA Monitor" },
     Keybinding { key: "f", description: "Flashblocks" },
     Keybinding { key: "h", description: "HA Conductor" },
-    Keybinding { key: "l", description: "Load Test" },
     Keybinding { key: "p", description: "Proofs" },
     Keybinding { key: "u", description: "Upgrades" },
     Keybinding { key: "j/k", description: "Navigate" },
@@ -138,7 +130,6 @@ impl View for HomeView {
             KeyCode::Char('d') => Action::SwitchView(ViewId::DaMonitor),
             KeyCode::Char('f') => Action::SwitchView(ViewId::Flashblocks),
             KeyCode::Char('h') => Action::SwitchView(ViewId::Conductor),
-            KeyCode::Char('l') => Action::SwitchView(ViewId::LoadTest),
             KeyCode::Char('p') => Action::SwitchView(ViewId::Proofs),
             KeyCode::Char('u') => Action::SwitchView(ViewId::Upgrades),
             KeyCode::Up | KeyCode::Char('k') => {

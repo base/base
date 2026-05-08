@@ -3,7 +3,7 @@ use std::{fmt, path::Path, time::Duration};
 use alloy_primitives::{Address, U256};
 use alloy_signer_local::PrivateKeySigner;
 use revm::precompile::PrecompileId;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as SerdeError};
 use url::Url;
 
 use crate::{
@@ -76,8 +76,23 @@ impl PrecompileTarget {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TestConfig {
-    /// RPC endpoint URL.
-    pub rpc: Url,
+    /// HTTP JSON-RPC endpoints used for transaction submission.
+    ///
+    /// The first URL is also used for setup transactions such as funding, token distribution, and
+    /// draining. A single scalar URL is accepted as a one-entry list.
+    #[serde(default, deserialize_with = "deserialize_url_list")]
+    pub transaction_submission_rpcs: Vec<Url>,
+    /// HTTP JSON-RPC endpoint used for read/query operations.
+    ///
+    /// Defaults to the first entry in [`Self::transaction_submission_rpcs`] when omitted.
+    #[serde(default)]
+    pub query_rpc: Option<Url>,
+    /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
+    #[serde(default)]
+    pub txpool_nodes: Vec<Url>,
+    /// Builder flashblocks broadcast WebSocket endpoint.
+    #[serde(default)]
+    pub flashblocks_ws: Option<Url>,
 
     /// Mnemonic phrase for deriving sender accounts.
     /// If not provided, accounts are generated from seed.
@@ -129,23 +144,17 @@ pub struct TestConfig {
     /// Only used when swap transaction types are configured.
     #[serde(default = "default_swap_token_amount")]
     pub swap_token_amount: String,
-
-    /// JSON-RPC endpoint for block tracking (WebSocket subscription or HTTP polling).
-    #[serde(default, alias = "rpc_ws_url", alias = "ws_url")]
-    pub block_watcher_url: Option<Url>,
-    /// WebSocket URL for flashblocks subscription.
-    #[serde(default, alias = "flashblocks_url")]
-    pub flashblocks_ws_url: Option<Url>,
-    /// Separate HTTP JSON-RPC endpoint for confirmation polling.
-    /// Defaults to `rpc` when not set.
-    #[serde(default)]
-    pub confirmer_url: Option<Url>,
 }
 
 impl Default for TestConfig {
     fn default() -> Self {
         Self {
-            rpc: Url::parse("http://localhost:8545").expect("valid URL"),
+            transaction_submission_rpcs: vec![
+                Url::parse("http://localhost:8545").expect("valid URL"),
+            ],
+            query_rpc: None,
+            txpool_nodes: Vec::new(),
+            flashblocks_ws: None,
             mnemonic: None,
             funding_amount: "10000000000000000".to_string(),
             sender_count: 100,
@@ -160,9 +169,6 @@ impl Default for TestConfig {
             transactions: vec![WeightedTxType { weight: 100, tx_type: TxTypeConfig::Transfer }],
             looper_contract: None,
             swap_token_amount: default_swap_token_amount(),
-            block_watcher_url: None,
-            flashblocks_ws_url: None,
-            confirmer_url: None,
         }
     }
 }
@@ -170,7 +176,10 @@ impl Default for TestConfig {
 impl fmt::Debug for TestConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TestConfig")
-            .field("rpc", &self.rpc)
+            .field("transaction_submission_rpcs", &self.transaction_submission_rpcs)
+            .field("query_rpc", &self.query_rpc)
+            .field("txpool_nodes", &self.txpool_nodes)
+            .field("flashblocks_ws", &self.flashblocks_ws)
             .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
             .field("funding_amount", &self.funding_amount)
             .field("sender_count", &self.sender_count)
@@ -183,9 +192,6 @@ impl fmt::Debug for TestConfig {
             .field("transactions", &self.transactions)
             .field("looper_contract", &self.looper_contract)
             .field("swap_token_amount", &self.swap_token_amount)
-            .field("block_watcher_url", &self.block_watcher_url)
-            .field("flashblocks_ws_url", &self.flashblocks_ws_url)
-            .field("confirmer_url", &self.confirmer_url)
             .finish()
     }
 }
@@ -346,11 +352,50 @@ impl TestConfig {
             return Err(BaselineError::Config("sender_count must be > 0".into()));
         }
 
-        if let Some(url) = &self.flashblocks_ws_url {
-            Self::validate_ws_url(url, "flashblocks_ws_url")?;
+        if self.transaction_submission_rpcs.is_empty() {
+            return Err(BaselineError::Config(
+                "transaction_submission_rpcs must not be empty".into(),
+            ));
+        }
+        for url in &self.transaction_submission_rpcs {
+            Self::validate_http_url(url, "transaction_submission_rpcs")?;
         }
 
+        if let Some(url) = &self.query_rpc {
+            Self::validate_http_url(url, "query_rpc")?;
+        }
+        for url in &self.txpool_nodes {
+            Self::validate_http_url(url, "txpool_nodes")?;
+        }
+
+        let Some(flashblocks_ws) = &self.flashblocks_ws else {
+            return Err(BaselineError::Config("flashblocks_ws is required".into()));
+        };
+        Self::validate_ws_url(flashblocks_ws, "flashblocks_ws")?;
+
         Ok(())
+    }
+
+    /// Returns the first transaction submission endpoint.
+    pub fn primary_submission_rpc(&self) -> Result<&Url> {
+        self.transaction_submission_rpcs.first().ok_or_else(|| {
+            BaselineError::Config("transaction_submission_rpcs must not be empty".into())
+        })
+    }
+
+    fn validate_http_url(url: &Url, field_name: &str) -> Result<()> {
+        match url.scheme() {
+            "http" | "https" => Ok(()),
+            "ws" => Err(BaselineError::Config(format!(
+                "{field_name} uses 'ws://' scheme but requires 'http://' for JSON-RPC requests"
+            ))),
+            "wss" => Err(BaselineError::Config(format!(
+                "{field_name} uses 'wss://' scheme but requires 'https://' for JSON-RPC requests"
+            ))),
+            scheme => Err(BaselineError::Config(format!(
+                "{field_name} has invalid scheme '{scheme}', expected 'http://' or 'https://'"
+            ))),
+        }
     }
 
     fn validate_ws_url(url: &Url, field_name: &str) -> Result<()> {
@@ -458,7 +503,9 @@ impl TestConfig {
             BaselineError::Config("chain_id must be provided in config or fetched from RPC".into())
         })?;
 
-        let rpc_http_url = self.rpc.clone();
+        let transaction_submission_rpcs = self.transaction_submission_rpcs.clone();
+        let primary_submission_rpc = self.primary_submission_rpc()?.clone();
+        let query_rpc = self.query_rpc.clone().unwrap_or(primary_submission_rpc);
 
         let duration = self.parse_duration()?;
 
@@ -479,7 +526,9 @@ impl TestConfig {
             .unwrap_or(Duration::from_millis(100));
 
         Ok(crate::runner::LoadConfig {
-            rpc_http_url,
+            transaction_submission_rpcs,
+            query_rpc,
+            txpool_nodes: self.txpool_nodes.clone(),
             chain_id: resolved_chain_id,
             account_count: self.sender_count as usize,
             seed: self.seed,
@@ -492,9 +541,10 @@ impl TestConfig {
             batch_size: self.batch_size.max(1) as usize,
             batch_timeout,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
-            block_watcher_url: self.block_watcher_url.clone(),
-            flashblocks_ws_url: self.flashblocks_ws_url.clone(),
-            confirmer_url: self.confirmer_url.clone(),
+            flashblocks_ws: self
+                .flashblocks_ws
+                .clone()
+                .ok_or_else(|| BaselineError::Config("flashblocks_ws is required".into()))?,
         })
     }
 
@@ -591,6 +641,38 @@ impl TestConfig {
     }
 }
 
+/// Deserializes a URL field that may be written as either a scalar string or a list.
+fn deserialize_url_list<'de, D>(deserializer: D) -> std::result::Result<Vec<Url>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_yaml::Value::deserialize(deserializer)?;
+    match value {
+        serde_yaml::Value::Null => Ok(Vec::new()),
+        serde_yaml::Value::String(url) => Ok(vec![parse_url_for_serde(&url)?]),
+        serde_yaml::Value::Sequence(urls) => urls
+            .into_iter()
+            .map(|value| match value {
+                serde_yaml::Value::String(url) => parse_url_for_serde(&url),
+                other => Err(D::Error::custom(format!(
+                    "expected URL string in transaction_submission_rpcs, got {other:?}"
+                ))),
+            })
+            .collect(),
+        other => Err(D::Error::custom(format!(
+            "expected URL string or list of URL strings, got {other:?}"
+        ))),
+    }
+}
+
+/// Parses a URL for serde deserialization.
+fn parse_url_for_serde<E>(url: &str) -> std::result::Result<Url, E>
+where
+    E: SerdeError,
+{
+    Url::parse(url).map_err(|e| E::custom(format!("invalid URL '{url}': {e}")))
+}
+
 fn parse_address(s: &str, field: &str) -> Result<Address> {
     s.parse::<Address>()
         .map_err(|e| BaselineError::Config(format!("invalid {field} address '{s}': {e}")))
@@ -627,18 +709,52 @@ mod tests {
     #[test]
     fn parse_minimal_config() {
         let yaml = r#"
-rpc: http://localhost:8545
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.rpc.host_str(), Some("localhost"));
+        assert_eq!(config.primary_submission_rpc().unwrap().host_str(), Some("localhost"));
         assert_eq!(config.sender_count, 100);
         assert!(config.mnemonic.is_none());
+        assert!(config.txpool_nodes.is_empty());
+    }
+
+    #[test]
+    fn parse_sharded_submission_rpcs() {
+        let yaml = r#"
+transaction_submission_rpcs:
+  - http://localhost:7545
+  - http://localhost:7546
+flashblocks_ws: ws://localhost:7111
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        assert_eq!(load_config.transaction_submission_rpcs.len(), 2);
+        assert_eq!(load_config.transaction_submission_rpcs[0].port(), Some(7545));
+        assert_eq!(load_config.transaction_submission_rpcs[1].port(), Some(7546));
+    }
+
+    #[test]
+    fn parse_txpool_nodes() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+txpool_nodes:
+  - http://localhost:7545
+  - http://localhost:10545
+flashblocks_ws: ws://localhost:7111
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let load_config = config.to_load_config(Some(1337)).unwrap();
+        assert_eq!(load_config.txpool_nodes.len(), 2);
+        assert_eq!(load_config.txpool_nodes[0].port(), Some(7545));
+        assert_eq!(load_config.txpool_nodes[1].port(), Some(10545));
     }
 
     #[test]
     fn parse_full_config() {
         let yaml = r#"
-rpc: https://sepolia.base.org
+transaction_submission_rpcs: https://sepolia.base.org
+flashblocks_ws: wss://sepolia.flashblocks.base.org/ws
 mnemonic: "test test test test test test test test test test test junk"
 funding_amount: "500000000000000000"
 sender_count: 20
@@ -669,14 +785,16 @@ transactions:
     #[test]
     fn parse_duration_formats() {
         let yaml = r#"
-rpc: http://localhost:8545
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
 duration: "30s"
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.parse_duration().unwrap().unwrap(), Duration::from_secs(30));
 
         let yaml2 = r#"
-rpc: http://localhost:8545
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
 duration: "1h 30m"
 "#;
         let config2 = TestConfig::from_yaml(yaml2).unwrap();
@@ -686,7 +804,8 @@ duration: "1h 30m"
     #[test]
     fn parse_precompile_targets() {
         let yaml = r#"
-rpc: http://localhost:8545
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
 funder_key: "0x1234"
 transactions:
   - weight: 10
@@ -742,7 +861,8 @@ transactions:
     #[test]
     fn parse_precompile_with_iterations() {
         let yaml = r#"
-rpc: http://localhost:8545
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
 funder_key: "0x1234"
 looper_contract: "0x1234567890123456789012345678901234567890"
 transactions:
@@ -766,62 +886,76 @@ transactions:
     }
 
     #[test]
-    fn rejects_http_scheme_for_flashblocks_url() {
+    fn rejects_http_scheme_for_flashblocks_ws() {
         let yaml = r#"
-rpc: http://localhost:8545
-flashblocks_ws_url: http://localhost:7111
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: http://localhost:7111
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("flashblocks_ws_url"));
+        assert!(err.to_string().contains("flashblocks_ws"));
         assert!(err.to_string().contains("ws://"));
     }
 
     #[test]
-    fn block_watcher_url_accepts_http() {
+    fn query_rpc_accepts_http() {
         let yaml = r#"
-rpc: http://localhost:8545
-block_watcher_url: http://localhost:8546
+transaction_submission_rpcs: http://localhost:8545
+query_rpc: http://localhost:8546
+flashblocks_ws: ws://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "http");
+        assert_eq!(config.query_rpc.as_ref().unwrap().scheme(), "http");
     }
 
     #[test]
-    fn block_watcher_url_accepts_wss() {
+    fn query_rpc_rejects_wss() {
         let yaml = r#"
-rpc: http://localhost:8545
-block_watcher_url: wss://localhost:8546
-flashblocks_ws_url: wss://localhost:7111
+transaction_submission_rpcs: http://localhost:8545
+query_rpc: wss://localhost:8546
+flashblocks_ws: wss://localhost:7111
 "#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "wss");
-        assert_eq!(config.flashblocks_ws_url.as_ref().unwrap().scheme(), "wss");
+        let err = TestConfig::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("query_rpc"));
+        assert!(err.to_string().contains("https://"));
     }
 
     #[test]
-    fn block_watcher_url_alias_rpc_ws_url() {
+    fn txpool_nodes_rejects_ws() {
         let yaml = r#"
-rpc: http://localhost:8545
-rpc_ws_url: ws://localhost:8546
+transaction_submission_rpcs: http://localhost:8545
+txpool_nodes:
+  - ws://localhost:7546
+flashblocks_ws: ws://localhost:7111
 "#;
-        let config = TestConfig::from_yaml(yaml).unwrap();
-        assert_eq!(config.block_watcher_url.as_ref().unwrap().scheme(), "ws");
+        let err = TestConfig::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("txpool_nodes"));
+        assert!(err.to_string().contains("http://"));
     }
 
     #[test]
-    fn omitted_urls_are_none() {
+    fn flashblocks_ws_accepts_wss() {
         let yaml = r#"
-rpc: http://localhost:8545
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: wss://localhost:7111
 "#;
         let config = TestConfig::from_yaml(yaml).unwrap();
-        assert!(config.block_watcher_url.is_none());
-        assert!(config.flashblocks_ws_url.is_none());
+        assert_eq!(config.flashblocks_ws.as_ref().unwrap().scheme(), "wss");
+    }
+
+    #[test]
+    fn missing_flashblocks_ws_is_rejected() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+"#;
+        let err = TestConfig::from_yaml(yaml).unwrap_err();
+        assert!(err.to_string().contains("flashblocks_ws"));
     }
 
     #[test]
     fn parse_uniswap_v3_config() {
         let yaml = r#"
-rpc: http://localhost:8545
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 10
     type: uniswap_v3
@@ -843,7 +977,8 @@ transactions:
     #[test]
     fn parse_aerodrome_cl_config() {
         let yaml = r#"
-rpc: http://localhost:8545
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
 transactions:
   - weight: 10
     type: aerodrome_cl

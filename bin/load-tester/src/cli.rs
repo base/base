@@ -1,7 +1,4 @@
-//! Load test runner binary that submits transactions at a target gas-per-second rate.
-//!
-//! Also provides a `rescue` subcommand for recovering stranded funds from
-//! test accounts after failed or interrupted load test runs.
+//! CLI argument parsing and execution for the load tester binary.
 
 use std::{
     path::PathBuf,
@@ -12,18 +9,22 @@ use std::{
     time::Duration,
 };
 
-use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, TxHash, U256, utils::format_ether};
+use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_primitives::{Address, U256, utils::format_ether};
 use alloy_provider::Provider;
-use alloy_rpc_types::TransactionRequest;
+use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
+use base_cli_utils::RuntimeManager;
 use base_load_tests::{
-    AccountPool, BaselineError, BatchRpcClient, FundedAccount, LoadRunner, LoadTestDisplay,
-    MetricsSummary, Result as LoadResult, RpcClient, TestConfig, create_wallet_provider,
+    AccountPool, BaselineError, FundedAccount, LoadRunner, LoadTestDisplay, MetricsSummary,
+    QueryProvider, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
+    create_wallet_provider,
 };
+use clap::{ArgGroup, Args, Parser, Subcommand};
 use eyre::{Result, bail};
 use futures::stream::{self, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 /// Accounts to derive and check per batch during rescue.
@@ -38,50 +39,63 @@ const DEFAULT_RESCUE_SCAN_COUNT: usize = 1000;
 /// Default maximum gas price (1000 gwei).
 const DEFAULT_MAX_GAS_PRICE: u128 = 1_000_000_000_000;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
-    let mut args = std::env::args().skip(1).peekable();
+/// The Base load tester CLI.
+#[derive(Parser, Clone, Debug)]
+#[command(
+    author,
+    version = env!("CARGO_PKG_VERSION"),
+    about = "Base load tester",
+    long_about = None,
+    args_conflicts_with_subcommands = true
+)]
+pub(crate) struct Cli {
+    /// Load test arguments.
+    #[command(flatten)]
+    load: LoadArgs,
 
-    match args.peek().map(String::as_str) {
-        Some("rescue") => {
-            args.next();
-            run_rescue(args.collect()).await
-        }
-        _ => run_load_test(args.collect()).await,
+    /// Optional subcommand.
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+impl Cli {
+    /// Runs the selected command.
+    pub(crate) fn run(self) -> Result<()> {
+        RuntimeManager::new().tokio_runtime()?.block_on(async move {
+            match self.command {
+                Some(Command::Rescue(args)) => run_rescue(args).await,
+                None => run_load_test(self.load).await,
+            }
+        })
     }
 }
 
-// ---------------------------------------------------------------------------
-// load-test subcommand (default)
-// ---------------------------------------------------------------------------
+/// Load test command arguments.
+#[derive(Args, Clone, Debug)]
+struct LoadArgs {
+    /// Run continuously until interrupted.
+    #[arg(long)]
+    continuous: bool,
 
-async fn run_load_test(args: Vec<String>) -> Result<()> {
+    /// Drain accounts from the configured test set without running a load test.
+    #[arg(long)]
+    drain_only: bool,
+
+    /// Load test YAML configuration.
+    #[arg(value_name = "CONFIG")]
+    config: PathBuf,
+}
+
+/// Load tester subcommands.
+#[derive(Subcommand, Clone, Debug)]
+enum Command {
+    /// Rescue stranded funds from load test accounts.
+    Rescue(RescueArgs),
+}
+
+async fn run_load_test(args: LoadArgs) -> Result<()> {
     let mp = LoadTestDisplay::init_tracing();
-
-    let mut config_path: Option<PathBuf> = None;
-    let mut continuous = false;
-    let mut drain_only = false;
-
-    for arg in &args {
-        match arg.as_str() {
-            "--continuous" => continuous = true,
-            "--drain-only" => drain_only = true,
-            other => {
-                if config_path.is_none() {
-                    config_path = Some(PathBuf::from(other));
-                }
-            }
-        }
-    }
-
-    let config_path = config_path
-        .or_else(|| {
-            option_env!("CARGO_MANIFEST_DIR")
-                .map(|dir| PathBuf::from(dir).join("examples/devnet.yaml"))
-        })
-        .ok_or_else(|| {
-            eyre::eyre!("usage: base-load-test [--continuous] [--drain-only] <config.yaml>")
-        })?;
+    let config_path = args.config;
 
     if !config_path.exists() {
         bail!("config file not found: {}", config_path.display());
@@ -89,19 +103,26 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
 
     let test_config = TestConfig::load(&config_path)?;
 
-    let client = RpcClient::new(test_config.rpc.clone());
-    let rpc_chain_id =
-        if test_config.chain_id.is_none() { Some(client.chain_id().await?) } else { None };
+    let query_rpc = test_config
+        .query_rpc
+        .clone()
+        .unwrap_or_else(|| test_config.primary_submission_rpc().expect("validated config").clone());
+    let client = RpcProviders::query(query_rpc.clone())?;
+    let rpc_chain_id = if test_config.chain_id.is_none() {
+        Some(client.get_chain_id().await.rpc("chain id")?)
+    } else {
+        None
+    };
 
     let load_config = {
         let cfg = test_config.to_load_config(rpc_chain_id)?;
-        if continuous { cfg.with_continuous() } else { cfg }
+        if args.continuous { cfg.with_continuous() } else { cfg }
     };
 
     let funding_key = TestConfig::funder_key()?;
 
     // Drain-only mode: recover funds from a previous interrupted run.
-    if drain_only {
+    if args.drain_only {
         println!("=== Drain-Only Mode ===");
         println!(
             "Re-deriving {} accounts from config and draining to funder...",
@@ -119,9 +140,15 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
 
     println!("Set RPCs to internal endpoints to avoid rate limiting");
     println!(
-        "Config: {} | RPC: {} | Chain: {}",
+        "Config: {} | Submit RPCs: {} | Query RPC: {} | Chain: {}",
         config_path.display(),
-        test_config.rpc,
+        test_config
+            .transaction_submission_rpcs
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+        query_rpc,
         load_config.chain_id
     );
     let duration_display =
@@ -139,9 +166,8 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
     let mut runner = LoadRunner::new(load_config.clone())?;
     runner.set_config_summary(config_summary.clone());
 
-    // Install signal handler before any long-running work. First signal sets
-    // the stop flag so `run()` exits its loop gracefully and the drain sequence
-    // runs. A second signal force-exits.
+    // Install signal handling before any long-running work so shutdown can
+    // stop the run loop and still drain funded accounts.
     let stop_flag = runner.stop_flag();
     install_signal_handler(stop_flag);
 
@@ -198,6 +224,11 @@ async fn run_load_test(args: Vec<String>) -> Result<()> {
         println!(
             "Block Latency: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
             bl.min, bl.p50, bl.mean, bl.p99, bl.max
+        );
+        let brd = &summary.block_receipt_delay;
+        println!(
+            "Block Receipt Delay: min={:.1?}  p50={:.1?}  mean={:.1?}  p99={:.1?}  max={:.1?}",
+            brd.min, brd.p50, brd.mean, brd.p99, brd.max
         );
         let fb = &summary.flashblocks_latency;
         println!(
@@ -261,6 +292,12 @@ async fn run_test_phases(
     mp: &indicatif::MultiProgress,
     duration: Option<Duration>,
 ) -> LoadResult<MetricsSummary> {
+    if runner.txpool_node_count() > 0 {
+        println!("Clearing txpool sender transactions...");
+        let removed = runner.clear_txpools().await?;
+        println!("Txpool clearing complete. Removed {removed} transaction(s).");
+    }
+
     println!("Funding test accounts...");
     runner.fund_accounts(funding_key.clone(), funding_amount).await?;
     println!("Accounts funded.");
@@ -281,121 +318,51 @@ async fn run_test_phases(
 }
 
 fn install_signal_handler(stop_flag: Arc<AtomicBool>) {
+    let cancel = CancellationToken::new();
+    RuntimeManager::install_signal_handler(cancel.clone());
+
     tokio::spawn(async move {
-        wait_for_shutdown_signal().await;
-        eprintln!("\nReceived signal, stopping gracefully. Send again to force exit.");
+        cancel.cancelled().await;
+        eprintln!("\nReceived signal, stopping gracefully.");
         stop_flag.store(true, Ordering::SeqCst);
-
-        wait_for_shutdown_signal().await;
-        eprintln!("\nForcing exit. Funds may remain in test accounts.");
-        std::process::exit(1);
     });
-}
-
-/// Waits for either SIGINT (Ctrl-C) or SIGTERM (Unix only).
-async fn wait_for_shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = sigterm.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = tokio::signal::ctrl_c().await;
-    }
 }
 
 // ---------------------------------------------------------------------------
 // rescue subcommand
 // ---------------------------------------------------------------------------
 
+#[derive(Args, Clone, Debug)]
+#[command(group(
+    ArgGroup::new("account_source")
+        .required(true)
+        .multiple(false)
+        .args(["seed", "mnemonic"])
+))]
 struct RescueArgs {
+    /// RPC endpoint used to scan balances and submit drain transactions.
+    #[arg(long = "rpc-url", alias = "rpc", value_name = "URL")]
     rpc_url: url::Url,
-    seed: u64,
+
+    /// Seed used for deterministic account generation.
+    #[arg(long)]
+    seed: Option<u64>,
+
+    /// Number of accounts to scan.
+    #[arg(long = "count", default_value_t = DEFAULT_RESCUE_SCAN_COUNT)]
     scan_count: usize,
+
+    /// Starting account offset.
+    #[arg(long, default_value_t = 0)]
     offset: usize,
-    funder_key: PrivateKeySigner,
+
+    /// Mnemonic used for account generation.
+    #[arg(long)]
     mnemonic: Option<String>,
-}
 
-impl RescueArgs {
-    fn parse(args: Vec<String>) -> Result<Self> {
-        let mut rpc_url: Option<url::Url> = None;
-        let mut seed: Option<u64> = None;
-        let mut scan_count = DEFAULT_RESCUE_SCAN_COUNT;
-        let mut offset = 0usize;
-        let mut mnemonic: Option<String> = None;
-
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "--rpc-url" | "--rpc" => {
-                    i += 1;
-                    rpc_url = Some(
-                        args.get(i)
-                            .ok_or_else(|| eyre::eyre!("--rpc-url requires a value"))?
-                            .parse()?,
-                    );
-                }
-                "--seed" => {
-                    i += 1;
-                    seed = Some(
-                        args.get(i)
-                            .ok_or_else(|| eyre::eyre!("--seed requires a value"))?
-                            .parse()?,
-                    );
-                }
-                "--count" => {
-                    i += 1;
-                    scan_count = args
-                        .get(i)
-                        .ok_or_else(|| eyre::eyre!("--count requires a value"))?
-                        .parse()?;
-                }
-                "--offset" => {
-                    i += 1;
-                    offset = args
-                        .get(i)
-                        .ok_or_else(|| eyre::eyre!("--offset requires a value"))?
-                        .parse()?;
-                }
-                "--mnemonic" => {
-                    i += 1;
-                    mnemonic = Some(
-                        args.get(i)
-                            .ok_or_else(|| eyre::eyre!("--mnemonic requires a value"))?
-                            .clone(),
-                    );
-                }
-                "--help" | "-h" => {
-                    print_rescue_usage();
-                    std::process::exit(0);
-                }
-                other => {
-                    bail!("unknown argument: {other}. Run with `rescue --help` for usage.");
-                }
-            }
-            i += 1;
-        }
-
-        let rpc_url = rpc_url.ok_or_else(|| eyre::eyre!("--rpc-url is required"))?;
-
-        if seed.is_none() && mnemonic.is_none() {
-            bail!("either --seed or --mnemonic is required");
-        }
-
-        let funder_key_hex = std::env::var("FUNDER_KEY")
-            .map_err(|_| eyre::eyre!("FUNDER_KEY environment variable not set"))?;
-        let funder_key: PrivateKeySigner = funder_key_hex.parse()?;
-
-        Ok(Self { rpc_url, seed: seed.unwrap_or(0), scan_count, offset, funder_key, mnemonic })
-    }
+    /// Private key of the funder account that receives drained funds.
+    #[arg(long = "funder-key", env = "FUNDER_KEY", hide_env_values = true)]
+    funder_key: PrivateKeySigner,
 }
 
 struct DrainParams {
@@ -408,27 +375,23 @@ struct DrainParams {
     rpc_url: url::Url,
 }
 
-async fn run_rescue(raw_args: Vec<String>) -> Result<()> {
+async fn run_rescue(args: RescueArgs) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let args = RescueArgs::parse(raw_args)?;
-
-    let client = RpcClient::new(args.rpc_url.clone());
-    let chain_id = client.chain_id().await?;
+    let client = RpcProviders::query(args.rpc_url.clone())?;
+    let chain_id = client.get_chain_id().await.rpc("chain id")?;
     let funder_address = args.funder_key.address();
+    let seed = args.seed.unwrap_or(0);
 
     println!("=== Load Test Rescue ===");
     println!("RPC: {} | Chain: {} | Funder: {}", args.rpc_url, chain_id, funder_address);
-    println!(
-        "Scanning {} accounts (seed={}, offset={})\n",
-        args.scan_count, args.seed, args.offset
-    );
+    println!("Scanning {} accounts (seed={}, offset={})\n", args.scan_count, seed, args.offset);
 
-    let gas_price = client.get_gas_price().await?;
+    let gas_price = client.get_gas_price().await.rpc("get gas price")?;
     let max_priority_fee = (gas_price / 10).max(1);
     let max_fee = gas_price.saturating_mul(2).max(max_priority_fee).min(DEFAULT_MAX_GAS_PRICE);
     let drain_gas_limit = 21_000u128;
@@ -459,11 +422,10 @@ async fn run_rescue(raw_args: Vec<String>) -> Result<()> {
         let accounts = if let Some(ref mnemonic) = args.mnemonic {
             AccountPool::from_mnemonic(mnemonic, batch_count, batch_offset)?
         } else {
-            AccountPool::with_offset(args.seed, batch_count, batch_offset)?
+            AccountPool::with_offset(seed, batch_count, batch_offset)?
         };
 
-        let batch_rpc = BatchRpcClient::new(args.rpc_url.clone());
-        let (rescued, drained) = rescue_batch(&client, &batch_rpc, &accounts, &params, &pb).await?;
+        let (rescued, drained) = rescue_batch(&client, &accounts, &params, &pb).await?;
 
         total_rescued = total_rescued.saturating_add(rescued);
         total_accounts_drained += drained;
@@ -485,8 +447,7 @@ async fn run_rescue(raw_args: Vec<String>) -> Result<()> {
 }
 
 async fn rescue_batch(
-    client: &RpcClient,
-    batch_rpc: &BatchRpcClient,
+    client: &QueryProvider,
     accounts: &AccountPool,
     params: &DrainParams,
     pb: &ProgressBar,
@@ -498,7 +459,11 @@ async fn rescue_batch(
             let client = client.clone();
             let address = a.address;
             async move {
-                let balance = client.get_pending_balance(address).await?;
+                let balance = client
+                    .get_balance(address)
+                    .block_id(BlockNumberOrTag::Pending.into())
+                    .await
+                    .rpc("get pending balance")?;
                 Ok::<_, BaselineError>((address, balance))
             }
         })
@@ -550,7 +515,7 @@ async fn rescue_batch(
                     .get_transaction_count(address)
                     .pending()
                     .await
-                    .map_err(|e| BaselineError::Rpc(e.to_string()))?;
+                    .rpc("get pending transaction count")?;
 
                 let tx = TransactionRequest::default()
                     .with_to(funder_address)
@@ -570,7 +535,7 @@ async fn rescue_batch(
                             tx_hash = %tx_hash,
                             "rescue drain tx sent"
                         );
-                        Ok(Some((tx_hash, address, send_amount)))
+                        Ok(Some((address, send_amount)))
                     }
                     Err(e) => {
                         warn!(from = %address, error = %e, "rescue drain tx failed, skipping");
@@ -584,66 +549,57 @@ async fn rescue_batch(
     let drain_results: Vec<_> =
         stream::iter(drain_futs).buffer_unordered(RESCUE_CONCURRENCY).collect().await;
 
-    let mut pending_txs: Vec<(TxHash, Address)> = Vec::new();
+    let mut pending_accounts: Vec<Address> = Vec::new();
     let mut total_drained = U256::ZERO;
     let mut drain_count = 0usize;
     for result in drain_results {
-        let result: LoadResult<Option<(TxHash, Address, U256)>> = result;
-        if let Some((tx_hash, address, amount)) = result? {
-            pending_txs.push((tx_hash, address));
+        let result: LoadResult<Option<(Address, U256)>> = result;
+        if let Some((address, amount)) = result? {
+            pending_accounts.push(address);
             total_drained = total_drained.saturating_add(amount);
             drain_count += 1;
         }
     }
 
-    if !pending_txs.is_empty() {
-        rescue_await_confirmations(batch_rpc, &mut pending_txs).await?;
+    if !pending_accounts.is_empty() {
+        rescue_await_drained_balances(client, params.drain_gas_cost, &mut pending_accounts).await?;
     }
 
     Ok((total_drained, drain_count))
 }
 
-async fn rescue_await_confirmations(
-    batch_rpc: &BatchRpcClient,
-    pending_txs: &mut Vec<(TxHash, Address)>,
+async fn rescue_await_drained_balances(
+    client: &QueryProvider,
+    max_remaining: U256,
+    pending_accounts: &mut Vec<Address>,
 ) -> LoadResult<()> {
     let timeout = Duration::from_secs(60);
     let poll_interval = Duration::from_millis(500);
     let start = std::time::Instant::now();
 
-    while !pending_txs.is_empty() && start.elapsed() < timeout {
+    while !pending_accounts.is_empty() && start.elapsed() < timeout {
         tokio::time::sleep(poll_interval).await;
 
-        let hashes: Vec<TxHash> = pending_txs.iter().map(|(h, _)| *h).collect();
-        let results = match batch_rpc.batch_get_transaction_receipts(&hashes).await {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(error = %e, "batch receipt fetch failed during rescue confirmation");
-                continue;
-            }
-        };
-
         let mut still_pending = Vec::new();
-        for ((tx_hash, address), receipt_opt) in pending_txs.drain(..).zip(results.into_iter()) {
-            match receipt_opt {
-                Some(receipt) => {
-                    if receipt.status() {
-                        debug!(tx_hash = %tx_hash, address = %address, "rescue tx confirmed");
-                    } else {
-                        warn!(tx_hash = %tx_hash, address = %address, "rescue tx reverted");
-                    }
+        for address in pending_accounts.drain(..) {
+            match client.get_balance(address).await.rpc("get balance") {
+                Ok(balance) if balance <= max_remaining => {
+                    debug!(address = %address, balance = %balance, "rescue drain balance settled");
                 }
-                None => {
-                    still_pending.push((tx_hash, address));
+                Ok(_) => {
+                    still_pending.push(address);
+                }
+                Err(e) => {
+                    warn!(address = %address, error = %e, "failed to check rescue drain balance");
+                    still_pending.push(address);
                 }
             }
         }
-        *pending_txs = still_pending;
+        *pending_accounts = still_pending;
     }
 
-    if !pending_txs.is_empty() {
-        let unconfirmed: Vec<_> = pending_txs.iter().map(|(_, addr)| addr).collect();
-        warn!(accounts = ?unconfirmed, "some rescue txs did not confirm within timeout");
+    if !pending_accounts.is_empty() {
+        warn!(accounts = ?pending_accounts, "some rescue balances did not settle within timeout");
     }
 
     Ok(())
@@ -658,26 +614,4 @@ fn rescue_progress_bar(total: u64, prefix: &str) -> ProgressBar {
     );
     pb.set_prefix(prefix.to_string());
     pb
-}
-
-fn print_rescue_usage() {
-    println!(
-        "\
-Usage: base-load-test rescue --rpc-url <URL> (--seed <SEED> | --mnemonic <PHRASE>) [OPTIONS]
-
-Rescue stranded funds from load test accounts by re-deriving sender
-addresses and draining any non-zero balances back to the funder.
-
-Required:
-  --rpc-url <URL>        RPC endpoint
-  --seed <SEED>          Seed used for account generation
-  --mnemonic <PHRASE>    Mnemonic used for account generation (alternative to --seed)
-
-Optional:
-  --count <N>            Number of accounts to scan (default: {DEFAULT_RESCUE_SCAN_COUNT})
-  --offset <N>           Starting account offset (default: 0)
-
-Environment:
-  FUNDER_KEY             Private key of the funder account (hex)"
-    );
 }

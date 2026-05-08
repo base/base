@@ -2,11 +2,12 @@
 #
 # Requires FUNDER_KEY environment variable with a funded private key
 
-rpc: "https://sepolia.base.org/"
-
-block_watcher_url: "https://sepolia.base.org/"
-flashblocks_ws_url: "wss://sepolia.flashblocks.base.org/ws"
-confirmer_url: "https://sepolia.base.org/"
+transaction_submission_rpcs:
+  - "https://sepolia.base.org/"
+# Must point at an RPC that supports eth_getBlockReceipts for confirmation tracking.
+query_rpc: "https://base-sepolia-rpc.publicnode.com"
+txpool_nodes: []
+flashblocks_ws: "wss://sepolia.flashblocks.base.org/ws"
 
 sender_count: 200
 target_gps: 60000000
@@ -34,4 +35,3 @@ transactions:
   #   token_in: "0x15948C3043A980A8d980d4D615A5E4c9514B0D64"
   #   token_out: "0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4"
   #   tick_spacing: 100
-
