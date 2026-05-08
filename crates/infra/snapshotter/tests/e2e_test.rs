@@ -343,7 +343,8 @@ async fn upload_with_empty_prefix() -> Result<()> {
 #[serial]
 async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
     let harness = TestHarness::new().await?;
-    let run_prefix = "diff-test/1000000-1700000000";
+    let s3 = &harness.storage_client;
+    let bucket = &harness.bucket_name;
 
     let uploader = SnapshotUploader::new(
         harness.storage_client.clone(),
@@ -351,11 +352,10 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
         "diff-test".to_string(),
     );
 
-    let s3 = &harness.storage_client;
-    let bucket = &harness.bucket_name;
+    // Simulate a previous snapshot run: upload files under a previous prefix
+    // and write latest.json pointing to it.
+    let prev_prefix = "diff-test/900000-1699000000";
 
-    // Pre-seed R2 with finalized static file chunks from a previous snapshot run.
-    // These represent block ranges that are fully finalized and should NOT be re-uploaded.
     let preexisting: &[(&str, &[u8])] = &[
         ("headers-0-499999.tar.zst", b"finalized-headers-0"),
         ("headers-500000-999999.tar.zst", b"finalized-headers-1"),
@@ -365,10 +365,13 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
         ("receipts-500000-999999.tar.zst", b"finalized-receipts-1"),
         ("account_changesets-0-499999.tar.zst", b"finalized-acc-cs-0"),
         ("storage_changesets-0-499999.tar.zst", b"finalized-stor-cs-0"),
+        ("state.tar.zst", b"old-mdbx-state"),
+        ("rocksdb_indices.tar.zst", b"old-rocksdb"),
+        ("manifest.json", b"{\"block\":900000}"),
     ];
 
     for (name, data) in preexisting {
-        let key = format!("{run_prefix}/{name}");
+        let key = format!("{prev_prefix}/{name}");
         s3.put_object()
             .bucket(bucket)
             .key(&key)
@@ -377,14 +380,26 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
             .await?;
     }
 
+    let latest_pointer = serde_json::json!({
+        "prefix": prev_prefix,
+        "block": 900_000,
+        "timestamp": 1_699_000_000u64
+    });
+    s3.put_object()
+        .bucket(bucket)
+        .key("diff-test/latest.json")
+        .body(aws_sdk_s3::primitives::ByteStream::from(serde_json::to_vec(&latest_pointer)?))
+        .send()
+        .await?;
+
+    // Now run a new snapshot upload at block 1M.
+    // The uploader should read latest.json, find the previous prefix, compare sizes.
     let tmp = tempfile::tempdir()?;
     let output_dir = tmp.path().join("output");
     std::fs::create_dir_all(&output_dir)?;
 
     let manifest = serde_json::json!({
-        "block": 1_000_000,
-        "chain_id": 8453,
-        "storage_version": 2,
+        "block": 1_000_000, "chain_id": 8453, "storage_version": 2,
         "reth_version": "2.1.0 (d58c6e3)",
         "components": {
             "state": {"file": "state.tar.zst", "size": 100, "decompressed_size": 200, "output_files": []},
@@ -398,16 +413,16 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
     });
     std::fs::write(output_dir.join("manifest.json"), serde_json::to_string_pretty(&manifest)?)?;
 
-    // AlwaysUpload: mdbx state + rocksdb (always re-uploaded, content changes every snapshot)
+    // AlwaysUpload: mdbx + rocksdb always re-uploaded
     std::fs::write(output_dir.join("state.tar.zst"), b"new-mdbx-state-data")?;
     std::fs::write(output_dir.join("rocksdb_indices.tar.zst"), b"new-rocksdb-data")?;
 
-    // DiffBySize: finalized chunks with SAME size as remote → should be SKIPPED
-    for (name, data) in preexisting {
-        std::fs::write(output_dir.join(name), *data)?;
+    // DiffBySize: finalized chunks with SAME size as previous run → should be SKIPPED
+    for &(name, data) in &preexisting[..8] {
+        std::fs::write(output_dir.join(name), data)?;
     }
 
-    // DiffBySize: tip chunks that are NEW (don't exist in remote) → should be UPLOADED
+    // DiffBySize: new tip chunks → should be UPLOADED
     std::fs::write(output_dir.join("headers-1000000-1499999.tar.zst"), b"new-tip-headers")?;
     std::fs::write(output_dir.join("transactions-1000000-1499999.tar.zst"), b"new-tip-txs")?;
     std::fs::write(output_dir.join("receipts-1000000-1499999.tar.zst"), b"new-tip-receipts")?;
@@ -423,28 +438,40 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
         .collect();
     files.sort_unstable();
 
-    uploader.upload(&output_dir, &files, 1_000_000, 1_700_000_000).await?;
+    let new_run_prefix = uploader.upload(&output_dir, &files, 1_000_000, 1_700_000_000).await?;
+    assert!(
+        new_run_prefix.starts_with("diff-test/1000000-"),
+        "new run prefix should be under diff-test/, got: {new_run_prefix}"
+    );
 
-    // Verify AlwaysUpload: mdbx state re-uploaded
-    let state_body = get_object_bytes(s3, bucket, &format!("{run_prefix}/state.tar.zst")).await?;
-    assert_eq!(state_body, b"new-mdbx-state-data", "mdbx state should always be re-uploaded");
+    // Verify AlwaysUpload: mdbx + rocksdb re-uploaded to NEW prefix
+    let state_body =
+        get_object_bytes(s3, bucket, &format!("{new_run_prefix}/state.tar.zst")).await?;
+    assert_eq!(state_body, b"new-mdbx-state-data", "mdbx should always be re-uploaded");
 
-    // Verify AlwaysUpload: rocksdb re-uploaded
     let rocksdb_body =
-        get_object_bytes(s3, bucket, &format!("{run_prefix}/rocksdb_indices.tar.zst")).await?;
+        get_object_bytes(s3, bucket, &format!("{new_run_prefix}/rocksdb_indices.tar.zst")).await?;
     assert_eq!(rocksdb_body, b"new-rocksdb-data", "rocksdb should always be re-uploaded");
 
-    // Verify DiffBySize SKIPPED: finalized chunks retain original content
-    for (name, original_data) in preexisting {
-        let body = get_object_bytes(s3, bucket, &format!("{run_prefix}/{name}")).await?;
-        assert_eq!(
-            body.as_slice(),
-            *original_data,
-            "finalized chunk {name} should be skipped (content unchanged)"
-        );
+    // Verify DiffBySize SKIPPED: finalized chunks NOT uploaded to new prefix
+    // (they only exist under the previous prefix)
+    let skipped_chunks = [
+        "headers-0-499999.tar.zst",
+        "headers-500000-999999.tar.zst",
+        "transactions-0-499999.tar.zst",
+        "transactions-500000-999999.tar.zst",
+        "receipts-0-499999.tar.zst",
+        "receipts-500000-999999.tar.zst",
+        "account_changesets-0-499999.tar.zst",
+        "storage_changesets-0-499999.tar.zst",
+    ];
+    for name in skipped_chunks {
+        let key = format!("{new_run_prefix}/{name}");
+        let exists = s3.head_object().bucket(bucket).key(&key).send().await.is_ok();
+        assert!(!exists, "finalized chunk {name} should NOT be in new prefix (was skipped)");
     }
 
-    // Verify DiffBySize UPLOADED: new tip chunks exist
+    // Verify DiffBySize UPLOADED: new tip chunks exist in new prefix
     let tip_checks: &[(&str, &[u8])] = &[
         ("headers-1000000-1499999.tar.zst", b"new-tip-headers"),
         ("transactions-1000000-1499999.tar.zst", b"new-tip-txs"),
@@ -453,15 +480,15 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
         ("storage_changesets-500000-999999.tar.zst", b"new-tip-stor-cs"),
     ];
     for (name, expected) in tip_checks {
-        let body = get_object_bytes(s3, bucket, &format!("{run_prefix}/{name}")).await?;
+        let body = get_object_bytes(s3, bucket, &format!("{new_run_prefix}/{name}")).await?;
         assert_eq!(body.as_slice(), *expected, "tip chunk {name} should be uploaded");
     }
 
-    // Verify manifest always uploaded
-    let manifest_body =
-        get_object_bytes(s3, bucket, &format!("{run_prefix}/manifest.json")).await?;
-    let parsed: serde_json::Value = serde_json::from_slice(&manifest_body)?;
-    assert_eq!(parsed["block"], 1_000_000, "manifest should be uploaded with correct block");
+    // Verify latest.json updated to point to new run
+    let latest_body = get_object_bytes(s3, bucket, "diff-test/latest.json").await?;
+    let pointer: LatestPointer = serde_json::from_slice(&latest_body)?;
+    assert_eq!(pointer.block, 1_000_000, "latest should point to new block");
+    assert_eq!(pointer.prefix, new_run_prefix, "latest should point to new prefix");
 
     Ok(())
 }
@@ -470,7 +497,8 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
 #[serial]
 async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
     let harness = TestHarness::new().await?;
-    let run_prefix = "overwrite-test/2000000-1700000000";
+    let s3 = &harness.storage_client;
+    let bucket = &harness.bucket_name;
 
     let uploader = SnapshotUploader::new(
         harness.storage_client.clone(),
@@ -478,16 +506,16 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
         "overwrite-test".to_string(),
     );
 
-    let s3 = &harness.storage_client;
-    let bucket = &harness.bucket_name;
+    // Simulate a previous run with old state + rocksdb
+    let prev_prefix = "overwrite-test/1500000-1699000000";
 
-    // Pre-seed R2 with stale state and rocksdb from a previous snapshot
-    let stale: &[(&str, &[u8])] = &[
+    let prev_files: &[(&str, &[u8])] = &[
         ("state.tar.zst", b"old-mdbx-snapshot-from-yesterday"),
         ("rocksdb_indices.tar.zst", b"old-rocksdb-from-yesterday"),
+        ("manifest.json", b"{\"block\":1500000}"),
     ];
-    for (name, data) in stale {
-        let key = format!("{run_prefix}/{name}");
+    for (name, data) in prev_files {
+        let key = format!("{prev_prefix}/{name}");
         s3.put_object()
             .bucket(bucket)
             .key(&key)
@@ -496,6 +524,20 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
             .await?;
     }
 
+    // Write latest.json pointing to previous run
+    let latest_pointer = serde_json::json!({
+        "prefix": prev_prefix,
+        "block": 1_500_000,
+        "timestamp": 1_699_000_000u64
+    });
+    s3.put_object()
+        .bucket(bucket)
+        .key("overwrite-test/latest.json")
+        .body(aws_sdk_s3::primitives::ByteStream::from(serde_json::to_vec(&latest_pointer)?))
+        .send()
+        .await?;
+
+    // New snapshot with fresh state + rocksdb
     let tmp = tempfile::tempdir()?;
     let output_dir = tmp.path().join("output");
     std::fs::create_dir_all(&output_dir)?;
@@ -517,22 +559,36 @@ async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
         output_dir.join("state.tar.zst"),
     ];
 
-    uploader.upload(&output_dir, &files, 2_000_000, 1_700_000_000).await?;
+    let new_prefix = uploader.upload(&output_dir, &files, 2_000_000, 1_700_000_000).await?;
 
-    // Verify state was overwritten, not skipped
-    let state_body = get_object_bytes(s3, bucket, &format!("{run_prefix}/state.tar.zst")).await?;
+    // Verify state uploaded to NEW prefix (not the previous one)
+    let state_body = get_object_bytes(s3, bucket, &format!("{new_prefix}/state.tar.zst")).await?;
     assert_eq!(
         state_body, b"fresh-mdbx-state",
-        "state.tar.zst should be overwritten even though it existed in R2"
+        "state.tar.zst should be uploaded to new prefix despite existing in previous run"
     );
 
-    // Verify rocksdb was overwritten, not skipped
+    // Verify rocksdb uploaded to NEW prefix
     let rocksdb_body =
-        get_object_bytes(s3, bucket, &format!("{run_prefix}/rocksdb_indices.tar.zst")).await?;
+        get_object_bytes(s3, bucket, &format!("{new_prefix}/rocksdb_indices.tar.zst")).await?;
     assert_eq!(
         rocksdb_body, b"fresh-rocksdb",
-        "rocksdb_indices.tar.zst should be overwritten even though it existed in R2"
+        "rocksdb_indices.tar.zst should be uploaded to new prefix despite existing in previous run"
     );
+
+    // Verify previous run's files are untouched
+    let old_state = get_object_bytes(s3, bucket, &format!("{prev_prefix}/state.tar.zst")).await?;
+    assert_eq!(
+        old_state.as_slice(),
+        b"old-mdbx-snapshot-from-yesterday",
+        "previous run's state should be untouched"
+    );
+
+    // Verify latest.json updated
+    let latest_body = get_object_bytes(s3, bucket, "overwrite-test/latest.json").await?;
+    let pointer: LatestPointer = serde_json::from_slice(&latest_body)?;
+    assert_eq!(pointer.block, 2_000_000, "latest should point to new block");
+    assert_eq!(pointer.prefix, new_prefix, "latest should point to new prefix");
 
     Ok(())
 }
