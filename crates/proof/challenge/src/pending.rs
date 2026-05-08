@@ -7,7 +7,10 @@
 //! Each entry also carries a [`DisputeIntent`] that determines whether the
 //! completed proof will be submitted via `challenge()` or `nullify()` on-chain.
 
-use std::{collections::HashMap, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_primitives::PROOF_TYPE_ZK;
@@ -251,8 +254,10 @@ impl PendingProofs {
             None => return Ok(None),
         };
 
-        let session_id = match &pending.phase {
-            ProofPhase::AwaitingProof { session_id, .. } => session_id.clone(),
+        let (session_id, started_at) = match &pending.phase {
+            ProofPhase::AwaitingProof { session_id, started_at } => {
+                (session_id.clone(), *started_at)
+            }
             ProofPhase::ReadyToSubmit { proof_bytes } => {
                 return Ok(Some(ProofUpdate::Ready(proof_bytes.clone())));
             }
@@ -291,14 +296,14 @@ impl PendingProofs {
                 ProofUpdate::NeedsRetry
             }
             Ok(ProofJobStatus::Created | ProofJobStatus::Pending | ProofJobStatus::Running) => {
-                let timed_out =
-                    if let ProofPhase::AwaitingProof { started_at, .. } = &pending.phase {
-                        started_at.elapsed() > max_proof_duration
-                    } else {
-                        false
-                    };
-                if timed_out {
-                    warn!(game = %game, "proof session timed out, will retry");
+                let elapsed = started_at.elapsed();
+                if elapsed > max_proof_duration {
+                    warn!(
+                        game = %game,
+                        elapsed = ?elapsed,
+                        limit = ?max_proof_duration,
+                        "proof session timed out, will retry"
+                    );
                     pending.retry_count += 1;
                     pending.phase = ProofPhase::NeedsRetry;
                     ProofUpdate::NeedsRetry

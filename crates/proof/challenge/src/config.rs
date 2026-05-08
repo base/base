@@ -97,6 +97,8 @@ pub struct ChallengerConfig {
     pub zk_connect_timeout: Duration,
     /// Timeout for individual gRPC requests to the ZK proof service.
     pub zk_request_timeout: Duration,
+    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
+    pub max_proof_duration: Duration,
     /// URL of the TEE enclave RPC endpoint (optional).
     pub tee_rpc_url: Option<Validated<Url>>,
     /// Timeout for individual TEE proof requests (only `Some` when TEE is enabled).
@@ -174,6 +176,7 @@ impl ChallengerConfig {
         require_nonzero_duration(cli.challenger.poll_interval, "poll-interval")?;
         require_nonzero_duration(cli.challenger.zk_connect_timeout, "zk-connect-timeout")?;
         require_nonzero_duration(cli.challenger.zk_request_timeout, "zk-request-timeout")?;
+        require_nonzero_duration(cli.challenger.max_proof_duration, "max-proof-duration")?;
 
         let tee_request_timeout = if tee_rpc_url.is_some() {
             require_nonzero_duration(cli.challenger.tee_request_timeout, "tee-request-timeout")?;
@@ -216,6 +219,7 @@ impl ChallengerConfig {
             zk_rpc_url,
             zk_connect_timeout: cli.challenger.zk_connect_timeout,
             zk_request_timeout: cli.challenger.zk_request_timeout,
+            max_proof_duration: cli.challenger.max_proof_duration,
             tee_rpc_url,
             tee_request_timeout,
             signing,

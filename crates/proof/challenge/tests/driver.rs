@@ -81,8 +81,11 @@ fn test_driver_with_tee(
     let validator = OutputValidator::new(l2_provider);
     let submitter = ChallengeSubmitter::new(tx_manager);
 
-    let config =
-        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
+    let config = DriverConfig {
+        poll_interval: Duration::from_millis(10),
+        max_proof_duration: Duration::from_secs(4 * 60 * 60),
+        cancel: CancellationToken::new(),
+    };
 
     Driver::new(
         config,
@@ -376,8 +379,11 @@ async fn test_step_scan_error_propagated() {
     let validator = OutputValidator::new(l2);
     let submitter = ChallengeSubmitter::new(default_tx_manager());
 
-    let config =
-        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
+    let config = DriverConfig {
+        poll_interval: Duration::from_millis(10),
+        max_proof_duration: Duration::from_secs(4 * 60 * 60),
+        cancel: CancellationToken::new(),
+    };
 
     let mut driver = Driver::new(
         config,
@@ -1512,7 +1518,6 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     );
 }
 
-// ── Fix A: unexpected status codes treated as retryable failures ──────────
 
 fn minimal_prove_request(session_id: &str) -> base_zk_client::ProveBlockRequest {
     base_zk_client::ProveBlockRequest {
@@ -1550,13 +1555,14 @@ async fn test_poll_unspecified_status_triggers_retry() {
     );
 
     let update = proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
-    assert!(matches!(update, Some(ProofUpdate::NeedsRetry)), "Unspecified should trigger NeedsRetry");
+    assert!(
+        matches!(update, Some(ProofUpdate::NeedsRetry)),
+        "Unspecified should trigger NeedsRetry"
+    );
     let entry = proofs.get(&addr(0)).unwrap();
     assert_eq!(entry.retry_count, 1);
     assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
 }
-
-// ── Fix B: wall-clock timeout on AwaitingProof ────────────────────────────
 
 #[tokio::test]
 async fn test_poll_running_within_timeout_stays_pending() {
@@ -1581,7 +1587,10 @@ async fn test_poll_running_within_timeout_stays_pending() {
     );
 
     let update = proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
-    assert!(matches!(update, Some(ProofUpdate::Pending)), "Running within timeout should stay Pending");
+    assert!(
+        matches!(update, Some(ProofUpdate::Pending)),
+        "Running within timeout should stay Pending"
+    );
     let entry = proofs.get(&addr(0)).unwrap();
     assert_eq!(entry.retry_count, 0);
     assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
@@ -1611,7 +1620,10 @@ async fn test_poll_running_timeout_triggers_retry() {
 
     // Zero timeout: already expired on the first poll.
     let update = proofs.poll(addr(0), &*zk, Duration::ZERO).await.unwrap();
-    assert!(matches!(update, Some(ProofUpdate::NeedsRetry)), "Timed-out Running should trigger NeedsRetry");
+    assert!(
+        matches!(update, Some(ProofUpdate::NeedsRetry)),
+        "Timed-out Running should trigger NeedsRetry"
+    );
     let entry = proofs.get(&addr(0)).unwrap();
     assert_eq!(entry.retry_count, 1);
     assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
