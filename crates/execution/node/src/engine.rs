@@ -112,7 +112,7 @@ where
     }
 
     /// Verifies Isthmus withdrawals root against the given parent state provider.
-    pub fn validate_block_post_execution_with_state<DB, H>(
+    pub fn verify_isthmus_withdrawals_root<DB, H>(
         &self,
         state_updates: &HashedPostState,
         state: DB,
@@ -161,7 +161,7 @@ where
                 "failed to load parent state for Isthmus withdrawals root validation: {err}"
             ))
         })?;
-        self.validate_block_post_execution_with_state(state_updates, state, block.header())
+        self.verify_isthmus_withdrawals_root(state_updates, state, block.header())
     }
 
     fn convert_payload_to_block(

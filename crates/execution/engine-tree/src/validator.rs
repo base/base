@@ -110,7 +110,7 @@ where
     where
         DB: StateProvider,
     {
-        Self::validate_block_post_execution_with_state(self, state_updates, state, block.header())
+        Self::verify_isthmus_withdrawals_root(self, state_updates, state, block.header())
     }
 }
 
