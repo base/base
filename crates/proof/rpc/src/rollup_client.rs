@@ -121,6 +121,28 @@ impl RollupClient {
     pub const fn output_cache(&self) -> &MeteredCache<u64, OutputAtBlock> {
         &self.output_cache
     }
+
+    async fn request_output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        let backoff = self.retry_config.to_backoff_builder();
+
+        (|| async {
+            self.provider
+                .raw_request::<_, OutputAtBlock>(
+                    "optimism_outputAtBlock".into(),
+                    (format!("0x{block_number:x}"),),
+                )
+                .await
+                .map_err(|e| {
+                    RpcError::InvalidResponse(format!("Failed to get output at block: {e}"))
+                })
+        })
+        .retry(backoff)
+        .when(|e| e.is_retryable())
+        .notify(|err, dur| {
+            tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::output_at_block");
+        })
+        .await
+    }
 }
 
 #[async_trait]
@@ -171,26 +193,14 @@ impl RollupProvider for RollupClient {
             return Ok(cached);
         }
 
-        let backoff = self.retry_config.to_backoff_builder();
+        let output = self.request_output_at_block(block_number).await?;
+        self.output_cache.insert(block_number, output).await;
 
-        let output = (|| async {
-            self.provider
-                .raw_request::<_, OutputAtBlock>(
-                    "optimism_outputAtBlock".into(),
-                    (format!("0x{block_number:x}"),),
-                )
-                .await
-                .map_err(|e| {
-                    RpcError::InvalidResponse(format!("Failed to get output at block: {e}"))
-                })
-        })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying RollupClient::output_at_block");
-        })
-        .await?;
+        Ok(output)
+    }
 
+    async fn fresh_output_at_block(&self, block_number: u64) -> RpcResult<OutputAtBlock> {
+        let output = self.request_output_at_block(block_number).await?;
         self.output_cache.insert(block_number, output).await;
 
         Ok(output)

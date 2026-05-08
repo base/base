@@ -14,7 +14,7 @@ base_cli_utils::define_log_args!("BASE_PROPOSER");
 base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
 base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
 base_tx_manager::define_signer_cli!("BASE_PROPOSER");
-base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER");
+base_tx_manager::define_tx_manager_cli!("BASE_PROPOSER", tx_send_timeout_default = "10m");
 
 /// Proposer - TEE-based output proposal generation for Base.
 #[derive(Debug, Clone, Parser)]
@@ -229,6 +229,7 @@ mod tests {
     use base_cli_utils::LogFormat;
 
     use super::*;
+    use crate::constants::PROPOSAL_TIMEOUT;
 
     #[test]
     fn test_cli_defaults() {
@@ -282,6 +283,7 @@ mod tests {
         assert_eq!(cli.proposer.rpc_max_retries, 5);
         assert_eq!(cli.proposer.rpc_retry_initial_delay, Duration::from_millis(100));
         assert_eq!(cli.proposer.rpc_retry_max_delay, Duration::from_secs(10));
+        assert_eq!(cli.proposer.tx_manager.tx_send_timeout, PROPOSAL_TIMEOUT);
 
         // Check signing defaults (all None)
         assert!(cli.proposer.signer.private_key.is_none());
@@ -294,6 +296,34 @@ mod tests {
         // Test that missing required fields cause an error
         let args = vec!["proposer"];
         assert!(Cli::try_parse_from(args).is_err());
+    }
+
+    #[test]
+    fn test_cli_preserves_explicit_zero_tx_send_timeout() {
+        let args = vec![
+            "proposer",
+            "--prover-rpc",
+            "http://localhost:8080",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l2-eth-rpc",
+            "http://localhost:9545",
+            "--anchor-state-registry-addr",
+            "0x1234567890123456789012345678901234567890",
+            "--dispute-game-factory-addr",
+            "0x2234567890123456789012345678901234567890",
+            "--game-type",
+            "1",
+            "--tee-image-hash",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "--rollup-rpc",
+            "http://localhost:7545",
+            "--tx-manager.tx-send-timeout",
+            "0s",
+        ];
+        let cli = Cli::try_parse_from(args).unwrap();
+
+        assert!(cli.proposer.tx_manager.tx_send_timeout.is_zero());
     }
 
     #[test]

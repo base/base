@@ -271,8 +271,10 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let anchor_registry =
-            Arc::new(MockAnchorStateRegistry { anchor_root: test_anchor_root(0) });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(0),
+            anchor_game: Address::ZERO,
+        });
         let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
         let pipeline = ProvingPipeline::new(

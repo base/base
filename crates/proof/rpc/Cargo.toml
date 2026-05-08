@@ -51,4 +51,4 @@ backon.workspace = true
 moka = { workspace = true, features = ["future"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

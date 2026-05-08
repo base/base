@@ -202,9 +202,12 @@ impl<L2: L2Provider> OutputValidator<L2> {
         let account_result =
             self.l2_provider.get_proof(Predeploys::L2_TO_L1_MESSAGE_PASSER, rpc_hash).await?;
 
-        AccountProofVerifier::verify(&account_result, consensus_header.state_root).map_err(
-            |e| ValidatorError::AccountProofFailed { block_number, reason: e.to_string() },
-        )?;
+        AccountProofVerifier::verify(
+            &account_result,
+            consensus_header.state_root,
+            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+        )
+        .map_err(|e| ValidatorError::AccountProofFailed { block_number, reason: e.to_string() })?;
 
         let storage_root = account_result.storage_hash;
         let output_root =
@@ -397,7 +400,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::test_utils::{MockL2Provider, build_test_header_and_account};
+    use crate::test_utils::{
+        MockL2Provider, build_test_header_and_account, build_test_header_and_account_for_address,
+    };
 
     /// Creates a mock L2 provider with multiple blocks and returns a vec of
     /// expected output roots (one per block).
@@ -811,5 +816,37 @@ mod tests {
             matches!(err, ValidatorError::AccountProofFailed { block_number: 100, .. }),
             "expected AccountProofFailed, got: {err:?}"
         );
+    }
+
+    /// Regression: a valid proof for a different account must not be accepted
+    /// as the `L2ToL1MessagePasser` storage root.
+    #[tokio::test]
+    async fn test_account_proof_address_mismatch_rejected() {
+        let storage_hash = B256::repeat_byte(0xBB);
+        let substituted_address = Address::repeat_byte(0x99);
+        let (header, account) =
+            build_test_header_and_account_for_address(100, storage_hash, substituted_address);
+        let substituted_root =
+            OutputRoot::from_parts(header.state_root, storage_hash, header.hash_slow()).hash();
+
+        let mut provider = MockL2Provider::new();
+        provider.insert_block(100, header, account);
+
+        let validator = OutputValidator::new(Arc::new(provider));
+        let game_address = Address::repeat_byte(0x10);
+
+        let result = validator.validate_final_root(game_address, 100, substituted_root).await;
+
+        let err = result.expect_err("substituted account proof should be rejected");
+        match err {
+            ValidatorError::AccountProofFailed { block_number, reason } => {
+                assert_eq!(block_number, 100);
+                assert!(
+                    reason.contains("account proof address mismatch"),
+                    "expected address mismatch reason, got: {reason}"
+                );
+            }
+            other => panic!("expected AccountProofFailed, got: {other:?}"),
+        }
     }
 }
