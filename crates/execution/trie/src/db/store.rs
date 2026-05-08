@@ -1,4 +1,4 @@
-use std::{ops::RangeBounds, path::Path};
+use std::{collections::BTreeMap, ops::RangeBounds, path::Path};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
@@ -385,32 +385,44 @@ impl MdbxProofsStorage {
         Ok(deleted_count)
     }
 
-    /// Append deletion tombstones for all existing storage items of `hashed_address` at
-    /// `block_number`. Iterates via `next()` from a RO cursor and writes MaybeDeleted(None)
-    /// rows.
-    fn wipe_storage<T, Next, K, VV, V>(
+    /// Tombstone every key returned by `next`, then overlay `new_entries` so collisions
+    /// resolve in favor of `new_entries`, and `append_dup` the merged set in sorted-key order at
+    /// `block_number`. Used by the wipe branches of `store_trie_updates_for_block` to keep new
+    /// slots / nodes that arrive in the same block as a `wiped`/`is_deleted` entry —
+    /// `HashedStorage::from_plain_storage` sets `wiped = was_destroyed()` (true for
+    /// `DestroyedChanged`), so a SELFDESTRUCT + same-block recreate produces both at once.
+    fn wipe_and_overlay<T, Next, I, K, VV, V>(
         &self,
         tx: &(impl DbTxMut + DbTx),
         block_number: u64,
         hashed_address: B256,
         mut next: Next,
+        new_entries: I,
     ) -> BaseProofsStorageResult<Vec<T::Key>>
     where
         T: Table<Value = VersionedValue<V>> + DupSort,
         Next: FnMut() -> BaseProofsStorageResult<Option<(K, VV)>>,
+        I: IntoIterator<Item = (K, Option<V>)>,
         (B256, K, Option<V>): IntoKV<T>,
         T::Key: Clone,
+        K: Ord,
     {
-        let mut cur = tx.cursor_dup_write::<T>()?;
-        let mut keys: Vec<T::Key> = Vec::new();
-
+        let mut merged: BTreeMap<K, Option<V>> = BTreeMap::new();
         while let Some((k, _vv)) = next()? {
-            let key: T::Key = (hashed_address, k, Option::<V>::None).into_key();
-            let del: T::Value = VersionedValue { block_number, value: MaybeDeleted(None) };
-            cur.append_dup(key.clone(), del)?;
-            keys.push(key);
+            merged.insert(k, None);
+        }
+        for (k, v) in new_entries {
+            merged.insert(k, v);
         }
 
+        let mut cur = tx.cursor_dup_write::<T>()?;
+        let mut keys: Vec<T::Key> = Vec::with_capacity(merged.len());
+        for (k, value) in merged {
+            let key: T::Key = (hashed_address, k, Option::<V>::None).into_key();
+            let vv: T::Value = VersionedValue { block_number, value: MaybeDeleted(value) };
+            cur.append_dup(key.clone(), vv)?;
+            keys.push(key);
+        }
         Ok(keys)
     }
 
@@ -505,17 +517,16 @@ impl MdbxProofsStorage {
 
         let mut storage_trie_keys = Vec::<StorageTrieKey>::with_capacity(storage_trie_len);
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
-            // Handle wiped - mark all storage trie as deleted at the current block number
             if nodes.is_deleted && append_mode {
-                // Yet to have any update for the current block number - So just using up to
-                // previous block number
                 let mut ro = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
-                let keys =
-                    self.wipe_storage(tx, block_number, *hashed_address, || Ok(ro.next()?))?;
-
+                let keys = self.wipe_and_overlay(
+                    tx,
+                    block_number,
+                    *hashed_address,
+                    || Ok(ro.next()?),
+                    nodes.storage_nodes_ref().iter().cloned(),
+                )?;
                 storage_trie_keys.extend(keys);
-
-                // Skip any further processing for this hashed_address
                 continue;
             }
 
@@ -534,15 +545,19 @@ impl MdbxProofsStorage {
 
         let mut hashed_storage_keys = Vec::<HashedStorageKey>::with_capacity(hashed_storage_len);
         for (hashed_address, storage) in sorted_post_state.storages {
-            // Handle wiped - mark all storage slots as deleted at the current block number
             if append_mode && storage.is_wiped() {
-                // Yet to have any update for the current block number - So just using up to
-                // previous block number
                 let mut ro = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
-                let keys =
-                    self.wipe_storage(tx, block_number, hashed_address, || Ok(ro.next()?))?;
+                let keys = self.wipe_and_overlay(
+                    tx,
+                    block_number,
+                    hashed_address,
+                    || Ok(ro.next()?),
+                    storage
+                        .storage_slots_ref()
+                        .iter()
+                        .map(|(slot, val)| (*slot, Some(StorageValue(*val)))),
+                )?;
                 hashed_storage_keys.extend(keys);
-                // Skip any further processing for this hashed_address
                 continue;
             }
             let keys = self.persist_history_batch(
@@ -2998,6 +3013,78 @@ mod tests {
             assert_eq!(vv.block_number, BLOCK.block.number);
             assert!(vv.value.0.is_some(), "expected normal node for non-wiped address at BLOCK");
         }
+    }
+
+    /// Mirror of `tests/lib.rs::test_store_trie_updates_with_wiped_storage_and_new_slots` for
+    /// the storage *trie* path. When `StorageTrieUpdates::is_deleted` is true AND
+    /// `storage_nodes` is non-empty (the shape revm/reth produce when a contract is destroyed
+    /// and recreated with a fresh trie in the same block), the wipe branch must tombstone every
+    /// pre-existing path for the address AND persist the new post-recreation nodes — with new
+    /// nodes winning on path collision.
+    #[test]
+    fn store_trie_updates_wiped_storage_trie_with_new_nodes() {
+        let dir = TempDir::new().unwrap();
+        let store = MdbxProofsStorage::new(dir.path()).expect("env");
+
+        let addr = B256::from([0x77; 32]);
+        let pre_path_dropped = Nibbles::from_nibbles_unchecked([0x01, 0x02]);
+        let pre_path_overwritten = Nibbles::from_nibbles_unchecked([0x0A, 0x0B]);
+        let new_path_kept = Nibbles::from_nibbles_unchecked([0xCC, 0xDD]);
+
+        store
+            .store_storage_branches(
+                addr,
+                vec![
+                    (pre_path_dropped, Some(BranchNodeCompact::default())),
+                    (pre_path_overwritten, Some(BranchNodeCompact::default())),
+                ],
+            )
+            .expect("seed");
+
+        const BLOCK: BlockWithParent =
+            BlockWithParent::new(B256::ZERO, NumHash::new(123, B256::ZERO));
+        let mut diff_trie_updates = TrieUpdates::default();
+        let mut wiped_with_new = StorageTrieUpdates::default();
+        wiped_with_new.set_deleted(true);
+        wiped_with_new.storage_nodes.insert(new_path_kept, BranchNodeCompact::default());
+        wiped_with_new.storage_nodes.insert(pre_path_overwritten, BranchNodeCompact::default());
+        diff_trie_updates.storage_tries.insert(addr, wiped_with_new);
+
+        let diff = BlockStateDiff {
+            sorted_trie_updates: diff_trie_updates.into_sorted(),
+            sorted_post_state: HashedPostStateSorted::default(),
+        };
+        store.store_trie_updates(BLOCK, diff).expect("store");
+
+        let tx = store.env.tx().expect("tx");
+        let mut cur = tx.new_cursor::<StorageTrieHistory>().expect("cursor");
+
+        let dropped_key = StorageTrieKey::new(addr, StoredNibbles::from(pre_path_dropped));
+        let dropped_vv = cur
+            .seek_by_key_subkey(dropped_key, BLOCK.block.number)
+            .expect("seek")
+            .expect("tombstone exists");
+        assert_eq!(dropped_vv.block_number, BLOCK.block.number);
+        assert!(dropped_vv.value.0.is_none(), "pre-existing path with no new node must tombstone");
+
+        let overwritten_key = StorageTrieKey::new(addr, StoredNibbles::from(pre_path_overwritten));
+        let overwritten_vv = cur
+            .seek_by_key_subkey(overwritten_key, BLOCK.block.number)
+            .expect("seek")
+            .expect("overlay exists");
+        assert_eq!(overwritten_vv.block_number, BLOCK.block.number);
+        assert!(
+            overwritten_vv.value.0.is_some(),
+            "collision path must reflect the new node, not the wipe tombstone",
+        );
+
+        let new_key = StorageTrieKey::new(addr, StoredNibbles::from(new_path_kept));
+        let new_vv = cur
+            .seek_by_key_subkey(new_key, BLOCK.block.number)
+            .expect("seek")
+            .expect("new node exists");
+        assert_eq!(new_vv.block_number, BLOCK.block.number);
+        assert!(new_vv.value.0.is_some(), "new path must be persisted, not dropped by the wipe");
     }
 
     #[test]

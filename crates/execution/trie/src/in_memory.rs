@@ -113,11 +113,13 @@ impl InMemoryStorageInner {
                         result.hashed_storages_written_total += 1;
                     }
                 }
-            } else {
-                for (slot, value) in storage.storage_slots_ref() {
-                    self.hashed_storages.insert((block_number, *hashed_address, *slot), *value);
-                    result.hashed_storages_written_total += 1;
-                }
+            }
+            // Persist any new slots that arrive in the same block as the wipe (e.g. SELFDESTRUCT
+            // + same-block re-CREATE2 produces `wiped = true` together with fresh
+            // `storage_slots_ref()` for the recreated contract). Mirrors the MDBX backend.
+            for (slot, value) in storage.storage_slots_ref() {
+                self.hashed_storages.insert((block_number, *hashed_address, *slot), *value);
+                result.hashed_storages_written_total += 1;
             }
         }
 

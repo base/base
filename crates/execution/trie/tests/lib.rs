@@ -1270,6 +1270,92 @@ fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsIni
     Ok(())
 }
 
+/// When a [`HashedPostState`] entry has `wiped = true` AND non-empty `storage` (the shape revm
+/// produces for `AccountStatus::DestroyedChanged` accounts that are destroyed and recreated in
+/// the same block), `store_trie_updates` must tombstone every prior storage slot for the address
+/// at `block_number` AND persist the new post-recreation slot values from `storage`. Dropping
+/// the new slots corrupts `HashedStorageHistory` and makes `BaseProofsStateProviderRef::storage`
+/// return `None` for the new slots, producing divergent storage / state / output roots
+/// downstream of `LiveTrieCollector`.
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_with_wiped_storage_and_new_slots<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let hashed_address = B256::repeat_byte(0x01);
+    let block_ref = BlockWithParent::new(B256::ZERO, NumHash::new(100, B256::repeat_byte(0x96)));
+
+    let pre_existing_slots = vec![
+        (B256::repeat_byte(0x10), U256::from(100)),
+        (B256::repeat_byte(0x20), U256::from(200)),
+    ];
+    storage.store_hashed_storages(hashed_address, pre_existing_slots.clone())?;
+
+    let new_slot_kept = (B256::repeat_byte(0x30), U256::from(0xCAFE));
+    let new_slot_overwriting_old = (B256::repeat_byte(0x10), U256::from(0xBEEF));
+
+    let mut post_state = HashedPostState::default();
+    let wiped_with_new =
+        HashedStorage::from_iter(true, vec![new_slot_kept, new_slot_overwriting_old]);
+    post_state.storages.insert(hashed_address, wiped_with_new);
+
+    let block_state_diff = BlockStateDiff {
+        sorted_trie_updates: TrieUpdatesSorted::default(),
+        sorted_post_state: post_state.into_sorted(),
+    };
+
+    storage.store_trie_updates(block_ref, block_state_diff)?;
+
+    let mut cursor150 = storage.storage_hashed_cursor(hashed_address, 150)?;
+    let mut found = Vec::new();
+    while let Some((key, value)) = cursor150.next()? {
+        found.push((key, value));
+    }
+
+    assert_eq!(
+        found,
+        vec![new_slot_overwriting_old, new_slot_kept],
+        "After wipe+recreate, only the new post-recreation slots must be visible",
+    );
+
+    let mut seek_kept = storage.storage_hashed_cursor(hashed_address, 150)?;
+    assert_eq!(
+        seek_kept.seek(new_slot_kept.0)?,
+        Some(new_slot_kept),
+        "New slot 0x30 = 0xCAFE must round-trip through the cursor",
+    );
+
+    let mut seek_overwritten = storage.storage_hashed_cursor(hashed_address, 150)?;
+    assert_eq!(
+        seek_overwritten.seek(new_slot_overwriting_old.0)?,
+        Some(new_slot_overwriting_old),
+        "Reused slot 0x10 must reflect the new post-recreation value 0xBEEF, not the wiped 100",
+    );
+
+    let mut seek_dropped = storage.storage_hashed_cursor(hashed_address, 150)?;
+    assert_eq!(
+        seek_dropped.seek(B256::repeat_byte(0x20))?,
+        Some(new_slot_kept),
+        "seek(0x20) must skip the tombstoned old slot and advance to the next visible entry \
+         (0x30 = 0xCAFE), proving 0x20 is not visible at block 150",
+    );
+
+    let mut cursor75 = storage.storage_hashed_cursor(hashed_address, 75)?;
+    let mut pre_wipe_found = Vec::new();
+    while let Some((key, value)) = cursor75.next()? {
+        pre_wipe_found.push((key, value));
+    }
+    assert_eq!(
+        pre_wipe_found, pre_existing_slots,
+        "Cursor positioned before the wipe block must still see the original slot values",
+    );
+
+    Ok(())
+}
+
 /// Test that `store_trie_updates` properly stores branch nodes, leaf nodes, and removals
 ///
 /// This test verifies that all data stored via `store_trie_updates` can be read back
