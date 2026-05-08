@@ -131,8 +131,13 @@ impl SendState {
     ///    seen, returns [`TxManagerError::NonceTooLow`] (immediate abort).
     /// 5. If nonce-too-low errors have reached the threshold, returns
     ///    [`TxManagerError::NonceTooLow`].
-    /// 6. If the mempool deadline has expired, returns
-    ///    [`TxManagerError::MempoolDeadlineExpired`].
+    /// 6. If the mempool deadline has expired *and* no transaction has been
+    ///    successfully published, returns
+    ///    [`TxManagerError::MempoolDeadlineExpired`]. Once a publish has
+    ///    succeeded the tx is in the mempool and the deadline's purpose is
+    ///    served — further waiting is governed by the receipt timeout and
+    ///    bump cycle, not by aborting (which would leak a pre-reserved nonce
+    ///    and stall publication on lower nonces still live on L1).
     /// 7. Otherwise, returns `None`.
     #[must_use]
     pub fn critical_error(&self) -> Option<TxManagerError> {
@@ -154,7 +159,8 @@ impl SendState {
         if inner.nonce_too_low_count >= self.safe_abort_nonce_too_low_count {
             return Some(TxManagerError::NonceTooLow);
         }
-        if let Some(deadline) = inner.mempool_deadline
+        if !inner.has_published
+            && let Some(deadline) = inner.mempool_deadline
             && now >= deadline
         {
             return Some(TxManagerError::MempoolDeadlineExpired);
@@ -441,6 +447,27 @@ mod tests {
     fn no_mempool_deadline_does_not_abort() {
         let state = SendState::new(3).unwrap();
         assert!(state.critical_error().is_none());
+    }
+
+    #[test]
+    fn expired_mempool_deadline_after_publish_does_not_abort() {
+        // Once a transaction has been successfully published it is in the
+        // mempool, so the deadline that guards "tx never reached mempool"
+        // must no longer fire. Otherwise the send loop aborts while the
+        // pre-reserved nonce stays live on L1, stalling subsequent sends.
+        let state = SendState::new(3).unwrap();
+        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        state.record_successful_publish();
+        assert!(state.critical_error().is_none());
+    }
+
+    #[test]
+    fn expired_mempool_deadline_before_publish_still_aborts() {
+        // Negative case: with no successful publish, the expired deadline
+        // remains a terminal abort condition.
+        let state = SendState::new(3).unwrap();
+        state.set_mempool_deadline(Instant::now() - Duration::from_secs(1));
+        assert_eq!(state.critical_error(), Some(TxManagerError::MempoolDeadlineExpired));
     }
 
     // ── Pre-publish immediate abort ─────────────────────────────────────
