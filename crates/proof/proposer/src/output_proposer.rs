@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
+    l1_origin_too_old_selector,
 };
 use base_proof_primitives::Proposal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
@@ -16,28 +17,43 @@ use tracing::info;
 use crate::error::ProposerError;
 
 const GAME_ALREADY_EXISTS: &str = "GameAlreadyExists";
+const L1_ORIGIN_TOO_OLD: &str = "L1OriginTooOld";
 
 /// Classifies a [`TxManagerError`] into a [`ProposerError`].
 ///
 /// Checks the structured revert reason and raw data for the
-/// `GameAlreadyExists` selector first, then falls back to searching the
+/// known non-retryable selectors first, then falls back to searching the
 /// Display string for non-`ExecutionReverted` variants (e.g. `Rpc`).
 fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
-    let selector = game_already_exists_selector();
+    let game_exists_selector = game_already_exists_selector();
+    let l1_origin_selector = l1_origin_too_old_selector();
 
     if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
         if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
             return ProposerError::GameAlreadyExists;
         }
-        if data.as_ref().is_some_and(|d| d.starts_with(&selector)) {
+        if data.as_ref().is_some_and(|d| d.starts_with(&game_exists_selector)) {
             return ProposerError::GameAlreadyExists;
+        }
+        if reason.as_deref().is_some_and(|r| r.contains(L1_ORIGIN_TOO_OLD)) {
+            return ProposerError::L1OriginTooOld;
+        }
+        if data.as_ref().is_some_and(|d| d.starts_with(&l1_origin_selector)) {
+            return ProposerError::L1OriginTooOld;
         }
         return ProposerError::TxManager(err);
     }
 
     let msg = err.to_string();
-    if msg.contains(&alloy_primitives::hex::encode(selector)) || msg.contains(GAME_ALREADY_EXISTS) {
+    if msg.contains(&alloy_primitives::hex::encode(game_exists_selector))
+        || msg.contains(GAME_ALREADY_EXISTS)
+    {
         return ProposerError::GameAlreadyExists;
+    }
+    if msg.contains(&alloy_primitives::hex::encode(l1_origin_selector))
+        || msg.contains(L1_ORIGIN_TOO_OLD)
+    {
+        return ProposerError::L1OriginTooOld;
     }
     ProposerError::TxManager(err)
 }
@@ -334,15 +350,22 @@ mod tests {
     // classify_tx_manager_error tests
     // ========================================================================
 
+    #[derive(Debug)]
+    enum ExpectedClassification {
+        GameAlreadyExists,
+        L1OriginTooOld,
+        TxManager,
+    }
+
     #[rstest]
     #[case::rpc_with_selector_hex(
         TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::game_already_exists_selector()))),
-        true,
+        ExpectedClassification::GameAlreadyExists,
         "selector hex in Rpc message"
     )]
     #[case::rpc_with_name(
         TxManagerError::Rpc(format!("{GAME_ALREADY_EXISTS}()")),
-        true,
+        ExpectedClassification::GameAlreadyExists,
         "error name in Rpc message"
     )]
     #[case::reverted_with_reason(
@@ -350,7 +373,7 @@ mod tests {
             reason: Some(format!("{GAME_ALREADY_EXISTS}()")),
             data: None,
         },
-        true,
+        ExpectedClassification::GameAlreadyExists,
         "reason string contains name"
     )]
     #[case::reverted_with_selector_data(
@@ -362,34 +385,67 @@ mod tests {
                 data: Some(Bytes::from(data)),
             }
         },
-        true,
+        ExpectedClassification::GameAlreadyExists,
         "raw data contains selector"
+    )]
+    #[case::rpc_with_l1_origin_selector_hex(
+        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::l1_origin_too_old_selector()))),
+        ExpectedClassification::L1OriginTooOld,
+        "L1OriginTooOld selector hex in Rpc message"
+    )]
+    #[case::rpc_with_l1_origin_name(
+        TxManagerError::Rpc(format!("{L1_ORIGIN_TOO_OLD}()")),
+        ExpectedClassification::L1OriginTooOld,
+        "L1OriginTooOld name in Rpc message"
+    )]
+    #[case::reverted_with_l1_origin_reason(
+        TxManagerError::ExecutionReverted {
+            reason: Some(format!("{L1_ORIGIN_TOO_OLD}()")),
+            data: None,
+        },
+        ExpectedClassification::L1OriginTooOld,
+        "L1OriginTooOld reason string contains name"
+    )]
+    #[case::reverted_with_l1_origin_selector_data(
+        TxManagerError::ExecutionReverted {
+            reason: None,
+            data: Some(Bytes::from(base_proof_contracts::l1_origin_too_old_selector().to_vec())),
+        },
+        ExpectedClassification::L1OriginTooOld,
+        "L1OriginTooOld raw data contains selector"
     )]
     #[case::reverted_other_error(
         TxManagerError::ExecutionReverted {
             reason: Some("SomeOtherError()".to_string()),
             data: Some(Bytes::from(vec![0xde, 0xad, 0xbe, 0xef])),
         },
-        false,
+        ExpectedClassification::TxManager,
         "unrelated revert"
     )]
-    #[case::nonce_too_low(TxManagerError::NonceTooLow, false, "non-revert error")]
+    #[case::nonce_too_low(
+        TxManagerError::NonceTooLow,
+        ExpectedClassification::TxManager,
+        "non-revert error"
+    )]
     fn test_classify_tx_manager_error(
         #[case] err: TxManagerError,
-        #[case] expect_game_exists: bool,
+        #[case] expected: ExpectedClassification,
         #[case] scenario: &str,
     ) {
         let result = classify_tx_manager_error(err);
-        if expect_game_exists {
-            assert!(
+        match expected {
+            ExpectedClassification::GameAlreadyExists => assert!(
                 matches!(result, ProposerError::GameAlreadyExists),
                 "{scenario}: expected GameAlreadyExists, got {result:?}"
-            );
-        } else {
-            assert!(
+            ),
+            ExpectedClassification::L1OriginTooOld => assert!(
+                matches!(result, ProposerError::L1OriginTooOld),
+                "{scenario}: expected L1OriginTooOld, got {result:?}"
+            ),
+            ExpectedClassification::TxManager => assert!(
                 matches!(result, ProposerError::TxManager(_)),
                 "{scenario}: expected TxManager, got {result:?}"
-            );
+            ),
         }
     }
 
@@ -398,5 +454,12 @@ mod tests {
     #[case::other_error(ProposerError::Contract("other".into()), false)]
     fn test_is_game_already_exists(#[case] err: ProposerError, #[case] expected: bool) {
         assert_eq!(err.is_game_already_exists(), expected);
+    }
+
+    #[rstest]
+    #[case::l1_origin_too_old(ProposerError::L1OriginTooOld, true)]
+    #[case::other_error(ProposerError::Contract("other".into()), false)]
+    fn test_is_l1_origin_too_old(#[case] err: ProposerError, #[case] expected: bool) {
+        assert_eq!(err.is_l1_origin_too_old(), expected);
     }
 }

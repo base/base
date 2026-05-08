@@ -26,6 +26,10 @@ pub enum ProposerError {
     #[error("game already exists")]
     GameAlreadyExists,
 
+    /// The proof's L1 origin is older than the EIP-2935 history window.
+    #[error("l1 origin too old")]
+    L1OriginTooOld,
+
     /// Configuration error.
     #[error("config error: {0}")]
     Config(String),
@@ -56,10 +60,17 @@ impl ProposerError {
     pub const ERROR_TYPE_TX_MANAGER: &str = "tx_manager";
     /// Metric label for duplicate game errors.
     pub const ERROR_TYPE_GAME_ALREADY_EXISTS: &str = "game_already_exists";
+    /// Metric label for stale L1 origin errors.
+    pub const ERROR_TYPE_L1_ORIGIN_TOO_OLD: &str = "l1_origin_too_old";
 
     /// Returns true if this error indicates the game already exists.
     pub const fn is_game_already_exists(&self) -> bool {
         matches!(self, Self::GameAlreadyExists)
+    }
+
+    /// Returns true if this error indicates the proof's L1 origin is too old.
+    pub const fn is_l1_origin_too_old(&self) -> bool {
+        matches!(self, Self::L1OriginTooOld)
     }
 
     /// Returns the metrics label for this error variant.
@@ -70,6 +81,7 @@ impl ProposerError {
             Self::Contract(_) => Self::ERROR_TYPE_CONTRACT,
             Self::TxReverted(_) => Self::ERROR_TYPE_TX_REVERTED,
             Self::GameAlreadyExists => Self::ERROR_TYPE_GAME_ALREADY_EXISTS,
+            Self::L1OriginTooOld => Self::ERROR_TYPE_L1_ORIGIN_TOO_OLD,
             Self::Config(_) => Self::ERROR_TYPE_CONFIG,
             Self::Internal(_) => Self::ERROR_TYPE_INTERNAL,
             Self::TxManager(_) => Self::ERROR_TYPE_TX_MANAGER,
