@@ -32,7 +32,7 @@ pub async fn get_inputs_for_pipeline<O>(
     oracle: Arc<O>,
 ) -> Result<(
     BootInfo,
-    Option<(Arc<RwLock<PipelineCursor>>, OracleL1ChainProvider<O>, OracleL2ChainProvider<O>)>,
+    (Arc<RwLock<PipelineCursor>>, OracleL1ChainProvider<O>, OracleL2ChainProvider<O>),
     u64,
 )>
 where
@@ -90,7 +90,7 @@ where
     .await?;
     l2_provider.set_cursor(Arc::clone(&cursor));
 
-    Ok((boot_clone, Some((cursor, l1_provider, l2_provider)), safe_head_number))
+    Ok((boot_clone, (cursor, l1_provider, l2_provider), safe_head_number))
 }
 
 /// Constructs a derivation pipeline and executes block derivation.
@@ -120,7 +120,7 @@ pub trait WitnessExecutor {
         l2_provider: Self::L2,
     ) -> Result<OraclePipeline<Self::O, Self::L1, Self::L2, Self::DA>>;
 
-    /// Run derivation and block execution to produce the proven boot info.
+    /// Run derivation and block execution to produce the proven boot info and derived L2 block.
     ///
     /// The intermediate root sampling interval is taken from
     /// [`BootInfo::intermediate_block_interval`] (committed via preimage key 9, same source as
@@ -131,7 +131,7 @@ pub trait WitnessExecutor {
         pipeline: DP,
         cursor: Arc<RwLock<PipelineCursor>>,
         l2_provider: OracleL2ChainProvider<O>,
-    ) -> Result<(BootInfo, Vec<alloy_primitives::B256>)>
+    ) -> Result<(BootInfo, u64, Vec<alloy_primitives::B256>)>
     where
         O: CommsClient + FlushableCache + Send + Sync + Debug,
         DP: DriverPipeline<P> + Send + Sync + Debug,
@@ -173,10 +173,19 @@ pub trait WitnessExecutor {
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
 
+        let derived_l2_block_number = safe_head.block_info.number;
+        if derived_l2_block_number != boot.claimed_l2_block_number {
+            return Err(anyhow!(
+                "Failed to validate claimed L2 block number {claimed}. Derivation only reached L2 block #{derived}",
+                claimed = boot.claimed_l2_block_number,
+                derived = derived_l2_block_number,
+            ));
+        }
+
         if output_root != boot.claimed_l2_output_root {
             return Err(anyhow!(
                 "Failed to validate L2 block #{number} with claimed output root {claimed_output_root}. Got {output_root} instead",
-                number = safe_head.block_info.number,
+                number = derived_l2_block_number,
                 output_root = output_root,
                 claimed_output_root = boot.claimed_l2_output_root,
             ));
@@ -184,9 +193,9 @@ pub trait WitnessExecutor {
 
         info!(
             target: "client",
-            "Successfully validated L2 block #{number} with output root {output_root}",
-            number = safe_head.block_info.number,
-            output_root = output_root
+            block_number = derived_l2_block_number,
+            output_root = %output_root,
+            "successfully validated L2 block"
         );
 
         // SAFETY: Inside the zkVM, the process exits after proof generation completes.
@@ -199,6 +208,6 @@ pub trait WitnessExecutor {
             std::mem::forget(rollup_config);
         }
 
-        Ok((boot_clone, intermediate_roots))
+        Ok((boot_clone, derived_l2_block_number, intermediate_roots))
     }
 }

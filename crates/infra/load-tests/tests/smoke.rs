@@ -133,6 +133,19 @@ fn metrics_summary_latency() {
 
     let fb_latency = &summary.flashblocks_latency;
     assert_eq!(fb_latency.p50, Duration::from_millis(150));
+
+    let mut metrics = TransactionMetrics::new(
+        TxHash::repeat_byte(99),
+        Some(Duration::from_millis(600)),
+        None,
+        21000,
+        1_000_000_000,
+        Some(99),
+    );
+    metrics.block_receipt_delay = Some(Duration::from_millis(75));
+    collector.record_confirmed(metrics);
+    let summary = collector.summarize(Duration::from_secs(10), None);
+    assert_eq!(summary.block_receipt_delay.p50, Duration::from_millis(75));
 }
 
 #[test]
@@ -180,6 +193,7 @@ fn metrics_summary_json_serialization() {
     let json = summary.to_json().unwrap();
 
     assert!(json.contains("block_latency"));
+    assert!(json.contains("block_receipt_delay"));
     assert!(json.contains("throughput"));
     assert!(json.contains("gas"));
 }

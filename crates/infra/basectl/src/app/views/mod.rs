@@ -21,9 +21,6 @@ pub use flashblocks::FlashblocksView;
 mod home;
 pub use home::HomeView;
 
-mod load_test;
-pub use load_test::LoadTestView;
-
 mod proofs;
 pub use proofs::ProofsView;
 

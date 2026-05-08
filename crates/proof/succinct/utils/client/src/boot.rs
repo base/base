@@ -33,18 +33,26 @@ sol! {
 }
 
 impl BootInfoStruct {
-    /// Create from a [`BootInfo`] and intermediate state roots.
+    /// Create from a [`BootInfo`], the derived L2 block number, and intermediate state roots.
     pub fn new(
         boot_info: BootInfo,
         l2_pre_block_number: u64,
+        l2_block_number: u64,
         intermediate_roots: Vec<B256>,
     ) -> Self {
+        // Defense-in-depth: witness execution validates this before constructing the committed
+        // public inputs, and this assert preserves that invariant for any direct caller.
+        assert_eq!(
+            l2_block_number, boot_info.claimed_l2_block_number,
+            "derived L2 block number must match claimed L2 block number"
+        );
+
         Self {
             l1Head: boot_info.l1_head,
             l2PreRoot: boot_info.agreed_l2_output_root,
             l2PostRoot: boot_info.claimed_l2_output_root,
             l2PreBlockNumber: l2_pre_block_number,
-            l2BlockNumber: boot_info.claimed_l2_block_number,
+            l2BlockNumber: l2_block_number,
             rollupConfigHash: hash_rollup_config(&boot_info.rollup_config),
             intermediateRoots: Bytes::from(
                 intermediate_roots
@@ -59,10 +67,53 @@ impl BootInfoStruct {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::b256;
+    use alloy_primitives::{Address, b256};
     use base_common_chains::Registry;
 
     use super::*;
+
+    fn boot_info(claimed_l2_block_number: u64) -> BootInfo {
+        let rollup_config =
+            Registry::rollup_config(8453).expect("Base mainnet config should exist").clone();
+        let l1_config = base_common_chains::L1_CONFIGS
+            .get(&rollup_config.l1_chain_id)
+            .expect("Base mainnet L1 config should exist")
+            .clone();
+
+        BootInfo {
+            l1_head: B256::repeat_byte(0x11),
+            agreed_l2_output_root: B256::repeat_byte(0x22),
+            claimed_l2_output_root: B256::repeat_byte(0x33),
+            claimed_l2_block_number,
+            chain_id: rollup_config.l2_chain_id.id(),
+            rollup_config,
+            l1_config,
+            proposer: Address::ZERO,
+            intermediate_block_interval: 0,
+            l1_head_number: 0,
+        }
+    }
+
+    #[test]
+    fn boot_info_struct_uses_derived_l2_block_number() {
+        let boot = boot_info(20);
+        let boot_info_struct = BootInfoStruct::new(boot, 10, 20, vec![B256::repeat_byte(0x44)]);
+
+        assert_eq!(boot_info_struct.l2PreBlockNumber, 10);
+        assert_eq!(boot_info_struct.l2BlockNumber, 20);
+        assert_eq!(
+            boot_info_struct.intermediateRoots,
+            Bytes::from(B256::repeat_byte(0x44).to_vec())
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "derived L2 block number must match claimed L2 block number")]
+    fn boot_info_struct_rejects_mismatched_derived_l2_block_number() {
+        let boot = boot_info(20);
+
+        let _ = BootInfoStruct::new(boot, 10, 19, Vec::new());
+    }
 
     /// Verify that `hash_rollup_config` produces the same value as the nitro-enclave's
     /// `PerChainConfig::hash()` for each supported chain. These expected values are the

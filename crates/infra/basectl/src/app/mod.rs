@@ -7,9 +7,7 @@ mod core;
 pub use core::App;
 
 mod resources;
-pub use resources::{
-    ConductorState, DaState, FlashState, LoadTestTask, ProofsState, Resources, ValidatorState,
-};
+pub use resources::{ConductorState, DaState, FlashState, ProofsState, Resources, ValidatorState};
 
 mod router;
 pub use router::{Router, ViewId};
@@ -24,5 +22,5 @@ pub use view::View;
 mod views;
 pub use views::{
     CommandCenterView, ConductorView, ConfigView, DaMonitorView, FlashblocksView, HomeView,
-    LoadTestView, ProofsView, TransactionPane, UpgradesView, create_view,
+    ProofsView, TransactionPane, UpgradesView, create_view,
 };

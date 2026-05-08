@@ -10,6 +10,8 @@ pub struct TransactionMetrics {
     pub tx_hash: TxHash,
     /// Time from submission to block production.
     pub block_latency: Option<Duration>,
+    /// Time from block production to receipt observation by the block watcher.
+    pub block_receipt_delay: Option<Duration>,
     /// Time from submission to sequencer acceptance.
     pub flashblocks_latency: Option<Duration>,
     /// Gas used by the transaction.
@@ -18,7 +20,7 @@ pub struct TransactionMetrics {
     pub gas_price: u128,
     /// Block number where transaction was included.
     pub block_number: Option<u64>,
-    /// When the confirmer discovered the receipt (used by the rolling window).
+    /// When canonical inclusion was observed (used by the rolling window).
     #[serde(skip)]
     pub confirmed_at: Option<Instant>,
 }
@@ -36,6 +38,7 @@ impl TransactionMetrics {
         Self {
             tx_hash,
             block_latency,
+            block_receipt_delay: None,
             flashblocks_latency,
             gas_used,
             gas_price,

@@ -43,7 +43,7 @@ use tracing::{debug, info, warn};
 
 use crate::{ChallengerMetrics, GameScanner};
 
-/// Reason a game was removed from tracking after [`BondManager::advance_game`].
+/// Reason a game was removed from tracking after `BondManager::advance_game`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemovalReason {
     /// Bond was successfully claimed — the full lifecycle completed.
@@ -217,6 +217,18 @@ impl<C: Clock> BondManager<C> {
     pub fn set_weth_delay(&mut self, delay: Duration) {
         info!(delay_secs = delay.as_secs(), "DelayedWETH delay configured");
         self.weth_delay = Some(delay);
+    }
+
+    /// Returns the effective `DelayedWETH` withdrawal delay for a game, falling
+    /// back to `Self::DEFAULT_WETH_DELAY` when the onchain delay has not yet
+    /// been read. Both the `check_delay` and `submit_claim_credit`
+    /// retry-backoff paths must agree on this value, so the fallback is
+    /// centralized here.
+    pub fn effective_weth_delay(&self, game_address: Address) -> Duration {
+        self.weth_delay.unwrap_or_else(|| {
+            debug!(game = %game_address, "WETH delay not yet known, using default 7 days");
+            Self::DEFAULT_WETH_DELAY
+        })
     }
 
     /// Sets the maximum time a completed bond game remains tracked while
@@ -897,10 +909,7 @@ impl<C: Clock> BondManager<C> {
         // If the real delay is shorter, the withdraw attempt will simply
         // succeed earlier than expected. If longer, the attempt will revert
         // and be retried after a short backoff.
-        let delay = self.weth_delay.unwrap_or_else(|| {
-            debug!(game = %game_address, "WETH delay not yet known, using default 7 days");
-            Self::DEFAULT_WETH_DELAY
-        });
+        let delay = self.effective_weth_delay(game_address);
 
         let elapsed = self.clock.now().saturating_sub(unlocked_at);
 
@@ -986,7 +995,7 @@ impl<C: Clock> BondManager<C> {
                 if let Some(retry_delay) = revert_retry_delay
                     && matches!(&e, crate::ChallengeSubmitError::TxReverted { .. })
                 {
-                    let delay = self.weth_delay.unwrap_or(Self::DEFAULT_WETH_DELAY);
+                    let delay = self.effective_weth_delay(game_address);
                     let retry_delay = retry_delay.min(delay);
                     let elapsed_before_retry = delay.saturating_sub(retry_delay);
                     let unlocked_at = self.clock.now().saturating_sub(elapsed_before_retry);

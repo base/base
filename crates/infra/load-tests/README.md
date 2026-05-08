@@ -7,6 +7,7 @@ Load testing and benchmarking framework for Base infrastructure.
 | Crate | Description |
 |-------|-------------|
 | `base-load-tests` | Core library with workload generation, transaction submission, and metrics collection |
+| `base-load-tester-bin` | Binary crate for running load tests and rescue/drain commands |
 
 ## Goals
 
@@ -27,30 +28,42 @@ FUNDER_KEY=0x... just load-test sepolia
 Or run directly with cargo:
 
 ```bash
-# Build the crate
-cargo build -p base-load-tests
+# Build the crates
+cargo build -p base-load-tests -p base-load-tester-bin
 
 # Run tests
 cargo test -p base-load-tests
 
 # Run the load test binary with a config file
-cargo run -p base-load-tests --bin base-load-test -- path/to/config.yaml
+cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
 ```
 
 ## Configuration
 
 All configuration is done via YAML files. See `src/config/test_config.rs` for comprehensive field documentation, or `examples/devnet.yaml` for a working example.
-
 Example minimal config:
 
 ```yaml
-rpc: http://localhost:8545
-block_watcher_url: "ws://localhost:8546"
-flashblocks_ws_url: "ws://localhost:7111"
+transaction_submission_rpcs:
+  - "http://localhost:8545"
+# Add more URLs to shard submit batches across multiple HTTP endpoints.
+query_rpc: "http://localhost:8545"
+# Optional: clear pending transactions from these admin RPC nodes for all sender addresses.
+txpool_nodes: []
+flashblocks_ws: "ws://localhost:7111"
 sender_count: 10
 target_gps: 2100000
 duration: "30s"
 ```
+
+`flashblocks_ws` is required for builder flashblocks broadcast latency data.
+`transaction_submission_rpcs` accepts either a single URL string or a list; submit batches are
+distributed across the configured HTTP endpoints.
+`txpool_nodes` is optional and defaults to an empty list; when present, the load tester calls
+`admin_dropSenderTransactions` for every sender address on every configured node before funding.
+Canonical confirmation and gas metrics are collected by polling `query_rpc` for new blocks and
+fetching `eth_getBlockReceipts` for each observed block, so `query_rpc` must support
+`eth_getBlockReceipts`.
 
 ### Available Configs
 

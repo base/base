@@ -177,6 +177,15 @@ services:
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_SEQ1_METRICS_PORT}
       - --txpool.nolocals
+      - --rollup.txpool-max-inflight-delegated-slots=32768
+      - --txpool.pending-max-count=200000
+      - --txpool.pending-max-size=512
+      - --txpool.basefee-max-count=200000
+      - --txpool.basefee-max-size=512
+      - --txpool.queued-max-count=200000
+      - --txpool.queued-max-size=512
+      - --txpool.max-account-slots=256
+      - --txpool.max-batch-size=1024
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --color=never
@@ -309,6 +318,15 @@ services:
       - --rollup.chain-block-time=2000
       - --metrics=0.0.0.0:${L2_SEQ2_METRICS_PORT}
       - --txpool.nolocals
+      - --rollup.txpool-max-inflight-delegated-slots=32768
+      - --txpool.pending-max-count=200000
+      - --txpool.pending-max-size=512
+      - --txpool.basefee-max-count=200000
+      - --txpool.basefee-max-size=512
+      - --txpool.queued-max-count=200000
+      - --txpool.queued-max-size=512
+      - --txpool.max-account-slots=256
+      - --txpool.max-batch-size=1024
       - --rpc.txfeecap=0
       - --rpc.gascap=600000000
       - --color=never

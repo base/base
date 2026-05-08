@@ -17,7 +17,6 @@ futures = { workspace = true }
 crossterm = { workspace = true }
 serde_yaml = { workspace = true }
 alloy-contract = { workspace = true }
-base-load-tests = { workspace = true }
 base-common-chains = { workspace = true }
 base-common-network = { workspace = true }
 base-consensus-gossip = { workspace = true }

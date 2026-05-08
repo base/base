@@ -32,6 +32,10 @@ pub struct DisplaySnapshot {
     pub p50_latency: Duration,
     /// Rolling 30s p99 latency.
     pub p99_latency: Duration,
+    /// Rolling 30s block receipt delay p50.
+    pub block_receipt_delay_p50: Duration,
+    /// Rolling 30s block receipt delay p99.
+    pub block_receipt_delay_p99: Duration,
     /// Rolling 30s flashblocks p50 latency.
     pub flashblocks_p50_latency: Duration,
     /// Rolling 30s flashblocks p99 latency.
@@ -204,10 +208,12 @@ impl LoadTestDisplay {
         });
 
         self.gas_lat.set_message(format!(
-            "gas     {:.2} gwei   block latency p50 {}   p99 {}",
+            "gas     {:.2} gwei   block latency p50 {}   p99 {}   receipt delay p50 {}   p99 {}",
             snap.gas_price_gwei,
             fmt_latency(snap.p50_latency),
             fmt_latency(snap.p99_latency),
+            fmt_latency(snap.block_receipt_delay_p50),
+            fmt_latency(snap.block_receipt_delay_p99),
         ));
 
         if snap.flashblocks_p50_latency > Duration::ZERO

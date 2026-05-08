@@ -4,23 +4,32 @@
 # Requires FUNDER_KEY env var (for devnet, use Anvil Account #1):
 #   FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 
-# RPC endpoint for local devnet
-rpc: http://localhost:8545
+# HTTP submission endpoints. Batches are distributed across all configured URLs.
+transaction_submission_rpcs:
+  - "http://localhost:7545"
 
-# RPC endpoint for block latency tracking (WebSocket or HTTP)
-block_watcher_url: "ws://localhost:8546"
+# RPC endpoint for reads and balance checks
+query_rpc: "http://localhost:8545"
 
-# Flashblocks websocket url (flashblock latency tracking)
-flashblocks_ws_url: "ws://localhost:7111"
+# Optional txpool admin nodes to clear for all sender addresses before startup.
+txpool_nodes:
+  - "http://localhost:7545"
+  - "http://localhost:8545"
 
-# Separate endpoint for confirmation polling (defaults to rpc when not set)
-# confirmer_url: "http://localhost:8547"
+# Builder flashblocks broadcast WebSocket endpoint
+flashblocks_ws: "ws://localhost:7111"
 
 # Number of sender accounts
 sender_count: 100
 
 # Target gas per second (~100 simple transfers)
-target_gps: 2100000
+target_gps: 20000000
+
+# Keep local devnet RPC pressure batched while leaving enough in-flight room
+# for block receipt confirmation to provide backpressure.
+in_flight_per_sender: 96
+batch_size: 20
+batch_timeout: "10ms"
 
 # Test duration
 duration: "30s"
@@ -28,7 +37,7 @@ duration: "30s"
 # Fixed seed for reproducible account generation
 seed: 12345
 
-# 0.01 ETH per account (covers gas for 30s at 2.1M GPS; drained after test)
+# 0.01 ETH per account (covers gas for 30s at the local devnet profile; drained after test)
 funding_amount: "10000000000000000"
 
 # Amount of each swap token to distribute per sender (1000 tokens).

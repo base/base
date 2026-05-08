@@ -1,11 +1,15 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    any::Any,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
 use base_common_chains::Upgrades;
 use base_common_evm::L1BlockInfo;
+use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_execution_evm::RethL1BlockInfo;
 use parking_lot::RwLock;
 use reth_chainspec::ChainSpecProvider;
@@ -18,9 +22,35 @@ use reth_storage_api::{AccountInfoReader, BlockReaderIdExt, StateProviderFactory
 use reth_transaction_pool::{
     EthPoolTransaction, EthTransactionValidator, TransactionOrigin, TransactionValidationOutcome,
     TransactionValidator,
+    error::{InvalidPoolTransactionError, PoolTransactionError},
 };
 
 use crate::BasePooledTx;
+
+/// Base-specific transaction pool validation errors.
+#[derive(Debug, thiserror::Error)]
+pub enum BaseTxPoolError {
+    /// The transaction's DA footprint exceeds the block gas limit.
+    #[error(
+        "transaction DA footprint ({transaction_da_footprint}) exceeds block gas limit ({block_gas_limit})"
+    )]
+    DaFootprintExceedsBlockGasLimit {
+        /// The computed DA footprint of the transaction (`estimated_da_size` * `da_footprint_gas_scalar`).
+        transaction_da_footprint: u64,
+        /// The current block gas limit.
+        block_gas_limit: u64,
+    },
+}
+
+impl PoolTransactionError for BaseTxPoolError {
+    fn is_bad_transaction(&self) -> bool {
+        true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 /// Tracks additional infos for the current block.
 #[derive(Debug, Default)]
@@ -196,6 +226,28 @@ where
         } = outcome
         {
             let mut l1_block_info = self.block_info.l1_block_info.read().clone();
+
+            // Check to ensure tx doesn't exceed the DA footprint limit
+            if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
+                let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
+                    l1_block_info
+                        .da_footprint_gas_scalar
+                        .unwrap_or(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)
+                        as u64,
+                );
+                let block_gas_limit = self.inner.block_gas_limit();
+                if da_footprint > block_gas_limit {
+                    return TransactionValidationOutcome::Invalid(
+                        valid_tx.into_transaction(),
+                        InvalidPoolTransactionError::other(
+                            BaseTxPoolError::DaFootprintExceedsBlockGasLimit {
+                                transaction_da_footprint: da_footprint,
+                                block_gas_limit,
+                            },
+                        ),
+                    );
+                }
+            }
 
             let encoded = valid_tx.transaction().encoded_2718();
 

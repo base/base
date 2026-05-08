@@ -41,6 +41,7 @@ impl<'a> MetricsAggregator<'a> {
             config,
             error: None,
             block_latency: self.compute_block_latency(),
+            block_receipt_delay: self.compute_block_receipt_delay(),
             flashblocks_latency: self.compute_flashblocks_latency(),
             throughput: self.compute_throughput(duration, submitted, failed),
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
@@ -64,6 +65,17 @@ impl<'a> MetricsAggregator<'a> {
         let mut latencies: Vec<Duration> =
             self.transactions.iter().filter_map(|t| t.block_latency).collect();
 
+        Self::compute_duration_metrics(&mut latencies)
+    }
+
+    fn compute_block_receipt_delay(&self) -> LatencyMetrics {
+        let mut latencies: Vec<Duration> =
+            self.transactions.iter().filter_map(|t| t.block_receipt_delay).collect();
+
+        Self::compute_duration_metrics(&mut latencies)
+    }
+
+    fn compute_duration_metrics(latencies: &mut [Duration]) -> LatencyMetrics {
         if latencies.is_empty() {
             return LatencyMetrics::default();
         }
@@ -78,9 +90,9 @@ impl<'a> MetricsAggregator<'a> {
             min: latencies[0],
             max: latencies[len - 1],
             mean,
-            p50: Self::percentile(&latencies, 50),
-            p95: Self::percentile(&latencies, 95),
-            p99: Self::percentile(&latencies, 99),
+            p50: Self::percentile(latencies, 50),
+            p95: Self::percentile(latencies, 95),
+            p99: Self::percentile(latencies, 99),
         }
     }
 
@@ -203,6 +215,8 @@ pub struct MetricsSummary {
     pub error: Option<String>,
     /// Block production latency.
     pub block_latency: LatencyMetrics,
+    /// Delay between block production time and receipt observation.
+    pub block_receipt_delay: LatencyMetrics,
     /// Flashblocks sequencer latency.
     pub flashblocks_latency: FlashblocksLatencyMetrics,
     /// Throughput statistics.

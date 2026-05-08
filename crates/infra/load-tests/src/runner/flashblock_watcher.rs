@@ -1,11 +1,9 @@
-//! Flashblock subscription and transaction tracking.
+//! Builder flashblocks broadcast transaction watching.
 
-use std::{
-    collections::{VecDeque, hash_map::Entry},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
-use alloy_primitives::{TxHash, keccak256};
+use alloy_eips::eip2718::Decodable2718;
+use base_common_consensus::BaseTxEnvelope;
 use base_common_flashblocks::Flashblock;
 use futures::StreamExt;
 use tokio_tungstenite::{
@@ -16,41 +14,35 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use url::Url;
 
-use super::FlashblockTimes;
+use super::{FlashblockInclusion, ResultsTracker};
 
-/// Cap on the flashblock times map; receives all txs, not just ours.
-const MAX_FLASHBLOCK_CACHE_SIZE: usize = 50_000;
-
-/// Subscribes to flashblocks and tracks transaction inclusion times.
+/// Watches transaction inclusion times from the builder flashblocks broadcast WebSocket.
 #[derive(Debug)]
-pub struct FlashblockTracker {
+pub struct FlashblockWatcher {
     ws_url: Url,
-    flashblock_times: FlashblockTimes,
+    results_tracker: ResultsTracker,
     cancel_token: CancellationToken,
-    /// Tracks insertion order for FIFO eviction. Persists across reconnects
-    /// so entries from prior connections remain evictable.
-    eviction_queue: VecDeque<TxHash>,
 }
 
-impl FlashblockTracker {
-    /// Creates a new [`FlashblockTracker`].
+impl FlashblockWatcher {
+    /// Creates a new [`FlashblockWatcher`].
     pub const fn new(
         ws_url: Url,
-        flashblock_times: FlashblockTimes,
+        results_tracker: ResultsTracker,
         cancel_token: CancellationToken,
     ) -> Self {
-        Self { ws_url, flashblock_times, cancel_token, eviction_queue: VecDeque::new() }
+        Self { ws_url, results_tracker, cancel_token }
     }
 
-    /// Spawns the tracker as a background task.
-    pub fn start(mut self) -> tokio::task::JoinHandle<()> {
+    /// Spawns the watcher as a background task.
+    pub fn start(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             self.run().await;
         })
     }
 
-    async fn run(&mut self) {
-        info!(url = %self.ws_url, "starting flashblock tracker");
+    async fn run(&self) {
+        info!(url = %self.ws_url, "starting flashblock watcher");
 
         let mut backoff = Duration::from_millis(100);
         let max_backoff = Duration::from_secs(5);
@@ -68,7 +60,7 @@ impl FlashblockTracker {
                             biased;
 
                             _ = self.cancel_token.cancelled() => {
-                                debug!("flashblock tracker stopping");
+                                debug!("flashblock watcher stopping");
                                 return;
                             }
                             msg = read.next() => {
@@ -115,51 +107,38 @@ impl FlashblockTracker {
             }
         }
 
-        debug!("flashblock tracker stopped");
+        debug!("flashblock watcher stopped");
     }
 
-    fn process_message(&mut self, bytes: Bytes) {
+    fn process_message(&self, bytes: Bytes) {
         let now = Instant::now();
 
-        match Flashblock::try_decode_message(bytes) {
-            Ok(flashblock) => {
-                let tx_count = flashblock.diff.transactions.len();
-                debug!(index = flashblock.index, tx_count, "received flashblock");
-
-                let tx_hashes: Vec<TxHash> = flashblock
-                    .diff
-                    .transactions
-                    .iter()
-                    .filter_map(|tx_bytes| Self::extract_tx_hash(tx_bytes).ok())
-                    .collect();
-
-                let mut times = self.flashblock_times.write();
-                for tx_hash in tx_hashes {
-                    if let Entry::Vacant(e) = times.entry(tx_hash) {
-                        e.insert(now);
-                        self.eviction_queue.push_back(tx_hash);
-                    }
-                }
-
-                while times.len() > MAX_FLASHBLOCK_CACHE_SIZE {
-                    match self.eviction_queue.pop_front() {
-                        Some(old) => {
-                            times.remove(&old);
-                        }
-                        None => break,
-                    }
-                }
-            }
+        let flashblock = match Flashblock::try_decode_message(bytes) {
+            Ok(flashblock) => flashblock,
             Err(e) => {
-                warn!(error = %e, "failed to decode flashblock");
+                warn!(error = %e, "failed to decode flashblock broadcast message");
+                return;
             }
-        }
+        };
+
+        let inclusions = Self::parse_broadcast_inclusions(&flashblock, now);
+        self.results_tracker.on_new_flashblock(inclusions);
     }
 
-    fn extract_tx_hash(tx_bytes: &[u8]) -> Result<TxHash, &'static str> {
-        if tx_bytes.is_empty() {
-            return Err("empty transaction bytes");
-        }
-        Ok(keccak256(tx_bytes))
+    fn parse_broadcast_inclusions(
+        flashblock: &Flashblock,
+        included_at: Instant,
+    ) -> Vec<FlashblockInclusion> {
+        flashblock
+            .diff
+            .transactions
+            .iter()
+            .filter_map(|tx_bytes| {
+                let envelope = BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref())
+                    .inspect_err(|e| warn!(error = %e, "failed to decode flashblock transaction"))
+                    .ok()?;
+                Some(FlashblockInclusion { tx_hash: envelope.tx_hash(), included_at })
+            })
+            .collect()
     }
 }
