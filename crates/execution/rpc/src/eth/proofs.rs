@@ -10,11 +10,32 @@ use async_trait::async_trait;
 use base_execution_trie::{BaseProofsStorage, BaseProofsStore};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
-use jsonrpsee_types::error::ErrorObject;
+use jsonrpsee_types::error::{ErrorCode, ErrorObject};
 use reth_provider::StateProofProvider;
 use reth_rpc_api::eth::helpers::FullEthApi;
 
 use crate::{metrics::EthApiExtMetrics, state::BaseStateProviderFactory};
+
+/// Maximum number of storage keys accepted in a single `eth_getProof` request. Matches go-ethereum.
+pub const MAX_PROOF_KEYS: usize = 1024;
+
+/// Validates the storage-key count for `eth_getProof`.
+#[derive(Debug)]
+pub struct ProofKeyLimit;
+
+impl ProofKeyLimit {
+    /// Returns an `InvalidParams` error when `keys_len` exceeds [`MAX_PROOF_KEYS`].
+    pub fn check(keys_len: usize) -> Result<(), ErrorObject<'static>> {
+        if keys_len > MAX_PROOF_KEYS {
+            return Err(ErrorObject::owned(
+                ErrorCode::InvalidParams.code(),
+                format!("too many storage keys: max {MAX_PROOF_KEYS}, got {keys_len}"),
+                None::<()>,
+            ));
+        }
+        Ok(())
+    }
+}
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -61,6 +82,9 @@ where
         keys: Vec<JsonStorageKey>,
         block_number: Option<BlockId>,
     ) -> RpcResult<EIP1186AccountProofResponse> {
+        // Reject oversized batches before any DB access; each key triggers a trie traversal.
+        ProofKeyLimit::check(keys.len())?;
+
         let start = Instant::now();
         EthApiExtMetrics::get_proof_requests().increment(1);
 
@@ -88,5 +112,35 @@ where
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jsonrpsee_types::error::ErrorCode;
+
+    use super::{MAX_PROOF_KEYS, ProofKeyLimit};
+
+    #[test]
+    fn accepts_at_limit() {
+        assert!(ProofKeyLimit::check(MAX_PROOF_KEYS).is_ok());
+    }
+
+    #[test]
+    fn accepts_below_limit() {
+        assert!(ProofKeyLimit::check(0).is_ok());
+        assert!(ProofKeyLimit::check(1).is_ok());
+        assert!(ProofKeyLimit::check(MAX_PROOF_KEYS - 1).is_ok());
+    }
+
+    #[test]
+    fn rejects_above_limit() {
+        let err = ProofKeyLimit::check(MAX_PROOF_KEYS + 1).expect_err("must reject");
+        assert_eq!(err.code(), ErrorCode::InvalidParams.code());
+        assert!(
+            err.message().contains("too many storage keys"),
+            "unexpected error message: {}",
+            err.message()
+        );
     }
 }
