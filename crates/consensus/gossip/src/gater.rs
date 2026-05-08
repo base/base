@@ -14,9 +14,6 @@ use tokio::time::Instant;
 
 use crate::{Connectedness, ConnectionError, ConnectionGate, Metrics};
 
-/// Default maximum number of entries in the connectedness LRU cache.
-const DEFAULT_MAX_CONNECTEDNESS_CACHE_SIZE: usize = 4096;
-
 /// Policy for connection checks when DNS resolution fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DnsResolutionFailure {
@@ -69,7 +66,7 @@ pub struct GaterConfig {
     /// Maximum number of entries in the connectedness LRU cache.
     ///
     /// Bounds the memory used to track peer connection state. When the cache
-    /// is full, the least recently used entry is evicted. Default is 2048.
+    /// is full, the least recently used entry is evicted. Default is 4096.
     pub max_connectedness_cache_size: usize,
 }
 
@@ -78,7 +75,7 @@ impl Default for GaterConfig {
         Self {
             peer_redialing: None,
             dial_period: Duration::from_secs(60 * 60),
-            max_connectedness_cache_size: DEFAULT_MAX_CONNECTEDNESS_CACHE_SIZE,
+            max_connectedness_cache_size: 4096,
         }
     }
 }
@@ -88,7 +85,7 @@ impl Default for GaterConfig {
 /// A connection gate that regulates peer connections for the libp2p gossip swarm.
 ///
 /// An implementation of the [`ConnectionGate`] trait.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConnectionGater {
     /// The configuration for the connection gater.
     config: GaterConfig,
@@ -108,6 +105,12 @@ pub struct ConnectionGater {
     pub blocked_addrs: HashSet<IpAddr>,
     /// A set of blocked subnets that cannot be connected to.
     pub blocked_subnets: HashSet<IpNet>,
+}
+
+impl Default for ConnectionGater {
+    fn default() -> Self {
+        Self::new(GaterConfig::default())
+    }
 }
 
 impl ConnectionGater {
