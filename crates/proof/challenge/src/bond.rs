@@ -1669,6 +1669,88 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn non_revert_withdraw_failure_does_not_back_off() {
+        // Regression guard for the `matches!(_, TxReverted { .. })` arm in
+        // `submit_claim_credit`: a non-revert error (e.g. a `TxManager`
+        // variant such as `NonceTooLow`) must leave the phase as
+        // `NeedsWithdraw` so the next poll resubmits immediately rather
+        // than waiting on the WETH-delay back-off window.
+        let claim_addr = Address::repeat_byte(0xCC);
+        let game = addr(0);
+        let wall_unix = 2_000_000_000;
+        let resolved_at = wall_unix - 3_600;
+        let monotonic_secs = 3_700;
+        let delay = Duration::from_secs(3_600);
+        let clock = FixedClock { monotonic: Duration::from_secs(monotonic_secs), wall_unix };
+        let stale_unlocked_at =
+            BondManager::<FixedClock>::estimate_unlock_time(&clock, resolved_at);
+
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
+        mgr.set_weth_delay(delay);
+        mgr.track_game(game, claim_addr);
+        mgr.set_phase(
+            game,
+            BondPhase::AwaitingDelay {
+                unlocked_at: stale_unlocked_at,
+                unlocked_at_unix_secs: None,
+            },
+        );
+
+        let mut state = mock_state(2, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.resolved_at = resolved_at;
+        state.bond_unlocked = true;
+        state.bond_claimed = false;
+        let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
+        // Two non-revert failures so that both the first failed submission
+        // and the immediate retry have a response queued.
+        let submitter = MockBondTransactionSubmitter::with_responses(vec![
+            Err(crate::ChallengeSubmitError::TxManager(
+                base_tx_manager::TxManagerError::NonceTooLow,
+            )),
+            Err(crate::ChallengeSubmitError::TxManager(
+                base_tx_manager::TxManagerError::NonceTooLow,
+            )),
+        ]);
+
+        // First poll: stale AwaitingDelay → check_delay transitions to
+        // NeedsWithdraw without submitting.
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none());
+        assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsWithdraw));
+        assert!(submitter.recorded_calls().is_empty());
+
+        // Second poll: NeedsWithdraw → submit_claim_credit → non-revert
+        // failure. The phase must remain `NeedsWithdraw`; the back-off
+        // path is gated on `TxReverted` only.
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none());
+        assert_eq!(submitter.recorded_calls().len(), 1);
+        assert!(
+            matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsWithdraw),
+            "non-revert withdraw failure must not transition back to AwaitingDelay"
+        );
+
+        // Third poll: still `NeedsWithdraw` → resubmits immediately,
+        // without waiting on a back-off window.
+        let result = mgr.advance_game(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none());
+        assert_eq!(
+            submitter.recorded_calls().len(),
+            2,
+            "non-revert failures must not introduce a back-off delay before retry"
+        );
+        assert!(matches!(mgr.tracked.get(&game).unwrap().phase, BondPhase::NeedsWithdraw));
+    }
+
     #[test]
     fn unix_to_monotonic_past_timestamp() {
         // Clock at 500s monotonic, unix_now=2000, event at unix 1900
