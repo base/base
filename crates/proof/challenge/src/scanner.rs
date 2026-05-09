@@ -43,7 +43,7 @@ use base_proof_contracts::{
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::ChallengerMetrics;
 
@@ -291,7 +291,7 @@ impl GameScanner {
             // and clearing `zkProver` runs through `_proofRefutedUpdate(ZK)` which
             // also clears `ci`. Suspect contract bug if observed.
             (true, false, ci) => {
-                warn!(
+                error!(
                     index = index,
                     countered_index = ci,
                     "skipping TEE-only game with unexpected non-zero countered_index"
