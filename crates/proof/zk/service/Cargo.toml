@@ -27,8 +27,9 @@ sp1-cluster-artifact.workspace = true
 # Network
 base-common-network.workspace = true
 alloy-primitives.workspace = true
-alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
+alloy-provider.workspace = true
+base-proof-rpc.workspace = true
 
 async-trait.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }

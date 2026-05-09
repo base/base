@@ -17,6 +17,7 @@ use super::{
     cache::MeteredCache,
     config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
+    provider_ext::DebugProviderExt,
     traits::L2Provider,
     types::BaseBlock,
 };
@@ -193,12 +194,7 @@ impl L2Provider for L2Client {
     async fn chain_config(&self) -> RpcResult<serde_json::Value> {
         let backoff = self.retry_config.to_backoff_builder();
 
-        (|| async {
-            self.provider
-                .raw_request::<_, serde_json::Value>("debug_chainConfig".into(), ())
-                .await
-                .map_err(RpcError::from)
-        })
+        (|| async { self.provider.debug_chain_config().await.map_err(RpcError::from) })
         .retry(backoff)
         .when(|e| e.is_retryable())
         .notify(|err, dur| {
@@ -223,7 +219,8 @@ impl L2Provider for L2Client {
 
         let proof: EIP1186AccountProofResponse = (|| async {
             self.provider
-                .raw_request("eth_getProof".into(), (address, empty_keys.clone(), block_hash))
+                .get_proof(address, empty_keys.clone())
+                .hash(block_hash)
                 .await
                 .map_err(RpcError::from)
         })

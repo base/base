@@ -5,28 +5,8 @@ use alloy_provider::{Identity, Provider, ProviderBuilder};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag};
 use anyhow::Result;
 use base_common_network::Base;
+use base_proof_rpc::OptimismRollupProviderExt;
 use tracing::debug;
-
-/// L2 output root at a specific block.
-#[derive(serde::Deserialize, Debug)]
-pub(super) struct OutputAtBlock {
-    #[serde(rename = "blockRef")]
-    pub block_ref: BlockRef,
-}
-
-/// Block number and hash reference.
-#[derive(serde::Deserialize, Debug)]
-pub(super) struct BlockRef {
-    #[serde(rename = "l1origin")]
-    pub l1_origin: L1Origin,
-}
-
-/// L1 origin info for an L2 block.
-#[derive(serde::Deserialize, Debug)]
-pub(super) struct L1Origin {
-    /// L1 block number.
-    pub number: u64,
-}
 
 /// Computes safe L1 head blocks for proof ranges.
 #[derive(Debug)]
@@ -92,14 +72,10 @@ impl L1HeadCalculator {
     where
         OP: Provider<Base>,
     {
-        let response: OutputAtBlock = op_provider
-            .raw_request(
-                "optimism_outputAtBlock".into(),
-                (BlockNumberOrTag::Number(l2_block_number),),
-            )
-            .await?;
+        let response =
+            op_provider.optimism_output_at_block(BlockNumberOrTag::Number(l2_block_number)).await?;
 
-        Ok(response.block_ref.l1_origin.number)
+        Ok(response.block_ref.l1origin.number)
     }
 
     /// Get block hash at a specific height.
