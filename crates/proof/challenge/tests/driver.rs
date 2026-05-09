@@ -1265,15 +1265,11 @@ async fn test_bond_manager_skips_already_unlocked_game() {
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 2: NeedsUnlock → bond_unlocked=true → AwaitingDelay (no tx).
+    // Poll 2: NeedsUnlock -> bond_unlocked=true and delay=0 -> NeedsWithdraw (no tx).
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 3: AwaitingDelay (delay=0) → NeedsWithdraw.
-    mgr.poll(&*verifier, &submitter).await;
-    assert_eq!(mgr.tracked_count(), 1);
-
-    // Poll 4: NeedsWithdraw → submit withdraw → Completed → removed.
+    // Poll 3: NeedsWithdraw -> submit withdraw -> Completed -> removed.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 0);
 
