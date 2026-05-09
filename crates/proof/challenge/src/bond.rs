@@ -1023,12 +1023,6 @@ impl<C: Clock> BondManager<C> {
                 Ok(completed.then_some(RemovalReason::Completed))
             }
             Err(e) => {
-                warn!(
-                    game = %game_address,
-                    error = %e,
-                    step,
-                    "claimCredit transaction failed, will retry"
-                );
                 ChallengerMetrics::claim_credit_tx_outcome_total(ChallengerMetrics::STATUS_ERROR)
                     .increment(1);
                 if let Some(retry_delay) = revert_retry_delay
@@ -1038,15 +1032,25 @@ impl<C: Clock> BondManager<C> {
                     let retry_delay = retry_delay.min(delay);
                     let elapsed_before_retry = delay.saturating_sub(retry_delay);
                     let unlocked_at = self.clock.now().saturating_sub(elapsed_before_retry);
-                    info!(
+                    warn!(
                         game = %game_address,
-                        retry_delay_secs = retry_delay.as_secs(),
+                        error = %e,
                         step,
-                        "claimCredit reverted, backing off before retry"
+                        retry = "after_backoff",
+                        retry_delay_secs = retry_delay.as_secs(),
+                        "claimCredit transaction failed, will retry after backoff"
                     );
                     self.set_phase(
                         game_address,
                         BondPhase::AwaitingDelay { unlocked_at, unlocked_at_unix_secs: None },
+                    );
+                } else {
+                    warn!(
+                        game = %game_address,
+                        error = %e,
+                        step,
+                        retry = "immediate",
+                        "claimCredit transaction failed, will retry"
                     );
                 }
                 Ok(None)
