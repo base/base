@@ -29,11 +29,7 @@ pub trait OptimismRollupProviderExt<N: Network>: Provider<N> {
         &self,
         block: BlockNumberOrTag,
     ) -> impl Future<Output = TransportResult<OutputAtBlock>> + Send + '_ {
-        async move {
-            self.client()
-                .request("optimism_outputAtBlock", (block,))
-                .await
-        }
+        async move { self.client().request("optimism_outputAtBlock", (block,)).await }
     }
 
     /// Calls `optimism_rollupConfig`.
@@ -41,11 +37,7 @@ pub trait OptimismRollupProviderExt<N: Network>: Provider<N> {
     /// Returns the raw JSON value so callers can perform their own typed deserialization
     /// (the on-the-wire schema for `RollupConfig` varies across node implementations).
     fn optimism_rollup_config(&self) -> impl Future<Output = TransportResult<Value>> + Send + '_ {
-        async move {
-            self.client()
-                .request_noparams("optimism_rollupConfig")
-                .await
-        }
+        async move { self.client().request_noparams("optimism_rollupConfig").await }
     }
 
     /// Calls `optimism_syncStatus`.
@@ -77,11 +69,7 @@ pub trait DebugProviderExt<N: Network>: Provider<N> {
         &self,
         block_number: u64,
     ) -> impl Future<Output = TransportResult<Bytes>> + Send + '_ {
-        async move {
-            self.client()
-                .request("debug_getRawBlock", (U64::from(block_number),))
-                .await
-        }
+        async move { self.client().request("debug_getRawBlock", (U64::from(block_number),)).await }
     }
 }
 
