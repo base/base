@@ -918,10 +918,7 @@ impl<C: Clock> BondManager<C> {
             game_address,
             submitter,
             "unlock",
-            BondPhase::AwaitingDelay {
-                unlocked_at: self.clock.now(),
-                unlocked_at_unix_secs: Some(self.clock.wall_clock_unix_secs()),
-            },
+            BondPhase::AwaitingDelay { unlocked_at: self.clock.now(), unlocked_at_unix_secs: None },
             None,
         )
         .await
@@ -2059,6 +2056,52 @@ mod tests {
             tracked.phase,
         );
         assert!(submitter.recorded_calls().is_empty(), "no transaction should have been submitted");
+    }
+
+    #[tokio::test]
+    async fn try_unlock_uses_monotonic_timestamp_for_fresh_unlock() {
+        let claim_addr = Address::repeat_byte(0xCC);
+        let game = addr(0);
+        let tx_hash = B256::repeat_byte(0xDD);
+
+        let mut state = mock_state(1, Address::ZERO, 100);
+        state.bond_recipient = claim_addr;
+        state.resolved_at = 1_999_999_900;
+        state.bond_unlocked = false;
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(game, state);
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+
+        let clock = fixed_clock(500);
+        let mut mgr = BondManager::new(
+            vec![claim_addr],
+            test_l1_rpc_url(),
+            empty_factory(),
+            1000,
+            TEST_DISCOVERY_INTERVAL,
+            clock,
+        );
+        mgr.set_weth_delay(Duration::from_secs(60));
+        mgr.track_game(game, claim_addr);
+
+        let submitter = MockBondTransactionSubmitter::success(tx_hash);
+        let result = mgr.try_unlock(game, &*verifier, &submitter).await.unwrap();
+        assert!(result.is_none(), "try_unlock should not remove the game");
+
+        let tracked = mgr.tracked.get(&game).expect("game should still be tracked");
+        assert!(
+            matches!(
+                tracked.phase,
+                BondPhase::AwaitingDelay {
+                    unlocked_at,
+                    unlocked_at_unix_secs: None
+                } if unlocked_at == Duration::from_secs(500)
+            ),
+            "expected AwaitingDelay with monotonic timestamp only, got {:?}",
+            tracked.phase,
+        );
+        assert_eq!(submitter.recorded_calls().len(), 1);
     }
 
     #[tokio::test]
