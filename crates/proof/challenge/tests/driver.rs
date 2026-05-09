@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -81,11 +81,8 @@ fn test_driver_with_tee(
     let validator = OutputValidator::new(l2_provider);
     let submitter = ChallengeSubmitter::new(tx_manager);
 
-    let config = DriverConfig {
-        poll_interval: Duration::from_millis(10),
-        cancel: CancellationToken::new(),
-        ready: Arc::new(AtomicBool::new(false)),
-    };
+    let config =
+        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
 
     Driver::new(
         config,
@@ -376,11 +373,8 @@ async fn test_step_scan_error_propagated() {
     let validator = OutputValidator::new(l2);
     let submitter = ChallengeSubmitter::new(default_tx_manager());
 
-    let config = DriverConfig {
-        poll_interval: Duration::from_millis(10),
-        cancel: CancellationToken::new(),
-        ready: Arc::new(AtomicBool::new(false)),
-    };
+    let config =
+        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
 
     let mut driver = Driver::new(
         config,

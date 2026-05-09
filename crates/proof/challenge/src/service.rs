@@ -195,11 +195,8 @@ impl ChallengerService {
         };
 
         // ── 9. Run driver ────────────────────────────────────────────────────
-        let driver_config = DriverConfig {
-            poll_interval: config.poll_interval,
-            cancel: cancel.child_token(),
-            ready: Arc::clone(&ready),
-        };
+        let driver_config =
+            DriverConfig { poll_interval: config.poll_interval, cancel: cancel.child_token() };
         let driver = Driver::new(
             driver_config,
             DriverComponents {
@@ -212,6 +209,11 @@ impl ChallengerService {
                 bond_manager,
             },
         );
+
+        // Signal readiness immediately after initialization — the driver loop
+        // itself is purely operational work that should not gate readiness probes.
+        ready.store(true, Ordering::SeqCst);
+        info!("service is ready");
 
         // Drop guard ensures child tasks are cancelled even if the driver panics.
         let cancel_guard = cancel.clone().drop_guard();
