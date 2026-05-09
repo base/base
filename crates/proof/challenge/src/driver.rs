@@ -18,7 +18,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_contracts::AggregateVerifierClient;
+use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::{
     ProofEncoder, ProofRequest as TeeProofRequest, ProofResult, ProverClient,
 };
@@ -694,8 +694,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             self.verifier_client.zk_prover(game_address),
         )?;
 
-        if status != GameScanner::STATUS_IN_PROGRESS {
-            debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
+        if status != GameStatus::InProgress {
+            debug!(game = %game_address, status = ?status, "game no longer in progress, dropping pending proof");
             self.pending_proofs.remove(&game_address);
             return Ok(());
         }

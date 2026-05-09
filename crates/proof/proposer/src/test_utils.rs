@@ -12,6 +12,7 @@ use base_common_genesis::RollupConfig;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
+    GameStatus,
 };
 use base_proof_primitives::{ProofResult, Proposal, ProverClient};
 use base_proof_rpc::{
@@ -217,6 +218,8 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 pub struct MockAggregateVerifier {
     /// Map of game address to game info returned by `game_info()`.
     pub game_info_map: HashMap<Address, GameInfo>,
+    /// Map of game address to status returned by `status()`.
+    pub status_map: HashMap<Address, GameStatus>,
     /// Addresses for which `game_info()` returns an error.
     pub failing_addresses: HashSet<Address>,
     /// Map of game address to intermediate output roots.
@@ -244,8 +247,8 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             parent_address: Address::ZERO,
         }))
     }
-    async fn status(&self, _: Address) -> Result<u8, ContractError> {
-        Ok(0)
+    async fn status(&self, addr: Address) -> Result<GameStatus, ContractError> {
+        Ok(self.status_map.get(&addr).copied().unwrap_or(GameStatus::InProgress))
     }
     async fn zk_prover(&self, _: Address) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
@@ -321,6 +324,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     async fn is_game_finalized(&self, _: Address, _: Address) -> Result<bool, ContractError> {
         Ok(true)
     }
+
     async fn anchor_preflight(
         &self,
         _: Address,

@@ -19,7 +19,7 @@ use base_challenger::{
         mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
-use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex};
+use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex, GameStatus};
 use base_proof_primitives::{ProofResult, Proposal, ProverClient};
 use base_protocol::OutputRoot;
 use base_runtime::TokioRuntime;
@@ -283,7 +283,10 @@ async fn test_step_invalid_game_proof_succeeded() {
     );
 
     // Simulate the on-chain effect of a successful challenge: game is resolved.
-    verifier.update_game(addr(0), MockGameState { status: 1, ..game_state(20) });
+    verifier.update_game(
+        addr(0),
+        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
+    );
 
     // Step 2: proof polled → Succeeded → nullification submitted → entry removed.
     driver.step().await.unwrap();
@@ -417,7 +420,10 @@ async fn test_step_pending_proof_skips_prove_block() {
     zk.state.lock().unwrap().proof_status = ProofJobStatus::Succeeded as i32;
 
     // Simulate the on-chain effect: game is resolved after challenge tx.
-    verifier.update_game(addr(0), MockGameState { status: 1, ..game_state(20) });
+    verifier.update_game(
+        addr(0),
+        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
+    );
 
     // Step 2: same game re-discovered → polls existing session, proof succeeds,
     // challenge tx submitted, session removed from pending_proofs.
@@ -457,7 +463,10 @@ async fn test_step_nullification_failure_preserves_proof() {
     assert!(entry.is_ready(), "phase should be ReadyToSubmit after tx failure");
 
     // Simulate the on-chain effect of a successful challenge: game is resolved.
-    verifier.update_game(addr(0), MockGameState { status: 1, ..game_state(20) });
+    verifier.update_game(
+        addr(0),
+        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
+    );
 
     // Step 3: poll_pending_proofs re-submits the challenge tx, now it succeeds.
     driver.step().await.unwrap();
@@ -469,9 +478,10 @@ async fn test_step_nullification_failure_preserves_proof() {
 
 #[tokio::test]
 async fn test_poll_or_submit_drops_resolved_game() {
-    // Game has resolved (status=1 CHALLENGER_WINS) — driver should drop the
+    // Game has resolved (ChallengerWins) — driver should drop the
     // pending proof without attempting submission.
-    let mut driver = driver_with_ready_proof(mock_state(1, Address::ZERO, 20));
+    let mut driver =
+        driver_with_ready_proof(mock_state(GameStatus::ChallengerWins, Address::ZERO, 20));
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -483,7 +493,8 @@ async fn test_poll_or_submit_drops_resolved_game() {
 async fn test_poll_or_submit_drops_already_challenged_game() {
     // Game is still IN_PROGRESS but already challenged (zk_prover != ZERO)
     // — driver should drop the pending proof.
-    let mut driver = driver_with_ready_proof(mock_state(0, ZK_PROVER_ADDR, 20));
+    let mut driver =
+        driver_with_ready_proof(mock_state(GameStatus::InProgress, ZK_PROVER_ADDR, 20));
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -495,8 +506,12 @@ async fn test_poll_or_submit_drops_already_challenged_game() {
 async fn test_poll_or_submit_drops_nullified_game() {
     // Game is still IN_PROGRESS but both provers are ZERO (nullified)
     // — driver should drop the pending proof without attempting submission.
-    let mut driver =
-        driver_with_ready_proof(mock_state_with_tee(0, Address::ZERO, Address::ZERO, 20));
+    let mut driver = driver_with_ready_proof(mock_state_with_tee(
+        GameStatus::InProgress,
+        Address::ZERO,
+        Address::ZERO,
+        20,
+    ));
     driver.step().await.unwrap();
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
@@ -556,7 +571,10 @@ async fn test_step_proof_retry_succeeds() {
     zk.state.lock().unwrap().proof_status = ProofJobStatus::Succeeded as i32;
 
     // Simulate the on-chain effect of a successful challenge: game is resolved.
-    verifier.update_game(addr(0), MockGameState { status: 1, ..game_state(20) });
+    verifier.update_game(
+        addr(0),
+        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
+    );
 
     // Step 3: proof succeeds, challenge tx submitted, entry removed.
     driver.step().await.unwrap();
@@ -592,7 +610,10 @@ async fn test_step_proof_exceeds_max_retries() {
 
     // Simulate the on-chain effect: mark the game as resolved so the
     // stateless scanner does not re-discover it after the entry is dropped.
-    verifier.update_game(addr(0), MockGameState { status: 1, ..game_state(20) });
+    verifier.update_game(
+        addr(0),
+        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
+    );
 
     // One more step: poll returns Failed → retry_count becomes max_retries + 1,
     // handle_proof_retry sees retry_count > MAX_PROOF_RETRIES and drops the entry.
@@ -676,7 +697,10 @@ async fn test_step_invalid_game_tee_fails_zk_succeeds() {
     );
 
     // Simulate the on-chain effect of a successful challenge: game is resolved.
-    verifier.update_game(addr(0), MockGameState { status: 1, ..game_state(20) });
+    verifier.update_game(
+        addr(0),
+        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
+    );
 
     // Step 2: proof polled → Succeeded → challenge tx submitted → entry removed.
     driver.step().await.unwrap();
@@ -805,7 +829,10 @@ async fn test_step_tee_submission_failure_falls_back_to_zk() {
     // Simulate the on-chain effect of a successful challenge: game is
     // resolved. This prevents the scanner from re-discovering the game
     // after the pending proof is submitted in step 2.
-    verifier.update_game(addr(0), MockGameState { status: 1, ..game_state(20) });
+    verifier.update_game(
+        addr(0),
+        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
+    );
 
     // Step 2: ZK proof polled → Succeeded → entry cleaned up.
     driver.step().await.unwrap();
@@ -844,7 +871,8 @@ async fn test_poll_or_submit_nullify_intent_not_dropped_when_zk_prover_set() {
     // requires zkProver == ZERO).
     let factory = single_game_factory();
     let l2 = default_l2();
-    let mut game_state = mock_state_with_tee(0, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20);
+    let mut game_state =
+        mock_state_with_tee(GameStatus::InProgress, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20);
     game_state.countered_index = 2; // challenged at 0-based index 1
     // Provide intermediate roots so the scanner's FraudulentZkChallenge
     // processing (which runs after the pending proof is submitted) does not
@@ -869,8 +897,12 @@ async fn test_poll_or_submit_challenge_intent_dropped_when_zk_prover_set() {
     // when zkProver is non-zero (game already challenged).
     let factory = single_game_factory();
     let l2 = default_l2();
-    let verifier =
-        single_game_verifier(mock_state_with_tee(0, ZK_PROVER_ADDR, DEFAULT_TEE_PROVER, 20));
+    let verifier = single_game_verifier(mock_state_with_tee(
+        GameStatus::InProgress,
+        ZK_PROVER_ADDR,
+        DEFAULT_TEE_PROVER,
+        20,
+    ));
 
     let tx = MockTxManager::new(Err(TxManagerError::NonceTooLow)); // Should never be called
     let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), tx);
@@ -1164,7 +1196,7 @@ async fn test_step_dual_proof_tee_fails_falls_back_to_zk_nullify() {
 // ──────────────────────────────────────────────────────────────────────────
 
 const fn bond_test_state(claim_addr: Address) -> MockGameState {
-    let mut state = mock_state(1, Address::ZERO, 100);
+    let mut state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
     state.bond_recipient = claim_addr;
     state
 }
@@ -1192,7 +1224,7 @@ async fn test_bond_manager_full_lifecycle() {
     // AwaitingDelay → NeedsWithdraw → Completed.
     //
     // The mock verifier uses a static game state, so we set
-    // status=1 (CHALLENGER_WINS) to represent a game that has already been
+    // ChallengerWins to represent a game that has already been
     // resolved on-chain. The manager detects this and advances directly
     // to NeedsUnlock without submitting a resolve transaction.
     let claim_addr = ZK_PROVER_ADDR;
@@ -1210,7 +1242,7 @@ async fn test_bond_manager_full_lifecycle() {
     assert!(mgr.track_game(game_addr, claim_addr));
     assert_eq!(mgr.tracked_count(), 1);
 
-    // Poll 1: NeedsResolve → status=1 (already resolved, CHALLENGER_WINS) → NeedsUnlock.
+    // Poll 1: NeedsResolve → already resolved (ChallengerWins) → NeedsUnlock.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after detecting resolution");
 
@@ -1316,7 +1348,7 @@ async fn test_bond_manager_tx_failure_retries() {
     let mut mgr = default_bond_manager(claim_addr);
     mgr.track_game(game_addr, claim_addr);
 
-    // Poll 1: NeedsResolve → status=1 (already resolved, CHALLENGER_WINS) → NeedsUnlock.
+    // Poll 1: NeedsResolve → already resolved (ChallengerWins) → NeedsUnlock.
     mgr.poll(&*verifier, &submitter).await;
     assert_eq!(mgr.tracked_count(), 1, "game should still be tracked after detecting resolution");
 
@@ -1349,7 +1381,7 @@ async fn test_bond_manager_keeps_defender_wins_when_recipient_is_claimable() {
     let game_addr = addr(0);
 
     let mut state = bond_test_state(claim_addr);
-    state.status = 2; // DEFENDER_WINS
+    state.status = GameStatus::DefenderWins;
     let verifier = single_game_verifier(state);
 
     // One response for the anchor state update that is attempted after
@@ -1377,7 +1409,7 @@ async fn test_bond_manager_removes_game_when_recipient_not_claimable() {
     let game_addr = addr(0);
 
     let mut state = bond_test_state(claim_addr);
-    state.status = 2; // DEFENDER_WINS
+    state.status = GameStatus::DefenderWins;
     state.bond_recipient = other_addr; // bond goes to someone else
     let verifier = single_game_verifier(state);
 
