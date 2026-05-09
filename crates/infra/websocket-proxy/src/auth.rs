@@ -38,7 +38,7 @@ impl std::fmt::Display for AuthenticationParseError {
             DuplicateApplicationArgument(app) => {
                 write!(f, "Duplicate application argument: [{app}]")
             }
-            DuplicateAPIKeyArgument(app) => write!(f, "Duplicate API key: [{app}]"),
+            DuplicateAPIKeyArgument(key) => write!(f, "Duplicate API key: [{key}]"),
         }
     }
 }
@@ -77,7 +77,7 @@ impl TryFrom<Vec<String>> for Authentication {
             }
 
             if key_to_application.contains_key(key) {
-                return Err(DuplicateAPIKeyArgument(app.to_string()));
+                return Err(DuplicateAPIKeyArgument(key.to_string()));
             }
 
             applications.insert(app.to_string());
@@ -173,6 +173,6 @@ mod tests {
 
         let auth = Authentication::try_from(vec!["app1:key1".to_string(), "app2:key1".to_string()]);
         assert!(auth.is_err());
-        assert_eq!(auth.unwrap_err(), DuplicateAPIKeyArgument("app2".into()));
+        assert_eq!(auth.unwrap_err(), DuplicateAPIKeyArgument("key1".into()));
     }
 }
