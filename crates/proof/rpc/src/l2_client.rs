@@ -195,12 +195,12 @@ impl L2Provider for L2Client {
         let backoff = self.retry_config.to_backoff_builder();
 
         (|| async { self.provider.debug_chain_config().await.map_err(RpcError::from) })
-        .retry(backoff)
-        .when(|e| e.is_retryable())
-        .notify(|err, dur| {
-            tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::chain_config");
-        })
-        .await
+            .retry(backoff)
+            .when(|e| e.is_retryable())
+            .notify(|err, dur| {
+                tracing::debug!(error = %err, delay = ?dur, "Retrying L2Client::chain_config");
+            })
+            .await
     }
 
     async fn get_proof(
