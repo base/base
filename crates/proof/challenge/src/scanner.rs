@@ -43,7 +43,7 @@ use base_proof_contracts::{
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::ChallengerMetrics;
 
@@ -178,6 +178,8 @@ pub struct GameScanner {
     /// previous tick. Persists discovery so that games which age out of
     /// the lookback tail are still re-evaluated until they resolve.
     tracked_indices: Mutex<BTreeSet<u64>>,
+    /// Consecutive scan failure count per tracked factory index.
+    scan_error_counts: Mutex<HashMap<u64, u64>>,
 }
 
 impl std::fmt::Debug for GameScanner {
@@ -193,6 +195,9 @@ impl GameScanner {
     /// Maximum number of games to evaluate concurrently during a scan.
     pub const SCAN_CONCURRENCY: usize = 32;
 
+    /// Consecutive per-index scan failures before logs escalate to `error!`.
+    pub const PERSISTENT_SCAN_ERROR_LOG_THRESHOLD: u64 = 3;
+
     /// Creates a new game scanner.
     pub fn new(
         factory_client: Arc<dyn DisputeGameFactoryClient>,
@@ -205,6 +210,7 @@ impl GameScanner {
             config,
             interval_cache: Mutex::new(HashMap::new()),
             tracked_indices: Mutex::new(BTreeSet::new()),
+            scan_error_counts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -226,8 +232,9 @@ impl GameScanner {
     /// they are no longer `IN_PROGRESS`. Individual game query failures are
     /// logged and skipped so that a transient RPC error on one game does not
     /// abort the entire scan; failing indices are conservatively retained in
-    /// the tracking set so they are retried on subsequent ticks. After
-    /// evaluation, the `base_challenger_games_scanned_total` counter,
+    /// the tracking set so they are retried on subsequent ticks, with logs
+    /// escalated after repeated failures. After evaluation, the
+    /// `base_challenger_games_scanned_total` counter,
     /// `base_challenger_scan_tracked_in_progress` gauge, and
     /// `base_challenger_scan_head` gauge are updated.
     pub async fn scan(&self) -> Result<Vec<CandidateGame>> {
@@ -238,6 +245,7 @@ impl GameScanner {
             // No games on chain means any tracking we may have accumulated
             // is stale (e.g. the factory address was changed at runtime).
             self.tracked_indices.lock().expect("tracked_indices lock poisoned").clear();
+            self.scan_error_counts.lock().expect("scan_error_counts lock poisoned").clear();
             ChallengerMetrics::scan_tracked_in_progress().set(0.0);
             return Ok(vec![]);
         }
@@ -273,18 +281,52 @@ impl GameScanner {
         for (i, result) in results {
             match result {
                 Ok(GameEvaluation::Actionable(candidate)) => {
+                    self.scan_error_counts
+                        .lock()
+                        .expect("scan_error_counts lock poisoned")
+                        .remove(&i);
                     next_tracked.insert(i);
                     candidates.push(candidate);
                 }
                 Ok(GameEvaluation::InProgressNotActionable) => {
+                    self.scan_error_counts
+                        .lock()
+                        .expect("scan_error_counts lock poisoned")
+                        .remove(&i);
                     next_tracked.insert(i);
                 }
                 Ok(GameEvaluation::Terminal) => {
+                    self.scan_error_counts
+                        .lock()
+                        .expect("scan_error_counts lock poisoned")
+                        .remove(&i);
                     // Game has resolved or been fully nullified; never needs
                     // to be revisited.
                 }
                 Err(e) => {
-                    warn!(error = %e, index = i, "failed to query game, skipping");
+                    let consecutive_failures = {
+                        let mut scan_error_counts =
+                            self.scan_error_counts.lock().expect("scan_error_counts lock poisoned");
+                        let count = scan_error_counts.entry(i).or_insert(0);
+                        *count += 1;
+                        *count
+                    };
+
+                    if consecutive_failures >= Self::PERSISTENT_SCAN_ERROR_LOG_THRESHOLD {
+                        error!(
+                            error = %e,
+                            index = i,
+                            consecutive_failures = consecutive_failures,
+                            "persistent game query failure"
+                        );
+                    } else {
+                        warn!(
+                            error = %e,
+                            index = i,
+                            consecutive_failures = consecutive_failures,
+                            "failed to query game, skipping"
+                        );
+                    }
                     // Conservatively keep the index in the tracking set so it
                     // is retried on the next tick rather than silently lost.
                     next_tracked.insert(i);
@@ -295,6 +337,10 @@ impl GameScanner {
         candidates.sort_unstable_by_key(|c| c.index);
 
         let tracked_len = next_tracked.len();
+        self.scan_error_counts
+            .lock()
+            .expect("scan_error_counts lock poisoned")
+            .retain(|index, _| next_tracked.contains(index));
         *self.tracked_indices.lock().expect("tracked_indices lock poisoned") = next_tracked;
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
@@ -380,8 +426,8 @@ impl GameScanner {
     /// or returns `None` if the game is in an unexpected state and should
     /// be left as `InProgressNotActionable`.
     ///
-    /// Callers must ensure that at least one of `tee_prover` or `zk_prover`
-    /// is non-zero; the fully-nullified case is handled by the caller.
+    /// Callers should filter fully-nullified games before classification so
+    /// they can be treated as terminal instead of unexpectedly in-progress.
     fn classify(
         index: u64,
         tee_prover: Address,
@@ -435,9 +481,10 @@ impl GameScanner {
             }
 
             // Caller is responsible for filtering out fully-nullified games.
-            (false, false, _) => unreachable!(
-                "fully-nullified games must be filtered before classify (index = {index})"
-            ),
+            (false, false, _) => {
+                warn!(index = index, "fully-nullified game reached classifier");
+                None
+            }
         }
     }
 
