@@ -227,7 +227,8 @@ impl GameScanner {
     /// logged and skipped so that a transient RPC error on one game does not
     /// abort the entire scan; failing indices are conservatively retained in
     /// the tracking set so they are retried on subsequent ticks. After
-    /// evaluation, the `base_challenger_games_scanned_total` counter and
+    /// evaluation, the `base_challenger_games_scanned_total` counter,
+    /// `base_challenger_scan_tracked_in_progress` gauge, and
     /// `base_challenger_scan_head` gauge are updated.
     pub async fn scan(&self) -> Result<Vec<CandidateGame>> {
         let game_count = self.factory_client.game_count().await?;
@@ -237,6 +238,7 @@ impl GameScanner {
             // No games on chain means any tracking we may have accumulated
             // is stale (e.g. the factory address was changed at runtime).
             self.tracked_indices.lock().expect("tracked_indices lock poisoned").clear();
+            ChallengerMetrics::scan_tracked_in_progress().set(0.0);
             return Ok(vec![]);
         }
 
@@ -296,6 +298,7 @@ impl GameScanner {
         *self.tracked_indices.lock().expect("tracked_indices lock poisoned") = next_tracked;
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
+        ChallengerMetrics::scan_tracked_in_progress().set(tracked_len as f64);
         ChallengerMetrics::scan_head().set(end as f64);
 
         info!(
