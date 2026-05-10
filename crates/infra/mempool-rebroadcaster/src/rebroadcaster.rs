@@ -112,12 +112,15 @@ impl Rebroadcaster {
                 .await;
 
             if let Err(e) = result {
-                let err_msg = e.as_error_resp().unwrap().message.to_string();
+                let err_msg = e
+                    .as_error_resp()
+                    .map(|r| r.message.to_string())
+                    .unwrap_or_else(|| e.to_string());
                 if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
                     output.unexpected_failed_geth_to_reth += 1;
                     error!(
                         tx = ?hash,
-                        error = ?err_msg,
+                        error = %err_msg,
                         from = sender,
                         "error sending txn from geth to reth"
                     );
@@ -138,12 +141,15 @@ impl Rebroadcaster {
                 .await;
 
             if let Err(e) = result {
-                let err_msg = e.as_error_resp().unwrap().message.to_string();
+                let err_msg = e
+                    .as_error_resp()
+                    .map(|r| r.message.to_string())
+                    .unwrap_or_else(|| e.to_string());
                 if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
                     output.unexpected_failed_reth_to_geth += 1;
                     error!(
                         tx = ?hash,
-                        error = ?err_msg,
+                        error = %err_msg,
                         from = sender,
                         "error sending txn from reth to geth"
                     );
