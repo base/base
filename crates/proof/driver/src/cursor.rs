@@ -119,3 +119,225 @@ impl PipelineCursor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{Header, Sealed};
+    use alloy_primitives::B256;
+    use base_protocol::{BlockInfo, L2BlockInfo};
+
+    use super::*;
+
+    /// Constructs a [`BlockInfo`] where each field is derived from `number` for easy assertions.
+    fn make_origin(number: u64) -> BlockInfo {
+        BlockInfo {
+            hash: B256::repeat_byte(number as u8),
+            number,
+            parent_hash: B256::ZERO,
+            timestamp: number * 2,
+        }
+    }
+
+    /// Constructs a [`TipCursor`] whose L2 safe-head `block_info.number` equals `number`.
+    fn make_tip(number: u64) -> TipCursor {
+        TipCursor::new(
+            L2BlockInfo {
+                block_info: BlockInfo {
+                    hash: B256::repeat_byte(number as u8),
+                    number,
+                    parent_hash: B256::ZERO,
+                    timestamp: number * 2,
+                },
+                ..Default::default()
+            },
+            Sealed::new_unchecked(Header::default(), B256::repeat_byte(number as u8)),
+            B256::repeat_byte(number as u8),
+        )
+    }
+
+    // ── PipelineCursor::new ───────────────────────────────────────────────────
+
+    #[test]
+    fn new_sets_capacity_to_channel_timeout_plus_five() {
+        let cursor = PipelineCursor::new(10, make_origin(0));
+        assert_eq!(cursor.capacity, 15);
+
+        let cursor2 = PipelineCursor::new(0, make_origin(0));
+        assert_eq!(cursor2.capacity, 5);
+    }
+
+    #[test]
+    fn new_tracks_initial_origin() {
+        let origin = make_origin(42);
+        let cursor = PipelineCursor::new(10, origin);
+
+        assert_eq!(cursor.origin(), origin);
+        assert_eq!(cursor.origins.front(), Some(&42));
+        assert_eq!(cursor.origin_infos.get(&42), Some(&origin));
+    }
+
+    #[test]
+    fn new_starts_with_empty_tips() {
+        let cursor = PipelineCursor::new(10, make_origin(0));
+        assert!(cursor.tips.is_empty());
+    }
+
+    // ── PipelineCursor::advance ───────────────────────────────────────────────
+
+    #[test]
+    fn advance_updates_current_origin_and_inserts_tip() {
+        let mut cursor = PipelineCursor::new(5, make_origin(0));
+        let origin1 = make_origin(1);
+
+        cursor.advance(origin1, make_tip(1));
+
+        assert_eq!(cursor.origin(), origin1);
+        assert!(cursor.tips.contains_key(&1));
+        assert_eq!(cursor.tips.len(), 1);
+        assert_eq!(cursor.origin_infos.get(&1), Some(&origin1));
+    }
+
+    #[test]
+    fn advance_no_eviction_while_below_capacity() {
+        let channel_timeout: u64 = 5;
+        let capacity = channel_timeout as usize + 5; // 10
+        let mut cursor = PipelineCursor::new(channel_timeout, make_origin(0));
+
+        // Advance capacity - 1 times: tips should grow without any eviction.
+        for i in 1..(capacity as u64) {
+            cursor.advance(make_origin(i), make_tip(i));
+        }
+        assert_eq!(cursor.tips.len(), capacity - 1);
+        assert!(cursor.tips.contains_key(&1));
+    }
+
+    #[test]
+    fn advance_no_eviction_at_exactly_capacity() {
+        let channel_timeout: u64 = 5;
+        let capacity = channel_timeout as usize + 5; // 10
+        let mut cursor = PipelineCursor::new(channel_timeout, make_origin(0));
+
+        for i in 1..=capacity as u64 {
+            cursor.advance(make_origin(i), make_tip(i));
+        }
+        assert_eq!(cursor.tips.len(), capacity);
+        // All tips 1..=capacity still present.
+        assert!(cursor.tips.contains_key(&1));
+        assert!(cursor.tips.contains_key(&(capacity as u64)));
+    }
+
+    #[test]
+    fn advance_evicts_oldest_entries_past_capacity() {
+        let channel_timeout: u64 = 5;
+        let capacity = channel_timeout as usize + 5; // 10
+        let mut cursor = PipelineCursor::new(channel_timeout, make_origin(0));
+
+        // Run well past capacity so that steady-state eviction has been in effect
+        // for several rounds (the first extra advance "consumes" the initial-origin
+        // slot in `origins`, after which every subsequent advance evicts one tip).
+        let total: u64 = (capacity as u64) * 2;
+        for i in 1..=total {
+            cursor.advance(make_origin(i), make_tip(i));
+        }
+
+        // Early tips must have been evicted.
+        assert!(!cursor.tips.contains_key(&1));
+        assert!(!cursor.tips.contains_key(&5));
+        // The most-recent tips must still be present.
+        assert!(cursor.tips.contains_key(&total));
+        assert!(cursor.tips.contains_key(&(total - 1)));
+        // The cursor must not grow without bound.
+        assert!(cursor.tips.len() <= capacity + 1);
+    }
+
+    // ── PipelineCursor::tip / accessor delegation ─────────────────────────────
+
+    #[test]
+    fn tip_returns_most_recently_inserted() {
+        let mut cursor = PipelineCursor::new(5, make_origin(0));
+
+        cursor.advance(make_origin(1), make_tip(1));
+        assert_eq!(cursor.tip().l2_safe_head.block_info.number, 1);
+
+        cursor.advance(make_origin(2), make_tip(2));
+        assert_eq!(cursor.tip().l2_safe_head.block_info.number, 2);
+
+        cursor.advance(make_origin(3), make_tip(3));
+        assert_eq!(cursor.tip().l2_safe_head.block_info.number, 3);
+    }
+
+    #[test]
+    fn accessor_methods_delegate_to_current_tip() {
+        let mut cursor = PipelineCursor::new(5, make_origin(0));
+        let output_root = B256::repeat_byte(0xFF);
+        let tip = TipCursor::new(
+            L2BlockInfo {
+                block_info: BlockInfo {
+                    hash: B256::repeat_byte(0x01),
+                    number: 1,
+                    parent_hash: B256::ZERO,
+                    timestamp: 2,
+                },
+                ..Default::default()
+            },
+            Sealed::new_unchecked(Header::default(), B256::repeat_byte(0x01)),
+            output_root,
+        );
+        cursor.advance(make_origin(1), tip);
+
+        assert_eq!(cursor.l2_safe_head().block_info.number, 1);
+        assert_eq!(cursor.l2_safe_head_header().hash(), &B256::repeat_byte(0x01));
+        assert_eq!(*cursor.l2_safe_head_output_root(), output_root);
+    }
+
+    // ── PipelineCursor::reset ─────────────────────────────────────────────────
+
+    #[test]
+    fn reset_exact_match_returns_tip_at_channel_start() {
+        let channel_timeout: u64 = 5;
+        let mut cursor = PipelineCursor::new(channel_timeout, make_origin(0));
+
+        for i in 1..=8u64 {
+            cursor.advance(make_origin(i), make_tip(i));
+        }
+
+        // fork_block = 7  →  channel_start = 7 - 5 = 2  →  exact hit.
+        let (tip, origin) = cursor.reset(7);
+        assert_eq!(tip.l2_safe_head.block_info.number, 2);
+        assert_eq!(origin.number, 2);
+        assert_eq!(origin, make_origin(2));
+    }
+
+    #[test]
+    fn reset_fallback_returns_nearest_earlier_tip_when_channel_start_missing() {
+        let channel_timeout: u64 = 5;
+        let mut cursor = PipelineCursor::new(channel_timeout, make_origin(0));
+
+        // Only advance to odd-numbered blocks: tips = {1, 3, 5, 7, 9}.
+        for i in [1u64, 3, 5, 7, 9] {
+            cursor.advance(make_origin(i), make_tip(i));
+        }
+
+        // fork_block = 9  →  channel_start = 4.
+        // Block 4 is absent; nearest earlier entry in tips is block 3.
+        let (tip, origin) = cursor.reset(9);
+        assert_eq!(tip.l2_safe_head.block_info.number, 3);
+        assert_eq!(origin.number, 3);
+        assert_eq!(origin, make_origin(3));
+    }
+
+    #[test]
+    fn reset_exact_match_takes_priority_over_fallback() {
+        let channel_timeout: u64 = 5;
+        let mut cursor = PipelineCursor::new(channel_timeout, make_origin(0));
+
+        for i in [1u64, 3, 5, 7, 9] {
+            cursor.advance(make_origin(i), make_tip(i));
+        }
+
+        // fork_block = 10  →  channel_start = 5.  Block 5 exists → exact match.
+        let (tip, origin) = cursor.reset(10);
+        assert_eq!(tip.l2_safe_head.block_info.number, 5);
+        assert_eq!(origin.number, 5);
+    }
+}

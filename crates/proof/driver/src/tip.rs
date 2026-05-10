@@ -47,3 +47,52 @@ impl TipCursor {
         &self.l2_safe_head_output_root
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{Header, Sealed};
+    use alloy_primitives::B256;
+    use base_protocol::{BlockInfo, L2BlockInfo};
+
+    use super::*;
+
+    fn make_l2_block_info(number: u64) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo {
+                hash: B256::repeat_byte(number as u8),
+                number,
+                parent_hash: B256::ZERO,
+                timestamp: number * 2,
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn new_stores_all_fields() {
+        let l2_head = make_l2_block_info(7);
+        let header_hash = B256::repeat_byte(0xAA);
+        let header = Sealed::new_unchecked(Header::default(), header_hash);
+        let output_root = B256::repeat_byte(0xBB);
+
+        let cursor = TipCursor::new(l2_head, header, output_root);
+
+        assert_eq!(cursor.l2_safe_head, l2_head);
+        assert_eq!(cursor.l2_safe_head_output_root, output_root);
+        assert_eq!(*cursor.l2_safe_head_header.hash(), header_hash);
+    }
+
+    #[test]
+    fn accessors_return_references_to_fields() {
+        let l2_head = make_l2_block_info(3);
+        let header_hash = B256::repeat_byte(0xCC);
+        let header = Sealed::new_unchecked(Header::default(), header_hash);
+        let output_root = B256::repeat_byte(0xDD);
+
+        let cursor = TipCursor::new(l2_head, header, output_root);
+
+        assert_eq!(*cursor.l2_safe_head(), l2_head);
+        assert_eq!(cursor.l2_safe_head_header().hash(), &header_hash);
+        assert_eq!(*cursor.l2_safe_head_output_root(), output_root);
+    }
+}
