@@ -2,7 +2,7 @@
 FROM rust:1.85 AS builder
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libclang-dev \
     pkg-config \
@@ -51,7 +51,7 @@ FROM rust:1.85-slim
 WORKDIR /app
 
 # Install required runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     clang \
     pkg-config \
