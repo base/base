@@ -427,6 +427,63 @@ pub const fn mock_state_with_tee(
     }
 }
 
+/// Mock dispute game factory that supports interior-mutability extension.
+///
+/// Use this when a test needs to simulate new games being added to the
+/// factory between scanner ticks (e.g. exercising the persistent
+/// in-progress tracking set).
+#[derive(Debug)]
+pub struct MutableMockDisputeGameFactory {
+    /// Ordered list of games in the factory, behind a `Mutex` so tests can
+    /// extend it after the scanner has been constructed.
+    pub games: Mutex<Vec<GameAtIndex>>,
+}
+
+impl MutableMockDisputeGameFactory {
+    /// Creates a new mock from an initial set of games.
+    pub const fn new(games: Vec<GameAtIndex>) -> Self {
+        Self { games: Mutex::new(games) }
+    }
+
+    /// Appends a single game to the factory.
+    pub fn push(&self, game: GameAtIndex) {
+        self.games.lock().unwrap().push(game);
+    }
+}
+
+#[async_trait]
+impl DisputeGameFactoryClient for MutableMockDisputeGameFactory {
+    async fn game_count(&self) -> Result<u64, ContractError> {
+        Ok(self.games.lock().unwrap().len() as u64)
+    }
+
+    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
+        self.games
+            .lock()
+            .unwrap()
+            .get(index as usize)
+            .copied()
+            .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
+    }
+
+    async fn init_bonds(&self, _game_type: u32) -> Result<U256, ContractError> {
+        Ok(U256::ZERO)
+    }
+
+    async fn game_impls(&self, _game_type: u32) -> Result<Address, ContractError> {
+        Ok(Address::repeat_byte(0x11))
+    }
+
+    async fn games(
+        &self,
+        _game_type: u32,
+        _root_claim: B256,
+        _extra_data: Bytes,
+    ) -> Result<Address, ContractError> {
+        Ok(Address::ZERO)
+    }
+}
+
 /// Mock factory that returns an error for specific indices.
 #[derive(Debug)]
 pub struct ErrorOnIndexFactory {
@@ -1140,5 +1197,143 @@ mod tests {
 
         assert_eq!(candidates.len(), 1, "only the non-nullified game should be a candidate");
         assert_eq!(candidates[0].index, 1);
+    }
+
+    /// Regression test for CHAIN-4171 (Immunefi #75849).
+    ///
+    /// A game that ages out of the lookback tail must still be re-evaluated
+    /// on subsequent scans. Without persistent in-progress tracking, a late
+    /// state transition (e.g. a fraudulent ZK challenge against a legacy
+    /// TEE-only game) would be missed once enough newer games are created
+    /// to push the affected game outside the rolling tail window.
+    #[tokio::test]
+    async fn test_scan_revisits_aged_out_in_progress_games() {
+        let tee_addr = Address::repeat_byte(0xEE);
+        let zk_addr = Address::repeat_byte(0xCC);
+
+        // Initial state: 3 games inside a lookback window of 3.
+        let factory = Arc::new(MutableMockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 1),
+            factory_game(2, 1),
+        ]));
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
+        verifier_games.insert(addr(1), mock_state_with_tee(0, Address::ZERO, tee_addr, 200));
+        verifier_games.insert(addr(2), mock_state_with_tee(0, Address::ZERO, tee_addr, 300));
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+
+        let scanner = GameScanner::new(
+            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
+            ScannerConfig { lookback_games: 3 },
+        );
+
+        // First tick: all three games are inside the tail and discovered.
+        let initial = scanner.scan().await.unwrap();
+        assert_eq!(initial.len(), 3, "all three initial games are actionable");
+        assert!(initial.iter().any(|c| c.index == 0));
+        assert_eq!(scanner.tracked_indices_len(), 3);
+
+        // Simulate a late ZK challenge against game 0 while it remains
+        // IN_PROGRESS, then push three new games into the factory so game
+        // 0 falls outside the rolling lookback tail (now [3..=5]).
+        let mut challenged_state = mock_state_with_tee(0, zk_addr, tee_addr, 100);
+        challenged_state.countered_index = 2; // 1-based → challenged_index = 1
+        verifier.update_game(addr(0), challenged_state);
+
+        for i in 3..6u64 {
+            factory.push(factory_game(i, 1));
+            verifier.update_game(addr(i), mock_state_with_tee(0, Address::ZERO, tee_addr, i * 100));
+        }
+
+        // Second tick: even though game 0 is outside the tail, it must
+        // still be returned by scan() because it was previously tracked
+        // and is still IN_PROGRESS.
+        let late = scanner.scan().await.unwrap();
+        let game_zero = late
+            .iter()
+            .find(|c| c.index == 0)
+            .expect("aged-out in-progress game must still be returned by scan()");
+        assert_eq!(
+            game_zero.category,
+            GameCategory::FraudulentZkChallenge { challenged_index: 1 },
+            "aged-out game should now classify under its late state transition"
+        );
+    }
+
+    /// Resolved games are dropped from the persistent tracking set so that
+    /// memory use does not grow unbounded with the total factory size.
+    #[tokio::test]
+    async fn test_scan_drops_resolved_games_from_tracking() {
+        let tee_addr = Address::repeat_byte(0xEE);
+
+        let factory = Arc::new(MutableMockDisputeGameFactory::new(vec![factory_game(0, 1)]));
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+
+        let scanner = GameScanner::new(
+            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
+            ScannerConfig { lookback_games: 3 },
+        );
+
+        // First tick: game 0 is in progress and gets tracked.
+        let initial = scanner.scan().await.unwrap();
+        assert_eq!(initial.len(), 1);
+        assert_eq!(scanner.tracked_indices_len(), 1);
+
+        // Resolve game 0 and add enough newer games to push it out of the tail.
+        let mut resolved = mock_state_with_tee(0, Address::ZERO, tee_addr, 100);
+        resolved.status = 1; // 0=IN_PROGRESS, 1=CHALLENGER_WINS, 2=DEFENDER_WINS
+        verifier.update_game(addr(0), resolved);
+        for i in 1..4u64 {
+            factory.push(factory_game(i, 1));
+            verifier.update_game(addr(i), mock_state_with_tee(0, Address::ZERO, tee_addr, i * 100));
+        }
+
+        let _ = scanner.scan().await.unwrap();
+
+        // Tracking should hold only the three new IN_PROGRESS games — the
+        // resolved game must be dropped.
+        assert_eq!(scanner.tracked_indices_len(), 3);
+    }
+
+    /// Fully nullified games (both provers zero) are dropped from the
+    /// persistent tracking set even while they remain `IN_PROGRESS`,
+    /// because no on-chain transition can make them actionable again.
+    #[tokio::test]
+    async fn test_scan_drops_fully_nullified_games_from_tracking() {
+        let tee_addr = Address::repeat_byte(0xEE);
+
+        let factory = Arc::new(MutableMockDisputeGameFactory::new(vec![factory_game(0, 1)]));
+
+        let mut verifier_games = HashMap::new();
+        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+
+        let scanner = GameScanner::new(
+            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
+            Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
+            ScannerConfig { lookback_games: 3 },
+        );
+
+        scanner.scan().await.unwrap();
+        assert_eq!(scanner.tracked_indices_len(), 1);
+
+        // Fully nullify the game (both provers zero) while keeping it IN_PROGRESS.
+        verifier.update_game(addr(0), mock_state_with_tee(0, Address::ZERO, Address::ZERO, 100));
+        for i in 1..4u64 {
+            factory.push(factory_game(i, 1));
+            verifier.update_game(addr(i), mock_state_with_tee(0, Address::ZERO, tee_addr, i * 100));
+        }
+
+        scanner.scan().await.unwrap();
+
+        // Only the three new live games remain tracked.
+        assert_eq!(scanner.tracked_indices_len(), 3);
     }
 }

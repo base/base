@@ -33,7 +33,7 @@
 //! provers zero) are skipped.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{Arc, Mutex},
 };
 
@@ -127,17 +127,57 @@ impl CandidateGame {
     }
 }
 
+/// Outcome of a single [`GameScanner::evaluate_game`] call.
+///
+/// Distinguishes actionable games from games that are still live but not
+/// currently actionable, and from games that have reached a terminal state.
+/// The scanner uses these variants to decide whether to keep an index in
+/// its persistent in-progress tracking set.
+#[derive(Debug)]
+pub enum GameEvaluation {
+    /// The game is `IN_PROGRESS` and matches one of the [`GameCategory`]
+    /// variants. The driver should process the contained candidate.
+    Actionable(CandidateGame),
+
+    /// The game is `IN_PROGRESS` but is not currently actionable (e.g. an
+    /// unexpected prover/`countered_index` combination). Keep the index in
+    /// the tracking set because a later on-chain transition could make it
+    /// actionable again.
+    InProgressNotActionable,
+
+    /// The game has reached a terminal state and never needs to be
+    /// re-evaluated. This covers both resolved games (`status != IN_PROGRESS`)
+    /// and games that have been fully nullified (`teeProver` and `zkProver`
+    /// both zero). Drop the index from tracking.
+    Terminal,
+}
+
 /// Scans the `DisputeGameFactory` for dispute games that need validation.
 ///
-/// The scanner is fully stateless — every call re-evaluates the entire
-/// lookback window so that on-chain state changes (new proofs added,
-/// challenges filed) are always detected.
+/// On every tick the scanner evaluates the union of two index sets:
+///
+/// * The recent **lookback tail** `(game_count - lookback_games) ..=
+///   (game_count - 1)`, which acts as a startup catch-up window and as the
+///   discovery channel for newly-created games.
+/// * A persistent **tracking set** of indices for games that were observed
+///   to be `IN_PROGRESS` on a previous tick. This guarantees that older
+///   games which age out of the lookback tail continue to be re-evaluated
+///   so that late on-chain transitions (e.g. a fraudulent ZK challenge
+///   filed against a legacy TEE-only game) are still detected.
+///
+/// Indices are removed from the tracking set as soon as their game reaches
+/// a terminal state (resolved or fully nullified), bounding memory use to
+/// the number of currently-live games rather than the total factory size.
 pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     config: ScannerConfig,
     /// Cache of `game_type → intermediate_block_interval` to avoid repeated RPC calls.
     interval_cache: Mutex<HashMap<u32, u64>>,
+    /// Set of factory indices for games observed as `IN_PROGRESS` on a
+    /// previous tick. Persists discovery so that games which age out of
+    /// the lookback tail are still re-evaluated until they resolve.
+    tracked_indices: Mutex<BTreeSet<u64>>,
 }
 
 impl std::fmt::Debug for GameScanner {
@@ -159,53 +199,101 @@ impl GameScanner {
         verifier_client: Arc<dyn AggregateVerifierClient>,
         config: ScannerConfig,
     ) -> Self {
-        Self { factory_client, verifier_client, config, interval_cache: Mutex::new(HashMap::new()) }
+        Self {
+            factory_client,
+            verifier_client,
+            config,
+            interval_cache: Mutex::new(HashMap::new()),
+            tracked_indices: Mutex::new(BTreeSet::new()),
+        }
     }
 
-    /// Scans the lookback window for candidate games that need validation.
+    /// Returns the number of game indices currently retained in the
+    /// in-progress tracking set.
+    pub fn tracked_indices_len(&self) -> usize {
+        self.tracked_indices.lock().expect("tracked_indices lock poisoned").len()
+    }
+
+    /// Scans for candidate games that need validation.
     ///
-    /// Every call re-evaluates the full lookback window so that on-chain state
-    /// changes (new proofs added, challenges filed) are always detected. Games
-    /// that are not `IN_PROGRESS` or have been fully nullified are filtered out
-    /// cheaply via a single `status()` RPC call.
+    /// Every call evaluates the union of the recent factory tail (the
+    /// lookback window) and the persistent tracking set of previously-observed
+    /// `IN_PROGRESS` games. This guarantees both that newly-created games are
+    /// discovered and that older live games which have aged out of the tail
+    /// continue to be re-evaluated until they reach a terminal state.
     ///
-    /// Individual game query failures are logged and skipped so that a transient
-    /// RPC error on one game does not abort the entire scan. Errored games are
-    /// naturally retried on the next tick. After evaluation, the
-    /// `base_challenger_games_scanned_total` counter and
+    /// Games are filtered out cheaply via a single `status()` RPC call when
+    /// they are no longer `IN_PROGRESS`. Individual game query failures are
+    /// logged and skipped so that a transient RPC error on one game does not
+    /// abort the entire scan; failing indices are conservatively retained in
+    /// the tracking set so they are retried on subsequent ticks. After
+    /// evaluation, the `base_challenger_games_scanned_total` counter and
     /// `base_challenger_scan_head` gauge are updated.
     pub async fn scan(&self) -> Result<Vec<CandidateGame>> {
         let game_count = self.factory_client.game_count().await?;
 
         if game_count == 0 {
             debug!("factory has no games");
+            // No games on chain means any tracking we may have accumulated
+            // is stale (e.g. the factory address was changed at runtime).
+            self.tracked_indices.lock().expect("tracked_indices lock poisoned").clear();
             return Ok(vec![]);
         }
 
         let end = game_count - 1;
-        let start = game_count.saturating_sub(self.config.lookback_games);
+        let tail_start = game_count.saturating_sub(self.config.lookback_games);
 
-        let games_to_scan = end - start + 1;
+        // Build the set of indices to scan: the recent factory tail unioned
+        // with previously-discovered live games. The tail acts as the
+        // discovery channel for newly-created games and as a startup
+        // catch-up window; the tracking set carries forward older live
+        // games that the tail no longer reaches.
+        let mut indices: BTreeSet<u64> = (tail_start..=end).collect();
+        {
+            let tracked = self.tracked_indices.lock().expect("tracked_indices lock poisoned");
+            for &i in tracked.iter() {
+                if i <= end {
+                    indices.insert(i);
+                }
+            }
+        }
+        let games_to_scan = indices.len() as u64;
 
-        let results: Vec<(u64, Result<Option<CandidateGame>>)> = stream::iter(start..=end)
+        let results: Vec<(u64, Result<GameEvaluation>)> = stream::iter(indices.into_iter())
             .map(|i| async move { (i, self.evaluate_game(i).await) })
             .buffer_unordered(Self::SCAN_CONCURRENCY)
             .collect()
             .await;
 
         let mut candidates = Vec::new();
+        let mut next_tracked: BTreeSet<u64> = BTreeSet::new();
 
         for (i, result) in results {
             match result {
-                Ok(Some(candidate)) => candidates.push(candidate),
-                Ok(None) => {}
+                Ok(GameEvaluation::Actionable(candidate)) => {
+                    next_tracked.insert(i);
+                    candidates.push(candidate);
+                }
+                Ok(GameEvaluation::InProgressNotActionable) => {
+                    next_tracked.insert(i);
+                }
+                Ok(GameEvaluation::Terminal) => {
+                    // Game has resolved or been fully nullified; never needs
+                    // to be revisited.
+                }
                 Err(e) => {
                     warn!(error = %e, index = i, "failed to query game, skipping");
+                    // Conservatively keep the index in the tracking set so it
+                    // is retried on the next tick rather than silently lost.
+                    next_tracked.insert(i);
                 }
             }
         }
 
         candidates.sort_unstable_by_key(|c| c.index);
+
+        let tracked_len = next_tracked.len();
+        *self.tracked_indices.lock().expect("tracked_indices lock poisoned") = next_tracked;
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
         ChallengerMetrics::scan_head().set(end as f64);
@@ -214,6 +302,7 @@ impl GameScanner {
             games_found = candidates.len(),
             scan_head = end,
             games_scanned = games_to_scan,
+            tracked_in_progress = tracked_len,
             "scan complete"
         );
 
@@ -222,17 +311,17 @@ impl GameScanner {
 
     /// Evaluates a single game at the given factory index.
     ///
-    /// Returns `Some(CandidateGame)` if the game is `IN_PROGRESS` and
-    /// matches one of the four [`GameCategory`] variants. Returns `None`
-    /// if the game should be skipped (resolved, fully nullified, or in
-    /// an unrecognized state).
-    pub async fn evaluate_game(&self, index: u64) -> Result<Option<CandidateGame>> {
+    /// Returns a [`GameEvaluation`] describing whether the game is
+    /// actionable, still live but not currently actionable, or terminal.
+    /// The scanner uses these variants to decide whether to keep the index
+    /// in its persistent tracking set.
+    pub async fn evaluate_game(&self, index: u64) -> Result<GameEvaluation> {
         let factory = self.factory_client.game_at_index(index).await?;
 
         let status = self.verifier_client.status(factory.proxy).await?;
         if status != Self::STATUS_IN_PROGRESS {
-            debug!(index = index, status = status, "skipping game not in progress");
-            return Ok(None);
+            debug!(index = index, status = status, "game has resolved");
+            return Ok(GameEvaluation::Terminal);
         }
 
         // Fetch classification fields only for in-progress games.
@@ -242,9 +331,21 @@ impl GameScanner {
             self.verifier_client.countered_index(factory.proxy),
         )?;
 
+        // A game with both provers zero is fully nullified and cannot
+        // transition back to an actionable state — drop tracking even though
+        // its status is still IN_PROGRESS.
+        if tee_prover == Address::ZERO && zk_prover == Address::ZERO {
+            debug!(index = index, "game fully nullified (both provers zeroed)");
+            return Ok(GameEvaluation::Terminal);
+        }
+
         let category = match Self::classify(index, tee_prover, zk_prover, countered_index) {
             Some(c) => c,
-            None => return Ok(None),
+            // The game is in_progress with at least one active prover but in
+            // an unexpected combination (e.g. TEE-only with a non-zero
+            // countered_index). Keep tracking it because a later state
+            // transition could make it actionable.
+            None => return Ok(GameEvaluation::InProgressNotActionable),
         };
 
         // Fetch remaining fields only for actionable games.
@@ -260,7 +361,7 @@ impl GameScanner {
             self.resolve_intermediate_block_interval(factory.game_type),
         )?;
 
-        Ok(Some(CandidateGame {
+        Ok(GameEvaluation::Actionable(CandidateGame {
             index,
             factory,
             info,
@@ -273,7 +374,11 @@ impl GameScanner {
     }
 
     /// Classifies a game into a [`GameCategory`] based on its prover state,
-    /// or returns `None` if the game should be skipped.
+    /// or returns `None` if the game is in an unexpected state and should
+    /// be left as `InProgressNotActionable`.
+    ///
+    /// Callers must ensure that at least one of `tee_prover` or `zk_prover`
+    /// is non-zero; the fully-nullified case is handled by the caller.
     fn classify(
         index: u64,
         tee_prover: Address,
@@ -282,6 +387,7 @@ impl GameScanner {
     ) -> Option<GameCategory> {
         let has_tee = tee_prover != Address::ZERO;
         let has_zk = zk_prover != Address::ZERO;
+        debug_assert!(has_tee || has_zk, "classify must not be called for fully-nullified games");
 
         match (has_tee, has_zk, countered_index) {
             // Path 1: TEE-proposed, unchallenged.
@@ -325,11 +431,10 @@ impl GameScanner {
                 None
             }
 
-            // Both provers zeroed — already nullified.
-            (false, false, _) => {
-                debug!(index = index, "skipping nullified game (both provers zeroed)");
-                None
-            }
+            // Caller is responsible for filtering out fully-nullified games.
+            (false, false, _) => unreachable!(
+                "fully-nullified games must be filtered before classify (index = {index})"
+            ),
         }
     }
 
