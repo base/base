@@ -48,3 +48,6 @@ std = [
 	"thiserror/std",
 	"tracing/std",
 ]
+
+[dev-dependencies]
+alloy-eips = { workspace = true, features = ["std"] }

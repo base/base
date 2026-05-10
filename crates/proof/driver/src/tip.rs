@@ -47,3 +47,51 @@ impl TipCursor {
         &self.l2_safe_head_output_root
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{Header, Sealable};
+    use alloy_eips::BlockNumHash;
+    use alloy_primitives::B256;
+    use base_protocol::{BlockInfo, L2BlockInfo};
+
+    use super::*;
+
+    fn make_tip(number: u64) -> TipCursor {
+        let block_info = BlockInfo {
+            hash: B256::repeat_byte(number as u8),
+            number,
+            parent_hash: B256::ZERO,
+            timestamp: number * 2,
+        };
+        let l2_info = L2BlockInfo {
+            block_info,
+            l1_origin: BlockNumHash { number, hash: B256::ZERO },
+            seq_num: 0,
+        };
+        let header = Header { number, ..Default::default() }.seal_slow();
+        let output_root = B256::repeat_byte(number as u8);
+        TipCursor::new(l2_info, header, output_root)
+    }
+
+    #[test]
+    fn accessors_return_correct_values() {
+        let tip = make_tip(42);
+
+        assert_eq!(tip.l2_safe_head().block_info.number, 42);
+        assert_eq!(tip.l2_safe_head_header().number, 42);
+        assert_eq!(*tip.l2_safe_head_output_root(), B256::repeat_byte(42));
+    }
+
+    #[test]
+    fn clone_produces_independent_copy() {
+        let tip = make_tip(5);
+        let cloned = tip.clone();
+
+        assert_eq!(
+            tip.l2_safe_head().block_info.number,
+            cloned.l2_safe_head().block_info.number
+        );
+        assert_eq!(tip.l2_safe_head_output_root(), cloned.l2_safe_head_output_root());
+    }
+}
