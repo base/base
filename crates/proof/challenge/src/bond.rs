@@ -1831,7 +1831,8 @@ mod tests {
             state.bond_recipient = bond_recipient;
             verifier_games.insert(addr(i), state);
         }
-        let factory: Arc<dyn DisputeGameFactoryClient> = Arc::new(MockDisputeGameFactory { games });
+        let factory: Arc<dyn DisputeGameFactoryClient> =
+            Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         (factory, verifier)
     }
@@ -1918,7 +1919,8 @@ mod tests {
         state.resolved_at = 500;
         verifier_games.insert(addr(0), state);
 
-        let factory: Arc<dyn DisputeGameFactoryClient> = Arc::new(MockDisputeGameFactory { games });
+        let factory: Arc<dyn DisputeGameFactoryClient> =
+            Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let clock = fixed_clock(0);

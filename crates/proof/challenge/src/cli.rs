@@ -110,16 +110,10 @@ pub struct ChallengerArgs {
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
 
-    /// Size of the recent factory tail evaluated on every scan tick.
-    ///
-    /// Acts as the startup catch-up window when the challenger first
-    /// connects to a long-lived factory and as the discovery channel for
-    /// newly-created games on subsequent ticks. Once a game has been
-    /// observed in `IN_PROGRESS` state during any tick, the scanner
-    /// retains its index in an in-memory tracking set and continues
-    /// re-evaluating it until the game reaches a terminal state, so this
-    /// value does **not** impose a permanent cap on steady-state coverage
-    /// of unresolved games.
+    /// Size of the recent factory tail evaluated on every scan tick. Sets
+    /// the startup catch-up window and the discovery channel for new games;
+    /// in-progress games observed within it stay tracked across ticks even
+    /// after they age out.
     #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
     pub lookback_games: u64,
 

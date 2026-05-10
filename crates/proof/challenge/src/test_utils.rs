@@ -119,20 +119,38 @@ impl Default for MockGameState {
 }
 
 /// Mock dispute game factory with configurable per-index game data.
+///
+/// The game list lives behind a `Mutex` so multi-step tests can extend it
+/// after the scanner has been constructed (e.g. simulating new games being
+/// added between scan ticks).
 #[derive(Debug)]
 pub struct MockDisputeGameFactory {
     /// Ordered list of games in the factory.
-    pub games: Vec<GameAtIndex>,
+    pub games: Mutex<Vec<GameAtIndex>>,
+}
+
+impl MockDisputeGameFactory {
+    /// Creates a new mock from an initial set of games.
+    pub const fn new(games: Vec<GameAtIndex>) -> Self {
+        Self { games: Mutex::new(games) }
+    }
+
+    /// Appends a single game to the factory.
+    pub fn push(&self, game: GameAtIndex) {
+        self.games.lock().unwrap().push(game);
+    }
 }
 
 #[async_trait]
 impl DisputeGameFactoryClient for MockDisputeGameFactory {
     async fn game_count(&self) -> Result<u64, ContractError> {
-        Ok(self.games.len() as u64)
+        Ok(self.games.lock().unwrap().len() as u64)
     }
 
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
         self.games
+            .lock()
+            .unwrap()
             .get(index as usize)
             .copied()
             .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
@@ -368,7 +386,7 @@ pub fn factory_game(index: u64, game_type: u32) -> GameAtIndex {
 
 /// Helper to create an empty [`MockDisputeGameFactory`] behind an `Arc`.
 pub fn empty_factory() -> Arc<dyn DisputeGameFactoryClient> {
-    Arc::new(MockDisputeGameFactory { games: vec![] })
+    Arc::new(MockDisputeGameFactory::new(vec![]))
 }
 
 /// Default TEE prover address used by [`mock_state`].
@@ -428,63 +446,6 @@ pub const fn mock_state_with_tee(
         is_respected: true,
         is_retired: false,
         anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
-    }
-}
-
-/// Mock dispute game factory that supports interior-mutability extension.
-///
-/// Use this when a test needs to simulate new games being added to the
-/// factory between scanner ticks (e.g. exercising the persistent
-/// in-progress tracking set).
-#[derive(Debug)]
-pub struct MutableMockDisputeGameFactory {
-    /// Ordered list of games in the factory, behind a `Mutex` so tests can
-    /// extend it after the scanner has been constructed.
-    pub games: Mutex<Vec<GameAtIndex>>,
-}
-
-impl MutableMockDisputeGameFactory {
-    /// Creates a new mock from an initial set of games.
-    pub const fn new(games: Vec<GameAtIndex>) -> Self {
-        Self { games: Mutex::new(games) }
-    }
-
-    /// Appends a single game to the factory.
-    pub fn push(&self, game: GameAtIndex) {
-        self.games.lock().unwrap().push(game);
-    }
-}
-
-#[async_trait]
-impl DisputeGameFactoryClient for MutableMockDisputeGameFactory {
-    async fn game_count(&self) -> Result<u64, ContractError> {
-        Ok(self.games.lock().unwrap().len() as u64)
-    }
-
-    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
-        self.games
-            .lock()
-            .unwrap()
-            .get(index as usize)
-            .copied()
-            .ok_or_else(|| ContractError::Validation(format!("index {index} out of bounds")))
-    }
-
-    async fn init_bonds(&self, _game_type: u32) -> Result<U256, ContractError> {
-        Ok(U256::ZERO)
-    }
-
-    async fn game_impls(&self, _game_type: u32) -> Result<Address, ContractError> {
-        Ok(Address::repeat_byte(0x11))
-    }
-
-    async fn games(
-        &self,
-        _game_type: u32,
-        _root_claim: B256,
-        _extra_data: Bytes,
-    ) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
     }
 }
 
@@ -892,15 +853,13 @@ mod tests {
         // Game 2: type 1, status=1 (not in progress) -> skipped
         // Game 3: type 1, IN_PROGRESS, TEE + ZK (dual proof) -> candidate (InvalidDualProposal)
         // Game 4: type 1, IN_PROGRESS, TEE only -> candidate (InvalidTeeProposal)
-        let factory = Arc::new(MockDisputeGameFactory {
-            games: vec![
-                factory_game(0, 1),
-                factory_game(1, 99),
-                factory_game(2, 1),
-                factory_game(3, 1),
-                factory_game(4, 1),
-            ],
-        });
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 99),
+            factory_game(2, 1),
+            factory_game(3, 1),
+            factory_game(4, 1),
+        ]));
 
         let challenger_addr = Address::repeat_byte(0xCC);
         let mut verifier_games = HashMap::new();
@@ -940,9 +899,11 @@ mod tests {
     async fn test_scan_dual_proof_games_are_candidates() {
         let zk_addr = Address::repeat_byte(0xAA);
 
-        let factory = Arc::new(MockDisputeGameFactory {
-            games: vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
-        });
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 1),
+            factory_game(2, 1),
+        ]));
 
         let mut verifier_games = HashMap::new();
         // Game 0: TEE + ZK (dual proof, no challenge) -> candidate (InvalidDualProposal)
@@ -970,7 +931,7 @@ mod tests {
     /// Empty factory returns empty vec without error.
     #[tokio::test]
     async fn test_scan_empty_factory() {
-        let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
 
         let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
@@ -993,7 +954,7 @@ mod tests {
                 .insert(addr(i), mock_state(GameStatus::InProgress, Address::ZERO, i * 10));
         }
 
-        let factory = Arc::new(MockDisputeGameFactory { games });
+        let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 3 });
@@ -1014,9 +975,11 @@ mod tests {
     async fn test_scan_skips_errored_games() {
         // 3 games: index 1 will error, indices 0 and 2 are valid candidates
         let factory = Arc::new(ErrorOnIndexFactory {
-            inner: MockDisputeGameFactory {
-                games: vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
-            },
+            inner: MockDisputeGameFactory::new(vec![
+                factory_game(0, 1),
+                factory_game(1, 1),
+                factory_game(2, 1),
+            ]),
             error_indices: vec![1],
         });
 
@@ -1046,9 +1009,8 @@ mod tests {
     async fn test_scan_tee_prover_nonzero_still_candidate() {
         let tee_addr = Address::repeat_byte(0xEE);
 
-        let factory = Arc::new(MockDisputeGameFactory {
-            games: vec![factory_game(0, 1), factory_game(1, 1)],
-        });
+        let factory =
+            Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1), factory_game(1, 1)]));
 
         let mut verifier_games = HashMap::new();
         // Game 0: IN_PROGRESS, no ZK prover, has a TEE prover -> candidate
@@ -1074,7 +1036,7 @@ mod tests {
     #[tokio::test]
     async fn test_scan_error_at_first_index() {
         let factory = Arc::new(ErrorOnIndexFactory {
-            inner: MockDisputeGameFactory { games: vec![factory_game(0, 1), factory_game(1, 1)] },
+            inner: MockDisputeGameFactory::new(vec![factory_game(0, 1), factory_game(1, 1)]),
             error_indices: vec![0],
         });
 
@@ -1098,7 +1060,7 @@ mod tests {
         let tee_addr = Address::repeat_byte(0xEE);
         let zk_addr = Address::repeat_byte(0xCC);
 
-        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
         let mut state = mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100);
@@ -1123,7 +1085,7 @@ mod tests {
     async fn test_scan_zk_proposal_returns_invalid_zk_proposal() {
         let zk_addr = Address::repeat_byte(0xCC);
 
-        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
         // tee_prover == ZERO, zk_prover != ZERO, countered_index == 0
@@ -1145,7 +1107,7 @@ mod tests {
     /// [`GameCategory::InvalidTeeProposal`].
     #[tokio::test]
     async fn test_scan_tee_proposal_returns_invalid_tee_proposal() {
-        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
         verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
@@ -1166,7 +1128,7 @@ mod tests {
         let tee_addr = Address::repeat_byte(0xEE);
         let zk_addr = Address::repeat_byte(0xCC);
 
-        let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
         // Both provers non-zero, countered_index == 0 (added via verifyProposalProof)
@@ -1189,9 +1151,11 @@ mod tests {
     async fn test_scan_filters_nullified_games() {
         let tee_addr = Address::repeat_byte(0xEE);
 
-        let factory = Arc::new(MockDisputeGameFactory {
-            games: vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1)],
-        });
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
+            factory_game(0, 1),
+            factory_game(1, 1),
+            factory_game(2, 1),
+        ]));
 
         let mut verifier_games = HashMap::new();
         // Game 0: both provers zeroed (nullified) → filtered out
@@ -1220,8 +1184,6 @@ mod tests {
         assert_eq!(candidates[0].index, 1);
     }
 
-    /// Regression test for CHAIN-4171 (Immunefi #75849).
-    ///
     /// A game that ages out of the lookback tail must still be re-evaluated
     /// on subsequent scans. Without persistent in-progress tracking, a late
     /// state transition (e.g. a fraudulent ZK challenge against a legacy
@@ -1233,7 +1195,7 @@ mod tests {
         let zk_addr = Address::repeat_byte(0xCC);
 
         // Initial state: 3 games inside a lookback window of 3.
-        let factory = Arc::new(MutableMockDisputeGameFactory::new(vec![
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![
             factory_game(0, 1),
             factory_game(1, 1),
             factory_game(2, 1),
@@ -1303,7 +1265,7 @@ mod tests {
     async fn test_scan_drops_resolved_games_from_tracking() {
         let tee_addr = Address::repeat_byte(0xEE);
 
-        let factory = Arc::new(MutableMockDisputeGameFactory::new(vec![factory_game(0, 1)]));
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
         verifier_games.insert(
@@ -1350,7 +1312,7 @@ mod tests {
     async fn test_scan_drops_fully_nullified_games_from_tracking() {
         let tee_addr = Address::repeat_byte(0xEE);
 
-        let factory = Arc::new(MutableMockDisputeGameFactory::new(vec![factory_game(0, 1)]));
+        let factory = Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
         verifier_games.insert(

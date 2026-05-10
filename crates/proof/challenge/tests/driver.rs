@@ -111,7 +111,7 @@ fn default_l2() -> Arc<MockL2Provider> {
 }
 
 fn single_game_factory() -> Arc<MockDisputeGameFactory> {
-    Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] })
+    Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]))
 }
 
 fn single_game_verifier(state: MockGameState) -> Arc<MockAggregateVerifier> {
@@ -221,7 +221,7 @@ fn driver_with_ready_proof(
 
 #[tokio::test]
 async fn test_step_no_candidates() {
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
+    let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
     let verifier = empty_verifier();
     let l2 = default_l2();
 
@@ -521,7 +521,7 @@ async fn test_poll_or_submit_drops_nullified_game() {
 
 #[tokio::test]
 async fn test_run_cancellation() {
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
+    let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
     let verifier = empty_verifier();
     let l2 = default_l2();
 
