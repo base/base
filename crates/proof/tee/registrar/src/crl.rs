@@ -79,12 +79,17 @@ impl CertCrlInfo {
     ///
     /// Returns an error if any certificate cannot be parsed from DER.
     pub fn from_chain(certs_der: &[&[u8]]) -> Result<Vec<Self>, CrlError> {
-        let path_digests = compute_path_digests(certs_der);
         let mut infos = Vec::with_capacity(certs_der.len());
 
         for (i, der) in certs_der.iter().enumerate() {
-            let (_, cert) = X509Certificate::from_der(der)
+            let (remaining, cert) = X509Certificate::from_der(der)
                 .map_err(|e| CrlError::CertParse(format!("certificate {i}: {e}")))?;
+            if !remaining.is_empty() {
+                return Err(CrlError::CertParse(format!(
+                    "certificate {i}: trailing DER data ({} bytes)",
+                    remaining.len()
+                )));
+            }
 
             let serial_number = cert.tbs_certificate.serial.to_bytes_be();
             let crl_url = extract_crl_distribution_point(&cert);
@@ -97,7 +102,12 @@ impl CertCrlInfo {
                 format!("intermediate {i}")
             };
 
-            infos.push(Self { label, serial_number, crl_url, path_digest: path_digests[i] });
+            infos.push(Self { label, serial_number, crl_url, path_digest: B256::ZERO });
+        }
+
+        let path_digests = compute_path_digests(certs_der);
+        for (info, path_digest) in infos.iter_mut().zip(path_digests) {
+            info.path_digest = path_digest;
         }
 
         Ok(infos)
@@ -272,8 +282,14 @@ async fn fetch_and_check_crl(
         )));
     }
 
-    let (_, crl) = CertificateRevocationList::from_der(&crl_bytes)
+    let (remaining, crl) = CertificateRevocationList::from_der(&crl_bytes)
         .map_err(|e| CrlError::Parse(format!("{crl_url}: {e}")))?;
+    if !remaining.is_empty() {
+        return Err(CrlError::Parse(format!(
+            "{crl_url}: trailing DER data ({} bytes)",
+            remaining.len()
+        )));
+    }
 
     // Check if the serial number appears in the revoked certificates list.
     // Both sides use `BigUint::to_bytes_be()` which normalises away ASN.1
@@ -321,6 +337,12 @@ pub enum CrlError {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        io::{Read, Write},
+        net::{SocketAddr, TcpListener},
+        thread::{self, JoinHandle},
+    };
+
     use rstest::{fixture, rstest};
     use sha2::{Digest, Sha256};
 
@@ -338,7 +360,7 @@ mod tests {
     const INTER2_HEX: &str = "308203163082029ba003020102021100cb286a4a4a09207f8b0c14950dcd6861300a06082a8648ce3d0403033064310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533136303406035504030c2d636264383238303866646138623434642e75732d656173742d312e6177732e6e6974726f2d656e636c61766573301e170d3234313133303033313435345a170d3234313230363031313435345a308189313c303a06035504030c33343762313739376131663031386266302e7a6f6e616c2e75732d656173742d312e6177732e6e6974726f2d656e636c61766573310c300a060355040b0c03415753310f300d060355040a0c06416d617a6f6e310b3009060355040613025553310b300906035504080c0257413110300e06035504070c0753656174746c653076301006072a8648ce3d020106052b810400220362000423959f700ef87dcbdba686449d944f2a89ad22aa03d73cf93d28853f2fb6a80b0cc714d3090e34cda8234eef8f804e46c0dcb216062afba3e2b36a693660d9965e2370308b8e1ffad8542ddbe3e733077481b0cbc747d8c7beb7612820d4fe95a381ea3081e730120603551d130101ff040830060101ff020101301f0603551d23041830168014bfbd54a168f57f7391b66ca60a2836f30acfb9a1301d0603551d0e04160414bbf52a3a42fdc4f301f72536b90e65aaa1b70a99300e0603551d0f0101ff0404030201863081800603551d1f047930773075a073a071866f687474703a2f2f63726c2d75732d656173742d312d6177732d6e6974726f2d656e636c617665732e73332e75732d656173742d312e616d617a6f6e6177732e636f6d2f63726c2f30366434386638652d326330382d343738312d613634352d6231646534303261656662382e63726c300a06082a8648ce3d0403030369003066023100fa31509230632a002939201eb5686b52d79f0276db5c2b954bed324caa5c3271a60d25e2e05a5e6700e488a074af4ecd02310084770462c2ef86dcdb11fa8a31dcf770866cbd28822b682a112b98c09a30e35e94affd3482bf8b01b59a0a7775b4af18";
 
     /// Intermediate 3 (signed by inter2). Validity: 2024-11-30 to 2024-12-01.
-    const INTER3_HEX: &str = "308202bf30820245a003020102021500c8925d382506d820d93d2c704a7523c4ba2ddfaa300a06082a8648ce3d040303308189313c303a06035504030c33343762313739376131663031386266302e7a6f6e616c2e75732d656173742d312e6177732e6e6974726f2d656e636c61766573310c300a060355040b0c03415753310f300d060355040a0c06416d617a6f6e310b3009060355040613025553310b300906035504080c0257413110300e06035504070c0753656174746c65301e170d3234313133303132343133315a170d3234313230313132343133315a30818e310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533139303706035504030c30692d30646533386232623638353363633965382e75732d656173742d312e6177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004466754b5718024df3564bcd722361e7c65a4922eda7b1f826758e30afac40b04a281062897d085311fd509b70a6bbc5f8280f86ae2ff255ad147146fc97b7afb16064f0712d335c1d473b716be320be625e91c5870973084b3a0005bc020c7b2a366306430120603551d130101ff040830060101ff020100300e0603551d0f0101ff040403020204301d0603551d0e04160414345c86a9ec55bc30cafd923d6b73111d9c57abc0301f0603551d23041830168014bbf52a3a42fdc4f301f72536b90e65aaa1b70a99300a06082a8648ce3d0403030368003065023100aba82c02f40acb9846012bf070578217eeb2ebbfd16414948438cf67eeab6f64cdc5a152998766c88b2cdebd5a97ebd402307421611ed511567bc8e6a0a2805b981ef38dc3bd6a6c661522802b5c5d658cc4fcc9b5e8df148b161d366926896736836a";
+    const INTER3_HEX: &str = "308202bf30820245a003020102021500c8925d382506d820d93d2c704a7523c4ba2ddfaa300a06082a8648ce3d040303308189313c303a06035504030c33343762313739376131663031386266302e7a6f6e616c2e75732d656173742d312e6177732e6e6974726f2d656e636c61766573310c300a060355040b0c03415753310f300d060355040a0c06416d617a6f6e310b3009060355040613025553310b300906035504080c0257413110300e06035504070c0753656174746c65301e170d3234313133303132343133315a170d3234313230313132343133315a30818e310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533139303706035504030c30692d30646533386232623638353363633965382e75732d656173742d312e6177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004466754b5718024df3564bcd722361e7c65a4922eda7b1f826758e30afac40b04a281062897d085311fd509b70a6bbc5f8280f86ae2ff255ad147146fc97b7afb16064f0712d335c1d473b716be320be625e91c5870973084b3a0005bc020c7b2a366306430120603551d130101ff040830060101ff020100300e0603551d0f0101ff040403020204301d0603551d0e04160414345c86a9ec55bc30cafd923d6b73111d9c57abc0301f0603551d23041830168014bbf52a3a42fdc4f301f72536b90e65aaa1b70a99300a06082a8648ce3d0403030368003065023100aba82c02f40acb9846012bf070578217eeb2ebbfd16414948438cf67eeab6f64cdc5a152998766c88b2cdebd5a97ebd402307421611ed511567bc8e6a0a2805b981ef38dc3bd6a6c661522802b5c5d658cc4fcc9b5e8df148b161d36692689673683";
 
     /// Leaf enclave cert (signed by inter3). Validity: 2024-11-30T16:22 to 2024-11-30T19:22.
     const LEAF_HEX: &str = "3082027c30820201a00302010202100193685e7fee7d8500000000674b3bd8300a06082a8648ce3d04030330818e310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533139303706035504030c30692d30646533386232623638353363633965382e75732d656173742d312e6177732e6e6974726f2d656e636c61766573301e170d3234313133303136323234355a170d3234313133303139323234385a308193310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753313e303c06035504030c35692d30646533386232623638353363633965382d656e63303139333638356537666565376438352e75732d656173742d312e6177733076301006072a8648ce3d020106052b810400220362000461d930c61be969237398264901d6a37282cfd42c0694d012d9143cc86a339d567913dae552bad2f10d47c50d4e670247f0344983cbdc2d2e0045d4ccbdff59ef7a26ebf1be83a81e24a651c92008fe9f465757792a0877fba02c8b5e1eb2ed90a31d301b300c0603551d130101ff04023000300b0603551d0f0404030206c0300a06082a8648ce3d0403030369003066023100e48f39a39b444a6e5ea7a38b808198a2318dd531ed62faf4a9223f71f27dff4a5e495e32dd10f250bbaf1f892a4d328f023100d09fc8e48e233b9e972eecb94798865664dbeb0d75b29041f482777a4b7cae133483dcc9d35509c4967be51db37a7454";
@@ -372,6 +394,16 @@ mod tests {
 
     /// Garbage bytes used for invalid DER tests.
     const INVALID_DER_BYTES: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+
+    /// Minimal valid DER-encoded CRL with no revoked certificates.
+    const EMPTY_CRL_DER: [u8; 49] = [
+        0x30, 0x2f, 0x30, 0x1d, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03,
+        0x03, 0x30, 0x00, 0x17, 0x0d, 0x32, 0x34, 0x30, 0x31, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30,
+        0x30, 0x30, 0x5a, 0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03,
+        0x03, 0x02, 0x00, 0x00,
+    ];
+
+    const CRL_TEST_HOST: &str = "aws-nitro-enclave-test.amazonaws.com";
 
     // ── Fixtures ────────────────────────────────────────────────────────
 
@@ -416,8 +448,35 @@ mod tests {
     /// point URL.
     fn crl_url_for_hex(cert_hex: &str) -> Option<String> {
         let der = hex::decode(cert_hex).unwrap();
-        let (_, cert) = X509Certificate::from_der(&der).unwrap();
+        let (remaining, cert) = X509Certificate::from_der(&der).unwrap();
+        assert!(remaining.is_empty());
         extract_crl_distribution_point(&cert)
+    }
+
+    fn serve_crl_body_once(body: Vec<u8>) -> (reqwest::Client, String, JoinHandle<()>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let bytes_read = stream.read(&mut request).unwrap();
+            assert!(bytes_read > 0);
+
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+        });
+        let client = client_resolving_crl_host_to(addr);
+        let url = format!("http://{CRL_TEST_HOST}/crl");
+
+        (client, url, handle)
+    }
+
+    fn client_resolving_crl_host_to(addr: SocketAddr) -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().resolve(CRL_TEST_HOST, addr).build().unwrap()
     }
 
     // ── CRL distribution point extraction (parameterised) ───────────────
@@ -526,7 +585,20 @@ mod tests {
     fn invalid_der_returns_cert_parse_error() {
         let result = CertCrlInfo::from_chain(&[&INVALID_DER_BYTES[..]]);
         let err = result.unwrap_err();
-        assert!(matches!(err, CrlError::CertParse(_)), "expected CertParse, got: {err}");
+        assert!(matches!(&err, CrlError::CertParse(_)), "expected CertParse, got: {err}");
+    }
+
+    #[rstest]
+    fn trailing_der_certificate_alias_returns_cert_parse_error(full_chain: ChainFixture) {
+        let mut aliased = full_chain.owned;
+        aliased[1].extend_from_slice(b"chain-4256-trailing-der");
+        let refs: Vec<&[u8]> = aliased.iter().map(|c| c.as_slice()).collect();
+        let err = CertCrlInfo::from_chain(&refs).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(matches!(&err, CrlError::CertParse(_)), "expected CertParse, got: {msg}");
+        assert!(msg.contains("certificate 1"), "expected cert index in error, got: {msg}");
+        assert!(msg.contains("trailing DER data"), "expected trailing DER error, got: {msg}");
     }
 
     // ── Edge cases: single-cert and two-cert chains ─────────────────────
@@ -597,6 +669,28 @@ mod tests {
         let refs = root_and_leaf_chain.refs();
         let result = check_chain_against_crls(&refs, &client).await.unwrap();
         assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_and_check_crl_accepts_exact_der_response() {
+        let (client, url, handle) = serve_crl_body_once(EMPTY_CRL_DER.to_vec());
+        let revoked = fetch_and_check_crl(&client, &url, &[]).await.unwrap();
+        handle.join().unwrap();
+
+        assert!(!revoked);
+    }
+
+    #[tokio::test]
+    async fn fetch_and_check_crl_rejects_trailing_der_response() {
+        let mut aliased = EMPTY_CRL_DER.to_vec();
+        aliased.extend_from_slice(b"chain-4256-trailing-crl");
+        let (client, url, handle) = serve_crl_body_once(aliased);
+        let err = fetch_and_check_crl(&client, &url, &[]).await.unwrap_err();
+        handle.join().unwrap();
+        let msg = err.to_string();
+
+        assert!(matches!(&err, CrlError::Parse(_)), "expected Parse, got: {msg}");
+        assert!(msg.contains("trailing DER data"), "expected trailing DER error, got: {msg}");
     }
 
     // ── fetch_and_check_crl: serial comparison logic ────────────────────

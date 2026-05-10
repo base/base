@@ -28,6 +28,7 @@ base-consensus-derive.workspace = true
 base-common-genesis.workspace = true
 base-proof-host.workspace = true
 base-proof-preimage.workspace = true
+base-proof-rpc.workspace = true
 base-proof.workspace = true
 base-protocol = { workspace = true, features = ["serde"] }
 base-common-chains.workspace = true

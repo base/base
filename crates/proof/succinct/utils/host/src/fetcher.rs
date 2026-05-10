@@ -10,7 +10,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_network::{BlockResponse, Network, primitives::HeaderResponse};
-use alloy_primitives::{Address, B256, Bytes, U64, U256, keccak256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
@@ -19,6 +19,7 @@ use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_proof_host::HostConfig;
+use base_proof_rpc::DebugProviderExt;
 use base_proof_succinct_client_utils::boot::BootInfoStruct;
 use base_protocol::L2BlockInfo;
 use futures::{StreamExt, stream};
@@ -674,10 +675,7 @@ impl OPSuccinctDataFetcher {
     // Source from: https://github.com/anton-rs/kona/blob/85b1c88b44e5f54edfc92c781a313717bad5dfc7/crates/derive-alloy/src/alloy_providers.rs#L225.
     /// Fetch an L2 block by number.
     pub async fn get_l2_block_by_number(&self, block_number: u64) -> Result<BaseBlock> {
-        let raw_block: Bytes = self
-            .l2_provider
-            .raw_request("debug_getRawBlock".into(), [U64::from(block_number)])
-            .await?;
+        let raw_block = self.l2_provider.debug_get_raw_block(block_number).await?;
         let block = BaseBlock::decode(&mut raw_block.as_ref()).map_err(|e| anyhow::anyhow!(e))?;
         Ok(block)
     }

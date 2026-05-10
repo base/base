@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
-use alloy_provider::{Provider, RootProvider};
+use alloy_eips::BlockNumberOrTag;
+use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;
 use backon::Retryable;
 use base_common_genesis::RollupConfig;
-use serde_json::Value;
 use url::Url;
 
 use super::{
@@ -16,6 +16,7 @@ use super::{
     cache::MeteredCache,
     config::{DEFAULT_CACHE_SIZE, RetryConfig},
     error::{RpcError, RpcResult},
+    provider_ext::OptimismRollupProviderExt,
     traits::RollupProvider,
     types::{OutputAtBlock, SyncStatus},
 };
@@ -127,10 +128,7 @@ impl RollupClient {
 
         (|| async {
             self.provider
-                .raw_request::<_, OutputAtBlock>(
-                    "optimism_outputAtBlock".into(),
-                    (format!("0x{block_number:x}"),),
-                )
+                .optimism_output_at_block(BlockNumberOrTag::Number(block_number))
                 .await
                 .map_err(|e| {
                     RpcError::InvalidResponse(format!("Failed to get output at block: {e}"))
@@ -153,7 +151,7 @@ impl RollupProvider for RollupClient {
         (|| async {
             let raw_response = self
                 .provider
-                .raw_request::<_, Value>("optimism_rollupConfig".into(), ())
+                .optimism_rollup_config()
                 .await
                 .map_err(|e| RpcError::InvalidResponse(format!("Failed to get rollup config: {e}")))?;
 
@@ -176,7 +174,7 @@ impl RollupProvider for RollupClient {
 
         (|| async {
             self.provider
-                .raw_request::<_, SyncStatus>("optimism_syncStatus".into(), ())
+                .optimism_sync_status()
                 .await
                 .map_err(|e| RpcError::InvalidResponse(format!("Failed to get sync status: {e}")))
         })

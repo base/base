@@ -15,6 +15,7 @@ use alloc::{format, sync::Arc};
 use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, Header, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
+use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_primitives::B64;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
@@ -169,7 +170,35 @@ impl HeaderValidator<Header> for BaseBeaconConsensus {
         // validate header extra data for all networks post merge
         validate_header_extra_data(header, self.max_extra_data_size)?;
         validate_header_gas(header)?;
-        validate_header_base_fee(header, &self.chain_spec)
+        validate_header_base_fee(header, &self.chain_spec)?;
+
+        // After Isthmus, every block header must carry `requests_hash = sha256("")`
+        // (i.e. `EMPTY_REQUESTS_HASH`) because Base does not support EL-triggered execution
+        // requests (EIP-7685). Before Isthmus, the field must be omitted entirely.
+        //
+        // The Engine API path (`BaseExecutionPayload::into_block_with_sidecar*`) already
+        // enforces this rule, but raw header/block import paths (e.g. `import_blocks_from_file`,
+        // historical/range sync) only flow through `HeaderValidator::validate_header`. Without
+        // the check here, a malformed post-Isthmus header with an arbitrary `requests_hash`
+        // would be accepted and persisted by the import path while being rejected by the
+        // Engine path — a block-validity differential that could lead to a chain split.
+        //
+        // See `docs/specs/pages/upgrades/isthmus/exec-engine.md`.
+        if self.chain_spec.is_isthmus_active_at_timestamp(header.timestamp()) {
+            match header.requests_hash() {
+                None => return Err(ConsensusError::RequestsHashMissing),
+                Some(hash) if hash != EMPTY_REQUESTS_HASH => {
+                    return Err(ConsensusError::BodyRequestsHashDiff(
+                        GotExpected { got: hash, expected: EMPTY_REQUESTS_HASH }.into(),
+                    ));
+                }
+                Some(_) => {}
+            }
+        } else if header.requests_hash().is_some() {
+            return Err(ConsensusError::RequestsHashUnexpected);
+        }
+
+        Ok(())
     }
 
     fn validate_header_against_parent(
@@ -226,8 +255,11 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{BlockBody, Eip658Value, Header, Receipt, TxEip7702, TxReceipt};
-    use alloy_eips::{eip4895::Withdrawals, eip7685::Requests};
-    use alloy_primitives::{Address, Bytes, Log, Signature, U256};
+    use alloy_eips::{
+        eip4895::Withdrawals,
+        eip7685::{EMPTY_REQUESTS_HASH, Requests},
+    };
+    use alloy_primitives::{Address, B256, Bytes, Log, Signature, U256};
     use base_common_consensus::{
         BasePrimitives, BaseReceipt, BaseTransactionSigned, BaseTypedTransaction,
         HoloceneExtraData, JovianExtraData,
@@ -748,6 +780,85 @@ mod tests {
             result.unwrap_err(),
             ConsensusError::BlobGasUsedDiff(diff)
                 if diff.got == DA_FOOTPRINT && diff.expected == 0
+        ));
+    }
+
+    /// Builds a minimal post-Isthmus header that satisfies all of `validate_header`'s checks
+    /// other than the `requests_hash` rule under test.
+    fn isthmus_header_with_requests_hash(requests_hash: Option<B256>) -> SealedHeader<Header> {
+        SealedHeader::seal_slow(Header {
+            base_fee_per_gas: Some(1337),
+            withdrawals_root: Some(B256::ZERO),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            timestamp: u64::MAX,
+            requests_hash,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn test_isthmus_validate_header_accepts_empty_requests_hash() {
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+        let header = isthmus_header_with_requests_hash(Some(EMPTY_REQUESTS_HASH));
+        beacon_consensus
+            .validate_header(&header)
+            .expect("post-Isthmus header with EMPTY_REQUESTS_HASH must pass validate_header");
+    }
+
+    /// Regression: post-Isthmus headers carrying a non-empty `requests_hash` (Base does not
+    /// support EL execution requests) must be rejected by the raw header import path, matching
+    /// the Engine API's `BasePayloadError::NonEmptyELRequests` enforcement. Without the check,
+    /// `import_blocks_from_file` and range-sync would persist a malformed header that the
+    /// Engine path rejects, producing a block-validity differential inside the EL.
+    #[test]
+    fn test_isthmus_validate_header_rejects_non_empty_requests_hash() {
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+        let bogus = B256::repeat_byte(0x11);
+        let header = isthmus_header_with_requests_hash(Some(bogus));
+
+        assert!(matches!(
+            beacon_consensus.validate_header(&header).unwrap_err(),
+            ConsensusError::BodyRequestsHashDiff(diff)
+                if diff.got == bogus && diff.expected == EMPTY_REQUESTS_HASH
+        ));
+    }
+
+    #[test]
+    fn test_isthmus_validate_header_rejects_missing_requests_hash() {
+        let chain_spec = base_mainnet_builder().isthmus_activated().build();
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+        let header = isthmus_header_with_requests_hash(None);
+
+        assert!(matches!(
+            beacon_consensus.validate_header(&header).unwrap_err(),
+            ConsensusError::RequestsHashMissing,
+        ));
+    }
+
+    #[test]
+    fn test_pre_isthmus_validate_header_rejects_unexpected_requests_hash() {
+        // Holocene activates strictly before Isthmus; this exercises the pre-Isthmus branch.
+        let chain_spec = base_mainnet_builder().holocene_activated().build();
+        let beacon_consensus = BaseBeaconConsensus::new(Arc::new(chain_spec));
+
+        let header = SealedHeader::seal_slow(Header {
+            base_fee_per_gas: Some(1337),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            timestamp: u64::MAX,
+            requests_hash: Some(EMPTY_REQUESTS_HASH),
+            ..Default::default()
+        });
+
+        assert!(matches!(
+            beacon_consensus.validate_header(&header).unwrap_err(),
+            ConsensusError::RequestsHashUnexpected,
         ));
     }
 }

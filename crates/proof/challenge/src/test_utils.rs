@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, ContractError, DisputeGameFactoryClient,
-    GameAtIndex, GameInfo,
+    GameAtIndex, GameInfo, GameStatus,
 };
 use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
@@ -36,8 +36,8 @@ pub const TEST_DISCOVERY_INTERVAL: Duration = Duration::from_secs(300);
 /// Per-game state for the mock verifier.
 #[derive(Debug, Clone)]
 pub struct MockGameState {
-    /// Game status (`0=IN_PROGRESS`, `1=CHALLENGER_WINS`, `2=DEFENDER_WINS`).
-    pub status: u8,
+    /// Game status.
+    pub status: GameStatus,
     /// Address of the ZK prover (`Address::ZERO` if unchallenged).
     pub zk_prover: Address,
     /// Address of the TEE prover (`Address::ZERO` if no TEE proof submitted).
@@ -87,7 +87,7 @@ pub struct MockGameState {
 impl Default for MockGameState {
     fn default() -> Self {
         Self {
-            status: 0,
+            status: GameStatus::InProgress,
             zk_prover: Address::ZERO,
             tee_prover: Address::ZERO,
             game_info: GameInfo {
@@ -215,7 +215,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         self.get(game_address, |s| s.game_info)
     }
 
-    async fn status(&self, game_address: Address) -> Result<u8, ContractError> {
+    async fn status(&self, game_address: Address) -> Result<GameStatus, ContractError> {
         self.get(game_address, |s| s.status)
     }
 
@@ -385,13 +385,17 @@ pub const DEFAULT_L1_HEAD: B256 = B256::repeat_byte(0xAA);
 ///
 /// Uses [`DEFAULT_TEE_PROVER`] as the TEE prover address. Use
 /// [`mock_state_with_tee`] to override.
-pub const fn mock_state(status: u8, zk_prover: Address, block_number: u64) -> MockGameState {
+pub const fn mock_state(
+    status: GameStatus,
+    zk_prover: Address,
+    block_number: u64,
+) -> MockGameState {
     mock_state_with_tee(status, zk_prover, DEFAULT_TEE_PROVER, block_number)
 }
 
 /// Helper to build mock game state with an explicit TEE prover address.
 pub const fn mock_state_with_tee(
-    status: u8,
+    status: GameStatus,
     zk_prover: Address,
     tee_prover: Address,
     block_number: u64,
@@ -900,11 +904,11 @@ mod tests {
 
         let challenger_addr = Address::repeat_byte(0xCC);
         let mut verifier_games = HashMap::new();
-        verifier_games.insert(addr(0), mock_state(0, Address::ZERO, 100));
-        verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 150));
-        verifier_games.insert(addr(2), mock_state(1, Address::ZERO, 200));
-        verifier_games.insert(addr(3), mock_state(0, challenger_addr, 300));
-        verifier_games.insert(addr(4), mock_state(0, Address::ZERO, 400));
+        verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
+        verifier_games.insert(addr(1), mock_state(GameStatus::InProgress, Address::ZERO, 150));
+        verifier_games.insert(addr(2), mock_state(GameStatus::ChallengerWins, Address::ZERO, 200));
+        verifier_games.insert(addr(3), mock_state(GameStatus::InProgress, challenger_addr, 300));
+        verifier_games.insert(addr(4), mock_state(GameStatus::InProgress, Address::ZERO, 400));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
@@ -942,11 +946,11 @@ mod tests {
 
         let mut verifier_games = HashMap::new();
         // Game 0: TEE + ZK (dual proof, no challenge) -> candidate (InvalidDualProposal)
-        verifier_games.insert(addr(0), mock_state(0, zk_addr, 100));
+        verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, zk_addr, 100));
         // Game 1: TEE only -> candidate (InvalidTeeProposal)
-        verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 200));
+        verifier_games.insert(addr(1), mock_state(GameStatus::InProgress, Address::ZERO, 200));
         // Game 2: TEE + ZK (dual proof, no challenge) -> candidate (InvalidDualProposal)
-        verifier_games.insert(addr(2), mock_state(0, zk_addr, 300));
+        verifier_games.insert(addr(2), mock_state(GameStatus::InProgress, zk_addr, 300));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
@@ -985,7 +989,8 @@ mod tests {
 
         for i in 0..100u64 {
             games.push(factory_game(i, 1));
-            verifier_games.insert(addr(i), mock_state(0, Address::ZERO, i * 10));
+            verifier_games
+                .insert(addr(i), mock_state(GameStatus::InProgress, Address::ZERO, i * 10));
         }
 
         let factory = Arc::new(MockDisputeGameFactory { games });
@@ -1016,9 +1021,9 @@ mod tests {
         });
 
         let mut verifier_games = HashMap::new();
-        verifier_games.insert(addr(0), mock_state(0, Address::ZERO, 100));
+        verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
         // index 1 won't be queried on the verifier because the factory errors first
-        verifier_games.insert(addr(2), mock_state(0, Address::ZERO, 300));
+        verifier_games.insert(addr(2), mock_state(GameStatus::InProgress, Address::ZERO, 300));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
@@ -1047,9 +1052,12 @@ mod tests {
 
         let mut verifier_games = HashMap::new();
         // Game 0: IN_PROGRESS, no ZK prover, has a TEE prover -> candidate
-        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
+        verifier_games.insert(
+            addr(0),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100),
+        );
         // Game 1: IN_PROGRESS, no ZK prover, has default TEE prover -> candidate
-        verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 200));
+        verifier_games.insert(addr(1), mock_state(GameStatus::InProgress, Address::ZERO, 200));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
@@ -1071,7 +1079,7 @@ mod tests {
         });
 
         let mut verifier_games = HashMap::new();
-        verifier_games.insert(addr(1), mock_state(0, Address::ZERO, 200));
+        verifier_games.insert(addr(1), mock_state(GameStatus::InProgress, Address::ZERO, 200));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
@@ -1093,7 +1101,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
 
         let mut verifier_games = HashMap::new();
-        let mut state = mock_state_with_tee(0, zk_addr, tee_addr, 100);
+        let mut state = mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100);
         state.countered_index = 3; // 1-based: challenged at 0-based index 2
         verifier_games.insert(addr(0), state);
 
@@ -1119,7 +1127,10 @@ mod tests {
 
         let mut verifier_games = HashMap::new();
         // tee_prover == ZERO, zk_prover != ZERO, countered_index == 0
-        verifier_games.insert(addr(0), mock_state_with_tee(0, zk_addr, Address::ZERO, 100));
+        verifier_games.insert(
+            addr(0),
+            mock_state_with_tee(GameStatus::InProgress, zk_addr, Address::ZERO, 100),
+        );
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
@@ -1137,7 +1148,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] });
 
         let mut verifier_games = HashMap::new();
-        verifier_games.insert(addr(0), mock_state(0, Address::ZERO, 100));
+        verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
@@ -1159,7 +1170,8 @@ mod tests {
 
         let mut verifier_games = HashMap::new();
         // Both provers non-zero, countered_index == 0 (added via verifyProposalProof)
-        verifier_games.insert(addr(0), mock_state_with_tee(0, zk_addr, tee_addr, 100));
+        verifier_games
+            .insert(addr(0), mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
         let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
@@ -1183,11 +1195,20 @@ mod tests {
 
         let mut verifier_games = HashMap::new();
         // Game 0: both provers zeroed (nullified) → filtered out
-        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, Address::ZERO, 100));
+        verifier_games.insert(
+            addr(0),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, Address::ZERO, 100),
+        );
         // Game 1: TEE prover active, ZK prover zero → candidate
-        verifier_games.insert(addr(1), mock_state_with_tee(0, Address::ZERO, tee_addr, 200));
+        verifier_games.insert(
+            addr(1),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 200),
+        );
         // Game 2: both provers zeroed (nullified) → filtered out
-        verifier_games.insert(addr(2), mock_state_with_tee(0, Address::ZERO, Address::ZERO, 300));
+        verifier_games.insert(
+            addr(2),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, Address::ZERO, 300),
+        );
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
@@ -1219,9 +1240,18 @@ mod tests {
         ]));
 
         let mut verifier_games = HashMap::new();
-        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
-        verifier_games.insert(addr(1), mock_state_with_tee(0, Address::ZERO, tee_addr, 200));
-        verifier_games.insert(addr(2), mock_state_with_tee(0, Address::ZERO, tee_addr, 300));
+        verifier_games.insert(
+            addr(0),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100),
+        );
+        verifier_games.insert(
+            addr(1),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 200),
+        );
+        verifier_games.insert(
+            addr(2),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 300),
+        );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let scanner = GameScanner::new(
@@ -1239,13 +1269,17 @@ mod tests {
         // Simulate a late ZK challenge against game 0 while it remains
         // IN_PROGRESS, then push three new games into the factory so game
         // 0 falls outside the rolling lookback tail (now [3..=5]).
-        let mut challenged_state = mock_state_with_tee(0, zk_addr, tee_addr, 100);
+        let mut challenged_state =
+            mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100);
         challenged_state.countered_index = 2; // 1-based → challenged_index = 1
         verifier.update_game(addr(0), challenged_state);
 
         for i in 3..6u64 {
             factory.push(factory_game(i, 1));
-            verifier.update_game(addr(i), mock_state_with_tee(0, Address::ZERO, tee_addr, i * 100));
+            verifier.update_game(
+                addr(i),
+                mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, i * 100),
+            );
         }
 
         // Second tick: even though game 0 is outside the tail, it must
@@ -1272,7 +1306,10 @@ mod tests {
         let factory = Arc::new(MutableMockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
-        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
+        verifier_games.insert(
+            addr(0),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100),
+        );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let scanner = GameScanner::new(
@@ -1287,12 +1324,16 @@ mod tests {
         assert_eq!(scanner.tracked_indices_len(), 1);
 
         // Resolve game 0 and add enough newer games to push it out of the tail.
-        let mut resolved = mock_state_with_tee(0, Address::ZERO, tee_addr, 100);
-        resolved.status = 1; // 0=IN_PROGRESS, 1=CHALLENGER_WINS, 2=DEFENDER_WINS
+        let mut resolved =
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100);
+        resolved.status = GameStatus::ChallengerWins;
         verifier.update_game(addr(0), resolved);
         for i in 1..4u64 {
             factory.push(factory_game(i, 1));
-            verifier.update_game(addr(i), mock_state_with_tee(0, Address::ZERO, tee_addr, i * 100));
+            verifier.update_game(
+                addr(i),
+                mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, i * 100),
+            );
         }
 
         let _ = scanner.scan().await.unwrap();
@@ -1312,7 +1353,10 @@ mod tests {
         let factory = Arc::new(MutableMockDisputeGameFactory::new(vec![factory_game(0, 1)]));
 
         let mut verifier_games = HashMap::new();
-        verifier_games.insert(addr(0), mock_state_with_tee(0, Address::ZERO, tee_addr, 100));
+        verifier_games.insert(
+            addr(0),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100),
+        );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
         let scanner = GameScanner::new(
@@ -1325,10 +1369,16 @@ mod tests {
         assert_eq!(scanner.tracked_indices_len(), 1);
 
         // Fully nullify the game (both provers zero) while keeping it IN_PROGRESS.
-        verifier.update_game(addr(0), mock_state_with_tee(0, Address::ZERO, Address::ZERO, 100));
+        verifier.update_game(
+            addr(0),
+            mock_state_with_tee(GameStatus::InProgress, Address::ZERO, Address::ZERO, 100),
+        );
         for i in 1..4u64 {
             factory.push(factory_game(i, 1));
-            verifier.update_game(addr(i), mock_state_with_tee(0, Address::ZERO, tee_addr, i * 100));
+            verifier.update_game(
+                addr(i),
+                mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, i * 100),
+            );
         }
 
         scanner.scan().await.unwrap();

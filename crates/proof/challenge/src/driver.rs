@@ -15,16 +15,10 @@
 //!    TEE proof first (`nullify()`), falling back to ZK `nullify()`.
 //!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_contracts::AggregateVerifierClient;
+use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_primitives::{
     ProofEncoder, ProofRequest as TeeProofRequest, ProofResult, ProverClient,
 };
@@ -49,8 +43,6 @@ pub struct DriverConfig {
     pub poll_interval: Duration,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
-    /// Shared flag flipped to `true` after the first successful driver step.
-    pub ready: Arc<AtomicBool>,
 }
 
 /// TEE proof configuration, bundling the provider and L1 head provider.
@@ -126,8 +118,6 @@ where
     pub poll_interval: Duration,
     /// Token used to signal graceful shutdown.
     pub cancel: CancellationToken,
-    /// Indicates whether the driver has completed its first scan.
-    pub ready: Arc<AtomicBool>,
 }
 
 impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> std::fmt::Debug
@@ -158,31 +148,20 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             bond_manager: components.bond_manager,
             poll_interval: config.poll_interval,
             cancel: config.cancel,
-            ready: config.ready,
         }
     }
 
     /// Runs the main driver loop until the cancellation token is fired.
     pub async fn run(mut self) {
         info!("challenger driver starting");
-        let mut signalled_ready = false;
         loop {
             if self.cancel.is_cancelled() {
                 info!("challenger driver shutting down");
                 break;
             }
 
-            match self.step().await {
-                Ok(()) => {
-                    if !signalled_ready {
-                        signalled_ready = true;
-                        self.ready.store(true, Ordering::SeqCst);
-                        info!("service is ready");
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "driver step failed");
-                }
+            if let Err(e) = self.step().await {
+                warn!(error = %e, "driver step failed");
             }
 
             ChallengerMetrics::pending_proofs().set(self.pending_proofs.len() as f64);
@@ -715,8 +694,8 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             self.verifier_client.zk_prover(game_address),
         )?;
 
-        if status != GameScanner::STATUS_IN_PROGRESS {
-            debug!(game = %game_address, status = status, "game no longer in progress, dropping pending proof");
+        if status != GameStatus::InProgress {
+            debug!(game = %game_address, status = ?status, "game no longer in progress, dropping pending proof");
             self.pending_proofs.remove(&game_address);
             return Ok(());
         }
