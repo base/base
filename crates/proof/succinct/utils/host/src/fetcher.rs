@@ -25,6 +25,8 @@ use base_protocol::L2BlockInfo;
 use futures::{StreamExt, stream};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use backon::Retryable;
+use base_retry::RetryConfig;
 use serde_json::{Value, json};
 
 use crate::{
@@ -450,27 +452,59 @@ impl OPSuccinctDataFetcher {
     where
         T: serde::de::DeserializeOwned,
     {
+        let retry_config = RetryConfig::new(
+            3,
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_secs(5),
+        );
+        let backoff = retry_config.to_backoff_builder();
+
         let client = reqwest::Client::new();
-        let response = client
-            .post(url.clone())
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params,
-                "id": 1
-            }))
-            .send()
-            .await?
-            .json::<serde_json::Value>()
-            .await?;
+        let request_payload = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1
+        });
+        let method_str = method.to_string();
 
-        // Check for RPC error from the JSON RPC response.
-        if let Some(error) = response.get("error") {
-            let error_message = error["message"].as_str().unwrap_or("Unknown error");
-            return Err(anyhow::anyhow!("Error calling {method}: {error_message}"));
-        }
+        let make_request = || {
+            let client = &client;
+            let url = url.clone();
+            let payload = request_payload.clone();
+            let method_str = method_str.clone();
+            async move {
+                let response = client
+                    .post(url)
+                    .json(&payload)
+                    .send()
+                    .await?
+                    .json::<serde_json::Value>()
+                    .await?;
 
-        serde_json::from_value(response["result"].clone()).map_err(Into::into)
+                // Check for RPC error from the JSON RPC response.
+                if let Some(error) = response.get("error") {
+                    let error_message = error["message"].as_str().unwrap_or("Unknown error");
+                    return Err(anyhow::anyhow!("Error calling {}: {}", method_str, error_message));
+                }
+
+                let result = serde_json::from_value(response["result"].clone())?;
+                Ok(result)
+            }
+        };
+
+        make_request
+            .retry(backoff)
+            .notify(|err, delay| {
+                tracing::warn!(
+                    error = %err,
+                    delay_ms = delay.as_millis(),
+                    method = %method_str,
+                    url = %url,
+                    "RPC request failed, retrying"
+                );
+            })
+            .await
     }
 
     /// Fetch arbitrary data from the RPC.
