@@ -241,38 +241,59 @@ impl S3EventReaderWriter {
     /// Writes a single event as a standalone S3 object using `If-None-Match: *`.
     ///
     /// If the object already exists (412), another writer succeeded first — return Ok.
+    /// Transient S3 errors (throttling, 5xx) are retried with exponential backoff.
     async fn write_event(&self, event: &Event) -> Result<()> {
+        const MAX_RETRIES: usize = 5;
+        const BASE_DELAY_MS: u64 = 100;
+
         let s3_key = event.event.s3_event_key();
         let history_event = to_history_event(event);
         let content = serde_json::to_string(&history_event)?;
 
-        let put_request = self
-            .s3_client
-            .put_object()
-            .bucket(&self.bucket)
-            .key(&s3_key)
-            .body(ByteStream::from(content.into_bytes()))
-            .if_none_match("*");
+        for attempt in 0..MAX_RETRIES {
+            let put_request = self
+                .s3_client
+                .put_object()
+                .bucket(&self.bucket)
+                .key(&s3_key)
+                .body(ByteStream::from(content.clone().into_bytes()))
+                .if_none_match("*");
 
-        let put_start = Instant::now();
-        match put_request.send().await {
-            Ok(_) => {
-                Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
-                debug!(s3_key = %s3_key, "wrote event to S3");
-                Ok(())
-            }
-            Err(ref e) if Self::is_conditional_write_conflict(e) => {
-                Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
-                Metrics::s3_conditional_conflicts().increment(1);
-                debug!(s3_key = %s3_key, "event already exists in S3, skipping");
-                Ok(())
-            }
-            Err(e) => {
-                // TODO: retry with exponential backoff
-                Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
-                Err(anyhow::anyhow!("failed to write event to S3: {e}"))
+            let put_start = Instant::now();
+            match put_request.send().await {
+                Ok(_) => {
+                    Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
+                    debug!(s3_key = %s3_key, "wrote event to S3");
+                    return Ok(());
+                }
+                Err(ref e) if Self::is_conditional_write_conflict(e) => {
+                    Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
+                    Metrics::s3_conditional_conflicts().increment(1);
+                    debug!(s3_key = %s3_key, "event already exists in S3, skipping");
+                    return Ok(());
+                }
+                Err(e) => {
+                    Metrics::s3_put_duration().record(put_start.elapsed().as_secs_f64());
+                    if attempt < MAX_RETRIES - 1 {
+                        let delay = BASE_DELAY_MS * 2_u64.pow(attempt as u32);
+                        warn!(
+                            s3_key = %s3_key,
+                            attempt = attempt + 1,
+                            delay_ms = delay,
+                            error = %e,
+                            "S3 put failed, retrying with backoff"
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "failed to write event to S3 after {MAX_RETRIES} attempts: {e}"
+                        ));
+                    }
+                }
             }
         }
+
+        Err(anyhow::anyhow!("failed to write event to S3: exceeded {MAX_RETRIES} attempts"))
     }
 
     async fn update_transaction_by_hash_index(
