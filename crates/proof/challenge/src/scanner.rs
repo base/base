@@ -34,6 +34,7 @@
 
 use std::{
     collections::{BTreeSet, HashMap},
+    mem,
     sync::{Arc, Mutex},
 };
 
@@ -264,6 +265,13 @@ impl GameScanner {
             for &i in tracked.iter() {
                 if i <= end {
                     indices.insert(i);
+                } else {
+                    warn!(
+                        index = i,
+                        game_count = game_count,
+                        scan_head = end,
+                        "dropping tracked index beyond factory range"
+                    );
                 }
             }
         }
@@ -277,40 +285,28 @@ impl GameScanner {
 
         let mut candidates = Vec::new();
         let mut next_tracked: BTreeSet<u64> = BTreeSet::new();
+        let mut next_error_counts: HashMap<u64, u64> = HashMap::new();
+        let previous_error_counts = mem::take(
+            &mut *self.scan_error_counts.lock().expect("scan_error_counts lock poisoned"),
+        );
 
         for (i, result) in results {
             match result {
                 Ok(GameEvaluation::Actionable(candidate)) => {
-                    self.scan_error_counts
-                        .lock()
-                        .expect("scan_error_counts lock poisoned")
-                        .remove(&i);
                     next_tracked.insert(i);
                     candidates.push(candidate);
                 }
                 Ok(GameEvaluation::InProgressNotActionable) => {
-                    self.scan_error_counts
-                        .lock()
-                        .expect("scan_error_counts lock poisoned")
-                        .remove(&i);
                     next_tracked.insert(i);
                 }
                 Ok(GameEvaluation::Terminal) => {
-                    self.scan_error_counts
-                        .lock()
-                        .expect("scan_error_counts lock poisoned")
-                        .remove(&i);
                     // Game has resolved or been fully nullified; never needs
                     // to be revisited.
                 }
                 Err(e) => {
-                    let consecutive_failures = {
-                        let mut scan_error_counts =
-                            self.scan_error_counts.lock().expect("scan_error_counts lock poisoned");
-                        let count = scan_error_counts.entry(i).or_insert(0);
-                        *count += 1;
-                        *count
-                    };
+                    let consecutive_failures =
+                        previous_error_counts.get(&i).copied().unwrap_or_default() + 1;
+                    next_error_counts.insert(i, consecutive_failures);
 
                     if consecutive_failures >= Self::PERSISTENT_SCAN_ERROR_LOG_THRESHOLD {
                         error!(
@@ -337,10 +333,8 @@ impl GameScanner {
         candidates.sort_unstable_by_key(|c| c.index);
 
         let tracked_len = next_tracked.len();
-        self.scan_error_counts
-            .lock()
-            .expect("scan_error_counts lock poisoned")
-            .retain(|index, _| next_tracked.contains(index));
+        *self.scan_error_counts.lock().expect("scan_error_counts lock poisoned") =
+            next_error_counts;
         *self.tracked_indices.lock().expect("tracked_indices lock poisoned") = next_tracked;
 
         ChallengerMetrics::games_scanned_total().increment(games_to_scan);
