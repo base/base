@@ -18,6 +18,7 @@ sp1-sdk = { workspace = true, features = ["network", "blocking", "profiling"] }
 
 # local
 base-proof-succinct-client-utils.workspace = true
+base-retry.workspace = true
 
 # op-alloy
 base-common-consensus.workspace = true
@@ -47,6 +48,7 @@ alloy-network.workspace = true
 
 # general
 anyhow.workspace = true
+backon.workspace = true
 async-trait.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 cfg-if.workspace = true
