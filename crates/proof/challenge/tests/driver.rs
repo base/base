@@ -15,7 +15,7 @@ use base_challenger::{
         MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider,
         MockTeeProofProvider, MockTxManager, MockZkProofProvider, MockZkProofState,
         TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account, empty_factory, factory_game,
-        mock_state, mock_state_with_tee, receipt_with_status,
+        mock_anchor_registry, mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex, GameStatus};
@@ -72,8 +72,11 @@ fn test_driver_with_tee(
     tx_manager: MockTxManager,
     tee: Option<TeeConfig>,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
-    let scanner =
-        GameScanner::new(factory, Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>);
+    let scanner = GameScanner::new(
+        factory,
+        Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
+        mock_anchor_registry(Address::ZERO),
+    );
     let validator = OutputValidator::new(l2_provider);
     let submitter = ChallengeSubmitter::new(tx_manager);
 
@@ -362,8 +365,11 @@ async fn test_step_scan_error_propagated() {
 
     let factory = Arc::new(FailingFactory);
     let verifier = empty_verifier();
-    let scanner =
-        GameScanner::new(factory, Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>);
+    let scanner = GameScanner::new(
+        factory,
+        Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
+        mock_anchor_registry(Address::ZERO),
+    );
 
     let l2 = default_l2();
     let validator = OutputValidator::new(l2);

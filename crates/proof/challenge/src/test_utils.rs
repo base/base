@@ -17,8 +17,9 @@ use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
 use base_proof_contracts::{
-    AggregateVerifierClient, AnchorPreflight, AnchorRoot, ContractError, DisputeGameFactoryClient,
-    GameAtIndex, GameInfo, GameStatus,
+    AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
+    AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
+    GameStatus,
 };
 use base_proof_primitives::{ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L2Provider, RpcError, RpcResult};
@@ -172,6 +173,42 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     ) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
     }
+}
+
+/// Mock anchor-state registry with a mutable anchor snapshot.
+#[derive(Debug)]
+pub struct MockAnchorStateRegistry {
+    /// Current anchor snapshot returned by the mock.
+    pub snapshot: Mutex<AnchorSnapshot>,
+}
+
+impl MockAnchorStateRegistry {
+    /// Creates a new mock with the given anchor game.
+    pub const fn new(anchor_game: Address) -> Self {
+        Self {
+            snapshot: Mutex::new(AnchorSnapshot {
+                anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
+                anchor_game,
+            }),
+        }
+    }
+
+    /// Updates the current anchor game.
+    pub fn set_anchor_game(&self, anchor_game: Address) {
+        self.snapshot.lock().unwrap().anchor_game = anchor_game;
+    }
+}
+
+#[async_trait]
+impl AnchorStateRegistryClient for MockAnchorStateRegistry {
+    async fn anchor_snapshot(&self) -> Result<AnchorSnapshot, ContractError> {
+        Ok(*self.snapshot.lock().unwrap())
+    }
+}
+
+/// Helper to create a mock anchor-state registry behind an [`Arc`].
+pub fn mock_anchor_registry(anchor_game: Address) -> Arc<dyn AnchorStateRegistryClient> {
+    Arc::new(MockAnchorStateRegistry::new(anchor_game))
 }
 
 /// Mock aggregate verifier with configurable per-address game state.
@@ -871,7 +908,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -915,7 +952,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -934,17 +971,17 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
 
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
         assert!(candidates.is_empty());
     }
 
-    /// Lookback window: on fresh start with large factory, only the recent tail is scanned.
+    /// Anchor lower bound: only games after the current anchor game are scanned.
     #[tokio::test]
-    async fn test_scan_lookback_window() {
-        // Factory with 100 games, but lookback is 3 -> only scan indices 97, 98, 99
+    async fn test_scan_starts_after_anchor_game() {
+        // Factory with 100 games and anchor at index 96 -> scan indices 97, 98, 99.
         let mut games = Vec::new();
         let mut verifier_games = HashMap::new();
 
@@ -957,9 +994,8 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::with_lookback_games(factory, verifier, 3);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(addr(96)));
 
-        // start = 100-3 = 97, end = 99
         let candidates = scanner.scan().await.unwrap();
 
         assert_eq!(candidates.len(), 3);
@@ -969,8 +1005,8 @@ mod tests {
     }
 
     /// Error resilience: a per-game error is logged and skipped, other games still returned.
-    /// Errored games are naturally retried on the next scan since the full lookback
-    /// window is always evaluated.
+    /// Errored games are naturally retried on the next scan since the full post-anchor
+    /// range is always evaluated.
     #[tokio::test]
     async fn test_scan_skips_errored_games() {
         // 3 games: index 1 will error, indices 0 and 2 are valid candidates
@@ -990,7 +1026,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
         let candidates = scanner.scan().await.unwrap();
@@ -1028,7 +1064,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1050,7 +1086,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1078,7 +1114,7 @@ mod tests {
         verifier_games.insert(addr(0), state);
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1105,7 +1141,7 @@ mod tests {
         );
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1123,7 +1159,7 @@ mod tests {
         verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1146,7 +1182,7 @@ mod tests {
             .insert(addr(0), mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1186,7 +1222,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier);
+        let scanner = GameScanner::new(factory, verifier, mock_anchor_registry(Address::ZERO));
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1194,17 +1230,14 @@ mod tests {
         assert_eq!(candidates[0].index, 1);
     }
 
-    /// A game that ages out of the lookback tail must still be re-evaluated
-    /// on subsequent scans. Without persistent in-progress tracking, a late
-    /// state transition (e.g. a fraudulent ZK challenge against a legacy
-    /// TEE-only game) would be missed once enough newer games are created
-    /// to push the affected game outside the rolling tail window.
+    /// A game remains covered after new games are appended because the scanner
+    /// evaluates the full post-anchor range rather than a rolling tail.
     #[tokio::test]
-    async fn test_scan_revisits_aged_out_in_progress_games() {
+    async fn test_scan_revisits_old_post_anchor_in_progress_games() {
         let tee_addr = Address::repeat_byte(0xEE);
         let zk_addr = Address::repeat_byte(0xCC);
 
-        // Initial state: 3 games inside a lookback window of 3.
+        // Initial state: 3 games after the starting anchor.
         let factory = Arc::new(MockDisputeGameFactory::new(vec![
             factory_game(0, 1),
             factory_game(1, 1),
@@ -1226,21 +1259,20 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::with_lookback_games(
+        let scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            3,
+            mock_anchor_registry(Address::ZERO),
         );
 
-        // First tick: all three games are inside the tail and discovered.
+        // First tick: all three games are post-anchor and discovered.
         let initial = scanner.scan().await.unwrap();
         assert_eq!(initial.len(), 3, "all three initial games are actionable");
         assert!(initial.iter().any(|c| c.index == 0));
         assert_eq!(scanner.tracked_indices_len(), 3);
 
         // Simulate a late ZK challenge against game 0 while it remains
-        // IN_PROGRESS, then push three new games into the factory so game
-        // 0 falls outside the rolling lookback tail (now [3..=5]).
+        // IN_PROGRESS, then push three new games into the factory.
         let mut challenged_state =
             mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100);
         challenged_state.countered_index = 2; // 1-based → challenged_index = 1
@@ -1254,18 +1286,16 @@ mod tests {
             );
         }
 
-        // Second tick: even though game 0 is outside the tail, it must
-        // still be returned by scan() because it was previously tracked
-        // and is still IN_PROGRESS.
+        // Second tick: game 0 is still post-anchor, so it must be returned by scan().
         let late = scanner.scan().await.unwrap();
         let game_zero = late
             .iter()
             .find(|c| c.index == 0)
-            .expect("aged-out in-progress game must still be returned by scan()");
+            .expect("old post-anchor in-progress game must still be returned by scan()");
         assert_eq!(
             game_zero.category,
             GameCategory::FraudulentZkChallenge { challenged_index: 1 },
-            "aged-out game should now classify under its late state transition"
+            "old game should now classify under its late state transition"
         );
     }
 
@@ -1284,10 +1314,10 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::with_lookback_games(
+        let scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            3,
+            mock_anchor_registry(Address::ZERO),
         );
 
         // First tick: game 0 is in progress and gets tracked.
@@ -1295,7 +1325,7 @@ mod tests {
         assert_eq!(initial.len(), 1);
         assert_eq!(scanner.tracked_indices_len(), 1);
 
-        // Resolve game 0 and add enough newer games to push it out of the tail.
+        // Resolve game 0 and add newer games.
         let mut resolved =
             mock_state_with_tee(GameStatus::InProgress, Address::ZERO, tee_addr, 100);
         resolved.status = GameStatus::ChallengerWins;
@@ -1331,10 +1361,10 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::with_lookback_games(
+        let scanner = GameScanner::new(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            3,
+            mock_anchor_registry(Address::ZERO),
         );
 
         scanner.scan().await.unwrap();

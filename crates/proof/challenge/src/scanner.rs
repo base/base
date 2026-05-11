@@ -40,7 +40,8 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use base_proof_contracts::{
-    AggregateVerifierClient, DisputeGameFactoryClient, GameAtIndex, GameInfo, GameStatus,
+    AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
+    GameInfo, GameStatus,
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
@@ -142,47 +143,36 @@ pub enum GameEvaluation {
 
 /// Scans the `DisputeGameFactory` for dispute games that need validation.
 ///
-/// On every tick the scanner evaluates the union of two index sets:
-///
-/// * The recent **lookback tail**
-///   `(game_count - DEFAULT_LOOKBACK_GAMES) ..= (game_count - 1)`, which acts
-///   as a startup catch-up window and as the discovery channel for
-///   newly-created games.
-/// * A persistent **tracking set** of indices for games that were observed
-///   to be `IN_PROGRESS` on a previous tick. This guarantees that older
-///   games which age out of the lookback tail continue to be re-evaluated
-///   so that late on-chain transitions (e.g. a fraudulent ZK challenge
-///   filed against a legacy TEE-only game) are still detected.
+/// On every tick the scanner locates the current anchor game in the factory
+/// index list, then evaluates every later factory index. This avoids an
+/// arbitrary lookback cap while still skipping historical games at or before
+/// the accepted anchor.
 ///
 /// Indices are removed from the tracking set as soon as their game reaches
 /// a terminal state (resolved or fully nullified), bounding memory use to
-/// the number of currently-live games rather than the total factory size.
+/// the number of currently-live post-anchor games rather than the total
+/// factory size.
 pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
-    lookback_games: u64,
+    anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
     /// Cache of `game_type → intermediate_block_interval` to avoid repeated RPC calls.
     interval_cache: Mutex<HashMap<u32, u64>>,
+    /// Cached `(anchor_game, factory_index)` for the current anchor game.
+    anchor_index: Mutex<Option<(Address, u64)>>,
     /// Tracked factory indices keyed to their consecutive scan-failure
     /// count (`0` for healthy entries). An index is present iff the game was
-    /// observed `IN_PROGRESS` on a previous tick, so older live games which
-    /// age out of the lookback tail are still re-evaluated until they reach
-    /// a terminal state.
+    /// observed `IN_PROGRESS` on a previous tick.
     tracking: Mutex<BTreeMap<u64, u64>>,
 }
 
 impl std::fmt::Debug for GameScanner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GameScanner")
-            .field("lookback_games", &self.lookback_games)
-            .finish_non_exhaustive()
+        f.debug_struct("GameScanner").finish_non_exhaustive()
     }
 }
 
 impl GameScanner {
-    /// Number of recent factory games evaluated on every scan tick.
-    pub const DEFAULT_LOOKBACK_GAMES: u64 = 1000;
-
     /// Maximum number of games to evaluate concurrently during a scan.
     pub const SCAN_CONCURRENCY: usize = 32;
 
@@ -193,21 +183,14 @@ impl GameScanner {
     pub fn new(
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
-    ) -> Self {
-        Self::with_lookback_games(factory_client, verifier_client, Self::DEFAULT_LOOKBACK_GAMES)
-    }
-
-    /// Creates a game scanner with a custom recent-tail size.
-    pub fn with_lookback_games(
-        factory_client: Arc<dyn DisputeGameFactoryClient>,
-        verifier_client: Arc<dyn AggregateVerifierClient>,
-        lookback_games: u64,
+        anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
     ) -> Self {
         Self {
             factory_client,
             verifier_client,
-            lookback_games: lookback_games.max(1),
+            anchor_registry_client,
             interval_cache: Mutex::new(HashMap::new()),
+            anchor_index: Mutex::new(None),
             tracking: Mutex::new(BTreeMap::new()),
         }
     }
@@ -220,18 +203,18 @@ impl GameScanner {
 
     /// Scans for candidate games that need validation.
     ///
-    /// Every call evaluates the union of the recent factory tail (the
-    /// lookback window) and the persistent tracking set of previously-observed
-    /// `IN_PROGRESS` games. This guarantees both that newly-created games are
-    /// discovered and that older live games which have aged out of the tail
-    /// continue to be re-evaluated until they reach a terminal state.
+    /// Every call evaluates every factory index after the current anchor game.
+    /// If the registry is still at its starting anchor (`anchorGame == 0`), the
+    /// scan starts from index 0. If the anchor game cannot be found in the
+    /// factory, the scanner falls back to index 0 rather than risking a missed
+    /// game.
     ///
     /// Games are filtered out cheaply via a single `status()` RPC call when
     /// they are no longer `IN_PROGRESS`. Individual game query failures are
     /// logged and skipped so that a transient RPC error on one game does not
     /// abort the entire scan; previously-tracked failing indices are retained
-    /// so aged-out in-progress games are retried on subsequent ticks, with
-    /// logs escalated after repeated failures. After evaluation, the
+    /// so repeated failures can be surfaced with escalating logs. After
+    /// evaluation, the
     /// `base_challenger_games_scanned_total` counter,
     /// `base_challenger_scan_tracked_in_progress` gauge, and
     /// `base_challenger_scan_head` gauge are updated.
@@ -248,33 +231,17 @@ impl GameScanner {
         }
 
         let end = game_count - 1;
-        let tail_start = game_count.saturating_sub(self.lookback_games);
+        let scan_start = self.scan_start_index(game_count).await;
 
         let previous_tracking =
             mem::take(&mut *self.tracking.lock().expect("tracking lock poisoned"));
+        let games_to_scan = game_count.saturating_sub(scan_start);
 
-        let mut extra_tracked = Vec::new();
-        for &i in previous_tracking.keys() {
-            if i < tail_start {
-                extra_tracked.push(i);
-            } else if i > end {
-                warn!(
-                    index = i,
-                    game_count = game_count,
-                    scan_head = end,
-                    "dropping tracked index beyond factory range"
-                );
-            }
-        }
-        let tail_len = if tail_start <= end { end - tail_start + 1 } else { 0 };
-        let games_to_scan = tail_len + extra_tracked.len() as u64;
-
-        let results: Vec<(u64, Result<GameEvaluation>)> =
-            stream::iter(extra_tracked.into_iter().chain(tail_start..=end))
-                .map(|i| async move { (i, self.evaluate_game(i).await) })
-                .buffer_unordered(Self::SCAN_CONCURRENCY)
-                .collect()
-                .await;
+        let results: Vec<(u64, Result<GameEvaluation>)> = stream::iter(scan_start..game_count)
+            .map(|i| async move { (i, self.evaluate_game(i).await) })
+            .buffer_unordered(Self::SCAN_CONCURRENCY)
+            .collect()
+            .await;
 
         let mut candidates = Vec::new();
         let mut next_tracking: BTreeMap<u64, u64> = BTreeMap::new();
@@ -298,8 +265,8 @@ impl GameScanner {
                         warn!(error = %e, index = i, consecutive_failures, "game query failed");
                     }
                     if previous_tracking.contains_key(&i) {
-                        // Keep previously-tracked indices: dropping on error would silently
-                        // lose coverage of aged-out in-progress games.
+                        // Keep previously-tracked indices so repeated failures are
+                        // visible in metrics and logs.
                         next_tracking.insert(i, consecutive_failures);
                     }
                 }
@@ -317,6 +284,7 @@ impl GameScanner {
 
         info!(
             games_found = candidates.len(),
+            scan_start,
             scan_head = end,
             games_scanned = games_to_scan,
             tracked_in_progress = tracked_len,
@@ -324,6 +292,120 @@ impl GameScanner {
         );
 
         Ok(candidates)
+    }
+
+    /// Returns the first factory index that should be evaluated this tick.
+    ///
+    /// The start is one past the current anchor game's factory index. When the
+    /// registry still has no anchor game, or if the anchor game cannot be
+    /// located in this factory, the scanner starts at 0.
+    pub async fn scan_start_index(&self, game_count: u64) -> u64 {
+        let anchor = match self.anchor_registry_client.anchor_snapshot().await {
+            Ok(anchor) => anchor,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "failed to read anchor snapshot, scanning from genesis"
+                );
+                *self.anchor_index.lock().expect("anchor_index lock poisoned") = None;
+                return 0;
+            }
+        };
+        let anchor_game = anchor.anchor_game;
+
+        if anchor_game == Address::ZERO {
+            *self.anchor_index.lock().expect("anchor_index lock poisoned") = None;
+            return 0;
+        }
+
+        if let Some((cached_game, cached_index)) =
+            *self.anchor_index.lock().expect("anchor_index lock poisoned")
+            && cached_game == anchor_game
+            && cached_index < game_count
+        {
+            return cached_index.saturating_add(1).min(game_count);
+        }
+
+        let search_start = self
+            .anchor_index
+            .lock()
+            .expect("anchor_index lock poisoned")
+            .map(|(_, index)| index.saturating_add(1))
+            .unwrap_or_default()
+            .min(game_count);
+
+        let found = match self.find_game_index(anchor_game, search_start, game_count).await {
+            Ok(Some(index)) => Some(index),
+            Ok(None) if search_start > 0 => {
+                match self.find_game_index(anchor_game, 0, search_start).await {
+                    Ok(index) => index,
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            anchor_game = %anchor_game,
+                            "failed to locate anchor game, scanning from genesis"
+                        );
+                        *self.anchor_index.lock().expect("anchor_index lock poisoned") = None;
+                        return 0;
+                    }
+                }
+            }
+            Ok(None) => None,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    anchor_game = %anchor_game,
+                    "failed to locate anchor game, scanning from genesis"
+                );
+                *self.anchor_index.lock().expect("anchor_index lock poisoned") = None;
+                return 0;
+            }
+        };
+
+        if let Some(index) = found {
+            *self.anchor_index.lock().expect("anchor_index lock poisoned") =
+                Some((anchor_game, index));
+            return index.saturating_add(1).min(game_count);
+        }
+
+        warn!(
+            anchor_game = %anchor_game,
+            game_count,
+            "anchor game not found in factory, scanning from genesis"
+        );
+        *self.anchor_index.lock().expect("anchor_index lock poisoned") = None;
+        0
+    }
+
+    /// Finds `target` in the half-open factory index range `[start, end)`.
+    pub async fn find_game_index(
+        &self,
+        target: Address,
+        start: u64,
+        end: u64,
+    ) -> Result<Option<u64>> {
+        if start >= end {
+            return Ok(None);
+        }
+
+        let results: Vec<(u64, Result<GameAtIndex>)> =
+            stream::iter(start..end)
+                .map(|i| async move {
+                    (i, self.factory_client.game_at_index(i).await.map_err(Into::into))
+                })
+                .buffer_unordered(Self::SCAN_CONCURRENCY)
+                .collect()
+                .await;
+
+        let mut found = None;
+        for (index, result) in results {
+            let game = result?;
+            if game.proxy == target {
+                found = Some(found.map_or(index, |current: u64| current.min(index)));
+            }
+        }
+
+        Ok(found)
     }
 
     /// Evaluates a single game at the given factory index.

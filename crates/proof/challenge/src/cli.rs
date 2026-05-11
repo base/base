@@ -56,6 +56,10 @@ pub struct ChallengerArgs {
     #[arg(long = "dispute-game-factory-addr", env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"))]
     pub dispute_game_factory_addr: Address,
 
+    /// Address of the `AnchorStateRegistry` contract on L1.
+    #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
+    pub anchor_state_registry_addr: Address,
+
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",

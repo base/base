@@ -28,11 +28,13 @@ L2 headers and account proofs and treats the game as an input to be checked.
 
 ## Game Selection
 
-The challenger scans a fixed recent tail of factory indices and keeps tracking games that were
-observed `IN_PROGRESS` until they resolve or are fully nullified. Each scan re-evaluates the recent
-tail plus the tracked live set so games can move between categories as new proofs, challenges, or
-nullifications are posted onchain. Individual game query failures are logged and retried on the next
-scan; they do not abort the full scan.
+The challenger reads the current `AnchorStateRegistry.anchorGame()`, locates that game in the
+factory index array, and scans every later factory index. If the registry is still at the starting
+anchor, or if the anchor game cannot be found in the factory, scanning starts at index `0`. Games
+observed `IN_PROGRESS` remain tracked until they resolve or are fully nullified, so metrics reflect
+the live post-anchor set. Each scan re-evaluates the full post-anchor range so games can move
+between categories as new proofs, challenges, or nullifications are posted onchain. Individual game
+query failures are logged and retried on the next scan; they do not abort the full scan.
 
 A game is selected only when `status() == IN_PROGRESS`. The challenger then reads:
 
@@ -235,6 +237,7 @@ A challenger needs:
 - L1 RPC endpoint.
 - L2 execution RPC endpoint.
 - `DisputeGameFactory` address.
+- `AnchorStateRegistry` address.
 - ZK proof RPC endpoint.
 - L1 transaction signer.
 - Poll interval.

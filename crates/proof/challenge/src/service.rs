@@ -10,8 +10,8 @@ use base_balance_monitor::BalanceMonitorLayer;
 use base_cli_utils::RuntimeManager;
 use base_health::HealthServer;
 use base_proof_contracts::{
-    AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
-    DisputeGameFactoryContractClient,
+    AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryContractClient,
+    DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
 use base_proof_rpc::{L1Client, L1ClientConfig, L2Client, L2ClientConfig};
 use base_runtime::TokioRuntime;
@@ -109,9 +109,18 @@ impl ChallengerService {
         );
 
         let verifier_client = AggregateVerifierContractClient::new(l1_rpc_url.clone())?;
+        let anchor_registry_client = AnchorStateRegistryContractClient::new(
+            config.anchor_state_registry_addr,
+            l1_rpc_url.clone(),
+        )?;
+        info!(
+            address = %config.anchor_state_registry_addr,
+            "AnchorStateRegistry client initialized"
+        );
 
         let factory_client = Arc::new(factory_client);
         let verifier_client: Arc<dyn AggregateVerifierClient> = Arc::new(verifier_client);
+        let anchor_registry_client = Arc::new(anchor_registry_client);
 
         // ── 5. L2 client ─────────────────────────────────────────────────────
         let l2_config = L2ClientConfig::new(config.l2_eth_rpc.as_ref().clone());
@@ -156,7 +165,7 @@ impl ChallengerService {
                 config.bond_claim_addresses,
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
-                GameScanner::DEFAULT_LOOKBACK_GAMES,
+                BondManager::<TokioRuntime>::DEFAULT_DISCOVERY_BATCH_SIZE,
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
             );
@@ -178,7 +187,8 @@ impl ChallengerService {
         };
 
         // ── 7b. Assemble scanner, validator, and driver ─────────────────────
-        let scanner = GameScanner::new(factory_client, Arc::clone(&verifier_client));
+        let scanner =
+            GameScanner::new(factory_client, Arc::clone(&verifier_client), anchor_registry_client);
 
         let validator = OutputValidator::new(l2_client);
 
