@@ -31,7 +31,8 @@ pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
 
 mod bundle;
 pub use bundle::{
-    SendBundleApiImpl, SendBundleApiServer, SendBundleRequest, maintain_bundle_transactions,
+    BundleApiMetrics, SendBundleApiImpl, SendBundleApiServer, SendBundleRequest,
+    maintain_bundle_transactions,
 };
 
 mod wire;
