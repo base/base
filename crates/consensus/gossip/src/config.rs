@@ -70,6 +70,9 @@ pub const SEEN_MESSAGES_TTL: Duration =
 /// The frequency at which peer scores are inspected.
 pub const PEER_SCORE_INSPECT_FREQUENCY: Duration = Duration::from_secs(15);
 
+/// How often the network actor calls [`ConnectionGate::prune`] to drop expired bookkeeping.
+pub const GATER_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 // Config Building
 ////////////////////////////////////////////////////////////////////////////////////////////////

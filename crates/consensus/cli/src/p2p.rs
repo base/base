@@ -199,14 +199,6 @@ pub struct P2PArgs {
     #[arg(long = "p2p.redial.period", env = "BASE_NODE_P2P_REDIAL_PERIOD", default_value = "60")]
     pub redial_period: u64,
 
-    /// Maximum number of entries in the connection gater's connectedness cache.
-    #[arg(
-        long = "p2p.gater.connectedness-cache-size",
-        env = "BASE_NODE_P2P_GATER_CONNECTEDNESS_CACHE_SIZE",
-        default_value = "4096"
-    )]
-    pub connectedness_cache_size: usize,
-
     /// An optional list of bootnode ENRs or node records to start the node with.
     #[arg(long = "p2p.bootnodes", value_delimiter = ',', env = "BASE_NODE_P2P_BOOTNODES")]
     pub bootnodes: Vec<String>,
@@ -531,7 +523,6 @@ impl P2PArgs {
             gater_config: GaterConfig {
                 peer_redialing: self.peer_redial,
                 dial_period: Duration::from_secs(60 * self.redial_period),
-                max_connectedness_cache_size: self.connectedness_cache_size,
             },
             connection_limits_config: ConnectionLimitsConfig::new(self.peers_hi),
             bootnodes,
