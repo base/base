@@ -1,6 +1,6 @@
 //! Contains all upgrades represented in the [`crate::Upgrade`] type.
 
-use crate::{Ecotone, Fjord, Isthmus, Jovian};
+use crate::{BaseV1, Ecotone, Fjord, Isthmus, Jovian};
 
 /// Base Upgrades
 ///
@@ -46,6 +46,9 @@ impl Upgrades {
 
     /// The Jovian upgrade transactions.
     pub const JOVIAN: Jovian = Jovian;
+
+    /// The Base V1 upgrade transactions.
+    pub const BASE_V1: BaseV1 = BaseV1;
 }
 
 #[cfg(test)]
