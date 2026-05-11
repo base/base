@@ -176,6 +176,9 @@ impl GameScanner {
     /// Maximum number of games to evaluate concurrently during a scan.
     pub const SCAN_CONCURRENCY: usize = 32;
 
+    /// Maximum number of factory indices to inspect in one anchor lookup batch.
+    pub const ANCHOR_SEARCH_BATCH_SIZE: u64 = 1024;
+
     /// Consecutive per-index scan failures before logs escalate to `error!`.
     pub const PERSISTENT_SCAN_ERROR_LOG_THRESHOLD: u64 = 3;
 
@@ -235,6 +238,14 @@ impl GameScanner {
 
         let previous_tracking =
             mem::take(&mut *self.tracking.lock().expect("tracking lock poisoned"));
+        let pruned_tracking = previous_tracking.keys().filter(|&&i| i < scan_start).count();
+        if pruned_tracking > 0 {
+            info!(
+                pruned_tracking = pruned_tracking,
+                scan_start = scan_start,
+                "pruned tracked indices behind anchor"
+            );
+        }
         let games_to_scan = game_count.saturating_sub(scan_start);
 
         let results: Vec<(u64, Result<GameEvaluation>)> = stream::iter(scan_start..game_count)
@@ -303,12 +314,15 @@ impl GameScanner {
         let anchor = match self.anchor_registry_client.anchor_snapshot().await {
             Ok(anchor) => anchor,
             Err(e) => {
+                let cached_scan_start = self.cached_scan_start_index(game_count);
+                let scan_start = cached_scan_start.unwrap_or_default();
                 warn!(
                     error = %e,
-                    "failed to read anchor snapshot, scanning from genesis"
+                    scan_start = scan_start,
+                    has_cached_anchor = cached_scan_start.is_some(),
+                    "failed to read anchor snapshot"
                 );
-                *self.anchor_index.lock().expect("anchor_index lock poisoned") = None;
-                return 0;
+                return scan_start;
             }
         };
         let anchor_game = anchor.anchor_game;
@@ -334,33 +348,27 @@ impl GameScanner {
             .unwrap_or_default()
             .min(game_count);
 
-        let found = match self.find_game_index(anchor_game, search_start, game_count).await {
-            Ok(Some(index)) => Some(index),
-            Ok(None) if search_start > 0 => {
-                match self.find_game_index(anchor_game, 0, search_start).await {
-                    Ok(index) => index,
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            anchor_game = %anchor_game,
-                            "failed to locate anchor game, scanning from genesis"
-                        );
-                        *self.anchor_index.lock().expect("anchor_index lock poisoned") = None;
-                        return 0;
-                    }
-                }
-            }
-            Ok(None) => None,
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    anchor_game = %anchor_game,
-                    "failed to locate anchor game, scanning from genesis"
-                );
-                *self.anchor_index.lock().expect("anchor_index lock poisoned") = None;
-                return 0;
-            }
-        };
+        let (mut found, mut lookup_had_errors) =
+            self.find_game_index(anchor_game, search_start, game_count).await;
+
+        if found.is_none() && search_start > 0 {
+            let (wrapped_found, wrapped_lookup_had_errors) =
+                self.find_game_index(anchor_game, 0, search_start).await;
+            found = wrapped_found;
+            lookup_had_errors |= wrapped_lookup_had_errors;
+        }
+
+        if found.is_none()
+            && lookup_had_errors
+            && let Some(scan_start) = self.cached_scan_start_index(game_count)
+        {
+            warn!(
+                anchor_game = %anchor_game,
+                scan_start = scan_start,
+                "anchor game not found after lookup errors, using cached anchor"
+            );
+            return scan_start;
+        }
 
         if let Some(index) = found {
             *self.anchor_index.lock().expect("anchor_index lock poisoned") =
@@ -377,35 +385,66 @@ impl GameScanner {
         0
     }
 
+    /// Returns the scan start from the cached anchor index when it is valid for
+    /// the current factory size.
+    pub fn cached_scan_start_index(&self, game_count: u64) -> Option<u64> {
+        self.anchor_index
+            .lock()
+            .expect("anchor_index lock poisoned")
+            .map(|(_, index)| index)
+            .filter(|&index| index < game_count)
+            .map(|index| index.saturating_add(1).min(game_count))
+    }
+
     /// Finds `target` in the half-open factory index range `[start, end)`.
     pub async fn find_game_index(
         &self,
         target: Address,
         start: u64,
         end: u64,
-    ) -> Result<Option<u64>> {
+    ) -> (Option<u64>, bool) {
         if start >= end {
-            return Ok(None);
+            return (None, false);
         }
 
-        let results: Vec<(u64, Result<GameAtIndex>)> =
-            stream::iter(start..end)
-                .map(|i| async move {
-                    (i, self.factory_client.game_at_index(i).await.map_err(Into::into))
-                })
+        let mut search_end = end;
+        let mut had_errors = false;
+
+        while search_end > start {
+            let search_start = search_end.saturating_sub(Self::ANCHOR_SEARCH_BATCH_SIZE).max(start);
+            let results: Vec<_> = stream::iter(search_start..search_end)
+                .map(|i| async move { (i, self.factory_client.game_at_index(i).await) })
                 .buffer_unordered(Self::SCAN_CONCURRENCY)
                 .collect()
                 .await;
 
-        let mut found = None;
-        for (index, result) in results {
-            let game = result?;
-            if game.proxy == target {
-                found = Some(found.map_or(index, |current: u64| current.min(index)));
+            let mut found = None;
+            for (index, result) in results {
+                let game = match result {
+                    Ok(game) => game,
+                    Err(e) => {
+                        had_errors = true;
+                        warn!(
+                            error = %e,
+                            index = index,
+                            "failed to fetch game during anchor search"
+                        );
+                        continue;
+                    }
+                };
+                if game.proxy == target {
+                    found = Some(found.map_or(index, |current: u64| current.min(index)));
+                }
             }
+
+            if found.is_some() {
+                return (found, had_errors);
+            }
+
+            search_end = search_start;
         }
 
-        Ok(found)
+        (None, had_errors)
     }
 
     /// Evaluates a single game at the given factory index.

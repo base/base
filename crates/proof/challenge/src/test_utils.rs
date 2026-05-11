@@ -180,6 +180,8 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
 pub struct MockAnchorStateRegistry {
     /// Current anchor snapshot returned by the mock.
     pub snapshot: Mutex<AnchorSnapshot>,
+    /// Whether `anchor_snapshot` should return a simulated error.
+    pub fail_snapshot: Mutex<bool>,
 }
 
 impl MockAnchorStateRegistry {
@@ -190,6 +192,7 @@ impl MockAnchorStateRegistry {
                 anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
                 anchor_game,
             }),
+            fail_snapshot: Mutex::new(false),
         }
     }
 
@@ -197,11 +200,19 @@ impl MockAnchorStateRegistry {
     pub fn set_anchor_game(&self, anchor_game: Address) {
         self.snapshot.lock().unwrap().anchor_game = anchor_game;
     }
+
+    /// Sets whether `anchor_snapshot` should return a simulated error.
+    pub fn set_fail_snapshot(&self, fail_snapshot: bool) {
+        *self.fail_snapshot.lock().unwrap() = fail_snapshot;
+    }
 }
 
 #[async_trait]
 impl AnchorStateRegistryClient for MockAnchorStateRegistry {
     async fn anchor_snapshot(&self) -> Result<AnchorSnapshot, ContractError> {
+        if *self.fail_snapshot.lock().unwrap() {
+            return Err(ContractError::Validation("simulated anchor snapshot error".to_owned()));
+        }
         Ok(*self.snapshot.lock().unwrap())
     }
 }
@@ -502,6 +513,65 @@ impl DisputeGameFactoryClient for ErrorOnIndexFactory {
     }
 
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
+        if self.error_indices.contains(&index) {
+            return Err(ContractError::Validation(format!("simulated error at index {index}")));
+        }
+        self.inner.game_at_index(index).await
+    }
+
+    async fn init_bonds(&self, game_type: u32) -> Result<U256, ContractError> {
+        self.inner.init_bonds(game_type).await
+    }
+
+    async fn game_impls(&self, game_type: u32) -> Result<Address, ContractError> {
+        self.inner.game_impls(game_type).await
+    }
+
+    async fn games(
+        &self,
+        game_type: u32,
+        root_claim: B256,
+        extra_data: Bytes,
+    ) -> Result<Address, ContractError> {
+        self.inner.games(game_type, root_claim, extra_data).await
+    }
+}
+
+/// Mock factory that records queried indices and can return errors for specific indices.
+#[derive(Debug)]
+pub struct RecordingDisputeGameFactory {
+    /// The inner factory providing normal game data.
+    pub inner: MockDisputeGameFactory,
+    /// Indices that should return an error when queried.
+    pub error_indices: Vec<u64>,
+    /// Factory indices queried through `game_at_index`.
+    pub queried_indices: Mutex<Vec<u64>>,
+}
+
+impl RecordingDisputeGameFactory {
+    /// Creates a new recording factory.
+    pub fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
+        Self {
+            inner: MockDisputeGameFactory::new(games),
+            error_indices,
+            queried_indices: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Returns all indices queried so far.
+    pub fn queried_indices(&self) -> Vec<u64> {
+        self.queried_indices.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl DisputeGameFactoryClient for RecordingDisputeGameFactory {
+    async fn game_count(&self) -> Result<u64, ContractError> {
+        self.inner.game_count().await
+    }
+
+    async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {
+        self.queried_indices.lock().unwrap().push(index);
         if self.error_indices.contains(&index) {
             return Err(ContractError::Validation(format!("simulated error at index {index}")));
         }
@@ -1002,6 +1072,100 @@ mod tests {
         assert_eq!(candidates[0].index, 97);
         assert_eq!(candidates[1].index, 98);
         assert_eq!(candidates[2].index, 99);
+    }
+
+    /// Cold anchor lookup searches the latest batch first and skips individual
+    /// lookup errors without aborting the whole search.
+    #[tokio::test]
+    async fn test_find_game_index_searches_tail_batch_and_skips_errors() {
+        let game_count = GameScanner::ANCHOR_SEARCH_BATCH_SIZE + 10;
+        let target_index = game_count - 1;
+        let error_index = target_index - 1;
+
+        let games = (0..game_count).map(|i| factory_game(i, 1)).collect();
+        let factory = Arc::new(RecordingDisputeGameFactory::new(games, vec![error_index]));
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
+        let scanner = GameScanner::new(
+            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
+            verifier,
+            mock_anchor_registry(Address::ZERO),
+        );
+
+        let (found, had_errors) = scanner.find_game_index(addr(target_index), 0, game_count).await;
+
+        assert_eq!(found, Some(target_index));
+        assert!(had_errors, "lookup should report skipped per-index errors");
+
+        let queried = factory.queried_indices();
+        let first_tail_index = game_count - GameScanner::ANCHOR_SEARCH_BATCH_SIZE;
+        assert_eq!(queried.len() as u64, GameScanner::ANCHOR_SEARCH_BATCH_SIZE);
+        assert!(
+            queried.iter().all(|&i| i >= first_tail_index && i < game_count),
+            "cold lookup should only query the latest anchor search batch"
+        );
+    }
+
+    /// If reading the anchor snapshot fails after a cache has been populated,
+    /// the scanner keeps using the cached anchor instead of scanning genesis.
+    #[tokio::test]
+    async fn test_scan_uses_cached_anchor_when_anchor_snapshot_fails() {
+        let mut games = Vec::new();
+        let mut verifier_games = HashMap::new();
+
+        for i in 0..5u64 {
+            games.push(factory_game(i, 1));
+            verifier_games
+                .insert(addr(i), mock_state(GameStatus::InProgress, Address::ZERO, i * 10));
+        }
+
+        let factory = Arc::new(MockDisputeGameFactory::new(games));
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(addr(2)));
+        let scanner = GameScanner::new(
+            factory,
+            verifier,
+            Arc::clone(&anchor_registry) as Arc<dyn AnchorStateRegistryClient>,
+        );
+
+        let initial = scanner.scan().await.unwrap();
+        assert_eq!(initial.iter().map(|c| c.index).collect::<Vec<_>>(), vec![3, 4]);
+
+        anchor_registry.set_fail_snapshot(true);
+        let cached = scanner.scan().await.unwrap();
+
+        assert_eq!(cached.iter().map(|c| c.index).collect::<Vec<_>>(), vec![3, 4]);
+    }
+
+    /// When the anchor advances, tracked indices behind it are pruned from the
+    /// in-progress tracking map.
+    #[tokio::test]
+    async fn test_scan_prunes_tracking_when_anchor_advances() {
+        let mut games = Vec::new();
+        let mut verifier_games = HashMap::new();
+
+        for i in 0..5u64 {
+            games.push(factory_game(i, 1));
+            verifier_games
+                .insert(addr(i), mock_state(GameStatus::InProgress, Address::ZERO, i * 10));
+        }
+
+        let factory = Arc::new(MockDisputeGameFactory::new(games));
+        let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
+        let anchor_registry = Arc::new(MockAnchorStateRegistry::new(Address::ZERO));
+        let scanner = GameScanner::new(
+            factory,
+            verifier,
+            Arc::clone(&anchor_registry) as Arc<dyn AnchorStateRegistryClient>,
+        );
+
+        scanner.scan().await.unwrap();
+        assert_eq!(scanner.tracked_indices_len(), 5);
+
+        anchor_registry.set_anchor_game(addr(2));
+        let candidates = scanner.scan().await.unwrap();
+
+        assert_eq!(candidates.iter().map(|c| c.index).collect::<Vec<_>>(), vec![3, 4]);
+        assert_eq!(scanner.tracked_indices_len(), 2);
     }
 
     /// Error resilience: a per-game error is logged and skipped, other games still returned.
