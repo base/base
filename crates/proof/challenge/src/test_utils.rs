@@ -550,7 +550,7 @@ pub struct RecordingDisputeGameFactory {
 
 impl RecordingDisputeGameFactory {
     /// Creates a new recording factory.
-    pub fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
+    pub const fn new(games: Vec<GameAtIndex>, error_indices: Vec<u64>) -> Self {
         Self {
             inner: MockDisputeGameFactory::new(games),
             error_indices,
