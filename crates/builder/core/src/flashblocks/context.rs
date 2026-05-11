@@ -985,6 +985,9 @@ impl BasePayloadBuilderCtx {
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
+                if err.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
                 log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
