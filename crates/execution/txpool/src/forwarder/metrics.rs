@@ -13,14 +13,7 @@ base_metrics::define_metrics! {
     txs_forwarded: counter,
     #[describe("Total RPC send errors (after all retries exhausted)")]
     #[label(builder_url)]
-    #[label(name = "reason", default = [
-        "transport",
-        "request_timeout",
-        "restart_needed",
-        "call_error",
-        "parse_error",
-        "other",
-    ])]
+    #[label(name = "reason")]
     rpc_errors: counter,
     #[describe("Total number of transactions rejected by the builder's pool within successful batch calls")]
     #[label(builder_url)]
