@@ -1044,6 +1044,9 @@ impl BasePayloadBuilderCtx {
                 BuilderMetrics::metering_known_transaction().increment(1);
             } else {
                 BuilderMetrics::metering_unknown_transaction().increment(1);
+                if self.builder_config.metering_provider.is_enabled() {
+                    self.builder_config.metering_provider.mark_included_without_metering(&tx_hash);
+                }
             }
 
             // append sender and transaction to the respective lists
