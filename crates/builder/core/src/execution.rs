@@ -190,6 +190,7 @@ impl TxnExecutionError {
                 | Self::ExecutionMeteringLimitExceeded(
                     ExecutionMeteringLimitExceeded::TransactionExecutionTime(_, _),
                 )
+                | Self::MaxGasUsageExceeded
         )
     }
 }
