@@ -86,13 +86,14 @@ where
         sync_handler: libp2p_stream::Control,
         sync_protocol: IncomingStreams,
         gate: G,
+        peer_monitoring: Option<PeerMonitoring>,
     ) -> Self {
         Self {
             swarm,
             addr,
             handler,
             peerstore: Default::default(),
-            peer_monitoring: None,
+            peer_monitoring,
             peer_connection_start: Default::default(),
             sync_handler,
             sync_protocol: Some(sync_protocol),
