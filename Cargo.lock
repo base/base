@@ -5950,17 +5950,21 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
+ "blake3",
  "bollard",
  "clap",
  "futures",
- "reth-cli-commands",
+ "rayon",
+ "serde",
  "serde_json",
  "serial_test",
+ "tar",
  "tempfile",
  "testcontainers",
  "testcontainers-modules",
  "tokio",
  "tracing",
+ "zstd",
 ]
 
 [[package]]

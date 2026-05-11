@@ -10,7 +10,7 @@
 //!   These are always re-uploaded since they change every snapshot.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -85,6 +85,12 @@ impl SnapshotUploader {
     /// Creates a new uploader.
     pub const fn new(client: S3Client, bucket: String, prefix: String) -> Self {
         Self { client, bucket, prefix }
+    }
+
+    /// Returns the set of filenames that exist in `{prefix}/static_files/`.
+    pub async fn remote_static_filenames(&self) -> Result<HashSet<String>> {
+        let remote = self.list_remote_objects(&self.static_files_prefix()).await?;
+        Ok(remote.into_keys().collect())
     }
 
     /// Uploads snapshot artifacts with diff-based optimization.

@@ -514,6 +514,10 @@ testcontainers-modules = { version = "0.13", default-features = false }
 # docker
 bollard = "0.19.4"
 
+# compression
+zstd = "0.13"
+blake3 = "1.8"
+
 # misc
 snap = "1"
 redb = "2"

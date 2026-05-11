@@ -94,19 +94,35 @@ impl<C: ContainerManager> Snapshotter<C> {
 
         let run_output_dir = create_run_output_dir(&self.config.output_dir, run_timestamp)?;
 
+        let remote_static_files = self.uploader.remote_static_filenames().await?;
+
+        let blocks_per_file = self.config.blocks_per_file.unwrap_or(500_000);
+        let block = self.config.block;
+        let skip_ranges = match block {
+            Some(b) => {
+                SnapshotGenerator::compute_skip_ranges(&remote_static_files, b, blocks_per_file)
+            }
+            None => std::collections::HashSet::new(),
+        };
+
+        info!(
+            skip_count = skip_ranges.len(),
+            remote_files = remote_static_files.len(),
+            "computed compression skip ranges"
+        );
+
         let source_datadir = self.config.source_datadir.clone();
         let output_dir_for_gen = run_output_dir.clone();
         let chain_id = self.config.chain_id;
-        let block = self.config.block;
-        let blocks_per_file = self.config.blocks_per_file;
 
         let files = tokio::task::spawn_blocking(move || {
-            SnapshotGenerator::generate(
+            SnapshotGenerator::generate_manifest(
                 &source_datadir,
                 &output_dir_for_gen,
                 chain_id,
                 block,
-                blocks_per_file,
+                Some(blocks_per_file),
+                &skip_ranges,
             )
         })
         .await
