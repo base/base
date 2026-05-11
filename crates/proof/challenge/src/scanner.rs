@@ -325,21 +325,17 @@ impl GameScanner {
     pub async fn evaluate_game(&self, index: u64) -> Result<GameEvaluation> {
         let factory = self.factory_client.game_at_index(index).await?;
 
-        // Fetch status alongside classification fields in a single round of
-        // concurrent RPCs. The extra prover reads are wasted when status is
-        // terminal, but that's a one-off cost per index since terminal games
-        // are evicted from tracking after the tick that observes them.
-        let (status, zk_prover, tee_prover, countered_index) = tokio::try_join!(
-            self.verifier_client.status(factory.proxy),
-            self.verifier_client.zk_prover(factory.proxy),
-            self.verifier_client.tee_prover(factory.proxy),
-            self.verifier_client.countered_index(factory.proxy),
-        )?;
-
+        let status = self.verifier_client.status(factory.proxy).await?;
         if status != GameStatus::InProgress {
             debug!(index = index, status = %status, "game has resolved");
             return Ok(GameEvaluation::Terminal);
         }
+
+        let (zk_prover, tee_prover, countered_index) = tokio::try_join!(
+            self.verifier_client.zk_prover(factory.proxy),
+            self.verifier_client.tee_prover(factory.proxy),
+            self.verifier_client.countered_index(factory.proxy),
+        )?;
 
         // Both provers zero means the game has been fully nullified and no
         // future on-chain transition can make it actionable.
