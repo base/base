@@ -59,7 +59,7 @@ where
 
         // Decode the EIP-2718 transaction bytes
         let consensus_tx =
-            BaseTransactionSigned::decode_2718(&mut tx.raw.as_ref()).map_err(|e| {
+            BaseTransactionSigned::decode_2718_exact(tx.raw.as_ref()).map_err(|e| {
                 BuilderApiMetrics::decode_errors().increment(1);
                 ErrorObjectOwned::owned(
                     ErrorCode::InvalidParams.code(),
@@ -314,5 +314,27 @@ mod tests {
         // Decode should succeed, but the txpool is a noop so it will reject the tx
         // This error code should be InternalError
         assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
+    #[tokio::test]
+    async fn decode_tx_with_trailing_bytes_returns_invalid_params() {
+        let handler = handler();
+
+        let (sender, raw) = create_eip1559_tx();
+        let mut trailing_raw = raw.to_vec();
+        trailing_raw.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        let tx = ValidatedTransaction {
+            sender,
+            raw: Bytes::from(trailing_raw),
+            target_block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+        };
+
+        let result = handler.insert_validated_transaction(tx).await;
+        assert!(result.is_err(), "expected decode error for trailing bytes");
+
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), ErrorCode::InvalidParams.code());
     }
 }

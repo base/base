@@ -178,7 +178,7 @@ where
         validate_bundle_request(&bundle, current_block)?;
 
         let raw = &bundle.txs[0];
-        let consensus_tx = BaseTransactionSigned::decode_2718(&mut raw.as_ref()).map_err(|e| {
+        let consensus_tx = BaseTransactionSigned::decode_2718_exact(raw.as_ref()).map_err(|e| {
             rpc_err(ErrorCode::InvalidParams, format!("failed to decode transaction: {e:?}"))
         })?;
 
@@ -213,9 +213,30 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::TxEip1559;
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, Signature, TxKind, U256};
+    use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
     use super::*;
+
+    fn create_eip1559_tx() -> Bytes {
+        let tx = TxEip1559 {
+            chain_id: 1,
+            nonce: 0,
+            gas_limit: 21000,
+            max_fee_per_gas: 100,
+            max_priority_fee_per_gas: 10,
+            to: TxKind::Call(Address::repeat_byte(0x01)),
+            value: U256::from(1000),
+            access_list: Default::default(),
+            input: Default::default(),
+        };
+        let sig = Signature::new(U256::from(1), U256::from(2), false);
+        let signed = BaseTransactionSigned::new_unhashed(BaseTypedTransaction::Eip1559(tx), sig);
+        Bytes::from(signed.encoded_2718())
+    }
 
     fn handler(
         current_block: u64,
@@ -425,5 +446,25 @@ mod tests {
         let err = handler.send_bundle(req).await.unwrap_err();
         assert_eq!(err.code(), ErrorCode::InvalidParams.code());
         assert!(err.message().contains("too far ahead"));
+    }
+
+    #[tokio::test]
+    async fn send_bundle_rejects_tx_with_trailing_bytes() {
+        let handler = handler(100);
+        let mut raw = create_eip1559_tx().to_vec();
+        raw.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        let req = SendBundleRequest {
+            txs: vec![Bytes::from(raw)],
+            block_number: None,
+            min_timestamp: None,
+            max_timestamp: None,
+            reverting_tx_hashes: None,
+            replacement_uuid: None,
+            builders: None,
+        };
+
+        let err = handler.send_bundle(req).await.unwrap_err();
+        assert_eq!(err.code(), ErrorCode::InvalidParams.code());
+        assert!(err.message().contains("failed to decode transaction"));
     }
 }

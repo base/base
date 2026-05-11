@@ -769,7 +769,9 @@ where
                 .payload
                 .transactions()
                 .iter()
-                .map(|tx| BaseTransactionSigned::decode_2718(&mut &tx[..]).map(|tx| tx.tx_hash()))
+                .map(|tx| {
+                    BaseTransactionSigned::decode_2718_exact(tx.as_ref()).map(|tx| tx.tx_hash())
+                })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|err| InsertBlockErrorKind::Other(Box::new(err)))?,
             BlockOrPayload::Block(block) => {
