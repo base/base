@@ -1,79 +1,36 @@
 //! Contains the `[BaseSpecId]` type and its implementation.
 
 use alloy_consensus::BlockHeader;
-use base_common_chains::Upgrades;
+use base_common_chains::{BaseUpgrade, Upgrades};
 use revm::primitives::hardfork::SpecId;
 
-/// Base spec id.
-#[repr(u8)]
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Hash,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Default,
-    strum::Display,
-    strum::EnumString,
-    strum::IntoStaticStr,
-)]
+/// EVM-facing Base spec id.
+///
+/// This wraps the canonical Base upgrade type and adds revm-specific behavior.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[allow(non_camel_case_types)]
-pub enum BaseSpecId {
-    /// Bedrock spec id.
-    #[strum(serialize = "Bedrock")]
-    BEDROCK = 100,
-    /// Regolith spec id.
-    #[strum(serialize = "Regolith")]
-    REGOLITH,
-    /// Canyon spec id.
-    #[strum(serialize = "Canyon")]
-    CANYON,
-    /// Ecotone spec id.
-    #[strum(serialize = "Ecotone")]
-    ECOTONE,
-    /// Fjord spec id.
-    #[strum(serialize = "Fjord")]
-    FJORD,
-    /// Granite spec id.
-    #[strum(serialize = "Granite")]
-    GRANITE,
-    /// Holocene spec id.
-    #[strum(serialize = "Holocene")]
-    HOLOCENE,
-    /// Isthmus spec id.
-    #[default]
-    #[strum(serialize = "Isthmus")]
-    ISTHMUS,
-    /// Jovian spec id.
-    #[strum(serialize = "Jovian")]
-    JOVIAN,
-    /// Base Azul spec id.
-    #[strum(serialize = "Azul")]
-    AZUL,
-    /// Beryl spec id.
-    #[strum(serialize = "Beryl")]
-    BERYL,
-}
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct BaseSpecId(BaseUpgrade);
 
 impl BaseSpecId {
-    /// Converts the [`BaseSpecId`] into a [`SpecId`].
-    pub const fn into_eth_spec(self) -> SpecId {
-        match self {
-            Self::BEDROCK | Self::REGOLITH => SpecId::MERGE,
-            Self::CANYON => SpecId::SHANGHAI,
-            Self::ECOTONE | Self::FJORD | Self::GRANITE | Self::HOLOCENE => SpecId::CANCUN,
-            Self::ISTHMUS | Self::JOVIAN => SpecId::PRAGUE,
-            Self::AZUL | Self::BERYL => SpecId::OSAKA,
-        }
+    /// Creates a new Base EVM spec id for the given Base upgrade.
+    pub const fn new(upgrade: BaseUpgrade) -> Self {
+        Self(upgrade)
     }
 
-    /// Checks if the [`BaseSpecId`] is enabled in the other [`BaseSpecId`].
-    pub const fn is_enabled_in(self, other: Self) -> bool {
-        other as u8 <= self as u8
+    /// Returns the wrapped Base upgrade.
+    pub const fn upgrade(self) -> BaseUpgrade {
+        self.0
+    }
+
+    /// Converts the [`BaseSpecId`] into a [`SpecId`].
+    pub const fn into_eth_spec(self) -> SpecId {
+        self.0.into_eth_spec()
+    }
+
+    /// Checks if the given Base upgrade is enabled in this spec.
+    pub const fn is_enabled_in(self, other: BaseUpgrade) -> bool {
+        other as u8 <= self.0 as u8
     }
 
     /// Parses the [`BaseSpecId`] from the chain spec and block header.
@@ -88,35 +45,45 @@ impl BaseSpecId {
     /// This is only intended to be used after the Bedrock, when hardforks are activated by
     /// timestamp.
     pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
-        if chain_spec.is_beryl_active_at_timestamp(timestamp) {
-            Self::BERYL
-        } else if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
-            Self::AZUL
-        } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-            Self::JOVIAN
-        } else if chain_spec.is_isthmus_active_at_timestamp(timestamp) {
-            Self::ISTHMUS
-        } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-            Self::HOLOCENE
-        } else if chain_spec.is_granite_active_at_timestamp(timestamp) {
-            Self::GRANITE
-        } else if chain_spec.is_fjord_active_at_timestamp(timestamp) {
-            Self::FJORD
-        } else if chain_spec.is_ecotone_active_at_timestamp(timestamp) {
-            Self::ECOTONE
-        } else if chain_spec.is_canyon_active_at_timestamp(timestamp) {
-            Self::CANYON
-        } else if chain_spec.is_regolith_active_at_timestamp(timestamp) {
-            Self::REGOLITH
-        } else {
-            Self::BEDROCK
-        }
+        Self(BaseUpgrade::from_timestamp(chain_spec, timestamp))
+    }
+}
+
+impl From<BaseUpgrade> for BaseSpecId {
+    fn from(upgrade: BaseUpgrade) -> Self {
+        Self(upgrade)
     }
 }
 
 impl From<BaseSpecId> for SpecId {
     fn from(spec: BaseSpecId) -> Self {
         spec.into_eth_spec()
+    }
+}
+
+impl From<BaseSpecId> for BaseUpgrade {
+    fn from(spec: BaseSpecId) -> Self {
+        spec.upgrade()
+    }
+}
+
+impl From<BaseSpecId> for &'static str {
+    fn from(spec: BaseSpecId) -> Self {
+        spec.0.name()
+    }
+}
+
+impl core::fmt::Display for BaseSpecId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl core::str::FromStr for BaseSpecId {
+    type Err = <BaseUpgrade as core::str::FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<BaseUpgrade>().map(Self)
     }
 }
 
@@ -128,30 +95,30 @@ mod tests {
 
     #[test]
     fn test_base_spec_id_eth_spec_compatibility() {
-        // Define test cases: (BaseSpecId, enabled in ETH specs, enabled in Base specs)
+        // Define test cases: (BaseUpgrade, enabled in ETH specs, enabled in Base upgrades)
         let test_cases = [
             (
-                BaseSpecId::BEDROCK,
+                BaseUpgrade::Bedrock,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, false),
                     (SpecId::CANCUN, false),
                     (SpecId::default(), false),
                 ],
-                vec![(BaseSpecId::BEDROCK, true), (BaseSpecId::REGOLITH, false)],
+                vec![(BaseUpgrade::Bedrock, true), (BaseUpgrade::Regolith, false)],
             ),
             (
-                BaseSpecId::REGOLITH,
+                BaseUpgrade::Regolith,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, false),
                     (SpecId::CANCUN, false),
                     (SpecId::default(), false),
                 ],
-                vec![(BaseSpecId::BEDROCK, true), (BaseSpecId::REGOLITH, true)],
+                vec![(BaseUpgrade::Bedrock, true), (BaseUpgrade::Regolith, true)],
             ),
             (
-                BaseSpecId::CANYON,
+                BaseUpgrade::Canyon,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, true),
@@ -159,13 +126,13 @@ mod tests {
                     (SpecId::default(), false),
                 ],
                 vec![
-                    (BaseSpecId::BEDROCK, true),
-                    (BaseSpecId::REGOLITH, true),
-                    (BaseSpecId::CANYON, true),
+                    (BaseUpgrade::Bedrock, true),
+                    (BaseUpgrade::Regolith, true),
+                    (BaseUpgrade::Canyon, true),
                 ],
             ),
             (
-                BaseSpecId::ECOTONE,
+                BaseUpgrade::Ecotone,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, true),
@@ -173,14 +140,14 @@ mod tests {
                     (SpecId::default(), false),
                 ],
                 vec![
-                    (BaseSpecId::BEDROCK, true),
-                    (BaseSpecId::REGOLITH, true),
-                    (BaseSpecId::CANYON, true),
-                    (BaseSpecId::ECOTONE, true),
+                    (BaseUpgrade::Bedrock, true),
+                    (BaseUpgrade::Regolith, true),
+                    (BaseUpgrade::Canyon, true),
+                    (BaseUpgrade::Ecotone, true),
                 ],
             ),
             (
-                BaseSpecId::FJORD,
+                BaseUpgrade::Fjord,
                 vec![
                     (SpecId::MERGE, true),
                     (SpecId::SHANGHAI, true),
@@ -188,15 +155,15 @@ mod tests {
                     (SpecId::default(), false),
                 ],
                 vec![
-                    (BaseSpecId::BEDROCK, true),
-                    (BaseSpecId::REGOLITH, true),
-                    (BaseSpecId::CANYON, true),
-                    (BaseSpecId::ECOTONE, true),
-                    (BaseSpecId::FJORD, true),
+                    (BaseUpgrade::Bedrock, true),
+                    (BaseUpgrade::Regolith, true),
+                    (BaseUpgrade::Canyon, true),
+                    (BaseUpgrade::Ecotone, true),
+                    (BaseUpgrade::Fjord, true),
                 ],
             ),
             (
-                BaseSpecId::JOVIAN,
+                BaseUpgrade::Jovian,
                 vec![
                     (SpecId::PRAGUE, true),
                     (SpecId::SHANGHAI, true),
@@ -204,17 +171,17 @@ mod tests {
                     (SpecId::MERGE, true),
                 ],
                 vec![
-                    (BaseSpecId::BEDROCK, true),
-                    (BaseSpecId::REGOLITH, true),
-                    (BaseSpecId::CANYON, true),
-                    (BaseSpecId::ECOTONE, true),
-                    (BaseSpecId::FJORD, true),
-                    (BaseSpecId::HOLOCENE, true),
-                    (BaseSpecId::ISTHMUS, true),
+                    (BaseUpgrade::Bedrock, true),
+                    (BaseUpgrade::Regolith, true),
+                    (BaseUpgrade::Canyon, true),
+                    (BaseUpgrade::Ecotone, true),
+                    (BaseUpgrade::Fjord, true),
+                    (BaseUpgrade::Holocene, true),
+                    (BaseUpgrade::Isthmus, true),
                 ],
             ),
             (
-                BaseSpecId::AZUL,
+                BaseUpgrade::Azul,
                 vec![
                     (SpecId::OSAKA, true),
                     (SpecId::PRAGUE, true),
@@ -223,18 +190,18 @@ mod tests {
                     (SpecId::MERGE, true),
                 ],
                 vec![
-                    (BaseSpecId::BEDROCK, true),
-                    (BaseSpecId::REGOLITH, true),
-                    (BaseSpecId::CANYON, true),
-                    (BaseSpecId::ECOTONE, true),
-                    (BaseSpecId::FJORD, true),
-                    (BaseSpecId::HOLOCENE, true),
-                    (BaseSpecId::ISTHMUS, true),
-                    (BaseSpecId::JOVIAN, true),
+                    (BaseUpgrade::Bedrock, true),
+                    (BaseUpgrade::Regolith, true),
+                    (BaseUpgrade::Canyon, true),
+                    (BaseUpgrade::Ecotone, true),
+                    (BaseUpgrade::Fjord, true),
+                    (BaseUpgrade::Holocene, true),
+                    (BaseUpgrade::Isthmus, true),
+                    (BaseUpgrade::Jovian, true),
                 ],
             ),
             (
-                BaseSpecId::BERYL,
+                BaseUpgrade::Beryl,
                 vec![
                     (SpecId::OSAKA, true),
                     (SpecId::PRAGUE, true),
@@ -243,41 +210,39 @@ mod tests {
                     (SpecId::MERGE, true),
                 ],
                 vec![
-                    (BaseSpecId::BEDROCK, true),
-                    (BaseSpecId::REGOLITH, true),
-                    (BaseSpecId::CANYON, true),
-                    (BaseSpecId::ECOTONE, true),
-                    (BaseSpecId::FJORD, true),
-                    (BaseSpecId::HOLOCENE, true),
-                    (BaseSpecId::ISTHMUS, true),
-                    (BaseSpecId::JOVIAN, true),
-                    (BaseSpecId::AZUL, true),
+                    (BaseUpgrade::Bedrock, true),
+                    (BaseUpgrade::Regolith, true),
+                    (BaseUpgrade::Canyon, true),
+                    (BaseUpgrade::Ecotone, true),
+                    (BaseUpgrade::Fjord, true),
+                    (BaseUpgrade::Holocene, true),
+                    (BaseUpgrade::Isthmus, true),
+                    (BaseUpgrade::Jovian, true),
+                    (BaseUpgrade::Azul, true),
                 ],
             ),
         ];
 
-        for (base_spec, eth_tests, base_tests) in test_cases {
+        for (base_upgrade, eth_tests, base_tests) in test_cases {
+            let base_spec = BaseSpecId::new(base_upgrade);
+
             // Test ETH spec compatibility
             for (eth_spec, expected) in eth_tests {
                 assert_eq!(
                     base_spec.into_eth_spec().is_enabled_in(eth_spec),
                     expected,
-                    "{:?} should {} be enabled in ETH {:?}",
-                    base_spec,
+                    "{base_spec:?} should {} be enabled in ETH {eth_spec:?}",
                     if expected { "" } else { "not " },
-                    eth_spec
                 );
             }
 
-            // Test Base spec compatibility
-            for (other_base_spec, expected) in base_tests {
+            // Test Base upgrade compatibility
+            for (other_base_upgrade, expected) in base_tests {
                 assert_eq!(
-                    base_spec.is_enabled_in(other_base_spec),
+                    base_spec.is_enabled_in(other_base_upgrade),
                     expected,
-                    "{:?} should {} be enabled in Base {:?}",
-                    base_spec,
+                    "{base_spec:?} should {} be enabled in Base {other_base_upgrade:?}",
                     if expected { "" } else { "not " },
-                    other_base_spec
                 );
             }
         }
@@ -285,6 +250,6 @@ mod tests {
 
     #[test]
     fn default_base_spec_id() {
-        assert_eq!(BaseSpecId::default(), BaseSpecId::ISTHMUS);
+        assert_eq!(BaseSpecId::default().upgrade(), BaseUpgrade::LATEST);
     }
 }

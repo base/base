@@ -1466,3 +1466,48 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
         "game should be tracked by bond manager after successful challenge"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Checkpoint count mismatch (stale interval) surfaces as an error
+// ──────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_step_checkpoint_count_mismatch_surfaces_error() {
+    // Regression test for Immunefi #74652: after a governance
+    // `setImplementation` that changes `INTERMEDIATE_BLOCK_INTERVAL`,
+    // the cached stale interval produces a `CheckpointCountMismatch`
+    // error. This error must NOT be silently swallowed — it should
+    // propagate as a per-game error so operators notice.
+    //
+    // Setup: starting=10, l2_block=20, span=10.
+    // On-chain impl uses interval=10 → stores 1 intermediate root.
+    // But we configure the mock so the scanner resolves interval=5
+    // (the default mock value), which expects 2 intermediate roots.
+    // This triggers CheckpointCountMismatch { expected: 2, actual: 1 }.
+    let factory = single_game_factory();
+
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        // On-chain: only 1 intermediate root (as if interval=10).
+        intermediate_output_roots: vec![BOGUS_ROOT],
+        ..game_state(20)
+    });
+
+    // The mock verifier's `read_intermediate_block_interval` returns 5,
+    // so the scanner caches interval=5. With span=10, the validator
+    // expects 10/5 = 2 intermediate roots, but only 1 is on-chain.
+    let l2 = default_l2();
+
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
+
+    // step() should succeed (per-game errors are caught at the candidate
+    // level), but the game should NOT have a pending proof — the mismatch
+    // error prevents silent skipping and instead logs an error.
+    driver.step().await.unwrap();
+
+    assert!(
+        driver.pending_proofs.is_empty(),
+        "no proof should be initiated when checkpoint count mismatches — \
+         the error should be surfaced, not silently swallowed"
+    );
+}

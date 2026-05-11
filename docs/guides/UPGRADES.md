@@ -279,66 +279,56 @@ pub enum BaseSpecId {
 }
 ```
 
-Extend `into_eth_spec()` — if no new Ethereum EL upgrade is paired, reuse the previous mapping:
+Extend `BaseSpecId::into_eth_spec()` only when the new Base upgrade changes the paired Ethereum EL
+upgrade. `BaseSpecId` wraps `BaseUpgrade`, so new hardforks are added to `BaseUpgrade` first:
 
 ```rust
-Self::ISTHMUS | Self::JOVIAN | Self::AZUL => SpecId::PRAGUE,
+BaseUpgrade::Isthmus | BaseUpgrade::Jovian => SpecId::PRAGUE,
+BaseUpgrade::Azul | BaseUpgrade::Beryl => SpecId::OSAKA,
 ```
 
-Add a `#[strum(serialize = "...")]` attribute on the new variant with its canonical string name:
+Add the new `BaseUpgrade` variant with its canonical string name:
 
 ```rust
-/// Base Azul spec id.
-#[strum(serialize = "Azul")]
-AZUL,
+/// Beryl hardfork.
+Beryl,
 ```
 
-`FromStr` and `From<BaseSpecId> for &'static str` are derived automatically.
+`BaseSpecId` parsing and display delegate to `BaseUpgrade`.
 
 ---
 
 ### 10. Route precompiles
 
-**File:** [`crates/common/evm/src/precompiles/provider.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/precompiles/provider.rs)
+**File:** [`crates/common/precompiles/src/provider.rs`](../../crates/common/precompiles/src/provider.rs)
 
-If the upgrade introduces new precompiles, add a new `pub fn azul()` method on `BasePrecompiles`. If it reuses the previous set, extend the existing arm in `new_with_spec`:
+If the upgrade introduces new precompiles, add a new method on `BasePrecompiles`. If it reuses the
+previous set, extend the existing arm in `new_with_spec`:
 
 ```rust
 // Reuse previous precompile set
-BaseSpecId::JOVIAN | BaseSpecId::AZUL => Self::jovian(),
+BaseUpgrade::Azul | BaseUpgrade::Beryl => Self::azul(),
 
 // Or add a new set
-BaseSpecId::AZUL => Self::azul(),
+BaseUpgrade::Beryl => Self::beryl(),
 ```
 
 ---
 
 ### 11. Update spec resolution
 
-**File:** [`crates/common/evm/src/spec.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/spec.rs)
+**File:** [`crates/common/chains/src/upgrade.rs`](https://github.com/base/base/blob/main/crates/common/chains/src/upgrade.rs)
 
 Add the new upgrade as the first check (newest upgrade wins):
 
 ```rust
-pub fn spec_by_timestamp_after_bedrock(chain_spec: impl BaseUpgrades, timestamp: u64) -> BaseSpecId {
-    if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
-        BaseSpecId::AZUL
+pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
+    if chain_spec.is_beryl_active_at_timestamp(timestamp) {
+        Self::Beryl
+    } else if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
+        Self::Azul
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-        BaseSpecId::JOVIAN
-    } // ... remaining checks unchanged
-}
-```
-
-**File:** [`crates/common/genesis/src/rollup.rs`](https://github.com/base/base/blob/main/crates/common/genesis/src/rollup.rs)
-
-Same pattern in the `#[cfg(feature = "revm")] impl RollupConfig` block:
-
-```rust
-pub fn spec_id(&self, timestamp: u64) -> base_revm::BaseSpecId {
-    if self.is_base_azul_active(timestamp) {
-        base_revm::BaseSpecId::AZUL
-    } else if self.is_jovian_active(timestamp) {
-        base_revm::BaseSpecId::JOVIAN
+        Self::Jovian
     } // ... remaining checks unchanged
 }
 ```
