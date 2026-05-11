@@ -1,0 +1,181 @@
+name: Notify Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/execution/metering/**"
+      - "crates/execution/txpool-rpc/**"
+      - "crates/execution/flashblocks/**"
+      - "crates/consensus/rpc/**"
+      - "crates/proof/rpc/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOCS_REPOSITORY: soheimam/nodes-docs
+  DIFF_SIZE_LIMIT: 51200
+  EVENT_TYPE: node-methods-changed
+
+jobs:
+  notify:
+    name: Dispatch contract change to docs repo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Compute diff against previous commit
+        id: diff
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          paths=(
+            "crates/execution/metering"
+            "crates/execution/txpool-rpc"
+            "crates/execution/flashblocks"
+            "crates/consensus/rpc"
+            "crates/proof/rpc"
+          )
+
+          diff_file="$RUNNER_TEMP/node-methods.diff"
+
+          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            base="${AFTER_SHA}^"
+          else
+            base="$BEFORE_SHA"
+          fi
+
+          git diff "$base" "$AFTER_SHA" -- "${paths[@]}" > "$diff_file"
+
+          diff_size=$(wc -c < "$diff_file" | tr -d ' ')
+          echo "diff_size=$diff_size" >> "$GITHUB_OUTPUT"
+          echo "diff_path=$diff_file" >> "$GITHUB_OUTPUT"
+          echo "Computed diff: $diff_size bytes across ${#paths[@]} watched paths"
+
+      - name: Resolve associated pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          pr_json=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+            --jq '.[0] // {}')
+
+          number=$(jq -r '.number // ""' <<< "$pr_json")
+          title=$(jq -r '.title // ""' <<< "$pr_json")
+          body=$(jq -r '.body // ""' <<< "$pr_json")
+
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          printf '%s' "$title" > "$RUNNER_TEMP/pr_title.txt"
+          printf '%s' "$body" > "$RUNNER_TEMP/pr_body.txt"
+
+          if [[ -n "$number" ]]; then
+            echo "Resolved PR #$number: $title"
+          else
+            echo "No PR associated with this commit (direct push to main); dispatching with empty PR context."
+          fi
+
+      - name: Build dispatch payload
+        id: payload
+        env:
+          DIFF_SIZE: ${{ steps.diff.outputs.diff_size }}
+          DIFF_PATH: ${{ steps.diff.outputs.diff_path }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+
+          truncated=false
+          diff_arg=("--arg" "diff" "")
+
+          if (( DIFF_SIZE > DIFF_SIZE_LIMIT )); then
+            echo "Diff is $DIFF_SIZE bytes (> $DIFF_SIZE_LIMIT); omitting from payload."
+            truncated=true
+          else
+            diff_arg=("--rawfile" "diff" "$DIFF_PATH")
+          fi
+
+          payload_file="$RUNNER_TEMP/dispatch.json"
+          jq -n \
+            --arg event_type "$EVENT_TYPE" \
+            --arg sha "${{ github.sha }}" \
+            --arg pr_number "$PR_NUMBER" \
+            --rawfile pr_title "$RUNNER_TEMP/pr_title.txt" \
+            --rawfile pr_body "$RUNNER_TEMP/pr_body.txt" \
+            "${diff_arg[@]}" \
+            --argjson truncated "$truncated" \
+            '{
+              event_type: $event_type,
+              client_payload: {
+                sha: $sha,
+                pr_number: $pr_number,
+                pr_title: $pr_title,
+                pr_body: $pr_body,
+                diff: $diff,
+                diff_truncated: $truncated
+              }
+            }' > "$payload_file"
+
+          echo "payload_path=$payload_file" >> "$GITHUB_OUTPUT"
+          echo "Payload size: $(wc -c < "$payload_file") bytes (truncated=$truncated)"
+
+      - name: Validate DOCS_REPO_TOKEN secret is configured
+        env:
+          DOCS_PAT: ${{ secrets.DOCS_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DOCS_PAT:-}" ]]; then
+            echo "DOCS_REPO_TOKEN secret is not configured." >&2
+            exit 1
+          fi
+
+      - name: Send repository_dispatch to docs repo
+        env:
+          DOCS_PAT: ${{ secrets.DOCS_REPO_TOKEN }}
+          PAYLOAD_PATH: ${{ steps.payload.outputs.payload_path }}
+        run: |
+          set -euo pipefail
+
+          response_body="$RUNNER_TEMP/response.txt"
+          status_code=$(curl -sS \
+            -o "$response_body" \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $DOCS_PAT" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$DOCS_REPOSITORY/dispatches" \
+            --data-binary @"$PAYLOAD_PATH")
+
+          echo "Dispatch status: $status_code"
+          if [[ -s "$response_body" ]]; then
+            echo "Response body:"
+            cat "$response_body"
+          fi
+
+          if [[ "$status_code" != "204" ]]; then
+            echo "Dispatch failed (expected 204, got $status_code)." >&2
+            exit 1
+          fi
+
+          echo "Dispatched '$EVENT_TYPE' to $DOCS_REPOSITORY for ${{ github.sha }}"
