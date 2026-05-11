@@ -22,8 +22,9 @@ use base_proof_tee_registrar::{
     AwsDiscoveryConfig, AwsTargetGroupDiscovery, BoundlessConfig, CrlConfig,
     DEFAULT_CRL_FETCH_TIMEOUT_SECS, DEFAULT_MAX_ATTESTATION_AGE_SECS, DEFAULT_MAX_CONCURRENCY,
     DEFAULT_MAX_RECOVERY_ATTEMPTS, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
-    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, ProverClient, ProvingConfig,
-    RegistrarConfig, RegistrarError, RegistrarMetrics, RegistrationDriver, RegistryContractClient,
+    DEFAULT_UNHEALTHY_REGISTRATION_WINDOW_SECS, DriverConfig, NitroVerifierClient,
+    NitroVerifierContractClient, ProverClient, ProvingConfig, RegistrarConfig, RegistrarError,
+    RegistrarMetrics, RegistrationDriver, RegistryContractClient,
 };
 use base_tx_manager::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use clap::{Args, Parser, ValueEnum};
@@ -201,10 +202,6 @@ struct BoundlessArgs {
     )]
     boundless_max_recovery_attempts: u32,
 
-    /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
-    #[arg(long, env = cli_env!("NITRO_VERIFIER_ADDRESS"))]
-    nitro_verifier_address: Option<Address>,
-
     /// Maximum age (in seconds) of a recovered proof's attestation timestamp
     /// before it is considered stale. Should be slightly below the on-chain
     /// `MAX_AGE` to account for clock skew. Defaults to 3300 s (55 minutes).
@@ -226,8 +223,15 @@ struct CrlArgs {
     #[arg(long, env = cli_env!("CRL_CHECK_ENABLED"), default_value_t = false)]
     crl_check_enabled: bool,
 
-    /// `NitroEnclaveVerifier` contract address for `revokeCert` calls.
-    /// Required when `--crl-check-enabled` is set.
+    /// `NitroEnclaveVerifier` contract address. Required when
+    /// `--crl-check-enabled` is set; consulted both for the durable on-chain
+    /// `revokedCerts` pre-check and as the destination for outgoing
+    /// `revokeCert` transactions.
+    ///
+    /// The flag/env name retains the `crl-` prefix for backward compatibility
+    /// with existing production deployments (introduced in #1984); operators
+    /// in the wild set `BASE_REGISTRAR_CRL_NITRO_VERIFIER_ADDRESS` and
+    /// renaming would silently break their startup.
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
 
@@ -318,7 +322,6 @@ impl Cli {
                     image_id: parse_image_id(image_id_hex)?,
                     poll_interval: Duration::from_secs(self.boundless.boundless_poll_interval_secs),
                     timeout: Duration::from_secs(self.boundless.boundless_timeout_secs),
-                    nitro_verifier_address: self.boundless.nitro_verifier_address,
                     max_recovery_attempts: self.boundless.boundless_max_recovery_attempts,
                     max_attestation_age: Duration::from_secs(
                         self.boundless.max_attestation_age_secs,
@@ -497,6 +500,18 @@ impl Cli {
             config.l1_rpc_url.clone(),
         );
 
+        // Optional `NitroEnclaveVerifier` client for the on-chain durable
+        // revocation pre-check. Built only when CRL checking is enabled and
+        // the verifier address is configured; otherwise the driver falls
+        // back to the AWS-CRL-only path (fail-open).
+        let nitro_verifier: Option<Arc<dyn NitroVerifierClient>> =
+            match (config.crl.enabled, config.crl.nitro_verifier_address) {
+                (true, Some(verifier_address)) => Some(Arc::new(
+                    NitroVerifierContractClient::new(verifier_address, config.l1_rpc_url.clone()),
+                )),
+                _ => None,
+            };
+
         // ── 6. Build proof provider ──────────────────────────────────────────
         let proof_provider: Box<dyn AttestationProofProvider> = match config.proving {
             ProvingConfig::Boundless(ref boundless) => Box::new(BoundlessProver {
@@ -559,6 +574,7 @@ impl Cli {
             tx_manager,
             signer_client,
             driver_config,
+            nitro_verifier,
         )
         .run()
         .await;

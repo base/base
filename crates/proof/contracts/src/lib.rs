@@ -34,7 +34,9 @@ pub use tee_prover_registry::{
 };
 
 mod nitro_enclave_verifier;
-pub use nitro_enclave_verifier::INitroEnclaveVerifier;
+pub use nitro_enclave_verifier::{
+    INitroEnclaveVerifier, NitroEnclaveVerifierClient, NitroEnclaveVerifierContractClient,
+};
 
 mod error;
 pub use error::ContractError;
