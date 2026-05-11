@@ -236,10 +236,16 @@ impl OPSuccinctDataFetcher {
 
         let block_data = stream::iter(start + 1..=end)
             .map(|block_number| async move {
-                let block =
-                    self.l2_provider.get_block_by_number(block_number.into()).await?.unwrap();
-                let receipts =
-                    self.l2_provider.get_block_receipts(block_number.into()).await?.unwrap();
+                let block = self
+                    .l2_provider
+                    .get_block_by_number(block_number.into())
+                    .await?
+                    .ok_or_else(|| anyhow!("Block not found for block number {}", block_number))?;
+                let receipts = self
+                    .l2_provider
+                    .get_block_receipts(block_number.into())
+                    .await?
+                    .ok_or_else(|| anyhow!("Receipts not found for block number {}", block_number))?;
                 let total_l1_fees: u128 =
                     receipts.iter().map(|tx| tx.l1_block_info.l1_fee.unwrap_or(0)).sum();
                 let total_tx_fees: u128 = receipts
@@ -536,7 +542,7 @@ impl OPSuccinctDataFetcher {
                 earliest_l1_header = Some(l1_block_header);
             }
         }
-        Ok(earliest_l1_header.unwrap())
+        earliest_l1_header.ok_or_else(|| anyhow!("Boot info batch is empty"))
     }
 
     /// Get the latest L1 header in a batch of boot infos.
@@ -717,10 +723,11 @@ impl OPSuccinctDataFetcher {
     /// Fetch L2 block info by number.
     pub async fn l2_block_info_by_number(&self, block_number: u64) -> Result<L2BlockInfo> {
         // If the rollup config is not already loaded, fetch and save it.
-        if self.rollup_config.is_none() {
-            return Err(anyhow::anyhow!("Rollup config not loaded."));
-        }
-        let genesis = self.rollup_config.as_ref().unwrap().genesis;
+        let rollup_config = self
+            .rollup_config
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Rollup config not loaded."))?;
+        let genesis = rollup_config.genesis;
         let block = self.get_l2_block_by_number(block_number).await?;
         Ok(L2BlockInfo::from_block_and_genesis(&block, &genesis)?)
     }
@@ -796,7 +803,10 @@ impl OPSuccinctDataFetcher {
         let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
-        let l2_claim_block = l2_provider.get_block_by_number(l2_end_block.into()).await?.unwrap();
+        let l2_claim_block = l2_provider
+            .get_block_by_number(l2_end_block.into())
+            .await?
+            .ok_or_else(|| anyhow!("Block not found for block number {}", l2_end_block))?;
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
         let l2_claim_storage_hash = l2_provider
