@@ -268,31 +268,31 @@ mod tests {
     }
 
     #[test]
-    fn is_base_azul_active_at_timestamp() {
+    fn is_azul_active_at_timestamp() {
         // Azul is scheduled on mainnet at 1779386400
         let base_mainnet_forks = ChainUpgrades::mainnet();
-        assert!(!base_mainnet_forks.is_base_azul_active_at_timestamp(0));
-        assert!(!base_mainnet_forks.is_base_azul_active_at_timestamp(1_779_386_399));
-        assert!(base_mainnet_forks.is_base_azul_active_at_timestamp(1_779_386_400));
-        assert!(base_mainnet_forks.is_base_azul_active_at_timestamp(u64::MAX));
+        assert!(!base_mainnet_forks.is_azul_active_at_timestamp(0));
+        assert!(!base_mainnet_forks.is_azul_active_at_timestamp(1_779_386_399));
+        assert!(base_mainnet_forks.is_azul_active_at_timestamp(1_779_386_400));
+        assert!(base_mainnet_forks.is_azul_active_at_timestamp(u64::MAX));
 
         // Azul is scheduled on sepolia at 1776708000
         let base_sepolia_forks = ChainUpgrades::sepolia();
-        assert!(!base_sepolia_forks.is_base_azul_active_at_timestamp(0));
-        assert!(!base_sepolia_forks.is_base_azul_active_at_timestamp(1_776_707_999));
-        assert!(base_sepolia_forks.is_base_azul_active_at_timestamp(1_776_708_000));
-        assert!(base_sepolia_forks.is_base_azul_active_at_timestamp(u64::MAX));
+        assert!(!base_sepolia_forks.is_azul_active_at_timestamp(0));
+        assert!(!base_sepolia_forks.is_azul_active_at_timestamp(1_776_707_999));
+        assert!(base_sepolia_forks.is_azul_active_at_timestamp(1_776_708_000));
+        assert!(base_sepolia_forks.is_azul_active_at_timestamp(u64::MAX));
 
         // Azul is active at genesis on devnet (ForkCondition::ZERO_TIMESTAMP)
         let devnet_forks = ChainUpgrades::devnet();
-        assert!(devnet_forks.is_base_azul_active_at_timestamp(0));
+        assert!(devnet_forks.is_azul_active_at_timestamp(0));
 
         // Azul is scheduled on zeronet at 1775152800
         let zeronet_forks = ChainUpgrades::zeronet();
-        assert!(!zeronet_forks.is_base_azul_active_at_timestamp(0));
-        assert!(!zeronet_forks.is_base_azul_active_at_timestamp(1_775_152_799));
-        assert!(zeronet_forks.is_base_azul_active_at_timestamp(1_775_152_800));
-        assert!(zeronet_forks.is_base_azul_active_at_timestamp(u64::MAX));
+        assert!(!zeronet_forks.is_azul_active_at_timestamp(0));
+        assert!(!zeronet_forks.is_azul_active_at_timestamp(1_775_152_799));
+        assert!(zeronet_forks.is_azul_active_at_timestamp(1_775_152_800));
+        assert!(zeronet_forks.is_azul_active_at_timestamp(u64::MAX));
     }
 
     #[test]
