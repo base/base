@@ -552,5 +552,23 @@ mod tests {
         // Poisoned head popped, follow-up still in queue, metrics watch updated.
         assert_eq!(engine.tasks.len(), 1, "only the poisoned head should be popped on Flush");
         assert_eq!(*queue_rx.borrow(), 1, "queue length watch must be republished after pop");
+
+        // Now flip the EL's response to a valid FCU and re-drain. This proves that drain
+        // *resumes* after a flush — the surviving follow-up task must execute and be popped,
+        // emptying the queue. Without the head-pop fix, this second drain would re-execute the
+        // poisoned task forever and never reach the follow-up.
+        client
+            .set_fork_choice_updated_v3_response(ForkchoiceUpdated {
+                payload_status: PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: Some(FixedBytes([3u8; 32])),
+                },
+                payload_id: Some(PayloadId::new([7u8; 8])),
+            })
+            .await;
+
+        engine.drain().await.expect("drain must succeed once the EL accepts the follow-up");
+        assert_eq!(engine.tasks.len(), 0, "follow-up task should drain to completion");
+        assert_eq!(*queue_rx.borrow(), 0, "queue length watch must reflect empty queue");
     }
 }

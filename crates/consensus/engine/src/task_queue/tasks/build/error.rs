@@ -130,6 +130,10 @@ mod tests {
         BuildTaskError::EngineBuildError(EngineBuildError::EngineSyncing),
         EngineTaskErrorSeverity::Temporary
     )]
+    #[case::mpsc_send(
+        BuildTaskError::MpscSend(Box::new(mpsc::error::SendError(PayloadId::new([0u8; 8])))),
+        EngineTaskErrorSeverity::Critical
+    )]
     fn test_build_task_error_severity(
         #[case] err: BuildTaskError,
         #[case] expected: EngineTaskErrorSeverity,
