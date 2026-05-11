@@ -26,6 +26,9 @@ pub use consumer::{Consumer, ConsumerConfig, ConsumerMetrics, RecentlySent, Spaw
 mod forwarder;
 pub use forwarder::{Forwarder, ForwarderConfig, ForwarderMetrics, SpawnedForwarder};
 
+mod pool_error_label;
+pub use pool_error_label::PoolRejectionLabel;
+
 mod builder;
 pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
 

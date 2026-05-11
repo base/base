@@ -12,7 +12,7 @@ use tracing::debug;
 
 use super::metrics::Metrics as BundleApiMetrics;
 use crate::{
-    BasePooledTransaction,
+    BasePooledTransaction, PoolRejectionLabel,
     transaction::{MAX_BUNDLE_ADVANCE_BLOCKS, MAX_BUNDLE_ADVANCE_MILLIS},
 };
 
@@ -80,15 +80,15 @@ fn rpc_err(code: ErrorCode, msg: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(code.code(), msg.into(), None::<()>)
 }
 
-/// Validates the structural constraints on a [`SendBundleRequest`].
-///
-/// Returns `Ok(())` if all restrictions pass, or an RPC error describing the
-/// first violated constraint.
 fn validation_err(reason: &'static str, msg: impl Into<String>) -> ErrorObjectOwned {
     BundleApiMetrics::validation_errors(reason).increment(1);
     rpc_err(ErrorCode::InvalidParams, msg)
 }
 
+/// Validates the structural constraints on a [`SendBundleRequest`].
+///
+/// Returns `Ok(())` if all restrictions pass, or an RPC error describing the
+/// first violated constraint.
 fn validate_bundle_request(
     req: &SendBundleRequest,
     current_block: u64,
@@ -213,7 +213,7 @@ where
         );
 
         self.pool.add_external_transaction(pool_tx).await.map_err(|e| {
-            BundleApiMetrics::txs_rejected(BundleApiMetrics::rejection_label(&e)).increment(1);
+            BundleApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
             rpc_err(ErrorCode::InternalError, format!("pool rejected transaction: {e}"))
         })?;
 
