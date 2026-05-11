@@ -302,29 +302,7 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
 /// Returns the [`BaseSpecId`] at the given timestamp using the [`Upgrades`] trait from
 /// `base-common-chains`.
 fn base_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> BaseSpecId {
-    if chain_spec.is_beryl_active_at_timestamp(timestamp) {
-        BaseSpecId::BERYL
-    } else if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
-        BaseSpecId::AZUL
-    } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-        BaseSpecId::JOVIAN
-    } else if chain_spec.is_isthmus_active_at_timestamp(timestamp) {
-        BaseSpecId::ISTHMUS
-    } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-        BaseSpecId::HOLOCENE
-    } else if chain_spec.is_granite_active_at_timestamp(timestamp) {
-        BaseSpecId::GRANITE
-    } else if chain_spec.is_fjord_active_at_timestamp(timestamp) {
-        BaseSpecId::FJORD
-    } else if chain_spec.is_ecotone_active_at_timestamp(timestamp) {
-        BaseSpecId::ECOTONE
-    } else if chain_spec.is_canyon_active_at_timestamp(timestamp) {
-        BaseSpecId::CANYON
-    } else if chain_spec.is_regolith_active_at_timestamp(timestamp) {
-        BaseSpecId::REGOLITH
-    } else {
-        BaseSpecId::BEDROCK
-    }
+    BaseSpecId::from_timestamp(chain_spec, timestamp)
 }
 
 /// An extension trait for [`L1BlockInfo`] that allows us to calculate the L1 cost of a transaction

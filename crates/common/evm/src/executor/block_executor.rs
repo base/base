@@ -449,7 +449,7 @@ mod tests {
                 gas_limit,
                 ..Default::default()
             })
-            .modify_cfg_chained(|cfg| cfg.spec = BaseSpecId::JOVIAN);
+            .modify_cfg_chained(|cfg| cfg.spec = BaseSpecId::new(BaseUpgrade::Jovian));
 
         let evm = ctx.build_with_inspector(NoOpInspector {});
 

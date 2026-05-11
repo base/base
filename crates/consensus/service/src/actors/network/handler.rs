@@ -31,6 +31,8 @@ pub struct NetworkHandler {
     pub unsafe_block_signer_sender: watch::Sender<Address>,
     /// The peer score inspector. Is used to ban peers that are below a given threshold.
     pub peer_score_inspector: tokio::time::Interval,
+    /// Periodic pruner for expired connection gater state.
+    pub gater_pruner: tokio::time::Interval,
     /// A handler for the block signer.
     pub signer: Option<BlockSignerHandler>,
 }
@@ -157,6 +159,9 @@ impl GossipTransport for NetworkHandler {
                 }
                 _ = self.peer_score_inspector.tick(), if has_peer_monitoring => {
                     self.handle_peer_monitoring().await;
+                }
+                _ = self.gater_pruner.tick() => {
+                    self.gossip.connection_gate.prune();
                 }
             }
         }

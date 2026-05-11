@@ -34,7 +34,7 @@ use std::{
 use alloy_primitives::Address;
 use base_proof_contracts::{
     AggregateVerifierClient, DelayedWETHClient, DelayedWETHContractClient,
-    DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
+    DisputeGameFactoryClient, GameStatus, encode_claim_credit_calldata, encode_resolve_calldata,
     encode_set_anchor_state_calldata,
 };
 use base_runtime::Clock;
@@ -87,11 +87,10 @@ pub struct TrackedGame {
     /// `setAnchorState()` call or when the game is not eligible
     /// (e.g. `CHALLENGER_WINS`).
     pub anchor_update_complete: bool,
-    /// Cached on-chain game status (`0` = in progress, `1` = challenger
-    /// wins, `2` = defender wins). Populated on the first successful
+    /// Cached on-chain game status. Populated on the first successful
     /// `status()` RPC read; subsequent ticks reuse the cached value
     /// because the status is immutable after resolution.
-    pub cached_status: Option<u8>,
+    pub cached_status: Option<GameStatus>,
     /// Cached `AnchorStateRegistry` address for this game. Read from the
     /// game contract on first use and reused thereafter (immutable per game).
     pub cached_asr_address: Option<Address>,
@@ -179,9 +178,6 @@ impl<C: Clock> BondManager<C> {
 
     /// How long to wait before retrying a reverted withdraw attempt.
     const WITHDRAW_REVERT_RETRY_DELAY: Duration = Duration::from_secs(60);
-
-    /// `DEFENDER_WINS` game status constant.
-    const STATUS_DEFENDER_WINS: u8 = 2;
 
     /// Creates a new bond manager for the given set of claim addresses.
     pub fn new(
@@ -779,7 +775,7 @@ impl<C: Clock> BondManager<C> {
     ) -> eyre::Result<Option<RemovalReason>> {
         let status = verifier_client.status(game_address).await?;
 
-        if status == GameScanner::STATUS_IN_PROGRESS {
+        if status == GameStatus::InProgress {
             let game_over = verifier_client.game_over(game_address).await?;
             if !game_over {
                 debug!(game = %game_address, "game dispute period not yet elapsed");
@@ -829,7 +825,7 @@ impl<C: Clock> BondManager<C> {
         } else {
             ChallengerMetrics::resolve_tx_outcome_total(ChallengerMetrics::STATUS_ALREADY_RESOLVED)
                 .increment(1);
-            info!(game = %game_address, status, "game already resolved");
+            info!(game = %game_address, status = ?status, "game already resolved");
             // Status is immutable after resolution — cache it so that
             // try_anchor_update (called later this tick) can skip the
             // redundant RPC round-trip.
@@ -1233,7 +1229,7 @@ impl<C: Clock> BondManager<C> {
             }
         };
 
-        if status != Self::STATUS_DEFENDER_WINS {
+        if status != GameStatus::DefenderWins {
             self.skip_anchor_update_permanently(game_address);
             return;
         }
@@ -1629,7 +1625,7 @@ mod tests {
             },
         );
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.resolved_at = resolved_at;
         state.bond_unlocked = true;
@@ -1708,7 +1704,7 @@ mod tests {
             },
         );
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.resolved_at = resolved_at;
         state.bond_unlocked = true;
@@ -1831,7 +1827,7 @@ mod tests {
         let games: Vec<_> = (0..game_count).map(|i| factory_game(i, 0)).collect();
         let mut verifier_games = HashMap::new();
         for i in 0..game_count {
-            let mut state = mock_state(0, zk_prover, 100 + i);
+            let mut state = mock_state(GameStatus::InProgress, zk_prover, 100 + i);
             state.bond_recipient = bond_recipient;
             verifier_games.insert(addr(i), state);
         }
@@ -1867,7 +1863,7 @@ mod tests {
         let claim_addr = Address::repeat_byte(0xCC);
         let other_recipient = Address::repeat_byte(0xDD);
         // bond_recipient is someone else, but zkProver matches our address.
-        // Status 0 = IN_PROGRESS, so the game should match via zkProver.
+        // Status is InProgress, so the game should match via zkProver.
         let (factory, verifier) = discovery_mocks(2, other_recipient, claim_addr);
 
         let clock = fixed_clock(0);
@@ -1916,7 +1912,7 @@ mod tests {
 
         let games = vec![factory_game(0, 0)];
         let mut verifier_games = HashMap::new();
-        let mut state = mock_state(1, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.bond_claimed = true; // already claimed
         state.resolved_at = 500;
@@ -2064,7 +2060,7 @@ mod tests {
         // resolved_at = 1_999_999_900 → age = 2_000_000_000 - 1_999_999_900 = 100s
         // monotonic 500 - 100 = 400 → unlocked_at should be 400s.
         let game = addr(0);
-        let mut state = mock_state(1, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
         state.resolved_at = 1_999_999_900;
         state.bond_unlocked = true;
 
@@ -2084,7 +2080,7 @@ mod tests {
     #[tokio::test]
     async fn determine_phase_returns_needs_withdraw_when_delay_elapsed() {
         let game = addr(0);
-        let mut state = mock_state(1, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
         state.resolved_at = 1_999_999_900;
         state.bond_unlocked = true;
 
@@ -2108,7 +2104,7 @@ mod tests {
 
         // resolved_at = 1_999_999_800 -> age = 2_000_000_000 - 1_999_999_800 = 200s.
         // With a 60s WETH delay, this should advance straight to withdrawal.
-        let mut state = mock_state(1, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.resolved_at = 1_999_999_800;
         state.bond_unlocked = true;
@@ -2150,7 +2146,7 @@ mod tests {
         let game = addr(0);
         let tx_hash = B256::repeat_byte(0xDD);
 
-        let mut state = mock_state(1, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.resolved_at = 1_999_999_900;
         state.bond_unlocked = false;
@@ -2306,7 +2302,7 @@ mod tests {
         mgr.track_game(game, claim_addr);
         // Game is still in NeedsResolve — should not attempt anchor update.
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
@@ -2328,8 +2324,8 @@ mod tests {
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::NeedsUnlock);
 
-        // Status 1 = CHALLENGER_WINS — not eligible for anchor update.
-        let mut state = mock_state(1, Address::ZERO, 100);
+        // ChallengerWins — not eligible for anchor update.
+        let mut state = mock_state(GameStatus::ChallengerWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
@@ -2352,8 +2348,8 @@ mod tests {
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::NeedsUnlock);
 
-        // Status 2 = DEFENDER_WINS — eligible.
-        let mut state = mock_state(2, Address::ZERO, 100);
+        // DefenderWins — eligible for anchor update.
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
@@ -2385,7 +2381,7 @@ mod tests {
             },
         );
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
@@ -2410,7 +2406,7 @@ mod tests {
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::NeedsUnlock);
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
         let verifier = Arc::new(MockAggregateVerifier::new([(game, state)].into_iter().collect()));
@@ -2439,7 +2435,7 @@ mod tests {
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::NeedsUnlock);
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
         mutate(&mut state);
@@ -2491,7 +2487,7 @@ mod tests {
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::Completed);
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
         state.is_finalized = false;
@@ -2515,7 +2511,7 @@ mod tests {
         mgr.track_game(game, claim_addr);
         mgr.set_phase(game, BondPhase::Completed);
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = claim_addr;
         state.anchor_state_registry = asr;
         state.is_finalized = false;
@@ -2540,7 +2536,7 @@ mod tests {
         let mut mgr = make_manager(vec![claim_addr]);
         mgr.track_game(game, claim_addr);
 
-        let mut state = mock_state(2, Address::ZERO, 100);
+        let mut state = mock_state(GameStatus::DefenderWins, Address::ZERO, 100);
         state.bond_recipient = other_recipient;
         state.anchor_state_registry = asr;
         state.is_finalized = false;

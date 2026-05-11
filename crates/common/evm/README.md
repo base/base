@@ -21,10 +21,10 @@ base-common-evm = { workspace = true }
 ```
 
 ```rust,ignore
-use base_common_evm::{BaseEvmFactory, BasePrecompiles, BaseSpecId};
+use base_common_evm::{BaseEvmFactory, BasePrecompiles, BaseSpecId, BaseUpgrade};
 
 let factory = BaseEvmFactory::default();
-let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::ISTHMUS);
+let precompiles = BasePrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Isthmus));
 ```
 
 ## License

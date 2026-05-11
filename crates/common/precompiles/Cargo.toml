@@ -1,0 +1,36 @@
+[package]
+name = "base-common-precompiles"
+description = "Base precompile definitions and fork-specific precompile sets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-common-chains.workspace = true
+
+# revm
+revm.workspace = true
+
+[features]
+default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
+std = [ "base-common-chains/std", "revm/std" ]
+bn = [ "revm/bn" ]
+blst = [ "revm/blst" ]
+c-kzg = [ "revm/c-kzg" ]
+portable = [ "revm/portable" ]
+secp256k1 = [ "revm/secp256k1" ]
+memory_limit = [ "revm/memory_limit" ]
+optional_no_base_fee = [ "revm/optional_no_base_fee" ]
+optional_eip3541 = [ "revm/optional_eip3541" ]
+optional_eip3607 = [ "revm/optional_eip3607" ]
+optional_fee_charge = [ "revm/optional_fee_charge" ]
+optional_balance_check = [ "revm/optional_balance_check" ]
+optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
