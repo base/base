@@ -30,16 +30,16 @@ hardfork!(
         /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
         Jovian,
         /// Azul: First Base-specific network upgrade.
+        #[default]
         Azul,
         /// Beryl: Second Base-specific network upgrade.
-        #[default]
         Beryl,
     }
 );
 
 impl BaseUpgrade {
-    /// Latest known Base upgrade.
-    pub const LATEST: Self = Self::Beryl;
+    /// Latest Base upgrade used by default.
+    pub const LATEST: Self = Self::Azul;
 
     /// Converts the Base upgrade into its matching Ethereum execution spec.
     pub const fn into_eth_spec(self) -> SpecId {
@@ -176,14 +176,9 @@ mod tests {
     }
 
     #[test]
-    fn latest_base_upgrade_matches_highest_variant() {
-        let highest_variant = BaseUpgrade::VARIANTS
-            .iter()
-            .copied()
-            .max_by_key(|upgrade| *upgrade as u8)
-            .expect("BaseUpgrade should have at least one variant");
-
-        assert_eq!(BaseUpgrade::LATEST, highest_variant);
+    fn latest_base_upgrade_matches_default() {
+        assert_eq!(BaseUpgrade::default(), BaseUpgrade::LATEST);
+        assert_eq!(BaseUpgrade::LATEST, BaseUpgrade::Azul);
     }
 
     #[test]
