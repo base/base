@@ -1519,7 +1519,6 @@ async fn test_step_checkpoint_count_mismatch_surfaces_error() {
     );
 }
 
-
 fn minimal_prove_request(session_id: &str) -> base_zk_client::ProveBlockRequest {
     base_zk_client::ProveBlockRequest {
         start_block_number: 0,
