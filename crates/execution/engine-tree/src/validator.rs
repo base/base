@@ -1107,7 +1107,7 @@ where
         let hashed_state = self.provider.hashed_post_state(&output.state);
         drop(_enter);
 
-        let _enter = debug_span!(target: "engine::tree::payload_validator", "validate_block_post_execution_with_state").entered();
+        let _enter = debug_span!(target: "engine::tree::payload_validator", "validate_block_post_execution_with_parent_state").entered();
         // Build a fresh parent-state provider for validation instead of reusing the execution
         // provider, which may be wrapped with execution caches.
         let parent_state_provider = parent_state_provider_builder.build()?;
