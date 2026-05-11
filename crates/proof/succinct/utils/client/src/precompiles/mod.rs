@@ -201,7 +201,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use alloy_primitives::U256;
-    use base_common_evm::{BaseContext, DefaultBase as _};
+    use base_common_evm::{BaseContext, BaseUpgrade, DefaultBase as _};
     use revm::{
         Context,
         database::EmptyDB,
@@ -213,19 +213,6 @@ mod tests {
     use super::*;
 
     type TestContext = BaseContext<EmptyDB>;
-
-    const ALL_BASE_SPECS: [BaseSpecId; 10] = [
-        BaseSpecId::BEDROCK,
-        BaseSpecId::REGOLITH,
-        BaseSpecId::CANYON,
-        BaseSpecId::ECOTONE,
-        BaseSpecId::FJORD,
-        BaseSpecId::GRANITE,
-        BaseSpecId::HOLOCENE,
-        BaseSpecId::ISTHMUS,
-        BaseSpecId::JOVIAN,
-        BaseSpecId::AZUL,
-    ];
 
     /// Creates a [`CallInputs`] with `bytecode_address` set to the given address
     /// and `target_address` set to zero, simulating a DELEGATECALL scenario.
@@ -255,7 +242,8 @@ mod tests {
     #[test]
     fn test_precompile_lookup_uses_bytecode_address() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
+        let mut precompiles =
+            OpZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         // SHA256 precompile at address 0x02
         let sha256_addr = revm::precompile::u64_to_address(2);
@@ -279,7 +267,8 @@ mod tests {
     #[test]
     fn test_run_nonexistent_precompile() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
+        let mut precompiles =
+            OpZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let fake_addr = Address::from_slice(&[0xFFu8; 20]);
         let call_inputs = create_call_inputs(fake_addr, Bytes::new(), u64::MAX);
@@ -292,7 +281,8 @@ mod tests {
     #[test]
     fn test_run_out_of_gas() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
+        let mut precompiles =
+            OpZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let sha256_addr = revm::precompile::u64_to_address(2);
         let call_inputs = create_call_inputs(sha256_addr, Bytes::from_static(b"test"), 0);
@@ -308,7 +298,8 @@ mod tests {
     #[test]
     fn test_run_with_shared_buffer_empty() {
         let mut ctx = create_test_context();
-        let mut precompiles = OpZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
+        let mut precompiles =
+            OpZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let sha256_addr = revm::precompile::u64_to_address(2);
         let call_inputs = CallInputs {
@@ -389,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_zkvm_precompiles_match_base_evm_precompiles() {
-        for spec in ALL_BASE_SPECS {
+        for spec in BaseUpgrade::VARIANTS.iter().copied().map(BaseSpecId::new) {
             let base_precompiles = BasePrecompiles::new_with_spec(spec);
             let zkvm_precompiles = OpZkvmPrecompiles::new_with_spec(spec);
 
@@ -462,8 +453,8 @@ mod tests {
     fn test_azul_uses_osaka_p256verify() {
         let p256_addr = *secp256r1::P256VERIFY.address();
 
-        let jovian_set = get_or_create_precompiles(BaseSpecId::JOVIAN);
-        let azul_set = get_or_create_precompiles(BaseSpecId::AZUL);
+        let jovian_set = get_or_create_precompiles(BaseSpecId::new(BaseUpgrade::Jovian));
+        let azul_set = get_or_create_precompiles(BaseSpecId::new(BaseUpgrade::Azul));
 
         let jovian_p256 = jovian_set.get(&p256_addr).expect("JOVIAN must have P256VERIFY");
         let azul_p256 = azul_set.get(&p256_addr).expect("AZUL must have P256VERIFY");

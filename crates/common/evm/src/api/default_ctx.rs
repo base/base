@@ -1,4 +1,5 @@
 //! Contains trait [`DefaultBase`] used to create a default context.
+use base_common_chains::BaseUpgrade;
 use revm::{
     Context, Journal, MainContext,
     context::{BlockEnv, CfgEnv, TxEnv},
@@ -21,7 +22,7 @@ impl DefaultBase for BaseContext<EmptyDB> {
     fn base() -> Self {
         Context::mainnet()
             .with_tx(BaseTransaction::builder().build_fill())
-            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::BEDROCK))
+            .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)))
             .with_chain(L1BlockInfo::default())
     }
 }

@@ -3264,6 +3264,7 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "base-common-genesis",
+ "revm",
  "serde",
  "spin 0.10.0",
 ]
@@ -3313,13 +3314,13 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-flz",
+ "base-common-precompiles",
  "reth-evm",
  "revm",
  "rstest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "strum",
  "thiserror 2.0.18",
 ]
 
@@ -3385,6 +3386,14 @@ dependencies = [
  "base-common-rpc-types-engine",
  "reth-rpc-convert",
  "rstest",
+]
+
+[[package]]
+name = "base-common-precompiles"
+version = "0.0.0"
+dependencies = [
+ "base-common-chains",
+ "revm",
 ]
 
 [[package]]

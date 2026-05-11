@@ -4,7 +4,7 @@ use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_evm::{EvmEnv, EvmFactory};
 use alloy_primitives::U256;
-use base_common_evm::BaseSpecId;
+use base_common_evm::{BaseSpecId, BaseUpgrade};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_proof_mpt::TrieHinter;
@@ -105,7 +105,7 @@ where
         // from the parent header via the EIP-4844 formula would diverge from canonical
         // state whenever `parent.blob_gas_used` is non-zero, breaking proof generation.
         let blob_excess_gas_and_price = spec_id
-            .is_enabled_in(BaseSpecId::ECOTONE)
+            .is_enabled_in(BaseUpgrade::Ecotone)
             .then_some(BlobExcessGasAndPrice { excess_blob_gas: 0, blob_gasprice: 1 });
 
         let next_block_base_fee = self
@@ -214,7 +214,7 @@ mod tests {
 
         let block_env = builder
             .prepare_block_env(
-                BaseSpecId::ISTHMUS,
+                BaseSpecId::new(BaseUpgrade::Isthmus),
                 &parent,
                 &payload_attrs,
                 &BaseFeeParams { max_change_denominator: 250, elasticity_multiplier: 6 },
