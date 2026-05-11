@@ -178,7 +178,11 @@ impl BatchEncoder {
         // derivation pipeline and waste L1 DA space.
         if self.config.batch_type == BatchType::Span && !self.span_accumulator.is_empty() {
             let chain_id = self.rollup_config.l2_chain_id.id();
-            let mut span_batch = SpanBatch { chain_id, ..Default::default() };
+            let mut span_batch = SpanBatch {
+                chain_id,
+                genesis_timestamp: self.rollup_config.genesis.l2_time,
+                ..Default::default()
+            };
             let total = self.span_accumulator.len();
             let mut append_failed = false;
 
@@ -784,8 +788,9 @@ mod tests {
     use alloy_consensus::{BlockBody, Header, SignableTransaction, TxLegacy};
     use alloy_primitives::{Bytes, Sealed, Signature};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_genesis::ChainGenesis;
     use base_comp::BatchComposeError;
-    use base_protocol::{L1BlockInfoBedrock, L1BlockInfoTx};
+    use base_protocol::{BatchReader, L1BlockInfoBedrock, L1BlockInfoTx};
     use rstest::rstest;
 
     use super::*;
@@ -827,6 +832,13 @@ mod tests {
                 block
             })
             .collect()
+    }
+
+    fn make_block_at(parent_hash: B256, number: u64, timestamp: u64) -> BaseBlock {
+        let mut block = make_block(parent_hash);
+        block.header.number = number;
+        block.header.timestamp = timestamp;
+        block
     }
 
     fn default_encoder() -> BatchEncoder {
@@ -1426,6 +1438,52 @@ mod tests {
         // A submission must be immediately available.
         let sub = encoder.next_submission();
         assert!(sub.is_some(), "span batch should produce a submission after size-based close");
+    }
+
+    /// Span batches encode their timestamp relative to the rollup genesis timestamp.
+    #[test]
+    fn test_span_batch_uses_rollup_genesis_timestamp() {
+        let genesis_l2_time = 1_000_000;
+        let block_time = 2;
+        let rollup_config = Arc::new(RollupConfig {
+            genesis: ChainGenesis { l2_time: genesis_l2_time, ..Default::default() },
+            block_time,
+            ..Default::default()
+        });
+        let config = EncoderConfig {
+            batch_type: BatchType::Span,
+            target_frame_size: 130_044,
+            max_frame_size: 130_044,
+            max_channel_duration: 1000,
+            ..EncoderConfig::default()
+        };
+        let mut encoder = BatchEncoder::new(Arc::clone(&rollup_config), config);
+
+        let first = make_block_at(B256::ZERO, 1, genesis_l2_time + block_time);
+        let first_hash = first.header.hash_slow();
+        let second = make_block_at(first_hash, 2, genesis_l2_time + 2 * block_time);
+
+        encoder.add_block(first).unwrap();
+        encoder.add_block(second).unwrap();
+        let frames = encoder.encode_and_drain().expect("span frames");
+        assert!(!frames.is_empty(), "span encoding must produce frames");
+
+        let channel_data =
+            frames.iter().flat_map(|frame| frame.data.iter().copied()).collect::<Vec<_>>();
+        let mut reader = BatchReader::new(
+            channel_data,
+            RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize,
+            true,
+        );
+        let decoded = reader.next_batch(rollup_config.as_ref()).expect("decoded span batch");
+        let Batch::Span(span_batch) = decoded else {
+            panic!("expected span batch");
+        };
+
+        assert_eq!(span_batch.batches.len(), 2);
+        assert_eq!(span_batch.batches[0].timestamp, genesis_l2_time + block_time);
+        assert_eq!(span_batch.batches[1].timestamp, genesis_l2_time + 2 * block_time);
+        assert!(reader.next_batch(rollup_config.as_ref()).is_none());
     }
 
     /// In Span mode, `advance_l1_head` flushes the accumulator when the effective
