@@ -1309,6 +1309,15 @@ impl<C: Clock> BondManager<C> {
             return;
         }
 
+        if preflight.paused {
+            debug!(
+                game = %game_address,
+                asr = %asr_address,
+                "anchor state update not ready because registry is paused"
+            );
+            return;
+        }
+
         if !preflight.respected {
             debug!(
                 game = %game_address,
@@ -2465,6 +2474,11 @@ mod tests {
     #[tokio::test]
     async fn anchor_update_retries_for_unrespected_game() {
         run_anchor_update_skip_case(|s| s.is_respected = false, false).await;
+    }
+
+    #[tokio::test]
+    async fn anchor_update_retries_when_registry_paused() {
+        run_anchor_update_skip_case(|s| s.is_paused = true, false).await;
     }
 
     #[tokio::test]

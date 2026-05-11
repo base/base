@@ -645,7 +645,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAnchorStateRegistry::IAnchorStateRegistryInstance::new(asr_address, &self.provider);
 
-        let (blacklisted, retired, respected, anchor) = futures::try_join!(
+        let (blacklisted, retired, respected, paused, anchor) = futures::try_join!(
             async {
                 contract.isGameBlacklisted(game_address).call().await.map_err(|e| {
                     ContractError::Call { context: "isGameBlacklisted failed".into(), source: e }
@@ -663,6 +663,13 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                 })
             },
             async {
+                contract
+                    .paused()
+                    .call()
+                    .await
+                    .map_err(|e| ContractError::Call { context: "paused failed".into(), source: e })
+            },
+            async {
                 contract.getAnchorRoot().call().await.map_err(|e| ContractError::Call {
                     context: "getAnchorRoot failed".into(),
                     source: e,
@@ -678,6 +685,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             blacklisted,
             retired,
             respected,
+            paused,
             anchor_root: AnchorRoot { root: anchor.root, l2_block_number },
         })
     }
