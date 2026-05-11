@@ -189,11 +189,15 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// Exception: tasks that fail with [`EngineTaskErrorSeverity::Flush`] are popped from the
     /// queue before the error is returned. The poisoned task must not be retried in-place — the
     /// engine processor will signal the derivation pipeline to flush its buffered batch/channel
-    /// state and the next call to [`Engine::drain`] will proceed with the remaining tasks.
+    /// state and the next call to [`Engine::drain`] will proceed with the remaining tasks. Any
+    /// [`EngineState`] mutations the task made before failing are published to subscribers prior
+    /// to popping, mirroring the success path so watch consumers (e.g. the RPC state view) stay
+    /// in sync.
     pub async fn drain(&mut self) -> Result<(), EngineTaskErrors> {
         while let Some((task, _)) = self.tasks.peek() {
             if let Err(err) = task.execute(&mut self.state).await {
                 if matches!(err.severity(), EngineTaskErrorSeverity::Flush) {
+                    self.state_sender.send_replace(self.state);
                     self.pop_head();
                 }
                 return Err(err);
