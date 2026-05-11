@@ -6,9 +6,6 @@ use std::time::Duration;
 /// transaction to be included on-chain.
 pub const PROPOSAL_TIMEOUT: Duration = Duration::from_mins(10);
 
-/// Timeout for prover server RPC calls.
-pub const PROVER_TIMEOUT: Duration = Duration::from_mins(30);
-
 /// Default maximum number of concurrent RPC calls during the recovery scan.
 pub const RECOVERY_SCAN_CONCURRENCY: usize = 8;
 

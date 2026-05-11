@@ -63,6 +63,15 @@ pub struct ProposerArgs {
     #[arg(long = "prover-rpc", env = cli_env!("PROVER_RPC"))]
     pub prover_rpc: Url,
 
+    /// Prover RPC request timeout (e.g., "70m", "4200s").
+    #[arg(
+        long = "prover-timeout",
+        env = cli_env!("PROVER_TIMEOUT"),
+        default_value = "70m",
+        value_parser = humantime::parse_duration
+    )]
+    pub prover_timeout: Duration,
+
     /// URL of the L1 Ethereum RPC endpoint.
     #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
     pub l1_eth_rpc: Url,
@@ -258,6 +267,7 @@ mod tests {
         // Check defaults
         assert!(!cli.proposer.dry_run);
         assert!(!cli.proposer.allow_non_finalized);
+        assert_eq!(cli.proposer.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(cli.proposer.poll_interval, Duration::from_secs(12));
         assert_eq!(cli.proposer.rpc_timeout, Duration::from_secs(30));
         assert_eq!(cli.proposer.rollup_rpc.as_str(), "http://localhost:7545/");
