@@ -300,7 +300,11 @@ where
                         retryable = Self::is_retryable(&err),
                         "RPC send failed, dropping batch",
                     );
-                    ForwarderMetrics::rpc_errors(Arc::clone(&self.url_label)).increment(1);
+                    ForwarderMetrics::rpc_errors(
+                        Arc::clone(&self.url_label),
+                        ForwarderMetrics::rpc_error_label(&err),
+                    )
+                    .increment(1);
                     return;
                 }
             }
