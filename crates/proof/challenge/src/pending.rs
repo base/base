@@ -266,6 +266,22 @@ impl PendingProofs {
             }
         };
 
+        // Check the timeout before the RPC so persistent transport errors
+        // don't keep the entry pinned in `AwaitingProof`.
+        let elapsed = started_at.elapsed();
+        if elapsed > max_proof_duration {
+            let pending = self.0.get_mut(&game).expect("entry just inspected");
+            warn!(
+                game = %game,
+                elapsed = ?elapsed,
+                limit = ?max_proof_duration,
+                "proof session timed out, will retry"
+            );
+            pending.retry_count += 1;
+            pending.phase = ProofPhase::NeedsRetry;
+            return Ok(Some(ProofUpdate::NeedsRetry));
+        }
+
         let request =
             GetProofRequest { session_id, receipt_type: Some(ReceiptType::OnChainSnark as i32) };
 
@@ -296,20 +312,7 @@ impl PendingProofs {
                 ProofUpdate::NeedsRetry
             }
             Ok(ProofJobStatus::Created | ProofJobStatus::Pending | ProofJobStatus::Running) => {
-                let elapsed = started_at.elapsed();
-                if elapsed > max_proof_duration {
-                    warn!(
-                        game = %game,
-                        elapsed = ?elapsed,
-                        limit = ?max_proof_duration,
-                        "proof session timed out, will retry"
-                    );
-                    pending.retry_count += 1;
-                    pending.phase = ProofPhase::NeedsRetry;
-                    ProofUpdate::NeedsRetry
-                } else {
-                    ProofUpdate::Pending
-                }
+                ProofUpdate::Pending
             }
             Ok(ProofJobStatus::Unspecified) | Err(_) => {
                 warn!(raw_status = response.status, game = %game, "unexpected proof job status, treating as retryable failure");
