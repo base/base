@@ -386,17 +386,6 @@ impl GameScanner {
         scan_start
     }
 
-    /// Returns the scan start from the cached anchor index when it is valid for
-    /// the current factory size.
-    pub fn cached_scan_start_index(&self, game_count: u64) -> Option<u64> {
-        self.anchor_index
-            .lock()
-            .expect("anchor_index lock poisoned")
-            .map(|(_, index)| index)
-            .filter(|&index| index < game_count)
-            .map(|index| index.saturating_add(1).min(game_count))
-    }
-
     /// Finds `target` in the half-open factory index range `[start, end)`,
     /// searching backward in batches and returning the match closest to `end`.
     ///
