@@ -166,7 +166,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_eips::eip1559::BaseFeeParams;
     use alloy_primitives::Sealable;
-    use base_common_evm::{BaseEvmFactory, BaseSpecId};
+    use base_common_evm::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_proof_mpt::NoopTrieHinter;
@@ -214,7 +214,7 @@ mod tests {
 
         let block_env = builder
             .prepare_block_env(
-                BaseSpecId::new(BaseUpgrade::Isthmus),
+                BaseSpecId::new(BaseUpgrade::LATEST),
                 &parent,
                 &payload_attrs,
                 &BaseFeeParams { max_change_denominator: 250, elasticity_multiplier: 6 },

@@ -212,6 +212,44 @@ mod tests {
         input
     }
 
+    fn assert_precompile_accepts_input_len(
+        precompiles: &Precompiles,
+        address: Address,
+        input_len: usize,
+    ) {
+        let precompile = precompiles.get(&address).unwrap();
+        let input = vec![0u8; input_len];
+        assert!(
+            precompile.execute(&input, u64::MAX).is_ok(),
+            "precompile {address} should succeed at max input size"
+        );
+    }
+
+    fn assert_jovian_input_limits_accept_max(spec: BaseUpgrade) {
+        let precompiles = BasePrecompiles::new_with_spec(spec);
+
+        assert_precompile_accepts_input_len(
+            precompiles.precompiles(),
+            bn254::pair::ADDRESS,
+            bn254_pair::JOVIAN_MAX_INPUT_SIZE,
+        );
+        assert_precompile_accepts_input_len(
+            precompiles.precompiles(),
+            bls12_381_const::G1_MSM_ADDRESS,
+            bls12_381::JOVIAN_G1_MSM_MAX_INPUT_SIZE,
+        );
+        assert_precompile_accepts_input_len(
+            precompiles.precompiles(),
+            bls12_381_const::G2_MSM_ADDRESS,
+            bls12_381::JOVIAN_G2_MSM_MAX_INPUT_SIZE,
+        );
+        assert_precompile_accepts_input_len(
+            precompiles.precompiles(),
+            bls12_381_const::PAIRING_ADDRESS,
+            bls12_381::JOVIAN_PAIRING_MAX_INPUT_SIZE,
+        );
+    }
+
     fn assert_jovian_input_limits(spec: BaseUpgrade) {
         let precompiles = BasePrecompiles::new_with_spec(spec);
         let bn254_pair_precompile = precompiles.precompiles().get(&bn254::pair::ADDRESS).unwrap();
@@ -250,8 +288,18 @@ mod tests {
     }
 
     #[test]
+    fn test_get_jovian_precompile_at_max_input_len() {
+        assert_jovian_input_limits_accept_max(BaseUpgrade::Jovian);
+    }
+
+    #[test]
     fn test_get_jovian_precompile_with_bad_input_len() {
         assert_jovian_input_limits(BaseUpgrade::Jovian);
+    }
+
+    #[test]
+    fn test_get_azul_precompile_at_max_input_len() {
+        assert_jovian_input_limits_accept_max(BaseUpgrade::Azul);
     }
 
     #[test]
