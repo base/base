@@ -33,7 +33,7 @@
 //! provers zero) are skipped.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     mem,
     sync::{Arc, Mutex},
 };
@@ -170,10 +170,10 @@ pub struct GameScanner {
     /// Cache of `game_type → intermediate_block_interval` to avoid repeated RPC calls.
     interval_cache: Mutex<HashMap<u32, u64>>,
     /// Tracked factory indices keyed to their consecutive scan-failure
-    /// count (`0` for healthy entries). An index is present iff the game
-    /// was observed `IN_PROGRESS` on a previous tick or its query is still
-    /// failing — so older live games which age out of the lookback tail
-    /// are still re-evaluated until they reach a terminal state.
+    /// count (`0` for healthy entries). An index is present iff the game was
+    /// observed `IN_PROGRESS` on a previous tick, so older live games which
+    /// age out of the lookback tail are still re-evaluated until they reach
+    /// a terminal state.
     tracking: Mutex<BTreeMap<u64, u64>>,
 }
 
@@ -222,9 +222,9 @@ impl GameScanner {
     /// Games are filtered out cheaply via a single `status()` RPC call when
     /// they are no longer `IN_PROGRESS`. Individual game query failures are
     /// logged and skipped so that a transient RPC error on one game does not
-    /// abort the entire scan; failing indices are conservatively retained in
-    /// the tracking set so they are retried on subsequent ticks, with logs
-    /// escalated after repeated failures. After evaluation, the
+    /// abort the entire scan; previously-tracked failing indices are retained
+    /// so aged-out in-progress games are retried on subsequent ticks, with
+    /// logs escalated after repeated failures. After evaluation, the
     /// `base_challenger_games_scanned_total` counter,
     /// `base_challenger_scan_tracked_in_progress` gauge, and
     /// `base_challenger_scan_head` gauge are updated.
@@ -246,11 +246,11 @@ impl GameScanner {
         let previous_tracking =
             mem::take(&mut *self.tracking.lock().expect("tracking lock poisoned"));
 
-        let mut indices: BTreeSet<u64> = (tail_start..=end).collect();
+        let mut extra_tracked = Vec::new();
         for &i in previous_tracking.keys() {
-            if i <= end {
-                indices.insert(i);
-            } else {
+            if i < tail_start {
+                extra_tracked.push(i);
+            } else if i > end {
                 warn!(
                     index = i,
                     game_count = game_count,
@@ -259,13 +259,15 @@ impl GameScanner {
                 );
             }
         }
-        let games_to_scan = indices.len() as u64;
+        let tail_len = if tail_start <= end { end - tail_start + 1 } else { 0 };
+        let games_to_scan = tail_len + extra_tracked.len() as u64;
 
-        let results: Vec<(u64, Result<GameEvaluation>)> = stream::iter(indices.into_iter())
-            .map(|i| async move { (i, self.evaluate_game(i).await) })
-            .buffer_unordered(Self::SCAN_CONCURRENCY)
-            .collect()
-            .await;
+        let results: Vec<(u64, Result<GameEvaluation>)> =
+            stream::iter(extra_tracked.into_iter().chain(tail_start..=end))
+                .map(|i| async move { (i, self.evaluate_game(i).await) })
+                .buffer_unordered(Self::SCAN_CONCURRENCY)
+                .collect()
+                .await;
 
         let mut candidates = Vec::new();
         let mut next_tracking: BTreeMap<u64, u64> = BTreeMap::new();
@@ -288,10 +290,11 @@ impl GameScanner {
                     } else {
                         warn!(error = %e, index = i, consecutive_failures, "game query failed");
                     }
-                    // Keep the index tracked: dropping on error would silently
-                    // lose coverage of an in-progress game, which is exactly
-                    // the failure mode this tracking map exists to prevent.
-                    next_tracking.insert(i, consecutive_failures);
+                    if previous_tracking.contains_key(&i) {
+                        // Keep previously-tracked indices: dropping on error would silently
+                        // lose coverage of aged-out in-progress games.
+                        next_tracking.insert(i, consecutive_failures);
+                    }
                 }
             }
         }

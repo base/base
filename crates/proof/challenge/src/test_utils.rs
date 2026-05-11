@@ -131,7 +131,7 @@ pub struct MockDisputeGameFactory {
 
 impl MockDisputeGameFactory {
     /// Creates a new mock from an initial set of games.
-    pub const fn new(games: Vec<GameAtIndex>) -> Self {
+    pub fn new(games: Vec<GameAtIndex>) -> Self {
         Self { games: Mutex::new(games) }
     }
 
@@ -998,6 +998,11 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].index, 0);
         assert_eq!(candidates[1].index, 2);
+        assert_eq!(
+            scanner.tracked_indices_len(),
+            2,
+            "tail-only errors should not inflate in-progress tracking"
+        );
     }
 
     /// Games with a non-zero TEE prover but zero ZK prover are still candidates.
@@ -1051,6 +1056,11 @@ mod tests {
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].index, 1);
+        assert_eq!(
+            scanner.tracked_indices_len(),
+            1,
+            "tail-only errors should not inflate in-progress tracking"
+        );
     }
 
     /// A challenged game (TEE + ZK provers non-zero, `countered_index` > 0) is
