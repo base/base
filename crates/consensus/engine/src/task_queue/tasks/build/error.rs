@@ -93,11 +93,10 @@ impl EngineTaskError for BuildTaskError {
 mod tests {
     use super::*;
 
-    /// Regression anchor for PR #2637. `InvalidPayload` must surface `Flush`
-    /// (so the engine processor flushes the derivation channel and the
-    /// poisoned task is popped from the head of the queue) AND carry the
-    /// EL's `validation_error` so operators can identify which batch
-    /// poisoned the pipeline.
+    /// `InvalidPayload` must surface `Flush` (so the engine processor flushes
+    /// the derivation channel and the poisoned task is popped from the head
+    /// of the queue) AND carry the EL's `validation_error` so operators can
+    /// identify which batch poisoned the pipeline.
     #[test]
     fn invalid_payload_is_flush_and_preserves_validation_error() {
         let err = BuildTaskError::EngineBuildError(EngineBuildError::InvalidPayload(
