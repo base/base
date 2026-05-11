@@ -843,7 +843,7 @@ impl crate::BondTransactionSubmitter for MockBondTransactionSubmitter {
 mod tests {
 
     use super::*;
-    use crate::scanner::{GameCategory, GameScanner, ScannerConfig};
+    use crate::scanner::{GameCategory, GameScanner};
 
     /// Happy path: mixed games, only `IN_PROGRESS` / non-nullified returned.
     #[tokio::test]
@@ -871,7 +871,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -915,7 +915,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -934,14 +934,14 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
         let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
 
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
         assert!(candidates.is_empty());
     }
 
-    /// Lookback window: on fresh start with large factory, only `lookback_games` are scanned.
+    /// Lookback window: on fresh start with large factory, only the recent tail is scanned.
     #[tokio::test]
     async fn test_scan_lookback_window() {
         // Factory with 100 games, but lookback is 3 -> only scan indices 97, 98, 99
@@ -957,7 +957,7 @@ mod tests {
         let factory = Arc::new(MockDisputeGameFactory::new(games));
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 3 });
+        let scanner = GameScanner::with_lookback_games(factory, verifier, 3);
 
         // start = 100-3 = 97, end = 99
         let candidates = scanner.scan().await.unwrap();
@@ -990,7 +990,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         // Index 0 -> candidate. Index 1 errors -> skipped. Index 2 -> candidate.
         let candidates = scanner.scan().await.unwrap();
@@ -1028,7 +1028,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1050,7 +1050,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1078,7 +1078,7 @@ mod tests {
         verifier_games.insert(addr(0), state);
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1105,7 +1105,7 @@ mod tests {
         );
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1123,7 +1123,7 @@ mod tests {
         verifier_games.insert(addr(0), mock_state(GameStatus::InProgress, Address::ZERO, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1146,7 +1146,7 @@ mod tests {
             .insert(addr(0), mock_state_with_tee(GameStatus::InProgress, zk_addr, tee_addr, 100));
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1186,7 +1186,7 @@ mod tests {
 
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(factory, verifier, ScannerConfig { lookback_games: 1000 });
+        let scanner = GameScanner::new(factory, verifier);
 
         let candidates = scanner.scan().await.unwrap();
 
@@ -1226,10 +1226,10 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let scanner = GameScanner::with_lookback_games(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            ScannerConfig { lookback_games: 3 },
+            3,
         );
 
         // First tick: all three games are inside the tail and discovered.
@@ -1284,10 +1284,10 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let scanner = GameScanner::with_lookback_games(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            ScannerConfig { lookback_games: 3 },
+            3,
         );
 
         // First tick: game 0 is in progress and gets tracked.
@@ -1331,10 +1331,10 @@ mod tests {
         );
         let verifier = Arc::new(MockAggregateVerifier::new(verifier_games));
 
-        let scanner = GameScanner::new(
+        let scanner = GameScanner::with_lookback_games(
             Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
             Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            ScannerConfig { lookback_games: 3 },
+            3,
         );
 
         scanner.scan().await.unwrap();

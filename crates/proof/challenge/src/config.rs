@@ -105,8 +105,6 @@ pub struct ChallengerConfig {
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
     pub tx_manager: TxManagerConfig,
-    /// Number of past games to scan on startup.
-    pub lookback_games: u64,
     /// How often a full rescan of the bond lookback window is performed.
     pub bond_discovery_interval: Duration,
     /// Maximum time to keep a completed bond game tracked while waiting for
@@ -182,7 +180,6 @@ impl ChallengerConfig {
             None
         };
 
-        require_nonzero(cli.challenger.lookback_games, "lookback-games")?;
         require_nonzero_duration(
             cli.challenger.bond_discovery_interval,
             "bond-discovery-interval",
@@ -220,7 +217,6 @@ impl ChallengerConfig {
             tee_request_timeout,
             signing,
             tx_manager,
-            lookback_games: cli.challenger.lookback_games,
             bond_discovery_interval: cli.challenger.bond_discovery_interval,
             anchor_update_retention: cli.challenger.anchor_update_retention,
             bond_claim_addresses: cli.challenger.bond_claim_addresses,
@@ -286,7 +282,6 @@ mod tests {
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.zk_connect_timeout, Duration::from_secs(10));
         assert_eq!(config.zk_request_timeout, Duration::from_secs(30));
-        assert_eq!(config.lookback_games, 1000);
         assert_eq!(config.bond_discovery_interval, Duration::from_secs(300));
         assert_eq!(config.anchor_update_retention, Duration::from_secs(24 * 60 * 60));
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
@@ -300,7 +295,6 @@ mod tests {
     #[case::poll_interval("--poll-interval", "0s", "poll-interval")]
     #[case::zk_connect_timeout("--zk-connect-timeout", "0s", "zk-connect-timeout")]
     #[case::zk_request_timeout("--zk-request-timeout", "0s", "zk-request-timeout")]
-    #[case::lookback_games("--lookback-games", "0", "lookback-games")]
     #[case::bond_discovery_interval("--bond-discovery-interval", "0s", "bond-discovery-interval")]
     #[case::anchor_update_retention("--anchor-update-retention", "0s", "anchor-update-retention")]
     fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] field: &str) {

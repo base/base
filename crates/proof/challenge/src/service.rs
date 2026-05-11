@@ -23,7 +23,7 @@ use tracing::{info, warn};
 
 use crate::{
     BondManager, ChallengeSubmitter, ChallengerConfig, ChallengerMetrics, Driver, DriverComponents,
-    DriverConfig, GameScanner, OutputValidator, ScannerConfig,
+    DriverConfig, GameScanner, OutputValidator,
 };
 
 /// Top-level challenger service.
@@ -150,16 +150,13 @@ impl ChallengerService {
             None
         };
 
-        // ── 7. Assemble scanner, validator, and driver ───────────────────────
-        let scanner_config = ScannerConfig { lookback_games: config.lookback_games };
-
-        // ── 7b. Bond manager (optional) ─────────────────────────────────────
+        // ── 7. Bond manager (optional) ─────────────────────────────────────
         let bond_manager = if !config.bond_claim_addresses.is_empty() {
             let mut bm = BondManager::new(
                 config.bond_claim_addresses,
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
-                config.lookback_games,
+                GameScanner::DEFAULT_LOOKBACK_GAMES,
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
             );
@@ -180,8 +177,8 @@ impl ChallengerService {
             None
         };
 
-        let scanner =
-            GameScanner::new(factory_client, Arc::clone(&verifier_client), scanner_config);
+        // ── 7b. Assemble scanner, validator, and driver ─────────────────────
+        let scanner = GameScanner::new(factory_client, Arc::clone(&verifier_client));
 
         let validator = OutputValidator::new(l2_client);
 

@@ -9,8 +9,7 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     BondManager, ChallengeSubmitter, DisputeIntent, Driver, DriverComponents, DriverConfig,
-    GameScanner, L1HeadProvider, OutputValidator, PendingProof, ProofPhase, ScannerConfig,
-    TeeConfig,
+    GameScanner, L1HeadProvider, OutputValidator, PendingProof, ProofPhase, TeeConfig,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
         MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider,
@@ -73,11 +72,8 @@ fn test_driver_with_tee(
     tx_manager: MockTxManager,
     tee: Option<TeeConfig>,
 ) -> Driver<MockL2Provider, MockZkProofProvider, MockTxManager> {
-    let scanner = GameScanner::new(
-        factory,
-        Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        ScannerConfig { lookback_games: 1000 },
-    );
+    let scanner =
+        GameScanner::new(factory, Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>);
     let validator = OutputValidator::new(l2_provider);
     let submitter = ChallengeSubmitter::new(tx_manager);
 
@@ -366,11 +362,8 @@ async fn test_step_scan_error_propagated() {
 
     let factory = Arc::new(FailingFactory);
     let verifier = empty_verifier();
-    let scanner = GameScanner::new(
-        factory,
-        Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        ScannerConfig { lookback_games: 1000 },
-    );
+    let scanner =
+        GameScanner::new(factory, Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>);
 
     let l2 = default_l2();
     let validator = OutputValidator::new(l2);

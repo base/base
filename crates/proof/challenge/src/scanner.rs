@@ -48,13 +48,6 @@ use tracing::{debug, error, info, warn};
 
 use crate::ChallengerMetrics;
 
-/// Configuration for the game scanner.
-#[derive(Debug, Clone)]
-pub struct ScannerConfig {
-    /// Number of past games to scan on startup (lookback window).
-    pub lookback_games: u64,
-}
-
 /// Classifies why a game was selected as a candidate and what action the
 /// driver should take.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,9 +144,10 @@ pub enum GameEvaluation {
 ///
 /// On every tick the scanner evaluates the union of two index sets:
 ///
-/// * The recent **lookback tail** `(game_count - lookback_games) ..=
-///   (game_count - 1)`, which acts as a startup catch-up window and as the
-///   discovery channel for newly-created games.
+/// * The recent **lookback tail**
+///   `(game_count - DEFAULT_LOOKBACK_GAMES) ..= (game_count - 1)`, which acts
+///   as a startup catch-up window and as the discovery channel for
+///   newly-created games.
 /// * A persistent **tracking set** of indices for games that were observed
 ///   to be `IN_PROGRESS` on a previous tick. This guarantees that older
 ///   games which age out of the lookback tail continue to be re-evaluated
@@ -166,7 +160,7 @@ pub enum GameEvaluation {
 pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
-    config: ScannerConfig,
+    lookback_games: u64,
     /// Cache of `game_type → intermediate_block_interval` to avoid repeated RPC calls.
     interval_cache: Mutex<HashMap<u32, u64>>,
     /// Tracked factory indices keyed to their consecutive scan-failure
@@ -179,11 +173,16 @@ pub struct GameScanner {
 
 impl std::fmt::Debug for GameScanner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GameScanner").field("config", &self.config).finish_non_exhaustive()
+        f.debug_struct("GameScanner")
+            .field("lookback_games", &self.lookback_games)
+            .finish_non_exhaustive()
     }
 }
 
 impl GameScanner {
+    /// Number of recent factory games evaluated on every scan tick.
+    pub const DEFAULT_LOOKBACK_GAMES: u64 = 1000;
+
     /// Maximum number of games to evaluate concurrently during a scan.
     pub const SCAN_CONCURRENCY: usize = 32;
 
@@ -194,12 +193,20 @@ impl GameScanner {
     pub fn new(
         factory_client: Arc<dyn DisputeGameFactoryClient>,
         verifier_client: Arc<dyn AggregateVerifierClient>,
-        config: ScannerConfig,
+    ) -> Self {
+        Self::with_lookback_games(factory_client, verifier_client, Self::DEFAULT_LOOKBACK_GAMES)
+    }
+
+    /// Creates a game scanner with a custom recent-tail size.
+    pub fn with_lookback_games(
+        factory_client: Arc<dyn DisputeGameFactoryClient>,
+        verifier_client: Arc<dyn AggregateVerifierClient>,
+        lookback_games: u64,
     ) -> Self {
         Self {
             factory_client,
             verifier_client,
-            config,
+            lookback_games: lookback_games.max(1),
             interval_cache: Mutex::new(HashMap::new()),
             tracking: Mutex::new(BTreeMap::new()),
         }
@@ -241,7 +248,7 @@ impl GameScanner {
         }
 
         let end = game_count - 1;
-        let tail_start = game_count.saturating_sub(self.config.lookback_games);
+        let tail_start = game_count.saturating_sub(self.lookback_games);
 
         let previous_tracking =
             mem::take(&mut *self.tracking.lock().expect("tracking lock poisoned"));

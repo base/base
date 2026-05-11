@@ -28,10 +28,11 @@ L2 headers and account proofs and treats the game as an input to be checked.
 
 ## Game Selection
 
-The challenger scans a configurable lookback window of factory indices. Each scan re-evaluates the
-whole window so games can move between categories as new proofs, challenges, or nullifications are
-posted onchain. Individual game query failures are logged and retried on the next scan; they do not
-abort the full scan.
+The challenger scans a fixed recent tail of factory indices and keeps tracking games that were
+observed `IN_PROGRESS` until they resolve or are fully nullified. Each scan re-evaluates the recent
+tail plus the tracked live set so games can move between categories as new proofs, challenges, or
+nullifications are posted onchain. Individual game query failures are logged and retried on the next
+scan; they do not abort the full scan.
 
 A game is selected only when `status() == IN_PROGRESS`. The challenger then reads:
 
@@ -236,7 +237,7 @@ A challenger needs:
 - `DisputeGameFactory` address.
 - ZK proof RPC endpoint.
 - L1 transaction signer.
-- Poll interval and game lookback window.
+- Poll interval.
 
 Optional inputs:
 

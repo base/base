@@ -110,13 +110,6 @@ pub struct ChallengerArgs {
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
 
-    /// Size of the recent factory tail evaluated on every scan tick. Sets
-    /// the startup catch-up window and the discovery channel for new games;
-    /// in-progress games observed within it stay tracked across ticks even
-    /// after they age out.
-    #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
-    pub lookback_games: u64,
-
     /// How often a full rescan of the bond lookback window is performed to
     /// catch state transitions (games challenged or resolved by other actors).
     #[arg(
