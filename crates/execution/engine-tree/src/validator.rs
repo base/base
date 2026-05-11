@@ -1601,7 +1601,7 @@ where
         Node::Provider,
         Node::Evm,
         EV::Validator,
-        FlashblocksCachedExecutionProvider<Node::Provider>,
+        FlashblocksCachedExecutionProvider,
     >;
 
     async fn build_tree_validator(
@@ -1620,10 +1620,7 @@ where
             validator,
             tree_config,
             invalid_block_hook,
-            FlashblocksCachedExecutionProvider::new(
-                ctx.node.provider().clone(),
-                self.flashblocks_state.clone(),
-            ),
+            FlashblocksCachedExecutionProvider::new(self.flashblocks_state.clone()),
             changeset_cache,
             ctx.node.task_executor().clone(),
         ))
