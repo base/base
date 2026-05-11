@@ -27,4 +27,4 @@ pub use engine_request_processor::{
 };
 
 mod rpc_request_processor;
-pub use rpc_request_processor::{EngineRpcProcessor, EngineRpcRequestReceiver};
+pub use rpc_request_processor::EngineRpcProcessor;
