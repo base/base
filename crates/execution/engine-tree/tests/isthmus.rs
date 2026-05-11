@@ -9,10 +9,7 @@ use base_common_consensus::{
     BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, Predeploys,
 };
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::{
-    BaseEngineTypes, BaseNode,
-    engine::{BaseEngineValidator, verify_isthmus_withdrawals_root},
-};
+use base_node_core::{BaseEngineTypes, BaseNode, engine::BaseEngineValidator};
 use reth_chain_state::{ComputedTrieData, ExecutedBlock};
 use reth_db_common::init::init_genesis;
 use reth_engine_primitives::PayloadValidator;
@@ -24,7 +21,7 @@ use reth_provider::{
 };
 use reth_revm::{bytecode::Bytecode, state::AccountInfo};
 use reth_trie::{
-    HashedPostState, HashedStorage, KeccakKeyHasher, KeyHasher, test_utils::storage_root_prehashed,
+    HashedPostState, HashedStorage, KeccakKeyHasher, test_utils::storage_root_prehashed,
 };
 use revm::database::BundleState;
 
@@ -64,14 +61,18 @@ fn isthmus_validation_rejects_bad_withdrawals_root_with_in_memory_parent_overlay
     assert_ne!(bad_withdrawals_root, parent_withdrawals_root);
     let child_block = recovered_empty_block(2, parent_hash, Some(bad_withdrawals_root));
     let child_state_updates = HashedPostState::default();
-    let parent_state_provider_builder =
-        StateProviderBuilder::new(provider, genesis_hash, Some(vec![parent_executed_block]));
+    let parent_state_provider_builder = StateProviderBuilder::new(
+        provider.clone(),
+        genesis_hash,
+        Some(vec![parent_executed_block]),
+    );
     let parent_state_provider =
         parent_state_provider_builder.build().expect("build overlay parent state provider");
+    let validator = BaseEngineValidator::<_, BaseTransactionSigned, BaseChainSpec>::new::<
+        KeccakKeyHasher,
+    >(chain_spec, provider);
 
-    let result = verify_isthmus_withdrawals_root(
-        chain_spec.as_ref(),
-        KeccakKeyHasher::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER),
+    let result = validator.validate_block_post_execution_with_state(
         &child_state_updates,
         parent_state_provider,
         child_block.header(),
@@ -90,19 +91,24 @@ fn isthmus_validation_accepts_valid_withdrawals_root_with_in_memory_parent_overl
     let parent_hash = parent_executed_block.recovered_block().hash();
     let child_block = recovered_empty_block(2, parent_hash, Some(parent_withdrawals_root));
     let child_state_updates = HashedPostState::default();
-    let parent_state_provider_builder =
-        StateProviderBuilder::new(provider, genesis_hash, Some(vec![parent_executed_block]));
+    let parent_state_provider_builder = StateProviderBuilder::new(
+        provider.clone(),
+        genesis_hash,
+        Some(vec![parent_executed_block]),
+    );
     let parent_state_provider =
         parent_state_provider_builder.build().expect("build overlay parent state provider");
+    let validator = BaseEngineValidator::<_, BaseTransactionSigned, BaseChainSpec>::new::<
+        KeccakKeyHasher,
+    >(chain_spec, provider);
 
-    verify_isthmus_withdrawals_root(
-        chain_spec.as_ref(),
-        KeccakKeyHasher::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER),
-        &child_state_updates,
-        parent_state_provider,
-        child_block.header(),
-    )
-    .expect("state-aware validation should use the in-memory parent overlay");
+    validator
+        .validate_block_post_execution_with_state(
+            &child_state_updates,
+            parent_state_provider,
+            child_block.header(),
+        )
+        .expect("state-aware validation should use the in-memory parent overlay");
 }
 
 fn isthmus_parent_overlay_fixture() -> (

@@ -17,9 +17,8 @@ use alloy_eip7928::BlockAccessList;
 use alloy_eips::eip2718::Decodable2718;
 use alloy_evm::Evm;
 use alloy_primitives::B256;
-use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType, Predeploys,
+    BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, OpTxType,
 };
 use base_common_evm::{
     BaseBlockExecutor, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseHaltReason,
@@ -29,7 +28,7 @@ use base_common_rpc_types_engine::ExecutionData;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::BaseRethReceiptBuilder;
 use base_flashblocks::FlashblocksState;
-use base_node_core::{BaseEngineTypes, engine::verify_isthmus_withdrawals_root};
+use base_node_core::{BaseEngineTypes, engine::BasePostExecutionValidator};
 use reth_chain_state::{DeferredTrieData, ExecutedBlock, LazyOverlay};
 use reth_consensus::{ConsensusError, FullConsensus, ReceiptRootBloom};
 use reth_engine_primitives::{
@@ -72,7 +71,7 @@ use reth_revm::{
     database::StateProviderDatabase,
     db::{State, states::bundle_state::BundleRetention},
 };
-use reth_trie::{HashedPostState, KeccakKeyHasher, KeyHasher, StateRoot, updates::TrieUpdates};
+use reth_trie::{HashedPostState, StateRoot, updates::TrieUpdates};
 use reth_trie_parallel::root::{ParallelStateRoot, ParallelStateRootError};
 use revm_primitives::Address;
 use tracing::{debug, debug_span, error, info, instrument, trace, warn};
@@ -114,8 +113,6 @@ where
     metrics: EngineApiMetrics,
     /// Validator for the payload.
     validator: V,
-    /// Hashed L2-to-L1 message passer predeploy address used by Isthmus withdrawals validation.
-    hashed_addr_l2tol1_msg_passer: B256,
     /// Cached execution provider.
     cached_execution_provider: C,
     /// Changeset cache for in-memory trie changesets
@@ -155,7 +152,7 @@ where
 {
     /// Creates a new `TreePayloadValidator`.
     #[allow(clippy::too_many_arguments)]
-    pub fn new<KH: KeyHasher>(
+    pub fn new(
         provider: P,
         consensus: Arc<dyn FullConsensus<BasePrimitives>>,
         evm_config: Evm,
@@ -184,7 +181,6 @@ where
             invalid_block_hook,
             metrics: EngineApiMetrics::default(),
             validator,
-            hashed_addr_l2tol1_msg_passer: KH::hash_key(Predeploys::L2_TO_L1_MESSAGE_PASSER),
             changeset_cache,
             cached_execution_provider,
             runtime,
@@ -357,7 +353,7 @@ where
         mut ctx: TreeCtx<'_, BasePrimitives>,
     ) -> ValidationOutcome<BasePrimitives, InsertPayloadError<BaseBlock>>
     where
-        V: PayloadValidator<T, Block = BaseBlock>,
+        V: BasePostExecutionValidator<T>,
         Evm: ConfigureEngineEvm<ExecutionData, Primitives = BasePrimitives>,
     {
         /// A helper macro that returns the block in case there was an error
@@ -1073,7 +1069,7 @@ where
         receipt_root_bloom: Option<ReceiptRootBloom>,
     ) -> Result<HashedPostState, InsertBlockErrorKind>
     where
-        V: PayloadValidator<T, Block = BaseBlock>,
+        V: BasePostExecutionValidator<T>,
     {
         let start = Instant::now();
 
@@ -1112,23 +1108,17 @@ where
         drop(_enter);
 
         let _enter = debug_span!(target: "engine::tree::payload_validator", "validate_block_post_execution_with_state").entered();
-        // Avoid building parent state before Isthmus; the verifier repeats this gate for direct
-        // callers that already have a parent state provider.
-        if self.provider.chain_spec().is_isthmus_active_at_timestamp(block.header().timestamp()) {
-            // Build a fresh parent-state provider for validation instead of reusing the execution
-            // provider, which may be wrapped with execution caches.
-            let parent_state_provider = parent_state_provider_builder.build()?;
-            if let Err(err) = verify_isthmus_withdrawals_root(
-                self.provider.chain_spec().as_ref(),
-                self.hashed_addr_l2tol1_msg_passer,
-                &hashed_state,
-                parent_state_provider,
-                block.header(),
-            ) {
-                // call post-block hook
-                self.on_invalid_block(parent_block, block, output, None, ctx.state_mut());
-                return Err(err.into());
-            }
+        // Build a fresh parent-state provider for validation instead of reusing the execution
+        // provider, which may be wrapped with execution caches.
+        let parent_state_provider = parent_state_provider_builder.build()?;
+        if let Err(err) = self.validator.validate_block_post_execution_with_state(
+            &hashed_state,
+            parent_state_provider,
+            block,
+        ) {
+            // call post-block hook
+            self.on_invalid_block(parent_block, block, output, None, ctx.state_mut());
+            return Err(err.into());
         }
 
         // record post-execution validation duration
@@ -1497,7 +1487,7 @@ where
         + ChainSpecProvider<ChainSpec = BaseChainSpec>
         + Clone
         + 'static,
-    V: PayloadValidator<Types, Block = BaseBlock>,
+    V: BasePostExecutionValidator<Types>,
     Evm: ConfigureEngineEvm<
             ExecutionData,
             Primitives = BasePrimitives,
@@ -1609,7 +1599,7 @@ where
     <<Node as FullNodeTypes>::Types as NodeTypes>::Payload:
         PayloadTypes<ExecutionData = ExecutionData>,
     EV: PayloadValidatorBuilder<Node>,
-    EV::Validator: PayloadValidator<<Node::Types as NodeTypes>::Payload, Block = BaseBlock>,
+    EV::Validator: BasePostExecutionValidator<<Node::Types as NodeTypes>::Payload>,
 {
     type EngineValidator = BaseEngineValidator<
         Node::Provider,
@@ -1627,7 +1617,7 @@ where
         let validator = self.payload_validator_builder.build(ctx).await?;
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
         let invalid_block_hook = ctx.create_invalid_block_hook(&data_dir).await?;
-        Ok(BaseEngineValidator::new::<KeccakKeyHasher>(
+        Ok(BaseEngineValidator::new(
             ctx.node.provider().clone(),
             std::sync::Arc::new(ctx.node.consensus().clone()),
             ctx.node.evm_config().clone(),
