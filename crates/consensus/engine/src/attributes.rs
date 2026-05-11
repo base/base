@@ -210,17 +210,21 @@ impl AttributesMatch {
             Some((ae, ad)) => (ae.into(), ad.into()),
         };
 
-        let extra_data_decoded = if config.is_jovian_active(block.header.timestamp) {
-            JovianExtraData::decode(&block.header.extra_data).map(|(be, bd, _)| (be, bd))
-        } else if config.is_holocene_active(block.header.timestamp) {
-            HoloceneExtraData::decode(&block.header.extra_data)
-        } else {
-            return AttributesMismatch::MissingBlockEIP1559.into();
-        };
+        // For Jovian we decode the additional `min_base_fee` field. We carry it through as
+        // `Option<u64>` so the Holocene path remains uniform.
+        let extra_data_decoded: Result<(u32, u32, Option<u64>), EIP1559ParamError> =
+            if config.is_jovian_active(block.header.timestamp) {
+                JovianExtraData::decode(&block.header.extra_data)
+                    .map(|(be, bd, mbf)| (be, bd, Some(mbf)))
+            } else if config.is_holocene_active(block.header.timestamp) {
+                HoloceneExtraData::decode(&block.header.extra_data).map(|(be, bd)| (be, bd, None))
+            } else {
+                return AttributesMismatch::MissingBlockEIP1559.into();
+            };
 
         // We decode the extra data stemming from the block header.
-        let (be, bd): (u128, u128) = match extra_data_decoded {
-            Ok((be, bd)) => (be.into(), bd.into()),
+        let (be, bd, block_min_base_fee): (u128, u128, Option<u64>) = match extra_data_decoded {
+            Ok((be, bd, mbf)) => (be.into(), bd.into(), mbf),
             Err(EIP1559ParamError::NoEIP1559Params) => {
                 error!(
                     "EIP1559 parameters for the block not set while holocene is active. This is a bug"
@@ -248,6 +252,29 @@ impl AttributesMatch {
                 BaseFeeParams { max_change_denominator: bd, elasticity_multiplier: be },
             )
             .into();
+        }
+
+        // Post-Jovian: the block header's `min_base_fee` must match the value derived from
+        // the L1-derived payload attributes. Without this check, the consolidation step
+        // would accept any `min_base_fee` encoded in the unsafe block header, allowing the
+        // next block's base fee floor to diverge from the L1 SystemConfig-derived value.
+        if config.is_jovian_active(block.header.timestamp) {
+            let attr_min_base_fee = attributes.attributes().min_base_fee;
+            let block_min_base_fee = block_min_base_fee
+                .expect("Jovian active implies the decoded block extra data carries min_base_fee");
+
+            match attr_min_base_fee {
+                None => {
+                    error!(
+                        "min_base_fee for attributes not set while jovian is active. This is a bug"
+                    );
+                    return AttributesMismatch::MissingAttributesMinBaseFee.into();
+                }
+                Some(attr_mbf) if attr_mbf != block_min_base_fee => {
+                    return AttributesMismatch::MinBaseFee(attr_mbf, block_min_base_fee).into();
+                }
+                Some(_) => {}
+            }
         }
 
         Self::Match
@@ -360,6 +387,12 @@ pub enum AttributesMismatch {
     MissingAttributesEIP1559,
     /// The EIP1559 payload for the block is missing when holocene is active.
     MissingBlockEIP1559,
+    /// The `min_base_fee` payload for the [`AttributesWithParent`] is missing when jovian is
+    /// active.
+    MissingAttributesMinBaseFee,
+    /// The `min_base_fee` of the attributes does not match the `min_base_fee` of the block
+    /// extra data when jovian is active. Carries (`attributes`, `block`).
+    MinBaseFee(u64, u64),
     /// The version in the extra data EIP1559 payload is incorrect. Should be 0.
     InvalidExtraDataVersion,
     /// An unknown extra data decoding error occurred.
@@ -402,7 +435,7 @@ mod tests {
     use alloy_rpc_types_eth::BlockTransactions;
     use arbitrary::{Arbitrary, Unstructured};
     use base_common_chains::Registry;
-    use base_common_consensus::HoloceneExtraData;
+    use base_common_consensus::{HoloceneExtraData, JovianExtraData};
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_protocol::{BlockInfo, L2BlockInfo};
 
@@ -1002,5 +1035,77 @@ mod tests {
         let check = AttributesMatch::check(cfg, &attributes, &block);
         assert_eq!(check, AttributesMatch::Match);
         assert!(check.is_match());
+    }
+
+    fn jovian_test_setup() -> (RollupConfig, AttributesWithParent, Block<Transaction>) {
+        let (mut cfg, mut attributes, block) = eip1559_test_setup();
+        cfg.hardforks.jovian_time = Some(0);
+
+        let eip1559_params: FixedBytes<8> = HoloceneExtraData::encode(
+            Default::default(),
+            BaseFeeParams { max_change_denominator: 100, elasticity_multiplier: 2 },
+        )
+        .unwrap()
+        .split_off(1)
+        .as_ref()
+        .try_into()
+        .unwrap();
+        attributes.attributes.eip_1559_params = Some(eip1559_params);
+
+        (cfg, attributes, block)
+    }
+
+    #[test]
+    fn test_jovian_min_base_fee_match() {
+        let (cfg, mut attributes, mut block) = jovian_test_setup();
+
+        attributes.attributes.min_base_fee = Some(123);
+        block.header.extra_data = JovianExtraData::encode(
+            Default::default(),
+            BaseFeeParams { max_change_denominator: 100, elasticity_multiplier: 2 },
+            123,
+        )
+        .unwrap();
+
+        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        assert_eq!(check, AttributesMatch::Match);
+        assert!(check.is_match());
+    }
+
+    #[test]
+    fn test_jovian_min_base_fee_mismatch() {
+        let (cfg, mut attributes, mut block) = jovian_test_setup();
+
+        attributes.attributes.min_base_fee = Some(123);
+        block.header.extra_data = JovianExtraData::encode(
+            Default::default(),
+            BaseFeeParams { max_change_denominator: 100, elasticity_multiplier: 2 },
+            456,
+        )
+        .unwrap();
+
+        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        assert_eq!(check, AttributesMatch::Mismatch(AttributesMismatch::MinBaseFee(123, 456)));
+        assert!(check.is_mismatch());
+    }
+
+    #[test]
+    fn test_jovian_min_base_fee_attribute_missing() {
+        let (cfg, mut attributes, mut block) = jovian_test_setup();
+
+        attributes.attributes.min_base_fee = None;
+        block.header.extra_data = JovianExtraData::encode(
+            Default::default(),
+            BaseFeeParams { max_change_denominator: 100, elasticity_multiplier: 2 },
+            456,
+        )
+        .unwrap();
+
+        let check = AttributesMatch::check(&cfg, &attributes, &block);
+        assert_eq!(
+            check,
+            AttributesMatch::Mismatch(AttributesMismatch::MissingAttributesMinBaseFee)
+        );
+        assert!(check.is_mismatch());
     }
 }
