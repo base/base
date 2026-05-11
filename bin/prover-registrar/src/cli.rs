@@ -567,7 +567,7 @@ impl Cli {
         ready.store(true, Ordering::SeqCst);
 
         let cancel_guard = cancel.clone().drop_guard();
-        let driver_result = RegistrationDriver::new(
+        let driver = RegistrationDriver::new(
             discovery,
             proof_provider,
             registry,
@@ -575,9 +575,8 @@ impl Cli {
             signer_client,
             driver_config,
             nitro_verifier,
-        )
-        .run()
-        .await;
+        )?;
+        let driver_result = driver.run().await;
         drop(cancel_guard);
 
         // ── 9. Graceful shutdown (always runs, even on driver error) ─────────

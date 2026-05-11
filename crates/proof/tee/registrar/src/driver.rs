@@ -128,6 +128,17 @@ where
     /// optional `nitro_verifier` client consults the on-chain durable
     /// revocation sentinel before each registration; pass `None` to disable
     /// the on-chain pre-check (useful for tests and unit deployments).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
+    /// but no `nitro_verifier` client is supplied. CRL revocation requires an
+    /// on-chain verifier both as the destination of `revokeCert` transactions
+    /// and as the source of the durable on-chain revocation sentinel; allowing
+    /// the driver to start in this state would silently bypass both layers of
+    /// CRL protection (the call site fails open on every error variant). Fail
+    /// fast at construction so the misconfiguration cannot reach a
+    /// registration cycle.
     pub fn new(
         discovery: D,
         proof_provider: P,
@@ -136,7 +147,15 @@ where
         signer_client: S,
         config: DriverConfig,
         nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
-    ) -> Self {
+    ) -> Result<Self> {
+        if config.crl.enabled && nitro_verifier.is_none() {
+            return Err(RegistrarError::Config(
+                "CRL checking enabled but nitro_verifier client not configured; \
+                 a NitroEnclaveVerifier client is required as both the revokeCert \
+                 destination and the on-chain revokedCerts sentinel source"
+                    .into(),
+            ));
+        }
         let crl_http_client = if config.crl.enabled {
             match crl::build_crl_http_client(config.crl.fetch_timeout) {
                 Ok(client) => Some(client),
@@ -148,7 +167,7 @@ where
         } else {
             None
         };
-        Self {
+        Ok(Self {
             discovery,
             proof_provider,
             registry,
@@ -157,7 +176,7 @@ where
             config,
             crl_http_client,
             nitro_verifier,
-        }
+        })
     }
 
     /// Runs the registration loop until cancelled.
@@ -693,18 +712,15 @@ where
         attestation_bytes: &[u8],
         instance: &ProverInstance,
     ) -> Result<bool> {
-        // CRL checking always pairs with an on-chain verifier client: the
-        // CLI builds `nitro_verifier` whenever `crl.enabled` is set, and
-        // refuses to start otherwise (`--nitro-verifier-address` is
-        // required when `--crl-check-enabled`). Treat its absence as a
-        // configuration bug rather than a runtime branch — the destination
-        // address for `revokeCert` is then read directly off the client,
-        // eliminating a redundant config field.
-        let verifier = self.nitro_verifier.as_deref().ok_or_else(|| {
-            RegistrarError::Config(
-                "CRL checking enabled but nitro_verifier client not configured".into(),
-            )
-        })?;
+        // CRL checking always pairs with an on-chain verifier client: this
+        // invariant is established by `RegistrationDriver::new`, which rejects
+        // construction when `crl.enabled` is set without a `nitro_verifier`.
+        // Reading the destination address directly off the client eliminates
+        // a redundant config field and a runtime branch.
+        let verifier = self.nitro_verifier.as_deref().expect(
+            "nitro_verifier presence is enforced by RegistrationDriver::new \
+             when crl.enabled is true",
+        );
         let verifier_address = verifier.address();
 
         // Parse the attestation document to get the cert chain.
@@ -1398,6 +1414,7 @@ mod tests {
             default_config(CancellationToken::new()),
             None,
         )
+        .expect("test driver construction succeeds")
     }
 
     /// Builds a fully-configured driver for `step()` / `process_instance()` tests.
@@ -1423,6 +1440,7 @@ mod tests {
             default_config(cancel),
             None,
         )
+        .expect("test driver construction succeeds")
     }
 
     // ── Configurable mock types for retry tests ────────────────────────
@@ -1576,6 +1594,7 @@ mod tests {
             default_config(cancel),
             None,
         )
+        .expect("test driver construction succeeds")
     }
 
     // ── Calldata encoding tests ─────────────────────────────────────────
@@ -1643,7 +1662,8 @@ mod tests {
             StubSignerClient,
             default_config(cancel.clone()),
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         let registered = vec![ORPHAN_A];
         cancel.cancel();
@@ -1705,7 +1725,8 @@ mod tests {
             StubSignerClient,
             default_config(CancellationToken::new()),
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         // Both ORPHAN_A and ORPHAN_B are "registered" (in values()),
         // neither is in active_signers.
@@ -1733,7 +1754,8 @@ mod tests {
             StubSignerClient,
             default_config(CancellationToken::new()),
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         let registered = vec![ORPHAN_A, ORPHAN_B, ORPHAN_C];
         driver.deregister_orphans(&HashSet::new(), &registered).await.unwrap();
@@ -1881,7 +1903,8 @@ mod tests {
             signer_client,
             config,
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         let inst = instance_with_launch_time(EP1, InstanceHealthStatus::Unhealthy, launch_time);
         let addrs = driver.process_instance(&inst).await.unwrap();
@@ -2185,7 +2208,8 @@ mod tests {
             signer_client,
             default_config(CancellationToken::new()),
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         driver.step().await.unwrap();
 
@@ -2260,7 +2284,8 @@ mod tests {
             signer_client,
             default_config(cancel),
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         driver.step().await.unwrap();
 
@@ -2467,7 +2492,8 @@ mod tests {
             signer_client,
             default_config(CancellationToken::new()),
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         driver.step().await.unwrap();
 
@@ -2607,7 +2633,8 @@ mod tests {
             signer_client,
             default_config(cancel.clone()),
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         // Schedule cancellation after 1 second (paused time).
         let cancel_clone = cancel.clone();
@@ -2705,7 +2732,8 @@ mod tests {
             signer_client,
             config,
             None,
-        );
+        )
+        .expect("test driver construction succeeds");
 
         driver.step().await.unwrap();
 
