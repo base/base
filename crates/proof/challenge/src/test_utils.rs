@@ -131,7 +131,7 @@ pub struct MockDisputeGameFactory {
 
 impl MockDisputeGameFactory {
     /// Creates a new mock from an initial set of games.
-    pub fn new(games: Vec<GameAtIndex>) -> Self {
+    pub const fn new(games: Vec<GameAtIndex>) -> Self {
         Self { games: Mutex::new(games) }
     }
 
