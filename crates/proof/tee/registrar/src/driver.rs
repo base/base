@@ -131,14 +131,21 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
-    /// but no `nitro_verifier` client is supplied. CRL revocation requires an
-    /// on-chain verifier both as the destination of `revokeCert` transactions
-    /// and as the source of the durable on-chain revocation sentinel; allowing
-    /// the driver to start in this state would silently bypass both layers of
-    /// CRL protection (the call site fails open on every error variant). Fail
-    /// fast at construction so the misconfiguration cannot reach a
-    /// registration cycle.
+    /// Returns [`RegistrarError::Config`] when CRL checking cannot be set up
+    /// in a state that honours both protection layers:
+    ///
+    /// - `config.crl.enabled` is `true` but no `nitro_verifier` client is
+    ///   supplied — the verifier is required as both the `revokeCert`
+    ///   destination (Layer 2) and the on-chain `revokedCerts` sentinel
+    ///   source (Layer 1).
+    /// - `config.crl.enabled` is `true` but the CRL HTTP client fails to
+    ///   build — Layer 2 (AWS CRL fetch) would silently no-op for the entire
+    ///   process lifetime.
+    ///
+    /// In both cases the call site at [`Self::process_instance`] fails open
+    /// on every error variant, so allowing the driver to start in either
+    /// state would silently bypass CRL protection. Fail fast at construction
+    /// so the misconfiguration cannot reach a registration cycle.
     pub fn new(
         discovery: D,
         proof_provider: P,
@@ -157,13 +164,11 @@ where
             ));
         }
         let crl_http_client = if config.crl.enabled {
-            match crl::build_crl_http_client(config.crl.fetch_timeout) {
-                Ok(client) => Some(client),
-                Err(e) => {
-                    warn!(error = %e, "failed to build CRL HTTP client, CRL checking will be disabled");
-                    None
-                }
-            }
+            Some(crl::build_crl_http_client(config.crl.fetch_timeout).map_err(|e| {
+                RegistrarError::Config(format!(
+                    "failed to build CRL HTTP client (Layer 2 / AWS CRL fetch): {e}"
+                ))
+            })?)
         } else {
             None
         };
@@ -759,10 +764,13 @@ where
         }
 
         // ── Layer 2: AWS CRL distribution point check ───────────────────
-        let http_client = self
-            .crl_http_client
-            .as_ref()
-            .ok_or_else(|| RegistrarError::Config("CRL HTTP client not available".into()))?;
+        // `crl_http_client` presence is enforced by `RegistrationDriver::new`
+        // when `crl.enabled` is true, and `check_and_revoke_crls` is only
+        // invoked from inside the `if self.config.crl.enabled` branch.
+        let http_client = self.crl_http_client.as_ref().expect(
+            "crl_http_client presence is enforced by RegistrationDriver::new \
+             when crl.enabled is true",
+        );
 
         RegistrarMetrics::crl_checks_total().increment(1);
 

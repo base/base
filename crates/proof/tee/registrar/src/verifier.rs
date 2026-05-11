@@ -2,8 +2,9 @@
 //!
 //! Wraps [`NitroEnclaveVerifierContractClient`] from `base-proof-contracts`
 //! with registrar-specific error types. The [`NitroVerifierClient`] trait uses
-//! [`RegistrarError`] to integrate with the registrar's error handling, while
-//! the underlying contract bindings use [`ContractError`].
+//! [`RegistrarError`] to integrate with the registrar's error handling; the
+//! underlying contract bindings raise their own `ContractError`, which is
+//! mapped inline to `RegistrarError::NitroVerifierCall` in `is_revoked`.
 //!
 //! Provides the durable on-chain revocation check that the driver consults
 //! before submitting a registration. The check is the offchain counterpart to
@@ -14,9 +15,7 @@
 
 use alloy_primitives::{Address, FixedBytes};
 use async_trait::async_trait;
-use base_proof_contracts::{
-    ContractError, NitroEnclaveVerifierClient as _, NitroEnclaveVerifierContractClient,
-};
+use base_proof_contracts::{NitroEnclaveVerifierClient as _, NitroEnclaveVerifierContractClient};
 use url::Url;
 
 use crate::{RegistrarError, Result};
@@ -50,11 +49,6 @@ impl NitroVerifierContractClient {
     }
 }
 
-/// Converts a [`ContractError`] into a [`RegistrarError::NitroVerifierCall`].
-fn map_contract_error(e: ContractError) -> RegistrarError {
-    RegistrarError::NitroVerifierCall { context: e.to_string(), source: Box::new(e) }
-}
-
 #[async_trait]
 impl NitroVerifierClient for NitroVerifierContractClient {
     fn address(&self) -> Address {
@@ -62,6 +56,14 @@ impl NitroVerifierClient for NitroVerifierContractClient {
     }
 
     async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool> {
-        self.inner.is_revoked(cert_hash).await.map_err(map_contract_error)
+        // `context` is a structured call label (matching the
+        // `NitroVerifierCall::context` docstring example), distinct from the
+        // underlying error rendered via `#[source]`. Avoids the duplicate
+        // message that `e.to_string()` would produce when the error chain
+        // is walked.
+        self.inner.is_revoked(cert_hash).await.map_err(|e| RegistrarError::NitroVerifierCall {
+            context: format!("revokedCerts({cert_hash:#x})"),
+            source: Box::new(e),
+        })
     }
 }
