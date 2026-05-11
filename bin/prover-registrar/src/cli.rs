@@ -506,9 +506,10 @@ impl Cli {
         // back to the AWS-CRL-only path (fail-open).
         let nitro_verifier: Option<Arc<dyn NitroVerifierClient>> =
             match (config.crl.enabled, config.crl.nitro_verifier_address) {
-                (true, Some(verifier_address)) => Some(Arc::new(
-                    NitroVerifierContractClient::new(verifier_address, config.l1_rpc_url.clone()),
-                )),
+                (true, Some(verifier_address)) => Some(Arc::new(NitroVerifierContractClient::new(
+                    verifier_address,
+                    config.l1_rpc_url.clone(),
+                ))),
                 _ => None,
             };
 

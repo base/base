@@ -107,10 +107,7 @@ mod tests {
         INitroEnclaveVerifier::revokedCertsCall { certHash: TEST_CERT_HASH }.abi_encode(),
         INitroEnclaveVerifier::revokedCertsCall::SELECTOR,
     )]
-    fn bytes32_call_abi_encodes_correctly(
-        #[case] encoded: Vec<u8>,
-        #[case] selector: [u8; 4],
-    ) {
+    fn bytes32_call_abi_encodes_correctly(#[case] encoded: Vec<u8>, #[case] selector: [u8; 4]) {
         assert_eq!(encoded.len(), BYTES32_CALL_ENCODED_LEN);
         assert_eq!(&encoded[..4], &selector);
     }

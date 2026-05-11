@@ -3097,7 +3097,10 @@ mod tests {
     fn path_digest_for(index: usize) -> FixedBytes<32> {
         let der = full_chain_der();
         let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
-        crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse").remove(index).path_digest
+        crl::CertCrlInfo::from_chain(&refs)
+            .expect("static fixtures parse")
+            .remove(index)
+            .path_digest
     }
 
     /// Parsed [`crl::CertCrlInfo`] vector for the canonical 4-cert chain,
@@ -3117,9 +3120,7 @@ mod tests {
 
     /// Convenience wrapper that runs the pre-check against the canonical
     /// 4-cert chain and returns `(result, call_count)`.
-    async fn run_pre_check(
-        verifier: &MockNitroVerifier,
-    ) -> (Result<bool>, u32) {
+    async fn run_pre_check(verifier: &MockNitroVerifier) -> (Result<bool>, u32) {
         let cert_infos = full_chain_cert_infos();
         let result =
             OnchainRevocationCheck::run(verifier, &cert_infos, ONCHAIN_TEST_INSTANCE_ID).await;
@@ -3183,10 +3184,8 @@ mod tests {
         // Even if the verifier reports the root and leaf path digests as
         // revoked, the pre-check must ignore them — they are out of scope
         // for `revokedCerts` (root manages its own trust, leaf is short-lived).
-        let verifier = MockNitroVerifier::revoking([
-            path_digest_for(ROOT_INDEX),
-            path_digest_for(LEAF_INDEX),
-        ]);
+        let verifier =
+            MockNitroVerifier::revoking([path_digest_for(ROOT_INDEX), path_digest_for(LEAF_INDEX)]);
         let (result, calls) = run_pre_check(&verifier).await;
 
         assert!(
