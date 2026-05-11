@@ -89,8 +89,7 @@ where
             }
             Err(e) => {
                 debug!(sender = %sender, error = %e, "pool rejected transaction");
-                BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e))
-                    .increment(1);
+                BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
                 Err(ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("pool rejected transaction: {e}"),
