@@ -155,7 +155,7 @@ pub trait BasePostExecutionValidator<Types: PayloadTypes>:
     PayloadValidator<Types, Block = BaseBlock>
 {
     /// See [`BaseEngineValidator::validate_block_post_execution_with_state`].
-    fn validate_block_post_execution_with_state<DB: StateProvider>(
+    fn validate_block_post_execution_with_parent_state<DB: StateProvider>(
         &self,
         state_updates: &HashedPostState,
         parent_state: DB,
@@ -170,7 +170,7 @@ where
     Self: PayloadValidator<Types, Block = BaseBlock>,
     ChainSpec: Upgrades,
 {
-    fn validate_block_post_execution_with_state<DB: StateProvider>(
+    fn validate_block_post_execution_with_parent_state<DB: StateProvider>(
         &self,
         state_updates: &HashedPostState,
         parent_state: DB,

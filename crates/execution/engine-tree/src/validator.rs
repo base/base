@@ -1111,7 +1111,7 @@ where
         // Build a fresh parent-state provider for validation instead of reusing the execution
         // provider, which may be wrapped with execution caches.
         let parent_state_provider = parent_state_provider_builder.build()?;
-        if let Err(err) = self.validator.validate_block_post_execution_with_state(
+        if let Err(err) = self.validator.validate_block_post_execution_with_parent_state(
             &hashed_state,
             parent_state_provider,
             block,
