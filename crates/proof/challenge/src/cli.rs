@@ -114,6 +114,14 @@ pub struct ChallengerArgs {
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
 
+    /// Number of recent factory games scanned by bond discovery.
+    #[arg(
+        long = "bond-discovery-lookback-games",
+        env = cli_env!("BOND_DISCOVERY_LOOKBACK_GAMES"),
+        default_value = "1000"
+    )]
+    pub bond_discovery_lookback_games: u64,
+
     /// How often a full rescan of the bond lookback window is performed to
     /// catch state transitions (games challenged or resolved by other actors).
     #[arg(

@@ -165,7 +165,7 @@ impl ChallengerService {
                 config.bond_claim_addresses,
                 l1_rpc_url,
                 Arc::clone(&factory_client) as Arc<dyn DisputeGameFactoryClient>,
-                BondManager::<TokioRuntime>::DEFAULT_DISCOVERY_BATCH_SIZE,
+                config.bond_discovery_lookback_games,
                 config.bond_discovery_interval,
                 TokioRuntime::new(),
             );

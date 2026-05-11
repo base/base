@@ -167,9 +167,6 @@ pub struct BondManager<C: Clock> {
 }
 
 impl<C: Clock> BondManager<C> {
-    /// Default maximum number of factory indices scanned per bond discovery tick.
-    pub const DEFAULT_DISCOVERY_BATCH_SIZE: u64 = 1000;
-
     /// Conservative fallback when the onchain `DelayedWETH` delay has not
     /// been read yet. If the real delay is shorter the withdraw will simply
     /// succeed earlier; if longer, the attempt reverts and is retried.

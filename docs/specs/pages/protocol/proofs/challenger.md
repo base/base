@@ -245,7 +245,8 @@ A challenger needs:
 Optional inputs:
 
 - TEE proof RPC endpoint and timeout, enabling TEE-first nullification for TEE-backed games.
-- Bond claim addresses and bond discovery interval, enabling automatic bond recovery and claiming.
+- Bond claim addresses, bond discovery interval, and bond discovery lookback window, enabling
+  automatic bond recovery and claiming.
 - Metrics and health server settings.
 
 ## Safety Requirements

@@ -107,6 +107,8 @@ pub struct ChallengerConfig {
     pub signing: SignerConfig,
     /// Transaction manager configuration (fee limits, confirmations, timeouts).
     pub tx_manager: TxManagerConfig,
+    /// Number of recent factory games scanned by bond discovery.
+    pub bond_discovery_lookback_games: u64,
     /// How often a full rescan of the bond lookback window is performed.
     pub bond_discovery_interval: Duration,
     /// Maximum time to keep a completed bond game tracked while waiting for
@@ -190,6 +192,10 @@ impl ChallengerConfig {
             None
         };
 
+        require_nonzero(
+            cli.challenger.bond_discovery_lookback_games,
+            "bond-discovery-lookback-games",
+        )?;
         require_nonzero_duration(
             cli.challenger.bond_discovery_interval,
             "bond-discovery-interval",
@@ -228,6 +234,7 @@ impl ChallengerConfig {
             tee_request_timeout,
             signing,
             tx_manager,
+            bond_discovery_lookback_games: cli.challenger.bond_discovery_lookback_games,
             bond_discovery_interval: cli.challenger.bond_discovery_interval,
             anchor_update_retention: cli.challenger.anchor_update_retention,
             bond_claim_addresses: cli.challenger.bond_claim_addresses,
@@ -298,6 +305,7 @@ mod tests {
             config.anchor_state_registry_addr,
             "0x2234567890123456789012345678901234567890".parse::<Address>().unwrap()
         );
+        assert_eq!(config.bond_discovery_lookback_games, 1000);
         assert_eq!(config.bond_discovery_interval, Duration::from_secs(300));
         assert_eq!(config.anchor_update_retention, Duration::from_secs(24 * 60 * 60));
         assert_eq!(config.health_addr, "0.0.0.0:8080".parse::<SocketAddr>().unwrap());
@@ -307,10 +315,23 @@ mod tests {
         assert_eq!(config.tx_manager.fee_limit_multiplier, 5);
     }
 
+    #[test]
+    fn test_bond_discovery_lookback_games_configurable() {
+        let all_args = [&SIGNER_ARGS[..], &["--bond-discovery-lookback-games", "2048"]].concat();
+        let cli = cli_from_args(&all_args);
+        let config = ChallengerConfig::from_cli(cli).unwrap();
+        assert_eq!(config.bond_discovery_lookback_games, 2048);
+    }
+
     #[rstest]
     #[case::poll_interval("--poll-interval", "0s", "poll-interval")]
     #[case::zk_connect_timeout("--zk-connect-timeout", "0s", "zk-connect-timeout")]
     #[case::zk_request_timeout("--zk-request-timeout", "0s", "zk-request-timeout")]
+    #[case::bond_discovery_lookback_games(
+        "--bond-discovery-lookback-games",
+        "0",
+        "bond-discovery-lookback-games"
+    )]
     #[case::bond_discovery_interval("--bond-discovery-interval", "0s", "bond-discovery-interval")]
     #[case::anchor_update_retention("--anchor-update-retention", "0s", "anchor-update-retention")]
     fn test_zero_value_rejected(#[case] flag: &str, #[case] value: &str, #[case] field: &str) {
