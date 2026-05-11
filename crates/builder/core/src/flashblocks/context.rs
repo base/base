@@ -535,11 +535,22 @@ impl BasePayloadBuilderCtx {
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
+    ///
+    /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
+    /// for the payload (derived from L1 batches by `base-consensus`), not a list of optional
+    /// pre-include candidates. In that mode any invalid-tx error must be propagated as fatal so
+    /// the EL rejects the payload, matching the strictness of the proof executor and allowing
+    /// Holocene's deposit-only fallback to apply consistently across both consumers.
+    ///
+    /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
+    /// attribute pre-includes; pre-includes there may legitimately be skipped on invalid-tx
+    /// errors, so the historical skip-and-continue behavior is preserved.
     pub(super) fn execute_sequencer_transactions(
         &self,
         db: &mut State<impl Database>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
+        let no_tx_pool = self.attributes().no_tx_pool;
 
         let mut fbal_db = FBALBuilderDb::new(&mut *db);
         let min_tx_index = info.executed_transactions.iter().len() as u64;
@@ -584,11 +595,14 @@ impl BasePayloadBuilderCtx {
             let ResultAndState { result, state } = match evm.transact(&sequencer_tx) {
                 Ok(res) => res,
                 Err(err) => {
-                    if err.is_invalid_tx_err() {
+                    if err.is_invalid_tx_err() && !no_tx_pool {
                         trace!(target: "payload_builder", %err, ?sequencer_tx, "Error in sequencer transaction, skipping.");
                         continue;
                     }
-                    // this is an error that we should treat as fatal for this attempt
+                    // Either a fatal execution error, or an invalid-tx error from an
+                    // attribute-derived (`no_tx_pool=true`) transaction list. The latter must
+                    // be fatal so the EL rejects the payload exactly like the proof executor
+                    // does.
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
@@ -1168,7 +1182,20 @@ impl BasePayloadBuilderCtx {
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Header, TxEip1559};
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{TxKind, U256};
+    use alloy_signer_local::PrivateKeySigner;
+    use base_common_consensus::BaseTypedTransaction;
+    use base_execution_chainspec::BaseChainSpec;
+    use reth_chainspec::ChainSpec;
+    use reth_primitives::SealedHeader;
+    use reth_primitives_traits::WithEncoded;
+    use reth_provider::noop::NoopProvider;
+    use reth_revm::{State, database::StateProviderDatabase};
+
     use super::*;
+    use crate::test_utils::sign_op_tx;
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1286,5 +1313,80 @@ mod tests {
         assert_eq!(next.da_footprint_per_batch, Some(600));
         assert_eq!(next.execution_time_per_batch_us, Some(300_000));
         assert_eq!(next.state_root_gas_per_batch, Some(150_000));
+    }
+
+    /// Regression test: when the payload attributes are derived (`no_tx_pool=true`), an
+    /// invalid-tx error from a sequencer transaction must be propagated as a fatal error
+    /// rather than silently skipped.
+    ///
+    /// In `no_tx_pool=true` mode the attribute-supplied transaction list is the consensus
+    /// input for the payload (produced by `base-consensus` from L1 batches). The proof
+    /// executor strictly executes the full list and fails the block on any invalid tx; the
+    /// EL must do the same so Holocene's deposit-only fallback applies consistently across
+    /// both consumers of the same L1 input. Skip-and-continue here would let the EL freeze a
+    /// safe-head whose state cannot be reproduced by an honest proof client.
+    #[test]
+    fn execute_sequencer_transactions_propagates_invalid_tx_when_no_tx_pool() {
+        // Minimal Base chainspec: chain id 901 with all L1 forks through Cancun active at
+        // genesis. No inherited rollup forks, so block construction stays on the simplest
+        // path. (Mirrors the helper used by the `build_block` tests in `payload.rs`.)
+        let genesis: serde_json::Value = serde_json::json!({
+            "config": { "chainId": 901 },
+            "gasLimit": "0x1C9C380",
+            "timestamp": "0x0"
+        });
+        let genesis = serde_json::from_value(genesis).expect("valid genesis");
+        let inner =
+            ChainSpec::builder().chain(901.into()).genesis(genesis).cancun_activated().build();
+        let chain_spec = Arc::new(BaseChainSpec { inner });
+        let parent_header = Header { gas_limit: 30_000_000, timestamp: 0, ..Default::default() };
+        let parent = Arc::new(SealedHeader::seal_slow(parent_header));
+
+        // A randomly-generated signer with no balance in the (empty) NoopProvider state.
+        // Any non-deposit transfer attempt will fail validation with
+        // `InvalidTransaction::LackOfFundForMaxFee` — an `is_invalid_tx_err()` outcome.
+        let signer = PrivateKeySigner::random();
+        let tx = TxEip1559 {
+            chain_id: 901,
+            nonce: 0,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(signer.address()),
+            value: U256::from(1u64),
+            ..Default::default()
+        };
+        let recovered =
+            sign_op_tx(&signer, BaseTypedTransaction::Eip1559(tx)).expect("sign sequencer tx");
+        let signed = recovered.into_inner();
+        let encoded = signed.encoded_2718().into();
+        let with_encoded = WithEncoded::new(encoded, signed);
+
+        // Strict mode: derived attributes (`no_tx_pool=true`) — the invalid tx must be fatal.
+        let mut ctx = BasePayloadBuilderCtx::for_test(chain_spec, parent);
+        ctx.config.attributes.no_tx_pool = true;
+        ctx.config.attributes.transactions = vec![with_encoded];
+
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let err = ctx
+            .execute_sequencer_transactions(&mut state)
+            .expect_err("invalid sequencer tx must fail when no_tx_pool=true");
+        assert!(
+            matches!(err, PayloadBuilderError::EvmExecutionError(_)),
+            "expected EvmExecutionError, got: {err:?}"
+        );
+
+        // Mempool mode (`no_tx_pool=false`): pre-includes are still skippable. Identical
+        // input now succeeds with zero gas consumed and no receipt — this guards against
+        // accidentally tightening the legacy code path along with the strict one.
+        ctx.config.attributes.no_tx_pool = false;
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let info = ctx
+            .execute_sequencer_transactions(&mut state)
+            .expect("invalid pre-include is skipped when no_tx_pool=false");
+        assert_eq!(info.cumulative_gas_used, 0, "skipped tx should not consume gas");
+        assert!(info.receipts.is_empty(), "skipped tx should not produce a receipt");
     }
 }

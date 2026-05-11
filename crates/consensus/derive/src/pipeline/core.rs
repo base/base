@@ -54,6 +54,14 @@ where
     /// This matches the reference node's `initialReset` behavior: using the system config from a
     /// potentially older L2 block ensures we see any batcher-address changes that could
     /// affect channels still open within the channel timeout window.
+    ///
+    /// The Granite hardfork shrinks `channel_timeout` from 300 to 50 L1 blocks, and the spec
+    /// gates the transition on the *L1 origin block's* timestamp (matching every operational use
+    /// site: `channel_assembler::is_timed_out`, `channel_bank::*`). `L2BlockInfo::l1_origin`
+    /// carries only `(number, hash)`, so we approximate the L1 origin timestamp with the safe
+    /// lower bound `l2_safe_head_ts - max_sequencer_drift`. Around the Granite boundary this
+    /// conservatively selects the pre-Granite (larger) timeout, which can only widen the
+    /// walk-back window — never narrow it past the spec.
     async fn initial_reset(
         &mut self,
         l2_safe_head: L2BlockInfo,
@@ -61,7 +69,10 @@ where
     where
         <P as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
     {
-        let channel_timeout = self.rollup_config.channel_timeout(l2_safe_head.block_info.timestamp);
+        let l2_safe_head_ts = l2_safe_head.block_info.timestamp;
+        let l1_origin_ts_lower_bound =
+            l2_safe_head_ts.saturating_sub(self.rollup_config.max_sequencer_drift(l2_safe_head_ts));
+        let channel_timeout = self.rollup_config.channel_timeout(l1_origin_ts_lower_bound);
         let l1_origin_number = l2_safe_head.l1_origin.number;
         let mut current = l2_safe_head;
 
@@ -251,10 +262,11 @@ mod tests {
     use alloc::{string::ToString, sync::Arc};
 
     use alloy_eips::BlockNumHash;
+    use alloy_primitives::{Address, B256, address};
     use alloy_rpc_types_engine::PayloadAttributes;
-    use base_common_genesis::{RollupConfig, SystemConfig};
+    use base_common_genesis::{HardForkConfig, RollupConfig, SystemConfig};
     use base_common_rpc_types_engine::BasePayloadAttributes;
-    use base_protocol::{AttributesWithParent, L2BlockInfo};
+    use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 
     use super::*;
     use crate::{
@@ -412,5 +424,92 @@ mod tests {
         };
         let result = pipeline.initial_reset(l2_safe_head).await;
         assert!(result.is_ok());
+    }
+
+    /// On a Granite-straddle safe head — L2 timestamp post-Granite while its L1 origin
+    /// timestamp is pre-Granite, possible because `max_sequencer_drift` allows the L2 to lead
+    /// its L1 origin by up to 1800s post-Fjord — the Granite-vs-pre-Granite `channel_timeout`
+    /// selection in `initial_reset` must follow the spec and gate on the L1 origin block's
+    /// timestamp (matching every operational use site), not the L2 safe head's timestamp.
+    /// Gating on the L2 timestamp would select 50 (Granite) and stop the walk-back at L1
+    /// origin 950, whereas the spec selects 300 (pre-Granite) and stops at L1 origin 700,
+    /// returning the older (and correct) `SystemConfig` for any batcher-address rotation in
+    /// that window.
+    #[tokio::test]
+    async fn test_derivation_pipeline_initial_reset_granite_straddle() {
+        const GRANITE_TIME: u64 = 1_000_000;
+        const L2_SAFE_HEAD_TIMESTAMP: u64 = GRANITE_TIME + 100;
+        const L1_HEAD: u64 = 1_000;
+        const PRE_GRANITE_TIMEOUT: u64 = 300;
+        const SPEC_STOP_L1_ORIGIN: u64 = L1_HEAD - PRE_GRANITE_TIMEOUT;
+        const CODE_STOP_L1_ORIGIN: u64 = L1_HEAD - RollupConfig::GRANITE_CHANNEL_TIMEOUT;
+        const BATCHER_AT_SPEC_STOP: Address = address!("BB00000000000000000000000000000000000002");
+        const BATCHER_AT_CODE_STOP: Address = address!("AA00000000000000000000000000000000000001");
+
+        let rollup_config = Arc::new(RollupConfig {
+            block_time: 2,
+            seq_window_size: 3600,
+            channel_timeout: PRE_GRANITE_TIMEOUT,
+            granite_channel_timeout: RollupConfig::GRANITE_CHANNEL_TIMEOUT,
+            hardforks: HardForkConfig {
+                fjord_time: Some(0),
+                granite_time: Some(GRANITE_TIME),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let mut l2_chain_provider = TestL2ChainProvider::default();
+        for n in SPEC_STOP_L1_ORIGIN..=L1_HEAD {
+            let timestamp = if n == L1_HEAD { L2_SAFE_HEAD_TIMESTAMP } else { 0 };
+            l2_chain_provider.blocks.push(L2BlockInfo {
+                block_info: BlockInfo {
+                    number: n,
+                    hash: B256::with_last_byte((n & 0xff) as u8),
+                    parent_hash: B256::ZERO,
+                    timestamp,
+                },
+                l1_origin: BlockNumHash {
+                    number: n,
+                    hash: B256::with_last_byte(((n ^ 0x80) & 0xff) as u8),
+                },
+                seq_num: 0,
+            });
+        }
+        l2_chain_provider.system_configs.insert(
+            SPEC_STOP_L1_ORIGIN,
+            SystemConfig { batcher_address: BATCHER_AT_SPEC_STOP, ..Default::default() },
+        );
+        l2_chain_provider.system_configs.insert(
+            CODE_STOP_L1_ORIGIN,
+            SystemConfig { batcher_address: BATCHER_AT_CODE_STOP, ..Default::default() },
+        );
+
+        let attributes = TestNextAttributes::default();
+        let mut pipeline = DerivationPipeline::new(attributes, rollup_config, l2_chain_provider);
+
+        let safe_head = L2BlockInfo {
+            block_info: BlockInfo {
+                number: L1_HEAD,
+                hash: B256::with_last_byte((L1_HEAD & 0xff) as u8),
+                parent_hash: B256::ZERO,
+                timestamp: L2_SAFE_HEAD_TIMESTAMP,
+            },
+            l1_origin: BlockNumHash {
+                number: L1_HEAD,
+                hash: B256::with_last_byte(((L1_HEAD ^ 0x80) & 0xff) as u8),
+            },
+            seq_num: 0,
+        };
+
+        let (l1_origin, system_config) = pipeline.initial_reset(safe_head).await.unwrap();
+        assert_eq!(
+            l1_origin.number, SPEC_STOP_L1_ORIGIN,
+            "spec walk-back must stop at L1 origin {SPEC_STOP_L1_ORIGIN} (pre-Granite=300), not at {CODE_STOP_L1_ORIGIN} (Granite=50)"
+        );
+        assert_eq!(
+            system_config.batcher_address, BATCHER_AT_SPEC_STOP,
+            "spec walk-back must return the SystemConfig pinned at L2 block {SPEC_STOP_L1_ORIGIN}, not the one at {CODE_STOP_L1_ORIGIN}"
+        );
     }
 }

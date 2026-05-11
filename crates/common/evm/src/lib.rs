@@ -5,6 +5,8 @@
 
 extern crate alloc;
 
+pub use base_common_chains::BaseUpgrade;
+
 mod spec;
 pub use spec::BaseSpecId;
 
@@ -24,14 +26,7 @@ mod handler;
 pub use handler::{BaseHandler, IsTxError};
 
 mod precompiles;
-pub use precompiles::{
-    BasePrecompiles, GRANITE, GRANITE_MAX_INPUT_SIZE, ISTHMUS_G1_MSM,
-    ISTHMUS_G1_MSM_MAX_INPUT_SIZE, ISTHMUS_G2_MSM, ISTHMUS_G2_MSM_MAX_INPUT_SIZE, ISTHMUS_PAIRING,
-    ISTHMUS_PAIRING_MAX_INPUT_SIZE, JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE,
-    JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
-    JOVIAN_PAIRING_MAX_INPUT_SIZE, run_g1_msm_isthmus, run_g1_msm_jovian, run_g2_msm_isthmus,
-    run_g2_msm_jovian, run_pair_granite, run_pair_jovian, run_pairing_isthmus, run_pairing_jovian,
-};
+pub use precompiles::BasePrecompiles;
 
 mod api;
 pub use api::{BaseContext, BaseContextTr, BaseError, Builder, DefaultBase};

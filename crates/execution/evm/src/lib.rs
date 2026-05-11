@@ -356,6 +356,7 @@ mod tests {
         Address, B256, LogData, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
+    use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
     use base_common_evm::BaseSpecId;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
@@ -391,7 +392,7 @@ mod tests {
         let evm_config = BaseEvmConfig::base(chain_spec);
         let header = Header { timestamp: 0, ..Default::default() };
         let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
-        assert_eq!(cfg_env.spec, BaseSpecId::AZUL);
+        assert_eq!(cfg_env.spec, BaseSpecId::new(BaseUpgrade::Azul));
         assert_eq!(cfg_env.tx_gas_limit_cap, Some(MAX_TX_GAS_LIMIT_OSAKA));
     }
 
@@ -484,7 +485,8 @@ mod tests {
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
         let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new().with_spec_and_mainnet_gas_params(BaseSpecId::ECOTONE),
+            cfg_env: CfgEnv::new()
+                .with_spec_and_mainnet_gas_params(BaseSpecId::new(BaseUpgrade::Ecotone)),
             ..Default::default()
         };
 
@@ -551,7 +553,8 @@ mod tests {
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
 
         let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new().with_spec_and_mainnet_gas_params(BaseSpecId::ECOTONE),
+            cfg_env: CfgEnv::new()
+                .with_spec_and_mainnet_gas_params(BaseSpecId::new(BaseUpgrade::Ecotone)),
             ..Default::default()
         };
 

@@ -46,6 +46,8 @@ pub struct ProposerConfig {
     pub allow_non_finalized: bool,
     /// URL of the prover RPC endpoint.
     pub prover_rpc: Url,
+    /// Prover RPC request timeout.
+    pub prover_timeout: Duration,
     /// URL of the L1 Ethereum RPC endpoint.
     pub l1_eth_rpc: Url,
     /// URL of the L2 Ethereum RPC endpoint.
@@ -128,6 +130,14 @@ impl ProposerConfig {
             });
         }
 
+        if proposer.prover_timeout.is_zero() {
+            return Err(ConfigError::OutOfRange {
+                field: "prover-timeout",
+                constraint: "greater than 0",
+                value: "0",
+            });
+        }
+
         if proposer.poll_interval.is_zero() {
             return Err(ConfigError::OutOfRange {
                 field: "poll-interval",
@@ -176,6 +186,7 @@ impl ProposerConfig {
             dry_run: proposer.dry_run,
             allow_non_finalized: proposer.allow_non_finalized,
             prover_rpc: proposer.prover_rpc,
+            prover_timeout: proposer.prover_timeout,
             l1_eth_rpc: proposer.l1_eth_rpc,
             l2_eth_rpc: proposer.l2_eth_rpc,
             anchor_state_registry_addr: proposer.anchor_state_registry_addr,
@@ -250,6 +261,7 @@ mod tests {
                     .unwrap(),
                 game_type: 1,
                 tee_image_hash: B256::repeat_byte(0x01),
+                prover_timeout: Duration::from_secs(70 * 60),
                 poll_interval: Duration::from_secs(12),
                 rpc_timeout: Duration::from_secs(30),
                 rollup_rpc: Url::parse("http://localhost:7545").unwrap(),
@@ -294,6 +306,7 @@ mod tests {
         assert!(!config.dry_run);
         assert!(!config.allow_non_finalized);
         assert_eq!(config.game_type, 1);
+        assert_eq!(config.prover_timeout, Duration::from_secs(70 * 60));
         assert_eq!(config.poll_interval, Duration::from_secs(12));
         assert_eq!(config.rpc_timeout, Duration::from_secs(30));
         assert_eq!(config.max_parallel_proofs, 1);
@@ -307,6 +320,14 @@ mod tests {
         let config = ProposerConfig::from_cli(cli).unwrap();
 
         assert_eq!(config.tx_manager.as_ref().unwrap().tx_send_timeout, Duration::ZERO);
+    }
+
+    #[test]
+    fn test_zero_prover_timeout() {
+        let mut cli = minimal_cli();
+        cli.proposer.prover_timeout = Duration::ZERO;
+        let result = ProposerConfig::from_cli(cli);
+        assert!(matches!(result, Err(ConfigError::OutOfRange { field: "prover-timeout", .. })));
     }
 
     #[test]

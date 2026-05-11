@@ -286,22 +286,40 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             Ok(result) => Ok(Some((result, intermediate_roots))),
             Err(e) => {
                 match &e {
+                    // Transient: the L2 node has not produced this block yet.
+                    // Safe to skip — the next scan tick will retry.
                     ValidatorError::BlockNotAvailable { .. } => {
                         debug!(
                             game = %game_address,
                             error = %e,
                             "block not yet available, skipping game"
                         );
+                        Ok(None)
                     }
+
+                    // Persistent configuration errors: these indicate a
+                    // mismatch between the cached interval and on-chain
+                    // state (e.g. after a governance `setImplementation`
+                    // that changed `INTERMEDIATE_BLOCK_INTERVAL`).
+                    // Propagate so the caller logs the error at game level
+                    // and operators are alerted. No log here — the caller
+                    // in `step()` already logs at warn level.
+                    ValidatorError::CheckpointCountMismatch { .. }
+                    | ValidatorError::InvalidInterval
+                    | ValidatorError::InvalidBlockRange { .. } => Err(e.into()),
+
+                    // Other errors (RPC, header hash mismatch, account
+                    // proof failure, arithmetic overflow) are potentially
+                    // transient — skip and retry on the next tick.
                     _ => {
                         warn!(
                             game = %game_address,
                             error = %e,
-                            "validation error, skipping game"
+                            "transient validation error, skipping game"
                         );
+                        Ok(None)
                     }
                 }
-                Ok(None)
             }
         }
     }

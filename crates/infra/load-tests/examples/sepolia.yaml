@@ -31,7 +31,7 @@ transactions:
   #   fee: 3000
   # - weight: 50
   #   type: aerodrome_cl
-  #   router: "0x6a786a4f9bc46fF861260545C490a7356c5ecbFe"
+  #   router: "0xD75e6a0C801F24ebb3125E360a5A064f6b9FEFaC"
   #   token_in: "0x15948C3043A980A8d980d4D615A5E4c9514B0D64"
   #   token_out: "0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4"
   #   tick_spacing: 100
