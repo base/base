@@ -63,8 +63,19 @@ impl EngineTaskError for BuildTaskError {
             Self::EngineBuildError(EngineBuildError::FinalizedAheadOfUnsafe(_, _)) => {
                 EngineTaskErrorSeverity::Critical
             }
+            // The execution layer rejected the payload attributes derived from the current
+            // batch (e.g. malformed transaction bytes, invalid state transition).
+            //
+            // Per the derivation spec, the attributes must be dropped and the forkchoice
+            // state must be left unchanged. Surfacing this as `Flush` causes the engine
+            // processor to signal `FlushChannel` to the derivation pipeline (clearing the
+            // poisoned batch + upstream channel state) while `Engine::drain` removes this
+            // task from the head of the queue. Without this, the build task is retried
+            // in-place forever, starving every later engine request behind it.
+            Self::EngineBuildError(EngineBuildError::InvalidPayload(_)) => {
+                EngineTaskErrorSeverity::Flush
+            }
             Self::EngineBuildError(EngineBuildError::AttributesInsertionFailed(_))
-            | Self::EngineBuildError(EngineBuildError::InvalidPayload(_))
             | Self::EngineBuildError(EngineBuildError::UnexpectedPayloadStatus(_))
             | Self::EngineBuildError(EngineBuildError::MissingPayloadId)
             | Self::EngineBuildError(EngineBuildError::EngineSyncing) => {
@@ -75,5 +86,54 @@ impl EngineTaskError for BuildTaskError {
             }
             Self::MpscSend(_) => EngineTaskErrorSeverity::Critical,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    fn rpc_error() -> RpcError<TransportErrorKind> {
+        RpcError::local_usage_str("test")
+    }
+
+    #[rstest]
+    #[case::finalized_ahead_of_unsafe(
+        BuildTaskError::EngineBuildError(EngineBuildError::FinalizedAheadOfUnsafe(10, 5)),
+        EngineTaskErrorSeverity::Critical
+    )]
+    #[case::attributes_insertion_failed(
+        BuildTaskError::EngineBuildError(EngineBuildError::AttributesInsertionFailed(rpc_error())),
+        EngineTaskErrorSeverity::Temporary
+    )]
+    #[case::forkchoice_state_invalid(
+        BuildTaskError::EngineBuildError(EngineBuildError::ForkchoiceStateInvalid),
+        EngineTaskErrorSeverity::Reset
+    )]
+    #[case::invalid_payload(
+        BuildTaskError::EngineBuildError(EngineBuildError::InvalidPayload("bad tx".into())),
+        EngineTaskErrorSeverity::Flush
+    )]
+    #[case::unexpected_payload_status(
+        BuildTaskError::EngineBuildError(EngineBuildError::UnexpectedPayloadStatus(
+            PayloadStatusEnum::Syncing,
+        )),
+        EngineTaskErrorSeverity::Temporary
+    )]
+    #[case::missing_payload_id(
+        BuildTaskError::EngineBuildError(EngineBuildError::MissingPayloadId),
+        EngineTaskErrorSeverity::Temporary
+    )]
+    #[case::engine_syncing(
+        BuildTaskError::EngineBuildError(EngineBuildError::EngineSyncing),
+        EngineTaskErrorSeverity::Temporary
+    )]
+    fn test_build_task_error_severity(
+        #[case] err: BuildTaskError,
+        #[case] expected: EngineTaskErrorSeverity,
+    ) {
+        assert_eq!(err.severity(), expected);
     }
 }
