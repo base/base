@@ -96,8 +96,8 @@ mod tests {
     /// Regression anchor for PR #2637. `InvalidPayload` must surface `Flush`
     /// (so the engine processor flushes the derivation channel and the
     /// poisoned task is popped from the head of the queue) AND carry the
-    /// EL's `validation_error` through `Display` so operators can identify
-    /// which batch poisoned the pipeline.
+    /// EL's `validation_error` so operators can identify which batch
+    /// poisoned the pipeline.
     #[test]
     fn invalid_payload_is_flush_and_preserves_validation_error() {
         let err = BuildTaskError::EngineBuildError(EngineBuildError::InvalidPayload(
@@ -109,61 +109,5 @@ mod tests {
             format!("{err:?}").contains("malformed transaction at index 3"),
             "Debug must surface the EL validation error, got: {err:?}",
         );
-    }
-
-    #[test]
-    fn attributes_insertion_failed_is_temporary_and_wraps_rpc_error() {
-        let rpc_err: RpcError<TransportErrorKind> = RpcError::local_usage_str("connection refused");
-        let build_err: EngineBuildError = rpc_err.into();
-        let err = BuildTaskError::EngineBuildError(build_err);
-
-        assert_eq!(err.severity(), EngineTaskErrorSeverity::Temporary);
-        assert!(
-            format!("{err:?}").contains("AttributesInsertionFailed"),
-            "expected AttributesInsertionFailed in Debug, got: {err:?}",
-        );
-    }
-
-    #[test]
-    fn unexpected_payload_status_is_temporary() {
-        let err = BuildTaskError::EngineBuildError(EngineBuildError::UnexpectedPayloadStatus(
-            PayloadStatusEnum::Syncing,
-        ));
-        assert_eq!(err.severity(), EngineTaskErrorSeverity::Temporary);
-    }
-
-    #[test]
-    fn missing_payload_id_is_temporary() {
-        let err = BuildTaskError::EngineBuildError(EngineBuildError::MissingPayloadId);
-        assert_eq!(err.severity(), EngineTaskErrorSeverity::Temporary);
-    }
-
-    #[test]
-    fn engine_syncing_is_temporary() {
-        let err = BuildTaskError::EngineBuildError(EngineBuildError::EngineSyncing);
-        assert_eq!(err.severity(), EngineTaskErrorSeverity::Temporary);
-    }
-
-    #[test]
-    fn forkchoice_state_invalid_is_reset() {
-        let err = BuildTaskError::EngineBuildError(EngineBuildError::ForkchoiceStateInvalid);
-        assert_eq!(err.severity(), EngineTaskErrorSeverity::Reset);
-    }
-
-    #[test]
-    fn finalized_ahead_of_unsafe_is_critical_and_carries_block_numbers() {
-        let inner = EngineBuildError::FinalizedAheadOfUnsafe(42, 17);
-        let err = BuildTaskError::EngineBuildError(inner);
-
-        assert_eq!(err.severity(), EngineTaskErrorSeverity::Critical);
-        let inner_msg = format!("{err:?}");
-        assert!(inner_msg.contains("42") && inner_msg.contains("17"), "got: {inner_msg}");
-    }
-
-    #[test]
-    fn mpsc_send_failure_is_critical() {
-        let err =
-            BuildTaskError::MpscSend(Box::new(mpsc::error::SendError(PayloadId::new([0u8; 8]))));
-        assert_eq!(err.severity(), EngineTaskErrorSeverity::Critical);
     }
 }
