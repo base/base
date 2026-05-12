@@ -197,10 +197,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         // Drain tasks in order of priority, halting on errors for a retry to be attempted.
         while let Some((task, _)) = self.tasks.peek() {
             // Execute the task.
-            let flush_err = match task.execute(&mut self.state).await {
-                Ok(()) => None,
-                Err(err) if matches!(err.severity(), EngineTaskErrorSeverity::Flush) => Some(err),
-                Err(err) => return Err(err),
+            let outcome = match task.execute(&mut self.state).await {
+                Err(err) if err.severity() != EngineTaskErrorSeverity::Flush => return Err(err),
+                other => other,
             };
 
             // Update the state and notify the engine actor.
@@ -212,9 +211,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             self.task_queue_length.send_replace(self.tasks.len());
             Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
 
-            if let Some(err) = flush_err {
-                return Err(err);
-            }
+            outcome?;
         }
 
         Ok(())
