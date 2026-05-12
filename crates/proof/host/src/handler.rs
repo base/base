@@ -305,6 +305,13 @@ async fn handle_hint_inner(
             warn!("debug_executePayload failed to return a complete witness");
 
             let preimage: Bytes = providers.l2.client().request("debug_dbGet", &[hash]).await?;
+            let actual_hash = keccak256(preimage.as_ref());
+            if actual_hash != hash {
+                return Err(HostError::StateNodePreimageHashMismatch {
+                    expected: hash,
+                    actual: actual_hash,
+                });
+            }
 
             let mut kv_write_lock = kv.write().await;
             kv_write_lock.set(PreimageKey::new_keccak256(*hash).into(), preimage.into())?;
@@ -416,7 +423,18 @@ async fn handle_hint_inner(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use alloy_genesis::ChainConfig;
+    use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
+    use base_common_genesis::RollupConfig;
+    use base_common_network::Base;
+    use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
+    use base_proof_primitives::ProofRequest;
+    use tokio::sync::RwLock;
+
     use super::*;
+    use crate::{MemoryKeyValueStore, ProverConfig};
 
     const TEST_HASH: B256 = B256::new([0x42u8; 32]);
     const TEST_TIMESTAMP: u64 = 1234567890;
@@ -433,6 +451,30 @@ mod tests {
         0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
         0x42, 0x42, 0x00, 0x00, 0x00, 0x00, 0x49, 0x96, 0x02, 0xD2,
     ];
+
+    fn test_cfg() -> HostConfig {
+        HostConfig {
+            request: ProofRequest::default(),
+            prover: ProverConfig {
+                l1_eth_url: "http://127.0.0.1:1".to_string(),
+                l2_eth_url: "http://127.0.0.1:1".to_string(),
+                l1_beacon_url: "http://127.0.0.1:1".to_string(),
+                l2_chain_id: 0,
+                rollup_config: RollupConfig::default(),
+                l1_config: ChainConfig::default(),
+                enable_experimental_witness_endpoint: false,
+            },
+            data_dir: None,
+        }
+    }
+
+    fn test_providers(l2: RootProvider<Base>) -> HostProviders {
+        let l1 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        let beacon = OnlineBeaconClient::new_http("http://127.0.0.1:1".to_string());
+        let blobs =
+            OnlineBlobProvider { beacon_client: beacon, genesis_time: 0, slot_interval: 12 };
+        HostProviders { l1, blobs, l2 }
+    }
 
     #[test]
     fn test_parse_blob_hint_formats() {
@@ -455,5 +497,31 @@ mod tests {
         assert!(err_msg.contains("Invalid blob hint length"));
         assert!(err_msg.contains("expected 40 or 48 bytes"));
         assert!(err_msg.contains("got 35"));
+    }
+
+    #[tokio::test]
+    async fn test_l2_state_node_rejects_hash_mismatch() {
+        const MALFORMED_PREIMAGE: [u8; 3] = [0xC2, 0x80, 0x80];
+
+        let requested_hash = TEST_HASH;
+        let preimage = Bytes::from(MALFORMED_PREIMAGE.to_vec());
+        let actual_hash = keccak256(preimage.as_ref());
+        let asserter = Asserter::new();
+        asserter.push_success(&preimage);
+        let l2 = provider_builder::<Base>().connect_mocked_client(asserter);
+        let providers = test_providers(l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let hint = HintType::L2StateNode.with_data(&[requested_hash.as_slice()]);
+
+        let err = handle_hint(hint, &test_cfg(), &providers, Arc::clone(&kv)).await.unwrap_err();
+
+        match err {
+            HostError::StateNodePreimageHashMismatch { expected, actual } => {
+                assert_eq!(expected, requested_hash);
+                assert_eq!(actual, actual_hash);
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+        assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
     }
 }
