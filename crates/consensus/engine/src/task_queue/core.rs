@@ -194,27 +194,30 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// to popping, mirroring the success path so watch consumers (e.g. the RPC state view) stay
     /// in sync.
     pub async fn drain(&mut self) -> Result<(), EngineTaskErrors> {
+        // Drain tasks in order of priority, halting on errors for a retry to be attempted.
         while let Some((task, _)) = self.tasks.peek() {
-            if let Err(err) = task.execute(&mut self.state).await {
-                if matches!(err.severity(), EngineTaskErrorSeverity::Flush) {
-                    self.state_sender.send_replace(self.state);
-                    self.pop_head();
-                }
+            // Execute the task.
+            let flush_err = match task.execute(&mut self.state).await {
+                Ok(()) => None,
+                Err(err) if matches!(err.severity(), EngineTaskErrorSeverity::Flush) => Some(err),
+                Err(err) => return Err(err),
+            };
+
+            // Update the state and notify the engine actor.
+            self.state_sender.send_replace(self.state);
+
+            // Pop the task from the queue now that it's been executed.
+            self.tasks.pop();
+
+            self.task_queue_length.send_replace(self.tasks.len());
+            Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
+
+            if let Some(err) = flush_err {
                 return Err(err);
             }
-
-            self.state_sender.send_replace(self.state);
-            self.pop_head();
         }
 
         Ok(())
-    }
-
-    /// Pops the head task from the queue and republishes the queue length metrics.
-    fn pop_head(&mut self) {
-        self.tasks.pop();
-        self.task_queue_length.send_replace(self.tasks.len());
-        Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
     }
 }
 
