@@ -228,10 +228,8 @@ struct CrlArgs {
     /// `revokedCerts` pre-check and as the destination for outgoing
     /// `revokeCert` transactions.
     ///
-    /// The flag/env name retains the `crl-` prefix for backward compatibility
-    /// with existing production deployments (introduced in #1984); operators
-    /// in the wild set `BASE_REGISTRAR_CRL_NITRO_VERIFIER_ADDRESS` and
-    /// renaming would silently break their startup.
+    /// The `crl-` prefix is retained for backward compatibility with
+    /// existing production deployments (introduced in #1984).
     #[arg(long, env = cli_env!("CRL_NITRO_VERIFIER_ADDRESS"))]
     crl_nitro_verifier_address: Option<Address>,
 
@@ -500,10 +498,8 @@ impl Cli {
             config.l1_rpc_url.clone(),
         );
 
-        // Optional `NitroEnclaveVerifier` client for the on-chain durable
-        // revocation pre-check. Built only when CRL checking is enabled and
-        // the verifier address is configured; otherwise the driver falls
-        // back to the AWS-CRL-only path (fail-open).
+        // Optional on-chain revocation pre-check client; only built when CRL
+        // checking is enabled and the verifier address is configured.
         let nitro_verifier: Option<Arc<dyn NitroVerifierClient>> =
             match (config.crl.enabled, config.crl.nitro_verifier_address) {
                 (true, Some(verifier_address)) => Some(Arc::new(NitroVerifierContractClient::new(

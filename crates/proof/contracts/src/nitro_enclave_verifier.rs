@@ -28,19 +28,11 @@ sol! {
 }
 
 /// Reads the durable revocation sentinel from the on-chain
-/// `NitroEnclaveVerifier`.
-///
-/// The on-chain `revokedCerts` mapping is set by `revokeCert` and persists
-/// across `_cacheNewCert` overwrites. Consulting it before submitting a
-/// registration prevents racing the cache rewrite that would otherwise
-/// re-trust a previously revoked intermediate (CHAIN-4194 / Immunefi #75608).
+/// `NitroEnclaveVerifier` (CHAIN-4194 / Immunefi #75608).
 #[async_trait]
 pub trait NitroEnclaveVerifierClient: Send + Sync {
     /// Returns the on-chain address of the verifier contract this client
-    /// is bound to. Used by callers that need to send transactions to the
-    /// same contract (e.g. `revokeCert` calls go through a tx manager,
-    /// not this client, so the destination address must be exposed
-    /// rather than carried through a separate config field).
+    /// is bound to.
     fn address(&self) -> Address;
 
     /// Returns `true` if the given accumulated-path-digest hash is currently
@@ -93,11 +85,6 @@ mod tests {
     /// 4 bytes (selector) + 32 bytes (bytes32 argument).
     const BYTES32_CALL_ENCODED_LEN: usize = 4 + 32;
 
-    /// Parameterised over each `bytes32`-only call in the interface so any
-    /// future additions only need a new `#[case]` line.
-    ///
-    /// `selector` is computed at case-evaluation time (not const), which is
-    /// fine because rstest case arguments are runtime expressions.
     #[rstest]
     #[case::revoke_cert(
         INitroEnclaveVerifier::revokeCertCall { certHash: TEST_CERT_HASH }.abi_encode(),
@@ -112,9 +99,6 @@ mod tests {
         assert_eq!(&encoded[..4], &selector);
     }
 
-    /// Selectors for every revocation-related entry point must be non-zero
-    /// (catches a degenerate sol! macro expansion) and distinct from each
-    /// other (catches a copy-paste collision in the interface block).
     #[rstest]
     fn revocation_selectors_are_nonzero_and_distinct() {
         let selectors = [

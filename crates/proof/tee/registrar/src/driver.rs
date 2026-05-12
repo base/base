@@ -99,11 +99,7 @@ pub struct RegistrationDriver<D, P, R, T, S> {
     /// Optional on-chain `NitroEnclaveVerifier` revocation client. Consulted
     /// before submitting a registration so that intermediates already revoked
     /// on-chain (`revokedCerts` sentinel set) cannot be re-trusted via the
-    /// `_cacheNewCert` rewrite path. Trait-object dispatched because this is
-    /// an optional dependency tied to the same `crl.enabled` switch — keeping
-    /// it generic-free avoids fanning out a sixth type parameter through every
-    /// driver call site. Trait-object overhead is irrelevant here as the
-    /// client is exercised at most once per registration cycle.
+    /// `_cacheNewCert` rewrite path.
     nitro_verifier: Option<Arc<dyn NitroVerifierClient>>,
 }
 
@@ -131,21 +127,10 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrarError::Config`] when CRL checking cannot be set up
-    /// in a state that honours both protection layers:
-    ///
-    /// - `config.crl.enabled` is `true` but no `nitro_verifier` client is
-    ///   supplied — the verifier is required as both the `revokeCert`
-    ///   destination (Layer 2) and the on-chain `revokedCerts` sentinel
-    ///   source (Layer 1).
-    /// - `config.crl.enabled` is `true` but the CRL HTTP client fails to
-    ///   build — Layer 2 (AWS CRL fetch) would silently no-op for the entire
-    ///   process lifetime.
-    ///
-    /// In both cases the call site at [`Self::process_instance`] fails open
-    /// on every error variant, so allowing the driver to start in either
-    /// state would silently bypass CRL protection. Fail fast at construction
-    /// so the misconfiguration cannot reach a registration cycle.
+    /// Returns [`RegistrarError::Config`] when `config.crl.enabled` is `true`
+    /// and either the `nitro_verifier` client is missing or the CRL HTTP
+    /// client fails to build. Failing fast prevents a misconfigured driver
+    /// from silently bypassing CRL protection at runtime.
     pub fn new(
         discovery: D,
         proof_provider: P,
@@ -717,15 +702,8 @@ where
         attestation_bytes: &[u8],
         instance: &ProverInstance,
     ) -> Result<bool> {
-        // CRL checking always pairs with an on-chain verifier client: this
-        // invariant is established by `RegistrationDriver::new`, which rejects
-        // construction when `crl.enabled` is set without a `nitro_verifier`.
-        // Reading the destination address directly off the client eliminates
-        // a redundant config field and a runtime branch.
-        let verifier = self.nitro_verifier.as_deref().expect(
-            "nitro_verifier presence is enforced by RegistrationDriver::new \
-             when crl.enabled is true",
-        );
+        // Invariants enforced by `RegistrationDriver::new` when `crl.enabled`.
+        let verifier = self.nitro_verifier.as_deref().expect("nitro_verifier required when CRL enabled");
         let verifier_address = verifier.address();
 
         // Parse the attestation document to get the cert chain.
@@ -737,18 +715,10 @@ where
         })?;
 
         let cert_chain_der = report.cert_chain_der();
-        // Parse the chain once and share the result across both layers —
-        // both `OnchainRevocationCheck::run` and `crl::check_chain_against_crls`
-        // walk the same intermediates, so duplicating the DER parse would
-        // burn CPU on every cycle for no benefit.
+        // Parse the chain once and share the result across both layers.
         let cert_infos = crl::CertCrlInfo::from_chain(&cert_chain_der)?;
 
         // ── Layer 1: on-chain durable revocation sentinel ───────────────
-        //
-        // Fails open: an RPC error here (e.g., the verifier contract
-        // predates the `revokedCerts` selector and returns empty data) must
-        // not silently disable the AWS CRL layer below. We log + count and
-        // fall through. Confirmed revocations short-circuit and block.
         RegistrarMetrics::onchain_revocation_checks_total().increment(1);
         match OnchainRevocationCheck::run(verifier, &cert_infos, &instance.instance_id).await {
             Ok(true) => return Ok(true),
@@ -764,13 +734,7 @@ where
         }
 
         // ── Layer 2: AWS CRL distribution point check ───────────────────
-        // `crl_http_client` presence is enforced by `RegistrationDriver::new`
-        // when `crl.enabled` is true, and `check_and_revoke_crls` is only
-        // invoked from inside the `if self.config.crl.enabled` branch.
-        let http_client = self.crl_http_client.as_ref().expect(
-            "crl_http_client presence is enforced by RegistrationDriver::new \
-             when crl.enabled is true",
-        );
+        let http_client = self.crl_http_client.as_ref().expect("crl_http_client required when CRL enabled");
 
         RegistrarMetrics::crl_checks_total().increment(1);
 
@@ -976,13 +940,11 @@ where
     }
 }
 
-/// On-chain durable revocation check, factored out of [`RegistrationDriver`]
-/// so it can be unit-tested independently of the full driver state machine.
+/// On-chain durable revocation check.
 ///
-/// Consults the on-chain `revokedCerts` mapping for every intermediate
-/// certificate in a pre-parsed Nitro cert chain. Encapsulated as a unit
-/// struct (rather than a free function) to keep the crate's API surface a
-/// type rather than a loose function, per the workspace style guide.
+/// Consults the `revokedCerts` mapping for every intermediate in a pre-parsed
+/// Nitro cert chain (root and leaf are skipped — see
+/// [`crl::CertCrlInfo::intermediates`]).
 #[derive(Debug)]
 pub struct OnchainRevocationCheck;
 
@@ -993,17 +955,8 @@ impl OnchainRevocationCheck {
     ///
     /// # Errors
     ///
-    /// Returns the underlying RPC error verbatim. The caller decides
-    /// whether to fail-open (current driver) or propagate; this method
-    /// makes no policy choice.
-    ///
-    /// # Scope
-    ///
-    /// Iterates [`crl::CertCrlInfo::intermediates`], which skips the root
-    /// and the leaf — matching the AWS CRL layer. Roots manage their own
-    /// trust and leaves are short-lived (~3 hours), so neither participates
-    /// in the on-chain `_cacheNewCert` rewrite that `revokedCerts` guards
-    /// against.
+    /// Returns the underlying RPC error verbatim; the caller decides whether
+    /// to fail-open or propagate.
     pub async fn run(
         verifier: &dyn NitroVerifierClient,
         cert_infos: &[crl::CertCrlInfo],
@@ -3011,25 +2964,14 @@ mod tests {
 
     // ── OnchainRevocationCheck tests ────────────────────────────────────
     //
-    // Covers the durable on-chain revocation pre-check that closes the
-    // CHAIN-4194 / Immunefi #75608 cache-rewrite gap. Uses the shared real
-    // Nitro attestation cert DER from [`crate::test_utils`] so the path
-    // digests are wired to the canonical accumulated-hash schema that the
-    // on-chain `revokedCerts` mapping is keyed by. The driver layer
-    // truncates to a 4-cert chain (root → inter1 → inter2 → leaf) since
-    // signature validity is enforced inside the ZK guest, not on-chain.
+    // Covers the durable on-chain revocation pre-check (CHAIN-4194 /
+    // Immunefi #75608). Uses the canonical 4-cert chain
+    // (root → inter1 → inter2 → leaf) from [`crate::test_utils`].
 
     const ONCHAIN_TEST_INSTANCE_ID: &str = "i-onchain-revocation-test";
 
     /// Mock [`NitroVerifierClient`] for unit-testing the on-chain pre-check.
-    ///
-    /// `revoked` lists the path digests the contract reports as revoked;
-    /// every other query returns `false`. `error`, when set, is consumed
-    /// on the *first* `is_revoked` call only (via `Option::take`) and then
-    /// the mock reverts to the `revoked`-set behaviour. This is sufficient
-    /// for current callers — `OnchainRevocationCheck::run` short-circuits
-    /// on the first error — but tests that need a sticky failure must
-    /// either re-arm `error` or queue separate errors.
+    /// `error`, when set, is returned once and then cleared.
     #[derive(Default)]
     struct MockNitroVerifier {
         revoked: HashSet<FixedBytes<32>>,
@@ -3046,11 +2988,6 @@ mod tests {
             }
         }
 
-        /// Builds a mock that returns `error` on the first `is_revoked`
-        /// call and then succeeds with `Ok(false)` on subsequent calls.
-        /// One-shot semantics are intentional: callers under test
-        /// short-circuit on the first error, so a sticky failure adds no
-        /// signal but would mask "did we stop early?" assertions.
         fn failing(error: RegistrarError) -> Self {
             Self {
                 revoked: HashSet::new(),
@@ -3060,10 +2997,6 @@ mod tests {
         }
     }
 
-    /// Test verifier address — only used to satisfy the `address()`
-    /// method on [`MockNitroVerifier`]; never inspected by the
-    /// `OnchainRevocationCheck` tests because they exercise the read
-    /// path, not the `revokeCert` send path.
     const TEST_VERIFIER_ADDRESS: Address = Address::repeat_byte(0xAB);
 
     #[async_trait::async_trait]
@@ -3081,27 +3014,21 @@ mod tests {
         }
     }
 
-    /// Index of each certificate in [`full_chain_der`].
+    // Cert indices in the canonical chain.
     const ROOT_INDEX: usize = 0;
     const INTER1_INDEX: usize = 1;
     const INTER2_INDEX: usize = 2;
     const LEAF_INDEX: usize = 3;
 
-    /// Decoded DER of the canonical 4-cert chain (root → inter1 → inter2 → leaf).
     fn full_chain_der() -> Vec<Vec<u8>> {
         CertFixtures::decode_chain(&[ROOT_HEX, INTER1_HEX, INTER2_HEX, LEAF_HEX])
     }
 
-    /// Returns the DER bytes of the canonical chain restricted to the given
-    /// cert indices, in order. Callers borrow `&[u8]` slices from the result
-    /// (the standard own-then-borrow pattern keeps lifetimes clean).
     fn chain_subset(indices: &[usize]) -> Vec<Vec<u8>> {
         let full = full_chain_der();
         indices.iter().map(|&i| full[i].clone()).collect()
     }
 
-    /// Computes the accumulated path digest for the cert at `index` in the
-    /// canonical chain, matching the on-chain `revokedCerts` mapping key.
     fn path_digest_for(index: usize) -> FixedBytes<32> {
         let der = full_chain_der();
         let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
@@ -3111,23 +3038,16 @@ mod tests {
             .path_digest
     }
 
-    /// Parsed [`crl::CertCrlInfo`] vector for the canonical 4-cert chain,
-    /// matching what `check_and_revoke_crls` passes into
-    /// [`OnchainRevocationCheck::run`].
     fn full_chain_cert_infos() -> Vec<crl::CertCrlInfo> {
         let der = full_chain_der();
         let refs: Vec<&[u8]> = der.iter().map(Vec::as_slice).collect();
         crl::CertCrlInfo::from_chain(&refs).expect("static fixtures parse")
     }
 
-    /// Number of intermediates the pre-check is expected to query for the
-    /// canonical 4-cert chain (root and leaf are always skipped).
     fn full_chain_intermediate_count() -> u32 {
         u32::try_from(full_chain_der().len().saturating_sub(2)).unwrap()
     }
 
-    /// Convenience wrapper that runs the pre-check against the canonical
-    /// 4-cert chain and returns `(result, call_count)`.
     async fn run_pre_check(verifier: &MockNitroVerifier) -> (Result<bool>, u32) {
         let cert_infos = full_chain_cert_infos();
         let result =
@@ -3151,9 +3071,6 @@ mod tests {
         );
     }
 
-    /// Each intermediate, on its own, must block registration. Parameterised
-    /// over which intermediate is revoked so we exercise both `inter1` (early
-    /// short-circuit) and `inter2` (queried only after `inter1` clears).
     #[rstest]
     #[case::inter1_revoked(INTER1_INDEX, 1)]
     #[case::inter2_revoked(INTER2_INDEX, 2)]
@@ -3189,9 +3106,6 @@ mod tests {
 
     #[tokio::test]
     async fn onchain_revocation_check_skips_root_and_leaf() {
-        // Even if the verifier reports the root and leaf path digests as
-        // revoked, the pre-check must ignore them — they are out of scope
-        // for `revokedCerts` (root manages its own trust, leaf is short-lived).
         let verifier =
             MockNitroVerifier::revoking([path_digest_for(ROOT_INDEX), path_digest_for(LEAF_INDEX)]);
         let (result, calls) = run_pre_check(&verifier).await;
@@ -3222,15 +3136,6 @@ mod tests {
         );
     }
 
-    /// Chains too short to contain intermediates must short-circuit without
-    /// any RPC traffic. Covers (a) a single-cert chain (root only) and (b) a
-    /// two-cert chain (root + leaf), both of which have zero intermediates
-    /// under the same skip-root-and-leaf rule that the AWS CRL layer uses.
-    /// Chain shapes with their expected number of intermediates (and thus
-    /// expected RPC calls when no intermediate is revoked):
-    /// - root-only: 0 intermediates
-    /// - root + leaf: 0 intermediates (skip-root-and-leaf collapses both)
-    /// - root + inter1 + leaf: 1 intermediate
     #[rstest]
     #[case::root_only(&[ROOT_INDEX], 0)]
     #[case::root_and_leaf(&[ROOT_INDEX, LEAF_INDEX], 0)]
@@ -3256,9 +3161,4 @@ mod tests {
         );
     }
 
-    // Cert-chain parse failures are tested at the parse boundary in
-    // `crl::tests`. `OnchainRevocationCheck::run` consumes pre-parsed
-    // `CertCrlInfo` values, so it is no longer reachable for that error
-    // path; the fail-open policy lives at the `check_and_revoke_crls` call
-    // site and is exercised through driver-level integration tests.
 }
