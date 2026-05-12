@@ -144,7 +144,10 @@ where
             return;
         };
 
-        // Spawn a new task to handle the sync request/response protocol.
+        // Spawn a single task to handle all inbound sync substreams serially.
+        // The response is a constant 2-byte write — no I/O wait benefits from per-stream
+        // concurrency. Inlining eliminates per-substream task allocation and bounds
+        // heap exposure.
         tokio::spawn(async move {
             loop {
                 let Some((peer_id, mut inbound_stream)) = sync_protocol.next().await else {
@@ -152,22 +155,24 @@ where
                     return;
                 };
 
-                info!(target: "gossip", peer_id = %peer_id, "Received a sync request, spawning a new task to handle it");
+                trace!(target: "gossip", peer_id = %peer_id, "Received sync request");
+                Metrics::sync_requests().increment(1);
 
-                tokio::spawn(async move {
-                    // We return: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
-                    // Response format: <response> = <res><version><payload>
-                    // No payload is returned.
-                    const OUTPUT: [u8; 2] = hex!("0100");
+                // We return: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
+                // Response format: <response> = <res><version><payload>
+                // No payload is returned.
+                const OUTPUT: [u8; 2] = hex!("0100");
+                const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
-                    // We only write that we're not supporting the sync request.
-                    if let Err(e) = inbound_stream.write_all(&OUTPUT).await {
-                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write the sync response");
-                        return;
-                    };
-
-                    debug!(target: "gossip", bytes_sent = OUTPUT.len(), peer_id = %peer_id, "Sent outbound sync response");
-                });
+                match tokio::time::timeout(WRITE_TIMEOUT, inbound_stream.write_all(&OUTPUT)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write sync response");
+                    }
+                    Err(_) => {
+                        warn!(target: "gossip", peer_id = %peer_id, "Sync response write timed out");
+                    }
+                }
             }
         });
     }
