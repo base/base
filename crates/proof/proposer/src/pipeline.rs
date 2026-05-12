@@ -2347,7 +2347,9 @@ mod tests {
     #[case::contract_revert(ProposerError::Contract("mock submission failure".into()))]
     #[case::rpc_transport(ProposerError::Rpc(base_proof_rpc::RpcError::Transport("rpc down".into())))]
     #[case::rpc_timeout(ProposerError::Rpc(base_proof_rpc::RpcError::Timeout("slow rpc".into())))]
-    #[case::tx_manager_nonce(ProposerError::TxManager(base_tx_manager::TxManagerError::NonceTooLow))]
+    #[case::tx_manager_nonce(ProposerError::TxManager(
+        base_tx_manager::TxManagerError::NonceTooLow
+    ))]
     #[case::tx_reverted(ProposerError::TxReverted("0xdeadbeef".into()))]
     #[case::internal(ProposerError::Internal("bug".into()))]
     #[tokio::test(flavor = "current_thread", start_paused = true)]
