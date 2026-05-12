@@ -72,6 +72,10 @@ derive_more = { workspace = true, features = ["debug", "eq"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 jsonrpsee = { workspace = true, features = ["server", "http-client"] }
 
+# Binary conductor commit endpoint
+ethereum_ssz.workspace = true
+reqwest.workspace = true
+
 # metrics
 metrics = { workspace = true, optional = true }
 
