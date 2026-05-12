@@ -3,8 +3,6 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, Bytes};
-#[cfg(test)]
-use base_common_evm::BaseUpgrade;
 use base_common_evm::{BasePrecompiles, BaseSpecId};
 use revm::{
     context::{Cfg, ContextTr},

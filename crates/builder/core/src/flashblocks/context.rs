@@ -1198,7 +1198,7 @@ mod tests {
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
-    use crate::test_utils::sign_op_tx;
+    use crate::test_utils::sign_base_tx;
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1360,7 +1360,7 @@ mod tests {
             ..Default::default()
         };
         let recovered =
-            sign_op_tx(&signer, BaseTypedTransaction::Eip1559(tx)).expect("sign sequencer tx");
+            sign_base_tx(&signer, BaseTypedTransaction::Eip1559(tx)).expect("sign sequencer tx");
         let signed = recovered.into_inner();
         let encoded = signed.encoded_2718().into();
         let with_encoded = WithEncoded::new(encoded, signed);
