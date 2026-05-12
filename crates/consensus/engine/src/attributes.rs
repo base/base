@@ -210,8 +210,8 @@ impl AttributesMatch {
             Some((ae, ad)) => (ae.into(), ad.into()),
         };
 
-        // For Jovian we decode the additional `min_base_fee` field. We carry it through as
-        // `Option<u64>` so the Holocene path remains uniform.
+        // The Jovian extra_data carries an additional `min_base_fee`. The `Option` doubles as
+        // a fork signal: `Some` iff Jovian is active.
         let extra_data_decoded: Result<(u32, u32, Option<u64>), EIP1559ParamError> =
             if config.is_jovian_active(block.header.timestamp) {
                 JovianExtraData::decode(&block.header.extra_data)
@@ -222,8 +222,7 @@ impl AttributesMatch {
                 return AttributesMismatch::MissingBlockEIP1559.into();
             };
 
-        // We decode the extra data stemming from the block header.
-        let (be, bd, block_min_base_fee): (u128, u128, Option<u64>) = match extra_data_decoded {
+        let (be, bd, jovian_block_mbf): (u128, u128, Option<u64>) = match extra_data_decoded {
             Ok((be, bd, mbf)) => (be.into(), bd.into(), mbf),
             Err(EIP1559ParamError::NoEIP1559Params) => {
                 error!(
@@ -245,7 +244,6 @@ impl AttributesMatch {
             }
         };
 
-        // We now have to check that both parameters match
         if ae != be || ad != bd {
             return AttributesMismatch::EIP1559Parameters(
                 BaseFeeParams { max_change_denominator: ad, elasticity_multiplier: ae },
@@ -254,26 +252,17 @@ impl AttributesMatch {
             .into();
         }
 
-        // Post-Jovian: the block header's `min_base_fee` must match the value derived from
-        // the L1-derived payload attributes. Without this check, the consolidation step
-        // would accept any `min_base_fee` encoded in the unsafe block header, allowing the
-        // next block's base fee floor to diverge from the L1 SystemConfig-derived value.
-        if config.is_jovian_active(block.header.timestamp) {
-            let attr_min_base_fee = attributes.attributes().min_base_fee;
-            let block_min_base_fee = block_min_base_fee
-                .expect("Jovian active implies the decoded block extra data carries min_base_fee");
-
-            match attr_min_base_fee {
-                None => {
-                    error!(
-                        "min_base_fee for attributes not set while jovian is active. This is a bug"
-                    );
-                    return AttributesMismatch::MissingAttributesMinBaseFee.into();
-                }
-                Some(attr_mbf) if attr_mbf != block_min_base_fee => {
-                    return AttributesMismatch::MinBaseFee(attr_mbf, block_min_base_fee).into();
-                }
-                Some(_) => {}
+        // Post-Jovian only: the block header's `min_base_fee` must match the L1-derived value.
+        // Without this check, consolidation would accept an arbitrary `min_base_fee` from the
+        // unsafe block header, letting the next block's base fee floor diverge from the value
+        // derived from the L1 SystemConfig.
+        if let Some(block_mbf) = jovian_block_mbf {
+            let Some(attr_mbf) = attributes.attributes().min_base_fee else {
+                error!("min_base_fee for attributes not set while jovian is active. This is a bug");
+                return AttributesMismatch::MissingAttributesMinBaseFee.into();
+            };
+            if attr_mbf != block_mbf {
+                return AttributesMismatch::MinBaseFee(attr_mbf, block_mbf).into();
             }
         }
 
