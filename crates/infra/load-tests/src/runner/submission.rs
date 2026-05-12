@@ -30,9 +30,9 @@ use super::{ResultsTracker, SentTransaction};
 use crate::rpc::{BatchRpcClient, BatchSendResult};
 
 /// Number of signer tasks per submission RPC.
-pub const SIGNER_WORKERS_PER_RPC: usize = 2;
+pub const SIGNER_WORKERS_PER_RPC: usize = 10;
 /// Number of sender tasks per submission RPC.
-pub const SENDER_WORKERS_PER_RPC: usize = 4;
+pub const SENDER_WORKERS_PER_RPC: usize = 10;
 /// Maximum signer task count.
 pub const MAX_SIGNER_WORKER_COUNT: usize = 32;
 /// Maximum sender task count.
