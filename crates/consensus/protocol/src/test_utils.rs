@@ -48,13 +48,13 @@ pub struct TestBatchValidator {
     /// Short circuit the block return to be the first block.
     pub short_circuit: bool,
     /// Blocks
-    pub op_blocks: Vec<BaseBlock>,
+    pub base_blocks: Vec<BaseBlock>,
 }
 
 impl TestBatchValidator {
     /// Creates a new [`TestBatchValidator`] with the given origin and batches.
-    pub const fn new(blocks: Vec<L2BlockInfo>, op_blocks: Vec<BaseBlock>) -> Self {
-        Self { blocks, short_circuit: false, op_blocks }
+    pub const fn new(blocks: Vec<L2BlockInfo>, base_blocks: Vec<BaseBlock>) -> Self {
+        Self { blocks, short_circuit: false, base_blocks }
     }
 }
 
@@ -78,7 +78,7 @@ impl BatchValidationProvider for TestBatchValidator {
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
-        self.op_blocks
+        self.base_blocks
             .iter()
             .find(|p| p.header.number == number)
             .cloned()

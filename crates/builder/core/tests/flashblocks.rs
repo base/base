@@ -27,7 +27,7 @@ async fn test_flashblock_metadata_balances_and_receipts() -> eyre::Result<()> {
     let sender = funded_signer().address();
     let transfer_value = U256::from(42);
 
-    // Use high addresses to avoid overlap with EVM precompiles or OP predeploys
+    // Use high addresses to avoid overlap with EVM precompiles or Base predeploys.
     let recipient_a = "0xAA00000000000000000000000000000000000001".parse::<Address>()?;
     let recipient_b = "0xBB00000000000000000000000000000000000002".parse::<Address>()?;
     let tx_a = driver

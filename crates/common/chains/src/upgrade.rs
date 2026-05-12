@@ -27,7 +27,7 @@ hardfork!(
         Holocene,
         /// Isthmus: <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/isthmus/overview.md>
         Isthmus,
-        /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
+        /// Jovian: Base network upgrade.
         Jovian,
         /// Azul: First Base-specific network upgrade.
         #[default]
@@ -60,7 +60,7 @@ impl BaseUpgrade {
     pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
         if chain_spec.is_beryl_active_at_timestamp(timestamp) {
             Self::Beryl
-        } else if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
+        } else if chain_spec.is_azul_active_at_timestamp(timestamp) {
             Self::Azul
         } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
             Self::Jovian

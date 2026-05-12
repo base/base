@@ -985,6 +985,9 @@ impl BasePayloadBuilderCtx {
                 diag.record_rejection(&err);
                 let priority_fee = tx.effective_tip_per_gas(base_fee).unwrap_or(0) as f64;
                 record_rejected_tx_priority_fee(&err, priority_fee);
+                if err.is_permanent() {
+                    diag.permanently_rejected_txs.push(tx_hash);
+                }
                 log_txn(Err(err));
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
@@ -1041,6 +1044,9 @@ impl BasePayloadBuilderCtx {
                 BuilderMetrics::metering_known_transaction().increment(1);
             } else {
                 BuilderMetrics::metering_unknown_transaction().increment(1);
+                if self.builder_config.metering_provider.is_enabled() {
+                    self.builder_config.metering_provider.mark_included_without_metering(&tx_hash);
+                }
             }
 
             // append sender and transaction to the respective lists
@@ -1195,7 +1201,7 @@ mod tests {
     use reth_revm::{State, database::StateProviderDatabase};
 
     use super::*;
-    use crate::test_utils::sign_op_tx;
+    use crate::test_utils::sign_base_tx;
 
     #[test]
     fn diagnostics_report_selection_outcome() {
@@ -1357,7 +1363,7 @@ mod tests {
             ..Default::default()
         };
         let recovered =
-            sign_op_tx(&signer, BaseTypedTransaction::Eip1559(tx)).expect("sign sequencer tx");
+            sign_base_tx(&signer, BaseTypedTransaction::Eip1559(tx)).expect("sign sequencer tx");
         let signed = recovered.into_inner();
         let encoded = signed.encoded_2718().into();
         let with_encoded = WithEncoded::new(encoded, signed);

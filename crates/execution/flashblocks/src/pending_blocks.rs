@@ -314,6 +314,18 @@ impl PendingBlocks {
         self.latest_header.clone()
     }
 
+    /// Returns the parent hash of the earliest pending block.
+    ///
+    /// This is the canonical block hash on top of which the cached flashblock
+    /// execution was performed. Consumers that reuse cached execution results
+    /// MUST verify their incoming `parent_block_hash` matches this value, since
+    /// during a reorg or sequencer failover two different parent hashes can
+    /// share the same block number.
+    #[inline]
+    pub fn parent_hash(&self) -> B256 {
+        self.earliest_header.parent_hash
+    }
+
     /// Returns all flashblocks.
     pub fn get_flashblocks(&self) -> Vec<Flashblock> {
         self.flashblocks.clone()
@@ -421,10 +433,10 @@ impl PendingBlocks {
             tx_type: tx.inner.inner.tx_type(),
         };
 
-        let op_tx_result =
+        let base_tx_result =
             BaseTxResult { inner: eth_tx_result, is_deposit: tx.inner.inner.is_deposit(), sender };
 
-        Some(op_tx_result)
+        Some(base_tx_result)
     }
 
     /// Returns a transaction by its hash.

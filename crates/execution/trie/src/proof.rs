@@ -352,7 +352,7 @@ where
             ),
             address,
             prefix_set,
-            TrieRootMetrics::new(TrieType::Custom("op_historical_proofs_storage")),
+            TrieRootMetrics::new(TrieType::Custom("base_historical_proofs_storage")),
         )
         .root()
     }

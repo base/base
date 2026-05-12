@@ -52,7 +52,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         self,
     ) -> eyre::Result<()> {
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
-        info!(target: "reth::cli", path = ?self.storage_path, "Pruning OP proofs storage");
+        info!(target: "reth::cli", path = ?self.storage_path, "Pruning Base proofs storage");
 
         // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;

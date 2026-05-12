@@ -18,6 +18,8 @@ pub struct DisplaySnapshot {
     pub confirmed: usize,
     /// Total transactions failed.
     pub failed: u64,
+    /// Total confirmed transactions that reverted.
+    pub reverted: u64,
     /// Total in-flight (unconfirmed) transactions.
     pub in_flight: u64,
     /// Number of senders at the in-flight limit.
@@ -161,12 +163,22 @@ impl LoadTestDisplay {
             self.header.set_message(format!("Base Load Test  elapsed {elapsed_str}   continuous"));
         }
 
-        self.txs.set_message(format!(
-            "txs     sub {}   conf {}   failed {}",
-            fmt_num(snap.submitted),
-            fmt_num(snap.confirmed as u64),
-            fmt_num(snap.failed),
-        ));
+        self.txs.set_message(if snap.reverted > 0 {
+            format!(
+                "txs     sub {}   conf {}   failed {}   reverted {}",
+                fmt_num(snap.submitted),
+                fmt_num(snap.confirmed as u64),
+                fmt_num(snap.failed),
+                fmt_num(snap.reverted),
+            )
+        } else {
+            format!(
+                "txs     sub {}   conf {}   failed {}",
+                fmt_num(snap.submitted),
+                fmt_num(snap.confirmed as u64),
+                fmt_num(snap.failed),
+            )
+        });
 
         let success_rate = if snap.submitted > 0 {
             snap.confirmed as f64 / snap.submitted as f64 * 100.0

@@ -21,7 +21,7 @@ use tracing::info;
 
 use crate::{
     client::{advance_to_target, fetch_safe_head_hash},
-    precompiles::{CustomCrypto, ZkvmOpEvmFactory},
+    precompiles::{CustomCrypto, ZkvmBaseEvmFactory},
 };
 
 // Gets the inputs for constructing the derivation pipeline.
@@ -149,7 +149,7 @@ pub trait WitnessExecutor {
             rollup_config.as_ref(),
             l2_provider.clone(),
             l2_provider,
-            ZkvmOpEvmFactory::new(),
+            ZkvmBaseEvmFactory::new(),
             None,
         );
         let mut driver = Driver::new(cursor, executor, pipeline);
@@ -174,13 +174,7 @@ pub trait WitnessExecutor {
         ////////////////////////////////////////////////////////////////
 
         let derived_l2_block_number = safe_head.block_info.number;
-        if derived_l2_block_number != boot.claimed_l2_block_number {
-            return Err(anyhow!(
-                "Failed to validate claimed L2 block number {claimed}. Derivation only reached L2 block #{derived}",
-                claimed = boot.claimed_l2_block_number,
-                derived = derived_l2_block_number,
-            ));
-        }
+        ensure_derived_block_matches_claim(derived_l2_block_number, boot.claimed_l2_block_number)?;
 
         if output_root != boot.claimed_l2_output_root {
             return Err(anyhow!(
@@ -209,5 +203,51 @@ pub trait WitnessExecutor {
         }
 
         Ok((boot_clone, derived_l2_block_number, intermediate_roots))
+    }
+}
+
+/// Ensures the derived L2 safe-head block number matches the boot's claimed L2 block number.
+pub fn ensure_derived_block_matches_claim(
+    safe_head_number: u64,
+    claimed_block_number: u64,
+) -> Result<()> {
+    if safe_head_number != claimed_block_number {
+        return Err(anyhow!(
+            "Derived safe head L2 block #{safe_head_number} does not match claimed L2 block number #{claimed_block_number}",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_derived_block_matches_claim;
+
+    #[test]
+    fn returns_ok_when_derived_equals_claimed() {
+        assert!(ensure_derived_block_matches_claim(0, 0).is_ok());
+        assert!(ensure_derived_block_matches_claim(123_456, 123_456).is_ok());
+        assert!(ensure_derived_block_matches_claim(u64::MAX, u64::MAX).is_ok());
+    }
+
+    #[test]
+    fn returns_err_with_both_numbers_when_derived_below_claimed() {
+        let err = ensure_derived_block_matches_claim(50, 100).expect_err("expected mismatch error");
+        let msg = err.to_string();
+        assert!(msg.contains("#50"), "missing derived block number in: {msg}");
+        assert!(msg.contains("#100"), "missing claimed block number in: {msg}");
+        assert!(
+            msg.contains("Derived safe head") && msg.contains("claimed L2 block number"),
+            "missing expected labels in: {msg}",
+        );
+    }
+
+    #[test]
+    fn returns_err_with_both_numbers_when_derived_above_claimed() {
+        let err =
+            ensure_derived_block_matches_claim(150, 100).expect_err("expected mismatch error");
+        let msg = err.to_string();
+        assert!(msg.contains("#150"));
+        assert!(msg.contains("#100"));
     }
 }

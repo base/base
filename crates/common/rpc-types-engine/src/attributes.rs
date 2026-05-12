@@ -165,7 +165,7 @@ impl BasePayloadAttributes {
             .flatten()
             .cloned()
             .zip(self.decoded_transactions())
-            .map(|(tx_bytes, result)| result.map(|op_tx| WithEncoded::new(tx_bytes, op_tx)))
+            .map(|(tx_bytes, result)| result.map(|base_tx| WithEncoded::new(tx_bytes, base_tx)))
     }
 
     /// Returns an iterator over the recovered [`BaseTxEnvelope`] in this attributes.
@@ -206,7 +206,7 @@ impl BasePayloadAttributes {
             .flatten()
             .cloned()
             .zip(self.recovered_transactions())
-            .map(|(tx_bytes, result)| result.map(|op_tx| WithEncoded::new(tx_bytes, op_tx)))
+            .map(|(tx_bytes, result)| result.map(|base_tx| WithEncoded::new(tx_bytes, base_tx)))
     }
 }
 

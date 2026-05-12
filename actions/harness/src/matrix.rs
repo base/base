@@ -60,7 +60,7 @@ impl ForkMatrix {
         Self::all().retain(|_, h| h.isthmus_time.is_some() && h.base.is_empty())
     }
 
-    /// Returns the canonical OP fault-proof fork progression from Granite onward.
+    /// Returns the canonical fault-proof fork progression from Granite onward.
     ///
     /// The `pectra-blob-schedule` compatibility patch (a Base Sepolia-only quirk)
     /// and Base-specific forks are excluded; this matrix covers only the upstream
@@ -204,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn from_isthmus_includes_only_op_forks_from_isthmus_onward() {
+    fn from_isthmus_includes_only_inherited_forks_from_isthmus_onward() {
         let names: Vec<_> = ForkMatrix::from_isthmus().iter().map(|(name, _)| name).collect();
         assert_eq!(names, vec!["isthmus", "jovian"]);
     }

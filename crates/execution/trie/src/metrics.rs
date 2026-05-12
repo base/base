@@ -84,7 +84,7 @@ impl StorageOperation {
 }
 
 base_metrics::define_metrics! {
-    optimism_trie.storage.operation,
+    base_trie.storage.operation,
     struct = OperationMetrics,
     #[describe("Duration of storage operations in seconds")]
     #[label(operation)]
@@ -92,7 +92,7 @@ base_metrics::define_metrics! {
 }
 
 base_metrics::define_metrics! {
-    optimism_trie.block,
+    base_trie.block,
     struct = BlockMetrics,
     #[describe("Total time to process a block (end-to-end) in seconds")]
     total_duration_seconds: histogram,

@@ -33,7 +33,10 @@ mod block;
 pub use block::{BlockInfo, FromBlockError, L2BlockInfo};
 
 mod frame;
-pub use frame::{DERIVATION_VERSION_0, Frame, FrameDecodingError, FrameParseError};
+pub use frame::{
+    BLOB_DERIVATION_PREFIX_SIZE, BLOB_MAX_DATA_SIZE, DERIVATION_VERSION_0, Frame,
+    FrameDecodingError, FrameParseError, MAX_BLOB_FRAME_SIZE,
+};
 
 mod utils;
 pub use utils::{read_tx_data, to_system_config};

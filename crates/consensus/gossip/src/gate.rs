@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use ipnet::IpNet;
 use libp2p::{Multiaddr, PeerId};
 
-use crate::{Connectedness, ConnectionError};
+use crate::ConnectionError;
 
 /// Connection Gate
 ///
@@ -24,9 +24,6 @@ pub trait ConnectionGate {
         peer_id: &PeerId,
         addr: &Multiaddr,
     ) -> Result<(), ConnectionError>;
-
-    /// Returns the [`Connectedness`] for a given peer id.
-    fn connectedness(&self, peer_id: &PeerId) -> Connectedness;
 
     /// Marks an address as currently being dialed.
     fn dialing(&mut self, addr: &Multiaddr);
@@ -78,4 +75,8 @@ pub trait ConnectionGate {
 
     /// Lists all protected peers.
     fn list_protected_peers(&self) -> Vec<PeerId>;
+
+    /// Periodic housekeeping. Called by the network actor on a fixed cadence.
+    /// Default impl is a no-op for gates that hold no expiring state.
+    fn prune(&mut self) {}
 }

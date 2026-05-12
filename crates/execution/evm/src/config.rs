@@ -1,6 +1,6 @@
 use revm::primitives::{Address, B256, Bytes};
 
-/// Context relevant for execution of a next block w.r.t OP.
+/// Context relevant for execution of a next Base block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BaseNextBlockEnvAttributes {
     /// The timestamp of the next block.

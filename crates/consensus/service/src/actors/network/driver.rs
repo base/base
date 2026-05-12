@@ -2,7 +2,9 @@ use std::net::{IpAddr, SocketAddr};
 
 use alloy_primitives::Address;
 use base_consensus_disc::Discv5Driver;
-use base_consensus_gossip::{ConnectionGater, GossipDriver, PEER_SCORE_INSPECT_FREQUENCY};
+use base_consensus_gossip::{
+    ConnectionGater, GATER_PRUNE_INTERVAL, GossipDriver, PEER_SCORE_INSPECT_FREQUENCY,
+};
 use base_consensus_sources::{BlockSigner, BlockSignerStartError};
 use discv5::multiaddr::Protocol;
 use futures::future::OptionFuture;
@@ -81,6 +83,9 @@ impl NetworkDriver {
         // We are checking the peer scores every [`PEER_SCORE_INSPECT_FREQUENCY`] seconds.
         let peer_score_inspector = tokio::time::interval(PEER_SCORE_INSPECT_FREQUENCY);
 
+        let mut gater_pruner = tokio::time::interval(GATER_PRUNE_INTERVAL);
+        gater_pruner.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         // Start the block signer if it is configured.
         let signer =
             OptionFuture::from(self.signer.map(async |s| s.start().await)).await.transpose()?;
@@ -91,6 +96,7 @@ impl NetworkDriver {
             enr_receiver,
             unsafe_block_signer_sender: self.unsafe_block_signer_sender,
             peer_score_inspector,
+            gater_pruner,
             signer,
         })
     }

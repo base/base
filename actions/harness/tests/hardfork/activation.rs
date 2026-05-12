@@ -219,8 +219,8 @@ fn granite_changes_channel_timeout_at_mainnet_timestamp() {
     );
 }
 
-/// `Azul` is a standalone Base-specific hardfork. It is not part of the OP
-/// cascade chain: Jovian does not imply it, and it does not imply Jovian.
+/// `Azul` is a standalone Base-specific hardfork. It is not part of the
+/// inherited cascade chain: Jovian does not imply it, and it does not imply Jovian.
 #[test]
 fn base_azul_is_standalone_from_jovian() {
     let rc = TestRollupConfigBuilder::mainnet();

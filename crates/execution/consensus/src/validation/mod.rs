@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_get_base_fee_pre_holocene() {
-        let op_chain_spec = BaseChainSpec::sepolia();
+        let base_chain_spec = BaseChainSpec::sepolia();
         let parent = Header {
             base_fee_per_gas: Some(1),
             gas_used: 15763614,
@@ -314,19 +314,19 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             0,
         );
         assert_eq!(
             base_fee.unwrap(),
-            op_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
+            base_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
         );
     }
 
     #[test]
     fn test_get_base_fee_holocene_extra_data_not_set() {
-        let op_chain_spec = holocene_chainspec();
+        let base_chain_spec = holocene_chainspec();
         let parent = Header {
             base_fee_per_gas: Some(1),
             gas_used: 15763614,
@@ -336,13 +336,13 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             HOLOCENE_TIMESTAMP + 5,
         );
         assert_eq!(
             base_fee.unwrap(),
-            op_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
+            base_chain_spec.next_block_base_fee(&parent, 0).unwrap_or_default()
         );
     }
 
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_get_base_fee_jovian_extra_data_and_min_base_fee_not_set() {
-        let op_chain_spec = jovian_chainspec();
+        let base_chain_spec = jovian_chainspec();
 
         let mut extra_data = Vec::new();
         extra_data.push(JOVIAN_EXTRA_DATA_VERSION_BYTE);
@@ -441,7 +441,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         );
@@ -462,7 +462,7 @@ mod tests {
         extra_data.append(&mut MIN_BASE_FEE.to_be_bytes().to_vec());
         let extra_data = Bytes::from(extra_data);
 
-        let op_chain_spec = jovian_chainspec();
+        let base_chain_spec = jovian_chainspec();
         let parent = Header {
             base_fee_per_gas: Some(CURR_BASE_FEE),
             gas_used: 15763614,
@@ -472,7 +472,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         );
@@ -492,7 +492,7 @@ mod tests {
         extra_data.append(&mut MIN_BASE_FEE.to_be_bytes().to_vec());
         let extra_data = Bytes::from(extra_data);
 
-        let op_chain_spec = jovian_chainspec();
+        let base_chain_spec = jovian_chainspec();
 
         // If we're currently at the minimum base fee, the next block base fee cannot decrease.
         let parent = Header {
@@ -504,7 +504,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         );
@@ -520,7 +520,7 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + 2 * BLOCK_TIME_SECONDS,
         );
@@ -539,7 +539,7 @@ mod tests {
         extra_data.append(&mut MIN_BASE_FEE.to_be_bytes().to_vec());
         let extra_data = Bytes::from(extra_data);
 
-        let op_chain_spec = jovian_chainspec();
+        let base_chain_spec = jovian_chainspec();
 
         let parent = Header {
             base_fee_per_gas: Some(100 * MIN_BASE_FEE),
@@ -550,14 +550,14 @@ mod tests {
             ..Default::default()
         };
         let base_fee = base_execution_chainspec::BaseChainSpec::next_block_base_fee(
-            &op_chain_spec,
+            &base_chain_spec,
             &parent,
             JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS,
         )
         .unwrap();
         assert_eq!(
             base_fee,
-            op_chain_spec
+            base_chain_spec
                 .inner
                 .next_block_base_fee(&parent, JOVIAN_TIMESTAMP + BLOCK_TIME_SECONDS)
                 .unwrap()

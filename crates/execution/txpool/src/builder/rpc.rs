@@ -12,7 +12,7 @@ use reth_transaction_pool::TransactionPool;
 use tracing::debug;
 
 use super::metrics::Metrics as BuilderApiMetrics;
-use crate::{BasePooledTransaction, ValidatedTransaction};
+use crate::{BasePooledTransaction, PoolRejectionLabel, ValidatedTransaction};
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
 #[rpc(server, namespace = "base")]
@@ -89,7 +89,7 @@ where
             }
             Err(e) => {
                 debug!(sender = %sender, error = %e, "pool rejected transaction");
-                BuilderApiMetrics::txs_rejected().increment(1);
+                BuilderApiMetrics::txs_rejected(PoolRejectionLabel::from_error(&e)).increment(1);
                 Err(ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("pool rejected transaction: {e}"),

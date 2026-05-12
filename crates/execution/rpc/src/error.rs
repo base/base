@@ -1,4 +1,4 @@
-//! RPC errors specific to OP.
+//! RPC errors specific to Base.
 
 use std::convert::Infallible;
 

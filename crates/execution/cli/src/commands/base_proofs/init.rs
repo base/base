@@ -37,12 +37,12 @@ pub struct InitCommand<C: ChainSpecParser> {
 }
 
 impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
-    /// Execute `initialize-op-proofs` command
+    /// Execute the `proofs init` command.
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
         self,
     ) -> eyre::Result<()> {
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
-        info!(target: "reth::cli", path = ?self.storage_path, "Initializing OP proofs storage");
+        info!(target: "reth::cli", path = ?self.storage_path, "Initializing Base proofs storage");
 
         // Initialize the environment with read-only access
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;

@@ -473,8 +473,8 @@ times. The `gossipsub` behaviour handles the actual block gossip. The `identify`
 capability information between peers when they first connect (the Base node advertises its agent
 version as `"base"`). The `sync_req_resp` behaviour supports a legacy request-response protocol
 called `payload_by_number` that is part of the legacy rollup P2P spec. This is being deprecated, and the Base
-implementation responds with "not found" to all requests, but it is still present so that op-nodes
-don't penalize Base nodes for not supporting it.
+implementation responds with "not found" to all requests, but it is still present so that legacy
+peers don't penalize Base nodes for not supporting it.
 
 The `GossipDriver`
 ([`gossip/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/gossip/src/driver.rs))

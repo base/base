@@ -30,7 +30,7 @@ hardfork!(
     #[derive(Default)]
     BaseUpgrade {
         // ... existing variants ...
-        /// Jovian: <https://github.com/ethereum-optimism/specs/tree/main/specs/protocol/jovian>
+        /// Jovian: Base network upgrade.
         Jovian,
         /// Azul: First Base-specific network upgrade.
         Azul,   // <-- add here
@@ -188,7 +188,7 @@ For **cascading** upgrades, replace the previous arm's `unwrap_or(ForkCondition:
 
 ```rust
 /// Returns `true` if [`Azul`](BaseUpgrade::Azul) is active at given block timestamp.
-fn is_base_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
+fn is_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
     self.upgrade_activation(BaseUpgrade::Azul).active_at_timestamp(timestamp)
 }
 ```
@@ -325,7 +325,7 @@ Add the new upgrade as the first check (newest upgrade wins):
 pub fn from_timestamp(chain_spec: impl Upgrades, timestamp: u64) -> Self {
     if chain_spec.is_beryl_active_at_timestamp(timestamp) {
         Self::Beryl
-    } else if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
+    } else if chain_spec.is_azul_active_at_timestamp(timestamp) {
         Self::Azul
     } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
         Self::Jovian

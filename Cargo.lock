@@ -3676,6 +3676,7 @@ dependencies = [
  "libp2p",
  "libp2p-identity",
  "libp2p-stream",
+ "lru 0.16.4",
  "metrics",
  "multihash",
  "openssl",
@@ -3899,6 +3900,7 @@ dependencies = [
 name = "base-engine-tree"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
  "alloy-consensus",
  "alloy-eip7928",
  "alloy-eips",
@@ -3921,6 +3923,7 @@ dependencies = [
  "reth-chain-state",
  "reth-chainspec",
  "reth-consensus",
+ "reth-db-common",
  "reth-engine-primitives",
  "reth-engine-tree",
  "reth-errors",
@@ -5101,6 +5104,7 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport-http",
  "anyhow",
+ "base-proof-preimage",
  "base-proof-succinct-build-utils",
  "base-proof-succinct-client-utils",
  "base-proof-succinct-elfs",
@@ -5111,11 +5115,13 @@ dependencies = [
  "clap",
  "csv",
  "dotenv",
+ "gag",
  "reqwest 0.12.28",
  "rustls 0.23.39",
  "serde_json",
  "sp1-cluster-utils",
  "sp1-sdk",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -9374,6 +9380,16 @@ name = "futures-utils-wasm"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42012b0f064e01aa58b545fe3727f90f7dd4020f4a3ea735b50344965f5a57e9"
+
+[[package]]
+name = "gag"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a713bee13966e9fbffdf7193af71d54a6b35a0bb34997cd6c9519ebeb5005972"
+dependencies = [
+ "filedescriptor",
+ "tempfile",
+]
 
 [[package]]
 name = "gcd"

@@ -267,11 +267,11 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
     fn hint_execution_witness(
         &self,
         parent_hash: B256,
-        op_payload_attributes: &base_common_rpc_types_engine::BasePayloadAttributes,
+        base_payload_attributes: &base_common_rpc_types_engine::BasePayloadAttributes,
     ) -> Result<(), Self::Error> {
         crate::block_on(async move {
             let encoded_attributes =
-                serde_json::to_vec(op_payload_attributes).map_err(OracleProviderError::Serde)?;
+                serde_json::to_vec(base_payload_attributes).map_err(OracleProviderError::Serde)?;
 
             HintType::L2PayloadWitness
                 .with_data(&[parent_hash.as_slice(), &encoded_attributes])

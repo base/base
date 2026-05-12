@@ -13,7 +13,6 @@ use reth_evm::{
     block::{BlockExecutor, ExecutableTx, InternalBlockExecutionError, TxResult},
 };
 use reth_primitives_traits::Recovered;
-use reth_provider::BlockNumReader;
 use reth_revm::State;
 use revm::{Database, context::TxEnv};
 use revm_primitives::B256;
@@ -21,23 +20,19 @@ use tracing::{instrument, trace, warn};
 
 /// Provider that fetches cached execution results for transactions.
 #[derive(Debug, Clone)]
-pub struct FlashblocksCachedExecutionProvider<P> {
+pub struct FlashblocksCachedExecutionProvider {
     flashblocks_state: Option<Arc<FlashblocksState>>,
-
-    provider: P,
 }
 
-impl<P> FlashblocksCachedExecutionProvider<P> {
+impl FlashblocksCachedExecutionProvider {
     /// Creates a new [`FlashblocksCachedExecutionProvider`].
-    pub const fn new(provider: P, flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
-        Self { provider, flashblocks_state }
+    pub const fn new(flashblocks_state: Option<Arc<FlashblocksState>>) -> Self {
+        Self { flashblocks_state }
     }
 }
 
-impl<P> CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>>
-    for FlashblocksCachedExecutionProvider<P>
-where
-    P: BlockNumReader,
+impl CachedExecutionProvider<BaseTxResult<BaseHaltReason, OpTxType>>
+    for FlashblocksCachedExecutionProvider
 {
     #[instrument(level = "debug", skip_all, fields(tx_hash = ?tx_hash))]
     fn get_cached_execution_for_tx(
@@ -47,13 +42,23 @@ where
         tx_hash: &B256,
     ) -> Option<BaseTxResult<BaseHaltReason, OpTxType>> {
         let flashblocks_state = self.flashblocks_state.as_ref()?;
-
-        // if block_number is not found, we can't use cached execution
-        let parent_block_number = self.provider.block_number(*parent_block_hash).ok().flatten()?;
-
-        let this_block_number = parent_block_number.checked_add(1).unwrap();
-
         let pending_blocks = flashblocks_state.get_pending_blocks().clone()?;
+
+        // The cached results were computed on top of a specific parent block.
+        // During a reorg or sequencer failover, two different parent hashes can
+        // share the same block number, so verifying block-number equivalence
+        // (e.g. via a separate `BlockNumReader` lookup) is insufficient — we
+        // must compare the parent hash itself.
+        if pending_blocks.parent_hash() != *parent_block_hash {
+            warn!(
+                expected_parent = ?pending_blocks.parent_hash(),
+                received_parent = ?parent_block_hash,
+                "Not using cached results - parent hash mismatch (possible reorg or sequencer failover)",
+            );
+            return None;
+        }
+
+        let this_block_number = pending_blocks.earliest_block_number();
 
         // The cached `ResultAndState` is only valid when applied atop the exact
         // prefix it was computed under, so require `tx_hash` to occupy the
@@ -244,7 +249,6 @@ mod tests {
     use alloy_consensus::{
         Header, Receipt, ReceiptWithBloom, Sealed, Signed, TxLegacy, transaction::Recovered,
     };
-    use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::{Address, B256, BlockNumber, Bloom, Bytes, Signature, TxKind, U256};
     use alloy_rpc_types_engine::PayloadId;
     use alloy_rpc_types_eth::TransactionReceipt;
@@ -253,9 +257,6 @@ mod tests {
     };
     use base_common_rpc_types::{BaseTransactionReceipt, L1BlockInfo, Transaction};
     use base_flashblocks::{FlashblocksState, PendingBlocks, PendingBlocksBuilder};
-    use reth_chainspec::ChainInfo;
-    use reth_provider::{BlockHashReader, BlockNumReader};
-    use reth_storage_errors::provider::ProviderResult;
     use revm::context::result::ExecutionResult;
 
     use super::{
@@ -263,79 +264,33 @@ mod tests {
         FlashblocksCachedExecutionProvider,
     };
 
-    #[derive(Clone)]
-    struct StubBlockNumReader {
-        parent_hash: B256,
-        parent_number: BlockNumber,
-    }
-
-    impl BlockHashReader for StubBlockNumReader {
-        fn block_hash(&self, _number: BlockNumber) -> ProviderResult<Option<B256>> {
-            Ok(None)
-        }
-
-        fn canonical_hashes_range(
-            &self,
-            _start: BlockNumber,
-            _end: BlockNumber,
-        ) -> ProviderResult<Vec<B256>> {
-            Ok(Vec::new())
-        }
-    }
-
-    impl BlockNumReader for StubBlockNumReader {
-        fn chain_info(&self) -> ProviderResult<ChainInfo> {
-            Ok(ChainInfo::default())
-        }
-
-        fn best_block_number(&self) -> ProviderResult<BlockNumber> {
-            Ok(self.parent_number)
-        }
-
-        fn last_block_number(&self) -> ProviderResult<BlockNumber> {
-            Ok(self.parent_number)
-        }
-
-        fn block_number(&self, hash: B256) -> ProviderResult<Option<BlockNumber>> {
-            Ok((hash == self.parent_hash).then_some(self.parent_number))
-        }
-
-        fn convert_hash_or_number(
-            &self,
-            id: BlockHashOrNumber,
-        ) -> ProviderResult<Option<BlockNumber>> {
-            match id {
-                BlockHashOrNumber::Hash(hash) => self.block_number(hash),
-                BlockHashOrNumber::Number(num) => Ok(Some(num)),
-            }
-        }
-    }
-
     fn provider_with_cache(
         parent_hash: B256,
         parent_number: BlockNumber,
         cached_hashes: &[B256],
-    ) -> FlashblocksCachedExecutionProvider<StubBlockNumReader> {
+    ) -> FlashblocksCachedExecutionProvider {
         let state = Arc::new(FlashblocksState::default());
         state.set_pending_blocks_for_testing(Some(build_pending_blocks(
+            parent_hash,
             parent_number + 1,
             cached_hashes,
         )));
-        FlashblocksCachedExecutionProvider::new(
-            StubBlockNumReader { parent_hash, parent_number },
-            Some(state),
-        )
+        FlashblocksCachedExecutionProvider::new(Some(state))
     }
 
     fn h(byte: u8) -> B256 {
         B256::repeat_byte(byte)
     }
 
-    fn build_pending_blocks(block_number: BlockNumber, tx_hashes: &[B256]) -> PendingBlocks {
+    fn build_pending_blocks(
+        parent_hash: B256,
+        block_number: BlockNumber,
+        tx_hashes: &[B256],
+    ) -> PendingBlocks {
         let mut builder = PendingBlocksBuilder::new();
-        builder.with_flashblocks([stub_flashblock(block_number)]);
+        builder.with_flashblocks([stub_flashblock(parent_hash, block_number)]);
         builder.with_header(Sealed::new_unchecked(
-            Header { number: block_number, ..Default::default() },
+            Header { number: block_number, parent_hash, ..Default::default() },
             B256::ZERO,
         ));
         for &hash in tx_hashes {
@@ -358,13 +313,13 @@ mod tests {
         }
     }
 
-    fn stub_flashblock(block_number: BlockNumber) -> Flashblock {
+    fn stub_flashblock(parent_hash: B256, block_number: BlockNumber) -> Flashblock {
         Flashblock {
             payload_id: PayloadId::default(),
             index: 0,
             base: Some(ExecutionPayloadBaseV1 {
                 parent_beacon_block_root: B256::ZERO,
-                parent_hash: B256::ZERO,
+                parent_hash,
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::ZERO,
                 block_number,
@@ -505,20 +460,23 @@ mod tests {
     #[test]
     fn missing_flashblocks_state_returns_none() {
         let parent = h(0xff);
-        let provider = FlashblocksCachedExecutionProvider::new(
-            StubBlockNumReader { parent_hash: parent, parent_number: 1 },
-            None,
-        );
+        let provider = FlashblocksCachedExecutionProvider::new(None);
         assert!(provider.get_cached_execution_for_tx(&parent, None, &h(0x01)).is_none());
     }
 
+    /// Models a reorg or sequencer failover: the cache was built on top of `h1`,
+    /// but the engine asks for a payload at the same height built on top of a
+    /// different parent `h2`. The cached results were computed against `h1`'s
+    /// state and would corrupt the post-state if reused, so the provider must
+    /// refuse the cache regardless of block-number agreement.
     #[test]
-    fn unknown_parent_hash_returns_none() {
-        let parent = h(0xff);
-        let other = h(0xee);
+    fn parent_hash_mismatch_returns_none_after_reorg() {
+        let h1 = h(0x11);
+        let h2 = h(0x22);
         let a = h(0x01);
-        let provider = provider_with_cache(parent, 1, &[a]);
+        let provider = provider_with_cache(h1, 1, &[a]);
 
-        assert!(provider.get_cached_execution_for_tx(&other, None, &a).is_none());
+        assert!(provider.get_cached_execution_for_tx(&h1, None, &a).is_some());
+        assert!(provider.get_cached_execution_for_tx(&h2, None, &a).is_none());
     }
 }

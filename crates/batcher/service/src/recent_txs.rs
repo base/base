@@ -12,7 +12,7 @@ use tracing::{debug, info};
 
 /// Maximum depth allowed for the recent-transaction startup scan.
 ///
-/// Matches the limit used by op-batcher's `--check-recent-txs-depth` flag.
+/// Matches the limit used by the reference batcher's `--check-recent-txs-depth` flag.
 pub const MAX_CHECK_RECENT_TXS_DEPTH: u64 = 128;
 
 /// Maximum number of L1 block fetches in flight during the startup scan.

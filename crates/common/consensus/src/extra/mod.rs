@@ -26,6 +26,9 @@ pub enum EIP1559ParamError {
     /// Extra data is not the correct length.
     #[error("Extra data is not the correct length")]
     InvalidExtraDataLength,
+    /// Invalid EIP-1559 parameter combination.
+    #[error("EIP-1559 denominator and elasticity must both be zero or both be non-zero")]
+    InvalidParams,
     /// Minimum base fee must be None before Jovian.
     #[error("Minimum base fee must be None before Jovian")]
     MinBaseFeeMustBeNone,

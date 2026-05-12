@@ -334,6 +334,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             blacklisted: false,
             retired: false,
             respected: true,
+            paused: false,
             anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
         })
     }

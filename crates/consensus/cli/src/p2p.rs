@@ -3,7 +3,7 @@
 use std::{
     fs,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
-    num::ParseIntError,
+    num::{NonZeroUsize, ParseIntError},
     path::PathBuf,
     str::FromStr,
 };
@@ -14,7 +14,9 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
-use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig};
+use base_consensus_gossip::{
+    ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS, GaterConfig,
+};
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_providers::AlloyChainProvider;
@@ -52,6 +54,11 @@ fn resolve_host(host: &str) -> Result<IpAddr, String> {
             .ok_or_else(|| format!("DNS resolution for '{host}' returned no addresses")),
         Err(e) => Err(format!("Failed to resolve '{host}': {e}")),
     }
+}
+
+fn parse_nonzero_usize(arg: &str) -> Result<NonZeroUsize, String> {
+    let value = arg.parse::<usize>().map_err(|err| err.to_string())?;
+    NonZeroUsize::new(value).ok_or_else(|| "value must be greater than 0".to_string())
 }
 
 /// P2P CLI Flags
@@ -106,6 +113,14 @@ pub struct P2PArgs {
     /// number.
     #[arg(long = "p2p.peers.hi", default_value = "30", env = "BASE_NODE_P2P_PEERS_HI")]
     pub peers_hi: u32,
+    /// Maximum number of peers to retain identify metadata for.
+    #[arg(
+        long = "p2p.identify.peerstore.size",
+        default_value_t = DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
+        env = "BASE_NODE_P2P_IDENTIFY_PEERSTORE_SIZE",
+        value_parser = parse_nonzero_usize
+    )]
+    pub identify_peerstore_size: NonZeroUsize,
     /// Grace period to keep a newly connected peer around, if it is not misbehaving.
     #[arg(
         long = "p2p.peers.grace",
@@ -525,6 +540,7 @@ impl P2PArgs {
                 dial_period: Duration::from_secs(60 * self.redial_period),
             },
             connection_limits_config: ConnectionLimitsConfig::new(self.peers_hi),
+            max_identify_peerstore_peers: self.identify_peerstore_size,
             bootnodes,
             rollup_config: config.clone(),
             gossip_signer: self.signer.config(l2_chain_id)?,
@@ -868,6 +884,28 @@ mod tests {
         assert_eq!(config.connection_limits_config.max_established_incoming, 42);
         assert_eq!(config.connection_limits_config.max_established_outgoing, 42);
         assert_eq!(config.connection_limits_config.max_established, 42);
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_wires_identify_peerstore_size() {
+        let args = MockCommand::parse_from(["test", "--p2p.identify.peerstore.size", "2048"]);
+
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .await
+            .unwrap();
+
+        assert_eq!(config.max_identify_peerstore_peers.get(), 2048);
+    }
+
+    #[test]
+    fn test_p2p_args_reject_zero_identify_peerstore_size() {
+        let err = MockCommand::try_parse_from(["test", "--p2p.identify.peerstore.size", "0"])
+            .expect_err("zero identify peerstore size should fail")
+            .to_string();
+
+        assert!(err.contains("value must be greater than 0"));
     }
 
     #[test]

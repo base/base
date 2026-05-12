@@ -89,6 +89,16 @@ pub struct ChallengerArgs {
     )]
     pub zk_request_timeout: Duration,
 
+    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed and
+    /// retrying (e.g., "30m", "2h"). Should be set above the typical proof generation time.
+    #[arg(
+        long = "max-proof-duration",
+        env = cli_env!("MAX_PROOF_DURATION"),
+        default_value = "4h",
+        value_parser = humantime::parse_duration
+    )]
+    pub max_proof_duration: Duration,
+
     /// URL of the TEE enclave RPC endpoint (optional; enables TEE-first proof sourcing).
     #[arg(long = "tee-rpc-url", env = cli_env!("TEE_RPC_URL"))]
     pub tee_rpc_url: Option<Url>,

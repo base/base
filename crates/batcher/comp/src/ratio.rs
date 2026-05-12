@@ -1,8 +1,6 @@
 //! Contains the ratio compressor for Base.
 //!
-//! This is a port of the [RatioCompressor][rc] from the op-batcher.
-//!
-//! [rc]: https://github.com/ethereum-optimism/optimism/blob/develop/op-batcher/compressor/ratio_compressor.go#L7
+//! This is a port of the reference batcher's ratio compressor.
 
 use crate::{CompressorResult, CompressorWriter, Config, VariantCompressor};
 

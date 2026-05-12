@@ -404,12 +404,12 @@ mod tests {
     fn sanity_l1_block_ecotone() {
         // rig
 
-        // OP Mainnet Ecotone compatibility fixture, block 118024092.
+        // Legacy Ecotone compatibility fixture, block 118024092.
         // <https://optimistic.etherscan.io/block/118024092>
         const TIMESTAMP: u64 = 1711603765;
         assert!(BaseChainSpec::mainnet().is_ecotone_active_at_timestamp(TIMESTAMP));
 
-        // First transaction in the OP Mainnet compatibility fixture, block 118024092.
+        // First transaction in the legacy compatibility fixture, block 118024092.
         //
         // https://optimistic.etherscan.io/getRawTx?tx=0x88501da5d5ca990347c2193be90a07037af1e3820bb40774c8154871c7669150
         const TX: [u8; 251] = hex!(
@@ -446,7 +446,7 @@ mod tests {
     fn parse_l1_info_fjord() {
         // rig
 
-        // L1 block info from an OP Mainnet compatibility fixture, block 124665056
+        // L1 block info from a legacy compatibility fixture, block 124665056.
         // (stored in input of tx at index 0).
         //
         // https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
@@ -454,8 +454,8 @@ mod tests {
             "440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a3000000000000000000000000000000000000000000000000000000003ef1278700000000000000000000000000000000000000000000000000000000000000012fdf87b89884a61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a590000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985"
         );
 
-        // expected l1 block info verified against expected l1 fee for tx. l1 tx fee listed on OP
-        // mainnet block scanner
+        // expected l1 block info verified against expected l1 fee for tx from the legacy
+        // compatibility fixture's block scanner.
         //
         // https://github.com/bluealloy/revm/blob/fa5650ee8a4d802f4f3557014dd157adfb074460/crates/revm/src/optimism/l1block.rs#L414-L443
         let l1_base_fee = U256::from(1055991687);

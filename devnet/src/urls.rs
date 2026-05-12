@@ -13,10 +13,10 @@ pub struct DevnetUrls {
     pub l2_builder_rpc: String,
     /// L2 client RPC endpoint
     pub l2_client_rpc: String,
-    /// L2 builder OP node RPC endpoint
-    pub l2_builder_op_rpc: String,
-    /// L2 client OP node RPC endpoint
-    pub l2_client_op_rpc: String,
+    /// L2 builder consensus node RPC endpoint
+    pub l2_builder_consensus_rpc: String,
+    /// L2 client consensus node RPC endpoint
+    pub l2_client_consensus_rpc: String,
 }
 
 impl fmt::Display for DevnetUrls {
@@ -26,8 +26,8 @@ impl fmt::Display for DevnetUrls {
         writeln!(f, "  L1:            {}", self.l1_rpc)?;
         writeln!(f, "  L2 Builder:    {}", self.l2_builder_rpc)?;
         writeln!(f, "  L2 Client:     {}", self.l2_client_rpc)?;
-        writeln!(f, "  L2 Builder CL: {}", self.l2_builder_op_rpc)?;
-        write!(f, "  L2 Client CL:  {}", self.l2_client_op_rpc)
+        writeln!(f, "  L2 Builder CL: {}", self.l2_builder_consensus_rpc)?;
+        write!(f, "  L2 Client CL:  {}", self.l2_client_consensus_rpc)
     }
 }
 

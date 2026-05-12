@@ -25,6 +25,15 @@ base_metrics::define_metrics! {
     #[describe("Total number of certificate revocations detected via CRL")]
     crl_revocations_detected: counter,
 
+    #[describe("Total number of on-chain durable revocation pre-checks performed")]
+    onchain_revocation_checks_total: counter,
+
+    #[describe("Total number of intermediates rejected by the on-chain durable revocation sentinel")]
+    onchain_revocations_detected: counter,
+
+    #[describe("Total number of on-chain revocation pre-checks that failed and fell through to the AWS CRL layer (fail-open)")]
+    onchain_revocation_check_errors: counter,
+
     #[describe("Total number of revokeCert transaction submission failures")]
     revoke_cert_tx_failures: counter,
 

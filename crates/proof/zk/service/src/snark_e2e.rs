@@ -152,7 +152,7 @@ impl SnarkE2e {
             .context("BASE_CONSENSUS_ADDRESS must be set")?;
 
         let l1_provider = ProviderBuilder::new().connect_http(l1_url.parse()?);
-        let op_provider = ProviderBuilder::<Identity, Identity, Base>::default()
+        let base_provider = ProviderBuilder::<Identity, Identity, Base>::default()
             .connect_http(l2_consensus_url.parse()?);
 
         let finalized_l1 = l1_provider
@@ -164,7 +164,8 @@ impl SnarkE2e {
 
         let mut attempts = 0u64;
         loop {
-            let l1_origin = L1HeadCalculator::get_l1_origin_num(&op_provider, target_block).await?;
+            let l1_origin =
+                L1HeadCalculator::get_l1_origin_num(&base_provider, target_block).await?;
 
             if l1_origin + SEQUENCE_WINDOW <= finalized_l1 {
                 info!(

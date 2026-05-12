@@ -260,8 +260,8 @@ impl<N: RpcNodeCore, Rpc: RpcConvert> fmt::Debug for BaseEthApi<N, Rpc> {
 pub struct BaseEthApiInner<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
     eth_api: EthApiNodeBackend<N, Rpc>,
-    /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
-    /// network.
+    /// Sequencer client, configured to forward submitted transactions to sequencer of the given
+    /// Base network.
     sequencer_client: Option<SequencerClient>,
     /// Minimum priority fee enforced by rollup-specific logic.
     ///
@@ -299,8 +299,8 @@ pub type BaseRpcConvert<N, NetworkT> = RpcConverter<
 /// Builds [`BaseEthApi`] for Base.
 #[derive(Debug)]
 pub struct BaseEthApiBuilder<NetworkT = Base> {
-    /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
-    /// network.
+    /// Sequencer client, configured to forward submitted transactions to sequencer of the given
+    /// Base network.
     sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,

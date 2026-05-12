@@ -195,8 +195,11 @@ impl ChallengerService {
         };
 
         // ── 9. Run driver ────────────────────────────────────────────────────
-        let driver_config =
-            DriverConfig { poll_interval: config.poll_interval, cancel: cancel.child_token() };
+        let driver_config = DriverConfig {
+            poll_interval: config.poll_interval,
+            max_proof_duration: config.max_proof_duration,
+            cancel: cancel.child_token(),
+        };
         let driver = Driver::new(
             driver_config,
             DriverComponents {

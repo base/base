@@ -1092,7 +1092,7 @@ mod tests {
         };
         let inclusion_block = BlockInfo::default();
         let mut fetcher: TestBatchValidator = TestBatchValidator {
-            op_blocks: vec![BaseBlock {
+            base_blocks: vec![BaseBlock {
                 header: Header { number: 9, ..Default::default() },
                 body: alloy_consensus::BlockBody {
                     transactions: Vec::new(),
@@ -1158,7 +1158,7 @@ mod tests {
         };
         let inclusion_block = BlockInfo::default();
         let mut fetcher: TestBatchValidator = TestBatchValidator {
-            op_blocks: vec![BaseBlock {
+            base_blocks: vec![BaseBlock {
                 header: Header { number: 9, ..Default::default() },
                 body: alloy_consensus::BlockBody {
                     transactions: vec![base_common_consensus::BaseTxEnvelope::Eip1559(
@@ -2150,7 +2150,7 @@ mod tests {
         };
         let mut fetcher: TestBatchValidator = TestBatchValidator {
             blocks: vec![l2_block],
-            op_blocks: vec![block],
+            base_blocks: vec![block],
             ..Default::default()
         };
         let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
@@ -2225,7 +2225,7 @@ mod tests {
         };
         let mut fetcher: TestBatchValidator = TestBatchValidator {
             blocks: vec![l2_block],
-            op_blocks: vec![block],
+            base_blocks: vec![block],
             ..Default::default()
         };
         let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };
@@ -2294,7 +2294,7 @@ mod tests {
         };
         let mut fetcher: TestBatchValidator = TestBatchValidator {
             blocks: vec![l2_parent],
-            op_blocks: vec![block],
+            base_blocks: vec![block],
             ..Default::default()
         };
         let first = SpanBatchElement { epoch_num: 9, timestamp: 10, ..Default::default() };
@@ -2372,7 +2372,7 @@ mod tests {
         };
         let mut fetcher: TestBatchValidator = TestBatchValidator {
             blocks: vec![l2_block],
-            op_blocks: vec![block],
+            base_blocks: vec![block],
             ..Default::default()
         };
         let first = SpanBatchElement { epoch_num: 10, timestamp: 10, ..Default::default() };

@@ -43,7 +43,7 @@ use base_proof_contracts::{
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::ChallengerMetrics;
 
@@ -136,8 +136,10 @@ pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     config: ScannerConfig,
-    /// Cache of `game_type → intermediate_block_interval` to avoid repeated RPC calls.
-    interval_cache: Mutex<HashMap<u32, u64>>,
+    /// Cache of `(game_type, impl_address) → intermediate_block_interval` to avoid repeated
+    /// RPC calls. Keyed on both fields so that a governance `setImplementation` call
+    /// (which changes the impl address) automatically causes a cache miss.
+    interval_cache: Mutex<HashMap<(u32, Address), u64>>,
 }
 
 impl std::fmt::Debug for GameScanner {
@@ -284,9 +286,11 @@ impl GameScanner {
             // Path 1: TEE-proposed, unchallenged.
             (true, false, 0) => Some(GameCategory::InvalidTeeProposal),
 
-            // TEE-only game with a non-zero countered_index — unexpected state.
+            // Unreachable: `ci > 0` requires `challenge()` (which sets `zkProver`),
+            // and clearing `zkProver` runs through `_proofRefutedUpdate(ZK)` which
+            // also clears `ci`. Suspect contract bug if observed.
             (true, false, ci) => {
-                debug!(
+                error!(
                     index = index,
                     countered_index = ci,
                     "skipping TEE-only game with unexpected non-zero countered_index"
@@ -312,9 +316,12 @@ impl GameScanner {
             // Path 3: ZK-proposed, unchallenged.
             (false, true, 0) => Some(GameCategory::InvalidZkProposal),
 
-            // ZK-only game with a non-zero countered_index — unexpected state.
+            // Only reachable after a global `TEE_VERIFIER.nullify()` drops the
+            // TEE proof on a game with an active challenge (`_updateProofCount`
+            // does not clear `ci` for TEE refutations). Requires a TEE soundness
+            // break or key compromise.
             (false, true, ci) => {
-                debug!(
+                warn!(
                     index = index,
                     countered_index = ci,
                     "skipping ZK-only game with unexpected non-zero countered_index"
@@ -331,20 +338,26 @@ impl GameScanner {
     }
 
     /// Resolves the intermediate block interval for a game type, using a cache
-    /// to avoid repeated RPC calls for the same type.
+    /// to avoid repeated RPC calls for the same `(game_type, impl_address)` pair.
+    ///
+    /// The impl address is always fetched from the factory so that a governance
+    /// `setImplementation` call (which changes the address) automatically
+    /// invalidates the cached value.
     async fn resolve_intermediate_block_interval(&self, game_type: u32) -> Result<u64> {
-        {
-            let cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
-            if let Some(&interval) = cache.get(&game_type) {
-                return Ok(interval);
-            }
-        }
-
         let impl_address = self.factory_client.game_impls(game_type).await?;
         if impl_address == Address::ZERO {
             return Err(eyre::eyre!(
                 "no game implementation registered in DisputeGameFactory for game type {game_type}"
             ));
+        }
+
+        let cache_key = (game_type, impl_address);
+
+        {
+            let cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
+            if let Some(&interval) = cache.get(&cache_key) {
+                return Ok(interval);
+            }
         }
 
         let interval = self.verifier_client.read_intermediate_block_interval(impl_address).await?;
@@ -357,7 +370,7 @@ impl GameScanner {
         );
 
         let mut cache = self.interval_cache.lock().expect("interval_cache lock poisoned");
-        cache.insert(game_type, interval);
+        cache.insert(cache_key, interval);
 
         Ok(interval)
     }
