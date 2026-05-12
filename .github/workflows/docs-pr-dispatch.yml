@@ -21,7 +21,9 @@ permissions:
 env:
   DOCS_REPOSITORY: soheimam/nodes-docs
   DIFF_SIZE_LIMIT: 51200
-  EVENT_TYPE: node-methods-changed
+  # Code-change dispatches use this event_type. Release dispatches use a
+  # different one and are fired from docs-pr-dispatch-release.yml.
+  EVENT_TYPE: base-code-changed
 
 jobs:
   notify:
@@ -70,7 +72,7 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Compute diff against previous commit
+      - name: Compute diff and changed paths
         id: diff
         env:
           BEFORE_SHA: ${{ github.event.before }}
@@ -87,6 +89,7 @@ jobs:
           )
 
           diff_file="$RUNNER_TEMP/node-methods.diff"
+          changed_paths_file="$RUNNER_TEMP/changed-paths.json"
 
           if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
             base="${AFTER_SHA}^"
@@ -94,12 +97,20 @@ jobs:
             base="$BEFORE_SHA"
           fi
 
+          # Full unified diff for the watched paths.
           git diff "$base" "$AFTER_SHA" -- "${paths[@]}" > "$diff_file"
+
+          # List of changed file paths (relative to repo root). The docs-side
+          # router uses these to decide which doc pages to regenerate.
+          git diff "$base" "$AFTER_SHA" --name-only -- "${paths[@]}" \
+            | jq -R -s 'split("\n") | map(select(length > 0))' > "$changed_paths_file"
 
           diff_size=$(wc -c < "$diff_file" | tr -d ' ')
           echo "diff_size=$diff_size" >> "$GITHUB_OUTPUT"
           echo "diff_path=$diff_file" >> "$GITHUB_OUTPUT"
+          echo "changed_paths_path=$changed_paths_file" >> "$GITHUB_OUTPUT"
           echo "Computed diff: $diff_size bytes across ${#paths[@]} watched paths"
+          echo "Changed files: $(jq 'length' "$changed_paths_file")"
 
       - name: Resolve associated pull request
         id: pr
@@ -137,6 +148,7 @@ jobs:
         env:
           DIFF_SIZE: ${{ steps.diff.outputs.diff_size }}
           DIFF_PATH: ${{ steps.diff.outputs.diff_path }}
+          CHANGED_PATHS_PATH: ${{ steps.diff.outputs.changed_paths_path }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           SHA: ${{ github.sha }}
         run: |
@@ -161,15 +173,18 @@ jobs:
             --rawfile pr_body "$RUNNER_TEMP/pr_body.txt" \
             "${diff_arg[@]}" \
             --argjson truncated "$truncated" \
+            --slurpfile changed_paths "$CHANGED_PATHS_PATH" \
             '{
               event_type: $event_type,
               client_payload: {
+                kind: "code-change",
                 sha: $sha,
                 pr_number: $pr_number,
                 pr_title: $pr_title,
                 pr_body: $pr_body,
                 diff: $diff,
-                diff_truncated: $truncated
+                diff_truncated: $truncated,
+                changed_paths: $changed_paths[0]
               }
             }' > "$payload_file"
 
