@@ -59,8 +59,6 @@ pub enum EngineActorRequest {
     ProcessLocalUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
     /// Request to reset engine forkchoice.
     ResetRequest(Box<ResetRequest>),
-    /// Request for the engine to process the provided RPC request.
-    RpcRequest(Box<EngineRpcRequest>),
     /// Request to seal the block with the provided details.
     SealRequest(Box<SealRequest>),
 }

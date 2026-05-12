@@ -48,8 +48,6 @@ pub struct BoundlessConfig {
     pub poll_interval: Duration,
     /// Proof generation timeout.
     pub timeout: Duration,
-    /// `NitroEnclaveVerifier` contract address for certificate caching (optional).
-    pub nitro_verifier_address: Option<Address>,
     /// Maximum number of deterministic request-ID slots to probe when
     /// recovering in-flight proofs after an instance rotation.
     pub max_recovery_attempts: u32,
@@ -68,7 +66,6 @@ impl std::fmt::Debug for BoundlessConfig {
             .field("image_id", &self.image_id)
             .field("poll_interval", &self.poll_interval)
             .field("timeout", &self.timeout)
-            .field("nitro_verifier_address", &self.nitro_verifier_address)
             .field("max_recovery_attempts", &self.max_recovery_attempts)
             .field("max_attestation_age", &self.max_attestation_age)
             .finish()
@@ -93,8 +90,10 @@ pub struct CrlConfig {
     /// Whether CRL checking is enabled. When disabled, no CRL fetches or
     /// `revokeCert` transactions are attempted. Defaults to `false`.
     pub enabled: bool,
-    /// `NitroEnclaveVerifier` contract address on L1 for `revokeCert` calls.
-    /// Required when `enabled` is `true`.
+    /// `NitroEnclaveVerifier` contract address on L1. Required when
+    /// `enabled` is `true`; consulted both for the durable on-chain
+    /// `revokedCerts` pre-check and as the destination for outgoing
+    /// `revokeCert` transactions.
     pub nitro_verifier_address: Option<Address>,
     /// HTTP timeout for CRL fetches from AWS S3 endpoints.
     pub fetch_timeout: Duration,

@@ -81,6 +81,8 @@ pub struct MockGameState {
     pub is_respected: bool,
     /// Whether the game is retired in the `AnchorStateRegistry`.
     pub is_retired: bool,
+    /// Whether the `AnchorStateRegistry` is currently paused.
+    pub is_paused: bool,
     /// Current anchor root returned by the `AnchorStateRegistry`.
     pub anchor_root: AnchorRoot,
 }
@@ -114,6 +116,7 @@ impl Default for MockGameState {
             is_finalized: true,
             is_respected: true,
             is_retired: false,
+            is_paused: false,
             anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
         }
     }
@@ -415,6 +418,7 @@ impl AggregateVerifierClient for MockAggregateVerifier {
             blacklisted: state.is_blacklisted,
             retired: state.is_retired,
             respected: state.is_respected,
+            paused: state.is_paused,
             anchor_root: state.anchor_root,
         })
     }
@@ -493,6 +497,7 @@ pub const fn mock_state_with_tee(
         is_finalized: true,
         is_respected: true,
         is_retired: false,
+        is_paused: false,
         anchor_root: AnchorRoot { root: B256::ZERO, l2_block_number: 0 },
     }
 }

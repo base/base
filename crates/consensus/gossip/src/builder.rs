@@ -246,6 +246,58 @@ impl GossipDriverBuilder {
         let gater_config = self.gater_config.take().unwrap_or_default();
         let gate = crate::ConnectionGater::new(gater_config);
 
-        Ok((GossipDriver::new(swarm, addr, handler, sync_handler, sync_protocol, gate), signer_tx))
+        Ok((
+            GossipDriver::new(
+                swarm,
+                addr,
+                handler,
+                sync_handler,
+                sync_protocol,
+                gate,
+                self.peer_monitoring,
+            ),
+            signer_tx,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_chains::Chain;
+
+    use super::*;
+
+    fn test_builder() -> GossipDriverBuilder {
+        let rollup_config = RollupConfig {
+            l2_chain_id: Chain::base_mainnet(),
+            block_time: 2,
+            ..Default::default()
+        };
+        GossipDriverBuilder::new(
+            rollup_config,
+            Address::repeat_byte(0x11),
+            "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            Keypair::generate_secp256k1(),
+        )
+        .with_peer_scoring(PeerScoreLevel::Light)
+    }
+
+    #[tokio::test]
+    async fn build_preserves_peer_monitoring_when_set() {
+        let peer_monitoring =
+            PeerMonitoring { ban_threshold: -100.0, ban_duration: Duration::from_secs(60 * 60) };
+
+        let (driver, _signer_tx) =
+            test_builder().with_peer_monitoring(Some(peer_monitoring)).build().unwrap();
+
+        let configured = driver.peer_monitoring.expect("peer_monitoring should be wired through");
+        assert_eq!(configured.ban_threshold, -100.0);
+        assert_eq!(configured.ban_duration, Duration::from_secs(60 * 60));
+    }
+
+    #[tokio::test]
+    async fn build_leaves_peer_monitoring_unset_by_default() {
+        let (driver, _signer_tx) = test_builder().build().unwrap();
+        assert!(driver.peer_monitoring.is_none());
     }
 }

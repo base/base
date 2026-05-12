@@ -802,6 +802,7 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "base-common-genesis",
+ "revm",
  "spin 0.10.0",
 ]
 
@@ -837,8 +838,8 @@ dependencies = [
  "base-common-chains",
  "base-common-consensus",
  "base-common-flz",
+ "base-common-precompiles",
  "revm",
- "strum",
  "thiserror",
 ]
 
@@ -860,6 +861,14 @@ dependencies = [
  "serde",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "base-common-precompiles"
+version = "0.0.0"
+dependencies = [
+ "base-common-chains",
+ "revm",
 ]
 
 [[package]]

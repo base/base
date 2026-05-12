@@ -202,6 +202,20 @@ async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
     let exclusion_result = txs.hashes().find(|hash| hash == tx_high_gas.tx_hash());
     assert!(exclusion_result.is_none());
 
+    // Regression: the over-cap tx must be evicted from the pool and seeded into the
+    // shared rejection cache after the first post-execution rejection. Otherwise the
+    // builder will re-execute it on every subsequent flashblock/block attempt, turning
+    // the cap into an unpaid EVM-execution sink.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(
+        rbuilder.builder_config().rejection_cache.contains_key(tx_high_gas.tx_hash()),
+        "over-cap tx should be in the shared rejection cache after one rejection"
+    );
+    assert!(
+        !rbuilder.pool().exists(*tx_high_gas.tx_hash()),
+        "over-cap tx should be evicted from the txpool after one rejection"
+    );
+
     Ok(())
 }
 

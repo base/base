@@ -10,7 +10,7 @@ mod aggregate_verifier;
 pub use aggregate_verifier::{
     AggregateVerifierClient, AggregateVerifierContractClient, GameInfo, GameStatus,
     encode_challenge_calldata, encode_claim_credit_calldata, encode_nullify_calldata,
-    encode_resolve_calldata, l1_origin_too_old_selector,
+    encode_resolve_calldata, invalid_parent_game_selector, l1_origin_too_old_selector,
 };
 
 mod delayed_weth;
@@ -34,7 +34,9 @@ pub use tee_prover_registry::{
 };
 
 mod nitro_enclave_verifier;
-pub use nitro_enclave_verifier::INitroEnclaveVerifier;
+pub use nitro_enclave_verifier::{
+    INitroEnclaveVerifier, NitroEnclaveVerifierClient, NitroEnclaveVerifierContractClient,
+};
 
 mod error;
 pub use error::ContractError;
