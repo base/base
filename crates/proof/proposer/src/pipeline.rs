@@ -584,6 +584,10 @@ where
                 );
                 state.proved.insert(target_block, proof);
                 state.submitting = None;
+                // Drop cached recovery so the next tick re-walks from
+                // anchor. A submit failure may indicate the cached parent
+                // is no longer valid on-chain
+                state.cached_recovery = None;
                 state.record_gauges();
                 false
             }
@@ -2284,6 +2288,46 @@ mod tests {
 
         state.reset();
         assert!(state.cached_recovery.is_none(), "reset() should clear cached_recovery");
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_failed_submission_clears_cached_recovery() {
+        let pipeline =
+            recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
+        let target_block = TEST_BLOCK_INTERVAL;
+        let proposal = test_proposal(target_block);
+        let proof =
+            ProofResult::Tee { aggregate_proposal: proposal.clone(), proposals: vec![proposal] };
+
+        let mut state = PipelineState::new();
+        state.submitting = Some(target_block);
+        state.cached_recovery = Some(CachedRecovery {
+            game_count: 1,
+            state: RecoveredState {
+                parent_address: proxy_addr(0),
+                output_root: B256::repeat_byte(0x01),
+                l2_block_number: target_block,
+            },
+        });
+
+        let chain_next = pipeline
+            .handle_submit_result(
+                Ok(SubmitOutcome::Failed {
+                    target_block,
+                    proof,
+                    error: ProposerError::Contract("mock submission failure".into()),
+                }),
+                &mut state,
+            )
+            .await;
+
+        assert!(!chain_next, "failed submission should not chain another submit");
+        assert!(
+            state.cached_recovery.is_none(),
+            "failed submission must drop cached recovery so next tick re-walks fresh"
+        );
+        assert!(state.proved.contains_key(&target_block), "proof should be re-queued for retry");
+        assert!(state.submitting.is_none(), "submitting slot should be released");
     }
 
     // ---- Intermediate output root validation (submission) tests ----
