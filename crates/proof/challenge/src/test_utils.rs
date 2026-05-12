@@ -1110,6 +1110,30 @@ mod tests {
         );
     }
 
+    /// If a factory ever reused a proxy address, anchor lookup should return
+    /// the matching index nearest the end of the searched range.
+    #[tokio::test]
+    async fn test_find_game_index_returns_match_closest_to_end() {
+        let target = addr(99);
+        let mut games =
+            vec![factory_game(0, 1), factory_game(1, 1), factory_game(2, 1), factory_game(3, 1)];
+        games[1].proxy = target;
+        games[3].proxy = target;
+
+        let factory = Arc::new(RecordingDisputeGameFactory::new(games, vec![]));
+        let verifier = Arc::new(MockAggregateVerifier::new(HashMap::new()));
+        let scanner = GameScanner::new(
+            Arc::clone(&factory) as Arc<dyn DisputeGameFactoryClient>,
+            verifier,
+            mock_anchor_registry(Address::ZERO),
+        );
+
+        let (found, had_errors) = scanner.find_game_index(target, 0, 4).await;
+
+        assert_eq!(found, Some(3));
+        assert!(!had_errors);
+    }
+
     /// If reading the anchor snapshot fails after a cache has been populated,
     /// the scanner keeps using the cached anchor instead of scanning genesis.
     #[tokio::test]

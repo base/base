@@ -45,6 +45,7 @@ use base_proof_contracts::{
 };
 use eyre::Result;
 use futures::stream::{self, StreamExt};
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, error, info, warn};
 
 use crate::ChallengerMetrics;
@@ -156,6 +157,9 @@ pub struct GameScanner {
     factory_client: Arc<dyn DisputeGameFactoryClient>,
     verifier_client: Arc<dyn AggregateVerifierClient>,
     anchor_registry_client: Arc<dyn AnchorStateRegistryClient>,
+    /// Serializes scan ticks so scanner-local caches are updated from one
+    /// coherent view of the factory and anchor registry.
+    scan_lock: AsyncMutex<()>,
     /// Cache of `(game_type, impl_address) → intermediate_block_interval` to avoid repeated
     /// RPC calls. Keyed on both fields so that a governance `setImplementation` call
     /// (which changes the impl address) automatically causes a cache miss.
@@ -194,6 +198,7 @@ impl GameScanner {
             factory_client,
             verifier_client,
             anchor_registry_client,
+            scan_lock: AsyncMutex::new(()),
             interval_cache: Mutex::new(HashMap::new()),
             anchor_index: Mutex::new(None),
             tracking: Mutex::new(BTreeMap::new()),
@@ -224,6 +229,7 @@ impl GameScanner {
     /// `base_challenger_scan_tracked_in_progress` gauge, and
     /// `base_challenger_scan_head` gauge are updated.
     pub async fn scan(&self) -> Result<Vec<CandidateGame>> {
+        let _scan_guard = self.scan_lock.lock().await;
         let game_count = self.factory_client.game_count().await?;
 
         if game_count == 0 {
@@ -427,7 +433,7 @@ impl GameScanner {
                     }
                 };
                 if game.proxy == target {
-                    found = Some(found.map_or(index, |current: u64| current.min(index)));
+                    found = Some(found.map_or(index, |current: u64| current.max(index)));
                 }
             }
 
