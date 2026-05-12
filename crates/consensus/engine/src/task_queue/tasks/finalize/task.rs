@@ -34,7 +34,14 @@ impl<EngineClient_: EngineClient> EngineTaskExt for FinalizeTask<EngineClient_> 
         // Monotonicity guard: BinaryHeap does not define ordering between same-variant tasks,
         // so a stale FinalizeTask with a lower block number may be popped after a higher one
         // has already been executed. Skip it to prevent finalized_head from regressing.
-        if self.block_number < state.sync_state.finalized_head().block_info.number {
+        let finalized_head = state.sync_state.finalized_head().block_info.number;
+        if self.block_number < finalized_head {
+            debug!(
+                target: "engine",
+                block_number = self.block_number,
+                finalized_head,
+                "skipping stale finalize task"
+            );
             return Ok(());
         }
 
