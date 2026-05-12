@@ -84,7 +84,7 @@ pub struct PipelineConfig {
 /// - No cache exists (cold start / pipeline reset).
 /// - The anchor advanced past the cached tip (governance intervention).
 /// - `game_count` decreased (L1 reorg removed games).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CachedRecovery {
     /// Factory `game_count` at the time of the last walk.
     game_count: u64,
@@ -577,17 +577,22 @@ where
             }
             SubmitOutcome::Failed { target_block, proof, error } => {
                 Metrics::errors_total(error.metric_label()).increment(1);
-                warn!(
-                    error = %error,
-                    target_block,
-                    "Submission failed, will retry"
-                );
+                // Drop the cache only when the contract explicitly reports
+                // the parent is no longer valid; transient failures (RPC,
+                // gas/nonce, signing) leave it intact to avoid an
+                // unnecessary forward walk on the next tick.
+                if error.is_invalid_parent_game() {
+                    warn!(
+                        error = %error,
+                        target_block,
+                        "Submission rejected: parent game invalid, dropping recovery cache"
+                    );
+                    state.cached_recovery = None;
+                } else {
+                    warn!(error = %error, target_block, "Submission failed, will retry");
+                }
                 state.proved.insert(target_block, proof);
                 state.submitting = None;
-                // Drop cached recovery so the next tick re-walks from
-                // anchor. A submit failure may indicate the cached parent
-                // is no longer valid on-chain
-                state.cached_recovery = None;
                 state.record_gauges();
                 false
             }
@@ -2290,8 +2295,9 @@ mod tests {
         assert!(state.cached_recovery.is_none(), "reset() should clear cached_recovery");
     }
 
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_failed_submission_clears_cached_recovery() {
+    /// Pipeline, primed state with a cached recovery tip, and a proof ready
+    /// for `handle_submit_result(SubmitOutcome::Failed { .. })` tests.
+    fn submission_failure_fixture() -> (TestPipeline, PipelineState, ProofResult) {
         let pipeline =
             recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
         let target_block = TEST_BLOCK_INTERVAL;
@@ -2310,21 +2316,59 @@ mod tests {
             },
         });
 
+        (pipeline, state, proof)
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_invalid_parent_game_submission_clears_cached_recovery() {
+        let (pipeline, mut state, proof) = submission_failure_fixture();
+        let target_block = TEST_BLOCK_INTERVAL;
+        let cached_before = state.cached_recovery;
+
         let chain_next = pipeline
             .handle_submit_result(
                 Ok(SubmitOutcome::Failed {
                     target_block,
                     proof,
-                    error: ProposerError::Contract("mock submission failure".into()),
+                    error: ProposerError::InvalidParentGame,
                 }),
                 &mut state,
             )
             .await;
 
+        assert!(cached_before.is_some());
         assert!(!chain_next, "failed submission should not chain another submit");
-        assert!(
-            state.cached_recovery.is_none(),
-            "failed submission must drop cached recovery so next tick re-walks fresh"
+        assert!(state.cached_recovery.is_none(), "InvalidParentGame must drop the cache");
+        assert!(state.proved.contains_key(&target_block), "proof should be re-queued for retry");
+        assert!(state.submitting.is_none(), "submitting slot should be released");
+    }
+
+    #[rstest]
+    #[case::contract_revert(ProposerError::Contract("mock submission failure".into()))]
+    #[case::rpc_transport(ProposerError::Rpc(base_proof_rpc::RpcError::Transport("rpc down".into())))]
+    #[case::rpc_timeout(ProposerError::Rpc(base_proof_rpc::RpcError::Timeout("slow rpc".into())))]
+    #[case::tx_manager_nonce(ProposerError::TxManager(base_tx_manager::TxManagerError::NonceTooLow))]
+    #[case::tx_reverted(ProposerError::TxReverted("0xdeadbeef".into()))]
+    #[case::internal(ProposerError::Internal("bug".into()))]
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_transient_failed_submission_preserves_cached_recovery(
+        #[case] error: ProposerError,
+    ) {
+        let (pipeline, mut state, proof) = submission_failure_fixture();
+        let target_block = TEST_BLOCK_INTERVAL;
+        let cached_before = state.cached_recovery;
+
+        let chain_next = pipeline
+            .handle_submit_result(
+                Ok(SubmitOutcome::Failed { target_block, proof, error }),
+                &mut state,
+            )
+            .await;
+
+        assert!(!chain_next, "transient failure should not chain another submit");
+        assert_eq!(
+            state.cached_recovery, cached_before,
+            "transient failure must preserve the cached recovery tip"
         );
         assert!(state.proved.contains_key(&target_block), "proof should be re-queued for retry");
         assert!(state.submitting.is_none(), "submitting slot should be released");
