@@ -3,6 +3,8 @@
 use alloc::string::String;
 
 use alloy_primitives::{Address, Bytes};
+#[cfg(test)]
+use base_common_evm::BaseUpgrade;
 use base_common_evm::{BasePrecompiles, BaseSpecId};
 use revm::{
     context::{Cfg, ContextTr},
@@ -242,7 +244,8 @@ mod tests {
     #[test]
     fn test_precompile_lookup_uses_bytecode_address() {
         let mut ctx = create_test_context();
-        let mut precompiles = BaseZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
+        let mut precompiles =
+            BaseZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         // SHA256 precompile at address 0x02
         let sha256_addr = revm::precompile::u64_to_address(2);
@@ -266,7 +269,8 @@ mod tests {
     #[test]
     fn test_run_nonexistent_precompile() {
         let mut ctx = create_test_context();
-        let mut precompiles = BaseZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
+        let mut precompiles =
+            BaseZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let fake_addr = Address::from_slice(&[0xFFu8; 20]);
         let call_inputs = create_call_inputs(fake_addr, Bytes::new(), u64::MAX);
@@ -279,7 +283,8 @@ mod tests {
     #[test]
     fn test_run_out_of_gas() {
         let mut ctx = create_test_context();
-        let mut precompiles = BaseZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
+        let mut precompiles =
+            BaseZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let sha256_addr = revm::precompile::u64_to_address(2);
         let call_inputs = create_call_inputs(sha256_addr, Bytes::from_static(b"test"), 0);
@@ -295,7 +300,8 @@ mod tests {
     #[test]
     fn test_run_with_shared_buffer_empty() {
         let mut ctx = create_test_context();
-        let mut precompiles = BaseZkvmPrecompiles::new_with_spec(BaseSpecId::BEDROCK);
+        let mut precompiles =
+            BaseZkvmPrecompiles::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock));
 
         let sha256_addr = revm::precompile::u64_to_address(2);
         let call_inputs = CallInputs {
