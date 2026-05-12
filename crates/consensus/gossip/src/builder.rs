@@ -284,10 +284,8 @@ mod tests {
 
     #[tokio::test]
     async fn build_preserves_peer_monitoring_when_set() {
-        let peer_monitoring = PeerMonitoring {
-            ban_threshold: -100.0,
-            ban_duration: Duration::from_secs(60 * 60),
-        };
+        let peer_monitoring =
+            PeerMonitoring { ban_threshold: -100.0, ban_duration: Duration::from_secs(60 * 60) };
 
         let (driver, _signer_tx) =
             test_builder().with_peer_monitoring(Some(peer_monitoring)).build().unwrap();
