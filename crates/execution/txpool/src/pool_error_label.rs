@@ -8,7 +8,7 @@ pub struct PoolRejectionLabel;
 
 impl PoolRejectionLabel {
     /// Returns a `&'static str` label for the given [`PoolError`].
-    pub fn from_error(err: &PoolError) -> &'static str {
+    pub const fn from_error(err: &PoolError) -> &'static str {
         match &err.kind {
             PoolErrorKind::AlreadyImported => "already_imported",
             PoolErrorKind::ReplacementUnderpriced => "replacement_underpriced",

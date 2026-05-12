@@ -1117,6 +1117,7 @@ impl LoadRunner {
                 let submitted = self.collector.submitted_count();
                 let confirmed = self.collector.confirmed_count();
                 let failed = self.collector.failed_count();
+                let reverted = self.collector.reverted_count();
                 let in_flight = results_tracker.total_in_flight();
                 let senders_blocked = results_tracker.senders_at_limit(max_in_flight_per_sender);
                 let (p50, p99) = self.collector.rolling_p50_p99();
@@ -1129,6 +1130,7 @@ impl LoadRunner {
                     submitted,
                     confirmed,
                     failed,
+                    reverted,
                     in_flight,
                     senders_blocked,
                     gas_price = self.gas_price,
@@ -1383,6 +1385,7 @@ impl LoadRunner {
             submitted: self.collector.submitted_count(),
             confirmed: self.collector.confirmed_count(),
             failed: self.collector.failed_count(),
+            reverted: self.collector.reverted_count(),
             in_flight: results_tracker.total_in_flight(),
             senders_blocked: results_tracker.senders_at_limit(max_in_flight_per_sender),
             total_senders: account_count,
