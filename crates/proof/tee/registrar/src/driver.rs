@@ -703,7 +703,8 @@ where
         instance: &ProverInstance,
     ) -> Result<bool> {
         // Invariants enforced by `RegistrationDriver::new` when `crl.enabled`.
-        let verifier = self.nitro_verifier.as_deref().expect("nitro_verifier required when CRL enabled");
+        let verifier =
+            self.nitro_verifier.as_deref().expect("nitro_verifier required when CRL enabled");
         let verifier_address = verifier.address();
 
         // Parse the attestation document to get the cert chain.
@@ -734,7 +735,8 @@ where
         }
 
         // ── Layer 2: AWS CRL distribution point check ───────────────────
-        let http_client = self.crl_http_client.as_ref().expect("crl_http_client required when CRL enabled");
+        let http_client =
+            self.crl_http_client.as_ref().expect("crl_http_client required when CRL enabled");
 
         RegistrarMetrics::crl_checks_total().increment(1);
 
@@ -3160,5 +3162,4 @@ mod tests {
             "only intermediates (root and leaf skipped) should produce RPC calls",
         );
     }
-
 }
