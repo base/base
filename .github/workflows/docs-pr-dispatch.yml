@@ -26,12 +26,44 @@ env:
 jobs:
   notify:
     name: Dispatch contract change to docs repo
+    # Fork guard: do not run on forks of soheimam/base even if the workflow file
+    # is copied. The dispatch step holds a cross-repo PAT, so refusing to run
+    # outside the canonical repo is the cheapest form of containment.
+    if: github.repository == 'soheimam/base'
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner
         uses: step-security/harden-runner@95d9a5deda9de15063e7595e9719c11c38c90ae2 # v2.13.2
         with:
           egress-policy: audit
+
+      - name: Authorize trigger
+        # Defense in depth: push-to-main already requires write access via branch
+        # protection, but we explicitly verify the pusher (github.actor) has at
+        # least write permission via the REST collaborators endpoint. Fails the
+        # job before any cross-repo network call happens if the actor doesn't
+        # qualify. workflow_dispatch is gated the same way.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          perm=$(curl -sS --fail-with-body \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/collaborators/${ACTOR}/permission" \
+            | jq -r '.permission // "none"')
+          case "$perm" in
+            admin|maintain|write)
+              echo "Actor '$ACTOR' has '$perm' permission on $REPO."
+              ;;
+            *)
+              echo "Actor '$ACTOR' has '$perm' permission on $REPO — refusing to dispatch." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -72,14 +104,19 @@ jobs:
       - name: Resolve associated pull request
         id: pr
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Use the auto-injected workflow token; no gh CLI, no third-party tooling.
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
-          pr_json=$(gh api \
+          pr_json=$(curl -sS --fail-with-body \
             -H "Accept: application/vnd.github+json" \
-            "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
-            --jq '.[0] // {}')
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/commits/${SHA}/pulls" \
+            | jq '.[0] // {}')
 
           number=$(jq -r '.number // ""' <<< "$pr_json")
           title=$(jq -r '.title // ""' <<< "$pr_json")
@@ -101,6 +138,7 @@ jobs:
           DIFF_SIZE: ${{ steps.diff.outputs.diff_size }}
           DIFF_PATH: ${{ steps.diff.outputs.diff_path }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
@@ -117,7 +155,7 @@ jobs:
           payload_file="$RUNNER_TEMP/dispatch.json"
           jq -n \
             --arg event_type "$EVENT_TYPE" \
-            --arg sha "${{ github.sha }}" \
+            --arg sha "$SHA" \
             --arg pr_number "$PR_NUMBER" \
             --rawfile pr_title "$RUNNER_TEMP/pr_title.txt" \
             --rawfile pr_body "$RUNNER_TEMP/pr_body.txt" \
@@ -153,6 +191,7 @@ jobs:
         env:
           DOCS_PAT: ${{ secrets.DOCS_REPO_TOKEN }}
           PAYLOAD_PATH: ${{ steps.payload.outputs.payload_path }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
@@ -178,4 +217,4 @@ jobs:
             exit 1
           fi
 
-          echo "Dispatched '$EVENT_TYPE' to $DOCS_REPOSITORY for ${{ github.sha }}"
+          echo "Dispatched '$EVENT_TYPE' to $DOCS_REPOSITORY for ${SHA}"

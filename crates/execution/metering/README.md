@@ -178,3 +178,6 @@ estimation. These bytes are used to compute compressed transaction size via `flz
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
+
+<!-- e2e-dispatch-test: touched to verify docs-pr-dispatch.yml fires the receiver in nodes-docs -->
+
