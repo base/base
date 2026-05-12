@@ -198,8 +198,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         while let Some((task, _)) = self.tasks.peek() {
             // Execute the task.
             let outcome = match task.execute(&mut self.state).await {
-                Err(err) if err.severity() != EngineTaskErrorSeverity::Flush => return Err(err),
-                other => other,
+                Ok(()) => Ok(()),
+                Err(err) if err.severity() == EngineTaskErrorSeverity::Flush => Err(err),
+                Err(err) => return Err(err),
             };
 
             // Update the state and notify the engine actor.
