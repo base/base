@@ -181,6 +181,7 @@ impl InProcessConsensus {
                 sequencer_stopped: config.sequencer_stopped,
                 sequencer_recovery_mode: false,
                 conductor_rpc_url: None,
+                conductor_binary_commit: false,
                 l1_conf_delay: 0,
             });
         }

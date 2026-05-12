@@ -387,11 +387,21 @@ impl RollupNode {
 
         // Create the conductor client early — the engine processor needs it for the
         // bootstrap leadership check and the sequencer actor needs it for block building.
+        // When `conductor_binary_commit` is set, commit_unsafe_payload uses the
+        // SSZ-binary endpoint; the other RPCs (leader, active, override_leader)
+        // continue to use JSON-RPC.
+        let binary_commit = self.sequencer_config.conductor_binary_commit;
         let conductor: Option<ConductorClient> = self
             .sequencer_config
             .conductor_rpc_url
             .clone()
-            .map(ConductorClient::new_http)
+            .map(|url| {
+                if binary_commit {
+                    ConductorClient::new_http_with_binary_commit(url)
+                } else {
+                    ConductorClient::new_http(url)
+                }
+            })
             .transpose()
             .map_err(|e| format!("Failed to create conductor client: {e}"))?;
 

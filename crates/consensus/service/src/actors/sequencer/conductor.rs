@@ -7,7 +7,15 @@ use jsonrpsee::{
     core::ClientError,
     http_client::{HttpClient, HttpClientBuilder},
 };
+use ssz::Encode;
 use url::Url;
+
+/// HTTP route on the conductor that accepts SSZ-encoded payload envelopes.
+/// Mirrors `CommitUnsafePayloadPath` in op-conductor.
+const COMMIT_UNSAFE_PAYLOAD_PATH: &str = "/commit-unsafe-payload";
+
+/// Content-Type the conductor expects on the binary commit endpoint.
+const SSZ_CONTENT_TYPE: &str = "application/octet-stream";
 
 /// Trait for interacting with the conductor service.
 ///
@@ -33,10 +41,17 @@ pub trait Conductor: Debug + Send + Sync {
 }
 
 /// A client for communicating with the conductor service via RPC.
+///
+/// Always uses jsonrpsee for `leader`, `active`, and `override_leader`. For
+/// `commit_unsafe_payload`, dispatches to the SSZ-binary endpoint when
+/// `binary_commit` is set on construction; otherwise uses the JSON-RPC method.
 #[derive(Debug, Clone)]
 pub struct ConductorClient {
-    /// The inner HTTP client.
+    /// The inner JSON-RPC HTTP client.
     inner: HttpClient,
+    /// The reqwest client + endpoint URL for the binary commit path. `None`
+    /// means use JSON-RPC for commits.
+    binary: Option<BinaryCommitClient>,
 }
 
 #[async_trait]
@@ -53,6 +68,9 @@ impl Conductor for ConductorClient {
         &self,
         payload: &BaseExecutionPayloadEnvelope,
     ) -> Result<(), ConductorError> {
+        if let Some(bin) = &self.binary {
+            return bin.commit_unsafe_payload(payload).await;
+        }
         Ok(self.inner.conductor_commit_unsafe_payload(payload.clone()).await?)
     }
 
@@ -62,10 +80,71 @@ impl Conductor for ConductorClient {
 }
 
 impl ConductorClient {
-    /// Creates a new conductor client using HTTP transport.
+    /// Creates a new conductor client using HTTP transport (JSON-RPC for all
+    /// methods).
     pub fn new_http(url: Url) -> Result<Self, ConductorError> {
         let inner = HttpClientBuilder::default().build(url)?;
-        Ok(Self { inner })
+        Ok(Self { inner, binary: None })
+    }
+
+    /// Creates a new conductor client where `commit_unsafe_payload` uses the
+    /// SSZ-binary endpoint at `<url>/commit-unsafe-payload` and the other RPCs
+    /// stay on JSON-RPC. The conductor must be running with the binary
+    /// endpoint enabled.
+    pub fn new_http_with_binary_commit(url: Url) -> Result<Self, ConductorError> {
+        let inner = HttpClientBuilder::default().build(url.clone())?;
+        let binary = BinaryCommitClient::new(url)?;
+        Ok(Self { inner, binary: Some(binary) })
+    }
+}
+
+/// Thin reqwest wrapper for the conductor's SSZ-binary commit endpoint.
+///
+/// Wire format (matches op-conductor `BinaryCommitHandler`):
+/// ```text
+///   POST /commit-unsafe-payload
+///   Content-Type: application/octet-stream
+///   Body: SSZ-encoded BaseExecutionPayloadEnvelope (raw bytes, no length
+///         prefix; for V3+ payloads the parent_beacon_block_root is the first
+///         32 bytes per `<BaseExecutionPayloadEnvelope as ssz::Encode>`).
+/// ```
+/// Returns `Ok(())` on 200, `ConductorError::Binary` otherwise.
+#[derive(Debug, Clone)]
+struct BinaryCommitClient {
+    http: reqwest::Client,
+    endpoint: Url,
+}
+
+impl BinaryCommitClient {
+    fn new(base_url: Url) -> Result<Self, ConductorError> {
+        let endpoint = base_url
+            .join(COMMIT_UNSAFE_PAYLOAD_PATH)
+            .map_err(|e| ConductorError::Binary(format!("invalid conductor url: {e}")))?;
+        let http = reqwest::Client::builder()
+            .build()
+            .map_err(|e| ConductorError::Binary(format!("build http client: {e}")))?;
+        Ok(Self { http, endpoint })
+    }
+
+    async fn commit_unsafe_payload(
+        &self,
+        payload: &BaseExecutionPayloadEnvelope,
+    ) -> Result<(), ConductorError> {
+        let body = payload.as_ssz_bytes();
+        let resp = self
+            .http
+            .post(self.endpoint.clone())
+            .header(reqwest::header::CONTENT_TYPE, SSZ_CONTENT_TYPE)
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| ConductorError::Binary(format!("send: {e}")))?;
+        if resp.status().is_success() {
+            return Ok(());
+        }
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        Err(ConductorError::Binary(format!("{status}: {}", text.trim())))
     }
 }
 
@@ -78,4 +157,7 @@ pub enum ConductorError {
     /// The conductor rejected the payload because this node is not the leader.
     #[error("not the conductor leader")]
     NotLeader,
+    /// An error occurred while talking to the conductor's binary commit endpoint.
+    #[error("binary commit error: {0}")]
+    Binary(String),
 }
