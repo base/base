@@ -146,13 +146,6 @@ pub trait EthApiOverride {
     ) -> RpcResult<U256>;
 
     /// Simulates transactions with flashblock state support.
-    ///
-    /// As of the current build, each entry in the returned `Vec<SimulatedBlock>`
-    /// carries a new `flashblockIndex` field (hex string) indicating which
-    /// pre-confirmed Flashblock the simulation was anchored against. The field
-    /// is `"0x0"` when no Flashblocks have arrived for the pending block yet.
-    /// Callers that want to correlate simulation output with eventual on-chain
-    /// inclusion should pin retries to the same `flashblockIndex`.
     #[method(name = "simulateV1")]
     async fn simulate_v1(
         &self,
