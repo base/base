@@ -22,7 +22,10 @@ pub struct OnlineBlobStore<T: BlobProvider> {
 /// This is only invoked when fetching the blobs in online mode. In zkVM mode,
 /// the blobs are given upfront.
 #[async_trait]
-impl<T: BlobProvider + Send> BlobProvider for OnlineBlobStore<T> {
+impl<T: BlobProvider + Send> BlobProvider for OnlineBlobStore<T>
+where
+    T::Error: From<base_proof::OracleProviderError>,
+{
     type Error = T::Error;
 
     async fn get_and_validate_blobs(
@@ -35,7 +38,8 @@ impl<T: BlobProvider + Send> BlobProvider for OnlineBlobStore<T> {
 
         let mut store = self.store.lock().unwrap();
         for blob in &blobs {
-            let (c_kzg_blob, commitment, proof) = get_blob_data(blob, &settings);
+            let (c_kzg_blob, commitment, proof) = get_blob_data(blob, &settings)
+                .map_err(|e| base_proof::OracleProviderError::BlobVerification(e.to_string()))?;
 
             store.blobs.push(c_kzg_blob);
             store.commitments.push(commitment);
@@ -46,13 +50,19 @@ impl<T: BlobProvider + Send> BlobProvider for OnlineBlobStore<T> {
 }
 
 /// Get the blob data for the given blob with the given settings.
-fn get_blob_data(blob: &Blob, settings: &EnvKzgSettings) -> (KzgRsBlob, Bytes48, Bytes48) {
-    let c_kzg_blob = c_kzg::Blob::from_bytes(blob.as_slice()).unwrap();
-    let commitment = settings.get().blob_to_kzg_commitment(&c_kzg_blob).unwrap();
-    let proof = settings.get().compute_blob_kzg_proof(&c_kzg_blob, &commitment.to_bytes()).unwrap();
-    (
-        KzgRsBlob::from_slice(&*c_kzg_blob).unwrap(),
+fn get_blob_data(blob: &Blob, settings: &EnvKzgSettings) -> Result<(KzgRsBlob, Bytes48, Bytes48)> {
+    let c_kzg_blob = c_kzg::Blob::from_bytes(blob.as_slice())
+        .map_err(|e| anyhow::anyhow!("Failed to parse blob from bytes: {:?}", e))?;
+    let commitment = settings.get().blob_to_kzg_commitment(&c_kzg_blob)
+        .map_err(|e| anyhow::anyhow!("Failed to compute KZG commitment: {:?}", e))?;
+    let proof = settings.get().compute_blob_kzg_proof(&c_kzg_blob, &commitment.to_bytes())
+        .map_err(|e| anyhow::anyhow!("Failed to compute KZG proof: {:?}", e))?;
+    let kzg_rs_blob = KzgRsBlob::from_slice(&*c_kzg_blob)
+        .map_err(|e| anyhow::anyhow!("Failed to load KZG blob: {:?}", e))?;
+
+    Ok((
+        kzg_rs_blob,
         kzg_rs::Bytes48(*commitment.to_bytes()),
         kzg_rs::Bytes48(*proof.to_bytes()),
-    )
+    ))
 }
