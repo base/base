@@ -82,6 +82,8 @@ struct ResultsTrackerInner {
 struct PendingTransaction {
     from: Address,
     submit_time: Instant,
+    /// Whether in-flight accounting was already released (e.g. by flashblock confirmation).
+    in_flight_released: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -125,7 +127,7 @@ impl ResultsTracker {
 
             inner.pending.insert(
                 transaction.tx_hash,
-                PendingTransaction { from: transaction.from, submit_time },
+                PendingTransaction { from: transaction.from, submit_time, in_flight_released: false },
             );
             inner
                 .in_flight_per_sender
@@ -138,6 +140,10 @@ impl ResultsTracker {
     }
 
     /// Records transaction inclusions observed from the flashblock stream.
+    ///
+    /// When a pending transaction is seen in a flashblock, its in-flight slot is released
+    /// immediately so the sender can submit new transactions without waiting for the slower
+    /// canonical block receipt.
     pub fn on_new_flashblock(&self, inclusions: Vec<FlashblockInclusion>) {
         let mut inner = self.inner.write();
 
@@ -145,6 +151,14 @@ impl ResultsTracker {
             if let Entry::Vacant(e) = inner.flashblocks.entry(inclusion.tx_hash) {
                 e.insert(inclusion.included_at);
                 inner.flashblock_eviction_queue.push_back(inclusion.tx_hash);
+            }
+
+            if let Some(pending) = inner.pending.get_mut(&inclusion.tx_hash) {
+                if !pending.in_flight_released {
+                    pending.in_flight_released = true;
+                    let from = pending.from;
+                    inner.decrement_in_flight(&from);
+                }
             }
         }
 
@@ -190,7 +204,9 @@ impl ResultsTracker {
         let expired_count = expired.len() as u64;
         for tx_hash in expired {
             if let Some(pending) = inner.pending.remove(&tx_hash) {
-                inner.decrement_in_flight(&pending.from);
+                if !pending.in_flight_released {
+                    inner.decrement_in_flight(&pending.from);
+                }
             }
         }
 
@@ -257,7 +273,9 @@ impl ResultsTrackerInner {
         metrics.reverted = !receipt.success;
 
         self.block_receipts.remove(&tx_hash);
-        self.decrement_in_flight(&pending.from);
+        if !pending.in_flight_released {
+            self.decrement_in_flight(&pending.from);
+        }
         self.unreported_confirmations.push_back(metrics);
     }
 
@@ -388,5 +406,62 @@ mod tests {
         let metrics = tracker.drain_confirmed_metrics();
         assert_eq!(metrics.len(), 1);
         assert!(metrics[0].flashblocks_latency.is_some());
+    }
+
+    #[test]
+    fn flashblock_releases_in_flight_before_block_receipt() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(4);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        assert_eq!(tracker.total_in_flight(), 1);
+        assert_eq!(tracker.in_flight_for(&from), 1);
+
+        tracker
+            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
+        assert_eq!(tracker.total_in_flight(), 0, "flashblock should release in-flight slot");
+        assert_eq!(tracker.in_flight_for(&from), 0);
+
+        // Block receipt arrives later — should not double-decrement.
+        let block_time = Instant::now() + Duration::from_millis(500);
+        tracker.on_new_block(
+            BlockObservation {
+                number: 10,
+                block_time: Some(block_time),
+                observed_at: block_time + Duration::from_millis(100),
+            },
+            vec![BlockReceipt {
+                tx_hash,
+                block_number: 10,
+                gas_used: 112_000,
+                effective_gas_price: 1_000_000_000,
+                success: true,
+            }],
+        );
+
+        assert_eq!(tracker.total_in_flight(), 0, "block receipt should not double-decrement");
+        let metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(metrics.len(), 1, "metrics should still be produced from block receipt");
+        assert!(metrics[0].flashblocks_latency.is_some());
+    }
+
+    #[test]
+    fn duplicate_flashblock_does_not_double_release() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(5);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        assert_eq!(tracker.total_in_flight(), 1);
+
+        tracker
+            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
+        assert_eq!(tracker.total_in_flight(), 0);
+
+        // Duplicate flashblock event for same tx.
+        tracker
+            .on_new_flashblock(vec![FlashblockInclusion { tx_hash, included_at: Instant::now() }]);
+        assert_eq!(tracker.total_in_flight(), 0, "duplicate flashblock should not underflow");
     }
 }
