@@ -206,13 +206,14 @@ pub fn gen_word_from(values: &[&str]) -> U256 {
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::Address;
+
     use super::*;
     use crate::{
         provider::{Handler, LayoutCtx},
         storage_ctx::StorageCtx,
         types::Slot,
     };
-    use alloy_primitives::Address;
 
     // -- HELPER FUNCTION TESTS ----------------------------------------------------
 

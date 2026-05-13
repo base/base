@@ -211,8 +211,9 @@ pub(crate) fn extract_mapping_types(ty: &Type) -> Option<(&Type, &Type)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use syn::parse_quote;
+
+    use super::*;
 
     #[test]
     fn test_to_snake_case() {

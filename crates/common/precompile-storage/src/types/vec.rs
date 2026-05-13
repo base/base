@@ -6,8 +6,9 @@
 //! - **Base slot**: Stores the array length
 //! - **Data slots**: Start at `keccak256(len_slot)`; elements packed where possible.
 
-use alloy_primitives::{Address, U256, keccak256};
 use std::ops::{Index, IndexMut};
+
+use alloy_primitives::{Address, U256, keccak256};
 
 use crate::{
     error::{BasePrecompileError, Result},

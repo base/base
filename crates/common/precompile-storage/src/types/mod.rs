@@ -10,12 +10,12 @@ pub mod set;
 pub mod slot;
 pub mod vec;
 
+use std::{cell::RefCell, collections::HashMap, hash::Hash};
+
 pub use bytes_like::*;
 pub use mapping::Mapping;
 pub use set::{Set, SetHandler};
 pub use slot::Slot;
-
-use std::{cell::RefCell, collections::HashMap, hash::Hash};
 
 pub use crate::provider::{
     FromWord, Handler, Layout, LayoutCtx, Packable, Storable, StorableType, StorageKey,

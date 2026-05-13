@@ -9,12 +9,10 @@ mod storable_tests;
 mod test_fields;
 mod utils;
 
+use contract::ContractConfig;
 pub(crate) use contract::{FieldInfo, FieldKind};
-
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
-
-use contract::ContractConfig;
 
 /// Transforms a struct that represents a storage layout into a contract with helper methods to
 /// easily interact with the EVM storage.

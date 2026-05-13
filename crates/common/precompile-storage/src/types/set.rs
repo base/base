@@ -6,8 +6,9 @@
 //! - **Values Vec**: A `Vec<T>` storing all set elements at `keccak256(base_slot)`
 //! - **Positions Mapping**: A `Mapping<T, u32>` at `base_slot + 1` (1-indexed, 0 = not present)
 
-use alloy_primitives::{Address, U256};
 use std::{collections::HashSet, fmt, hash::Hash, ops::Deref};
+
+use alloy_primitives::{Address, U256};
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -310,9 +311,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use alloy_primitives::Address;
+
     use super::*;
     use crate::{hashmap::setup_storage, storage_ctx::StorageCtx};
-    use alloy_primitives::Address;
 
     #[test]
     fn test_set_insert_contains_remove() {

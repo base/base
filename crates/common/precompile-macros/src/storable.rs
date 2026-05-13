@@ -534,8 +534,9 @@ fn gen_delete_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use syn::parse_quote;
+
+    use super::*;
 
     fn parse_enum(input: DeriveInput) -> DataEnum {
         match input.data {

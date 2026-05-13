@@ -1,9 +1,10 @@
+use std::collections::HashMap;
+
 use alloy_primitives::{Address, LogData, U256};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     state::{AccountInfo, Bytecode},
 };
-use std::collections::HashMap;
 
 use crate::{error::BasePrecompileError, provider::PrecompileStorageProvider};
 

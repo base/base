@@ -10,8 +10,9 @@
 //! - Base slot: stores `length * 2 + 1` (bit 0 = 1 indicates long string)
 //! - Data slots: stored at `keccak256(main_slot) + i` for each 32-byte chunk
 
-use alloy_primitives::{Address, Bytes, U256, keccak256};
 use std::marker::PhantomData;
+
+use alloy_primitives::{Address, Bytes, U256, keccak256};
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -267,9 +268,10 @@ fn encode_long_string_length(byte_length: usize) -> U256 {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::{hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx};
-    use proptest::prelude::*;
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>()

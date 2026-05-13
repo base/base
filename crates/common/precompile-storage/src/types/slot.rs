@@ -1,7 +1,8 @@
 //! Type-safe wrapper for a single EVM storage slot.
 
-use alloy_primitives::{Address, U256};
 use std::marker::PhantomData;
+
+use alloy_primitives::{Address, U256};
 
 use crate::{
     error::Result,
@@ -137,10 +138,11 @@ impl<T: Storable> Handler<T> for Slot<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{hashmap::setup_storage, provider::StorageKey};
     use alloy_primitives::B256;
     use proptest::prelude::*;
+
+    use super::*;
+    use crate::{hashmap::setup_storage, provider::StorageKey};
 
     fn arb_address() -> impl Strategy<Value = Address> {
         any::<[u8; 20]>().prop_map(Address::from)

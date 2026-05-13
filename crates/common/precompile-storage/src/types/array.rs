@@ -4,8 +4,9 @@
 //! - **Base slot**: Arrays start directly at `base_slot` (not at keccak256)
 //! - Small elements (`T::BYTES` ≤ 16) are packed; larger elements use full slots.
 
-use alloy_primitives::{Address, U256};
 use std::ops::{Index, IndexMut};
+
+use alloy_primitives::{Address, U256};
 
 use crate::{
     error::Result,

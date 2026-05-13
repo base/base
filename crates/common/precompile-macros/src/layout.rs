@@ -1,9 +1,10 @@
+use quote::{format_ident, quote};
+use syn::{Expr, Ident, Visibility};
+
 use crate::{
     FieldKind,
     packing::{self, LayoutField, PackingConstants, SlotAssignment},
 };
-use quote::{format_ident, quote};
-use syn::{Expr, Ident, Visibility};
 
 pub(crate) fn gen_handler_field_decl(field: &LayoutField<'_>) -> proc_macro2::TokenStream {
     let field_name = field.name;

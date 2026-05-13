@@ -4,6 +4,8 @@
 //! thread-local [`PrecompileStorageProvider`]. All storage operations within
 //! a precompile call must happen inside a [`StorageCtx::enter`] closure.
 
+use std::cell::RefCell;
+
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
 use revm::{
@@ -12,7 +14,6 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 use scoped_tls::scoped_thread_local;
-use std::cell::RefCell;
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -309,8 +310,9 @@ unsafe fn extend_lifetime_mut<'b, T: ?Sized>(r: &mut T) -> &'b mut T {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::U256;
+
+    use super::*;
 
     #[test]
     #[should_panic(expected = "already borrowed")]

@@ -1,13 +1,16 @@
 //! Type-safe wrapper for EVM storage mappings (hash-based key-value storage).
 
-use alloy_primitives::{Address, U256};
 use std::{
     hash::Hash,
     ops::{Index, IndexMut},
 };
 
-use crate::provider::{Layout, LayoutCtx, StorableType, StorageKey};
-use crate::types::HandlerCache;
+use alloy_primitives::{Address, U256};
+
+use crate::{
+    provider::{Layout, LayoutCtx, StorableType, StorageKey},
+    types::HandlerCache,
+};
 
 /// Type-safe access wrapper for EVM storage mappings.
 #[derive(Debug, Clone)]
@@ -98,8 +101,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::{Address, B256, U256, keccak256};
+
+    use super::*;
 
     fn old_mapping_slot<K: AsRef<[u8]>>(key: K, slot: U256) -> U256 {
         let key = key.as_ref();

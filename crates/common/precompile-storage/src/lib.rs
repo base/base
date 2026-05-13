@@ -20,9 +20,8 @@ pub mod evm;
 /// In-memory storage backend for tests.
 pub mod hashmap;
 
-pub use evm::EvmPrecompileStorageProvider;
-
 pub use error::{BasePrecompileError, IntoPrecompileResult, Result};
+pub use evm::EvmPrecompileStorageProvider;
 pub use packing::FieldLocation;
 pub use provider::{
     ContractStorage, FromWord, Handler, Layout, LayoutCtx, Packable, PrecompileStorageProvider,

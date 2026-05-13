@@ -4,10 +4,12 @@
 
 use alloy_primitives::{Address, U256};
 
-use crate::provider::{
-    FromWord, Layout, LayoutCtx, Packable, StorableType, StorageKey, sealed::OnlyPrimitives,
+use crate::{
+    provider::{
+        FromWord, Layout, LayoutCtx, Packable, StorableType, StorageKey, sealed::OnlyPrimitives,
+    },
+    types::Slot,
 };
-use crate::types::Slot;
 
 // Rust integers: (u)int8, (u)int16, (u)int32, (u)int64, (u)int128
 base_precompile_macros::storable_rust_ints!();
@@ -91,13 +93,14 @@ impl StorageKey for Address {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::{
         hashmap::setup_storage,
         provider::{Handler, LayoutCtx},
         storage_ctx::StorageCtx,
     };
-    use proptest::prelude::*;
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>()
