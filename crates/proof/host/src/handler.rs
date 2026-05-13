@@ -30,6 +30,7 @@ const HOST_SERVER_TARGET: &str = "host_server";
 const PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS: u64 = 10;
 const PAYLOAD_WITNESS_PREFETCH_MAX_IN_FLIGHT: usize = 10;
 const PAYLOAD_WITNESS_PREFETCH_MAX_READY: usize = 16;
+const PAYLOAD_WITNESS_PREFETCH_MAX_COMPLETED_BLOCKS: usize = 1024;
 const PAYLOAD_WITNESS_PREFETCH_MAX_LOOKAHEAD_PARENTS: usize = 64;
 const PAYLOAD_WITNESS_PREFETCH_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const EXECUTION_WITNESS_PREIMAGE_WRITE_BATCH_SIZE: usize = 256;
@@ -84,6 +85,8 @@ struct PayloadWitnessPrefetchState {
     entries: HashMap<B256, PayloadWitnessCacheEntry>,
     ready_order: VecDeque<B256>,
     scheduled_blocks: HashSet<u64>,
+    completed_blocks: HashSet<u64>,
+    completed_block_order: VecDeque<u64>,
     scheduled_lookahead_parents: HashSet<B256>,
     scheduled_lookahead_parent_order: VecDeque<B256>,
 }
@@ -241,6 +244,8 @@ impl PayloadWitnessPrefetcher {
                 }
             };
 
+            // The witness hint identifies the current payload by parent hash plus payload
+            // attributes, so the current payload number is the parent block number plus one.
             let current_block_number = parent_block.header.inner.number + 1;
             let first_prefetch_block = current_block_number + 1;
             let last_prefetch_block =
@@ -312,12 +317,30 @@ impl PayloadWitnessPrefetcher {
 
     fn mark_block_scheduled(&self, block_number: u64) -> bool {
         let mut state = self.lock_state();
+        if state.completed_blocks.contains(&block_number) {
+            return false;
+        }
+
         state.scheduled_blocks.insert(block_number)
     }
 
     fn unmark_block_scheduled(&self, block_number: u64) {
         let mut state = self.lock_state();
         state.scheduled_blocks.remove(&block_number);
+    }
+
+    fn mark_block_completed(&self, block_number: u64) {
+        let mut state = self.lock_state();
+        state.scheduled_blocks.remove(&block_number);
+        if state.completed_blocks.insert(block_number) {
+            state.completed_block_order.push_back(block_number);
+        }
+
+        while state.completed_block_order.len() > PAYLOAD_WITNESS_PREFETCH_MAX_COMPLETED_BLOCKS {
+            if let Some(evicted_block) = state.completed_block_order.pop_front() {
+                state.completed_blocks.remove(&evicted_block);
+            }
+        }
     }
 
     fn try_mark_in_flight(&self, keys: &[B256]) -> Option<Arc<Notify>> {
@@ -416,8 +439,11 @@ impl PayloadWitnessPrefetcher {
         kv: SharedKeyValueStore,
         block_number: u64,
     ) {
-        self.prefetch_block_inner(cfg, providers, kv, block_number).await;
-        self.unmark_block_scheduled(block_number);
+        if self.prefetch_block_inner(cfg, providers, kv, block_number).await {
+            self.mark_block_completed(block_number);
+        } else {
+            self.unmark_block_scheduled(block_number);
+        }
     }
 
     async fn prefetch_block_inner(
@@ -426,10 +452,10 @@ impl PayloadWitnessPrefetcher {
         providers: Arc<HostProviders>,
         kv: SharedKeyValueStore,
         block_number: u64,
-    ) {
+    ) -> bool {
         let _permit = match self.inner.semaphore.acquire().await {
             Ok(permit) => permit,
-            Err(_) => return,
+            Err(_) => return false,
         };
 
         let block = match providers
@@ -445,7 +471,7 @@ impl PayloadWitnessPrefetcher {
                     block_number,
                     "payload witness prefetch skipped: block not found"
                 );
-                return;
+                return false;
             }
             Err(err) => {
                 debug!(
@@ -454,7 +480,7 @@ impl PayloadWitnessPrefetcher {
                     error = %err,
                     "payload witness prefetch skipped: failed to fetch block"
                 );
-                return;
+                return false;
             }
         };
 
@@ -468,7 +494,7 @@ impl PayloadWitnessPrefetcher {
                     error = %err,
                     "payload witness prefetch skipped: failed to reconstruct payload attributes"
                 );
-                return;
+                return false;
             }
         };
         let payload_timestamp = payload_attributes.payload_attributes.timestamp;
@@ -483,12 +509,12 @@ impl PayloadWitnessPrefetcher {
                     error = %err,
                     "payload witness prefetch skipped: failed to compute cache key"
                 );
-                return;
+                return false;
             }
         };
 
         let Some(notify) = self.try_mark_in_flight(&keys) else {
-            return;
+            return false;
         };
         let in_flight = PayloadWitnessInFlightGuard::new(self.clone(), keys.clone(), notify);
 
@@ -523,7 +549,7 @@ impl PayloadWitnessPrefetcher {
                     "payload witness prefetch failed: debug_executePayload failed"
                 );
                 in_flight.mark_failed();
-                return;
+                return false;
             }
         };
         let rpc_elapsed = rpc_start.elapsed();
@@ -543,7 +569,7 @@ impl PayloadWitnessPrefetcher {
                 "payload witness prefetch failed: preimage insertion failed"
             );
             in_flight.mark_failed();
-            return;
+            return false;
         }
         let insert_elapsed = insert_start.elapsed();
 
@@ -576,6 +602,8 @@ impl PayloadWitnessPrefetcher {
             total_elapsed_ms = (rpc_elapsed + insert_elapsed).as_millis(),
             "payload witness prefetch completed"
         );
+
+        true
     }
 }
 
@@ -1392,6 +1420,24 @@ mod tests {
         }
 
         assert!(prefetcher.mark_lookahead_parent_scheduled(parent));
+    }
+
+    #[test]
+    fn test_payload_witness_completed_blocks_deduplicate_and_evict() {
+        let prefetcher = PayloadWitnessPrefetcher::new();
+        let block_number = u64::MAX;
+
+        assert!(prefetcher.mark_block_scheduled(block_number));
+        prefetcher.mark_block_completed(block_number);
+        assert!(!prefetcher.mark_block_scheduled(block_number));
+
+        for index in 0..PAYLOAD_WITNESS_PREFETCH_MAX_COMPLETED_BLOCKS {
+            let next_block = u64::try_from(index).unwrap();
+            assert!(prefetcher.mark_block_scheduled(next_block));
+            prefetcher.mark_block_completed(next_block);
+        }
+
+        assert!(prefetcher.mark_block_scheduled(block_number));
     }
 
     #[tokio::test]
