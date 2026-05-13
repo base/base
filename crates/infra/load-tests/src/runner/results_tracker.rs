@@ -190,6 +190,9 @@ impl ResultsTracker {
     }
 
     /// Expires submitted transactions that were not observed in a canonical block.
+    ///
+    /// Transactions already confirmed by a flashblock are not expired — they are
+    /// assumed to be included on-chain even if the block receipt has not arrived yet.
     pub fn expire_pending(&self, max_age: Duration) -> u64 {
         let now = Instant::now();
         let mut inner = self.inner.write();
@@ -197,6 +200,9 @@ impl ResultsTracker {
             .pending
             .iter()
             .filter_map(|(tx_hash, pending)| {
+                if pending.in_flight_released {
+                    return None;
+                }
                 (now.duration_since(pending.submit_time) > max_age).then_some(*tx_hash)
             })
             .collect();

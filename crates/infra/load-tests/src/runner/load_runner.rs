@@ -1492,15 +1492,10 @@ impl LoadRunner {
             .start(),
         );
 
-        info!(url = %self.config.query_rpc, "starting block watcher");
-        let block_watcher_task = Some(
-            BlockWatcher::new(
-                RootProvider::<Base>::new_http(self.config.query_rpc.clone()),
-                results_tracker.clone(),
-                self.cancel_token.clone(),
-            )
-            .start(),
-        );
+        // Block watcher is deferred until after the submission phase so that heavy
+        // eth_getBlockReceipts calls don't compete with tx submission on the query RPC.
+        // Flashblock confirmations handle in-flight release during the test.
+        let block_watcher_query_rpc = self.config.query_rpc.clone();
 
         let max_in_flight_per_sender = self.config.max_in_flight_per_sender;
 
@@ -1827,6 +1822,16 @@ impl LoadRunner {
             elapsed_secs = elapsed.as_secs(),
             actual_tps = submitted as f64 / elapsed.as_secs_f64(),
             "load test complete, draining confirmations"
+        );
+
+        info!(url = %block_watcher_query_rpc, "starting block watcher for confirmation drain");
+        let block_watcher_task = Some(
+            BlockWatcher::new(
+                RootProvider::<Base>::new_http(block_watcher_query_rpc),
+                results_tracker.clone(),
+                self.cancel_token.clone(),
+            )
+            .start(),
         );
 
         let drain_start = Instant::now();
