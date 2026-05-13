@@ -10,7 +10,7 @@ WITH ranked AS (
         id,
         ROW_NUMBER() OVER (
             PARTITION BY proof_request_id, session_type
-            ORDER BY created_at ASC, id ASC
+            ORDER BY created_at DESC, id DESC
         ) AS row_num
     FROM proof_sessions
     WHERE status IN ('SUBMITTING', 'RUNNING')
