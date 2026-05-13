@@ -192,6 +192,36 @@ pub trait EthApiOverride {
     /// Only available on the Flashblocks-aware RPC endpoints
     /// (`mainnet-preconf.base.org`, `sepolia-preconf.base.org`). Standard
     /// public endpoints return a `Method not found` error.
+    ///
+    /// # Returns
+    ///
+    /// Array of simulated block results, one per entry in `blockStateCalls`.
+    /// Each `SimulatedBlock` carries the standard hydrated block envelope
+    /// (`number`, `hash`, `gasUsed`, `baseFeePerGas`) populated by the
+    /// flashblock executor so consumers can size cumulative gas budgets,
+    /// dereference state by hash, and rebuild call-execution context without
+    /// a second RPC round-trip.
+    ///
+    /// The wrapping `calls` array in each block uses the standard simulate
+    /// call-result shape: `status`, `gasUsed`, `returnData`, `logs`, and an
+    /// optional `error` object. When a call reverts, `error` is an object
+    /// with two fields:
+    ///
+    /// - `message: String` — a short human-readable revert reason. Mirrors
+    ///   what RPC clients render today.
+    /// - `code: i64` — a numeric revert classification. Useful for callers
+    ///   that want to programmatically distinguish revert types (e.g.
+    ///   out-of-gas vs explicit revert) without parsing the prose.
+    ///
+    /// Both fields are always present together; consumers should not see
+    /// a partially-populated error object.
+    ///
+    /// # Logs in `calls[*].logs`
+    ///
+    /// The logs returned for each simulated call include ETH transfer logs
+    /// when `traceTransfers: true` was passed in the request; otherwise only
+    /// emitted contract logs appear. This matches the standard
+    /// `eth_simulateV1` contract.
     #[method(name = "simulateV1")]
     async fn simulate_v1(
         &self,
