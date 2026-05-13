@@ -11,8 +11,8 @@ pub use metrics::Metrics;
 
 mod beacon_client;
 pub use beacon_client::{
-    APIConfigResponse, APIGenesisResponse, BeaconBlobClient, BeaconClient, BeaconClientError,
-    OnlineBeaconClient, ReducedConfigData, ReducedGenesisData,
+    APIConfigResponse, APIGenesisResponse, BeaconClient, BeaconClientError, OnlineBeaconClient,
+    ReducedConfigData, ReducedGenesisData,
 };
 
 mod blobs;

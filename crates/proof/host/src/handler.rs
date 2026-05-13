@@ -5,11 +5,7 @@ use std::{
 };
 
 use alloy_consensus::Header;
-use alloy_eips::{
-    BlockNumberOrTag,
-    eip2718::Encodable2718,
-    eip4844::{FIELD_ELEMENTS_PER_BLOB, kzg_to_versioned_hash},
-};
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB};
 use alloy_network::Network;
 use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
 use alloy_provider::Provider;
@@ -27,8 +23,7 @@ use tokio::sync::{Mutex, Notify, Semaphore};
 use tracing::{debug, info, warn};
 
 use crate::{
-    HostConfig, HostError, HostProviders, KeyValueStore, Metrics, Result, SharedKeyValueStore,
-    store_ordered_trie,
+    HostConfig, HostError, HostProviders, Metrics, Result, SharedKeyValueStore, store_ordered_trie,
 };
 
 const PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS: u64 = 10;
@@ -778,113 +773,6 @@ pub fn parse_blob_hint(hint_data: &[u8]) -> Result<(B256, u64)> {
     }
 }
 
-fn store_blob_preimages(
-    kv: &mut dyn KeyValueStore,
-    hash: B256,
-    BlobWithCommitmentAndProof { blob, kzg_proof: proof, kzg_commitment: commitment }: BlobWithCommitmentAndProof,
-) -> Result<()> {
-    let mut blob_key = [0u8; 80];
-    blob_key[..48].copy_from_slice(commitment.as_ref());
-    for i in 0..FIELD_ELEMENTS_PER_BLOB {
-        blob_key[48..]
-            .copy_from_slice(ROOTS_OF_UNITY[i as usize].into_bigint().to_bytes_be().as_ref());
-        let blob_key_hash = keccak256(blob_key.as_ref());
-
-        kv.set(PreimageKey::new_keccak256(*blob_key_hash).into(), blob_key.into())?;
-        kv.set(
-            PreimageKey::new(*blob_key_hash, PreimageKeyType::Blob).into(),
-            blob.as_ref()[(i as usize) << 5..(i as usize + 1) << 5].to_vec(),
-        )?;
-    }
-
-    blob_key[72..].copy_from_slice(FIELD_ELEMENTS_PER_BLOB.to_be_bytes().as_ref());
-    let blob_key_hash = keccak256(blob_key.as_ref());
-
-    kv.set(PreimageKey::new_keccak256(*blob_key_hash).into(), blob_key.into())?;
-    kv.set(PreimageKey::new(*blob_key_hash, PreimageKeyType::Blob).into(), proof.to_vec())?;
-
-    // Store the commitment last so it doubles as the cache-complete marker. If any field element
-    // or proof write fails first, later hints will retry instead of treating a partial blob as
-    // cached.
-    kv.set(PreimageKey::new(*hash, PreimageKeyType::Sha256).into(), commitment.to_vec())?;
-
-    Ok(())
-}
-
-fn has_blob_preimages_in_store(kv: &dyn KeyValueStore, hash: B256) -> bool {
-    kv.get(PreimageKey::new(*hash, PreimageKeyType::Sha256).into()).is_some()
-}
-
-async fn has_blob_preimages(kv: &SharedKeyValueStore, hash: B256) -> bool {
-    has_blob_preimages_in_store(&*kv.read().await, hash)
-}
-
-async fn store_blob_preimages_if_missing(
-    kv: &SharedKeyValueStore,
-    hash: B256,
-    blob: BlobWithCommitmentAndProof,
-) -> Result<bool> {
-    let mut kv_lock = kv.write().await;
-    if has_blob_preimages_in_store(&*kv_lock, hash) {
-        return Ok(false);
-    }
-
-    store_blob_preimages(&mut *kv_lock, hash, blob)?;
-    Ok(true)
-}
-
-async fn fetch_and_store_single_blob(
-    providers: &HostProviders,
-    kv: SharedKeyValueStore,
-    block_ref: &BlockInfo,
-    hash: B256,
-) -> Result<()> {
-    let mut blobs = providers
-        .blobs
-        .fetch_blobs_with_proofs(block_ref, &[hash])
-        .await
-        .map_err(|e| HostError::BlobSidecarFetchFailed(e.to_string()))?;
-    if blobs.len() != 1 {
-        return Err(HostError::BlobCountMismatch { expected: 1, actual: blobs.len() });
-    }
-
-    let blob = blobs.pop().expect("Expected 1 blob");
-    store_blob_preimages_if_missing(&kv, hash, blob).await?;
-    Ok(())
-}
-
-async fn fetch_and_store_slot_blobs(
-    providers: &HostProviders,
-    kv: SharedKeyValueStore,
-    block_ref: &BlockInfo,
-    requested_hash: B256,
-) -> Result<bool> {
-    let blobs = providers
-        .blobs
-        .fetch_all_blobs_with_proofs(block_ref)
-        .await
-        .map_err(|e| HostError::BlobSidecarFetchFailed(e.to_string()))?;
-
-    let mut found_requested_hash = false;
-    let mut remaining_blobs = Vec::with_capacity(blobs.len());
-    for blob in blobs {
-        let hash = kzg_to_versioned_hash(blob.kzg_commitment.as_slice());
-        if hash == requested_hash {
-            found_requested_hash = true;
-            store_blob_preimages_if_missing(&kv, hash, blob).await?;
-            continue;
-        }
-
-        remaining_blobs.push((hash, blob));
-    }
-
-    for (hash, blob) in remaining_blobs {
-        store_blob_preimages_if_missing(&kv, hash, blob).await?;
-    }
-
-    Ok(found_requested_hash)
-}
-
 /// Fetches data in response to a hint.
 pub async fn handle_hint(
     hint: Hint<HintType>,
@@ -972,35 +860,47 @@ async fn handle_hint_inner(
 
             let partial_block_ref = BlockInfo { timestamp, ..Default::default() };
 
-            if has_blob_preimages(&kv, hash).await {
-                return Ok(());
-            }
-
-            match fetch_and_store_slot_blobs(providers, Arc::clone(&kv), &partial_block_ref, hash)
+            let mut blobs = providers
+                .blobs
+                .fetch_blobs_with_proofs(&partial_block_ref, &[hash])
                 .await
-            {
-                Ok(true) => {}
-                Ok(false) => {
-                    warn!(
-                        target: "blob_provider",
-                        ?hash,
-                        "Full-slot blob fetch did not include requested hash; retrying filtered fetch"
-                    );
-                    fetch_and_store_single_blob(providers, kv, &partial_block_ref, hash).await?;
-                }
-                Err(err) => {
-                    if !matches!(err, HostError::BlobSidecarFetchFailed(_)) {
-                        return Err(err);
-                    }
-
-                    warn!(
-                        target: "blob_provider",
-                        error = %err,
-                        "Full-slot blob fetch failed; retrying filtered fetch"
-                    );
-                    fetch_and_store_single_blob(providers, kv, &partial_block_ref, hash).await?;
-                }
+                .map_err(|e| HostError::BlobSidecarFetchFailed(e.to_string()))?;
+            if blobs.len() != 1 {
+                return Err(HostError::BlobCountMismatch { expected: 1, actual: blobs.len() });
             }
+            let BlobWithCommitmentAndProof { blob, kzg_proof: proof, kzg_commitment: commitment } =
+                blobs.pop().expect("Expected 1 blob");
+
+            let mut kv_lock = kv.write().await;
+
+            kv_lock.set(
+                PreimageKey::new(*hash, PreimageKeyType::Sha256).into(),
+                commitment.to_vec(),
+            )?;
+
+            let mut blob_key = [0u8; 80];
+            blob_key[..48].copy_from_slice(commitment.as_ref());
+            for i in 0..FIELD_ELEMENTS_PER_BLOB {
+                blob_key[48..].copy_from_slice(
+                    ROOTS_OF_UNITY[i as usize].into_bigint().to_bytes_be().as_ref(),
+                );
+                let blob_key_hash = keccak256(blob_key.as_ref());
+
+                kv_lock.set(PreimageKey::new_keccak256(*blob_key_hash).into(), blob_key.into())?;
+                kv_lock.set(
+                    PreimageKey::new(*blob_key_hash, PreimageKeyType::Blob).into(),
+                    blob.as_ref()[(i as usize) << 5..(i as usize + 1) << 5].to_vec(),
+                )?;
+            }
+
+            blob_key[72..].copy_from_slice(FIELD_ELEMENTS_PER_BLOB.to_be_bytes().as_ref());
+            let blob_key_hash = keccak256(blob_key.as_ref());
+
+            kv_lock.set(PreimageKey::new_keccak256(*blob_key_hash).into(), blob_key.into())?;
+            kv_lock.set(
+                PreimageKey::new(*blob_key_hash, PreimageKeyType::Blob).into(),
+                proof.to_vec(),
+            )?;
         }
         HintType::L1Precompile => {
             if hint.data.len() < 28 {
@@ -1326,10 +1226,7 @@ async fn handle_hint_inner(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{HashMap, HashSet},
-        sync::Arc,
-    };
+    use std::{collections::HashSet, sync::Arc};
 
     use alloy_genesis::ChainConfig;
     use alloy_provider::{RootProvider, builder as provider_builder, mock::Asserter};
@@ -1548,80 +1445,6 @@ mod tests {
         assert_eq!(state.ready_order.len(), PAYLOAD_WITNESS_PREFETCH_MAX_READY);
         assert!(!state.entries.contains_key(&evicted_keys[0]));
         assert!(!state.entries.contains_key(&evicted_keys[1]));
-    }
-
-    #[derive(Default)]
-    struct FailingKeyValueStore {
-        store: HashMap<B256, Vec<u8>>,
-        set_calls: usize,
-        fail_on_call: usize,
-    }
-
-    impl KeyValueStore for FailingKeyValueStore {
-        fn get(&self, key: B256) -> Option<Vec<u8>> {
-            self.store.get(&key).cloned()
-        }
-
-        fn set(&mut self, key: B256, value: Vec<u8>) -> Result<()> {
-            if self.set_calls == self.fail_on_call {
-                return Err(HostError::Custom("injected kv failure".into()));
-            }
-
-            self.set_calls += 1;
-            self.store.insert(key, value);
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn test_store_blob_preimages_writes_commitment_last() {
-        let writes_before_commitment = FIELD_ELEMENTS_PER_BLOB as usize * 2 + 2;
-        let mut kv =
-            FailingKeyValueStore { fail_on_call: writes_before_commitment, ..Default::default() };
-        let blob = BlobWithCommitmentAndProof {
-            blob: Box::default(),
-            kzg_commitment: [0x11u8; 48].into(),
-            kzg_proof: [0x22u8; 48].into(),
-        };
-
-        let result = store_blob_preimages(&mut kv, TEST_HASH, blob);
-
-        assert!(result.is_err());
-        assert_eq!(kv.set_calls, writes_before_commitment);
-        assert!(kv.get(PreimageKey::new(*TEST_HASH, PreimageKeyType::Sha256).into()).is_none());
-
-        let mut proof_key = [0u8; 80];
-        proof_key[..48].copy_from_slice(&[0x11u8; 48]);
-        proof_key[48..].copy_from_slice(
-            ROOTS_OF_UNITY[(FIELD_ELEMENTS_PER_BLOB - 1) as usize]
-                .into_bigint()
-                .to_bytes_be()
-                .as_ref(),
-        );
-        proof_key[72..].copy_from_slice(FIELD_ELEMENTS_PER_BLOB.to_be_bytes().as_ref());
-        let proof_key_hash = keccak256(proof_key.as_ref());
-
-        assert_eq!(
-            kv.get(PreimageKey::new(*proof_key_hash, PreimageKeyType::Blob).into()),
-            Some(vec![0x22u8; 48])
-        );
-    }
-
-    #[tokio::test]
-    async fn test_store_blob_preimages_if_missing_skips_cached_blob() {
-        let mut store = HashMap::new();
-        store.insert(PreimageKey::new(*TEST_HASH, PreimageKeyType::Sha256).into(), vec![0x11; 48]);
-        let kv: SharedKeyValueStore =
-            Arc::new(RwLock::new(FailingKeyValueStore { store, fail_on_call: 0, set_calls: 0 }));
-        let blob = BlobWithCommitmentAndProof {
-            blob: Box::default(),
-            kzg_commitment: [0x11u8; 48].into(),
-            kzg_proof: [0x22u8; 48].into(),
-        };
-
-        let stored = store_blob_preimages_if_missing(&kv, TEST_HASH, blob).await.unwrap();
-
-        assert!(!stored);
     }
 
     #[tokio::test]

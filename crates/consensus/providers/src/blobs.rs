@@ -9,7 +9,7 @@ use base_consensus_derive::{BlobProvider, BlobProviderError};
 use base_protocol::BlockInfo;
 use tracing::warn;
 
-use crate::{BeaconBlobClient, BeaconClient, Metrics};
+use crate::{BeaconClient, Metrics};
 
 /// A boxed blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,44 +176,6 @@ impl<B: BeaconClient> OnlineBlobProvider<B> {
     }
 }
 
-impl<B: BeaconBlobClient> OnlineBlobProvider<B> {
-    /// Fetches all blobs for the given slot.
-    async fn fetch_all_blobs(&self, slot: u64) -> Result<Vec<BoxedBlob>, BlobProviderError> {
-        Metrics::blob_prefetches().increment(1);
-
-        let result = self.beacon_client.beacon_blobs(slot).await.map_err(|e| {
-            let Some(missing_slot) = B::slot_not_found(&e) else {
-                return BlobProviderError::Backend(e.to_string());
-            };
-            warn!(
-                target: "blob_provider",
-                slot = missing_slot,
-                "Beacon slot not found (404); slot may be missed or orphaned, \
-                 triggering pipeline reset"
-            );
-            BlobProviderError::BlobNotFound { slot: missing_slot, reason: e.to_string() }
-        });
-
-        if result.is_err() {
-            Metrics::blob_prefetch_errors().increment(1);
-        }
-
-        result
-    }
-
-    /// Fetches and computes KZG commitments/proofs for every blob in the block's L1 slot.
-    pub async fn fetch_all_blobs_with_proofs(
-        &self,
-        block_ref: &BlockInfo,
-    ) -> Result<Vec<BlobWithCommitmentAndProof>, BlobProviderError> {
-        let slot = Self::slot(self.genesis_time, self.slot_interval, block_ref.timestamp)?;
-        let blobs = self.fetch_all_blobs(slot).await?;
-
-        Self::blobs_with_proofs(blobs)
-            .map_err(|e| BlobProviderError::Backend(format!("KZG commitment error: {e}")))
-    }
-}
-
 #[async_trait]
 impl<B> BlobProvider for OnlineBlobProvider<B>
 where
@@ -256,7 +218,7 @@ mod tests {
     use base_protocol::BlockInfo;
 
     use super::{BlobWithCommitmentAndProof, BoxedBlob, OnlineBlobProvider};
-    use crate::{APIConfigResponse, APIGenesisResponse, BeaconBlobClient, BeaconClient};
+    use crate::{APIConfigResponse, APIGenesisResponse, BeaconClient};
 
     /// Local error type for [`MockBeaconClient`].
     #[derive(Debug)]
@@ -318,17 +280,6 @@ mod tests {
                         .ok_or(MockBeaconError::BlobNotFound(*hash))
                 })
                 .collect()
-        }
-    }
-
-    #[async_trait]
-    impl BeaconBlobClient for MockBeaconClient {
-        async fn beacon_blobs(&self, _slot: u64) -> Result<Vec<BoxedBlob>, Self::Error> {
-            if self.fail_with_slot_not_found {
-                return Err(MockBeaconError::SlotNotFound);
-            }
-
-            Ok(self.blobs.values().map(|blob| BoxedBlob { blob: Box::new(*blob) }).collect())
         }
     }
 
@@ -434,35 +385,5 @@ mod tests {
             recomputed_hash, hash,
             "versioned hash derived from returned commitment must equal the requested hash"
         );
-    }
-
-    /// Verifies that `fetch_all_blobs_with_proofs` computes commitments/proofs
-    /// for every blob returned by the beacon client.
-    #[tokio::test]
-    async fn test_fetch_all_blobs_with_proofs_kzg_valid() {
-        let blob_a: Blob = FixedBytes::repeat_byte(1);
-        let blob_b: Blob = FixedBytes::repeat_byte(2);
-        let hash_a = versioned_hash_for(&blob_a);
-        let hash_b = versioned_hash_for(&blob_b);
-
-        let mut mock = MockBeaconClient::default();
-        mock.blobs.insert(hash_a, blob_a);
-        mock.blobs.insert(hash_b, blob_b);
-
-        let provider =
-            OnlineBlobProvider { beacon_client: mock, genesis_time: 0, slot_interval: 12 };
-        let block_ref = BlockInfo { timestamp: 12, ..Default::default() };
-
-        let result = provider.fetch_all_blobs_with_proofs(&block_ref).await.unwrap();
-        let mut recomputed_hashes = result
-            .iter()
-            .map(|blob| kzg_to_versioned_hash(blob.kzg_commitment.as_slice()))
-            .collect::<Vec<_>>();
-        recomputed_hashes.sort();
-
-        let mut expected_hashes = vec![hash_a, hash_b];
-        expected_hashes.sort();
-
-        assert_eq!(recomputed_hashes, expected_hashes);
     }
 }
