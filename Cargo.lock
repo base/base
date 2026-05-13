@@ -2726,13 +2726,19 @@ dependencies = [
 name = "base"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
  "base-cli-utils",
  "base-common-chains",
+ "base-consensus-cli",
+ "base-execution-chainspec",
+ "base-execution-cli",
  "clap",
  "eyre",
  "figment",
+ "reth-cli-runner",
  "serde",
- "tracing",
+ "tokio",
+ "url",
 ]
 
 [[package]]

@@ -42,6 +42,35 @@ pub struct L2ClientArgs {
     pub l2_trust_rpc: bool,
 }
 
+/// L2 client arguments for embedded consensus nodes.
+#[derive(Clone, Debug, clap::Args)]
+pub struct EmbeddedL2ClientArgs {
+    /// JWT secret for the auth-rpc endpoint of the execution client.
+    /// This MUST be a valid path to a file containing the hex-encoded JWT secret.
+    #[arg(long, visible_alias = "l2.jwt-secret", env = "BASE_NODE_L2_ENGINE_AUTH")]
+    pub l2_engine_jwt_secret: Option<PathBuf>,
+    /// Hex encoded JWT secret to use for the authenticated engine-API RPC server.
+    /// This MUST be a valid hex-encoded JWT secret of 64 digits.
+    #[arg(long, visible_alias = "l2.jwt-secret-encoded", env = "BASE_NODE_L2_ENGINE_AUTH_ENCODED")]
+    pub l2_engine_jwt_encoded: Option<JwtSecret>,
+    /// Timeout for http calls in milliseconds.
+    #[arg(
+        long,
+        visible_alias = "l2.timeout",
+        env = "BASE_NODE_L2_ENGINE_TIMEOUT",
+        default_value_t = DEFAULT_L2_ENGINE_TIMEOUT
+    )]
+    pub l2_engine_timeout: u64,
+    /// If false, block hash verification is performed for all retrieved blocks.
+    #[arg(
+        long,
+        visible_alias = "l2.trust-rpc",
+        env = "BASE_NODE_L2_TRUST_RPC",
+        default_value_t = DEFAULT_L2_TRUST_RPC
+    )]
+    pub l2_trust_rpc: bool,
+}
+
 impl Default for L2ClientArgs {
     fn default() -> Self {
         Self {
@@ -50,6 +79,29 @@ impl Default for L2ClientArgs {
             l2_engine_jwt_encoded: None,
             l2_engine_timeout: DEFAULT_L2_ENGINE_TIMEOUT,
             l2_trust_rpc: DEFAULT_L2_TRUST_RPC,
+        }
+    }
+}
+
+impl Default for EmbeddedL2ClientArgs {
+    fn default() -> Self {
+        Self {
+            l2_engine_jwt_secret: None,
+            l2_engine_jwt_encoded: None,
+            l2_engine_timeout: DEFAULT_L2_ENGINE_TIMEOUT,
+            l2_trust_rpc: DEFAULT_L2_TRUST_RPC,
+        }
+    }
+}
+
+impl From<EmbeddedL2ClientArgs> for L2ClientArgs {
+    fn from(args: EmbeddedL2ClientArgs) -> Self {
+        Self {
+            l2_engine_jwt_secret: args.l2_engine_jwt_secret,
+            l2_engine_jwt_encoded: args.l2_engine_jwt_encoded,
+            l2_engine_timeout: args.l2_engine_timeout,
+            l2_trust_rpc: args.l2_trust_rpc,
+            ..Self::default()
         }
     }
 }

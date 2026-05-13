@@ -29,7 +29,7 @@ mod l1;
 pub use l1::L1ClientArgs;
 
 mod l2;
-pub use l2::L2ClientArgs;
+pub use l2::{EmbeddedL2ClientArgs, L2ClientArgs};
 
 mod metrics;
 pub use metrics::CliMetrics;
@@ -37,10 +37,11 @@ pub use metrics::CliMetrics;
 mod node;
 pub use node::{
     ConsensusNodeArgs, ConsensusNodeCommand, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
+    EmbeddedConsensusNodeConfigArgs,
 };
 
 mod rpc;
-pub use rpc::RpcArgs;
+pub use rpc::{EmbeddedRpcArgs, RpcArgs};
 
 mod sequencer;
 pub use sequencer::SequencerArgs;

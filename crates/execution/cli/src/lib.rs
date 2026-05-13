@@ -13,6 +13,8 @@ pub mod app;
 pub mod chainspec;
 /// Base CLI commands.
 pub mod commands;
+mod node;
+pub use node::{ExecutionNodeArgs, ExecutionNodeLaunchConfig};
 /// Standard Base execution-node runner wiring.
 pub mod standard_node;
 

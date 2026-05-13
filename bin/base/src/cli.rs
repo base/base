@@ -1,5 +1,12 @@
+use std::path::Path;
+
+use base_consensus_cli::{
+    ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
+};
+use base_execution_cli::ExecutionNodeArgs;
 use clap::{Args, Parser, Subcommand};
-use tracing::info;
+use reth_cli_runner::CliRunner;
+use url::Url;
 
 use crate::config::{ChainArg, ResolvedChainConfig};
 
@@ -77,15 +84,56 @@ pub(crate) enum NodeSubcommand {
 }
 
 /// Arguments for `base node rpc`.
-#[derive(Args, Clone, Debug, Default)]
-pub(crate) struct RpcCommand;
+#[derive(Args, Clone, Debug)]
+pub(crate) struct RpcCommand {
+    /// Execution node arguments.
+    #[command(flatten)]
+    pub(crate) execution: ExecutionNodeArgs,
+
+    /// Consensus node arguments.
+    #[command(flatten)]
+    pub(crate) consensus: EmbeddedConsensusNodeConfigArgs,
+}
 
 impl RpcCommand {
     /// Runs the `rpc` flavor.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        info!(chain = ?resolved_chain, "Hello, I'm running this chain");
-        Ok(())
+        let execution_chain = resolved_chain.execution_chain_spec()?;
+        let consensus_chain = resolved_chain.consensus_chain_args();
+        let consensus_args = ConsensusNodeArgs::new(consensus_chain, self.consensus.into());
+        let rollup_config = consensus_args.load_rollup_config()?;
+
+        let execution = self.execution.into_launch_config(execution_chain).with_auth_ipc();
+        let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
+
+        CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            let launched = execution.launch_default(ctx).await?;
+            let handle = launched.handle;
+            let _execution_node = handle.node;
+            let execution_exit = handle.node_exit_future;
+
+            let overrides = ConsensusNodeOverrides {
+                l2_engine_rpc: Some(l2_engine_rpc),
+                l2_engine_jwt_secret: None,
+            };
+
+            tokio::select! {
+                result = execution_exit => result,
+                result = consensus_args.start_with_overrides(rollup_config, overrides) => {
+                    result.map_err(|e| eyre::eyre!(e))
+                }
+            }
+        })
     }
+}
+
+fn engine_ipc_url(path: &str) -> eyre::Result<Url> {
+    let path = Path::new(path);
+    let path =
+        if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
+    Url::from_file_path(&path).map_err(|()| {
+        eyre::eyre!("failed to convert auth IPC path to file URL: {}", path.display())
+    })
 }
 
 #[cfg(test)]
@@ -97,9 +145,18 @@ mod tests {
     use super::*;
     use crate::config::BuiltInChain;
 
+    const REQUIRED_CONSENSUS_ARGS: &[&str] =
+        &["--l1-eth-rpc", "http://localhost:8545", "--l1-beacon", "http://localhost:5052"];
+
+    fn node_rpc_args(args: &'static [&'static str]) -> Vec<&'static str> {
+        let mut full_args = Vec::from(args);
+        full_args.extend_from_slice(REQUIRED_CONSENSUS_ARGS);
+        full_args
+    }
+
     #[test]
     fn parses_default_chain_for_node_rpc() {
-        let cli = BaseCli::parse_from(["base", "node", "rpc"]);
+        let cli = BaseCli::parse_from(node_rpc_args(&["base", "node", "rpc"]));
 
         assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Mainnet)));
         assert!(matches!(cli.command, BaseCommand::Node(_)));
@@ -107,16 +164,44 @@ mod tests {
 
     #[test]
     fn parses_named_chain_selector() {
-        let cli = BaseCli::parse_from(["base", "-c", "sepolia", "node", "rpc"]);
+        let cli = BaseCli::parse_from(node_rpc_args(&["base", "-c", "sepolia", "node", "rpc"]));
+
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
+    }
+
+    #[test]
+    fn parses_global_chain_after_rpc_subcommand() {
+        let cli =
+            BaseCli::parse_from(node_rpc_args(&["base", "node", "rpc", "--chain", "sepolia"]));
 
         assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
     }
 
     #[test]
     fn parses_path_chain_selector() {
-        let cli = BaseCli::parse_from(["base", "--chain", "./chain.toml", "node", "rpc"]);
+        let cli =
+            BaseCli::parse_from(node_rpc_args(&["base", "--chain", "./chain.toml", "node", "rpc"]));
 
         assert!(matches!(cli.chain, ChainArg::File(_)));
+    }
+
+    #[test]
+    fn parses_execution_port_and_consensus_rpc_port() {
+        let cli = BaseCli::parse_from(node_rpc_args(&[
+            "base",
+            "node",
+            "rpc",
+            "--port",
+            "30333",
+            "--rpc.port",
+            "9546",
+        ]));
+
+        let BaseCommand::Node(node) = cli.command;
+        let NodeSubcommand::Rpc(rpc) = node.command;
+
+        assert_eq!(rpc.execution.network.port, 30333);
+        assert_eq!(rpc.consensus.rpc_flags.listen_port, 9546);
     }
 
     #[test]
@@ -130,9 +215,10 @@ mod tests {
 
     #[test]
     fn rejects_multiple_chain_selectors() {
-        let err =
-            BaseCli::try_parse_from(["base", "-c", "mainnet", "--chain", "sepolia", "node", "rpc"])
-                .unwrap_err();
+        let err = BaseCli::try_parse_from(node_rpc_args(&[
+            "base", "-c", "mainnet", "--chain", "sepolia", "node", "rpc",
+        ]))
+        .unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("cannot be used multiple times"));

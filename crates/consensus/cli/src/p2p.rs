@@ -191,6 +191,7 @@ pub struct P2PArgs {
     /// The interval in seconds to find peers using the discovery service.
     /// Defaults to 5 seconds.
     #[arg(
+        id = "consensus_p2p_discovery_interval",
         long = "p2p.discovery.interval",
         default_value = "5",
         env = "BASE_NODE_P2P_DISCOVERY_INTERVAL"
@@ -215,13 +216,22 @@ pub struct P2PArgs {
     pub redial_period: u64,
 
     /// An optional list of bootnode ENRs or node records to start the node with.
-    #[arg(long = "p2p.bootnodes", value_delimiter = ',', env = "BASE_NODE_P2P_BOOTNODES")]
+    #[arg(
+        id = "consensus_p2p_bootnodes",
+        long = "p2p.bootnodes",
+        value_delimiter = ',',
+        env = "BASE_NODE_P2P_BOOTNODES"
+    )]
     pub bootnodes: Vec<String>,
 
     /// Path to a file containing bootnode ENRs or node records.
     ///
     /// Entries may be separated by newlines or commas.
-    #[arg(long = "p2p.bootnodes-file", env = "BASE_NODE_P2P_BOOTNODES_FILE")]
+    #[arg(
+        id = "consensus_p2p_bootnodes_file",
+        long = "p2p.bootnodes-file",
+        env = "BASE_NODE_P2P_BOOTNODES_FILE"
+    )]
     pub bootnodes_file: Option<PathBuf>,
 
     /// Optionally enable topic scoring.
