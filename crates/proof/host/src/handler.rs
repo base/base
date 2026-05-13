@@ -83,8 +83,6 @@ impl PayloadWitnessPrefetcher {
             return false;
         };
         if ready_payload_attributes != payload_attributes {
-            state.ready.remove(&parent_block_hash);
-            state.ready_order.retain(|hash| hash != &parent_block_hash);
             return false;
         }
         state.ready.remove(&parent_block_hash);
@@ -186,18 +184,8 @@ impl PayloadWitnessPrefetcher {
         }
 
         let prefetcher = self.clone();
-        let handle = tokio::spawn(async move {
-            prefetcher.prefetch_block(kv, block_number).await;
-        });
         std::mem::drop(tokio::spawn(async move {
-            if let Err(err) = handle.await {
-                warn!(
-                    target: HOST_SERVER_TARGET,
-                    block_number,
-                    error = %err,
-                    "payload witness prefetch task failed"
-                );
-            }
+            prefetcher.prefetch_block(kv, block_number).await;
         }));
     }
 
@@ -281,6 +269,8 @@ impl PayloadWitnessPrefetcher {
     }
 
     async fn prefetch_block_inner(&self, kv: SharedKeyValueStore, block_number: u64) -> bool {
+        // Scheduled tasks wait here, so the semaphore bounds concurrent prefetch RPC work rather
+        // than the number of detached tasks created by a lookahead.
         let _permit = match self.inner.semaphore.acquire().await {
             Ok(permit) => permit,
             Err(_) => return false,
@@ -408,21 +398,18 @@ async fn insert_execution_witness_preimages(
     kv: SharedKeyValueStore,
     execute_payload_response: ExecutionWitness,
 ) -> Result<()> {
-    let preimages = execute_payload_response
+    let mut preimages = execute_payload_response
         .state
         .into_iter()
         .chain(execute_payload_response.codes)
-        .chain(execute_payload_response.keys);
-
-    let preimages = preimages
+        .chain(execute_payload_response.keys)
         .map(|preimage| {
             let preimage_bytes: Vec<u8> = preimage.into();
             let computed_hash = keccak256(&preimage_bytes);
             (PreimageKey::new_keccak256(*computed_hash), preimage_bytes)
         })
-        .collect::<Vec<_>>();
+        .peekable();
 
-    let mut preimages = preimages.into_iter().peekable();
     while preimages.peek().is_some() {
         {
             let mut kv_lock = kv.write().await;
@@ -1003,7 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn test_payload_witness_ready_cache_rejects_mismatched_attributes() {
+    fn test_payload_witness_ready_cache_keeps_mismatched_attributes() {
         let prefetcher = test_prefetcher();
         let parent_block_hash = B256::new([1; 32]);
         let payload_attributes = BasePayloadAttributes::default();
@@ -1013,7 +1000,7 @@ mod tests {
         prefetcher.mark_ready(parent_block_hash, payload_attributes.clone());
 
         assert!(!prefetcher.take_ready(parent_block_hash, &mismatched_payload_attributes));
-        assert!(!prefetcher.take_ready(parent_block_hash, &payload_attributes));
+        assert!(prefetcher.take_ready(parent_block_hash, &payload_attributes));
     }
 
     #[test]
