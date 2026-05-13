@@ -274,6 +274,9 @@ impl PayloadWitnessPrefetcher {
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, PayloadWitnessPrefetchState> {
+        // The prefetch cache is best-effort, and every mutation under this lock is an individual
+        // collection insert or remove. Recovering from poisoning can leave a stale cache entry, but
+        // it cannot leave structurally invalid state that affects proof correctness.
         self.inner.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
@@ -403,11 +406,6 @@ impl ScheduledLookaheadGuard {
 impl Drop for ScheduledLookaheadGuard {
     fn drop(&mut self) {
         if !self.keep_scheduled {
-            debug!(
-                target: HOST_SERVER_TARGET,
-                parent_block_hash = ?self.parent_block_hash,
-                "payload witness lookahead unscheduled"
-            );
             self.prefetcher.unmark_lookahead_scheduled(self.parent_block_hash);
         }
     }
@@ -433,11 +431,6 @@ impl ScheduledBlockGuard {
 impl Drop for ScheduledBlockGuard {
     fn drop(&mut self) {
         if !self.keep_scheduled {
-            debug!(
-                target: HOST_SERVER_TARGET,
-                block_number = self.block_number,
-                "payload witness prefetch block unscheduled"
-            );
             self.prefetcher.unmark_block_scheduled(self.block_number);
         }
     }
