@@ -105,6 +105,7 @@ impl PayloadWitnessPrefetcher {
         }
 
         let prefetcher = self.clone();
+        let cleanup_prefetcher = prefetcher.clone();
         let handle = tokio::spawn(async move {
             if !prefetcher.schedule_lookahead_inner(kv, parent_block_hash).await {
                 prefetcher.unmark_lookahead_scheduled(parent_block_hash);
@@ -112,6 +113,7 @@ impl PayloadWitnessPrefetcher {
         });
         std::mem::drop(tokio::spawn(async move {
             if let Err(err) = handle.await {
+                cleanup_prefetcher.unmark_lookahead_scheduled(parent_block_hash);
                 warn!(
                     target: HOST_SERVER_TARGET,
                     ?parent_block_hash,
@@ -392,6 +394,11 @@ impl ScheduledBlockGuard {
 impl Drop for ScheduledBlockGuard {
     fn drop(&mut self) {
         if !self.keep_scheduled {
+            debug!(
+                target: HOST_SERVER_TARGET,
+                block_number = self.block_number,
+                "payload witness prefetch block unscheduled"
+            );
             self.prefetcher.unmark_block_scheduled(self.block_number);
         }
     }
@@ -417,13 +424,16 @@ async fn insert_execution_witness_preimages(
 
     let mut preimages = preimages.into_iter().peekable();
     while preimages.peek().is_some() {
-        let mut kv_lock = kv.write().await;
-        for _ in 0..PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE {
-            let Some((key, preimage_bytes)) = preimages.next() else {
-                break;
-            };
-            kv_lock.set(key.into(), preimage_bytes)?;
+        {
+            let mut kv_lock = kv.write().await;
+            for _ in 0..PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE {
+                let Some((key, preimage_bytes)) = preimages.next() else {
+                    break;
+                };
+                kv_lock.set(key.into(), preimage_bytes)?;
+            }
         }
+        tokio::task::yield_now().await;
     }
     Ok(())
 }
@@ -858,6 +868,8 @@ async fn handle_hint_inner(
             if let Some(prefetcher) = payload_witness_prefetcher.as_ref()
                 && prefetcher.take_ready(parent_block_hash, &payload_attributes)
             {
+                // Prefetched preimages are written into the same proof-session KV store, which is
+                // append-only for the lifetime of a proof request.
                 debug!(
                     target: HOST_SERVER_TARGET,
                     ?parent_block_hash,
