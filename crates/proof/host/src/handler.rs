@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -34,11 +34,15 @@ const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 128;
 #[derive(Debug, Default)]
 struct PayloadWitnessPrefetchState {
     ready: HashSet<B256>,
+    ready_order: VecDeque<B256>,
     scheduled_blocks: HashSet<u64>,
+    scheduled_block_order: VecDeque<u64>,
 }
 
 #[derive(Debug)]
 struct PayloadWitnessPrefetchInner {
+    cfg: Arc<HostConfig>,
+    providers: Arc<HostProviders>,
     state: Mutex<PayloadWitnessPrefetchState>,
     semaphore: Semaphore,
 }
@@ -53,16 +57,12 @@ pub(crate) struct PayloadWitnessPrefetcher {
     inner: Arc<PayloadWitnessPrefetchInner>,
 }
 
-impl Default for PayloadWitnessPrefetcher {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl PayloadWitnessPrefetcher {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(cfg: Arc<HostConfig>, providers: Arc<HostProviders>) -> Self {
         Self {
             inner: Arc::new(PayloadWitnessPrefetchInner {
+                cfg,
+                providers,
                 state: Mutex::new(PayloadWitnessPrefetchState::default()),
                 semaphore: Semaphore::new(PAYLOAD_WITNESS_PREFETCH_MAX_IN_FLIGHT),
             }),
@@ -71,24 +71,25 @@ impl PayloadWitnessPrefetcher {
 
     fn take_ready(&self, parent_block_hash: B256) -> bool {
         let mut state = self.lock_state();
-        state.ready.remove(&parent_block_hash)
+        if !state.ready.remove(&parent_block_hash) {
+            return false;
+        }
+        state.ready_order.retain(|hash| hash != &parent_block_hash);
+        true
     }
 
     pub(crate) async fn schedule_lookahead(
         &self,
-        cfg: &HostConfig,
-        providers: &HostProviders,
         kv: SharedKeyValueStore,
         parent_block_hash: B256,
     ) {
-        if !cfg.prover.enable_experimental_witness_endpoint {
+        if !self.inner.cfg.prover.enable_experimental_witness_endpoint {
             return;
         }
 
-        let cfg = Arc::new(cfg.clone());
-        let providers = Arc::new(providers.clone());
         let prefetcher = self.clone();
-        tokio::spawn(async move {
+        let providers = Arc::clone(&self.inner.providers);
+        let handle = tokio::spawn(async move {
             let parent_block = match providers.l2.get_block_by_hash(parent_block_hash).await {
                 Ok(Some(block)) => block,
                 Ok(None) => {
@@ -112,48 +113,78 @@ impl PayloadWitnessPrefetcher {
 
             // The witness hint identifies the current payload by parent hash plus payload
             // attributes, so the current payload number is the parent block number plus one.
-            let current_block_number = parent_block.header.inner.number + 1;
-            let first_prefetch_block = current_block_number + 1;
+            let parent_block_number = parent_block.header.inner.number;
+            let Some(current_block_number) = parent_block_number.checked_add(1) else {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    parent_block_number,
+                    "payload witness prefetch skipped: block number overflow"
+                );
+                return;
+            };
+            let Some(first_prefetch_block) = current_block_number.checked_add(1) else {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    current_block_number,
+                    "payload witness prefetch skipped: no future block number available"
+                );
+                return;
+            };
             let last_prefetch_block =
-                current_block_number + PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS;
+                current_block_number.saturating_add(PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS);
 
             for block_number in first_prefetch_block..=last_prefetch_block {
-                prefetcher.spawn_prefetch_block(
-                    Arc::clone(&cfg),
-                    Arc::clone(&providers),
-                    Arc::clone(&kv),
-                    block_number,
-                );
+                prefetcher.spawn_prefetch_block(Arc::clone(&kv), block_number);
             }
         });
+        std::mem::drop(tokio::spawn(async move {
+            if let Err(err) = handle.await {
+                warn!(
+                    target: HOST_SERVER_TARGET,
+                    ?parent_block_hash,
+                    error = %err,
+                    "payload witness lookahead task failed"
+                );
+            }
+        }));
     }
 
-    fn spawn_prefetch_block(
-        &self,
-        cfg: Arc<HostConfig>,
-        providers: Arc<HostProviders>,
-        kv: SharedKeyValueStore,
-        block_number: u64,
-    ) {
+    fn spawn_prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
         if !self.mark_block_scheduled(block_number) {
             return;
         }
 
         let prefetcher = self.clone();
-        tokio::spawn(async move {
-            prefetcher.prefetch_block(cfg, providers, kv, block_number).await;
+        let handle = tokio::spawn(async move {
+            prefetcher.prefetch_block(kv, block_number).await;
         });
+        std::mem::drop(tokio::spawn(async move {
+            if let Err(err) = handle.await {
+                warn!(
+                    target: HOST_SERVER_TARGET,
+                    block_number,
+                    error = %err,
+                    "payload witness prefetch task failed"
+                );
+            }
+        }));
     }
 
     fn mark_block_scheduled(&self, block_number: u64) -> bool {
         let mut state = self.lock_state();
-        if state.scheduled_blocks.len() >= PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS {
-            state.scheduled_blocks.clear();
-        }
-
-        if !state.scheduled_blocks.insert(block_number) {
+        if state.scheduled_blocks.contains(&block_number) {
             return false;
         }
+
+        while state.scheduled_blocks.len() >= PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS {
+            let Some(oldest) = state.scheduled_block_order.pop_front() else {
+                break;
+            };
+            state.scheduled_blocks.remove(&oldest);
+        }
+
+        state.scheduled_blocks.insert(block_number);
+        state.scheduled_block_order.push_back(block_number);
 
         true
     }
@@ -161,45 +192,46 @@ impl PayloadWitnessPrefetcher {
     fn unmark_block_scheduled(&self, block_number: u64) {
         let mut state = self.lock_state();
         state.scheduled_blocks.remove(&block_number);
+        state.scheduled_block_order.retain(|scheduled| scheduled != &block_number);
     }
 
     fn mark_ready(&self, parent_block_hash: B256) {
         let mut state = self.lock_state();
-        if state.ready.len() >= PAYLOAD_WITNESS_PREFETCH_MAX_READY {
-            state.ready.clear();
+        if state.ready.remove(&parent_block_hash) {
+            state.ready_order.retain(|hash| hash != &parent_block_hash);
         }
+
+        while state.ready.len() >= PAYLOAD_WITNESS_PREFETCH_MAX_READY {
+            let Some(oldest) = state.ready_order.pop_front() else {
+                break;
+            };
+            state.ready.remove(&oldest);
+        }
+
         state.ready.insert(parent_block_hash);
+        state.ready_order.push_back(parent_block_hash);
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, PayloadWitnessPrefetchState> {
         self.inner.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    async fn prefetch_block(
-        &self,
-        cfg: Arc<HostConfig>,
-        providers: Arc<HostProviders>,
-        kv: SharedKeyValueStore,
-        block_number: u64,
-    ) {
-        if !self.prefetch_block_inner(cfg, providers, kv, block_number).await {
-            self.unmark_block_scheduled(block_number);
+    async fn prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
+        let mut scheduled_guard = ScheduledBlockGuard::new(self.clone(), block_number);
+        if self.prefetch_block_inner(kv, block_number).await {
+            scheduled_guard.keep_scheduled();
         }
     }
 
-    async fn prefetch_block_inner(
-        &self,
-        cfg: Arc<HostConfig>,
-        providers: Arc<HostProviders>,
-        kv: SharedKeyValueStore,
-        block_number: u64,
-    ) -> bool {
+    async fn prefetch_block_inner(&self, kv: SharedKeyValueStore, block_number: u64) -> bool {
         let _permit = match self.inner.semaphore.acquire().await {
             Ok(permit) => permit,
             Err(_) => return false,
         };
 
-        let block = match providers
+        let block = match self
+            .inner
+            .providers
             .l2
             .get_block_by_number(BlockNumberOrTag::Number(block_number))
             .full()
@@ -226,7 +258,7 @@ impl PayloadWitnessPrefetcher {
         };
 
         let parent_block_hash = block.header.inner.parent_hash;
-        let payload_attributes = match payload_attributes_from_l2_block(&cfg, block) {
+        let payload_attributes = match payload_attributes_from_l2_block(&self.inner.cfg, block) {
             Ok(payload_attributes) => payload_attributes,
             Err(err) => {
                 debug!(
@@ -242,7 +274,9 @@ impl PayloadWitnessPrefetcher {
             return false;
         }
 
-        let execute_payload_response = match providers
+        let execute_payload_response = match self
+            .inner
+            .providers
             .l2
             .client()
             .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
@@ -283,6 +317,31 @@ impl PayloadWitnessPrefetcher {
     }
 }
 
+#[derive(Debug)]
+struct ScheduledBlockGuard {
+    prefetcher: PayloadWitnessPrefetcher,
+    block_number: u64,
+    keep_scheduled: bool,
+}
+
+impl ScheduledBlockGuard {
+    const fn new(prefetcher: PayloadWitnessPrefetcher, block_number: u64) -> Self {
+        Self { prefetcher, block_number, keep_scheduled: false }
+    }
+
+    const fn keep_scheduled(&mut self) {
+        self.keep_scheduled = true;
+    }
+}
+
+impl Drop for ScheduledBlockGuard {
+    fn drop(&mut self) {
+        if !self.keep_scheduled {
+            self.prefetcher.unmark_block_scheduled(self.block_number);
+        }
+    }
+}
+
 async fn insert_execution_witness_preimages(
     kv: SharedKeyValueStore,
     execute_payload_response: ExecutionWitness,
@@ -293,15 +352,18 @@ async fn insert_execution_witness_preimages(
         .chain(execute_payload_response.codes)
         .chain(execute_payload_response.keys);
 
-    let mut kv_lock = kv.write().await;
-    for preimage in preimages {
-        let preimage_bytes: Vec<u8> = preimage.into();
-        let computed_hash = keccak256(&preimage_bytes);
+    let preimages = preimages
+        .map(|preimage| {
+            let preimage_bytes: Vec<u8> = preimage.into();
+            let computed_hash = keccak256(&preimage_bytes);
+            (PreimageKey::new_keccak256(*computed_hash), preimage_bytes)
+        })
+        .collect::<Vec<_>>();
 
-        let key = PreimageKey::new_keccak256(*computed_hash);
+    let mut kv_lock = kv.write().await;
+    for (key, preimage_bytes) in preimages {
         kv_lock.set(key.into(), preimage_bytes)?;
     }
-
     Ok(())
 }
 
@@ -735,9 +797,12 @@ async fn handle_hint_inner(
             if let Some(prefetcher) = payload_witness_prefetcher.as_ref()
                 && prefetcher.take_ready(parent_block_hash)
             {
-                prefetcher
-                    .schedule_lookahead(cfg, providers, Arc::clone(&kv), parent_block_hash)
-                    .await;
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    ?parent_block_hash,
+                    "payload witness served from prefetch cache"
+                );
+                prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
                 return Ok(());
             }
 
@@ -760,9 +825,7 @@ async fn handle_hint_inner(
             insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await?;
 
             if let Some(prefetcher) = payload_witness_prefetcher {
-                prefetcher
-                    .schedule_lookahead(cfg, providers, Arc::clone(&kv), parent_block_hash)
-                    .await;
+                prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
             }
         }
     }
@@ -825,6 +888,11 @@ mod tests {
         HostProviders { l1, blobs, l2 }
     }
 
+    fn test_prefetcher() -> PayloadWitnessPrefetcher {
+        let l2 = RootProvider::new_http("http://127.0.0.1:1".parse().unwrap());
+        PayloadWitnessPrefetcher::new(Arc::new(test_cfg()), Arc::new(test_providers(l2)))
+    }
+
     #[test]
     fn test_parse_blob_hint_formats() {
         let (legacy_hash, legacy_timestamp) = parse_blob_hint(&LEGACY_HINT).unwrap();
@@ -846,6 +914,55 @@ mod tests {
         assert!(err_msg.contains("Invalid blob hint length"));
         assert!(err_msg.contains("expected 40 or 48 bytes"));
         assert!(err_msg.contains("got 35"));
+    }
+
+    #[test]
+    fn test_payload_witness_ready_cache_evicts_oldest_entry() {
+        let prefetcher = test_prefetcher();
+
+        for i in 0..=PAYLOAD_WITNESS_PREFETCH_MAX_READY {
+            prefetcher.mark_ready(B256::new([i as u8; 32]));
+        }
+
+        assert!(!prefetcher.take_ready(B256::new([0; 32])));
+        assert!(prefetcher.take_ready(B256::new([1; 32])));
+    }
+
+    #[test]
+    fn test_payload_witness_scheduled_cache_evicts_oldest_entry() {
+        let prefetcher = test_prefetcher();
+
+        for i in 0..=PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS {
+            assert!(prefetcher.mark_block_scheduled(i as u64));
+        }
+
+        assert!(!prefetcher.mark_block_scheduled(1));
+        assert!(prefetcher.mark_block_scheduled(0));
+    }
+
+    #[test]
+    fn test_scheduled_block_guard_unmarks_on_drop() {
+        let prefetcher = test_prefetcher();
+        assert!(prefetcher.mark_block_scheduled(7));
+
+        {
+            let _guard = ScheduledBlockGuard::new(prefetcher.clone(), 7);
+        }
+
+        assert!(prefetcher.mark_block_scheduled(7));
+    }
+
+    #[test]
+    fn test_scheduled_block_guard_keeps_successful_prefetch_scheduled() {
+        let prefetcher = test_prefetcher();
+        assert!(prefetcher.mark_block_scheduled(7));
+
+        {
+            let mut guard = ScheduledBlockGuard::new(prefetcher.clone(), 7);
+            guard.keep_scheduled();
+        }
+
+        assert!(!prefetcher.mark_block_scheduled(7));
     }
 
     #[tokio::test]

@@ -27,9 +27,9 @@ const MAX_HINT_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Fetches data from remote sources in response to hints.
 pub struct OnlineHostBackend {
-    cfg: HostConfig,
+    cfg: Arc<HostConfig>,
     kv: SharedKeyValueStore,
-    providers: HostProviders,
+    providers: Arc<HostProviders>,
     proactive_hints: HashSet<HintType>,
     last_hint: Arc<RwLock<Option<Hint<HintType>>>>,
     payload_witness_prefetcher: PayloadWitnessPrefetcher,
@@ -44,13 +44,18 @@ impl fmt::Debug for OnlineHostBackend {
 impl OnlineHostBackend {
     /// Creates a new [`OnlineHostBackend`].
     pub fn new(cfg: HostConfig, kv: SharedKeyValueStore, providers: HostProviders) -> Self {
+        let cfg = Arc::new(cfg);
+        let providers = Arc::new(providers);
+        let payload_witness_prefetcher =
+            PayloadWitnessPrefetcher::new(Arc::clone(&cfg), Arc::clone(&providers));
+
         Self {
             cfg,
             kv,
             providers,
             proactive_hints: HashSet::default(),
             last_hint: Arc::new(RwLock::new(None)),
-            payload_witness_prefetcher: PayloadWitnessPrefetcher::new(),
+            payload_witness_prefetcher,
         }
     }
 
