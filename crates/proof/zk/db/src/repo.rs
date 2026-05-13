@@ -502,6 +502,25 @@ impl ProofRequestRepo {
 
         let retry_count: i32 = row.get("retry_count");
 
+        // Fail any RUNNING sessions before resetting so the retried run cannot collide with
+        // `idx_proof_sessions_request_type_running_unique`. No-op on the normal reaper path,
+        // since `get_stuck_requests` already excludes requests that have a RUNNING session.
+        sqlx::query(
+            r#"
+            UPDATE proof_sessions
+            SET status = $1,
+                error_message = COALESCE(error_message, $2),
+                completed_at = NOW()
+            WHERE proof_request_id = $3 AND status = $4
+            "#,
+        )
+        .bind(SessionStatus::Failed.as_str())
+        .bind("cleared during stuck-request retry")
+        .bind(id)
+        .bind(SessionStatus::Running.as_str())
+        .execute(&mut *tx)
+        .await?;
+
         if retry_count >= max_retries {
             sqlx::query(
                 r#"
