@@ -372,8 +372,9 @@ where
 
     #[inline]
     fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
+        let tx = self.storage.ro_tx()?;
         self.tx_acquisitions.fetch_add(1, Ordering::Relaxed);
-        self.storage.ro_tx()
+        Ok(tx)
     }
 
     #[inline]

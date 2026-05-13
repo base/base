@@ -89,10 +89,7 @@ pub trait BaseProofsStore: Send + Sync + Debug {
     where
         Self: 'tx;
 
-    /// Read-only transaction reused across cursor calls within one request.
-    ///
-    /// Proof, state-root, and witness paths open one [`Self::Tx`] at entry and pass it
-    /// to every cursor allocation that follows.
+    /// Transaction type used by request-scoped cursor factories.
     type Tx: Debug + Send + Sync;
 
     /// Get the earliest block number and hash that has been stored
@@ -130,7 +127,7 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>;
 
-    /// Open one read-only transaction for a request-scoped cursor factory.
+    /// Open a transaction for a request-scoped cursor factory.
     fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx>;
 
     /// Storage trie cursor reusing `tx`.

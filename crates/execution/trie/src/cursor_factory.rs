@@ -91,6 +91,7 @@ impl<'tx, S: BaseProofsStore> BaseProofsHashedAccountCursorFactory<'tx, S> {
     }
 }
 
+
 impl<'tx, S> HashedCursorFactory for BaseProofsHashedAccountCursorFactory<'tx, S>
 where
     for<'a> S: BaseProofsStore + 'tx,
