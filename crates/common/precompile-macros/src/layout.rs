@@ -7,6 +7,7 @@ use syn::{Expr, Ident, Visibility};
 
 pub(crate) fn gen_handler_field_decl(field: &LayoutField<'_>) -> proc_macro2::TokenStream {
     let field_name = field.name;
+    let doc_str = format!("Storage handler for the `{}` slot.", field_name);
     let handler_type = match &field.kind {
         FieldKind::Direct(ty) => {
             quote! { <#ty as ::base_precompile_storage::StorableType>::Handler }
@@ -16,7 +17,10 @@ pub(crate) fn gen_handler_field_decl(field: &LayoutField<'_>) -> proc_macro2::To
         }
     };
 
-    quote! { pub #field_name: #handler_type }
+    quote! {
+        #[doc = #doc_str]
+        pub #field_name: #handler_type
+    }
 }
 
 pub(crate) fn gen_handler_field_init(
@@ -91,8 +95,10 @@ pub(crate) fn gen_struct(
     allocated_fields: &[LayoutField<'_>],
 ) -> proc_macro2::TokenStream {
     let handler_fields = allocated_fields.iter().map(gen_handler_field_decl);
+    let doc_str = format!("Storage layout for the [`{name}`] precompile.");
 
     quote! {
+        #[doc = #doc_str]
         #vis struct #name {
             #(#handler_fields,)*
             address: ::alloy_primitives::Address,
@@ -200,6 +206,7 @@ pub(crate) fn gen_slots_module(allocated_fields: &[LayoutField<'_>]) -> proc_mac
     let collision_checks = gen_collision_checks(allocated_fields);
 
     quote! {
+        /// Storage slot indices and packing constants for this contract.
         pub mod slots {
             use super::*;
 

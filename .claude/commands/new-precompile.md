@@ -11,14 +11,7 @@ A **domain** is a crate containing one or more precompiles that belong together.
 | Completely orthogonal — no shared storage, no factory coupling | New domain |
 | Unsure | New domain — merging later is cheaper than untangling coupling |
 
-**Existing domains:**
-```
-crates/common/
-  precompile-macros/    ← infrastructure (not a domain)
-  precompile-storage/   ← infrastructure (not a domain)
-  precompile-tokens/    ← token domain (regular, stablecoin, security, factories)
-  precompile-oracle/    ← oracle domain
-```
+**Existing domains** — check `crates/common/` for `precompile-*` crates that are not `precompile-macros` or `precompile-storage` (those are infrastructure, not domains).
 
 ---
 
@@ -36,9 +29,7 @@ src/
     dispatch.rs         ← ABI dispatch
 ```
 
-Re-export from `abi/mod.rs` and `lib.rs`.
-
-If logic is shared with other precompiles in the domain, put it in `shared/`.
+Re-export from `abi/mod.rs` and `lib.rs`. If logic is shared with other precompiles in the domain, put it in `shared/`.
 
 ---
 
@@ -79,10 +70,12 @@ workspace = true
 [dependencies]
 alloy-primitives.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
-base-precompile-storage = { path = "../precompile-storage" }
-base-precompile-macros  = { path = "../precompile-macros" }
 revm.workspace = true
-thiserror.workspace = true
+base-precompile-macros  = { path = "../precompile-macros" }
+base-precompile-storage = { path = "../precompile-storage" }
+
+[features]
+test-utils = []   # required: #[contract] uses #[cfg(feature = "test-utils")] internally
 ```
 
 ### `src/abi/<name>.rs`
@@ -115,43 +108,92 @@ pub struct <Name> {
 }
 ```
 
-### `src/<name>/mod.rs`
+### `src/<name>/dispatch.rs`
+
+`sol! { interface I<Name> { ... } }` generates a **module** named `I<Name>`, not an enum.
+The dispatch enum is `I<Name>::I<Name>Calls`. Three traits must be in scope:
+
+- `Handler` — for `.read()` / `.write()` on `Slot<T>` fields
+- `SolInterface` — for `I<Name>::I<Name>Calls::abi_decode`
+- `SolCall` — for `abi_encode_returns` on functions with return values
 
 ```rust
-use base_precompile_storage::{
-    NativePrecompile, PrecompileStorageProvider, StorageCtx,
-};
+use alloy_primitives::Bytes;
+use alloy_sol_types::{SolCall, SolInterface};
+use base_precompile_storage::{BasePrecompileError, Handler, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-pub use storage::<Name>, storage::<NAME>_ADDRESS;
+use crate::abi::I<Name>;
+use super::<Name>;
+
+pub fn dispatch(pc: &mut <Name>, calldata: &[u8]) -> PrecompileResult {
+    let ctx = StorageCtx;
+    inner(pc, calldata).into_precompile_result(ctx.gas_used(), |b| b)
+}
+
+fn inner(pc: &mut <Name>, calldata: &[u8]) -> base_precompile_storage::Result<Bytes> {
+    if calldata.len() < 4 {
+        return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
+    }
+    let selector: [u8; 4] = calldata[..4].try_into().unwrap();
+
+    match I<Name>::I<Name>Calls::abi_decode(calldata) {
+        Ok(I<Name>::I<Name>Calls::myVoidFn(_)) => {
+            // no return value
+            Ok(Bytes::new())
+        }
+        Ok(I<Name>::I<Name>Calls::myGetterFn(_)) => {
+            let val = pc.field.read()?;
+            // single return: pass value directly, not as a tuple
+            Ok(I<Name>::myGetterFnCall::abi_encode_returns(&val).into())
+        }
+        Err(_) => Err(BasePrecompileError::UnknownFunctionSelector(selector)),
+    }
+}
+```
+
+### `src/<name>/mod.rs`
+
+> **Note:** `StorageCtx::enter` requires `S: Sized` and cannot be called directly with
+> `&mut dyn PrecompileStorageProvider`. Leave `execute` as `todo!()` until calldata is
+> wired into `PrecompileStorageProvider`.
+
+```rust
+use alloy_primitives::Address;
+use base_precompile_storage::{NativePrecompile, PrecompileStorageProvider};
+use revm::precompile::PrecompileResult;
+
+pub use dispatch::dispatch;
+pub use storage::{<Name>, <NAME>_ADDRESS};
+
+mod dispatch;
 mod storage;
 
 impl NativePrecompile for <Name> {
     const ADDRESS: Address = <NAME>_ADDRESS;
 
-    fn execute(storage: &mut dyn PrecompileStorageProvider) -> PrecompileResult {
-        StorageCtx::enter(storage, || {
-            let mut pc = <Name>::new();
-            let ctx = StorageCtx;
-            // TODO: decode calldata and dispatch
-            todo!()
-        })
+    fn execute(_storage: &mut dyn PrecompileStorageProvider) -> PrecompileResult {
+        // TODO: wire calldata once PrecompileStorageProvider exposes it
+        todo!()
     }
 }
 ```
 
 ### `src/lib.rs`
 
+Re-export all public types including `dispatch` so nothing is `unreachable_pub`:
+
 ```rust
 #![doc = include_str!("../README.md")]
 
 pub mod abi;
 pub mod <name>;
+
+pub use <name>::{<Name>, <NAME>_ADDRESS, dispatch};
 ```
 
 ## Registration
 
-One line in the precompile registry:
 ```rust
 // BasePrecompiles::register::<Name>();
 ```

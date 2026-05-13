@@ -1,0 +1,28 @@
+[package]
+name = "base-precompile-counter"
+description = "Counter precompile for the Base native EVM"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-primitives.workspace = true
+alloy-sol-types = { workspace = true, features = ["std"] }
+
+# revm
+revm.workspace = true
+
+# base
+base-precompile-macros  = { path = "../precompile-macros" }
+base-precompile-storage = { path = "../precompile-storage" }
+
+[features]
+test-utils = []

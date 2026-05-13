@@ -140,13 +140,19 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>], gen_location: bo
             }
         };
 
+        let slot_doc = format!("Base storage slot for the `{}` field.", field.name);
+        let offset_doc = format!("Byte offset within the slot for the `{}` field.", field.name);
         constants.extend(quote! {
+            #[doc = #slot_doc]
             pub const #slot_const: ::alloy_primitives::U256 = #slot_expr;
+            #[doc = #offset_doc]
             pub const #offset_const: usize = #offset_expr;
         });
 
         if gen_location {
+            let loc_doc = format!("Storage location descriptor for the `{}` field.", field.name);
             constants.extend(quote! {
+                #[doc = #loc_doc]
                 pub const #loc_const: ::base_precompile_storage::FieldLocation =
                     ::base_precompile_storage::FieldLocation::new(#slot_const.as_limbs()[0] as usize, #offset_const, #bytes_expr);
             });
@@ -155,7 +161,11 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>], gen_location: bo
         #[cfg(debug_assertions)]
         {
             let bytes_const = format_ident!("{slot_const}_BYTES");
-            constants.extend(quote! { pub const #bytes_const: usize = #bytes_expr; });
+            let bytes_doc = format!("Size in bytes of the `{}` field.", field.name);
+            constants.extend(quote! {
+                #[doc = #bytes_doc]
+                pub const #bytes_const: usize = #bytes_expr;
+            });
         }
     }
 
