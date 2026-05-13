@@ -9,11 +9,12 @@ use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::CliNodeTypes;
 
 mod init;
-mod prune;
-mod unwind;
-
 pub use init::InitCommand;
+
+mod prune;
 pub use prune::PruneCommand;
+
+mod unwind;
 pub use unwind::UnwindCommand;
 
 /// `base-node base-proofs` command

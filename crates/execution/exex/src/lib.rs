@@ -8,6 +8,8 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod sync_target;
+pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
+
 use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
@@ -20,7 +22,6 @@ use reth_execution_types::Chain;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use reth_node_api::{FullNodeComponents, NodePrimitives, NodeTypes};
 use reth_provider::{BlockNumReader, BlockReader, TransactionVariant};
-pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
 

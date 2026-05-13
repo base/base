@@ -16,7 +16,6 @@ use reth_network_p2p::bodies::client::BodiesClient;
 use reth_node_core::utils::get_single_header;
 
 mod bootnode;
-
 pub use bootnode::Command as BootnodeCommand;
 
 /// P2P debugging utilities.

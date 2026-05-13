@@ -377,7 +377,11 @@ impl RollupConfig {
         Self::GRANITE_CHANNEL_TIMEOUT
     }
 
-    /// The activation banner for the Base Azul hardfork, printed when the first block of the fork is built or processed.
+    /// The activation banner for the Base Azul hardfork, printed when the first block of the
+    /// fork is built or processed.
+    ///
+    /// Do not add a log message when emitting each line of this banner. The line is the payload;
+    /// adding a static message repeats that message beside every banner line in formatted logs.
     const AZUL_ACTIVATION_BANNER: &str = include_str!("../static/azul_activation_banner.txt");
 
     /// Logs hardfork activation when building or processing the first block of a fork.
@@ -396,7 +400,7 @@ impl RollupConfig {
             tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
         } else if self.is_first_base_azul_block(timestamp) {
             for line in Self::AZUL_ACTIVATION_BANNER.lines() {
-                tracing::info!(target: "upgrades", line, "azul activation banner");
+                tracing::info!(target: "upgrades", line);
             }
             tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
         } else if self.is_first_beryl_block(timestamp) {

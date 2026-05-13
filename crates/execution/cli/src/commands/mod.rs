@@ -13,19 +13,20 @@ use reth_cli_commands::{
 use crate::chainspec::BaseChainSpecParser;
 
 mod base_proofs;
-mod init_state;
-mod p2p;
-
-#[cfg(feature = "dev")]
-mod test_vectors;
-
 pub use base_proofs::{
     Command as BaseProofsCommand, InitCommand as BaseProofsInitCommand,
     PruneCommand as BaseProofsPruneCommand, Subcommands as BaseProofsSubcommands,
     UnwindCommand as BaseProofsUnwindCommand,
 };
+
+mod init_state;
 pub use init_state::BaseInitStateCommand;
+
+mod p2p;
 pub use p2p::{BootnodeCommand as P2pBootnodeCommand, Command as P2pCommand};
+
+#[cfg(feature = "dev")]
+mod test_vectors;
 #[cfg(feature = "dev")]
 pub use test_vectors::{Command as TestVectorsCommand, Subcommands as TestVectorsSubcommands};
 

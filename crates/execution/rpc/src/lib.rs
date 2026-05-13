@@ -8,26 +8,24 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod config;
-mod debug;
-mod engine;
-mod error;
-mod eth;
-mod metrics;
-mod miner;
-mod sequencer;
-mod state;
-mod witness;
-
 #[cfg(feature = "client")]
 pub use config::BaseEthConfigApiClient;
 pub use config::{BaseEthConfigApiServer, BaseEthConfigHandler};
+
+mod debug;
 #[cfg(test)]
 pub use debug::DebugApiOverrideClient;
 pub use debug::{DebugApiExt, DebugApiExtInner, DebugApiOverrideServer, ProofsSyncStatus};
+
+mod engine;
 #[cfg(feature = "client")]
 pub use engine::BaseEngineApiClient;
 pub use engine::{BaseEngineApi, BaseEngineApiServer, ENGINE_CAPABILITIES};
+
+mod error;
 pub use error::{BaseEthApiError, BaseInvalidTransactionError, SequencerClientError};
+
+mod eth;
 #[cfg(test)]
 pub use eth::EthApiOverrideClient;
 pub use eth::{
@@ -35,10 +33,20 @@ pub use eth::{
     BaseRpcConvert, BaseTxInfoMapper, EthApiExt, EthApiNodeBackend, EthApiOverrideServer,
     MAX_PROOF_KEYS, ProofKeyLimit, ReceiptFieldsBuilder,
 };
+
+mod metrics;
 pub use metrics::{DebugApiExtMetrics, DebugApis, EthApiExtMetrics, SequencerMetrics};
+
+mod miner;
 #[cfg(feature = "client")]
 pub use miner::MinerApiExtClient;
 pub use miner::{BaseMinerExtApi, MinerApiExtServer};
+
+mod sequencer;
 pub use sequencer::{Error as SequencerError, SequencerClient, SequencerClientInner};
+
+mod state;
 pub use state::BaseStateProviderFactory;
+
+mod witness;
 pub use witness::BaseDebugWitnessApi;

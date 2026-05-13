@@ -3,9 +3,17 @@
 mod block;
 mod call;
 mod pending_block;
+
 mod proofs;
+#[cfg(test)]
+pub use proofs::EthApiOverrideClient;
+pub use proofs::{EthApiExt, EthApiOverrideServer, MAX_PROOF_KEYS, ProofKeyLimit};
+
 mod receipt;
+pub use receipt::{BaseReceiptBuilder, BaseReceiptConverter, ReceiptFieldsBuilder};
+
 mod transaction;
+pub use transaction::BaseTxInfoMapper;
 
 use std::{
     fmt::{self, Formatter},
@@ -16,10 +24,6 @@ use std::{
 use alloy_primitives::U256;
 use base_common_network::Base;
 use eyre::WrapErr;
-#[cfg(test)]
-pub use proofs::EthApiOverrideClient;
-pub use proofs::{EthApiExt, EthApiOverrideServer, MAX_PROOF_KEYS, ProofKeyLimit};
-pub use receipt::{BaseReceiptBuilder, BaseReceiptConverter, ReceiptFieldsBuilder};
 use reth_chainspec::{EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes};
@@ -39,7 +43,6 @@ use reth_tasks::{
     TaskSpawner,
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
-pub use transaction::BaseTxInfoMapper;
 
 use crate::{BaseEthApiError, SequencerClient};
 
