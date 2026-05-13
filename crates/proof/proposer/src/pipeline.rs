@@ -357,10 +357,6 @@ where
         while cursor <= safe_head
             && state.inflight.len() + plans.len() < self.config.max_parallel_proofs
         {
-            // Skip blocks already being handled (in-flight, proved, or
-            // submitting).  Track the last skipped block so we can fetch
-            // its output root in the batch only when we actually find a block
-            // to dispatch.
             let mut last_skipped = None;
             while cursor <= safe_head
                 && (state.inflight.contains(&cursor)
@@ -370,17 +366,14 @@ where
                 last_skipped = Some(cursor);
                 cursor = match cursor.checked_add(self.config.driver.block_interval) {
                     Some(c) => c,
-                    // Overflow means there are no further blocks to dispatch.
                     None => return Ok(()),
                 };
             }
 
-            // Nothing left to dispatch after skipping.
             if cursor > safe_head {
                 break;
             }
 
-            // Still at max capacity after skipping.
             if state.inflight.len() + plans.len() >= self.config.max_parallel_proofs {
                 break;
             }
@@ -417,29 +410,27 @@ where
             }
         };
 
-        for (target, request) in requests {
+        for (plan, request) in requests {
             let prover = Arc::clone(&self.prover);
             let cancel = self.cancel.child_token();
 
             info!(
-                from_block = request
-                    .claimed_l2_block_number
-                    .saturating_sub(self.config.driver.block_interval),
-                to_block = target,
-                blocks = self.config.driver.block_interval,
+                from_block = plan.start_block,
+                to_block = plan.target_block,
+                blocks = plan.target_block.saturating_sub(plan.start_block),
                 "Dispatching proof task"
             );
-            state.inflight.insert(target);
+            state.inflight.insert(plan.target_block);
             state.prove_tasks.spawn(async move {
                 let mut proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
                 tokio::select! {
                     () = cancel.cancelled() => {
                         proof_timer.disarm();
-                        (target, Err(ProposerError::Internal("cancelled".into())))
+                        (plan.target_block, Err(ProposerError::Internal("cancelled".into())))
                     }
                     result = prover.prove(request) => {
                         drop(proof_timer);
-                        (target, result.map_err(|e| ProposerError::Prover(e.to_string())))
+                        (plan.target_block, result.map_err(|e| ProposerError::Prover(e.to_string())))
                     }
                 }
             });
@@ -1005,7 +996,7 @@ where
         recovered: &RecoveredState,
         plans: &[ProofPlan],
         output_blocks: Vec<u64>,
-    ) -> Result<Vec<(u64, ProofRequest)>, ProposerError> {
+    ) -> Result<Vec<(ProofPlan, ProofRequest)>, ProposerError> {
         let start_blocks: Vec<u64> = plans
             .iter()
             .map(|plan| plan.start_block)
@@ -1080,7 +1071,7 @@ where
                     "Built proof request for parallel proving"
                 );
 
-                Ok((plan.target_block, request))
+                Ok((*plan, request))
             })
             .collect()
     }
