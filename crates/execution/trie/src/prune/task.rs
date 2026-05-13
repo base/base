@@ -22,7 +22,8 @@ const PRUNE_BATCH_SIZE: u64 = 2000;
 #[derive(Debug)]
 pub struct BaseProofStoragePrunerTask<P, H> {
     pruner: Arc<BaseProofStoragePruner<P, H>>,
-    min_block_interval: u64,
+    retention_blocks: u64,
+    prune_finality_margin_blocks: u64,
     task_run_interval: Duration,
 }
 
@@ -35,23 +36,26 @@ where
     pub fn new(
         provider: BaseProofsStorage<P>,
         hash_reader: H,
-        min_block_interval: u64,
+        retention_blocks: u64,
+        prune_finality_margin_blocks: u64,
         task_run_interval: Duration,
     ) -> Self {
         let pruner = Arc::new(BaseProofStoragePruner::new(
             provider,
             hash_reader,
-            min_block_interval,
+            retention_blocks,
+            prune_finality_margin_blocks,
             PRUNE_BATCH_SIZE,
-        ));
-        Self { pruner, min_block_interval, task_run_interval }
+        );
+        Self { pruner, retention_blocks, prune_finality_margin_blocks, task_run_interval }
     }
 
     /// Run forever (until `cancel`), executing one prune pass per `task_run_interval`.
     pub async fn run(self, mut signal: GracefulShutdown) {
         info!(
             target: "trie::pruner_task",
-            min_block_interval = self.min_block_interval,
+            retention_blocks = self.retention_blocks,
+            prune_finality_margin_blocks = self.prune_finality_margin_blocks,
             interval_secs = self.task_run_interval.as_secs(),
             "Starting pruner task"
         );

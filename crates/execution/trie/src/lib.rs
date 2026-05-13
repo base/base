@@ -28,8 +28,12 @@ pub use in_memory::{
 
 pub mod db;
 pub use db::{
-    MdbxAccountCursor, MdbxBatchSession, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor,
+    MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor, RocksdbAccountCursor,
+    RocksdbProofsStorage, RocksdbStorageCursor, RocksdbTrieCursor,
 };
+
+/// Default on-disk proofs storage backend.
+pub type DefaultProofsStorage = MdbxProofsStorage;
 
 pub mod metrics;
 #[cfg(feature = "metrics")]

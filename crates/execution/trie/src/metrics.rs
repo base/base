@@ -456,8 +456,11 @@ where
         &self,
         new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        BlockMetrics::earliest_number().set(new_earliest_block_ref.block.number as f64);
-        self.storage.prune_earliest_state(new_earliest_block_ref)
+        let result = self.storage.prune_earliest_state(new_earliest_block_ref)?;
+        if let Some((block_number, _)) = self.storage.get_earliest_block_number()? {
+            BlockMetrics::earliest_number().set(block_number as f64);
+        }
+        Ok(result)
     }
 
     #[inline]
