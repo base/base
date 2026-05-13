@@ -233,3 +233,7 @@ jobs:
           fi
 
           echo "Dispatched '$EVENT_TYPE' to $DOCS_REPOSITORY for ${SHA}"
+          # `::notice::` surfaces this as a banner in the run summary,
+          # rather than being buried in the step log. Same primitive
+          # Mintlify uses via core.notice() in their automate-agent example.
+          echo "::notice title=Docs dispatch sent::${EVENT_TYPE} → ${DOCS_REPOSITORY} (base@${SHA:0:7})"
