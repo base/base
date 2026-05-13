@@ -40,11 +40,11 @@ required-features = ["test-utils"]
 [features]
 default = [ "std" ]
 std = [
+	"alloy-evm/std",
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
+	"derive_more/std",
 	"revm/std",
 	"thiserror/std",
-	"alloy-evm/std",
-	"derive_more/std"
 ]
 test-utils = []
