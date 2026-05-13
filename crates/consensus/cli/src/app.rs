@@ -3,7 +3,10 @@
 use base_cli_utils::CliStyles;
 use clap::{Parser, Subcommand};
 
-use crate::{Bootnode, BootnodeEnr, ConsensusFollowNodeCommand, ConsensusNodeCommand};
+use crate::{
+    Bootnode, BootnodeEnr, ConsensusChainArgs, ConsensusFollowNodeCommand, ConsensusNodeCommand,
+    GlobalConsensusChainArgs,
+};
 
 base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
@@ -19,6 +22,10 @@ base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
     long_about = None
 )]
 pub struct ConsensusCli {
+    /// Chain selection.
+    #[command(flatten)]
+    pub chain: GlobalConsensusChainArgs,
+
     /// The command to run.
     #[command(subcommand)]
     pub command: ConsensusCommands,
@@ -27,11 +34,12 @@ pub struct ConsensusCli {
 impl ConsensusCli {
     /// Runs the CLI.
     pub fn run(self) -> eyre::Result<()> {
+        let chain = ConsensusChainArgs::from(self.chain);
         match self.command {
-            ConsensusCommands::Node(node) => node.run(),
-            ConsensusCommands::Follow(follow) => follow.run(),
-            ConsensusCommands::Bootnode(bootnode) => bootnode.run(),
-            ConsensusCommands::BootnodeEnr(bootnode_enr) => bootnode_enr.run(),
+            ConsensusCommands::Node(node) => node.run(chain),
+            ConsensusCommands::Follow(follow) => follow.run(chain),
+            ConsensusCommands::Bootnode(bootnode) => bootnode.run(chain),
+            ConsensusCommands::BootnodeEnr(bootnode_enr) => bootnode_enr.run(chain),
         }
     }
 }
@@ -80,5 +88,19 @@ mod tests {
         let cli = ConsensusCli::parse_from(["base-consensus", "bootnode-enr"]);
 
         assert!(matches!(cli.command, ConsensusCommands::BootnodeEnr(_)));
+    }
+
+    #[test]
+    fn parses_global_chain_before_command() {
+        let cli = ConsensusCli::parse_from(["base-consensus", "--chain", "84532", "bootnode"]);
+
+        assert_eq!(cli.chain.l2_chain_id, alloy_chains::Chain::from(84532_u64));
+    }
+
+    #[test]
+    fn parses_global_chain_after_command() {
+        let cli = ConsensusCli::parse_from(["base-consensus", "bootnode", "--chain", "84532"]);
+
+        assert_eq!(cli.chain.l2_chain_id, alloy_chains::Chain::from(84532_u64));
     }
 }

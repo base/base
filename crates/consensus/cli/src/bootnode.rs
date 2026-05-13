@@ -6,7 +6,6 @@ use std::{
     path::PathBuf,
 };
 
-use alloy_chains::Chain;
 use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
@@ -19,15 +18,11 @@ use libp2p::identity::Keypair;
 use tokio::time::Duration;
 use tracing::{debug, info, warn};
 
-use crate::{L2ConfigFile, LogArgs, MetricsArgs, metrics::CliMetrics};
+use crate::{ConsensusChainArgs, L2ConfigFile, LogArgs, MetricsArgs, metrics::CliMetrics};
 
 /// Base consensus bootnode arguments.
 #[derive(Args, Clone, Debug)]
 pub struct Bootnode {
-    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(long = "chain", short = 'n', default_value = "8453", env = "BASE_NODE_NETWORK")]
-    pub l2_chain_id: Chain,
-
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -48,10 +43,6 @@ pub struct Bootnode {
 /// Prints the deterministic ENR for a Base consensus bootnode.
 #[derive(Args, Clone, Debug)]
 pub struct BootnodeEnr {
-    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(long = "chain", short = 'n', default_value = "8453", env = "BASE_NODE_NETWORK")]
-    pub l2_chain_id: Chain,
-
     /// L2 configuration file.
     #[clap(flatten)]
     pub l2_config: L2ConfigFile,
@@ -63,13 +54,13 @@ pub struct BootnodeEnr {
 
 impl Bootnode {
     /// Runs the CLI.
-    pub fn run(self) -> eyre::Result<()> {
+    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
         base_cli_utils::init_tracing!(
             LogConfig::from(self.logging.clone()),
             ["libp2p_gossipsub=error"]
         )?;
 
-        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
+        let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
 
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
@@ -114,8 +105,8 @@ impl Bootnode {
 
 impl BootnodeEnr {
     /// Runs the CLI.
-    pub fn run(self) -> eyre::Result<()> {
-        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
+    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
+        let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
         let enr = self.p2p.local_enr(cfg.l2_chain_id.id())?;
         self.p2p.write_enr_output(&enr)?;
         println!("{enr}");

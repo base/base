@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use alloy_chains::Chain;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
@@ -15,8 +14,8 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, RpcArgs,
-    metrics::CliMetrics,
+    ConsensusChainArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs,
+    MetricsArgs, RpcArgs, metrics::CliMetrics,
 };
 
 /// Overrides supplied by callers that embed a follow node alongside another service.
@@ -43,12 +42,12 @@ pub struct ConsensusFollowNodeCommand {
 
     /// Follow-node arguments.
     #[command(flatten)]
-    pub args: ConsensusFollowNodeArgs,
+    pub args: ConsensusFollowNodeConfigArgs,
 }
 
 impl ConsensusFollowNodeCommand {
     /// Runs the standalone consensus follow-node command.
-    pub fn run(self) -> eyre::Result<()> {
+    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
         base_cli_utils::init_tracing!(
             LogConfig::from(self.logging.clone()),
             ["libp2p_gossipsub=error"]
@@ -58,19 +57,39 @@ impl ConsensusFollowNodeCommand {
             base_cli_utils::register_version_metrics!();
         })?;
 
-        let cfg = self.args.load_rollup_config()?;
+        let args = ConsensusFollowNodeArgs::new(chain, self.args);
+        let cfg = args.load_rollup_config()?;
         if self.metrics.enabled {
             CliMetrics::init_rollup_config(&cfg);
         }
 
-        RuntimeManager::new()
-            .run_until_ctrl_c(self.args.start_with_overrides(cfg, Default::default()))
+        RuntimeManager::new().run_until_ctrl_c(args.start_with_overrides(cfg, Default::default()))
     }
 }
 
 /// Consensus follow-node arguments shared by the standalone and unified binaries.
 #[derive(Args, Clone, Debug)]
 pub struct ConsensusFollowNodeArgs {
+    /// Chain selection.
+    #[command(flatten)]
+    pub chain: ConsensusChainArgs,
+
+    /// Follow-node configuration.
+    #[command(flatten)]
+    pub config: ConsensusFollowNodeConfigArgs,
+}
+
+impl ConsensusFollowNodeArgs {
+    /// Creates reusable consensus follow-node arguments from typed chain and follow config
+    /// components.
+    pub const fn new(chain: ConsensusChainArgs, config: ConsensusFollowNodeConfigArgs) -> Self {
+        Self { chain, config }
+    }
+}
+
+/// Consensus follow-node configuration arguments without chain selection.
+#[derive(Args, Clone, Debug)]
+pub struct ConsensusFollowNodeConfigArgs {
     /// The URL of the node to follow.
     #[arg(long = "source-l2-rpc", env = "BASE_NODE_SOURCE_L2_RPC")]
     pub source_l2_rpc: Url,
@@ -86,10 +105,6 @@ pub struct ConsensusFollowNodeArgs {
     /// L2 engine CLI arguments.
     #[clap(flatten)]
     pub l2_client_args: L2ClientArgs,
-
-    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(long = "chain", short = 'n', default_value = "8453", env = "BASE_NODE_NETWORK")]
-    pub l2_chain_id: Chain,
 
     /// Gate sync behind proofs progress via `debug_proofsSyncStatus`.
     #[arg(long = "proofs", env = "BASE_NODE_PROOFS")]
@@ -124,7 +139,7 @@ pub struct ConsensusFollowNodeArgs {
 impl ConsensusFollowNodeArgs {
     /// Loads the configured L2 rollup config.
     pub fn load_rollup_config(&self) -> eyre::Result<RollupConfig> {
-        self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!(e))
+        self.config.l2_config.load(&self.chain.l2_chain_id).map_err(|e| eyre::eyre!(e))
     }
 
     /// Builds a follow node with default external endpoint configuration.
@@ -153,11 +168,14 @@ impl ConsensusFollowNodeArgs {
         overrides: ConsensusFollowNodeOverrides,
         local_l2_provider: RootProvider<Base>,
     ) -> eyre::Result<FollowNode> {
-        let l2_engine_rpc =
-            overrides.l2_engine_rpc.unwrap_or_else(|| self.l2_client_args.l2_engine_rpc.clone());
+        let l2_engine_rpc = overrides
+            .l2_engine_rpc
+            .unwrap_or_else(|| self.config.l2_client_args.l2_engine_rpc.clone());
         let jwt_secret = match overrides.l2_engine_jwt_secret {
             Some(secret) => secret,
-            None => self.l2_client_args.resolve_jwt_secret_for_endpoint(&l2_engine_rpc).await?,
+            None => {
+                self.config.l2_client_args.resolve_jwt_secret_for_endpoint(&l2_engine_rpc).await?
+            }
         };
         let rollup_config = Arc::new(cfg.clone());
 
@@ -165,11 +183,11 @@ impl ConsensusFollowNodeArgs {
             config: Arc::clone(&rollup_config),
             l2_url: l2_engine_rpc,
             l2_jwt_secret: jwt_secret,
-            l1_url: self.l1_rpc_args.l1_eth_rpc.clone(),
+            l1_url: self.config.l1_rpc_args.l1_eth_rpc.clone(),
             mode: NodeMode::Validator,
         };
-        let l2_source = DelegateL2Client::new(self.source_l2_rpc.clone());
-        let rpc_builder = self.rpc_flags.clone().into();
+        let l2_source = DelegateL2Client::new(self.config.source_l2_rpc.clone());
+        let rpc_builder = self.config.rpc_flags.clone().into();
         let l1_config = self.l1_config(&cfg)?;
 
         Ok(FollowNode::new(
@@ -180,8 +198,8 @@ impl ConsensusFollowNodeArgs {
             rpc_builder,
             l1_config,
         )
-        .with_proofs(self.proofs)
-        .with_proofs_max_blocks_ahead(self.proofs_max_blocks_ahead))
+        .with_proofs(self.config.proofs)
+        .with_proofs_max_blocks_ahead(self.config.proofs_max_blocks_ahead))
     }
 
     /// Starts a follow node with default external endpoint configuration.
@@ -199,7 +217,7 @@ impl ConsensusFollowNodeArgs {
         cfg: RollupConfig,
         overrides: ConsensusFollowNodeOverrides,
     ) -> eyre::Result<()> {
-        if !self.proofs {
+        if !self.config.proofs {
             warn!(
                 target: "rollup_node",
                 "Running without --proofs; this mode is mainly meant for syncing the Proofs ExEx and does not support EL sync"
@@ -209,12 +227,12 @@ impl ConsensusFollowNodeArgs {
         info!(
             target: "rollup_node",
             chain_id = cfg.l2_chain_id.id(),
-            source = %self.source_l2_rpc,
+            source = %self.config.source_l2_rpc,
             "Starting follow node"
         );
 
         let local_l2_provider = self.local_l2_provider(&overrides);
-        if self.proofs {
+        if self.config.proofs {
             self.check_proofs_rpc(&local_l2_provider).await?;
         }
 
@@ -236,7 +254,7 @@ impl ConsensusFollowNodeArgs {
         overrides: &ConsensusFollowNodeOverrides,
     ) -> RootProvider<Base> {
         let local_l2_rpc =
-            overrides.local_l2_rpc.clone().unwrap_or_else(|| self.l2_rpc_url.clone());
+            overrides.local_l2_rpc.clone().unwrap_or_else(|| self.config.l2_rpc_url.clone());
         RootProvider::<Base>::new_http(local_l2_rpc)
     }
 
@@ -255,16 +273,17 @@ impl ConsensusFollowNodeArgs {
 
     /// Builds the L1 configuration for the follow node.
     pub fn l1_config(&self, cfg: &RollupConfig) -> eyre::Result<L1Config> {
-        let l1_chain_config = self.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!(e))?;
-        let l1_beacon = OnlineBeaconClient::new_http(self.l1_rpc_args.l1_beacon.to_string());
+        let l1_chain_config =
+            self.config.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!(e))?;
+        let l1_beacon = OnlineBeaconClient::new_http(self.config.l1_rpc_args.l1_beacon.to_string());
 
         Ok(L1Config {
             chain_config: Arc::new(l1_chain_config),
-            trust_rpc: self.l1_rpc_args.l1_trust_rpc,
+            trust_rpc: self.config.l1_rpc_args.l1_trust_rpc,
             beacon_client: l1_beacon,
-            engine_provider: RootProvider::new_http(self.l1_rpc_args.l1_eth_rpc.clone()),
+            engine_provider: RootProvider::new_http(self.config.l1_rpc_args.l1_eth_rpc.clone()),
             finalized_poll_interval: L1Config::default_finalized_poll_interval(cfg.l1_chain_id),
-            verifier_l1_confs: self.l1_rpc_args.l1_verifier_confs,
+            verifier_l1_confs: self.config.l1_rpc_args.l1_verifier_confs,
         })
     }
 }

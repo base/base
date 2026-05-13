@@ -13,12 +13,16 @@ pub use app::{ConsensusCli, ConsensusCommands, LogArgs, MetricsArgs};
 mod bootnode;
 pub use bootnode::{Bootnode, BootnodeEnr, BootnodeP2PArgs, resolve_host};
 
+mod chain;
+pub use chain::{ConsensusChainArgs, GlobalConsensusChainArgs};
+
 mod config;
 pub use config::{ConfigError, L1ConfigFile, L2ConfigFile};
 
 mod follow;
 pub use follow::{
-    ConsensusFollowNodeArgs, ConsensusFollowNodeCommand, ConsensusFollowNodeOverrides,
+    ConsensusFollowNodeArgs, ConsensusFollowNodeCommand, ConsensusFollowNodeConfigArgs,
+    ConsensusFollowNodeOverrides,
 };
 
 mod l1;
@@ -31,7 +35,9 @@ mod metrics;
 pub use metrics::CliMetrics;
 
 mod node;
-pub use node::{ConsensusNodeArgs, ConsensusNodeCommand, ConsensusNodeOverrides};
+pub use node::{
+    ConsensusNodeArgs, ConsensusNodeCommand, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
+};
 
 mod rpc;
 pub use rpc::RpcArgs;
