@@ -184,8 +184,20 @@ impl PayloadWitnessPrefetcher {
         }
 
         let prefetcher = self.clone();
-        std::mem::drop(tokio::spawn(async move {
+        let cleanup_prefetcher = prefetcher.clone();
+        let handle = tokio::spawn(async move {
             prefetcher.prefetch_block(kv, block_number).await;
+        });
+        std::mem::drop(tokio::spawn(async move {
+            if let Err(err) = handle.await {
+                cleanup_prefetcher.unmark_block_scheduled(block_number);
+                warn!(
+                    target: HOST_SERVER_TARGET,
+                    block_number,
+                    error = %err,
+                    "payload witness prefetch task failed"
+                );
+            }
         }));
     }
 
@@ -317,6 +329,8 @@ impl PayloadWitnessPrefetcher {
                 return false;
             }
         };
+        // This is a best-effort duplicate-RPC guard; another task may still mark the same parent
+        // ready before this task finishes.
         if self.lock_state().ready.contains_key(&parent_block_hash) {
             return false;
         }
