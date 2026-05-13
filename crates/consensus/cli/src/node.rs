@@ -5,6 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use alloy_chains::Chain;
 use alloy_primitives::Address;
 use alloy_rpc_types_engine::JwtSecret;
+use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::Registry;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
@@ -15,7 +16,8 @@ use tracing::{error, info};
 use url::Url;
 
 use crate::{
-    L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
+    L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, P2PArgs, RpcArgs,
+    SequencerArgs, metrics::CliMetrics,
 };
 
 /// Overrides supplied by callers that embed consensus alongside another service.
@@ -25,6 +27,45 @@ pub struct ConsensusNodeOverrides {
     pub l2_engine_rpc: Option<Url>,
     /// Override for the L2 Engine API JWT secret.
     pub l2_engine_jwt_secret: Option<JwtSecret>,
+}
+
+/// Standalone consensus node command.
+#[derive(Args, Clone, Debug)]
+pub struct ConsensusNodeCommand {
+    /// Logging configuration.
+    #[command(flatten)]
+    pub logging: LogArgs,
+
+    /// Metrics configuration.
+    #[command(flatten)]
+    pub metrics: MetricsArgs,
+
+    /// Consensus node arguments.
+    #[command(flatten)]
+    pub args: ConsensusNodeArgs,
+}
+
+impl ConsensusNodeCommand {
+    /// Runs the standalone consensus node command.
+    pub fn run(self) -> eyre::Result<()> {
+        base_cli_utils::init_tracing!(
+            LogConfig::from(self.logging.clone()),
+            ["libp2p_gossipsub=error"]
+        )?;
+
+        base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
+            base_cli_utils::register_version_metrics!();
+        })?;
+
+        let cfg = self.args.load_rollup_config()?;
+        if self.metrics.enabled {
+            CliMetrics::init_rollup_config(&cfg);
+            CliMetrics::init_p2p(&self.args.p2p_flags);
+        }
+
+        RuntimeManager::new()
+            .run_until_ctrl_c(self.args.start_with_overrides(cfg, Default::default()))
+    }
 }
 
 /// Consensus node arguments shared by the standalone and unified binaries.
@@ -153,7 +194,7 @@ impl ConsensusNodeArgs {
             overrides.l2_engine_rpc.unwrap_or_else(|| self.l2_client_args.l2_engine_rpc.clone());
         let jwt_secret = match overrides.l2_engine_jwt_secret {
             Some(secret) => secret,
-            None => self.resolve_engine_jwt_secret(&l2_engine_rpc).await?,
+            None => self.l2_client_args.resolve_jwt_secret_for_endpoint(&l2_engine_rpc).await?,
         };
 
         self.p2p_flags.check_ports()?;
@@ -213,18 +254,113 @@ impl ConsensusNodeArgs {
         })
     }
 
-    /// Returns the signer [`Address`] from the rollup config for the given l2 chain id.
-    fn genesis_signer(&self) -> eyre::Result<Address> {
+    /// Returns the configured genesis signer address for the selected L2 chain.
+    pub fn genesis_signer(&self) -> eyre::Result<Address> {
         let id = self.l2_chain_id;
         Registry::unsafe_block_signer(id.id())
             .ok_or_else(|| eyre::eyre!("No unsafe block signer found for chain ID: {id}"))
     }
+}
 
-    async fn resolve_engine_jwt_secret(&self, l2_engine_rpc: &Url) -> eyre::Result<JwtSecret> {
-        if l2_engine_rpc.scheme() == "file" {
-            return Ok(self.l2_client_args.jwt_secret().unwrap_or_else(|_| JwtSecret::random()));
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Mutex};
+
+    use alloy_primitives::B256;
+    use clap::Parser;
+    use rstest::rstest;
+
+    use super::*;
+    use crate::SignerArgs;
+
+    static SIGNER_ENV_LOCK: Mutex<()> = Mutex::new(());
+    const SIGNER_ENV_KEYS: &[&str] = &[
+        "BASE_NODE_P2P_SEQUENCER_KEY",
+        "BASE_NODE_P2P_SEQUENCER_KEY_PATH",
+        "BASE_NODE_P2P_SIGNER_ENDPOINT",
+        "BASE_NODE_P2P_SIGNER_ADDRESS",
+    ];
+
+    fn default_node_args() -> ConsensusNodeArgs {
+        ConsensusNodeArgs {
+            l2_chain_id: Chain::from(8453_u64),
+            node_mode: NodeMode::default(),
+            l1_rpc_args: L1ClientArgs::default(),
+            l2_client_args: L2ClientArgs::default(),
+            l1_config: L1ConfigFile::default(),
+            l2_config: L2ConfigFile::default(),
+            p2p_flags: P2PArgs::default(),
+            rpc_flags: RpcArgs::default(),
+            sequencer_flags: SequencerArgs::default(),
+            safedb_path: None,
         }
+    }
 
-        self.l2_client_args.validate_jwt().await
+    #[rstest]
+    #[case::raw_key(vec![(
+        "BASE_NODE_P2P_SEQUENCER_KEY",
+        "bcc617ea05150ff60490d3c6058630ba94ae9f12a02a87efd291349ca0e54e0a",
+    )])]
+    #[case::key_path(vec![("BASE_NODE_P2P_SEQUENCER_KEY_PATH", "/tmp/key.hex")])]
+    #[case::remote_endpoint(vec![
+        ("BASE_NODE_P2P_SIGNER_ENDPOINT", "http://localhost:8080"),
+        ("BASE_NODE_P2P_SIGNER_ADDRESS", "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a"),
+    ])]
+    fn validates_sequencer_key_from_env(#[case] env_vars: Vec<(&str, &str)>) {
+        let _guard = SIGNER_ENV_LOCK.lock().unwrap();
+
+        for key in SIGNER_ENV_KEYS {
+            // SAFETY: guarded by SIGNER_ENV_LOCK.
+            unsafe { std::env::remove_var(key) }
+        }
+        for (key, value) in &env_vars {
+            // SAFETY: guarded by SIGNER_ENV_LOCK.
+            unsafe { std::env::set_var(key, value) }
+        }
+        let signer = SignerArgs::parse_from(["test"]);
+        for key in SIGNER_ENV_KEYS {
+            // SAFETY: guarded by SIGNER_ENV_LOCK.
+            unsafe { std::env::remove_var(key) }
+        }
+        let args = ConsensusNodeArgs {
+            node_mode: NodeMode::Sequencer,
+            p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
+            ..default_node_args()
+        };
+        assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[rstest]
+    #[case::validator_no_key(NodeMode::Validator, SignerArgs::default(), true)]
+    #[case::sequencer_no_key(NodeMode::Sequencer, SignerArgs::default(), false)]
+    #[case::sequencer_raw_key(
+        NodeMode::Sequencer,
+        SignerArgs { sequencer_key: Some(B256::ZERO), ..Default::default() },
+        true
+    )]
+    #[case::sequencer_key_path(
+        NodeMode::Sequencer,
+        SignerArgs { sequencer_key_path: Some(PathBuf::from("/tmp/key.hex")), ..Default::default() },
+        true
+    )]
+    #[case::sequencer_remote_endpoint(
+        NodeMode::Sequencer,
+        SignerArgs {
+            endpoint: Some(Url::parse("http://localhost:8080").unwrap()),
+            ..Default::default()
+        },
+        true
+    )]
+    fn validates_sequencer_key(
+        #[case] mode: NodeMode,
+        #[case] signer: SignerArgs,
+        #[case] expected_ok: bool,
+    ) {
+        let args = ConsensusNodeArgs {
+            node_mode: mode,
+            p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
+            ..default_node_args()
+        };
+        assert_eq!(args.validate_sequencer_key().is_ok(), expected_ok);
     }
 }
