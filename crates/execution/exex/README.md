@@ -75,7 +75,7 @@ Once `latest` tracks the chain tip, `eth_getProof` calls for every block within
 **Prune** — manually remove old proof history to reclaim space:
 
 ```bash
-base-reth-node op-proofs prune \
+base-reth-node proofs prune \
   --datadir /path/to/reth-datadir \
   --proofs-history.storage-path /path/to/proofs-db \
   --proofs-history.window 1296000
@@ -84,7 +84,7 @@ base-reth-node op-proofs prune \
 **Unwind** — recover from corruption by reverting to a specific block:
 
 ```bash
-base-reth-node op-proofs unwind \
+base-reth-node proofs unwind \
   --datadir /path/to/reth-datadir \
   --proofs-history.storage-path /path/to/proofs-db \
   --target <BLOCK_NUMBER>
@@ -96,7 +96,7 @@ base-reth-node op-proofs unwind \
 
 When the `metrics` feature is enabled, the proofs-history system exposes Prometheus metrics.
 
-### Block processing (`optimism_trie.block.*`)
+### Block processing (`base_trie.block.*`)
 
 | Metric                               | Type      | Description                                        |
 | ------------------------------------ | --------- | -------------------------------------------------- |
@@ -111,7 +111,7 @@ When the `metrics` feature is enabled, the proofs-history system exposes Prometh
 | `earliest_number`                    | Gauge     | Earliest block number in the proofs store          |
 | `latest_number`                      | Gauge     | Latest block number in the proofs store            |
 
-### Pruner (`optimism_trie.pruner.*`)
+### Pruner (`base_trie.pruner.*`)
 
 | Metric                          | Type      | Description                                        |
 | ------------------------------- | --------- | -------------------------------------------------- |
@@ -131,7 +131,7 @@ When the `metrics` feature is enabled, the proofs-history system exposes Prometh
 | `get_proof_successful_responses`| Counter   | Total successful `eth_getProof` responses          |
 | `get_proof_failures`            | Counter   | Total failed `eth_getProof` requests               |
 
-### Storage operations (`optimism_trie.storage.operation.*`)
+### Storage operations (`base_trie.storage.operation.*`)
 
 Per-operation `duration_seconds` histograms are recorded for: `store_account_branch`,
 `store_storage_branch`, `store_hashed_account`, `store_hashed_storage`,

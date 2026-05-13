@@ -3,7 +3,7 @@
 use crate::PrunerOutput;
 
 base_metrics::define_metrics! {
-    optimism_trie.pruner
+    base_trie.pruner
     #[describe("Pruning duration")]
     total_duration_seconds: histogram,
     #[describe("Number of pruned blocks")]

@@ -424,9 +424,9 @@ mod tests {
 
         let signed_tx =
             alloy_consensus::Signed::new_unchecked(tx, invalid_signature, B256::random());
-        let op_tx = BaseTransactionSigned::Eip1559(signed_tx);
+        let base_tx = BaseTransactionSigned::Eip1559(signed_tx);
 
-        let block = create_block_with_transactions(&harness, vec![op_tx]);
+        let block = create_block_with_transactions(&harness, vec![base_tx]);
 
         let result = meter_block(harness.blockchain_provider(), harness.chain_spec(), &block);
 

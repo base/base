@@ -203,6 +203,25 @@ pub enum ExecutorError {
     MissingExecutor,
 }
 
+impl ExecutorError {
+    /// Returns whether this error represents an invalid payload that may use Holocene
+    /// deposit-only recovery.
+    ///
+    /// Only errors caused by per-transaction invalidity are eligible: stripping
+    /// non-deposit transactions cannot rescue a block whose header/attribute fields are
+    /// themselves invalid (e.g. `InvalidExtraData`, `MissingEIP1559Params`), so those
+    /// propagate as a hard halt instead.
+    pub const fn is_deposit_only_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::BlockGasLimitExceeded
+                | Self::UnsupportedTransactionType(_)
+                | Self::ExecutionError(BlockExecutionError::Validation(_))
+                | Self::Recovery(_)
+        )
+    }
+}
+
 /// Result type alias for operations that may fail with [`ExecutorError`].
 pub type ExecutorResult<T> = Result<T, ExecutorError>;
 
@@ -254,5 +273,54 @@ impl DBErrorMarker for TrieDBError {}
 impl From<EIP1559ParamError> for ExecutorError {
     fn from(err: EIP1559ParamError) -> Self {
         Self::InvalidExtraData(Eip1559ValidationError::Decode(err))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_evm::block::{
+        BlockExecutionError, BlockValidationError, InternalBlockExecutionError,
+    };
+
+    use super::*;
+
+    #[test]
+    fn invalid_payload_errors_are_deposit_only_retryable() {
+        let errors = [
+            ExecutorError::BlockGasLimitExceeded,
+            ExecutorError::UnsupportedTransactionType(0xff),
+            ExecutorError::ExecutionError(BlockExecutionError::Validation(
+                BlockValidationError::msg("invalid payload"),
+            )),
+            ExecutorError::Recovery(Default::default()),
+        ];
+
+        for error in errors {
+            assert!(error.is_deposit_only_retryable());
+        }
+    }
+
+    #[test]
+    fn witness_and_internal_errors_are_not_deposit_only_retryable() {
+        let errors = [
+            // Block/attribute-level fields — stripping non-deposit txs cannot rescue them.
+            ExecutorError::MissingGasLimit,
+            ExecutorError::MissingTransactions,
+            ExecutorError::MissingEIP1559Params,
+            ExecutorError::MissingParentBeaconBlockRoot,
+            ExecutorError::InvalidExtraData(Eip1559ValidationError::ZeroDenominator),
+            // Witness-level / prover-influenced — must not trigger silent recovery.
+            ExecutorError::TrieDBError(TrieDBError::Provider("missing preimage".to_string())),
+            ExecutorError::ExecutionError(BlockExecutionError::Internal(
+                InternalBlockExecutionError::msg("internal executor error"),
+            )),
+            // Transaction decoding and executor lifecycle — not per-tx-validity issues.
+            ExecutorError::RLPError(alloy_eips::eip2718::Eip2718Error::UnexpectedType(0xff)),
+            ExecutorError::MissingExecutor,
+        ];
+
+        for error in errors {
+            assert!(!error.is_deposit_only_retryable());
+        }
     }
 }

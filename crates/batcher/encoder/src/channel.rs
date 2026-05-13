@@ -9,6 +9,8 @@ use base_protocol::{ChannelId, Frame};
 pub struct OpenChannel {
     /// The underlying channel writer.
     pub out: ChannelOut<ShadowCompressor>,
+    /// Index of the first block encoded into this channel.
+    pub block_start: usize,
     /// L1 block number when this channel was opened (for `MaxChannelDuration`).
     pub opened_at_l1: u64,
     /// Number of L2 blocks fed into this channel so far.
@@ -21,6 +23,7 @@ impl fmt::Debug for OpenChannel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OpenChannel")
             .field("channel_id", &self.out.id)
+            .field("block_start", &self.block_start)
             .field("opened_at_l1", &self.opened_at_l1)
             .field("blocks_added", &self.blocks_added)
             .field("da_backlog_bytes", &self.da_backlog_bytes)
@@ -41,12 +44,18 @@ pub struct ReadyChannel {
     pub cursor: usize,
     /// Which input blocks this channel covers (indices into the encoder's block queue).
     pub block_range: Range<usize>,
+    /// Exact input block range encoded into this channel.
+    pub encoded_block_range: Range<usize>,
     /// DA bytes still represented by this closed channel's frames.
     pub da_backlog_bytes: u64,
     /// Number of in-flight submissions for this channel.
     pub pending_confirmations: usize,
     /// Number of frames that have been confirmed.
     pub confirmed_count: usize,
+    /// Earliest L1 block that confirmed any frame from this channel.
+    pub first_confirmed_l1_block: Option<u64>,
+    /// Latest L1 block that confirmed any frame from this channel.
+    pub last_confirmed_l1_block: Option<u64>,
 }
 
 /// Tracks a pending submission back to its channel and frame range.

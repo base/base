@@ -146,6 +146,58 @@ pub enum RetryOutcome {
     Skipped,
 }
 
+/// Outcome of a `create_with_outbox` call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateProofRequestOutcome {
+    /// A new proof request row and outbox entry were inserted.
+    Created(Uuid),
+    /// An existing terminal `FAILED` row was reset to `CREATED` and a fresh
+    /// outbox entry was inserted; the worker will pick it up again.
+    Requeued(Uuid),
+    /// An existing non-terminal or `SUCCEEDED` row was returned unchanged for
+    /// idempotent replay; no new outbox entry was inserted.
+    Replayed(Uuid),
+    /// An existing terminal `FAILED` row is at the retry cap; no requeue.
+    RetryExhausted(Uuid),
+}
+
+impl CreateProofRequestOutcome {
+    /// Returns the proof request UUID regardless of outcome variant.
+    pub const fn id(&self) -> Uuid {
+        match self {
+            Self::Created(id)
+            | Self::Requeued(id)
+            | Self::Replayed(id)
+            | Self::RetryExhausted(id) => *id,
+        }
+    }
+}
+
+/// Errors returned by `create_with_outbox`.
+#[derive(Debug, thiserror::Error)]
+pub enum CreateProofRequestError {
+    /// Persisted row disagrees with the new request for this `session_id`.
+    #[error(
+        "session_id {id} already exists with a different {field} \
+         (existing request parameters do not match the new request)"
+    )]
+    IdCollision {
+        /// Conflicting proof request UUID.
+        id: Uuid,
+        /// Name of the first mismatched field. Stable across runs.
+        field: &'static str,
+    },
+    /// Conflicting row disappeared after insert conflict; safe to retry.
+    #[error("session_id {id}: proof request row missing after insert conflict; retry prove_block")]
+    SessionRowMissingAfterConflict {
+        /// Proof request UUID that was expected to exist.
+        id: Uuid,
+    },
+    /// Underlying database error.
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
+}
+
 /// Type of proof that determines success criteria
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR")]

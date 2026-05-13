@@ -30,6 +30,10 @@ pub enum ProposerError {
     #[error("l1 origin too old")]
     L1OriginTooOld,
 
+    /// The parent game is no longer valid on-chain (`AggregateVerifier.InvalidParentGame()`).
+    #[error("invalid parent game")]
+    InvalidParentGame,
+
     /// Configuration error.
     #[error("config error: {0}")]
     Config(String),
@@ -62,6 +66,8 @@ impl ProposerError {
     pub const ERROR_TYPE_GAME_ALREADY_EXISTS: &str = "game_already_exists";
     /// Metric label for stale L1 origin errors.
     pub const ERROR_TYPE_L1_ORIGIN_TOO_OLD: &str = "l1_origin_too_old";
+    /// Metric label for invalid parent game rejections.
+    pub const ERROR_TYPE_INVALID_PARENT_GAME: &str = "invalid_parent_game";
 
     /// Returns true if this error indicates the game already exists.
     pub const fn is_game_already_exists(&self) -> bool {
@@ -73,6 +79,11 @@ impl ProposerError {
         matches!(self, Self::L1OriginTooOld)
     }
 
+    /// Returns true if this error indicates the parent game is no longer valid on-chain.
+    pub const fn is_invalid_parent_game(&self) -> bool {
+        matches!(self, Self::InvalidParentGame)
+    }
+
     /// Returns the metrics label for this error variant.
     pub const fn metric_label(&self) -> &'static str {
         match self {
@@ -82,6 +93,7 @@ impl ProposerError {
             Self::TxReverted(_) => Self::ERROR_TYPE_TX_REVERTED,
             Self::GameAlreadyExists => Self::ERROR_TYPE_GAME_ALREADY_EXISTS,
             Self::L1OriginTooOld => Self::ERROR_TYPE_L1_ORIGIN_TOO_OLD,
+            Self::InvalidParentGame => Self::ERROR_TYPE_INVALID_PARENT_GAME,
             Self::Config(_) => Self::ERROR_TYPE_CONFIG,
             Self::Internal(_) => Self::ERROR_TYPE_INTERNAL,
             Self::TxManager(_) => Self::ERROR_TYPE_TX_MANAGER,

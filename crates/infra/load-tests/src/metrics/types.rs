@@ -20,6 +20,8 @@ pub struct TransactionMetrics {
     pub gas_price: u128,
     /// Block number where transaction was included.
     pub block_number: Option<u64>,
+    /// Whether the transaction reverted during execution.
+    pub reverted: bool,
     /// When canonical inclusion was observed (used by the rolling window).
     #[serde(skip)]
     pub confirmed_at: Option<Instant>,
@@ -43,6 +45,7 @@ impl TransactionMetrics {
             gas_used,
             gas_price,
             block_number,
+            reverted: false,
             confirmed_at: None,
         }
     }
@@ -79,6 +82,8 @@ pub struct ThroughputMetrics {
     pub total_confirmed: u64,
     /// Total transactions failed.
     pub total_failed: u64,
+    /// Total confirmed transactions that reverted during execution.
+    pub total_reverted: u64,
     /// Transactions per second achieved.
     pub tps: f64,
     /// Gas per second achieved.

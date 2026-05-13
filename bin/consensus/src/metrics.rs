@@ -46,6 +46,9 @@ impl CliMetrics {
     /// The high-tide peer count.
     pub const P2P_PEERS_HI: &'static str = "base_node_peers_hi";
 
+    /// The identify peerstore size.
+    pub const P2P_IDENTIFY_PEERSTORE_SIZE: &'static str = "base_node_identify_peerstore_size";
+
     /// The gossip mesh d option.
     pub const P2P_GOSSIP_MESH_D: &'static str = "base_node_gossip_mesh_d";
 
@@ -97,6 +100,7 @@ pub fn init_p2p_metrics(p2p: &P2PArgs) {
             ),
             (CliMetrics::P2P_PEERS_LO, p2p.peers_lo.to_string()),
             (CliMetrics::P2P_PEERS_HI, p2p.peers_hi.to_string()),
+            (CliMetrics::P2P_IDENTIFY_PEERSTORE_SIZE, p2p.identify_peerstore_size.to_string()),
             (CliMetrics::P2P_GOSSIP_MESH_D, p2p.gossip_mesh_d.to_string()),
             (CliMetrics::P2P_GOSSIP_MESH_D_LO, p2p.gossip_mesh_dlo.to_string()),
             (CliMetrics::P2P_GOSSIP_MESH_D_HI, p2p.gossip_mesh_dhi.to_string()),

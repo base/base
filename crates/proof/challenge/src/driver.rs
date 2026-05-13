@@ -15,7 +15,10 @@
 //!    TEE proof first (`nullify()`), falling back to ZK `nullify()`.
 //!    After the TEE proof is nullified, the game is re-scanned as Path 3.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
@@ -41,6 +44,8 @@ use crate::{
 pub struct DriverConfig {
     /// How often the driver polls for new games.
     pub poll_interval: Duration,
+    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
+    pub max_proof_duration: Duration,
     /// Cancellation token for graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -116,6 +121,8 @@ where
     pub bond_manager: Option<BondManager<C>>,
     /// Interval between polling cycles.
     pub poll_interval: Duration,
+    /// Maximum wall-clock time to wait for a ZK proof session before treating it as failed.
+    pub max_proof_duration: Duration,
     /// Token used to signal graceful shutdown.
     pub cancel: CancellationToken,
 }
@@ -147,6 +154,7 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             pending_proofs: PendingProofs::new(),
             bond_manager: components.bond_manager,
             poll_interval: config.poll_interval,
+            max_proof_duration: config.max_proof_duration,
             cancel: config.cancel,
         }
     }
@@ -286,22 +294,40 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
             Ok(result) => Ok(Some((result, intermediate_roots))),
             Err(e) => {
                 match &e {
+                    // Transient: the L2 node has not produced this block yet.
+                    // Safe to skip — the next scan tick will retry.
                     ValidatorError::BlockNotAvailable { .. } => {
                         debug!(
                             game = %game_address,
                             error = %e,
                             "block not yet available, skipping game"
                         );
+                        Ok(None)
                     }
+
+                    // Persistent configuration errors: these indicate a
+                    // mismatch between the cached interval and on-chain
+                    // state (e.g. after a governance `setImplementation`
+                    // that changed `INTERMEDIATE_BLOCK_INTERVAL`).
+                    // Propagate so the caller logs the error at game level
+                    // and operators are alerted. No log here — the caller
+                    // in `step()` already logs at warn level.
+                    ValidatorError::CheckpointCountMismatch { .. }
+                    | ValidatorError::InvalidInterval
+                    | ValidatorError::InvalidBlockRange { .. } => Err(e.into()),
+
+                    // Other errors (RPC, header hash mismatch, account
+                    // proof failure, arithmetic overflow) are potentially
+                    // transient — skip and retry on the next tick.
                     _ => {
                         warn!(
                             game = %game_address,
                             error = %e,
-                            "validation error, skipping game"
+                            "transient validation error, skipping game"
                         );
+                        Ok(None)
                     }
                 }
-                Ok(None)
             }
         }
     }
@@ -676,7 +702,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
         // Poll proof status first — if still pending, skip the contract
         // calls that check game liveness. This avoids 3 RPC round-trips
         // per tick for proofs that are not yet ready.
-        let proof_update = self.pending_proofs.poll(game_address, &*self.zk_prover).await?;
+        let proof_update = self
+            .pending_proofs
+            .poll(game_address, &*self.zk_prover, self.max_proof_duration)
+            .await?;
         match &proof_update {
             Some(ProofUpdate::Pending) => {
                 debug!(game = %game_address, "proof not ready, will retry next tick");
@@ -858,7 +887,10 @@ impl<L2: L2Provider, P: ZkProofProvider, T: TxManager, C: Clock> Driver<L2, P, T
                     "proof job re-initiated"
                 );
                 if let Some(p) = self.pending_proofs.get_mut(&game_address) {
-                    p.phase = ProofPhase::AwaitingProof { session_id: response.session_id };
+                    p.phase = ProofPhase::AwaitingProof {
+                        session_id: response.session_id,
+                        started_at: Instant::now(),
+                    };
                 }
             }
             Err(e) => {

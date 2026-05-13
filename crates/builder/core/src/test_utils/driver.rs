@@ -13,11 +13,11 @@ use chrono::Utc;
 
 use super::{
     DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode, Ipc,
-    LocalInstance, PrivateKeySigner, Protocol, TransactionBuilder, sign_op_tx,
+    LocalInstance, PrivateKeySigner, Protocol, TransactionBuilder, sign_base_tx,
 };
 use crate::BuilderConfig;
 
-/// The `ChainDriver` is a type that allows driving the op builder node to build new blocks manually
+/// The `ChainDriver` is a type that allows driving the Base builder node to build new blocks manually.
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node
 /// and the provider to fetch blocks and transactions.
 #[derive(Debug)]
@@ -140,7 +140,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
             // Create a temporary signer for the deposit
             let signer = self.signer.clone().unwrap_or_else(PrivateKeySigner::random);
-            let signed_tx = sign_op_tx(&signer, BaseTypedTransaction::Deposit(deposit_tx))?;
+            let signed_tx = sign_base_tx(&signer, BaseTypedTransaction::Deposit(deposit_tx))?;
             signed_tx.encoded_2718().into()
         };
 
@@ -324,7 +324,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     }
 }
 
-// L1 block info from an OP Mainnet compatibility fixture, block 124665056
+// L1 block info from a legacy compatibility fixture, block 124665056.
 // (stored in input of tx at index 0).
 // https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
 // It has the following modifications:

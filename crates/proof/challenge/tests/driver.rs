@@ -9,14 +9,14 @@ use std::{
 use alloy_primitives::{Address, B256, Bytes};
 use base_challenger::{
     BondManager, ChallengeSubmitter, DisputeIntent, Driver, DriverComponents, DriverConfig,
-    GameScanner, L1HeadProvider, OutputValidator, PendingProof, ProofPhase, ScannerConfig,
-    TeeConfig,
+    GameScanner, L1HeadProvider, OutputValidator, PendingProof, PendingProofs, ProofPhase,
+    ProofUpdate, TeeConfig,
     test_utils::{
         DEFAULT_L1_HEAD, DEFAULT_TEE_PROVER, MockAggregateVerifier, MockBondTransactionSubmitter,
         MockDisputeGameFactory, MockGameState, MockL1HeadProvider, MockL2Provider,
         MockTeeProofProvider, MockTxManager, MockZkProofProvider, MockZkProofState,
         TEST_DISCOVERY_INTERVAL, addr, build_test_header_and_account, empty_factory, factory_game,
-        mock_state, mock_state_with_tee, receipt_with_status,
+        mock_anchor_registry, mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
 use base_proof_contracts::{AggregateVerifierClient, ContractError, GameAtIndex, GameStatus};
@@ -76,13 +76,16 @@ fn test_driver_with_tee(
     let scanner = GameScanner::new(
         factory,
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        ScannerConfig { lookback_games: 1000 },
+        mock_anchor_registry(Address::ZERO),
     );
     let validator = OutputValidator::new(l2_provider);
     let submitter = ChallengeSubmitter::new(tx_manager);
 
-    let config =
-        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
+    let config = DriverConfig {
+        poll_interval: Duration::from_millis(10),
+        max_proof_duration: Duration::from_secs(4 * 60 * 60),
+        cancel: CancellationToken::new(),
+    };
 
     Driver::new(
         config,
@@ -111,7 +114,7 @@ fn default_l2() -> Arc<MockL2Provider> {
 }
 
 fn single_game_factory() -> Arc<MockDisputeGameFactory> {
-    Arc::new(MockDisputeGameFactory { games: vec![factory_game(0, 1)] })
+    Arc::new(MockDisputeGameFactory::new(vec![factory_game(0, 1)]))
 }
 
 fn single_game_verifier(state: MockGameState) -> Arc<MockAggregateVerifier> {
@@ -221,7 +224,7 @@ fn driver_with_ready_proof(
 
 #[tokio::test]
 async fn test_step_no_candidates() {
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
+    let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
     let verifier = empty_verifier();
     let l2 = default_l2();
 
@@ -369,15 +372,18 @@ async fn test_step_scan_error_propagated() {
     let scanner = GameScanner::new(
         factory,
         Arc::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-        ScannerConfig { lookback_games: 1000 },
+        mock_anchor_registry(Address::ZERO),
     );
 
     let l2 = default_l2();
     let validator = OutputValidator::new(l2);
     let submitter = ChallengeSubmitter::new(default_tx_manager());
 
-    let config =
-        DriverConfig { poll_interval: Duration::from_millis(10), cancel: CancellationToken::new() };
+    let config = DriverConfig {
+        poll_interval: Duration::from_millis(10),
+        max_proof_duration: Duration::from_secs(4 * 60 * 60),
+        cancel: CancellationToken::new(),
+    };
 
     let mut driver = Driver::new(
         config,
@@ -409,7 +415,8 @@ async fn test_step_pending_proof_skips_prove_block() {
 
     let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
 
-    // Step 1: proof is initiated but not ready (Unspecified) → session stored.
+    // Step 1: proof is initiated → session stored in AwaitingProof. The mock's
+    // proof_status is not polled this tick (pending_proofs is empty at poll time).
     driver.step().await.unwrap();
     assert!(
         driver.pending_proofs.contains_key(&addr(0)),
@@ -521,7 +528,7 @@ async fn test_poll_or_submit_drops_nullified_game() {
 
 #[tokio::test]
 async fn test_run_cancellation() {
-    let factory = Arc::new(MockDisputeGameFactory { games: vec![] });
+    let factory = Arc::new(MockDisputeGameFactory::new(vec![]));
     let verifier = empty_verifier();
     let l2 = default_l2();
 
@@ -581,6 +588,86 @@ async fn test_step_proof_retry_succeeds() {
     assert!(
         !driver.pending_proofs.contains_key(&addr(0)),
         "entry should be removed after successful challenge submission"
+    );
+}
+
+// Regression test for CHAIN-4297 / Immunefi #75829: after a FAILED proof, the
+// driver must re-invoke `prove_block` with the same deterministic
+// `session_id` so the service-side fix in `create_with_outbox` can requeue
+// the row. Independent of the DB layer; fails on a challenger-side regression
+// such as dropping the retry call or losing `derive_session_id` determinism.
+#[tokio::test]
+async fn test_step_proof_retry_reuses_deterministic_session_id() {
+    let (l2, factory, verifier) = invalid_game_mocks();
+
+    // Invalid index is 1 (see `invalid_game_mocks`: `vec![root_15, BOGUS_ROOT]`).
+    let expected_session_id = PendingProof::derive_session_id(addr(0), 1);
+
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: expected_session_id.clone(),
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Failed as i32,
+            error_message: Some("transient backend error".into()),
+            ..Default::default()
+        }),
+    });
+
+    let tx_manager = default_tx_manager();
+    let mut driver = test_driver(factory, Arc::clone(&verifier), l2, Arc::clone(&zk), tx_manager);
+
+    // Step 1: initial prove_block call from initiate_zk_proof.
+    driver.step().await.unwrap();
+    {
+        let log = &zk.state.lock().unwrap().prove_block_log;
+        assert_eq!(log.len(), 1, "exactly one prove_block call on initiation");
+        assert_eq!(
+            log[0].session_id.as_deref(),
+            Some(expected_session_id.as_str()),
+            "challenger must use the deterministic session_id on initiation",
+        );
+    }
+
+    // Step 2: poll observes Failed → NeedsRetry → handle_proof_retry must
+    // invoke prove_block again, reusing the same deterministic session_id.
+    driver.step().await.unwrap();
+    {
+        let log = &zk.state.lock().unwrap().prove_block_log;
+        assert_eq!(log.len(), 2, "retry must invoke prove_block a second time");
+        assert_eq!(
+            log[1].session_id.as_deref(),
+            Some(expected_session_id.as_str()),
+            "retry must reuse the deterministic session_id so the service can requeue",
+        );
+        assert_eq!(
+            log[0].session_id, log[1].session_id,
+            "the deterministic session_id must be stable across retries",
+        );
+    }
+
+    let entry = driver.pending_proofs.get(&addr(0)).expect("entry should be retained after retry");
+    assert!(
+        matches!(entry.phase, ProofPhase::AwaitingProof { ref session_id, .. } if session_id == &expected_session_id),
+        "post-retry phase must be AwaitingProof with the deterministic session_id",
+    );
+    assert_eq!(entry.retry_count, 1);
+
+    // Simulate the service requeuing on the second prove_block and the proof
+    // eventually succeeding on the retry session.
+    {
+        let mut state = zk.state.lock().unwrap();
+        state.proof_status = ProofJobStatus::Succeeded as i32;
+        state.receipt = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        state.error_message = None;
+    }
+    verifier.update_game(
+        addr(0),
+        MockGameState { status: GameStatus::ChallengerWins, ..game_state(20) },
+    );
+
+    driver.step().await.unwrap();
+    assert!(
+        !driver.pending_proofs.contains_key(&addr(0)),
+        "entry should be removed after successful retry submission",
     );
 }
 
@@ -1465,4 +1552,159 @@ async fn test_driver_tracks_bond_after_successful_challenge() {
         bond_mgr.is_tracking(&addr(0)),
         "game should be tracked by bond manager after successful challenge"
     );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Checkpoint count mismatch (stale interval) surfaces as an error
+// ──────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_step_checkpoint_count_mismatch_surfaces_error() {
+    // Regression test for Immunefi #74652: after a governance
+    // `setImplementation` that changes `INTERMEDIATE_BLOCK_INTERVAL`,
+    // the cached stale interval produces a `CheckpointCountMismatch`
+    // error. This error must NOT be silently swallowed — it should
+    // propagate as a per-game error so operators notice.
+    //
+    // Setup: starting=10, l2_block=20, span=10.
+    // On-chain impl uses interval=10 → stores 1 intermediate root.
+    // But we configure the mock so the scanner resolves interval=5
+    // (the default mock value), which expects 2 intermediate roots.
+    // This triggers CheckpointCountMismatch { expected: 2, actual: 1 }.
+    let factory = single_game_factory();
+
+    let verifier = single_game_verifier(MockGameState {
+        tee_prover: DEFAULT_TEE_PROVER,
+        // On-chain: only 1 intermediate root (as if interval=10).
+        intermediate_output_roots: vec![BOGUS_ROOT],
+        ..game_state(20)
+    });
+
+    // The mock verifier's `read_intermediate_block_interval` returns 5,
+    // so the scanner caches interval=5. With span=10, the validator
+    // expects 10/5 = 2 intermediate roots, but only 1 is on-chain.
+    let l2 = default_l2();
+
+    let mut driver = test_driver(factory, verifier, l2, default_zk_prover(), default_tx_manager());
+
+    // step() should succeed (per-game errors are caught at the candidate
+    // level), but the game should NOT have a pending proof — the mismatch
+    // error prevents silent skipping and instead logs an error.
+    driver.step().await.unwrap();
+
+    assert!(
+        driver.pending_proofs.is_empty(),
+        "no proof should be initiated when checkpoint count mismatches — \
+         the error should be surfaced, not silently swallowed"
+    );
+}
+
+fn minimal_prove_request(session_id: &str) -> base_zk_client::ProveBlockRequest {
+    base_zk_client::ProveBlockRequest {
+        start_block_number: 0,
+        number_of_blocks_to_prove: 1,
+        sequence_window: None,
+        proof_type: ProofType::SnarkGroth16.into(),
+        session_id: Some(session_id.to_string()),
+        prover_address: None,
+        l1_head: None,
+        intermediate_root_interval: None,
+    }
+}
+
+#[tokio::test]
+async fn test_poll_unspecified_status_triggers_retry() {
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "unspecified-session".to_string(),
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Unspecified as i32,
+            ..Default::default()
+        }),
+    });
+
+    let mut proofs = PendingProofs::new();
+    proofs.insert(
+        addr(0),
+        PendingProof::awaiting(
+            "unspecified-session".to_string(),
+            0,
+            B256::ZERO,
+            minimal_prove_request("unspecified-session"),
+            DisputeIntent::Challenge,
+        ),
+    );
+
+    let update = proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
+    assert!(
+        matches!(update, Some(ProofUpdate::NeedsRetry)),
+        "Unspecified should trigger NeedsRetry"
+    );
+    let entry = proofs.get(&addr(0)).unwrap();
+    assert_eq!(entry.retry_count, 1);
+    assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
+}
+
+#[tokio::test]
+async fn test_poll_running_within_timeout_stays_pending() {
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "running-session".to_string(),
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Running as i32,
+            ..Default::default()
+        }),
+    });
+
+    let mut proofs = PendingProofs::new();
+    proofs.insert(
+        addr(0),
+        PendingProof::awaiting(
+            "running-session".to_string(),
+            0,
+            B256::ZERO,
+            minimal_prove_request("running-session"),
+            DisputeIntent::Challenge,
+        ),
+    );
+
+    let update = proofs.poll(addr(0), &*zk, Duration::from_secs(3600)).await.unwrap();
+    assert!(
+        matches!(update, Some(ProofUpdate::Pending)),
+        "Running within timeout should stay Pending"
+    );
+    let entry = proofs.get(&addr(0)).unwrap();
+    assert_eq!(entry.retry_count, 0);
+    assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
+}
+
+#[tokio::test]
+async fn test_poll_running_timeout_triggers_retry() {
+    let zk = Arc::new(MockZkProofProvider {
+        session_id: "stuck-session".to_string(),
+        state: Mutex::new(MockZkProofState {
+            proof_status: ProofJobStatus::Running as i32,
+            ..Default::default()
+        }),
+    });
+
+    let mut proofs = PendingProofs::new();
+    proofs.insert(
+        addr(0),
+        PendingProof::awaiting(
+            "stuck-session".to_string(),
+            0,
+            B256::ZERO,
+            minimal_prove_request("stuck-session"),
+            DisputeIntent::Challenge,
+        ),
+    );
+
+    // Zero timeout: already expired on the first poll.
+    let update = proofs.poll(addr(0), &*zk, Duration::ZERO).await.unwrap();
+    assert!(
+        matches!(update, Some(ProofUpdate::NeedsRetry)),
+        "Timed-out Running should trigger NeedsRetry"
+    );
+    let entry = proofs.get(&addr(0)).unwrap();
+    assert_eq!(entry.retry_count, 1);
+    assert!(matches!(entry.phase, ProofPhase::NeedsRetry));
 }

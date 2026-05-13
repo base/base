@@ -1,6 +1,6 @@
 //! Network Builder Module.
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
@@ -54,6 +54,7 @@ impl From<NetworkConfig> for NetworkBuilder {
         .with_topic_scoring(config.topic_scoring)
         .with_gater_config(config.gater_config)
         .with_connection_limits_config(config.connection_limits_config)
+        .with_max_identify_peerstore_peers(config.max_identify_peerstore_peers)
     }
 }
 
@@ -98,6 +99,11 @@ impl NetworkBuilder {
     /// Sets the connection limits enforced by the libp2p swarm.
     pub fn with_connection_limits_config(self, config: ConnectionLimitsConfig) -> Self {
         Self { gossip: self.gossip.with_connection_limits_config(config), ..self }
+    }
+
+    /// Sets the maximum number of peers to retain identify metadata for.
+    pub fn with_max_identify_peerstore_peers(self, max_peers: NonZeroUsize) -> Self {
+        Self { gossip: self.gossip.with_max_identify_peerstore_peers(max_peers), ..self }
     }
 
     /// Sets the signer for the [`NetworkBuilder`].

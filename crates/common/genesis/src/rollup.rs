@@ -408,7 +408,7 @@ impl RollupConfig {
 /// Serializes a [`Chain`] as its numeric chain ID.
 ///
 /// `alloy_chains::Chain` serializes named chains (e.g. Base Sepolia) as a string like
-/// `"base-sepolia"`, but external consumers such as op-batcher expect a plain integer.
+/// `"base-sepolia"`, but external Go consumers expect a plain integer.
 /// This helper forces numeric serialization for all chains.
 #[cfg(feature = "serde")]
 fn chain_id_as_u64<S: serde::Serializer>(chain: &Chain, serializer: S) -> Result<S::Ok, S::Error> {
@@ -709,7 +709,7 @@ mod tests {
     #[cfg(feature = "serde")]
     fn test_l2_chain_id_serializes_as_number() {
         // Named chains (e.g. Base Sepolia, ID 84532) must serialize as a numeric JSON value,
-        // not as the string "base-sepolia". op-batcher and other Go consumers expect *big.Int.
+        // not as the string "base-sepolia". Go consumers expect *big.Int.
         let cfg = RollupConfig { l2_chain_id: Chain::from_id(84532), ..Default::default() };
         let json = serde_json::to_value(&cfg).unwrap();
         assert!(

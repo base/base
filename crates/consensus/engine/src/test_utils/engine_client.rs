@@ -67,11 +67,11 @@ pub struct MockEngineStorage {
     // Version-specific get_payload responses
     /// Storage for execution payload envelope v2 responses.
     pub execution_payload_v2: Option<ExecutionPayloadEnvelopeV2>,
-    /// Storage for OP execution payload envelope v3 responses.
+    /// Storage for Base execution payload envelope v3 responses.
     pub execution_payload_v3: Option<BaseExecutionPayloadEnvelopeV3>,
-    /// Storage for OP execution payload envelope v4 responses.
+    /// Storage for Base execution payload envelope v4 responses.
     pub execution_payload_v4: Option<BaseExecutionPayloadEnvelopeV4>,
-    /// Storage for OP execution payload envelope v5 responses.
+    /// Storage for Base execution payload envelope v5 responses.
     pub execution_payload_v5: Option<BaseExecutionPayloadEnvelopeV5>,
 
     // Version-specific get_payload_bodies responses

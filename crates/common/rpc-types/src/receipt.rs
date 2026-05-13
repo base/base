@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// Base transaction receipt type
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[doc(alias = "OpTxReceipt")]
+#[doc(alias = "BaseTxReceipt")]
 pub struct BaseTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
@@ -302,21 +302,21 @@ mod tests {
     }
 
     #[test]
-    fn serialize_empty_op_chain_transaction_receipt_fields_struct() {
-        let op_fields = TransactionReceiptFields::default();
+    fn serialize_empty_base_chain_transaction_receipt_fields_struct() {
+        let base_fields = TransactionReceiptFields::default();
 
-        let json = serde_json::to_value(op_fields).unwrap();
+        let json = serde_json::to_value(base_fields).unwrap();
         assert_eq!(json, json!({}));
     }
 
     #[test]
     fn serialize_l1_fee_scalar() {
-        let op_fields = TransactionReceiptFields {
+        let base_fields = TransactionReceiptFields {
             l1_block_info: L1BlockInfo { l1_fee_scalar: Some(0.678), ..Default::default() },
             ..Default::default()
         };
 
-        let json = serde_json::to_value(op_fields).unwrap();
+        let json = serde_json::to_value(base_fields).unwrap();
 
         assert_eq!(json["l1FeeScalar"], serde_json::Value::String("0.678".to_string()));
     }
@@ -327,19 +327,19 @@ mod tests {
             "l1FeeScalar": "0.678"
         });
 
-        let op_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, Some(0.678f64));
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, Some(0.678f64));
 
         let json = json!({
             "l1FeeScalar": Value::Null
         });
 
-        let op_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, None);
 
         let json = json!({});
 
-        let op_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
+        let base_fields: TransactionReceiptFields = serde_json::from_value(json).unwrap();
+        assert_eq!(base_fields.l1_block_info.l1_fee_scalar, None);
     }
 }

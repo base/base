@@ -112,6 +112,18 @@ impl CertCrlInfo {
 
         Ok(infos)
     }
+
+    /// Returns an iterator over the intermediate certificates in a chain,
+    /// skipping the root (index 0) and the leaf (last index).
+    ///
+    /// Roots manage their own trust and leaves are short-lived
+    /// (~3 hours), so neither participates in the on-chain
+    /// `_cacheNewCert` rewrite that the durable revocation sentinel
+    /// guards against; the AWS CRL layer applies the same scope.
+    /// Chains shorter than three certificates yield an empty iterator.
+    pub fn intermediates(infos: &[Self]) -> impl Iterator<Item = &Self> {
+        infos.iter().skip(1).take(infos.len().saturating_sub(2))
+    }
 }
 
 /// Information about a revoked certificate.
@@ -161,35 +173,31 @@ fn is_allowed_crl_host(url: &str) -> bool {
     )
 }
 
-/// Checks a certificate chain against CRLs fetched from distribution points.
+/// Checks a pre-parsed certificate chain against CRLs fetched from
+/// distribution points.
 ///
-/// This is the main entry point for CRL checking. It:
-/// 1. Extracts CRL info from each certificate
-/// 2. For certificates with CRL distribution points, fetches the CRL
-/// 3. Checks if the certificate's serial number appears on the CRL
+/// For each intermediate (root and leaf are skipped via
+/// [`CertCrlInfo::intermediates`]) the function:
+/// 1. Reads the CRL distribution point URL recorded during parsing
+/// 2. Fetches the CRL
+/// 3. Checks whether the certificate's serial number appears on the CRL
 ///
 /// **Fail-open policy**: CRL fetch or parse failures are logged as warnings
 /// but do not abort the check. Only confirmed revocations are reported.
 ///
 /// # Arguments
 ///
-/// * `certs_der` - DER-encoded certificates in chain order (root → leaf)
+/// * `cert_infos` - Pre-parsed cert chain info, typically produced once per
+///   cycle by [`CertCrlInfo::from_chain`] and shared with the on-chain
+///   revocation pre-check so the DER parse only happens once.
 /// * `http_client` - HTTP client for fetching CRLs
-///
-/// # Errors
-///
-/// Returns an error only if the certificate chain itself cannot be parsed.
-/// CRL fetch/parse failures are handled internally (fail-open).
 pub async fn check_chain_against_crls(
-    certs_der: &[&[u8]],
+    cert_infos: &[CertCrlInfo],
     http_client: &reqwest::Client,
-) -> Result<Vec<RevokedCertInfo>, CrlError> {
-    let cert_infos = CertCrlInfo::from_chain(certs_der)?;
+) -> Vec<RevokedCertInfo> {
     let mut revoked = Vec::new();
 
-    // Skip root (index 0) and leaf (last) — CRL checks are for intermediates.
-    // Root CAs manage their own trust; leaf certs are short-lived (~3 hours).
-    for info in cert_infos.iter().skip(1).take(cert_infos.len().saturating_sub(2)) {
+    for info in CertCrlInfo::intermediates(cert_infos) {
         let Some(ref crl_url) = info.crl_url else {
             debug!(cert = %info.label, "no CRL distribution point, skipping");
             continue;
@@ -226,7 +234,7 @@ pub async fn check_chain_against_crls(
         }
     }
 
-    Ok(revoked)
+    revoked
 }
 
 /// Fetches a CRL from the given URL and checks if the serial number is
@@ -347,23 +355,9 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::*;
-
-    // ── Real AWS Nitro cert DER hex (same fixtures as x509.rs) ──────────
-
-    /// Root CA (self-signed, P384). Validity: 2019-10-28 to 2049-10-28.
-    const ROOT_HEX: &str = "3082021130820196a003020102021100f93175681b90afe11d46ccb4e4e7f856300a06082a8648ce3d0403033049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c61766573301e170d3139313032383133323830355a170d3439313032383134323830355a3049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004fc0254eba608c1f36870e29ada90be46383292736e894bfff672d989444b5051e534a4b1f6dbe3c0bc581a32b7b176070ede12d69a3fea211b66e752cf7dd1dd095f6f1370f4170843d9dc100121e4cf63012809664487c9796284304dc53ff4a3423040300f0603551d130101ff040530030101ff301d0603551d0e041604149025b50dd90547e796c396fa729dcf99a9df4b96300e0603551d0f0101ff040403020186300a06082a8648ce3d0403030369003066023100a37f2f91a1c9bd5ee7b8627c1698d255038e1f0343f95b63a9628c3d39809545a11ebcbf2e3b55d8aeee71b4c3d6adf3023100a2f39b1605b27028a5dd4ba069b5016e65b4fbde8fe0061d6a53197f9cdaf5d943bc61fc2beb03cb6fee8d2302f3dff6";
-
-    /// Intermediate 1 (signed by root). Validity: 2024-11-28 to 2024-12-18.
-    const INTER1_HEX: &str = "308202be30820244a003020102021056bfc987fd05ac99c475061b1a65eedc300a06082a8648ce3d0403033049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c61766573301e170d3234313132383036303734355a170d3234313231383037303734355a3064310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533136303406035504030c2d636264383238303866646138623434642e75732d656173742d312e6177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b81040022036200040713751f4391a24bf27d688c9fdde4b7eec0c4922af63f242186269602eca12354e79356170287baa07dd84fa89834726891f9b4b27032b3e86000d32471a79fbf1a30c1982ad4ed069ad96a7e11d9ae2b5cd6a93ad613ee559ed7f6385a9a89a381d53081d230120603551d130101ff040830060101ff020102301f0603551d230418301680149025b50dd90547e796c396fa729dcf99a9df4b96301d0603551d0e04160414bfbd54a168f57f7391b66ca60a2836f30acfb9a1300e0603551d0f0101ff040403020186306c0603551d1f046530633061a05fa05d865b687474703a2f2f6177732d6e6974726f2d656e636c617665732d63726c2e73332e616d617a6f6e6177732e636f6d2f63726c2f61623439363063632d376436332d343262642d396539662d3539333338636236376638342e63726c300a06082a8648ce3d0403030368003065023100c05dfd13378b1eecd926b0c3ba8da01eec89ec5502ae7ca73cb958557ca323057962fff2681993a0ab223b6eacf11033023035664252d7f9e2c89c988cc4164d390f898a5e8ac2e99dc58595aa4c624e93face7964026a99b4bcca7088b51250ccc4";
-
-    /// Intermediate 2 (signed by inter1). Validity: 2024-11-30 to 2024-12-06.
-    const INTER2_HEX: &str = "308203163082029ba003020102021100cb286a4a4a09207f8b0c14950dcd6861300a06082a8648ce3d0403033064310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533136303406035504030c2d636264383238303866646138623434642e75732d656173742d312e6177732e6e6974726f2d656e636c61766573301e170d3234313133303033313435345a170d3234313230363031313435345a308189313c303a06035504030c33343762313739376131663031386266302e7a6f6e616c2e75732d656173742d312e6177732e6e6974726f2d656e636c61766573310c300a060355040b0c03415753310f300d060355040a0c06416d617a6f6e310b3009060355040613025553310b300906035504080c0257413110300e06035504070c0753656174746c653076301006072a8648ce3d020106052b810400220362000423959f700ef87dcbdba686449d944f2a89ad22aa03d73cf93d28853f2fb6a80b0cc714d3090e34cda8234eef8f804e46c0dcb216062afba3e2b36a693660d9965e2370308b8e1ffad8542ddbe3e733077481b0cbc747d8c7beb7612820d4fe95a381ea3081e730120603551d130101ff040830060101ff020101301f0603551d23041830168014bfbd54a168f57f7391b66ca60a2836f30acfb9a1301d0603551d0e04160414bbf52a3a42fdc4f301f72536b90e65aaa1b70a99300e0603551d0f0101ff0404030201863081800603551d1f047930773075a073a071866f687474703a2f2f63726c2d75732d656173742d312d6177732d6e6974726f2d656e636c617665732e73332e75732d656173742d312e616d617a6f6e6177732e636f6d2f63726c2f30366434386638652d326330382d343738312d613634352d6231646534303261656662382e63726c300a06082a8648ce3d0403030369003066023100fa31509230632a002939201eb5686b52d79f0276db5c2b954bed324caa5c3271a60d25e2e05a5e6700e488a074af4ecd02310084770462c2ef86dcdb11fa8a31dcf770866cbd28822b682a112b98c09a30e35e94affd3482bf8b01b59a0a7775b4af18";
-
-    /// Intermediate 3 (signed by inter2). Validity: 2024-11-30 to 2024-12-01.
-    const INTER3_HEX: &str = "308202bf30820245a003020102021500c8925d382506d820d93d2c704a7523c4ba2ddfaa300a06082a8648ce3d040303308189313c303a06035504030c33343762313739376131663031386266302e7a6f6e616c2e75732d656173742d312e6177732e6e6974726f2d656e636c61766573310c300a060355040b0c03415753310f300d060355040a0c06416d617a6f6e310b3009060355040613025553310b300906035504080c0257413110300e06035504070c0753656174746c65301e170d3234313133303132343133315a170d3234313230313132343133315a30818e310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533139303706035504030c30692d30646533386232623638353363633965382e75732d656173742d312e6177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004466754b5718024df3564bcd722361e7c65a4922eda7b1f826758e30afac40b04a281062897d085311fd509b70a6bbc5f8280f86ae2ff255ad147146fc97b7afb16064f0712d335c1d473b716be320be625e91c5870973084b3a0005bc020c7b2a366306430120603551d130101ff040830060101ff020100300e0603551d0f0101ff040403020204301d0603551d0e04160414345c86a9ec55bc30cafd923d6b73111d9c57abc0301f0603551d23041830168014bbf52a3a42fdc4f301f72536b90e65aaa1b70a99300a06082a8648ce3d0403030368003065023100aba82c02f40acb9846012bf070578217eeb2ebbfd16414948438cf67eeab6f64cdc5a152998766c88b2cdebd5a97ebd402307421611ed511567bc8e6a0a2805b981ef38dc3bd6a6c661522802b5c5d658cc4fcc9b5e8df148b161d36692689673683";
-
-    /// Leaf enclave cert (signed by inter3). Validity: 2024-11-30T16:22 to 2024-11-30T19:22.
-    const LEAF_HEX: &str = "3082027c30820201a00302010202100193685e7fee7d8500000000674b3bd8300a06082a8648ce3d04030330818e310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c034157533139303706035504030c30692d30646533386232623638353363633965382e75732d656173742d312e6177732e6e6974726f2d656e636c61766573301e170d3234313133303136323234355a170d3234313133303139323234385a308193310b30090603550406130255533113301106035504080c0a57617368696e67746f6e3110300e06035504070c0753656174746c65310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753313e303c06035504030c35692d30646533386232623638353363633965382d656e63303139333638356537666565376438352e75732d656173742d312e6177733076301006072a8648ce3d020106052b810400220362000461d930c61be969237398264901d6a37282cfd42c0694d012d9143cc86a339d567913dae552bad2f10d47c50d4e670247f0344983cbdc2d2e0045d4ccbdff59ef7a26ebf1be83a81e24a651c92008fe9f465757792a0877fba02c8b5e1eb2ed90a31d301b300c0603551d130101ff04023000300b0603551d0f0404030206c0300a06082a8648ce3d0403030369003066023100e48f39a39b444a6e5ea7a38b808198a2318dd531ed62faf4a9223f71f27dff4a5e495e32dd10f250bbaf1f892a4d328f023100d09fc8e48e233b9e972eecb94798865664dbeb0d75b29041f482777a4b7cae133483dcc9d35509c4967be51db37a7454";
+    use crate::test_utils::{
+        CertFixtures, INTER1_HEX, INTER2_HEX, INTER3_HEX, INVALID_DER_BYTES, LEAF_HEX, ROOT_HEX,
+    };
 
     // ── Expected constants ──────────────────────────────────────────────
 
@@ -391,9 +385,6 @@ mod tests {
     /// Number of certificates in the full Nitro attestation chain
     /// (root + 3 intermediates + leaf).
     const FULL_CHAIN_LEN: usize = 5;
-
-    /// Garbage bytes used for invalid DER tests.
-    const INVALID_DER_BYTES: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
 
     /// Minimal valid DER-encoded CRL with no revoked certificates.
     const EMPTY_CRL_DER: [u8; 49] = [
@@ -423,23 +414,23 @@ mod tests {
     /// attestation.
     #[fixture]
     fn full_chain() -> ChainFixture {
-        let owned = [ROOT_HEX, INTER1_HEX, INTER2_HEX, INTER3_HEX, LEAF_HEX]
-            .iter()
-            .map(|h| hex::decode(h).unwrap())
-            .collect();
-        ChainFixture { owned }
+        ChainFixture {
+            owned: CertFixtures::decode_chain(&[
+                ROOT_HEX, INTER1_HEX, INTER2_HEX, INTER3_HEX, LEAF_HEX,
+            ]),
+        }
     }
 
     /// Single-cert chain containing only the root.
     #[fixture]
     fn root_only_chain() -> ChainFixture {
-        ChainFixture { owned: vec![hex::decode(ROOT_HEX).unwrap()] }
+        ChainFixture { owned: CertFixtures::decode_chain(&[ROOT_HEX]) }
     }
 
     /// Two-cert chain containing root and leaf (no intermediates).
     #[fixture]
     fn root_and_leaf_chain() -> ChainFixture {
-        ChainFixture { owned: vec![hex::decode(ROOT_HEX).unwrap(), hex::decode(LEAF_HEX).unwrap()] }
+        ChainFixture { owned: CertFixtures::decode_chain(&[ROOT_HEX, LEAF_HEX]) }
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
@@ -447,7 +438,7 @@ mod tests {
     /// Parses a single hex-encoded cert and extracts its CRL distribution
     /// point URL.
     fn crl_url_for_hex(cert_hex: &str) -> Option<String> {
-        let der = hex::decode(cert_hex).unwrap();
+        let der = CertFixtures::decode(cert_hex);
         let (remaining, cert) = X509Certificate::from_der(&der).unwrap();
         assert!(remaining.is_empty());
         extract_crl_distribution_point(&cert)
@@ -641,22 +632,13 @@ mod tests {
         assert!(client.is_ok());
     }
 
-    // ── check_chain_against_crls: cert parse failure ────────────────────
-
-    #[tokio::test]
-    #[rstest]
-    async fn check_chain_against_crls_fails_on_invalid_der() {
-        let client = build_crl_http_client(Duration::from_secs(5)).unwrap();
-        let result = check_chain_against_crls(&[&INVALID_DER_BYTES[..]], &client).await;
-        let err = result.unwrap_err();
-        assert!(matches!(err, CrlError::CertParse(_)), "expected CertParse, got: {err}");
-    }
+    // ── check_chain_against_crls: empty / no-intermediate chains ────────
 
     #[tokio::test]
     #[rstest]
     async fn check_chain_against_crls_clean_for_empty_chain() {
         let client = build_crl_http_client(Duration::from_secs(5)).unwrap();
-        let result = check_chain_against_crls(&[], &client).await.unwrap();
+        let result = check_chain_against_crls(&[], &client).await;
         assert!(result.is_empty());
     }
 
@@ -667,7 +649,8 @@ mod tests {
         // be attempted, so the result is Clean even without network access.
         let client = build_crl_http_client(Duration::from_secs(1)).unwrap();
         let refs = root_and_leaf_chain.refs();
-        let result = check_chain_against_crls(&refs, &client).await.unwrap();
+        let cert_infos = CertCrlInfo::from_chain(&refs).unwrap();
+        let result = check_chain_against_crls(&cert_infos, &client).await;
         assert!(result.is_empty());
     }
 

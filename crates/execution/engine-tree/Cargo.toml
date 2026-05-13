@@ -52,9 +52,12 @@ derive_more.workspace = true
 crossbeam-channel.workspace = true
 
 [dev-dependencies]
+alloy-chains.workspace = true
 reth-chainspec.workspace = true
+reth-db-common.workspace = true
 reth-storage-errors.workspace = true
 alloy-rpc-types-eth.workspace = true
+base-common-rpc-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 base-common-flashblocks.workspace = true
-base-common-rpc-types.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }

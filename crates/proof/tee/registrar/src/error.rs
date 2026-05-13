@@ -41,6 +41,16 @@ pub enum RegistrarError {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
 
+    /// An on-chain `NitroEnclaveVerifier` contract call failed.
+    #[error("nitro verifier call failed: {context}")]
+    NitroVerifierCall {
+        /// Description of the call that failed (e.g. `"revokedCerts(0x…)"`).
+        context: String,
+        /// The underlying contract call error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
     /// Transaction signing or submission failed.
     #[error("signing error")]
     Signing(#[source] Box<dyn std::error::Error + Send + Sync>),

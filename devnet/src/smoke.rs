@@ -115,8 +115,8 @@ impl Devnet {
             l1_rpc: self.l1_rpc_url().await?.to_string(),
             l2_builder_rpc: self.l2_rpc_url()?.to_string(),
             l2_client_rpc: self.l2_client_rpc_url()?.to_string(),
-            l2_builder_op_rpc: self.l2_stack().builder_consensus_rpc_url().to_string(),
-            l2_client_op_rpc: self.l2_stack().client_consensus_rpc_url().to_string(),
+            l2_builder_consensus_rpc: self.l2_stack().builder_consensus_rpc_url().to_string(),
+            l2_client_consensus_rpc: self.l2_stack().client_consensus_rpc_url().to_string(),
         })
     }
 }

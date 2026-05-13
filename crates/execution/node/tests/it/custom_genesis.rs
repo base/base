@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 
 /// Tests that a Base node can initialize with a custom genesis block number.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_op_node_custom_genesis_number() {
+async fn test_base_node_custom_genesis_number() {
     reth_tracing::init_test_tracing();
 
     let genesis_number = 1000;

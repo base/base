@@ -139,7 +139,7 @@ impl InProcessClient {
         let rollup_args =
             RollupArgs { sequencer: Some(config.builder_rpc_url.clone()), ..Default::default() };
 
-        let op_node = BaseNode::new(rollup_args.clone());
+        let base_node = BaseNode::new(rollup_args.clone());
 
         let mut node_config = NodeConfig::new(Arc::clone(&chain_spec))
             .with_network(network_config)
@@ -161,8 +161,8 @@ impl InProcessClient {
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_types_and_provider::<BaseNode, BlockchainProvider<_>>()
-            .with_components(op_node.components())
-            .with_add_ons(op_node.add_ons())
+            .with_components(base_node.components())
+            .with_add_ons(base_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
         let extensions: Vec<Box<dyn BaseNodeExtension>> = Self::build_extensions(&config)?;

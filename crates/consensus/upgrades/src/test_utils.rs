@@ -24,7 +24,7 @@ pub fn check_deployment_code(
     let ctx = Context::base()
         .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)))
         .modify_tx_chained(|tx| {
-            // Deposit + OP meta
+            // Deposit + Base metadata.
             tx.deposit = DepositTransactionParts {
                 source_hash: deployment_tx.source_hash,
                 mint: Some(deployment_tx.mint),

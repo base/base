@@ -1,7 +1,8 @@
 //! Consensus-layer gossipsub driver for Base.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    num::NonZeroUsize,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -20,12 +21,22 @@ use libp2p::{
 };
 use libp2p_identity::Keypair;
 use libp2p_stream::IncomingStreams;
+use lru::LruCache;
 use tokio::sync::Mutex;
 
 use crate::{
     Behaviour, BlockHandler, ConnectionGate, ConnectionGater, Event, GossipDriverBuilder, Handler,
     Metrics, PublishError,
 };
+
+/// Configuration applied when constructing a [`GossipDriver`].
+#[derive(Debug, Clone)]
+pub struct GossipDriverConfig {
+    /// Maximum number of peers to retain identify metadata for.
+    pub max_identify_peerstore_peers: NonZeroUsize,
+    /// Peer score monitoring config.
+    pub peer_monitoring: Option<PeerMonitoring>,
+}
 
 /// A driver for a [`Swarm`] instance.
 ///
@@ -51,8 +62,8 @@ pub struct GossipDriver<G: ConnectionGate> {
     /// TODO: remove the sync-req-resp protocol once it is fully deprecated upstream.
     #[debug(skip)]
     pub sync_protocol: Option<IncomingStreams>,
-    /// A mapping from [`PeerId`] to [`Multiaddr`].
-    pub peerstore: HashMap<PeerId, libp2p::identify::Info>,
+    /// LRU cache of identify metadata keyed by [`PeerId`].
+    pub peerstore: LruCache<PeerId, libp2p::identify::Info>,
     /// If set, the gossip layer will monitor peer scores and ban peers that are below a given
     /// threshold.
     pub peer_monitoring: Option<PeerMonitoring>,
@@ -86,13 +97,14 @@ where
         sync_handler: libp2p_stream::Control,
         sync_protocol: IncomingStreams,
         gate: G,
+        config: GossipDriverConfig,
     ) -> Self {
         Self {
             swarm,
             addr,
             handler,
-            peerstore: Default::default(),
-            peer_monitoring: None,
+            peerstore: LruCache::new(config.max_identify_peerstore_peers),
+            peer_monitoring: config.peer_monitoring,
             peer_connection_start: Default::default(),
             sync_handler,
             sync_protocol: Some(sync_protocol),
@@ -143,7 +155,10 @@ where
             return;
         };
 
-        // Spawn a new task to handle the sync request/response protocol.
+        // Spawn a single task to handle all inbound sync substreams serially.
+        // The response is a constant 2-byte write — no I/O wait benefits from per-stream
+        // concurrency. Inlining eliminates per-substream task allocation and bounds
+        // heap exposure.
         tokio::spawn(async move {
             loop {
                 let Some((peer_id, mut inbound_stream)) = sync_protocol.next().await else {
@@ -151,22 +166,24 @@ where
                     return;
                 };
 
-                info!(target: "gossip", peer_id = %peer_id, "Received a sync request, spawning a new task to handle it");
+                trace!(target: "gossip", peer_id = %peer_id, "Received sync request");
+                Metrics::sync_requests().increment(1);
 
-                tokio::spawn(async move {
-                    // We return: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
-                    // Response format: <response> = <res><version><payload>
-                    // No payload is returned.
-                    const OUTPUT: [u8; 2] = hex!("0100");
+                // We return: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
+                // Response format: <response> = <res><version><payload>
+                // No payload is returned.
+                const OUTPUT: [u8; 2] = hex!("0100");
+                const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
-                    // We only write that we're not supporting the sync request.
-                    if let Err(e) = inbound_stream.write_all(&OUTPUT).await {
-                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write the sync response");
-                        return;
-                    };
-
-                    debug!(target: "gossip", bytes_sent = OUTPUT.len(), peer_id = %peer_id, "Sent outbound sync response");
-                });
+                match tokio::time::timeout(WRITE_TIMEOUT, inbound_stream.write_all(&OUTPUT)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write sync response");
+                    }
+                    Err(_) => {
+                        warn!(target: "gossip", peer_id = %peer_id, "Sync response write timed out");
+                    }
+                }
             }
         });
     }
@@ -314,7 +331,8 @@ where
         match event {
             libp2p::identify::Event::Received { connection_id, peer_id, info } => {
                 debug!(target: "gossip", ?connection_id, peer_id = %peer_id, ?info, "Received identify info from peer");
-                self.peerstore.insert(peer_id, info);
+                self.prune_peerstore_for_new_peer(peer_id);
+                self.peerstore.put(peer_id, info);
             }
             libp2p::identify::Event::Sent { connection_id, peer_id } => {
                 debug!(target: "gossip", ?connection_id, peer_id = %peer_id, "Sent identify info to peer");
@@ -326,6 +344,30 @@ where
                 error!(target: "gossip", ?connection_id, peer_id = %peer_id, ?error, "Error raised while attempting to identify remote");
             }
         }
+    }
+
+    fn prune_peerstore_for_new_peer(&mut self, peer_id: PeerId) {
+        if self.peerstore.contains(&peer_id) || self.peerstore.len() < self.peerstore.cap().get() {
+            return;
+        }
+
+        let connected_peers = self.swarm.connected_peers().copied().collect::<HashSet<_>>();
+        let peer_to_remove = peerstore_eviction_candidate(&self.peerstore, &connected_peers)
+            .expect("peerstore is non-empty when at capacity");
+
+        self.peerstore.pop(&peer_to_remove);
+
+        // This is a cache-level cap, not Lighthouse's full peer lifecycle model. Lighthouse
+        // keeps explicit connection state and evicts excess disconnected, untrusted peers; Base
+        // currently only has identify metadata here, so prefer disconnected entries and bound
+        // the cache until we model peer lifecycle state directly.
+        debug!(
+            target: "gossip",
+            peer_id = %peer_to_remove,
+            peerstore_size = self.peerstore.len(),
+            peerstore_limit = self.peerstore.cap().get(),
+            "Evicted identify info from peerstore"
+        );
     }
 
     /// Handles a [`libp2p::gossipsub::Event`].
@@ -450,5 +492,66 @@ where
         };
 
         None
+    }
+}
+
+fn peerstore_eviction_candidate<T>(
+    peerstore: &LruCache<PeerId, T>,
+    connected_peers: &HashSet<PeerId>,
+) -> Option<PeerId> {
+    peerstore
+        .iter()
+        .rev()
+        .map(|(peer_id, _)| *peer_id)
+        .find(|peer_id| !connected_peers.contains(peer_id))
+        .or_else(|| peerstore.iter().next_back().map(|(peer_id, _)| *peer_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_peerstore_eviction_candidate_prefers_disconnected_peer() {
+        let connected_peer = PeerId::random();
+        let disconnected_peer = PeerId::random();
+        let mut peerstore = LruCache::new(NonZeroUsize::new(1024).unwrap());
+        peerstore.put(disconnected_peer, ());
+        peerstore.put(connected_peer, ());
+        let connected_peers = HashSet::from([connected_peer]);
+
+        let candidate = peerstore_eviction_candidate(&peerstore, &connected_peers);
+
+        assert_eq!(candidate, Some(disconnected_peer));
+    }
+
+    #[test]
+    fn test_peerstore_eviction_candidate_uses_lru_disconnected_peer() {
+        let oldest_disconnected_peer = PeerId::random();
+        let newest_disconnected_peer = PeerId::random();
+        let connected_peer = PeerId::random();
+        let mut peerstore = LruCache::new(NonZeroUsize::new(1024).unwrap());
+        peerstore.put(oldest_disconnected_peer, ());
+        peerstore.put(newest_disconnected_peer, ());
+        peerstore.put(connected_peer, ());
+        let connected_peers = HashSet::from([connected_peer]);
+
+        let candidate = peerstore_eviction_candidate(&peerstore, &connected_peers);
+
+        assert_eq!(candidate, Some(oldest_disconnected_peer));
+    }
+
+    #[test]
+    fn test_peerstore_eviction_candidate_falls_back_to_lru_connected_peer() {
+        let least_recent_peer = PeerId::random();
+        let most_recent_peer = PeerId::random();
+        let mut peerstore = LruCache::new(NonZeroUsize::new(1024).unwrap());
+        peerstore.put(least_recent_peer, ());
+        peerstore.put(most_recent_peer, ());
+        let connected_peers = HashSet::from([least_recent_peer, most_recent_peer]);
+
+        let candidate = peerstore_eviction_candidate(&peerstore, &connected_peers);
+
+        assert_eq!(candidate, Some(least_recent_peer));
     }
 }

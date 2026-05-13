@@ -89,6 +89,8 @@ pub struct AnchorPreflight {
     pub retired: bool,
     /// Whether the game currently matches the registry's respected game type.
     pub respected: bool,
+    /// Whether the registry is currently paused (transient failure).
+    pub paused: bool,
     /// The current anchor root in the registry.
     pub anchor_root: AnchorRoot,
 }

@@ -126,4 +126,7 @@ base_metrics::define_metrics! {
     #[describe("Distribution of block versions")]
     #[label(name = "version", default = ["v1", "v2", "v3", "v4"])]
     block_version: counter,
+
+    #[describe("Sync protocol substream requests")]
+    sync_requests: counter,
 }

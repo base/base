@@ -466,7 +466,7 @@ mod tests {
             l1_origin: BlockNumHash { number: 9, ..Default::default() },
             ..Default::default()
         };
-        let op_block = BaseBlock {
+        let base_block = BaseBlock {
             header: Header { number: 41, ..Default::default() },
             body: BlockBody { transactions: vec![], ommers: vec![], withdrawals: None },
         };
@@ -487,7 +487,7 @@ mod tests {
 
         let mut provider = TestL2ChainProvider::default();
         provider.blocks.push(l2_parent);
-        provider.op_blocks.push(op_block);
+        provider.base_blocks.push(base_block);
 
         let mut stream = BatchStream::new(prev, config, provider);
         let err = stream.next_batch(l2_safe_head, &l1_blocks).await.unwrap_err();

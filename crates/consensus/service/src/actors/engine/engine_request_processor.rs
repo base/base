@@ -418,7 +418,7 @@ where
 
     /// Bootstrap path for pure validators.
     ///
-    /// Seeds engine state from reth's current head so `op_syncStatus` never returns
+    /// Seeds engine state from reth's current head so sync-status RPC never returns
     /// zeros, but intentionally skips sending a forkchoice update.  `el_sync_finished`
     /// is left `false` and will be set by the first gossip `InsertTask` FCU.
     async fn bootstrap_validator(&mut self, head: Option<L2BlockInfo>) {
@@ -576,7 +576,7 @@ where
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
             // Bootstrap: pre-populate the unsafe_head_tx watch channel so that external callers
-            // (admin_startSequencer, op_syncStatus) never observe a zero hash.
+            // (admin_startSequencer, sync-status RPC) never observe a zero hash.
             //
             // We gate on whether reth's current head is at the rollup genesis:
             //
@@ -768,17 +768,21 @@ mod tests {
     use base_common_genesis::{ChainGenesis, RollupConfig, SystemConfig};
     use base_common_rpc_types::Transaction as BaseTransaction;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_consensus_derive::Signal;
     use base_consensus_engine::{
         Engine, EngineState,
-        test_utils::{TestEngineStateBuilder, test_block_info, test_engine_client_builder},
+        test_utils::{
+            TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
+            test_engine_client_builder,
+        },
     };
     use base_protocol::{BlockInfo, L2BlockInfo};
     use rstest::rstest;
     use tokio::sync::{mpsc, watch};
 
     use crate::{
-        EngineClientError, EngineProcessingRequest, EngineProcessor, EngineProcessorOptions,
-        EngineRequestReceiver, MockConductor, NodeMode, ResetRequest,
+        BuildRequest, EngineClientError, EngineProcessingRequest, EngineProcessor,
+        EngineProcessorOptions, EngineRequestReceiver, MockConductor, NodeMode, ResetRequest,
         actors::engine::client::MockEngineDerivationClient,
     };
 
@@ -1609,6 +1613,116 @@ mod tests {
             L2BlockInfo::default(),
             "validator at genesis must not set finalized_head via engine.reset() (expected zeroed, got hash {})",
             state.sync_state.finalized_head().block_info.hash,
+        );
+    }
+
+    /// Regression test: when a `Build` request fails with an `InvalidPayload` (the EL rejects
+    /// the derived attributes), the processor must dispatch exactly one
+    /// [`Signal::FlushChannel`] to the derivation actor and resume servicing requests rather
+    /// than retrying the poisoned task in place. Without the
+    /// [`EngineTaskErrorSeverity::Flush`] mapping plus the head-pop in
+    /// [`base_consensus_engine::Engine::drain`], the processor would either spin on the same
+    /// FCU forever or starve every later request behind the poisoned head.
+    #[tokio::test]
+    async fn build_invalid_payload_dispatches_flush_signal_exactly_once() {
+        let parent_block = test_block_info(0);
+        let unsafe_block = test_block_info(1);
+        let attributes_timestamp = unsafe_block.block_info.timestamp;
+
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.ecotone_time = Some(attributes_timestamp);
+        let cfg = Arc::new(cfg);
+
+        let invalid_fcu = ForkchoiceUpdated {
+            payload_status: PayloadStatus {
+                status: PayloadStatusEnum::Invalid {
+                    validation_error: "malformed transaction".into(),
+                },
+                latest_valid_hash: Some(B256::with_last_byte(2)),
+            },
+            payload_id: None,
+        };
+        let client = Arc::new(
+            test_engine_client_builder().with_fork_choice_updated_v3_response(invalid_fcu).build(),
+        );
+
+        let (signal_tx, mut signal_rx) = mpsc::channel(4);
+        let mut mock_derivation = MockEngineDerivationClient::new();
+        // Bootstrap and per-block plumbing calls — accept any number of calls so the
+        // test focuses on the Flush dispatch alone.
+        mock_derivation.expect_send_new_engine_safe_head().returning(|_| Ok(()));
+        mock_derivation.expect_notify_sync_completed().returning(|_| Ok(()));
+        mock_derivation
+            .expect_send_signal()
+            .withf(|s| matches!(s, Signal::FlushChannel))
+            .times(1)
+            .returning(move |signal| {
+                let signal_tx = signal_tx.clone();
+                tokio::spawn(async move {
+                    let _ = signal_tx.send(signal).await;
+                });
+                Ok(())
+            });
+
+        let initial_state = TestEngineStateBuilder::new()
+            .with_unsafe_head(unsafe_block)
+            .with_safe_head(parent_block)
+            .with_el_sync_finished(true)
+            .build();
+        let (state_tx, _state_rx) = watch::channel(initial_state);
+        let (queue_tx, queue_rx) = watch::channel(0usize);
+        let engine = Engine::new(initial_state, state_tx, queue_tx);
+
+        let processor = EngineProcessor::new(
+            Arc::clone(&client),
+            Arc::clone(&cfg),
+            mock_derivation,
+            engine,
+            EngineProcessorOptions {
+                node_mode: NodeMode::Validator,
+                unsafe_head_tx: None,
+                conductor: None,
+                sequencer_stopped: false,
+            },
+        );
+
+        let (req_tx, req_rx) = mpsc::channel(8);
+        let handle = processor.start(req_rx);
+
+        let attributes = TestAttributesBuilder::new()
+            .with_parent(parent_block)
+            .with_timestamp(attributes_timestamp)
+            .build();
+        let (build_result_tx, _build_result_rx) = mpsc::channel(1);
+        req_tx
+            .send(EngineProcessingRequest::Build(Box::new(BuildRequest {
+                attributes,
+                result_tx: build_result_tx,
+            })))
+            .await
+            .expect("failed to send build request");
+
+        let received = tokio::time::timeout(std::time::Duration::from_secs(5), signal_rx.recv())
+            .await
+            .expect("timed out waiting for FlushChannel signal")
+            .expect("signal channel closed before FlushChannel was sent");
+        assert!(matches!(received, Signal::FlushChannel));
+
+        // Queue must drain back to zero — proves the poisoned task was popped, not re-queued.
+        let mut queue_rx = queue_rx;
+        tokio::time::timeout(std::time::Duration::from_secs(5), queue_rx.wait_for(|n| *n == 0))
+            .await
+            .expect("queue length never returned to zero")
+            .expect("queue length watch closed before draining");
+
+        // Clean shutdown: dropping the request channel makes start() exit with ChannelClosed.
+        // The mockall `times(1)` expectation is verified on drop of `mock_derivation` inside
+        // the spawned task — any second call to send_signal would panic the task.
+        drop(req_tx);
+        let result = handle.await.expect("processor task panicked");
+        assert!(
+            matches!(result, Err(crate::EngineError::ChannelClosed)),
+            "expected ChannelClosed on clean shutdown, got {result:?}"
         );
     }
 }

@@ -26,6 +26,10 @@ sol! {
         /// Error returned when the proof's L1 origin is older than the EIP-2935 history window.
         error L1OriginTooOld(uint256 l1OriginNumber, uint256 currentBlock);
 
+        /// Error returned by `initialize` when the parent game is unregistered,
+        /// unrespected, blacklisted, retired, or resolved as `CHALLENGER_WINS`.
+        error InvalidParentGame();
+
         /// Returns the root claim (output root) of this game.
         function rootClaim() external pure returns (bytes32);
 
@@ -295,6 +299,11 @@ pub trait AggregateVerifierClient: Send + Sync {
 /// The 4-byte selector for `L1OriginTooOld()`.
 pub const fn l1_origin_too_old_selector() -> [u8; 4] {
     IAggregateVerifier::L1OriginTooOld::SELECTOR
+}
+
+/// The 4-byte selector for `InvalidParentGame()`.
+pub const fn invalid_parent_game_selector() -> [u8; 4] {
+    IAggregateVerifier::InvalidParentGame::SELECTOR
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -645,7 +654,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         let contract =
             IAnchorStateRegistry::IAnchorStateRegistryInstance::new(asr_address, &self.provider);
 
-        let (blacklisted, retired, respected, anchor) = futures::try_join!(
+        let (blacklisted, retired, respected, paused, anchor) = futures::try_join!(
             async {
                 contract.isGameBlacklisted(game_address).call().await.map_err(|e| {
                     ContractError::Call { context: "isGameBlacklisted failed".into(), source: e }
@@ -663,6 +672,13 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                 })
             },
             async {
+                contract
+                    .paused()
+                    .call()
+                    .await
+                    .map_err(|e| ContractError::Call { context: "paused failed".into(), source: e })
+            },
+            async {
                 contract.getAnchorRoot().call().await.map_err(|e| ContractError::Call {
                     context: "getAnchorRoot failed".into(),
                     source: e,
@@ -678,6 +694,7 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             blacklisted,
             retired,
             respected,
+            paused,
             anchor_root: AnchorRoot { root: anchor.root, l2_block_number },
         })
     }
@@ -836,6 +853,14 @@ mod tests {
         let selector = l1_origin_too_old_selector();
         assert_eq!(selector.len(), 4);
         assert_ne!(selector, [0u8; 4]);
+    }
+
+    #[test]
+    fn test_invalid_parent_game_selector() {
+        let selector = invalid_parent_game_selector();
+        assert_eq!(selector.len(), 4);
+        assert_ne!(selector, [0u8; 4]);
+        assert_ne!(selector, l1_origin_too_old_selector());
     }
 
     #[test]

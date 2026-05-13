@@ -66,7 +66,7 @@ fn build_cfg_env(
     let mut cfg_env =
         CfgEnv::new().with_chain_id(chain_spec.chain().id()).with_spec_and_mainnet_gas_params(spec);
 
-    if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
+    if chain_spec.is_azul_active_at_timestamp(timestamp) {
         cfg_env.tx_gas_limit_cap = Some(MAX_TX_GAS_LIMIT_OSAKA);
     }
 

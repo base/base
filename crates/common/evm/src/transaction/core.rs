@@ -279,7 +279,7 @@ mod tests {
     fn test_deposit_transaction_fields() {
         let base_tx = TxEnv::builder().gas_limit(10).gas_price(100).gas_priority_fee(Some(5));
 
-        let op_tx = BaseTransaction::builder()
+        let base_tx = BaseTransaction::builder()
             .base(base_tx)
             .enveloped_tx(None)
             .not_system_transaction()
@@ -290,10 +290,10 @@ mod tests {
         // Verify transaction type (deposit transactions should have tx_type based on BaseSpecId)
         // The tx_type is derived from the transaction structure, not set manually
         // Verify common fields access
-        assert_eq!(op_tx.gas_limit(), 10);
-        assert_eq!(op_tx.kind(), revm::primitives::TxKind::Call(Address::ZERO));
+        assert_eq!(base_tx.gas_limit(), 10);
+        assert_eq!(base_tx.kind(), revm::primitives::TxKind::Call(Address::ZERO));
         // Verify gas related calculations - deposit transactions use gas_price for effective gas price
-        assert_eq!(op_tx.effective_gas_price(90), 100);
-        assert_eq!(op_tx.max_fee_per_gas(), 100);
+        assert_eq!(base_tx.effective_gas_price(90), 100);
+        assert_eq!(base_tx.max_fee_per_gas(), 100);
     }
 }

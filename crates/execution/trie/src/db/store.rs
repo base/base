@@ -1128,27 +1128,27 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
                     let entries = stats.entries();
 
                     metrics.push((
-                        "optimism_proof_storage.table_size",
+                        "base_proof_storage.table_size",
                         table_size as f64,
                         vec![Label::new("table", table)],
                     ));
                     metrics.push((
-                        "optimism_proof_storage.table_pages",
+                        "base_proof_storage.table_pages",
                         leaf_pages as f64,
                         vec![Label::new("table", table), Label::new("type", "leaf")],
                     ));
                     metrics.push((
-                        "optimism_proof_storage.table_pages",
+                        "base_proof_storage.table_pages",
                         branch_pages as f64,
                         vec![Label::new("table", table), Label::new("type", "branch")],
                     ));
                     metrics.push((
-                        "optimism_proof_storage.table_pages",
+                        "base_proof_storage.table_pages",
                         overflow_pages as f64,
                         vec![Label::new("table", table), Label::new("type", "overflow")],
                     ));
                     metrics.push((
-                        "optimism_proof_storage.table_entries",
+                        "base_proof_storage.table_entries",
                         entries as f64,
                         vec![Label::new("table", table)],
                     ));
@@ -1161,16 +1161,16 @@ impl reth_db::database_metrics::DatabaseMetrics for MdbxProofsStorage {
         if let Ok(freelist) =
             self.env.freelist().map_err(|error| error!(%error, "Failed to read db.freelist"))
         {
-            metrics.push(("optimism_proof_storage.freelist", freelist as f64, vec![]));
+            metrics.push(("base_proof_storage.freelist", freelist as f64, vec![]));
         }
 
         if let Ok(stat) = self.env.stat().map_err(|error| error!(%error, "Failed to read db.stat"))
         {
-            metrics.push(("optimism_proof_storage.page_size", stat.page_size() as f64, vec![]));
+            metrics.push(("base_proof_storage.page_size", stat.page_size() as f64, vec![]));
         }
 
         metrics.push((
-            "optimism_proof_storage.timed_out_not_aborted_transactions",
+            "base_proof_storage.timed_out_not_aborted_transactions",
             self.env.timed_out_not_aborted_transactions() as f64,
             vec![],
         ));

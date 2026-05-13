@@ -143,7 +143,7 @@ where
     Pool: PoolBounds,
     Client: ClientBounds,
 {
-    fn get_op_payload_builder_ctx(
+    fn get_base_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
             BasePayloadBuilderAttributes<base_common_consensus::BaseTxEnvelope>,
@@ -229,7 +229,7 @@ where
 
         let timestamp = config.attributes.timestamp();
         let mut ctx = self
-            .get_op_payload_builder_ctx(
+            .get_base_payload_builder_ctx(
                 config,
                 block_cancel.clone(),
                 FlashblocksExtraCtx {
@@ -1109,7 +1109,7 @@ where
     let _access_list = fal_builder.build(min_tx_index, max_tx_index);
 
     let metadata: FlashblocksMetadata =
-        if ctx.chain_spec.is_base_azul_active_at_timestamp(ctx.attributes().timestamp()) {
+        if ctx.chain_spec.is_azul_active_at_timestamp(ctx.attributes().timestamp()) {
             FlashblocksMetadata {
                 block_number: ctx.parent().number + 1,
                 access_list: None,

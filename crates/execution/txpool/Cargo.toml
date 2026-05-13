@@ -54,6 +54,8 @@ tokio = { workspace = true, features = ["sync", "rt", "time"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
 
 [dev-dependencies]
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 base-test-utils.workspace = true
 base-execution-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }

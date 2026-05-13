@@ -23,7 +23,7 @@ use crate::{ChainUpgradesExt, compute_jovian_base_fee, decode_holocene_base_fee}
 #[derive(Default, Debug)]
 pub struct GenesisInfo {
     /// Base chain info extracted from genesis extra fields.
-    pub optimism_chain_info: base_common_rpc_types::ChainInfo,
+    pub base_chain_info: base_common_rpc_types::ChainInfo,
     /// Base fee params derived from the genesis config.
     pub base_fee_params: BaseFeeParamsKind,
 }
@@ -32,19 +32,17 @@ impl GenesisInfo {
     /// Extracts Base genesis info from an [`alloy_genesis::Genesis`].
     pub fn extract_from(genesis: &Genesis) -> Self {
         let mut info = Self {
-            optimism_chain_info: base_common_rpc_types::ChainInfo::extract_from(
+            base_chain_info: base_common_rpc_types::ChainInfo::extract_from(
                 &genesis.config.extra_fields,
             )
             .unwrap_or_default(),
             ..Default::default()
         };
-        if let Some(optimism_base_fee_info) = &info.optimism_chain_info.base_fee_info
-            && let (Some(elasticity), Some(denominator)) = (
-                optimism_base_fee_info.eip1559_elasticity,
-                optimism_base_fee_info.eip1559_denominator,
-            )
+        if let Some(base_fee_info) = &info.base_chain_info.base_fee_info
+            && let (Some(elasticity), Some(denominator)) =
+                (base_fee_info.eip1559_elasticity, base_fee_info.eip1559_denominator)
         {
-            let base_fee_params = optimism_base_fee_info.eip1559_denominator_canyon.map_or_else(
+            let base_fee_params = base_fee_info.eip1559_denominator_canyon.map_or_else(
                 || BaseFeeParams::new(denominator as u128, elasticity as u128).into(),
                 |canyon_denominator| {
                     BaseFeeParamsKind::Variable(
@@ -213,11 +211,11 @@ impl EthChainSpec for BaseChainSpec {
     }
 
     fn display_hardforks(&self) -> Box<dyn core::fmt::Display> {
-        let op_forks = self.inner.hardforks.forks_iter().filter(|(fork, _)| {
+        let base_forks = self.inner.hardforks.forks_iter().filter(|(fork, _)| {
             !EthereumHardfork::VARIANTS.iter().any(|h| h.name() == (*fork).name())
         });
 
-        Box::new(DisplayHardforks::new(op_forks))
+        Box::new(DisplayHardforks::new(base_forks))
     }
 
     fn genesis_header(&self) -> &Self::Header {
@@ -287,9 +285,8 @@ impl Upgrades for BaseChainSpec {
 
 impl From<Genesis> for BaseChainSpec {
     fn from(genesis: Genesis) -> Self {
-        let optimism_genesis_info = GenesisInfo::extract_from(&genesis);
-        let genesis_info =
-            optimism_genesis_info.optimism_chain_info.genesis_info.unwrap_or_default();
+        let base_genesis_info = GenesisInfo::extract_from(&genesis);
+        let genesis_info = base_genesis_info.base_chain_info.genesis_info.unwrap_or_default();
 
         // Block-based hardforks in canonical fork ID order.
         let hardfork_opts = [
@@ -367,7 +364,7 @@ impl From<Genesis> for BaseChainSpec {
                 genesis,
                 hardforks,
                 paris_block_and_final_difficulty: Some((0, U256::ZERO)),
-                base_fee_params: optimism_genesis_info.base_fee_params,
+                base_fee_params: base_genesis_info.base_fee_params,
                 ..Default::default()
             },
         }
@@ -774,9 +771,9 @@ mod tests {
         let actual_isthmus_timestamp = genesis.config.extra_fields.get("isthmusTime");
         assert_eq!(actual_isthmus_timestamp, Some(serde_json::Value::from(53)).as_ref());
 
-        let optimism_object = genesis.config.extra_fields.get("optimism").unwrap();
+        let base_fee_object = genesis.config.extra_fields.get("optimism").unwrap();
         assert_eq!(
-            optimism_object,
+            base_fee_object,
             &serde_json::json!({
                 "eip1559Elasticity": 60,
                 "eip1559Denominator": 70,
@@ -863,12 +860,11 @@ mod tests {
 
         assert!(genesis.config.terminal_total_difficulty_passed);
 
-        let optimism_object = genesis.config.extra_fields.get("optimism").unwrap();
-        let optimism_base_fee_info =
-            serde_json::from_value::<FeeInfo>(optimism_object.clone()).unwrap();
+        let base_fee_object = genesis.config.extra_fields.get("optimism").unwrap();
+        let base_fee_info = serde_json::from_value::<FeeInfo>(base_fee_object.clone()).unwrap();
 
         assert_eq!(
-            optimism_base_fee_info,
+            base_fee_info,
             FeeInfo {
                 eip1559_elasticity: Some(6),
                 eip1559_denominator: Some(50),

@@ -60,10 +60,15 @@ holds at most a single channel at a time.
 
 Pruning is vastly simplified as there is at most only one open channel in the channel bank. So the
 channel bank's queue becomes effectively a staging slot for a single channel, the _staging channel_.
-The `MAX_CHANNEL_BANK_SIZE` parameter is no longer used, and the compressed size of the staging
-channel is required to be at most `MAX_RLP_BYTES_PER_CHANNEL` (else the channel is dropped). Note this
-latter rule is both a distinct condition and distinct effect, compared to the existing rule
-that the _uncompressed_ size of any given channel is _clipped_ to `MAX_RLP_BYTES_PER_CHANNEL` [during decompression](../../protocol/consensus/derivation.md#channel-format).
+The `MAX_CHANNEL_BANK_SIZE` parameter is no longer used, and the buffered size of the staging
+channel is required to be at most `MAX_RLP_BYTES_PER_CHANNEL` (else the channel is dropped). The
+buffered size uses the same channel-size accounting as pre-Holocene channel-bank pruning: the sum of
+all buffered frame data lengths, plus an additional frame-overhead of `200` bytes per frame. This
+`200` byte value is derivation memory accounting, not the `23` byte frame wire-format overhead.
+
+This staging-channel size rule is both a distinct condition and distinct effect, compared to the
+existing rule that the _uncompressed_ size of any given channel is _clipped_ to
+`MAX_RLP_BYTES_PER_CHANNEL` [during decompression](../../protocol/consensus/derivation.md#channel-format).
 
 ### Timeout
 
@@ -82,9 +87,11 @@ frame loading becomes simpler in the channel bank:
 correct frame for this channel, the frame and channel are dropped, including all future frames for
 the channel that might still be in the frame queue. Note that the equivalent rule was already
 present pre-Holocene.
-- After adding a frame to the staging channel, the channel is dropped if its raw compressed size as
-defined in the Bedrock specification is larger than `MAX_RLP_BYTES_PER_CHANNEL`. This rule replaces
-the total limit of all channels' combined sizes by `MAX_CHANNEL_BANK_SIZE` before Holocene.
+- After adding a frame to the staging channel, the channel is dropped if its buffered channel size is
+larger than `MAX_RLP_BYTES_PER_CHANNEL`. The buffered channel size is computed as the sum of buffered
+frame data lengths plus `200` bytes per buffered frame, matching the channel-size accounting defined
+for pre-Holocene channel-bank pruning. This rule replaces the total limit of all channels' combined
+sizes by `MAX_CHANNEL_BANK_SIZE` before Holocene.
 
 ## Span Batches
 

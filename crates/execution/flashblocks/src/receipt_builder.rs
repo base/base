@@ -220,24 +220,24 @@ mod tests {
     }
 
     #[test]
-    fn test_op_receipt_legacy_variant() {
+    fn test_base_receipt_legacy_variant() {
         let receipt: Receipt<Log> =
             Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
-        let op_receipt = BaseReceipt::Legacy(receipt);
-        assert!(matches!(op_receipt, BaseReceipt::Legacy(_)));
+        let base_receipt = BaseReceipt::Legacy(receipt);
+        assert!(matches!(base_receipt, BaseReceipt::Legacy(_)));
     }
 
     #[test]
-    fn test_op_receipt_deposit_variant() {
+    fn test_base_receipt_deposit_variant() {
         let receipt: Receipt<Log> =
             Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: 21000, logs: vec![] };
-        let op_receipt = BaseReceipt::Deposit(DepositReceipt {
+        let base_receipt = BaseReceipt::Deposit(DepositReceipt {
             inner: receipt,
             deposit_nonce: Some(1),
             deposit_receipt_version: Some(1),
         });
-        assert!(matches!(op_receipt, BaseReceipt::Deposit(_)));
-        if let BaseReceipt::Deposit(deposit) = op_receipt {
+        assert!(matches!(base_receipt, BaseReceipt::Deposit(_)));
+        if let BaseReceipt::Deposit(deposit) = base_receipt {
             assert_eq!(deposit.deposit_nonce, Some(1));
             assert_eq!(deposit.deposit_receipt_version, Some(1));
         }

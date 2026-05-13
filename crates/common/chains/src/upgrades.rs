@@ -61,7 +61,7 @@ pub trait Upgrades: EthereumHardforks {
     }
 
     /// Returns `true` if [`Azul`](BaseUpgrade::Azul) is active at given block timestamp.
-    fn is_base_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
+    fn is_azul_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.upgrade_activation(BaseUpgrade::Azul).active_at_timestamp(timestamp)
     }
 

@@ -1,5 +1,5 @@
 //! Defines the exact transaction variants that are allowed to be propagated over the eth p2p
-//! protocol in op.
+//! protocol for Base.
 
 use core::hash::Hash;
 
@@ -91,7 +91,7 @@ impl BasePooledTransaction {
     }
 
     /// Converts the transaction into the Base chain [`BaseTxEnvelope`].
-    pub fn into_op_envelope(self) -> BaseTxEnvelope {
+    pub fn into_base_envelope(self) -> BaseTxEnvelope {
         match self {
             Self::Legacy(tx) => tx.into(),
             Self::Eip2930(tx) => tx.into(),
@@ -222,7 +222,7 @@ impl From<BasePooledTransaction> for TxEnvelope {
 
 impl From<BasePooledTransaction> for BaseTxEnvelope {
     fn from(tx: BasePooledTransaction) -> Self {
-        tx.into_op_envelope()
+        tx.into_base_envelope()
     }
 }
 

@@ -12,8 +12,9 @@ strings.
 `BaseUpgrades` trait. Network specs are converted from `base-common-chains` configs, which own the
 genesis JSON, hardfork schedule, base fee params, and other chain constants.
 
-The genesis header is derived at startup from the genesis JSON using `make_op_genesis_header`,
-which computes the correct state root, storage root, and other fields for Base.
+The genesis header is derived at startup from the genesis JSON using
+`BaseChainSpec::make_genesis_header`, which computes the correct state root, storage root, and
+other fields for Base.
 
 Chain names are resolved from CLI strings via `SUPPORTED_CHAINS`, which maps `"base"`,
 `"base_sepolia"`, `"base-sepolia"`, and `"dev"` to specs built from `base-common-chains`.

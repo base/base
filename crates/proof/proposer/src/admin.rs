@@ -1,6 +1,6 @@
 //! Optional admin JSON-RPC handler.
 //!
-//! Provides `POST /` JSON-RPC admin methods mirroring the Go `op-proposer` API:
+//! Provides `POST /` JSON-RPC admin methods for proposer control:
 //! - `admin_startProposer`   — start the driver loop
 //! - `admin_stopProposer`    — stop the driver loop
 //! - `admin_proposerRunning` — query whether the driver is running
