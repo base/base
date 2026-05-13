@@ -175,3 +175,47 @@ fn back_to_back_calls_acquire_one_tx_each() {
     let delta = storage.tx_acquisitions() - before;
     assert_eq!(delta, 2, "two proof calls should acquire exactly two transactions, got {delta}");
 }
+
+/// `N` concurrent `proof` calls acquire exactly `N` transactions and return
+/// byte-identical proofs — guarding against both tx-sharing regressions
+/// (delta != N) and concurrent state leaks (proofs diverge).
+#[test]
+fn concurrent_calls_acquire_one_tx_per_request() {
+    const N: u64 = 8;
+
+    let (_dir, storage) = setup();
+    let address = Address::repeat_byte(0x11);
+    let slots = [B256::repeat_byte(0x01)];
+
+    let before = storage.tx_acquisitions();
+
+    let proofs: Vec<_> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..N)
+            .map(|_| {
+                s.spawn(|| {
+                    let provider = BaseProofsStateProviderRef::new(
+                        Box::<NoopProvider>::default(),
+                        &storage,
+                        0,
+                    );
+                    provider.proof(TrieInput::default(), address, &slots).expect("proof")
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().expect("thread join")).collect()
+    });
+
+    let delta = storage.tx_acquisitions() - before;
+    assert_eq!(
+        delta, N,
+        "{N} concurrent proof calls should acquire exactly {N} transactions, got {delta}"
+    );
+
+    let baseline = &proofs[0];
+    for (i, p) in proofs.iter().enumerate().skip(1) {
+        assert_eq!(
+            p, baseline,
+            "proof {i} diverges from proof 0 — concurrent state leak suspected"
+        );
+    }
+}
