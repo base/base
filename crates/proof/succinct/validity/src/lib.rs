@@ -1,5 +1,4 @@
-//! Validity proof proposer for Base using SP1 zero-knowledge proofs.
-
+#![doc = include_str!("../README.md")]
 #![recursion_limit = "256"]
 
 mod config;

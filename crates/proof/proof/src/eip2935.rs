@@ -8,7 +8,7 @@ use alloy_primitives::{B256, U256, b256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_trie::{Nibbles, TrieAccount};
 use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError, TrieProvider};
-use base_proof_preimage::errors::PreimageOracleError;
+use base_proof_preimage::PreimageOracleError;
 
 use crate::errors::OracleProviderError;
 

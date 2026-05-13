@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use anyhow::Result;
 use async_trait::async_trait;
 use base_consensus_derive::BlobProvider;
-use base_proof_succinct_client_utils::witness::BlobData;
+use base_proof_succinct_client_utils::BlobData;
 use base_protocol::BlockInfo;
 use kzg_rs::{Blob as KzgRsBlob, Bytes48};
 

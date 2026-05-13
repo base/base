@@ -247,7 +247,7 @@ impl Server {
             }
         };
 
-        Ok(ProofResult::Tee { aggregate_proposal, proposals })
+        Ok(ProofResult::Tee { aggregate_proposal: Box::new(aggregate_proposal), proposals })
     }
 }
 

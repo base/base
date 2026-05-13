@@ -5,13 +5,11 @@ use std::env;
 
 use alloy_primitives::{Address, B256};
 use anyhow::{Context, Result};
-use base_proof_succinct_client_utils::{boot::BootInfoStruct, types::u32_to_u8};
+use base_proof_succinct_client_utils::{BootInfoStruct, u32_to_u8};
 use base_proof_succinct_elfs::AGGREGATION_ELF;
 use base_proof_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher,
-    get_agg_proof_stdin,
-    network::{build_network_prover_from_env, parse_fulfillment_strategy},
-    proof_cache::{get_range_proof_dir, save_agg_proof},
+    OPSuccinctDataFetcher, build_network_prover_from_env, get_agg_proof_stdin, get_range_proof_dir,
+    parse_fulfillment_strategy, save_agg_proof,
 };
 use base_proof_succinct_proof_utils::{cluster_agg_proof, get_range_elf_embedded, is_cluster_mode};
 use clap::Parser;

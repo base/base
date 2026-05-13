@@ -1,5 +1,5 @@
 [package]
-name = "base"
+name = "base-bin"
 description = "Unified Base node binary"
 version.workspace = true
 edition.workspace = true

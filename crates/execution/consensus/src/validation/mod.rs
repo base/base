@@ -1,7 +1,9 @@
 //! Verification of blocks w.r.t. Base hardforks.
 
-pub mod canyon;
-pub mod isthmus;
+mod canyon;
+pub use canyon::*;
+mod isthmus;
+pub use isthmus::*;
 
 use alloc::vec::Vec;
 

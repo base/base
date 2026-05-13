@@ -6,8 +6,7 @@ use alloy_primitives::keccak256;
 use async_trait::async_trait;
 use base_proof_preimage::{
     FlushableCache, HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient,
-    WitnessOracle,
-    errors::{PreimageOracleError, PreimageOracleResult, WitnessOracleResult},
+    PreimageOracleError, PreimageOracleResult, WitnessOracle, WitnessOracleResult,
 };
 use parking_lot::RwLock;
 use sha2::Digest;

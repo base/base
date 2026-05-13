@@ -1,11 +1,15 @@
 [package]
-name = "range"
+name = "base-proof-succinct-range-program"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+
+[[bin]]
+name = "range"
+path = "src/main.rs"
 
 [dependencies]
 rkyv.workspace = true
@@ -24,8 +28,8 @@ base-proof-succinct-range-utils.workspace = true
 # `tracing-subscriber` feature dependencies
 tracing-subscriber = { workspace = true, optional = true }
 
-[features]
-tracing-subscriber = [ "dep:tracing-subscriber" ]
-
 [lints]
 workspace = true
+
+[features]
+tracing-subscriber = [ "dep:tracing-subscriber" ]

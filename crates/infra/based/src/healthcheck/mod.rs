@@ -15,7 +15,8 @@ use tracing::{debug, error, info};
 use crate::metrics::HealthcheckMetrics;
 
 /// Alloy-based Ethereum client implementation.
-pub mod alloy_client;
+mod alloy_client;
+pub use alloy_client::AlloyEthClient;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HealthState {

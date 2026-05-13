@@ -7,8 +7,7 @@ use core::num::NonZeroUsize;
 
 use async_trait::async_trait;
 use base_proof_preimage::{
-    FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient,
-    errors::PreimageOracleResult,
+    FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient, PreimageOracleResult,
 };
 use lru::LruCache;
 use spin::Mutex;

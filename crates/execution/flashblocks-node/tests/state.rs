@@ -3,7 +3,7 @@
 use alloy_network::BlockResponse;
 use alloy_primitives::U256;
 use base_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
-use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
+use base_flashblocks_node::{FlashblockBuilder, FlashblocksBuilderTestHarness};
 use base_test_utils::Account;
 use reth_provider::{AccountReader, StateProviderFactory};
 

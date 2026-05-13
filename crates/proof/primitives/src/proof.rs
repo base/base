@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 
 use alloy_primitives::{Address, B256};
 use base_proof_preimage::PreimageKey;
@@ -16,14 +16,13 @@ use crate::Proposal;
 ///
 /// - **`Zk`**: The ZK prover produces an opaque proof blob that the on-chain
 ///   verifier checks against a committed image ID.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ProofResult {
     /// Result from a TEE backend.
     Tee {
         /// The aggregated proposal covering the entire proven block range.
-        aggregate_proposal: Proposal,
+        aggregate_proposal: Box<Proposal>,
         /// The individual per-block proposals that were aggregated.
         proposals: Vec<Proposal>,
     },

@@ -281,14 +281,14 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use base_common_consensus::{DepositReceipt, serde_bincode_compat};
+    /// use base_common_consensus::{DepositReceipt, SerdeBincodeDepositReceipt};
     /// use serde::{Deserialize, Serialize, de::DeserializeOwned};
     /// use serde_with::serde_as;
     ///
     /// #[serde_as]
     /// #[derive(Serialize, Deserialize)]
     /// struct Data<T: Serialize + DeserializeOwned + Clone + 'static> {
-    ///     #[serde_as(as = "serde_bincode_compat::DepositReceipt<'_, T>")]
+    ///     #[serde_as(as = "SerdeBincodeDepositReceipt<'_, T>")]
     ///     receipt: DepositReceipt<T>,
     /// }
     /// ```

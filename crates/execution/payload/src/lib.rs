@@ -9,15 +9,20 @@
 
 extern crate alloc;
 
-pub mod builder;
-pub use builder::BasePayloadBuilder;
-pub mod config;
-pub mod error;
-pub mod payload;
+mod builder;
+pub use builder::{
+    BasePayloadBuilder, BasePayloadBuilderCtx, BasePayloadTransactions, Builder, ExecutedPayload,
+    ExecutionInfo,
+};
+mod config;
+pub use config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig};
+mod error;
+pub use error::BasePayloadBuilderError;
+mod payload;
 pub use payload::{BaseBuiltPayload, BasePayloadBuilderAttributes, payload_id};
 mod traits;
 pub use traits::*;
 mod types;
 pub use types::BasePayloadTypes;
-pub mod validator;
-pub use validator::BaseExecutionPayloadValidator;
+mod validator;
+pub use validator::{BaseExecutionPayloadValidator, ensure_well_formed_payload};

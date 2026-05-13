@@ -2,7 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
-use base_proof_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
+use base_proof_succinct_host_utils::{BlockInfo, OPSuccinctDataFetcher};
 use chrono::{Local, NaiveDateTime};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool, types::BigDecimal};
@@ -160,46 +160,67 @@ pub struct OPSuccinctRequest {
     pub cluster_proof_handle: Option<Value>,
 }
 
+/// Input data shared by range request constructors.
+#[derive(Debug, Clone)]
+pub struct RangeRequestInput {
+    /// Request execution mode.
+    pub mode: RequestMode,
+    /// Inclusive L2 start block.
+    pub start_block: i64,
+    /// Exclusive L2 end block.
+    pub end_block: i64,
+    /// Commitment to the range verification key.
+    pub range_vkey_commitment: B256,
+    /// Hash of the rollup configuration.
+    pub rollup_config_hash: B256,
+    /// L1 chain ID for this request.
+    pub l1_chain_id: i64,
+    /// L2 chain ID for this request.
+    pub l2_chain_id: i64,
+}
+
+/// Input data for aggregation request construction.
+#[derive(Debug, Clone)]
+pub struct AggregationRequestInput {
+    /// Request execution mode.
+    pub mode: RequestMode,
+    /// Inclusive L2 start block.
+    pub start_block: i64,
+    /// Exclusive L2 end block.
+    pub end_block: i64,
+    /// Commitment to the range verification key.
+    pub range_vkey_commitment: B256,
+    /// Hash of the aggregation verification key.
+    pub aggregation_vkey_hash: B256,
+    /// Hash of the rollup configuration.
+    pub rollup_config_hash: B256,
+    /// L1 chain ID for this request.
+    pub l1_chain_id: i64,
+    /// L2 chain ID for this request.
+    pub l2_chain_id: i64,
+    /// L1 block number used to checkpoint the aggregation request.
+    pub checkpointed_l1_block_number: i64,
+    /// L1 block hash used to checkpoint the aggregation request.
+    pub checkpointed_l1_block_hash: B256,
+    /// Prover address expected to fulfill the aggregation request.
+    pub prover_address: Address,
+}
+
 impl OPSuccinctRequest {
     /// Creates a new range request and fetches the block data.
-    #[allow(clippy::too_many_arguments)]
     pub async fn create_range_request(
-        mode: RequestMode,
-        start_block: i64,
-        end_block: i64,
-        range_vkey_commitment: B256,
-        rollup_config_hash: B256,
-        l1_chain_id: i64,
-        l2_chain_id: i64,
+        input: RangeRequestInput,
         fetcher: Arc<OPSuccinctDataFetcher>,
     ) -> Result<Self> {
-        let block_data =
-            fetcher.get_l2_block_data_range(start_block as u64, end_block as u64).await?;
+        let block_data = fetcher
+            .get_l2_block_data_range(input.start_block as u64, input.end_block as u64)
+            .await?;
 
-        Ok(Self::new_range_request(
-            mode,
-            start_block,
-            end_block,
-            range_vkey_commitment,
-            rollup_config_hash,
-            block_data,
-            l1_chain_id,
-            l2_chain_id,
-        ))
+        Ok(Self::new_range_request(input, block_data))
     }
 
     /// Create a new range request given the block data.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_range_request(
-        mode: RequestMode,
-        start_block: i64,
-        end_block: i64,
-        range_vkey_commitment: B256,
-        rollup_config_hash: B256,
-        block_data: Vec<BlockInfo>,
-        l1_chain_id: i64,
-        l2_chain_id: i64,
-    ) -> Self {
+    pub fn new_range_request(input: RangeRequestInput, block_data: Vec<BlockInfo>) -> Self {
         let now = Local::now().naive_local();
 
         let total_nb_transactions: u64 = block_data.iter().map(|b| b.transaction_count).sum();
@@ -212,57 +233,44 @@ impl OPSuccinctRequest {
             id: 0,
             status: RequestStatus::Unrequested,
             req_type: RequestType::Range,
-            mode,
-            start_block,
-            end_block,
+            mode: input.mode,
+            start_block: input.start_block,
+            end_block: input.end_block,
             created_at: now,
             updated_at: now,
-            range_vkey_commitment: range_vkey_commitment.to_vec(),
-            rollup_config_hash: rollup_config_hash.to_vec(),
+            range_vkey_commitment: input.range_vkey_commitment.to_vec(),
+            rollup_config_hash: input.rollup_config_hash.to_vec(),
             total_nb_transactions: total_nb_transactions as i64,
             total_eth_gas_used: total_eth_gas_used as i64,
             total_l1_fees: total_l1_fees.into(),
             total_tx_fees: total_tx_fees.into(),
-            l1_chain_id,
-            l2_chain_id,
+            l1_chain_id: input.l1_chain_id,
+            l2_chain_id: input.l2_chain_id,
             ..Default::default()
         }
     }
 
     /// Create a new aggregation request.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_agg_request(
-        mode: RequestMode,
-        start_block: i64,
-        end_block: i64,
-        range_vkey_commitment: B256,
-        aggregation_vkey_hash: B256,
-        rollup_config_hash: B256,
-        l1_chain_id: i64,
-        l2_chain_id: i64,
-        checkpointed_l1_block_number: i64,
-        checkpointed_l1_block_hash: B256,
-        prover_address: Address,
-    ) -> Self {
+    pub fn new_agg_request(input: AggregationRequestInput) -> Self {
         let now = Local::now().naive_local();
 
         Self {
             id: 0,
             status: RequestStatus::Unrequested,
             req_type: RequestType::Aggregation,
-            mode,
-            start_block,
-            end_block,
+            mode: input.mode,
+            start_block: input.start_block,
+            end_block: input.end_block,
             created_at: now,
             updated_at: now,
-            checkpointed_l1_block_number: Some(checkpointed_l1_block_number),
-            checkpointed_l1_block_hash: Some(checkpointed_l1_block_hash.to_vec()),
-            range_vkey_commitment: range_vkey_commitment.to_vec(),
-            aggregation_vkey_hash: Some(aggregation_vkey_hash.to_vec()),
-            rollup_config_hash: rollup_config_hash.to_vec(),
-            l1_chain_id,
-            l2_chain_id,
-            prover_address: Some(prover_address.to_vec()),
+            checkpointed_l1_block_number: Some(input.checkpointed_l1_block_number),
+            checkpointed_l1_block_hash: Some(input.checkpointed_l1_block_hash.to_vec()),
+            range_vkey_commitment: input.range_vkey_commitment.to_vec(),
+            aggregation_vkey_hash: Some(input.aggregation_vkey_hash.to_vec()),
+            rollup_config_hash: input.rollup_config_hash.to_vec(),
+            l1_chain_id: input.l1_chain_id,
+            l2_chain_id: input.l2_chain_id,
+            prover_address: Some(input.prover_address.to_vec()),
             l1_head_block_number: None,
             ..Default::default()
         }

@@ -8,17 +8,15 @@ use std::{
 
 use anyhow::Result;
 use base_proof_succinct_host_utils::{
-    block_range::{get_validated_block_range, split_range_basic},
-    fetcher::OPSuccinctDataFetcher,
-    host::OPSuccinctHost,
-    witness_generation::WitnessGenerator,
+    OPSuccinctDataFetcher, OPSuccinctHost, WitnessGenerator, get_validated_block_range,
+    split_range_basic,
 };
 use base_proof_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
 use base_proof_succinct_scripts::HostExecutorArgs;
 use clap::Parser;
 use futures::StreamExt;
-use log::info;
 use sp1_sdk::utils;
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -43,7 +41,7 @@ async fn main() -> Result<()> {
 
     let split_ranges = split_range_basic(l2_start_block, l2_end_block, args.effective_batch_size());
 
-    info!("The span batch ranges which will be executed: {split_ranges:?}");
+    info!(ranges = ?split_ranges, "span batch ranges selected for execution");
 
     // Get the host CLIs in order, in parallel.
     let host_args = futures::stream::iter(split_ranges.iter())
@@ -52,7 +50,7 @@ async fn main() -> Result<()> {
                 range.start,
                 range.end,
                 None,
-                base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
+                base_proof_succinct_client_utils::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
                 args.safe_db_fallback,
             )
             .await
@@ -77,7 +75,7 @@ async fn main() -> Result<()> {
     let root_dir = PathBuf::from(cargo_metadata.workspace_root).join("sp1-testing-suite-artifacts");
 
     let dir_name = root_dir.join(format!("base-proof-succinct-chain-{l2_chain_id}"));
-    info!("Writing artifacts to {dir_name:?}");
+    info!(directory = ?dir_name, "writing artifacts");
     for (sp1_stdin, range) in successful_ranges {
         let program_dir =
             PathBuf::from(format!("{}-{}-{}", dir_name.to_string_lossy(), range.start, range.end));

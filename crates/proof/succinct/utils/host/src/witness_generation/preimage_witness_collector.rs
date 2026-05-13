@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base_proof_preimage::{
     CommsClient, FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient,
-    errors::{PreimageOracleError, PreimageOracleResult},
+    PreimageOracleError, PreimageOracleResult,
 };
-use base_proof_succinct_client_utils::witness::preimage_store::PreimageStore;
+use base_proof_succinct_client_utils::PreimageStore;
 
 /// Wraps a preimage oracle and records all fetched preimages for witness generation.
 #[derive(Clone, Debug)]

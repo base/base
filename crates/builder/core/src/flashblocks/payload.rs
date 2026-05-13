@@ -20,7 +20,7 @@ use base_common_consensus::{BaseReceipt, BaseTransactionSigned};
 use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{calculate_receipt_root_no_memo, withdrawals_root};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use either::Either;
@@ -1004,7 +1004,7 @@ where
             // withdrawals root field in block header is used for storage root of L2 predeploy
             // `l2tol1-message-passer`
             Some(
-                isthmus::withdrawals_root(&state.bundle_state, state.database.as_ref())
+                withdrawals_root(&state.bundle_state, state.database.as_ref())
                     .map_err(PayloadBuilderError::other)?,
             )
         } else if ctx.chain_spec.is_canyon_active_at_timestamp(ctx.attributes().timestamp()) {

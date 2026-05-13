@@ -7,10 +7,6 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-[features]
-default = [ "ansi" ]
-ansi = []
-
 [dependencies]
 
 # sp1
@@ -79,3 +75,7 @@ opentelemetry-appender-tracing.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+default = [ "ansi" ]
+ansi = []

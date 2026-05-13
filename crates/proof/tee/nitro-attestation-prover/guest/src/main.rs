@@ -1,12 +1,14 @@
-// RISC Zero guest program for Nitro attestation verification.
-//
-// NOT compiled by the host crate — exists as source for manual compilation
-// with the risc0 toolchain:
-//
-//   rzup install
-//   cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf --ignore-rust-version
-//
-// The resulting ELF is loaded at runtime by DirectProver / BoundlessProver.
+//! RISC Zero guest program for Nitro attestation verification.
+//!
+//! NOT compiled by the host crate; exists as source for manual compilation
+//! with the risc0 toolchain:
+//!
+//! ```text
+//! rzup install
+//! cargo +risc0 build --release --target riscv32im-risc0-zkvm-elf --ignore-rust-version
+//! ```
+//!
+//! The resulting ELF is loaded at runtime by DirectProver / BoundlessProver.
 
 mod atomic_shims;
 

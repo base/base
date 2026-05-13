@@ -1,6 +1,7 @@
-//! Ethereum DA host utilities for witness generation.
+#![doc = include_str!("../README.md")]
 
-/// Single-chain SP1 host implementation.
-pub mod host;
-/// Ethereum DA witness generator.
-pub mod witness_generator;
+mod host;
+pub use host::*;
+
+mod witness_generator;
+pub use witness_generator::*;

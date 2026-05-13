@@ -1,7 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use alloy_primitives::B256;
-use base_proof_succinct_client_utils::precompiles::cycle_tracker::keys;
+use base_proof_succinct_client_utils::PrecompileCycleTrackerKey;
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -199,12 +199,12 @@ impl RequestExecutionStatistics {
             oracle_verify_cycles: get_cycles("oracle-verify"),
             derivation_cycles: get_cycles("payload-derivation"),
             blob_verification_cycles: get_cycles("blob-verification"),
-            bn_add_cycles: get_cycles(keys::BN_ADD),
-            bn_mul_cycles: get_cycles(keys::BN_MUL),
-            bn_pair_cycles: get_cycles(keys::BN_PAIR),
-            kzg_eval_cycles: get_cycles(keys::KZG_EVAL),
-            ec_recover_cycles: get_cycles(keys::EC_RECOVER),
-            p256_verify_cycles: get_cycles(keys::P256_VERIFY),
+            bn_add_cycles: get_cycles(PrecompileCycleTrackerKey::BN_ADD),
+            bn_mul_cycles: get_cycles(PrecompileCycleTrackerKey::BN_MUL),
+            bn_pair_cycles: get_cycles(PrecompileCycleTrackerKey::BN_PAIR),
+            kzg_eval_cycles: get_cycles(PrecompileCycleTrackerKey::KZG_EVAL),
+            ec_recover_cycles: get_cycles(PrecompileCycleTrackerKey::EC_RECOVER),
+            p256_verify_cycles: get_cycles(PrecompileCycleTrackerKey::P256_VERIFY),
         }
     }
 }

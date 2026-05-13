@@ -4,8 +4,7 @@ use std::net::UdpSocket;
 
 use base_cli_utils::LogConfig;
 use based::{
-    BlockProductionHealthChecker, HealthcheckConfig, HealthcheckMetrics, Node,
-    alloy_client::AlloyEthClient,
+    AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, HealthcheckMetrics, Node,
 };
 use cadence::{StatsdClient, UdpMetricSink};
 use clap::Parser;

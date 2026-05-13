@@ -6,9 +6,7 @@ use std::sync::Arc;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::Result;
 use base_proof_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher,
-    metrics::{MetricsGauge, init_metrics},
-    setup_logger,
+    MetricsGauge, OPSuccinctDataFetcher, init_metrics, setup_logger,
 };
 use base_proof_succinct_proof_utils::initialize_host;
 use base_proof_succinct_validity::{
@@ -108,21 +106,21 @@ async fn main() -> Result<()> {
     info!("Starting proposer.");
     let proposer_handle = tokio::spawn(async move {
         if let Err(e) = proposer.run().await {
-            tracing::error!("Proposer error: {}", e);
+            tracing::error!(error = %e, "proposer error");
             return Err(e);
         }
         Ok(())
     });
 
     // Initialize metrics exporter.
-    info!("Initializing metrics on port {}", env_config.metrics_port);
+    info!(port = env_config.metrics_port, "initializing metrics");
     ValidityGauge::register_all();
     init_metrics(&env_config.metrics_port);
 
     // Wait for all tasks to complete.
     let proposer_res = proposer_handle.await?;
     if let Err(e) = proposer_res {
-        tracing::error!("Proposer task failed: {}", e);
+        tracing::error!(error = %e, "proposer task failed");
         return Err(e);
     }
 

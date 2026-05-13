@@ -152,12 +152,13 @@ mod test {
         let hint_channel = BidirectionalChannel::new().unwrap();
 
         let client = tokio::task::spawn(async move {
-            let hint_writer = HintWriter::new(hint_channel.client);
+            hint_channel.client.write(u32::to_be_bytes(mock_data.len() as u32).as_ref()).await?;
+            hint_channel.client.write(&mock_data).await?;
 
-            // SAFETY: This is intentionally invalid UTF-8 to test error handling.
-            // The test verifies that invalid UTF-8 causes an error on the host side.
-            #[allow(invalid_from_utf8_unchecked)]
-            hint_writer.write(unsafe { alloc::str::from_utf8_unchecked(&mock_data) }).await
+            let mut hint_ack = [0u8; 1];
+            hint_channel.client.read_exact(&mut hint_ack).await?;
+
+            Ok(())
         });
         let host = tokio::task::spawn(async move {
             let router = TestRouter { incoming_hints: Default::default() };

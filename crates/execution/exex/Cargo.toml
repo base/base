@@ -43,6 +43,14 @@ base-execution-chainspec.workspace = true
 reth-ethereum-primitives.workspace = true
 reth-db = { workspace = true, features = ["test-utils"] }
 
+[package.metadata.cargo-udeps.ignore]
+development = [
+    "reth-node-builder",
+    "base-node-core",
+    "base-execution-chainspec",
+    "tempfile.workspace",
+]
+
 [features]
 test-utils = [
 	"base-node-core/test-utils",
@@ -54,11 +62,3 @@ test-utils = [
 	"reth-trie/test-utils",
 ]
 metrics = [ "base-execution-trie/metrics", "reth-trie/metrics" ]
-
-[package.metadata.cargo-udeps.ignore]
-development = [
-    "reth-node-builder",
-    "base-node-core",
-    "base-execution-chainspec",
-    "tempfile.workspace",
-]

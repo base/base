@@ -11,7 +11,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, DisputeGameFactoryClient,
     DisputeGameFactoryContractClient,
 };
-use base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
+use base_proof_succinct_client_utils::DEFAULT_INTERMEDIATE_ROOT_INTERVAL;
 use reqwest::Url;
 
 /// Succinct validity dispute game type (see `Proposer` tests / `initBonds`).

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy_primitives::Address;
 use anyhow::Result;
-use base_proof_succinct_host_utils::{OPSuccinctL2OutputOracle, fetcher::OPSuccinctDataFetcher};
+use base_proof_succinct_host_utils::{OPSuccinctDataFetcher, OPSuccinctL2OutputOracle};
 
 /// Get the latest proposed block number from the L2 output oracle.
 pub async fn get_latest_proposed_block_number(

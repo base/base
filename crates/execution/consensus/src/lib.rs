@@ -34,10 +34,15 @@ use reth_primitives_traits::{
 mod proof;
 pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
 
-pub mod validation;
-pub use validation::{canyon, isthmus, validate_block_post_execution};
+mod validation;
+pub use validation::{
+    ensure_empty_shanghai_withdrawals, ensure_empty_withdrawals_root,
+    ensure_withdrawals_storage_root_is_some, validate_block_post_execution,
+    validate_body_against_header_base, verify_withdrawals_root, verify_withdrawals_root_prehashed,
+    withdrawals_root, withdrawals_root_prehashed,
+};
 
-pub mod error;
+mod error;
 pub use error::BaseConsensusError;
 
 /// Base consensus implementation.
@@ -115,7 +120,7 @@ where
 
         // Check empty shanghai-withdrawals
         if self.chain_spec.is_canyon_active_at_timestamp(block.timestamp()) {
-            canyon::ensure_empty_shanghai_withdrawals(block.body()).map_err(|err| {
+            ensure_empty_shanghai_withdrawals(block.body()).map_err(|err| {
                 ConsensusError::Other(format!("failed to verify block {}: {err}", block.number()))
             })?
         } else {
@@ -135,12 +140,12 @@ where
         // Check withdrawals root field in header
         if self.chain_spec.is_isthmus_active_at_timestamp(block.timestamp()) {
             // storage root of withdrawals pre-deploy is verified post-execution
-            isthmus::ensure_withdrawals_storage_root_is_some(block.header()).map_err(|err| {
+            ensure_withdrawals_storage_root_is_some(block.header()).map_err(|err| {
                 ConsensusError::Other(format!("failed to verify block {}: {err}", block.number()))
             })?
         } else {
             // canyon is active, else would have returned already
-            canyon::ensure_empty_withdrawals_root(block.header())?
+            ensure_empty_withdrawals_root(block.header())?
         }
 
         Ok(())

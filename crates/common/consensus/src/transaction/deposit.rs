@@ -757,14 +757,14 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use base_common_consensus::{TxDeposit, serde_bincode_compat};
+    /// use base_common_consensus::{TxDeposit, SerdeBincodeTxDeposit};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///
     /// #[serde_as]
     /// #[derive(Serialize, Deserialize)]
     /// struct Data {
-    ///     #[serde_as(as = "serde_bincode_compat::TxDeposit")]
+    ///     #[serde_as(as = "SerdeBincodeTxDeposit")]
     ///     transaction: TxDeposit,
     /// }
     /// ```

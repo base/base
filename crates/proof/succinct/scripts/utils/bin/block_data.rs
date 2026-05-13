@@ -6,10 +6,10 @@ use std::{
 };
 
 use anyhow::Result;
-use base_proof_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
+use base_proof_succinct_host_utils::{BlockInfo, OPSuccinctDataFetcher};
 use clap::Parser;
-use log::info;
 use sp1_sdk::utils;
+use tracing::info;
 
 /// The arguments for the host executable.
 #[derive(Debug, Clone, Parser)]
@@ -105,7 +105,7 @@ async fn write_block_data_to_csv(
         }
         csv_writer.flush()?;
 
-        info!("Processed blocks {current_start} to {chunk_end}");
+        info!(start = current_start, end = chunk_end, "processed blocks");
         current_start = chunk_end + 1;
     }
 

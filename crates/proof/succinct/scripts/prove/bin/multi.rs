@@ -9,14 +9,9 @@ use std::{
 
 use anyhow::{Context, Result};
 use base_proof_succinct_host_utils::{
-    block_range::get_validated_block_range,
-    fetcher::OPSuccinctDataFetcher,
-    host::OPSuccinctHost,
-    network::{build_network_prover_from_env, parse_fulfillment_strategy},
-    proof_cache::save_range_proof,
-    stats::ExecutionStats,
-    witness_cache::{load_stdin_from_cache, save_stdin_to_cache},
-    witness_generation::WitnessGenerator,
+    ExecutionStats, OPSuccinctDataFetcher, OPSuccinctHost, WitnessGenerator,
+    build_network_prover_from_env, get_validated_block_range, load_stdin_from_cache,
+    parse_fulfillment_strategy, save_range_proof, save_stdin_to_cache,
 };
 use base_proof_succinct_proof_utils::{
     cluster_range_proof, get_range_elf_embedded, initialize_host, is_cluster_mode,
@@ -60,11 +55,11 @@ async fn main() -> Result<()> {
                 l2_start_block,
                 l2_end_block,
                 None,
-                base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
+                base_proof_succinct_client_utils::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
                 args.safe_db_fallback,
             )
             .await?;
-        debug!("Host args: {:?}", host_args);
+        debug!(host_args = ?host_args, "fetched host args");
 
         let start_time = Instant::now();
         let witness = host.run(&host_args).await?;
@@ -77,7 +72,7 @@ async fn main() -> Result<()> {
         if args.cache {
             let cache_path =
                 save_stdin_to_cache(l2_chain_id, l2_start_block, l2_end_block, &stdin)?;
-            info!("Saved stdin to cache: {}", cache_path.display());
+            info!(cache_path = %cache_path.display(), "saved stdin to cache");
         }
 
         Ok::<_, anyhow::Error>((stdin, duration))
@@ -92,7 +87,7 @@ async fn main() -> Result<()> {
             }
             Ok(None) => generate_stdin().await?,
             Err(e) => {
-                warn!("Failed to load cache: {e}, regenerating...");
+                warn!(error = %e, "failed to load cache, regenerating");
                 generate_stdin().await?
             }
         }
@@ -104,7 +99,7 @@ async fn main() -> Result<()> {
         if is_cluster_mode() {
             let proof = cluster_range_proof(args.cluster_timeout, sp1_stdin).await?;
             let path = save_range_proof(l2_chain_id, l2_start_block, l2_end_block, &proof)?;
-            info!("Range proof saved to {}", path.display());
+            info!(path = %path.display(), "range proof saved");
         } else {
             let range_proof_strategy = parse_fulfillment_strategy(
                 env::var("RANGE_PROOF_STRATEGY").unwrap_or_else(|_| "reserved".to_string()),
@@ -118,7 +113,7 @@ async fn main() -> Result<()> {
                 .await
                 .expect("proving failed");
             let path = save_range_proof(l2_chain_id, l2_start_block, l2_end_block, &proof)?;
-            info!("Range proof saved to {}", path.display());
+            info!(path = %path.display(), "range proof saved");
         }
     } else {
         let (block_data, report, execution_duration) =

@@ -28,7 +28,7 @@ use tokio::time::Duration;
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::signer::{SignerArgs, SignerArgsParseError};
+use crate::{SignerArgs, SignerArgsParseError};
 
 /// Resolves a hostname or IP address string to an [`IpAddr`].
 ///

@@ -6,8 +6,8 @@ use alloy_consensus::{BlockHeader, Header, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, TxKind, U256, keccak256};
 use base_execution_trie::{
-    BaseProofsStorage, BaseProofsStorageError, MdbxProofsStorage, initialize::InitializationJob,
-    live::LiveTrieCollector,
+    BaseProofsStorage, BaseProofsStorageError, InitializationJob, LiveTrieCollector,
+    MdbxProofsStorage,
 };
 use derive_more::Constructor;
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, MAINNET, MIN_TRANSACTION_GAS};

@@ -4,7 +4,7 @@ use alloy_primitives::keccak256;
 use async_trait::async_trait;
 use base_proof_preimage::{
     FlushableCache, HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient,
-    errors::{PreimageOracleError, PreimageOracleResult},
+    PreimageOracleError, PreimageOracleResult,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;

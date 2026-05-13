@@ -70,6 +70,36 @@ pub struct PipelineConfig {
     pub tee_prover_registry_address: Option<Address>,
 }
 
+/// Dependencies required to construct a [`ProvingPipeline`].
+pub struct ProvingPipelineParts<L1, L2, R, ASR, F> {
+    /// Pipeline configuration.
+    pub config: PipelineConfig,
+    /// Proof backend client.
+    pub prover: Arc<dyn ProverClient>,
+    /// L1 execution client.
+    pub l1_client: Arc<L1>,
+    /// L2 execution client.
+    pub l2_client: Arc<L2>,
+    /// Rollup node client.
+    pub rollup_client: Arc<R>,
+    /// Anchor state registry contract client.
+    pub anchor_registry: Arc<ASR>,
+    /// Dispute game factory contract client.
+    pub factory_client: Arc<F>,
+    /// Aggregate proof verifier contract client.
+    pub verifier_client: Arc<dyn AggregateVerifierClient>,
+    /// Output proposal submitter.
+    pub output_proposer: Arc<dyn OutputProposer>,
+    /// Cancellation token for pipeline shutdown.
+    pub cancel: CancellationToken,
+}
+
+impl<L1, L2, R, ASR, F> std::fmt::Debug for ProvingPipelineParts<L1, L2, R, ASR, F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProvingPipelineParts").field("config", &self.config).finish_non_exhaustive()
+    }
+}
+
 /// Cached result from the last successful recovery.
 ///
 /// The cache is keyed by `game_count`. When `game_count` is unchanged
@@ -230,19 +260,20 @@ where
     F: DisputeGameFactoryClient + 'static,
 {
     /// Creates a new parallel proving pipeline.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        config: PipelineConfig,
-        prover: Arc<dyn ProverClient>,
-        l1_client: Arc<L1>,
-        l2_client: Arc<L2>,
-        rollup_client: Arc<R>,
-        anchor_registry: Arc<ASR>,
-        factory_client: Arc<F>,
-        verifier_client: Arc<dyn AggregateVerifierClient>,
-        output_proposer: Arc<dyn OutputProposer>,
-        cancel: CancellationToken,
-    ) -> Self {
+    pub fn new(parts: ProvingPipelineParts<L1, L2, R, ASR, F>) -> Self {
+        let ProvingPipelineParts {
+            config,
+            prover,
+            l1_client,
+            l2_client,
+            rollup_client,
+            anchor_registry,
+            factory_client,
+            verifier_client,
+            output_proposer,
+            cancel,
+        } = parts;
+
         Self {
             config,
             prover,
@@ -1640,18 +1671,18 @@ mod tests {
         });
         let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
-        ProvingPipeline::new(
-            pipeline_config,
+        ProvingPipeline::new(ProvingPipelineParts {
+            config: pipeline_config,
             prover,
-            l1,
-            l2,
-            rollup,
+            l1_client: l1,
+            l2_client: l2,
+            rollup_client: rollup,
             anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
+            factory_client: factory,
+            verifier_client: Arc::new(MockAggregateVerifier::default()),
+            output_proposer: Arc::new(MockOutputProposer),
             cancel,
-        )
+        })
     }
 
     /// Builds a recovery pipeline with a pre-configured factory and canonical
@@ -1748,8 +1779,8 @@ mod tests {
             anchor_game,
         });
 
-        ProvingPipeline::new(
-            PipelineConfig {
+        ProvingPipeline::new(ProvingPipelineParts {
+            config: PipelineConfig {
                 max_parallel_proofs: 1,
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
@@ -1762,15 +1793,15 @@ mod tests {
                 },
             },
             prover,
-            l1,
-            l2,
-            rollup,
+            l1_client: l1,
+            l2_client: l2,
+            rollup_client: rollup,
             anchor_registry,
-            Arc::new(factory),
-            Arc::new(MockAggregateVerifier::default()),
+            factory_client: Arc::new(factory),
+            verifier_client: Arc::new(MockAggregateVerifier::default()),
             output_proposer,
             cancel,
-        )
+        })
     }
 
     // ---- Pipeline lifecycle tests ----
@@ -1900,8 +1931,8 @@ mod tests {
         let mut factory = MockDisputeGameFactory::with_games(vec![]);
         factory.game_count_override = Some(1);
 
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
+        let pipeline = ProvingPipeline::new(ProvingPipelineParts {
+            config: PipelineConfig {
                 max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
@@ -1913,15 +1944,15 @@ mod tests {
                 },
             },
             prover,
-            l1,
-            l2,
-            rollup,
+            l1_client: l1,
+            l2_client: l2,
+            rollup_client: rollup,
             anchor_registry,
-            Arc::new(factory),
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
+            factory_client: Arc::new(factory),
+            verifier_client: Arc::new(MockAggregateVerifier::default()),
+            output_proposer: Arc::new(MockOutputProposer),
             cancel,
-        );
+        });
 
         let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -2023,8 +2054,8 @@ mod tests {
             anchor_game: Address::ZERO,
         });
 
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
+        let pipeline = ProvingPipeline::new(ProvingPipelineParts {
+            config: PipelineConfig {
                 max_parallel_proofs: 1,
                 max_retries: 1,
                 recovery_scan_concurrency: 8,
@@ -2037,15 +2068,15 @@ mod tests {
                 },
             },
             prover,
-            l1,
-            l2,
-            rollup,
+            l1_client: l1,
+            l2_client: l2,
+            rollup_client: rollup,
             anchor_registry,
-            Arc::new(factory),
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
+            factory_client: Arc::new(factory),
+            verifier_client: Arc::new(MockAggregateVerifier::default()),
+            output_proposer: Arc::new(MockOutputProposer),
             cancel,
-        );
+        });
 
         let mut cache: Option<CachedRecovery> = None;
         let state = pipeline.recover_latest_state(&mut cache).await.unwrap();
@@ -2309,8 +2340,8 @@ mod tests {
         });
         let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
+        let pipeline = ProvingPipeline::new(ProvingPipelineParts {
+            config: PipelineConfig {
                 max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
@@ -2322,15 +2353,15 @@ mod tests {
                 },
             },
             prover,
-            l1,
-            l2,
-            rollup,
+            l1_client: l1,
+            l2_client: l2,
+            rollup_client: rollup,
             anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
+            factory_client: factory,
+            verifier_client: Arc::new(MockAggregateVerifier::default()),
+            output_proposer: Arc::new(MockOutputProposer),
             cancel,
-        );
+        });
 
         let recovered = RecoveredState {
             parent_address: Address::ZERO,
@@ -2341,7 +2372,7 @@ mod tests {
         let mut state = PipelineState::new();
         state.proved.insert(TEST_BLOCK_INTERVAL, {
             let p = test_proposal(TEST_BLOCK_INTERVAL);
-            ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] }
+            ProofResult::Tee { aggregate_proposal: Box::new(p.clone()), proposals: vec![p] }
         });
         state.inflight.insert(TEST_BLOCK_INTERVAL * 2);
         state.inflight.insert(TEST_BLOCK_INTERVAL * 3);
@@ -2442,8 +2473,8 @@ mod tests {
         });
         let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
+        let pipeline = ProvingPipeline::new(ProvingPipelineParts {
+            config: PipelineConfig {
                 max_parallel_proofs: 4,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
@@ -2455,15 +2486,15 @@ mod tests {
                 },
             },
             prover,
-            l1,
-            l2,
-            rollup,
+            l1_client: l1,
+            l2_client: l2,
+            rollup_client: rollup,
             anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
+            factory_client: factory,
+            verifier_client: Arc::new(MockAggregateVerifier::default()),
+            output_proposer: Arc::new(MockOutputProposer),
             cancel,
-        );
+        });
 
         let recovered = RecoveredState {
             parent_address: Address::ZERO,
@@ -2494,7 +2525,7 @@ mod tests {
         state.submitting = Some(512);
         state.proved.insert(512, {
             let p = test_proposal(512);
-            ProofResult::Tee { aggregate_proposal: p.clone(), proposals: vec![p] }
+            ProofResult::Tee { aggregate_proposal: Box::new(p.clone()), proposals: vec![p] }
         });
         state.inflight.insert(512);
         state.retry_counts.insert(512, 1);
@@ -2539,8 +2570,10 @@ mod tests {
             recovery_pipeline(MockDisputeGameFactory::with_games(vec![]), HashMap::new());
         let target_block = TEST_BLOCK_INTERVAL;
         let proposal = test_proposal(target_block);
-        let proof =
-            ProofResult::Tee { aggregate_proposal: proposal.clone(), proposals: vec![proposal] };
+        let proof = ProofResult::Tee {
+            aggregate_proposal: Box::new(proposal.clone()),
+            proposals: vec![proposal],
+        };
 
         let mut state = PipelineState::new();
         state.submitting = Some(target_block);
@@ -2632,7 +2665,7 @@ mod tests {
     fn submit_proof_result(target_block: u64) -> ProofResult {
         let proposals: Vec<Proposal> = (1..=target_block).map(test_proposal).collect();
         let aggregate = test_proposal(target_block);
-        ProofResult::Tee { aggregate_proposal: aggregate, proposals }
+        ProofResult::Tee { aggregate_proposal: Box::new(aggregate), proposals }
     }
 
     #[derive(Debug)]

@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
-    BaseProofsStorage, BaseProofsStore, InitializationJob, db::MdbxProofsStorage,
+    BaseProofsStorage, BaseProofsStore, InitializationJob, MdbxProofsStorage,
 };
 use clap::Parser;
 use reth_chainspec::ChainInfo;

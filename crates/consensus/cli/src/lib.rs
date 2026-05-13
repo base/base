@@ -45,8 +45,8 @@ pub use rpc::RpcArgs;
 mod sequencer;
 pub use sequencer::SequencerArgs;
 
-pub mod signer;
+mod signer;
 pub use signer::{SignerArgs, SignerArgsParseError};
 
-pub mod p2p;
+mod p2p;
 pub use p2p::{P2PArgs, P2PConfigError};

@@ -365,8 +365,7 @@ mod tests {
     use async_trait::async_trait;
     use base_common_chains::Registry;
     use base_proof_preimage::{
-        PreimageKey, PreimageOracleClient,
-        errors::{PreimageOracleError, PreimageOracleResult},
+        PreimageKey, PreimageOracleClient, PreimageOracleError, PreimageOracleResult,
     };
 
     use super::*;

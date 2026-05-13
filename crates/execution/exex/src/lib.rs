@@ -13,8 +13,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
 use base_execution_trie::{
-    BaseProofStoragePrunerTask, BaseProofsStorage, BaseProofsStore, live::LiveTrieCollector,
-    metrics::BlockMetrics,
+    BaseProofStoragePrunerTask, BaseProofsStorage, BaseProofsStore, BlockMetrics, LiveTrieCollector,
 };
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
@@ -118,8 +117,8 @@ where
 /// use reth_node_builder::{NodeBuilder, NodeConfig};
 /// use base_execution_chainspec::BaseChainSpec;
 /// use base_execution_exex::BaseProofsExEx;
-/// use base_node_core::{BaseNode, args::RollupArgs};
-/// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, db::MdbxProofsStorage};
+/// use base_node_core::{BaseNode, RollupArgs};
+/// use base_execution_trie::{BaseProofsStorage, InMemoryProofsStorage, MdbxProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
 ///
@@ -688,7 +687,7 @@ mod tests {
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use base_execution_trie::{
-        BaseProofsStorage, BaseProofsStore, BlockStateDiff, db::MdbxProofsStorage,
+        BaseProofsStorage, BaseProofsStore, BlockStateDiff, MdbxProofsStorage,
     };
     use reth_db::test_utils::tempdir_path;
     use reth_ethereum_primitives::{Block, Receipt};

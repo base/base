@@ -16,16 +16,12 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_consensus::BaseBeaconConsensus;
 use base_execution_evm::{BaseEvmConfig, BaseRethReceiptBuilder};
 use base_execution_payload_builder::{
-    Attributes, BaseBuiltPayload, PayloadPrimitives,
-    builder::BasePayloadTransactions,
-    config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
+    Attributes, BaseBuilderConfig, BaseBuiltPayload, BaseDAConfig, BasePayloadTransactions,
+    GasLimitConfig, PayloadPrimitives,
 };
 use base_execution_rpc::{
-    MinerApiExtServer,
-    config::{BaseEthConfigApiServer, BaseEthConfigHandler},
-    eth::BaseEthApiBuilder,
-    miner::BaseMinerExtApi,
-    witness::BaseDebugWitnessApi,
+    BaseDebugWitnessApi, BaseEthApiBuilder, BaseEthConfigApiServer, BaseEthConfigHandler,
+    BaseMinerExtApi, MinerApiExtServer,
 };
 use base_execution_txpool::{
     BaseOrdering, BasePooledTransaction, BasePooledTx, BaseTransactionPool,

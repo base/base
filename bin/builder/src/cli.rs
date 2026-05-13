@@ -6,7 +6,7 @@ use base_builder_core::{
     BuilderConfig, ExecutionMeteringMode, RejectionCache, SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
-use base_node_core::args::RollupArgs;
+use base_node_core::RollupArgs;
 
 /// Parameters for Flashblocks configuration.
 ///

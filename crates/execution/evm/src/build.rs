@@ -10,7 +10,7 @@ use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{calculate_receipt_root_no_memo, withdrawals_root};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
@@ -71,7 +71,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
                 // withdrawals root field in block header is used for storage root of L2 predeploy
                 // `l2tol1-message-passer`
                 Some(
-                    isthmus::withdrawals_root(bundle_state, state_provider)
+                    withdrawals_root(bundle_state, state_provider)
                         .map_err(BlockExecutionError::other)?,
                 )
             } else if Upgrades::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp) {

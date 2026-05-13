@@ -1,6 +1,14 @@
 [workspace]
 exclude = ["tools/compute-image-id"]
 
+[workspace.lints.rust]
+missing-docs = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
 [package]
 name = "base-proof-tee-nitro-verifier-guest"
 version = "0.0.0"
@@ -16,10 +24,5 @@ risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] 
 [profile.release]
 codegen-units = 1
 
-[lints.rust]
-missing-docs = "warn"
-unused-must-use = "deny"
-rust-2018-idioms = "deny"
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
+[lints]
+workspace = true

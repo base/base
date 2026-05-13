@@ -7,25 +7,38 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub mod config;
-pub mod debug;
-pub mod engine;
-pub mod error;
-pub mod eth;
-pub mod metrics;
-pub mod miner;
-pub mod sequencer;
-pub mod state;
-pub mod witness;
+mod config;
+mod debug;
+mod engine;
+mod error;
+mod eth;
+mod metrics;
+mod miner;
+mod sequencer;
+mod state;
+mod witness;
 
+#[cfg(feature = "client")]
+pub use config::BaseEthConfigApiClient;
 pub use config::{BaseEthConfigApiServer, BaseEthConfigHandler};
+#[cfg(test)]
+pub use debug::DebugApiOverrideClient;
+pub use debug::{DebugApiExt, DebugApiExtInner, DebugApiOverrideServer, ProofsSyncStatus};
 #[cfg(feature = "client")]
 pub use engine::BaseEngineApiClient;
 pub use engine::{BaseEngineApi, BaseEngineApiServer, ENGINE_CAPABILITIES};
 pub use error::{BaseEthApiError, BaseInvalidTransactionError, SequencerClientError};
-pub use eth::{BaseEthApi, BaseEthApiBuilder, BaseReceiptBuilder};
+#[cfg(test)]
+pub use eth::EthApiOverrideClient;
+pub use eth::{
+    BaseEthApi, BaseEthApiBuilder, BaseEthApiInner, BaseReceiptBuilder, BaseReceiptConverter,
+    BaseRpcConvert, BaseTxInfoMapper, EthApiExt, EthApiNodeBackend, EthApiOverrideServer,
+    MAX_PROOF_KEYS, ProofKeyLimit, ReceiptFieldsBuilder,
+};
 pub use metrics::{DebugApiExtMetrics, DebugApis, EthApiExtMetrics, SequencerMetrics};
 #[cfg(feature = "client")]
 pub use miner::MinerApiExtClient;
-pub use miner::MinerApiExtServer;
-pub use sequencer::{SequencerClient, SequencerClientInner};
+pub use miner::{BaseMinerExtApi, MinerApiExtServer};
+pub use sequencer::{Error as SequencerError, SequencerClient, SequencerClientInner};
+pub use state::BaseStateProviderFactory;
+pub use witness::BaseDebugWitnessApi;

@@ -2,8 +2,8 @@
 
 use std::fmt;
 
-use base_execution_payload_builder::config::BaseDAConfig;
-use base_node_core::args::RollupArgs;
+use base_execution_payload_builder::BaseDAConfig;
+use base_node_core::RollupArgs;
 use eyre::Result;
 use reth_node_builder::{Node, NodeHandle, NodeHandleFor};
 use reth_provider::providers::BlockchainProvider;

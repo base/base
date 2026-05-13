@@ -29,10 +29,9 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
-[features]
-default = [ "ethereum" ]
-ethereum = []
-
 [lints]
 workspace = true
 
+[features]
+default = [ "ethereum" ]
+ethereum = []

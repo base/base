@@ -25,6 +25,6 @@ mod tokio;
 pub use tokio::TokioRuntime;
 
 #[cfg(feature = "test-utils")]
-pub mod deterministic;
+mod deterministic;
 #[cfg(feature = "test-utils")]
 pub use deterministic::{Alarm, Config, Context, Executor, Runner, Sleeper, Task, Tasks};

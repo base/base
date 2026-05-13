@@ -11,4 +11,9 @@ mod extension;
 pub use extension::FlashblocksExtension;
 
 #[cfg(any(test, feature = "test-utils"))]
-pub mod test_harness;
+mod test_harness;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_harness::{
+    FlashblockBuilder, FlashblocksBuilderTestHarness, FlashblocksHarness, FlashblocksLocalNode,
+    FlashblocksParts, FlashblocksTestExtension,
+};

@@ -24,7 +24,7 @@ mod driver;
 pub use driver::{DriverConfig, PipelineHandle, ProposerDriverControl, RecoveredState};
 
 mod pipeline;
-pub use pipeline::{PipelineConfig, ProvingPipeline};
+pub use pipeline::{PipelineConfig, ProvingPipeline, ProvingPipelineParts};
 
 mod error;
 pub use error::{ProposerError, ProposerResult};

@@ -4,8 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_proof_preimage::{
-    HintRouter, PreimageFetcher, PreimageKey,
-    errors::{PreimageOracleError, PreimageOracleResult},
+    HintRouter, PreimageFetcher, PreimageKey, PreimageOracleError, PreimageOracleResult,
 };
 use tokio::sync::RwLock;
 

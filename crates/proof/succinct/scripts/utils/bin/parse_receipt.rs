@@ -4,7 +4,7 @@ use std::{fs, path::PathBuf};
 
 use alloy_primitives::hex;
 use anyhow::Result;
-use base_proof_succinct_client_utils::boot::BootInfoStruct;
+use base_proof_succinct_client_utils::BootInfoStruct;
 use base_proof_succinct_elfs::AGGREGATION_ELF;
 use clap::Parser;
 use sp1_sdk::{

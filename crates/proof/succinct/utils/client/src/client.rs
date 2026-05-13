@@ -18,9 +18,12 @@ use tracing::{error, info, warn};
 /// The default interval (in blocks) at which intermediate output roots are recorded.
 pub const DEFAULT_INTERMEDIATE_ROOT_INTERVAL: u64 = 10;
 
+/// Result type for zkVM derivation helpers.
+pub type ZkvmDriverResult<T, E> = Result<T, Box<DriverError<E>>>;
+
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
 /// [`BootInfo`].
-pub(crate) async fn fetch_safe_head_hash<O>(
+pub async fn fetch_safe_head_hash<O>(
     caching_oracle: &O,
     agreed_l2_output_root: B256,
 ) -> Result<B256, OracleProviderError>
@@ -58,13 +61,12 @@ where
 ///   of the produced block, the output root, and the intermediate output roots at the specified
 ///   interval.
 /// - `Err(e)` - An error if the block could not be produced.
-#[allow(clippy::result_large_err)]
 pub async fn advance_to_target<E, DP, P>(
     driver: &mut Driver<E, DP, P>,
     cfg: &RollupConfig,
     mut target: Option<u64>,
     intermediate_root_interval: u64,
-) -> DriverResult<(L2BlockInfo, B256, Vec<B256>), E::Error>
+) -> ZkvmDriverResult<(L2BlockInfo, B256, Vec<B256>), E::Error>
 where
     E: Executor + Send + Sync + Debug,
     DP: DriverPipeline<P> + Send + Sync + Debug,
@@ -104,13 +106,13 @@ where
                 // If we are in interop mode, this error must be handled by the caller.
                 // Otherwise, we continue the loop to halt derivation on the next iteration.
                 if cfg.is_isthmus_active(tip_cursor.l2_safe_head.block_info.timestamp) {
-                    return Err(PipelineError::EndOfSource.crit().into());
+                    return Err(Box::new(DriverError::Pipeline(PipelineError::EndOfSource.crit())));
                 }
                 continue;
             }
             Err(e) => {
-                error!(target: "client", "Failed to produce payload: {:?}", e);
-                return Err(DriverError::Pipeline(e));
+                error!(target: "client", error = ?e, "failed to produce payload");
+                return Err(Box::new(DriverError::Pipeline(e)));
             }
         };
         #[cfg(target_os = "zkvm")]
@@ -123,7 +125,7 @@ where
         let outcome = match driver.executor.execute_payload(attributes.clone()).await {
             Ok(outcome) => outcome,
             Err(e) => {
-                error!(target: "client", error = %e, "Failed to execute L2 block");
+                error!(target: "client", error = %e, "failed to execute L2 block");
 
                 if !cfg.is_holocene_active(attributes.payload_attributes.timestamp) {
                     // Pre-Holocene, discard the block if execution fails.
@@ -131,7 +133,7 @@ where
                 }
 
                 if !E::is_deposit_only_retryable(&e) {
-                    return Err(DriverError::Executor(e));
+                    return Err(Box::new(DriverError::Executor(e)));
                 }
 
                 // Retry with a deposit-only block.
@@ -141,7 +143,11 @@ where
                 // deposit-only block due to execution failure, the
                 // batch and channel it is contained in is forwards
                 // invalidated.
-                driver.pipeline.signal(Signal::FlushChannel).await?;
+                driver
+                    .pipeline
+                    .signal(Signal::FlushChannel)
+                    .await
+                    .map_err(|error| Box::new(DriverError::Pipeline(error)))?;
 
                 // Strip out all transactions that are not deposits.
                 attributes.transactions = attributes.transactions.map(|txs: Vec<Bytes>| {
@@ -158,9 +164,9 @@ where
                         error!(
                             target: "client",
                             error = %e,
-                            "Critical - Failed to execute deposit-only block",
+                            "failed to execute deposit-only block",
                         );
-                        return Err(DriverError::Executor(e));
+                        return Err(Box::new(DriverError::Executor(e)));
                     }
                 }
             }
@@ -180,17 +186,26 @@ where
                     .map(|tx: &Bytes| {
                         BaseTxEnvelope::decode(&mut tx.as_ref()).map_err(DriverError::Rlp)
                     })
-                    .collect::<DriverResult<Vec<BaseTxEnvelope>, E::Error>>()?,
+                    .collect::<DriverResult<Vec<BaseTxEnvelope>, E::Error>>()
+                    .map_err(Box::new)?,
                 ommers: Vec::new(),
                 withdrawals: None,
             },
         };
 
         // Get the pipeline origin and update the tip cursor.
-        let origin = driver.pipeline.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        let origin = driver
+            .pipeline
+            .origin()
+            .ok_or(PipelineError::MissingOrigin.crit())
+            .map_err(|error| Box::new(DriverError::Pipeline(error)))?;
         let l2_info =
-            L2BlockInfo::from_block_and_genesis(&block, &driver.pipeline.rollup_config().genesis)?;
-        let output_root = driver.executor.compute_output_root().map_err(DriverError::Executor)?;
+            L2BlockInfo::from_block_and_genesis(&block, &driver.pipeline.rollup_config().genesis)
+                .map_err(|error| Box::new(DriverError::FromBlock(error)))?;
+        let output_root = driver
+            .executor
+            .compute_output_root()
+            .map_err(|error| Box::new(DriverError::Executor(error)))?;
         blocks_processed += 1;
         if blocks_processed.is_multiple_of(interval) {
             intermediate_roots.push(output_root);

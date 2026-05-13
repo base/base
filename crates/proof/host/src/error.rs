@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 use alloy_rlp::Error as RlpError;
 use alloy_transport::TransportError;
 use base_proof_client::FaultProofProgramError;
-use base_proof_preimage::errors::{PreimageOracleError, WitnessOracleError};
+use base_proof_preimage::{PreimageOracleError, WitnessOracleError};
 use thiserror::Error;
 
 /// Result type for host operations.

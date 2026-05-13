@@ -24,8 +24,8 @@ base-proof-succinct-client-utils.workspace = true
 # `tracing-subscriber` feature dependencies
 tracing-subscriber = { workspace = true, optional = true }
 
-[features]
-tracing-subscriber = [ "dep:tracing-subscriber" ]
-
 [lints]
 workspace = true
+
+[features]
+tracing-subscriber = [ "dep:tracing-subscriber" ]

@@ -1,6 +1,6 @@
 use base_consensus_derive::PipelineErrorKind;
 use base_proof::OracleProviderError;
-use base_proof_preimage::errors::PreimageOracleError;
+use base_proof_preimage::PreimageOracleError;
 use thiserror::Error;
 
 /// An error that can occur in the proof client.

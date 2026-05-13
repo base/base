@@ -41,7 +41,8 @@ pub use bundle::{
 mod wire;
 pub use wire::ValidatedTransaction;
 
-pub mod estimated_da_size;
+mod estimated_da_size;
+pub use estimated_da_size::DataAvailabilitySized;
 
 use reth_transaction_pool::{Pool, TransactionValidationTaskExecutor};
 

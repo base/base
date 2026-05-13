@@ -1,28 +1,43 @@
-//! Host-side utilities for SP1 proof generation.
+#![doc = include_str!("../README.md")]
 
-/// L2 block range calculation and splitting.
-pub mod block_range;
+mod block_range;
+pub use block_range::*;
+
 mod constants;
-mod contract;
-/// L1/L2 RPC data fetcher.
-pub mod fetcher;
-/// SP1 host trait and helpers.
-pub mod host;
-mod proof;
-pub mod rpc_types;
-/// Execution statistics collection and formatting.
-pub mod stats;
 pub use constants::*;
+
+mod contract;
 pub use contract::*;
+
+mod fetcher;
+pub use fetcher::*;
+
+mod host;
+pub use host::*;
+
+mod proof;
 pub use proof::*;
-/// Logging setup.
-pub mod logger;
-/// Prometheus metrics initialization.
-pub mod metrics;
-/// SP1 network proof client.
-pub mod network;
-pub mod proof_cache;
-pub mod witness_cache;
-/// Witness generation traits and collectors.
-pub mod witness_generation;
+
+mod rpc_types;
+pub use rpc_types::*;
+
+mod stats;
+pub use stats::*;
+
+mod logger;
 pub use logger::setup_logger;
+
+mod metrics;
+pub use metrics::*;
+
+mod network;
+pub use network::*;
+
+mod proof_cache;
+pub use proof_cache::*;
+
+mod witness_cache;
+pub use witness_cache::*;
+
+mod witness_generation;
+pub use witness_generation::*;

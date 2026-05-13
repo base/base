@@ -783,8 +783,7 @@ mod tests {
     /// A test database instance that manages an embedded `PostgreSQL` server.
     /// Automatically cleans up when dropped.
     struct TestDb {
-        #[allow(dead_code)] // Held to keep embedded PostgreSQL alive
-        postgresql: PostgreSQL,
+        _postgresql: PostgreSQL,
         client: DriverDBClient,
     }
 
@@ -801,7 +800,7 @@ mod tests {
                 .await
                 .expect("Failed to connect to test database");
 
-            Self { postgresql, client }
+            Self { _postgresql: postgresql, client }
         }
 
         /// Returns a reference to the database client.

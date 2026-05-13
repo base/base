@@ -169,7 +169,7 @@ impl std::fmt::Debug for RegistrarConfig {
 
 /// Format only the `scheme://host:port` of a URL, dropping the path and query
 /// string to avoid leaking embedded API keys (e.g. Infura/Alchemy paths).
-pub(crate) fn url_origin(url: &Url) -> String {
+pub fn url_origin(url: &Url) -> String {
     let mut s = format!("{}://{}", url.scheme(), url.host_str().unwrap_or("<unknown>"));
     if let Some(port) = url.port() {
         s.push_str(&format!(":{port}"));

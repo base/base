@@ -11,47 +11,66 @@
 #[cfg(feature = "serde-bincode-compat")]
 use reth_ethereum_primitives as _;
 
-pub mod api;
-pub use api::{BaseProofsInitialStateStore, BaseProofsStore, BlockStateDiff};
+mod api;
+pub use api::{
+    BaseProofsInitialStateStore, BaseProofsStore, BlockStateDiff, InitialStateAnchor,
+    InitialStateStatus, OperationDurations, WriteCounts,
+};
 
-pub mod initialize;
+mod initialize;
 pub use initialize::InitializationJob;
 
-pub mod in_memory;
+mod in_memory;
 pub use in_memory::{
     InMemoryAccountCursor, InMemoryProofsStorage, InMemoryStorageCursor, InMemoryTrieCursor,
 };
 
-pub mod db;
-pub use db::{MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor};
+mod db;
+pub use db::*;
 
-pub mod metrics;
+mod metrics;
 #[cfg(feature = "metrics")]
 pub use metrics::{
     BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsStorage,
-    BaseProofsTrieCursor, StorageMetrics,
+    BaseProofsTrieCursor,
+};
+pub use metrics::{
+    BaseProofsHashedCursorWithMetrics, BaseProofsStorageWithMetrics,
+    BaseProofsTrieCursorWithMetrics, BlockMetrics, StorageMetrics, StorageOperation,
 };
 
 #[cfg(not(feature = "metrics"))]
 /// Alias for [`BaseProofsStore`] type without metrics (`metrics` feature is disabled).
 pub type BaseProofsStorage<S> = S;
 
-pub mod proof;
+mod proof;
+pub use proof::{
+    DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
+    DatabaseTrieWitness,
+};
 
-pub mod provider;
+mod provider;
+pub use provider::BaseProofsStateProviderRef;
 
-pub mod live;
+mod live;
+pub use live::LiveTrieCollector;
 
-pub mod cursor;
+mod cursor;
+#[cfg(feature = "metrics")]
+pub use cursor::{
+    BaseProofsHashedAccountCursor as BaseProofsRawHashedAccountCursor,
+    BaseProofsHashedStorageCursor as BaseProofsRawHashedStorageCursor,
+    BaseProofsTrieCursor as BaseProofsRawTrieCursor,
+};
 #[cfg(not(feature = "metrics"))]
 pub use cursor::{
     BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsTrieCursor,
 };
 
-pub mod cursor_factory;
+mod cursor_factory;
 pub use cursor_factory::{BaseProofsHashedAccountCursorFactory, BaseProofsTrieCursorFactory};
 
-pub mod error;
+mod error;
 pub use error::{BaseProofsStorageError, BaseProofsStorageResult};
 
 mod prune;

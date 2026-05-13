@@ -52,6 +52,11 @@ tracing.workspace = true
 # `metrics` feature
 metrics = { workspace = true, optional = true }
 
+[dev-dependencies]
+tokio.workspace = true
+httpmock.workspace = true
+serde_json = { workspace = true, features = ["std"] }
+
 [features]
 default = []
 metrics = [
@@ -59,8 +64,3 @@ metrics = [
 	"base-metrics/metrics",
 	"dep:metrics",
 ]
-
-[dev-dependencies]
-tokio.workspace = true
-httpmock.workspace = true
-serde_json = { workspace = true, features = ["std"] }

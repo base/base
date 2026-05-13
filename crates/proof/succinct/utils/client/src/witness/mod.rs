@@ -1,14 +1,16 @@
-/// Pipeline construction and block execution.
-pub mod executor;
-/// In-memory preimage oracle for the zkVM.
-pub mod preimage_store;
+//! Witness data types, preimage storage, and witness execution helpers.
+
+mod executor;
+pub use executor::*;
+
+mod preimage_store;
+pub use preimage_store::*;
 
 use std::{fmt::Debug, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use kzg_rs::{Blob, Bytes48};
-use preimage_store::PreimageStore;
 use serde::{Deserialize, Serialize};
 
 use crate::BlobStore;

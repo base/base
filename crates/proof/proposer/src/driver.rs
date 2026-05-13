@@ -246,7 +246,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        pipeline::PipelineConfig,
+        pipeline::{PipelineConfig, ProvingPipelineParts},
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
             MockOutputProposer, MockProver, MockRollupClient, test_anchor_root, test_sync_status,
@@ -277,8 +277,8 @@ mod tests {
         });
         let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
 
-        let pipeline = ProvingPipeline::new(
-            PipelineConfig {
+        let pipeline = ProvingPipeline::new(ProvingPipelineParts {
+            config: PipelineConfig {
                 max_parallel_proofs: 2,
                 max_retries: 3,
                 recovery_scan_concurrency: 8,
@@ -291,15 +291,15 @@ mod tests {
                 },
             },
             prover,
-            l1,
-            l2,
-            rollup,
+            l1_client: l1,
+            l2_client: l2,
+            rollup_client: rollup,
             anchor_registry,
-            factory,
-            Arc::new(MockAggregateVerifier::default()),
-            Arc::new(MockOutputProposer),
-            global_cancel.child_token(),
-        );
+            factory_client: factory,
+            verifier_client: Arc::new(MockAggregateVerifier::default()),
+            output_proposer: Arc::new(MockOutputProposer),
+            cancel: global_cancel.child_token(),
+        });
         PipelineHandle::new(pipeline, global_cancel)
     }
 

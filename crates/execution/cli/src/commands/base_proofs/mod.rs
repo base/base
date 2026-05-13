@@ -8,9 +8,13 @@ use clap::{Parser, Subcommand};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::CliNodeTypes;
 
-pub mod init;
-pub mod prune;
-pub mod unwind;
+mod init;
+mod prune;
+mod unwind;
+
+pub use init::InitCommand;
+pub use prune::PruneCommand;
+pub use unwind::UnwindCommand;
 
 /// `base-node base-proofs` command
 #[derive(Debug, Parser)]

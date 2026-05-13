@@ -4,8 +4,8 @@ use std::fs;
 
 use alloy_primitives::{B256, hex};
 use anyhow::Result;
-use base_proof_succinct_client_utils::boot::BootInfoStruct;
-use base_proof_succinct_host_utils::proof_cache::{get_range_proof_dir, save_range_proof};
+use base_proof_succinct_client_utils::BootInfoStruct;
+use base_proof_succinct_host_utils::{get_range_proof_dir, save_range_proof};
 use clap::Parser;
 use sp1_sdk::{
     ProverClient, SP1ProofWithPublicValues,

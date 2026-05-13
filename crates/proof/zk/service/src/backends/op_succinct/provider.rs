@@ -4,10 +4,8 @@ use std::{fmt, sync::Arc};
 
 use alloy_primitives::B256;
 use anyhow::Result;
-use base_proof_succinct_ethereum_host_utils::host::SingleChainOPSuccinctHost;
-use base_proof_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost, witness_generation::WitnessGenerator,
-};
+use base_proof_succinct_ethereum_host_utils::SingleChainOPSuccinctHost;
+use base_proof_succinct_host_utils::{OPSuccinctDataFetcher, OPSuccinctHost, WitnessGenerator};
 use sp1_sdk::SP1Stdin;
 use tracing::{debug, info};
 

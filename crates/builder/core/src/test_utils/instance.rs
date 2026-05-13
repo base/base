@@ -16,7 +16,7 @@ use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_rpc::BaseEthApiBuilder;
 use base_execution_txpool::BasePooledTransaction;
-use base_node_core::{BasePayloadValidatorBuilder, args::RollupArgs, node::BasePoolBuilder};
+use base_node_core::{BasePayloadValidatorBuilder, BasePoolBuilder, RollupArgs};
 use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
 use futures::{FutureExt, StreamExt};
 use nanoid::nanoid;

@@ -1,7 +1,7 @@
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
-use base_proof_succinct_client_utils::{boot::BootInfoStruct, types::AggregationInputs};
+use base_proof_succinct_client_utils::{AggregationInputs, BootInfoStruct};
 use sp1_sdk::{HashableKey, SP1Proof, SP1Stdin};
 
 /// Build the SP1 stdin for the aggregation proof from range proofs and headers.

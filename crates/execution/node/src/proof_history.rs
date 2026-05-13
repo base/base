@@ -4,11 +4,8 @@ use std::{sync::Arc, time::Duration};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_exex::BaseProofsExEx;
-use base_execution_rpc::{
-    debug::{DebugApiExt, DebugApiOverrideServer},
-    eth::proofs::{EthApiExt, EthApiOverrideServer},
-};
-use base_execution_trie::{BaseProofsStorage, db::MdbxProofsStorage};
+use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiOverrideServer};
+use base_execution_trie::{BaseProofsStorage, MdbxProofsStorage};
 use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;

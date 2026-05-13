@@ -1,15 +1,9 @@
 use std::marker::PhantomData;
 
-use base_execution_payload_builder::{
-    Attributes, PayloadPrimitives,
-    config::{BaseDAConfig, GasLimitConfig},
-};
+use base_execution_payload_builder::{Attributes, BaseDAConfig, GasLimitConfig, PayloadPrimitives};
 use base_execution_rpc::{
-    MinerApiExtServer,
-    config::{BaseEthConfigApiServer, BaseEthConfigHandler},
-    eth::BaseEthApiBuilder,
-    miner::BaseMinerExtApi,
-    witness::BaseDebugWitnessApi,
+    BaseDebugWitnessApi, BaseEthApiBuilder, BaseEthConfigApiServer, BaseEthConfigHandler,
+    BaseMinerExtApi, MinerApiExtServer,
 };
 use base_execution_txpool::BasePooledTx;
 use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};

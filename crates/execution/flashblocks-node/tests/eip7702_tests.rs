@@ -13,7 +13,7 @@ use alloy_sol_types::SolCall;
 use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
-use base_flashblocks_node::test_harness::FlashblocksHarness;
+use base_flashblocks_node::FlashblocksHarness;
 use base_node_runner::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
 use base_test_utils::{Account, Minimal7702Account};
 use eyre::Result;

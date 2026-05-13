@@ -1,7 +1,7 @@
 //! Miner API extension for Base.
 
 use alloy_primitives::U64;
-use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
+use base_execution_payload_builder::{BaseDAConfig, GasLimitConfig};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use tracing::debug;

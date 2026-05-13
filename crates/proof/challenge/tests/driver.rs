@@ -821,7 +821,7 @@ async fn test_step_invalid_game_tee_proof_succeeds() {
         config_hash: B256::ZERO,
     };
     let tee_provider = Arc::new(MockTeeProofProvider::success(ProofResult::Tee {
-        aggregate_proposal,
+        aggregate_proposal: Box::new(aggregate_proposal),
         proposals: vec![],
     }));
 
@@ -870,7 +870,7 @@ async fn test_step_tee_submission_failure_falls_back_to_zk() {
         config_hash: B256::ZERO,
     };
     let tee_provider = Arc::new(MockTeeProofProvider::success(ProofResult::Tee {
-        aggregate_proposal,
+        aggregate_proposal: Box::new(aggregate_proposal),
         proposals: vec![],
     }));
 
@@ -1199,7 +1199,7 @@ async fn test_step_dual_proof_invalid_with_tee_config_nullifies_tee_first() {
         config_hash: B256::ZERO,
     };
     let tee_provider = Arc::new(MockTeeProofProvider::success(ProofResult::Tee {
-        aggregate_proposal,
+        aggregate_proposal: Box::new(aggregate_proposal),
         proposals: vec![],
     }));
 

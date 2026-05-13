@@ -10,27 +10,21 @@ use std::{
 
 use anyhow::Result;
 use base_proof_succinct_host_utils::{
-    block_range::{
-        SpanBatchRange, get_rolling_block_range, get_validated_block_range,
-        split_range_based_on_safe_heads, split_range_basic,
-    },
-    fetcher::OPSuccinctDataFetcher,
-    host::OPSuccinctHost,
-    stats::ExecutionStats,
-    witness_cache::{load_stdin_from_cache, save_stdin_to_cache},
-    witness_generation::WitnessGenerator,
+    ExecutionStats, OPSuccinctDataFetcher, OPSuccinctHost, SpanBatchRange, WitnessGenerator,
+    get_rolling_block_range, get_validated_block_range, load_stdin_from_cache, save_stdin_to_cache,
+    split_range_based_on_safe_heads, split_range_basic,
 };
 use base_proof_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
 use base_proof_succinct_scripts::HostExecutorArgs;
 use clap::Parser;
 use futures::StreamExt;
-use log::info;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use sp1_sdk::{
     Elf,
     blocking::{CpuProver, Prover},
     utils,
 };
+use tracing::{info, warn};
 
 /// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
 /// each block range to a CSV file after each execution completes (not guaranteed to be in order).
@@ -87,12 +81,12 @@ where
             if cache_enabled {
                 match load_stdin_from_cache(l2_chain_id, start, end) {
                     Ok(Some(stdin)) => {
-                        info!("Loaded stdin from cache for range {start}-{end}");
+                        info!(start = start, end = end, "loaded stdin from cache");
                         return stdin;
                     }
                     Ok(None) => {} // No cache, generate below
                     Err(e) => {
-                        log::warn!("Failed to load stdin cache for range {start}-{end}: {e}");
+                        warn!(error = %e, start = start, end = end, "failed to load stdin cache");
                     }
                 }
             }
@@ -105,7 +99,7 @@ where
             if cache_enabled
                 && let Ok(cache_path) = save_stdin_to_cache(l2_chain_id, start, end, &stdin)
             {
-                info!("Saved stdin to cache: {}", cache_path.display());
+                info!(cache_path = %cache_path.display(), "saved stdin to cache");
             }
 
             stdin
@@ -132,11 +126,11 @@ where
                 .run();
 
             if let Some(err) = result.as_ref().err() {
-                log::warn!(
-                    "Failed to execute blocks {:?} - {:?} because of {:?}. Reduce your `batch-size` if you're running into OOM issues on SP1.",
-                    range.start,
-                    range.end,
-                    err
+                warn!(
+                    start_block = ?range.start,
+                    end_block = ?range.end,
+                    error = ?err,
+                    "failed to execute block range; reduce batch-size if SP1 runs out of memory"
                 );
                 return;
             }
@@ -145,22 +139,16 @@ where
 
             let execution_stats = ExecutionStats::new(0, &block_data, &report, 0, 0);
 
-            let mut file = OpenOptions::new()
-                .read(true)
-                .append(true)
-                .open(&report_path_clone)
-                .unwrap();
+            let mut file =
+                OpenOptions::new().read(true).append(true).open(&report_path_clone).unwrap();
 
             // Writes the headers only if the file is empty.
             let needs_header = file.seek(std::io::SeekFrom::End(0)).unwrap() == 0;
 
-            let mut csv_writer = csv::WriterBuilder::new()
-                .has_headers(needs_header)
-                .from_writer(file);
+            let mut csv_writer =
+                csv::WriterBuilder::new().has_headers(needs_header).from_writer(file);
 
-            csv_writer
-                .serialize(execution_stats)
-                .expect("Failed to write execution stats to CSV.");
+            csv_writer.serialize(execution_stats).expect("Failed to write execution stats to CSV.");
             csv_writer.flush().expect("Failed to flush CSV writer.");
         });
     })
@@ -267,7 +255,7 @@ async fn main() -> Result<()> {
         split_range_basic(l2_start_block, l2_end_block, args.effective_batch_size())
     };
 
-    info!("The span batch ranges which will be executed: {split_ranges:?}");
+    info!(ranges = ?split_ranges, "span batch ranges selected for execution");
 
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
@@ -275,7 +263,7 @@ async fn main() -> Result<()> {
                 range.start,
                 range.end,
                 None,
-                base_proof_succinct_client_utils::client::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
+                base_proof_succinct_client_utils::DEFAULT_INTERMEDIATE_ROOT_INTERVAL,
                 args.safe_db_fallback,
             )
             .await

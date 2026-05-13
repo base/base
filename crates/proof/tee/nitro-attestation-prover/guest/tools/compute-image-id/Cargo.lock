@@ -15,6 +15,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "base-compute-image-id"
+version = "0.0.0"
+dependencies = [
+ "risc0-binfmt",
+ "risc0-zkos-v1compat",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -112,14 +120,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
  "thiserror",
-]
-
-[[package]]
-name = "compute-image-id"
-version = "0.0.0"
-dependencies = [
- "risc0-binfmt",
- "risc0-zkos-v1compat",
 ]
 
 [[package]]

@@ -35,14 +35,14 @@ pub fn compute_path_digests(certs_der: &[&[u8]]) -> Vec<B256> {
     let mut path_digest = B256::ZERO;
 
     for (i, der) in certs_der.iter().enumerate() {
-        let cert_digest = B256::from_slice(Sha256::digest(der).as_slice());
+        let cert_digest = B256::from_slice(Sha256::digest(der).as_ref());
         if i == 0 {
             path_digest = cert_digest;
         } else {
             let mut hasher = Sha256::new();
             hasher.update(path_digest.as_slice());
             hasher.update(cert_digest.as_slice());
-            path_digest = B256::from_slice(hasher.finalize().as_slice());
+            path_digest = B256::from_slice(hasher.finalize().as_ref());
         }
         digests.push(path_digest);
     }

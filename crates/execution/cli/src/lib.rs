@@ -7,23 +7,28 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-/// A configurable app on top of the CLI parser.
-pub mod app;
-/// Base chain specification parser.
-pub mod chainspec;
-/// Base CLI commands.
-pub mod commands;
-/// Standard Base execution-node runner wiring.
-pub mod standard_node;
+mod app;
+pub use app::CliApp;
+
+mod chainspec;
+pub use chainspec::{BaseChainSpecParser, chain_value_parser};
+
+mod commands;
+pub use commands::{
+    BaseInitStateCommand, BaseProofsCommand, BaseProofsInitCommand, BaseProofsPruneCommand,
+    BaseProofsSubcommands, BaseProofsUnwindCommand, Commands, P2pBootnodeCommand, P2pCommand,
+};
+#[cfg(feature = "dev")]
+pub use commands::{TestVectorsCommand, TestVectorsSubcommands};
+
+mod standard_node;
+pub use standard_node::{StandardBaseRethNode, StandardNodeArgs};
 
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
-pub use app::CliApp;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::args::RollupArgs;
-use chainspec::BaseChainSpecParser;
+use base_node_core::RollupArgs;
 use clap::Parser;
-use commands::Commands;
 use futures::Future;
 use reth_cli_commands::launcher::FnLauncher;
 use reth_cli_runner::CliRunner;
@@ -37,7 +42,6 @@ use reth_node_core::{
 // reporting
 use reth_node_metrics as _;
 use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
-pub use standard_node::{StandardBaseRethNode, StandardNodeArgs};
 
 /// The main base-reth cli interface.
 ///
@@ -123,7 +127,7 @@ where
 #[cfg(test)]
 mod tests {
     use base_execution_chainspec::BaseChainSpec;
-    use base_node_core::args::RollupArgs;
+    use base_node_core::RollupArgs;
     use clap::Parser;
     use reth_cli_commands::{NodeCommand, node::NoArgs};
 

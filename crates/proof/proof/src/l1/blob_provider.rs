@@ -40,12 +40,11 @@ impl<T: CommsClient> OracleBlobProvider<T> {
     /// ## Returns
     /// - `Ok(blob)`: The blob.
     /// - `Err(e)`: The blob could not be retrieved.
-    #[allow(clippy::large_stack_frames)]
     async fn get_blob(
         &self,
         block_ref: &BlockInfo,
         blob_hash: &B256,
-    ) -> Result<Blob, OracleProviderError> {
+    ) -> Result<Box<Blob>, OracleProviderError> {
         let mut blob_req_meta = [0u8; 40];
         blob_req_meta[0..32].copy_from_slice(blob_hash.as_ref());
         blob_req_meta[32..40].copy_from_slice(block_ref.timestamp.to_be_bytes().as_ref());
@@ -61,7 +60,7 @@ impl<T: CommsClient> OracleBlobProvider<T> {
             .map_err(OracleProviderError::Preimage)?;
 
         // Reconstruct the blob from the 4096 field elements.
-        let mut blob = Blob::default();
+        let mut blob = Box::<Blob>::default();
         let mut field_element_key = [0u8; 80];
         field_element_key[..48].copy_from_slice(commitment.as_ref());
         for i in 0..FIELD_ELEMENTS_PER_BLOB {
@@ -111,7 +110,6 @@ impl<T: CommsClient> OracleBlobProvider<T> {
 impl<T: CommsClient + Sync + Send> BlobProvider for OracleBlobProvider<T> {
     type Error = OracleProviderError;
 
-    #[allow(clippy::large_stack_frames)]
     async fn get_and_validate_blobs(
         &mut self,
         block_ref: &BlockInfo,
@@ -119,7 +117,7 @@ impl<T: CommsClient + Sync + Send> BlobProvider for OracleBlobProvider<T> {
     ) -> Result<Vec<Box<Blob>>, Self::Error> {
         let mut blobs = Vec::with_capacity(blob_hashes.len());
         for hash in blob_hashes {
-            blobs.push(Box::new(self.get_blob(block_ref, hash).await?));
+            blobs.push(self.get_blob(block_ref, hash).await?);
         }
         Ok(blobs)
     }

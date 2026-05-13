@@ -3,7 +3,7 @@
 /// Healthcheck logic and client implementations.
 mod healthcheck;
 pub use healthcheck::{
-    BlockProductionHealthChecker, EthClient, HeaderSummary, HealthcheckConfig, Node, alloy_client,
+    AlloyEthClient, BlockProductionHealthChecker, EthClient, HeaderSummary, HealthcheckConfig, Node,
 };
 
 /// Healthcheck metrics.

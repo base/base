@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloy_primitives::{Address, Bytes};
 use base_common_evm::{BasePrecompiles, BaseSpecId};
 use revm::{
-    context::{Cfg, ContextTr},
+    context::{Cfg, ContextTr, LocalContextTr},
     handler::{EthPrecompiles, PrecompileProvider},
     interpreter::{CallInput, CallInputs, Gas, InstructionResult, InterpreterResult},
     precompile::{PrecompileError, Precompiles},
@@ -20,45 +20,47 @@ pub use custom::CustomCrypto;
 mod factory;
 pub use factory::ZkvmBaseEvmFactory;
 
-/// Tracker names for accelerated precompiles.
-/// These names are used in cycle-tracker-report events and must match
-/// the keys expected by stats.rs and validity/src/types.rs.
-pub mod cycle_tracker {
-    /// Prefix for all precompile cycle tracker keys.
-    pub const PREFIX: &str = "precompile-";
+/// Cycle-tracker name prefix for accelerated precompiles.
+pub const PRECOMPILE_CYCLE_TRACKER_PREFIX: &str = "precompile-";
 
-    /// Individual tracker names (without prefix).
-    pub mod names {
-        /// BN254 addition.
-        pub const BN_ADD: &str = "bn-add";
-        /// BN254 scalar multiplication.
-        pub const BN_MUL: &str = "bn-mul";
-        /// BN254 pairing check.
-        pub const BN_PAIR: &str = "bn-pair";
-        /// ECDSA recovery.
-        pub const EC_RECOVER: &str = "ec-recover";
-        /// P-256 signature verification.
-        pub const P256_VERIFY: &str = "p256-verify";
-        /// KZG point evaluation.
-        pub const KZG_EVAL: &str = "kzg-eval";
-    }
+/// Individual cycle-tracker names for accelerated precompiles, without the prefix.
+#[derive(Debug)]
+pub struct PrecompileCycleTrackerName;
 
-    /// Full cycle tracker keys (with "precompile-" prefix).
-    /// These match the keys in `ExecutionReport.cycle_tracker`.
-    pub mod keys {
-        /// BN254 addition (prefixed).
-        pub const BN_ADD: &str = "precompile-bn-add";
-        /// BN254 scalar multiplication (prefixed).
-        pub const BN_MUL: &str = "precompile-bn-mul";
-        /// BN254 pairing check (prefixed).
-        pub const BN_PAIR: &str = "precompile-bn-pair";
-        /// ECDSA recovery (prefixed).
-        pub const EC_RECOVER: &str = "precompile-ec-recover";
-        /// P-256 signature verification (prefixed).
-        pub const P256_VERIFY: &str = "precompile-p256-verify";
-        /// KZG point evaluation (prefixed).
-        pub const KZG_EVAL: &str = "precompile-kzg-eval";
-    }
+impl PrecompileCycleTrackerName {
+    /// BN254 addition.
+    pub const BN_ADD: &str = "bn-add";
+    /// BN254 scalar multiplication.
+    pub const BN_MUL: &str = "bn-mul";
+    /// BN254 pairing check.
+    pub const BN_PAIR: &str = "bn-pair";
+    /// ECDSA recovery.
+    pub const EC_RECOVER: &str = "ec-recover";
+    /// P-256 signature verification.
+    pub const P256_VERIFY: &str = "p256-verify";
+    /// KZG point evaluation.
+    pub const KZG_EVAL: &str = "kzg-eval";
+}
+
+/// Full cycle-tracker keys for accelerated precompiles.
+///
+/// These match the keys in `ExecutionReport.cycle_tracker`.
+#[derive(Debug)]
+pub struct PrecompileCycleTrackerKey;
+
+impl PrecompileCycleTrackerKey {
+    /// BN254 addition.
+    pub const BN_ADD: &str = "precompile-bn-add";
+    /// BN254 scalar multiplication.
+    pub const BN_MUL: &str = "precompile-bn-mul";
+    /// BN254 pairing check.
+    pub const BN_PAIR: &str = "precompile-bn-pair";
+    /// ECDSA recovery.
+    pub const EC_RECOVER: &str = "precompile-ec-recover";
+    /// P-256 signature verification.
+    pub const P256_VERIFY: &str = "precompile-p256-verify";
+    /// KZG point evaluation.
+    pub const KZG_EVAL: &str = "precompile-kzg-eval";
 }
 
 fn get_or_create_precompiles(spec: BaseSpecId) -> &'static Precompiles {
@@ -71,12 +73,12 @@ fn get_or_create_precompiles(spec: BaseSpecId) -> &'static Precompiles {
 #[inline]
 const fn get_precompile_tracker_name(id: &PrecompileId) -> Option<&'static str> {
     match id {
-        PrecompileId::Bn254Add => Some(cycle_tracker::names::BN_ADD),
-        PrecompileId::Bn254Mul => Some(cycle_tracker::names::BN_MUL),
-        PrecompileId::Bn254Pairing => Some(cycle_tracker::names::BN_PAIR),
-        PrecompileId::EcRec => Some(cycle_tracker::names::EC_RECOVER),
-        PrecompileId::P256Verify => Some(cycle_tracker::names::P256_VERIFY),
-        PrecompileId::KzgPointEvaluation => Some(cycle_tracker::names::KZG_EVAL),
+        PrecompileId::Bn254Add => Some(PrecompileCycleTrackerName::BN_ADD),
+        PrecompileId::Bn254Mul => Some(PrecompileCycleTrackerName::BN_MUL),
+        PrecompileId::Bn254Pairing => Some(PrecompileCycleTrackerName::BN_PAIR),
+        PrecompileId::EcRec => Some(PrecompileCycleTrackerName::EC_RECOVER),
+        PrecompileId::P256Verify => Some(PrecompileCycleTrackerName::P256_VERIFY),
+        PrecompileId::KzgPointEvaluation => Some(PrecompileCycleTrackerName::KZG_EVAL),
         _ => None,
     }
 }
@@ -126,7 +128,6 @@ where
             output: Bytes::new(),
         };
 
-        use revm::context::LocalContextTr;
         // NOTE: this snippet is refactored from the revm source code.
         // See https://github.com/bluealloy/revm/blob/9bc0c04fda0891e0e8d2e2a6dfd0af81c2af18c4/crates/handler/src/precompile_provider.rs#L111-L122.
         let shared_buffer;
@@ -325,7 +326,7 @@ mod tests {
     fn test_precompile_tracker_name_bn_add() {
         assert_eq!(
             get_precompile_tracker_name(&PrecompileId::Bn254Add),
-            Some(cycle_tracker::names::BN_ADD)
+            Some(PrecompileCycleTrackerName::BN_ADD)
         );
     }
 
@@ -333,7 +334,7 @@ mod tests {
     fn test_precompile_tracker_name_bn_mul() {
         assert_eq!(
             get_precompile_tracker_name(&PrecompileId::Bn254Mul),
-            Some(cycle_tracker::names::BN_MUL)
+            Some(PrecompileCycleTrackerName::BN_MUL)
         );
     }
 
@@ -341,7 +342,7 @@ mod tests {
     fn test_precompile_tracker_name_bn_pair() {
         assert_eq!(
             get_precompile_tracker_name(&PrecompileId::Bn254Pairing),
-            Some(cycle_tracker::names::BN_PAIR)
+            Some(PrecompileCycleTrackerName::BN_PAIR)
         );
     }
 
@@ -349,7 +350,7 @@ mod tests {
     fn test_precompile_tracker_name_ecrecover() {
         assert_eq!(
             get_precompile_tracker_name(&PrecompileId::EcRec),
-            Some(cycle_tracker::names::EC_RECOVER)
+            Some(PrecompileCycleTrackerName::EC_RECOVER)
         );
     }
 
@@ -357,7 +358,7 @@ mod tests {
     fn test_precompile_tracker_name_p256verify() {
         assert_eq!(
             get_precompile_tracker_name(&PrecompileId::P256Verify),
-            Some(cycle_tracker::names::P256_VERIFY)
+            Some(PrecompileCycleTrackerName::P256_VERIFY)
         );
     }
 
@@ -365,7 +366,7 @@ mod tests {
     fn test_precompile_tracker_name_kzg_eval() {
         assert_eq!(
             get_precompile_tracker_name(&PrecompileId::KzgPointEvaluation),
-            Some(cycle_tracker::names::KZG_EVAL)
+            Some(PrecompileCycleTrackerName::KZG_EVAL)
         );
     }
 
@@ -426,24 +427,24 @@ mod tests {
     #[test]
     fn test_tracker_keys_match_expected_format() {
         let expected_keys = [
-            cycle_tracker::keys::BN_ADD,
-            cycle_tracker::keys::BN_MUL,
-            cycle_tracker::keys::BN_PAIR,
-            cycle_tracker::keys::EC_RECOVER,
-            cycle_tracker::keys::P256_VERIFY,
-            cycle_tracker::keys::KZG_EVAL,
+            PrecompileCycleTrackerKey::BN_ADD,
+            PrecompileCycleTrackerKey::BN_MUL,
+            PrecompileCycleTrackerKey::BN_PAIR,
+            PrecompileCycleTrackerKey::EC_RECOVER,
+            PrecompileCycleTrackerKey::P256_VERIFY,
+            PrecompileCycleTrackerKey::KZG_EVAL,
         ];
 
         for key in &expected_keys {
             assert!(
-                key.starts_with(cycle_tracker::PREFIX),
+                key.starts_with(PRECOMPILE_CYCLE_TRACKER_PREFIX),
                 "Key '{}' should start with '{}'",
                 key,
-                cycle_tracker::PREFIX
+                PRECOMPILE_CYCLE_TRACKER_PREFIX
             );
             assert!(!key.contains(' '), "Key '{key}' contains spaces");
             assert!(
-                !key[cycle_tracker::PREFIX.len()..].contains('_'),
+                !key[PRECOMPILE_CYCLE_TRACKER_PREFIX.len()..].contains('_'),
                 "Key '{key}' contains underscores (should use dashes)"
             );
         }
@@ -475,28 +476,36 @@ mod tests {
     #[test]
     fn test_names_and_keys_are_consistent() {
         assert_eq!(
-            cycle_tracker::keys::BN_ADD,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::BN_ADD)
+            PrecompileCycleTrackerKey::BN_ADD,
+            format!("{}{}", PRECOMPILE_CYCLE_TRACKER_PREFIX, PrecompileCycleTrackerName::BN_ADD)
         );
         assert_eq!(
-            cycle_tracker::keys::BN_MUL,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::BN_MUL)
+            PrecompileCycleTrackerKey::BN_MUL,
+            format!("{}{}", PRECOMPILE_CYCLE_TRACKER_PREFIX, PrecompileCycleTrackerName::BN_MUL)
         );
         assert_eq!(
-            cycle_tracker::keys::BN_PAIR,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::BN_PAIR)
+            PrecompileCycleTrackerKey::BN_PAIR,
+            format!("{}{}", PRECOMPILE_CYCLE_TRACKER_PREFIX, PrecompileCycleTrackerName::BN_PAIR)
         );
         assert_eq!(
-            cycle_tracker::keys::EC_RECOVER,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::EC_RECOVER)
+            PrecompileCycleTrackerKey::EC_RECOVER,
+            format!(
+                "{}{}",
+                PRECOMPILE_CYCLE_TRACKER_PREFIX,
+                PrecompileCycleTrackerName::EC_RECOVER
+            )
         );
         assert_eq!(
-            cycle_tracker::keys::P256_VERIFY,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::P256_VERIFY)
+            PrecompileCycleTrackerKey::P256_VERIFY,
+            format!(
+                "{}{}",
+                PRECOMPILE_CYCLE_TRACKER_PREFIX,
+                PrecompileCycleTrackerName::P256_VERIFY
+            )
         );
         assert_eq!(
-            cycle_tracker::keys::KZG_EVAL,
-            format!("{}{}", cycle_tracker::PREFIX, cycle_tracker::names::KZG_EVAL)
+            PrecompileCycleTrackerKey::KZG_EVAL,
+            format!("{}{}", PRECOMPILE_CYCLE_TRACKER_PREFIX, PrecompileCycleTrackerName::KZG_EVAL)
         );
     }
 }

@@ -4,7 +4,7 @@ use base_bundle_extension::BundleExtension;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension, MeteringResourceLimits};
-use base_node_core::args::RollupArgs;
+use base_node_core::RollupArgs;
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode};
 use base_proofs_extension::ProofsHistoryExtension;
 use base_tx_forwarding::{

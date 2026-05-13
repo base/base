@@ -4,7 +4,7 @@
 mod config;
 pub use config::{
     AwsDiscoveryConfig, BoundlessConfig, CrlConfig, DEFAULT_MAX_ATTESTATION_AGE_SECS,
-    DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig, RegistrarConfig,
+    DEFAULT_MAX_RECOVERY_ATTEMPTS, ProvingConfig, RegistrarConfig, url_origin,
 };
 
 mod crl;

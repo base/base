@@ -10,8 +10,7 @@ use alloy_provider::Provider;
 use anyhow::{Context, Result};
 use base_proof_succinct_elfs::AGGREGATION_ELF;
 use base_proof_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, host::OPSuccinctHost,
-    metrics::MetricsGauge, witness_generation::WitnessGenerator,
+    MetricsGauge, OPSuccinctDataFetcher, OPSuccinctHost, WitnessGenerator, get_agg_proof_stdin,
 };
 use base_proof_succinct_proof_utils::{
     ClusterProofConfig, ClusterProofHandle, ClusterProofHandleJson, cluster_submit_agg_proof,
@@ -26,8 +25,8 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::{
-    OPSuccinctRequest, ProgramConfig, RequestExecutionStatistics, RequestStatus, RequestType,
-    ValidityGauge, db::DriverDBClient,
+    OPSuccinctRequest, ProgramConfig, RangeRequestInput, RequestExecutionStatistics, RequestStatus,
+    RequestType, ValidityGauge, db::DriverDBClient,
 };
 
 /// Manages proof request lifecycle: submission, monitoring, and fulfillment for
@@ -93,66 +92,119 @@ impl<H: OPSuccinctHost> fmt::Debug for OPSuccinctProofRequester<H> {
     }
 }
 
+/// Input data for constructing an [`OPSuccinctProofRequester`].
+pub struct ProofRequesterInput<H: OPSuccinctHost> {
+    /// Host implementation for witness generation.
+    pub host: Arc<H>,
+    /// SP1 network prover client, absent in cluster-only mode.
+    pub network_prover: Option<Arc<NetworkProver>>,
+    /// L1/L2 data fetcher.
+    pub fetcher: Arc<OPSuccinctDataFetcher>,
+    /// Database client for request state.
+    pub db_client: Arc<DriverDBClient>,
+    /// Program ELF and verification key configuration.
+    pub program_config: ProgramConfig,
+    /// Whether mock proving is enabled.
+    pub mock: bool,
+    /// Whether self-hosted cluster proving is enabled.
+    pub cluster: bool,
+    /// Cluster proving configuration.
+    pub cluster_config: Option<Arc<ClusterProofConfig>>,
+    /// In-memory cluster proof handles keyed by request ID.
+    pub cluster_handles: Arc<Mutex<HashMap<i64, ClusterProofHandle>>>,
+    /// Fulfillment strategy for range proofs.
+    pub range_strategy: FulfillmentStrategy,
+    /// Fulfillment strategy for aggregation proofs.
+    pub agg_strategy: FulfillmentStrategy,
+    /// SP1 proof mode for aggregation proofs.
+    pub agg_mode: SP1ProofMode,
+    /// Whether to use safe DB fallback logic.
+    pub safe_db_fallback: bool,
+    /// Maximum price per prover gas unit.
+    pub max_price_per_pgu: u64,
+    /// Proving timeout in seconds.
+    pub proving_timeout: u64,
+    /// Intermediate root sampling interval.
+    pub intermediate_root_interval: u64,
+    /// Cycle limit for range proofs.
+    pub range_cycle_limit: u64,
+    /// Gas limit for range proofs.
+    pub range_gas_limit: u64,
+    /// Cycle limit for aggregation proofs.
+    pub agg_cycle_limit: u64,
+    /// Gas limit for aggregation proofs.
+    pub agg_gas_limit: u64,
+    /// Optional prover address whitelist.
+    pub whitelist: Option<Vec<Address>>,
+    /// Minimum auction period in seconds.
+    pub min_auction_period: u64,
+    /// Auction timeout in seconds.
+    pub auction_timeout: u64,
+}
+
+impl<H: OPSuccinctHost> fmt::Debug for ProofRequesterInput<H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProofRequesterInput")
+            .field("network_prover", &self.network_prover.is_some())
+            .field("fetcher", &self.fetcher)
+            .field("db_client", &self.db_client)
+            .field("program_config", &self.program_config)
+            .field("mock", &self.mock)
+            .field("cluster", &self.cluster)
+            .field("cluster_config", &self.cluster_config)
+            .field("range_strategy", &self.range_strategy)
+            .field("agg_strategy", &self.agg_strategy)
+            .field("agg_mode", &self.agg_mode)
+            .field("safe_db_fallback", &self.safe_db_fallback)
+            .field("max_price_per_pgu", &self.max_price_per_pgu)
+            .field("proving_timeout", &self.proving_timeout)
+            .field("intermediate_root_interval", &self.intermediate_root_interval)
+            .field("range_cycle_limit", &self.range_cycle_limit)
+            .field("range_gas_limit", &self.range_gas_limit)
+            .field("agg_cycle_limit", &self.agg_cycle_limit)
+            .field("agg_gas_limit", &self.agg_gas_limit)
+            .field("whitelist", &self.whitelist)
+            .field("min_auction_period", &self.min_auction_period)
+            .field("auction_timeout", &self.auction_timeout)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
     /// Creates a new proof requester with the given configuration.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        host: Arc<H>,
-        network_prover: Option<Arc<NetworkProver>>,
-        fetcher: Arc<OPSuccinctDataFetcher>,
-        db_client: Arc<DriverDBClient>,
-        program_config: ProgramConfig,
-        mock: bool,
-        cluster: bool,
-        cluster_config: Option<Arc<ClusterProofConfig>>,
-        cluster_handles: Arc<Mutex<HashMap<i64, ClusterProofHandle>>>,
-        range_strategy: FulfillmentStrategy,
-        agg_strategy: FulfillmentStrategy,
-        agg_mode: SP1ProofMode,
-        safe_db_fallback: bool,
-        max_price_per_pgu: u64,
-        proving_timeout: u64,
-        intermediate_root_interval: u64,
-        range_cycle_limit: u64,
-        range_gas_limit: u64,
-        agg_cycle_limit: u64,
-        agg_gas_limit: u64,
-        whitelist: Option<Vec<Address>>,
-        min_auction_period: u64,
-        auction_timeout: u64,
-    ) -> Result<Self> {
+    pub fn new(input: ProofRequesterInput<H>) -> Result<Self> {
         anyhow::ensure!(
-            !(mock && cluster),
+            !(input.mock && input.cluster),
             "mock and cluster modes are mutually exclusive — set only one of SP1_PROVER=cluster or mock=true"
         );
         anyhow::ensure!(
-            !cluster || cluster_config.is_some(),
+            !input.cluster || input.cluster_config.is_some(),
             "cluster mode requires cluster_config — ensure SP1_PROVER=cluster and artifact store are configured"
         );
         Ok(Self {
-            host,
-            network_prover,
-            fetcher,
-            db_client,
-            program_config,
-            mock,
-            cluster,
-            cluster_config,
-            cluster_handles,
-            range_strategy,
-            agg_strategy,
-            agg_mode,
-            safe_db_fallback,
-            max_price_per_pgu,
-            proving_timeout,
-            intermediate_root_interval,
-            range_cycle_limit,
-            range_gas_limit,
-            agg_cycle_limit,
-            agg_gas_limit,
-            whitelist,
-            min_auction_period,
-            auction_timeout,
+            host: input.host,
+            network_prover: input.network_prover,
+            fetcher: input.fetcher,
+            db_client: input.db_client,
+            program_config: input.program_config,
+            mock: input.mock,
+            cluster: input.cluster,
+            cluster_config: input.cluster_config,
+            cluster_handles: input.cluster_handles,
+            range_strategy: input.range_strategy,
+            agg_strategy: input.agg_strategy,
+            agg_mode: input.agg_mode,
+            safe_db_fallback: input.safe_db_fallback,
+            max_price_per_pgu: input.max_price_per_pgu,
+            proving_timeout: input.proving_timeout,
+            intermediate_root_interval: input.intermediate_root_interval,
+            range_cycle_limit: input.range_cycle_limit,
+            range_gas_limit: input.range_gas_limit,
+            agg_cycle_limit: input.agg_cycle_limit,
+            agg_gas_limit: input.agg_gas_limit,
+            whitelist: input.whitelist,
+            min_auction_period: input.min_auction_period,
+            auction_timeout: input.auction_timeout,
         })
     }
 
@@ -518,28 +570,38 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
 
             // NOTE: The failed_requests check here can be removed in V5.
             if num_failed_requests > 2 || execution_status == ExecutionStatus::Unexecutable as i32 {
-                info!("Splitting failed request into two: {:?}", request.id);
+                info!(request_id = ?request.id, "splitting failed request into two");
                 let mid_block = (request.start_block + request.end_block) / 2;
                 let new_requests = vec![
                     OPSuccinctRequest::create_range_request(
-                        request.mode,
-                        request.start_block,
-                        mid_block,
-                        self.program_config.commitments.range_vkey_commitment,
-                        self.program_config.commitments.rollup_config_hash,
-                        l1_chain_id as i64,
-                        l2_chain_id as i64,
+                        RangeRequestInput {
+                            mode: request.mode,
+                            start_block: request.start_block,
+                            end_block: mid_block,
+                            range_vkey_commitment: self
+                                .program_config
+                                .commitments
+                                .range_vkey_commitment,
+                            rollup_config_hash: self.program_config.commitments.rollup_config_hash,
+                            l1_chain_id: l1_chain_id as i64,
+                            l2_chain_id: l2_chain_id as i64,
+                        },
                         Arc::clone(&self.fetcher),
                     )
                     .await?,
                     OPSuccinctRequest::create_range_request(
-                        request.mode,
-                        mid_block,
-                        request.end_block,
-                        self.program_config.commitments.range_vkey_commitment,
-                        self.program_config.commitments.rollup_config_hash,
-                        l1_chain_id as i64,
-                        l2_chain_id as i64,
+                        RangeRequestInput {
+                            mode: request.mode,
+                            start_block: mid_block,
+                            end_block: request.end_block,
+                            range_vkey_commitment: self
+                                .program_config
+                                .commitments
+                                .range_vkey_commitment,
+                            rollup_config_hash: self.program_config.commitments.rollup_config_hash,
+                            l1_chain_id: l1_chain_id as i64,
+                            l2_chain_id: l2_chain_id as i64,
+                        },
                         Arc::clone(&self.fetcher),
                     )
                     .await?,

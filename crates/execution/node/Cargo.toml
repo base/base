@@ -102,6 +102,10 @@ alloy-network.workspace = true
 base-common-evm.workspace = true
 base-common-network.workspace = true
 
+[[test]]
+name = "e2e_testsuite"
+path = "tests/e2e-testsuite/main.rs"
+
 [features]
 default = [ "reth-codec" ]
 asm-keccak = [
@@ -148,7 +152,3 @@ test-utils = [
 	"serde_json",
 ]
 reth-codec = []
-
-[[test]]
-name = "e2e_testsuite"
-path = "tests/e2e-testsuite/main.rs"

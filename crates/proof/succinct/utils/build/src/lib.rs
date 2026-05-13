@@ -1,9 +1,9 @@
-//! Build script for the utils crate.
+#![doc = include_str!("../README.md")]
 
 use sp1_build::{BuildArgs, build_program_with_args};
 
-#[allow(unused)]
-fn build_program(program_name: &str, elf_name: &str, features: Option<Vec<String>>) {
+/// Builds an SP1 program into the shared succinct ELF output directory.
+pub fn build_program(program_name: &str, elf_name: &str, features: Option<Vec<String>>) {
     let metadata =
         cargo_metadata::MetadataCommand::new().exec().expect("Failed to get cargo metadata");
 

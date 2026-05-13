@@ -2,8 +2,8 @@
 
 use alloy_primitives::B256;
 use anyhow::Result;
-use base_proof_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
-use base_proof_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
+use base_proof_succinct_client_utils::{hash_rollup_config, u32_to_u8};
+use base_proof_succinct_host_utils::OPSuccinctDataFetcher;
 use base_proof_succinct_proof_utils::cluster_setup_vkeys;
 use base_proof_succinct_scripts::ConfigArgs;
 use clap::Parser;

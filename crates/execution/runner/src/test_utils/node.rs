@@ -6,7 +6,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_common_network::Base;
 use base_execution_chainspec::BaseChainSpec;
-use base_node_core::args::RollupArgs;
+use base_node_core::RollupArgs;
 use eyre::Result;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,

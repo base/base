@@ -10,7 +10,7 @@ use base_bundle_extension::BundleExtension;
 use base_execution_chainspec::BaseChainSpec;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
-use base_node_core::args::RollupArgs;
+use base_node_core::RollupArgs;
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
 use base_txpool_rpc::{TxPoolRpcConfig, TxPoolRpcExtension};

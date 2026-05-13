@@ -37,6 +37,10 @@ proptest.workspace = true
 tokio = { workspace = true, features = ["full"] }
 criterion = { workspace = true, features = ["html_reports"] }
 
+[[bench]]
+name = "trie_node"
+harness = false
+
 [features]
 default = [ "serde" ]
 std = [
@@ -53,7 +57,3 @@ serde = [
 	"base-common-rpc-types-engine/serde",
 	"dep:serde",
 ]
-
-[[bench]]
-name = "trie_node"
-harness = false

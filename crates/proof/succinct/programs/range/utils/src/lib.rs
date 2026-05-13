@@ -1,15 +1,11 @@
-//! Utilities for running the range program.
+#![doc = include_str!("../README.md")]
 
 use std::sync::Arc;
 
 use base_proof::{OracleL1ChainProvider, OracleL2ChainProvider};
 use base_proof_succinct_client_utils::{
-    BlobStore,
-    boot::BootInfoStruct,
-    witness::{
-        executor::{WitnessExecutor, get_inputs_for_pipeline},
-        preimage_store::PreimageStore,
-    },
+    BlobStore, BootInfoStruct, PreimageStore, WitnessExecutor, WitnessPipelineParts,
+    get_inputs_for_pipeline,
 };
 
 /// Sets up tracing for the range program
@@ -46,15 +42,15 @@ pub async fn run_range_program<E>(
     let l1_config = Arc::new(boot_info.l1_config.clone());
 
     let pipeline = executor
-        .create_pipeline(
+        .create_pipeline(WitnessPipelineParts {
             rollup_config,
             l1_config,
-            Arc::clone(&cursor),
+            cursor: Arc::clone(&cursor),
             oracle,
             beacon,
             l1_provider,
-            l2_provider.clone(),
-        )
+            l2_provider: l2_provider.clone(),
+        })
         .await
         .unwrap();
 

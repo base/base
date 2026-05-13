@@ -1,7 +1,7 @@
 use std::{collections::HashMap, ops::Range};
 
 use anyhow::{Result, anyhow};
-use base_proof_succinct_host_utils::fetcher::BlockInfo;
+use base_proof_succinct_host_utils::BlockInfo;
 
 /// Identifies gaps not covered by the given sub-ranges in the overall range.
 ///
@@ -198,11 +198,10 @@ fn merge_ranges(mut ranges: Vec<Range<i64>>) -> Vec<Range<i64>> {
 }
 
 #[cfg(test)]
-#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use std::collections::HashMap;
 
-    use base_proof_succinct_host_utils::fetcher::BlockInfo;
+    use base_proof_succinct_host_utils::BlockInfo;
 
     use super::*;
 
@@ -240,8 +239,8 @@ mod tests {
     test_find_gaps!(test_find_gaps_empty_ranges, 1, 5, &[], &[1..5]);
     test_find_gaps!(test_find_gaps_single_range, 1, 5, &[(2, 4)], &[1..2, 4..5]);
 
-    test_merge_ranges!(test_merge_ranges_contiguous, vec![3..4, 4..7], vec![3..7]);
-    test_merge_ranges!(test_merge_ranges_overlap, vec![3..6, 4..7], vec![3..7]);
+    test_merge_ranges!(test_merge_ranges_contiguous, vec![3..4, 4..7], Vec::from([3..7]));
+    test_merge_ranges!(test_merge_ranges_overlap, vec![3..6, 4..7], Vec::from([3..7]));
     test_merge_ranges!(test_merge_ranges_disjoint, vec![3..5, 7..9], vec![3..5, 7..9]);
 
     // Tests for get_ranges_to_prove_by_blocks
@@ -446,7 +445,7 @@ mod tests {
         let block_infos = create_block_infos(vec![(1, 150_000_000)]);
 
         let result = get_ranges_to_prove_by_gas(&[0..1], 100_000_000, 600, &block_infos).unwrap();
-        assert_eq!(result, vec![0..1]);
+        assert_eq!(result, Vec::from([0..1]));
     }
 
     #[test]
@@ -455,7 +454,7 @@ mod tests {
         let block_infos = create_block_infos(vec![(1, 10_000)]);
 
         let result = get_ranges_to_prove_by_gas(&[0..1], 100_000_000, 600, &block_infos).unwrap();
-        assert_eq!(result, vec![0..1]);
+        assert_eq!(result, Vec::from([0..1]));
     }
 
     #[test]

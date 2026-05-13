@@ -117,7 +117,7 @@ impl reth_primitives_traits::SignedTransaction for BaseTxEnvelope {
 // ---------------------------------------------------------------------------
 
 impl reth_primitives_traits::serde_bincode_compat::SerdeBincodeCompat for BaseTxEnvelope {
-    type BincodeRepr<'a> = crate::serde_bincode_compat::transaction::BaseTxEnvelope<'a>;
+    type BincodeRepr<'a> = crate::SerdeBincodeBaseTxEnvelope<'a>;
 
     fn as_repr(&self) -> Self::BincodeRepr<'_> {
         self.into()
@@ -129,7 +129,7 @@ impl reth_primitives_traits::serde_bincode_compat::SerdeBincodeCompat for BaseTx
 }
 
 impl reth_primitives_traits::serde_bincode_compat::SerdeBincodeCompat for BaseReceipt {
-    type BincodeRepr<'a> = crate::serde_bincode_compat::BaseReceipt<'a>;
+    type BincodeRepr<'a> = crate::SerdeBincodeBaseReceipt<'a>;
 
     fn as_repr(&self) -> Self::BincodeRepr<'_> {
         self.into()

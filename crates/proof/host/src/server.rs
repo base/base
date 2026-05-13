@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use base_proof_preimage::{
-    HintReaderServer, PreimageOracleServer, PreimageServerBackend, errors::PreimageOracleError,
+    HintReaderServer, PreimageOracleError, PreimageOracleServer, PreimageServerBackend,
 };
 use tokio::spawn;
 use tracing::{Instrument, error, info, info_span};

@@ -17,7 +17,7 @@ use base_common_flashblocks::{
 };
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
-use base_flashblocks_node::test_harness::FlashblocksHarness;
+use base_flashblocks_node::FlashblocksHarness;
 use base_node_runner::test_utils::L1_BLOCK_INFO_DEPOSIT_TX;
 use base_test_utils::{Account, DoubleCounter};
 use eyre::Result;

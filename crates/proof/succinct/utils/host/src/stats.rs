@@ -1,11 +1,11 @@
 use std::fmt;
 
-use base_proof_succinct_client_utils::precompiles::cycle_tracker::keys;
+use base_proof_succinct_client_utils::PrecompileCycleTrackerKey;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::ExecutionReport;
 
-use crate::fetcher::BlockInfo;
+use crate::BlockInfo;
 
 /// Statistics for the range execution.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -143,12 +143,12 @@ impl ExecutionStats {
             oracle_verify_instruction_count: get_cycles("oracle-verify"),
             derivation_instruction_count: get_cycles("payload-derivation"),
             blob_verification_instruction_count: get_cycles("blob-verification"),
-            bn_add_cycles: get_cycles(keys::BN_ADD),
-            bn_mul_cycles: get_cycles(keys::BN_MUL),
-            bn_pair_cycles: get_cycles(keys::BN_PAIR),
-            kzg_eval_cycles: get_cycles(keys::KZG_EVAL),
-            ec_recover_cycles: get_cycles(keys::EC_RECOVER),
-            p256_verify_cycles: get_cycles(keys::P256_VERIFY),
+            bn_add_cycles: get_cycles(PrecompileCycleTrackerKey::BN_ADD),
+            bn_mul_cycles: get_cycles(PrecompileCycleTrackerKey::BN_MUL),
+            bn_pair_cycles: get_cycles(PrecompileCycleTrackerKey::BN_PAIR),
+            kzg_eval_cycles: get_cycles(PrecompileCycleTrackerKey::KZG_EVAL),
+            ec_recover_cycles: get_cycles(PrecompileCycleTrackerKey::EC_RECOVER),
+            p256_verify_cycles: get_cycles(PrecompileCycleTrackerKey::P256_VERIFY),
             nb_transactions,
             eth_gas_used: block_data.iter().map(|b| b.gas_used).sum(),
             l1_fees: block_data.iter().map(|b| b.total_l1_fees).sum(),

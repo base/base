@@ -94,6 +94,25 @@ where
 }
 
 /// Constructs a derivation pipeline and executes block derivation.
+#[derive(Debug, Clone)]
+pub struct WitnessPipelineParts<O, B, L1, L2> {
+    /// Rollup configuration for the target chain.
+    pub rollup_config: Arc<RollupConfig>,
+    /// L1 chain configuration for the target chain.
+    pub l1_config: Arc<ChainConfig>,
+    /// Cursor for the derivation pipeline.
+    pub cursor: Arc<RwLock<PipelineCursor>>,
+    /// Preimage oracle client.
+    pub oracle: Arc<O>,
+    /// Blob provider.
+    pub beacon: B,
+    /// L1 chain provider.
+    pub l1_provider: L1,
+    /// L2 chain provider.
+    pub l2_provider: L2,
+}
+
+/// Constructs a derivation pipeline and executes block derivation.
 #[async_trait]
 pub trait WitnessExecutor {
     /// Oracle client.
@@ -108,16 +127,9 @@ pub trait WitnessExecutor {
     type DA: DataAvailabilityProvider + Send + Sync + Debug + Clone;
 
     /// Build the derivation pipeline from the given providers.
-    #[allow(clippy::too_many_arguments)]
     async fn create_pipeline(
         &self,
-        rollup_config: Arc<RollupConfig>,
-        l1_config: Arc<ChainConfig>,
-        cursor: Arc<RwLock<PipelineCursor>>,
-        oracle: Arc<Self::O>,
-        beacon: Self::B,
-        l1_provider: Self::L1,
-        l2_provider: Self::L2,
+        parts: WitnessPipelineParts<Self::O, Self::B, Self::L1, Self::L2>,
     ) -> Result<OraclePipeline<Self::O, Self::L1, Self::L2, Self::DA>>;
 
     /// Run derivation and block execution to produce the proven boot info and derived L2 block.

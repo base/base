@@ -5,8 +5,8 @@ use alloy_primitives::B256;
 use anyhow::Result;
 use async_trait::async_trait;
 use base_proof_host::HostConfig;
-use base_proof_succinct_ethereum_client_utils::executor::ETHDAWitnessExecutor;
-use base_proof_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost};
+use base_proof_succinct_ethereum_client_utils::ETHDAWitnessExecutor;
+use base_proof_succinct_host_utils::{OPSuccinctDataFetcher, OPSuccinctHost};
 
 use crate::witness_generator::ETHDAWitnessGenerator;
 

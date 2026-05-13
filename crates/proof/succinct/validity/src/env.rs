@@ -2,7 +2,7 @@ use std::{env, str::FromStr};
 
 use alloy_primitives::Address;
 use anyhow::Result;
-use base_proof_succinct_host_utils::network::parse_fulfillment_strategy;
+use base_proof_succinct_host_utils::parse_fulfillment_strategy;
 use base_proof_succinct_signer_utils::SignerLock;
 use reqwest::Url;
 use sp1_sdk::{SP1ProofMode, network::FulfillmentStrategy};

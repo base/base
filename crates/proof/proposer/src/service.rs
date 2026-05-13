@@ -31,7 +31,7 @@ use crate::{
     constants::MAX_PROOF_RETRIES,
     driver::{DriverConfig, PipelineHandle, ProposerDriverControl},
     output_proposer::ProposalSubmitter,
-    pipeline::{PipelineConfig, ProvingPipeline},
+    pipeline::{PipelineConfig, ProvingPipeline, ProvingPipelineParts},
 };
 
 /// Top-level proposer service.
@@ -218,9 +218,9 @@ impl ProposerService {
                 anchor_state_registry_address: config.anchor_state_registry_addr,
             },
         };
-        let pipeline = ProvingPipeline::new(
-            pipeline_config,
-            prover_client,
+        let pipeline = ProvingPipeline::new(ProvingPipelineParts {
+            config: pipeline_config,
+            prover: prover_client,
             l1_client,
             l2_client,
             rollup_client,
@@ -228,8 +228,8 @@ impl ProposerService {
             factory_client,
             verifier_client,
             output_proposer,
-            cancel.child_token(),
-        );
+            cancel: cancel.child_token(),
+        });
         info!(max_parallel_proofs = config.max_parallel_proofs, "Proving pipeline initialized");
         let driver_handle: Arc<dyn ProposerDriverControl> =
             Arc::new(PipelineHandle::new(pipeline, cancel.clone()));

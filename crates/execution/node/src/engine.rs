@@ -9,7 +9,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     BasePayloadAttributes, ExecutionData,
 };
-use base_execution_consensus::isthmus;
+use base_execution_consensus::verify_withdrawals_root_prehashed;
 use base_execution_payload_builder::{BaseExecutionPayloadValidator, BasePayloadTypes};
 use reth_consensus::ConsensusError;
 use reth_node_api::{
@@ -139,10 +139,9 @@ where
             .get(&self.hashed_addr_l2tol1_msg_passer)
             .cloned()
             .unwrap_or_default();
-        isthmus::verify_withdrawals_root_prehashed(predeploy_storage_updates, parent_state, header)
-            .map_err(|err| {
-                ConsensusError::Other(format!("failed to verify block post-execution: {err}"))
-            })
+        verify_withdrawals_root_prehashed(predeploy_storage_updates, parent_state, header).map_err(
+            |err| ConsensusError::Other(format!("failed to verify block post-execution: {err}")),
+        )
     }
 }
 

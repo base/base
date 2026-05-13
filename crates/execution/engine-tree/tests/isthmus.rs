@@ -9,7 +9,7 @@ use base_common_consensus::{
     BaseBlock, BasePrimitives, BaseReceipt, BaseTransactionSigned, Predeploys,
 };
 use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-use base_node_core::{BaseEngineTypes, BaseNode, engine::BaseEngineValidator};
+use base_node_core::{BaseEngineTypes, BaseEngineValidator, BaseNode};
 use reth_chain_state::{ComputedTrieData, ExecutedBlock};
 use reth_db_common::init::init_genesis;
 use reth_engine_primitives::PayloadValidator;

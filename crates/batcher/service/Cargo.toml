@@ -37,6 +37,13 @@ base-common-genesis = { workspace = true, features = ["std"] }
 alloy-provider = { workspace = true, features = ["pubsub", "ws"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 
+[dev-dependencies]
+httpmock.workspace = true
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+miniz_oxide.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
 [features]
 metrics = [
 	"base-batcher-core/metrics",
@@ -44,10 +51,3 @@ metrics = [
 	"base-consensus-rpc/metrics",
 	"base-tx-manager/metrics",
 ]
-
-[dev-dependencies]
-httpmock.workspace = true
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-miniz_oxide.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

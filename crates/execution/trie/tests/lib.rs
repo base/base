@@ -6,7 +6,7 @@ use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorageError, BaseProofsStore, BlockStateDiff,
-    InMemoryProofsStorage, db::MdbxProofsStorage,
+    InMemoryProofsStorage, MdbxProofsStorage,
 };
 use reth_primitives_traits::Account;
 use reth_trie::{

@@ -54,14 +54,21 @@ pub type BaseTransactionSigned = BaseTxEnvelope;
 ///
 /// Read more: <https://github.com/bincode-org/bincode/issues/326>
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub mod serde_bincode_compat {
+mod serde_bincode_compat {
     pub use super::{
         receipts::serde_bincode_compat::{BaseReceipt, DepositReceipt},
         transaction::serde_bincode_compat::TxDeposit,
     };
+    pub use transaction::BaseTxEnvelope;
 
     /// Bincode-compatible serde implementations for transaction types.
-    pub mod transaction {
+    mod transaction {
         pub use crate::transaction::serde_bincode_compat::*;
     }
 }
+
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub use serde_bincode_compat::{
+    BaseReceipt as SerdeBincodeBaseReceipt, BaseTxEnvelope as SerdeBincodeBaseTxEnvelope,
+    DepositReceipt as SerdeBincodeDepositReceipt, TxDeposit as SerdeBincodeTxDeposit,
+};

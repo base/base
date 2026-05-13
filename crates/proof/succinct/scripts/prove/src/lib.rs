@@ -1,9 +1,9 @@
-//! Proving utilities for executing multi-block range proofs.
+#![doc = include_str!("../README.md")]
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Ok, Result};
-use base_proof_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
+use base_proof_succinct_host_utils::{BlockInfo, OPSuccinctDataFetcher};
 use base_proof_succinct_proof_utils::get_range_elf_embedded;
 use sp1_sdk::{
     Elf, ExecutionReport, SP1Stdin,

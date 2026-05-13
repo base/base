@@ -1,5 +1,5 @@
 [package]
-name = "devnet"
+name = "base-devnet"
 description = "System/E2E tests for Base node infrastructure"
 version.workspace = true
 edition.workspace = true

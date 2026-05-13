@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_proof_preimage::{
-    FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient, WitnessOracle,
-    errors::PreimageOracleResult,
+    FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient, PreimageOracleResult,
+    WitnessOracle,
 };
 
 use crate::Metrics;
@@ -91,7 +91,7 @@ where
 mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
-    use base_proof_preimage::{PreimageKeyType, WitnessOracleResult, errors::PreimageOracleError};
+    use base_proof_preimage::{PreimageKeyType, PreimageOracleError, WitnessOracleResult};
 
     use super::*;
 
@@ -128,10 +128,11 @@ mod tests {
         }
     }
 
-    #[allow(clippy::type_complexity)]
+    type RecordedPreimages = Arc<Mutex<Vec<(PreimageKey, Vec<u8>)>>>;
+
     #[derive(Debug, Clone, Default)]
     struct MockWitness {
-        preimages: Arc<Mutex<Vec<(PreimageKey, Vec<u8>)>>>,
+        preimages: RecordedPreimages,
     }
 
     impl WitnessOracle for MockWitness {

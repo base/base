@@ -21,25 +21,30 @@ use reth_trie::{
 };
 use reth_trie_common::{BranchNodeCompact, Nibbles};
 
+#[cfg(feature = "metrics")]
+use crate::cursor;
 use crate::{
     BaseProofsStorageResult, BaseProofsStore, BlockStateDiff,
     api::{BaseProofsInitialStateStore, InitialStateAnchor, OperationDurations, WriteCounts},
-    cursor,
 };
 
 /// Alias for [`BaseProofsStorageWithMetrics`].
+#[cfg(feature = "metrics")]
 pub type BaseProofsStorage<S> = BaseProofsStorageWithMetrics<S>;
 
 /// Alias for [`TrieCursor`](cursor::BaseProofsTrieCursor) with metrics layer.
+#[cfg(feature = "metrics")]
 pub type BaseProofsTrieCursor<C> = cursor::BaseProofsTrieCursor<BaseProofsTrieCursorWithMetrics<C>>;
 
 /// Alias for [`BaseProofsHashedAccountCursor`](cursor::BaseProofsHashedAccountCursor) with metrics
 /// layer.
+#[cfg(feature = "metrics")]
 pub type BaseProofsHashedAccountCursor<C> =
     cursor::BaseProofsHashedAccountCursor<BaseProofsHashedCursorWithMetrics<C>>;
 
 /// Alias for [`BaseProofsHashedStorageCursor`](cursor::BaseProofsHashedStorageCursor) with metrics
 /// layer.
+#[cfg(feature = "metrics")]
 pub type BaseProofsHashedStorageCursor<C> =
     cursor::BaseProofsHashedStorageCursor<BaseProofsHashedCursorWithMetrics<C>>;
 

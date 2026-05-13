@@ -121,7 +121,7 @@ pub fn setup_logger() {
 
         Registry::default().with(log_export_layer).with(fmt_layer).init();
         if otlp_enabled {
-            tracing::info!("OTLP endpoint configured: {}", otlp_endpoint);
+            tracing::info!(endpoint = %otlp_endpoint, "OTLP endpoint configured");
         }
         Ok(())
     });

@@ -595,7 +595,7 @@ pub(super) mod serde_bincode_compat {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
-    use crate::serde_bincode_compat::TxDeposit;
+    use crate::SerdeBincodeTxDeposit;
 
     /// Bincode-compatible representation of an [`BaseTxEnvelope`].
     #[derive(Debug, Serialize, Deserialize)]
@@ -633,7 +633,7 @@ pub(super) mod serde_bincode_compat {
             /// Precomputed hash.
             hash: B256,
             /// Borrowed deposit transaction data.
-            transaction: TxDeposit<'a>,
+            transaction: SerdeBincodeTxDeposit<'a>,
         },
     }
 

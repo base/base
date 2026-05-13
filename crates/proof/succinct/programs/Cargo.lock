@@ -20,21 +20,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "aggregation"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-sol-types",
- "base-proof-succinct-client-utils",
- "bincode",
- "serde_cbor",
- "sha2",
- "sp1-lib",
- "sp1-zkvm",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1033,6 +1018,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-succinct-aggregation-program"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-proof-succinct-client-utils",
+ "bincode",
+ "serde_cbor",
+ "sha2",
+ "sp1-lib",
+ "sp1-zkvm",
+]
+
+[[package]]
 name = "base-proof-succinct-client-utils"
 version = "0.0.0"
 dependencies = [
@@ -1082,6 +1082,19 @@ dependencies = [
  "base-proof-preimage",
  "base-proof-succinct-client-utils",
  "spin 0.10.0",
+]
+
+[[package]]
+name = "base-proof-succinct-range-program"
+version = "0.0.0"
+dependencies = [
+ "base-proof",
+ "base-proof-succinct-client-utils",
+ "base-proof-succinct-ethereum-client-utils",
+ "base-proof-succinct-range-utils",
+ "rkyv",
+ "sp1-zkvm",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3336,19 +3349,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
 dependencies = [
  "rand_core 0.9.5",
-]
-
-[[package]]
-name = "range"
-version = "0.0.0"
-dependencies = [
- "base-proof",
- "base-proof-succinct-client-utils",
- "base-proof-succinct-ethereum-client-utils",
- "base-proof-succinct-range-utils",
- "rkyv",
- "sp1-zkvm",
- "tracing-subscriber",
 ]
 
 [[package]]

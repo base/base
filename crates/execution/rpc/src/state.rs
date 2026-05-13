@@ -1,9 +1,7 @@
 //! State provider factory for Base Proofs `ExEx`.
 
 use alloy_eips::BlockId;
-use base_execution_trie::{
-    BaseProofsStorage, BaseProofsStore, provider::BaseProofsStateProviderRef,
-};
+use base_execution_trie::{BaseProofsStateProviderRef, BaseProofsStorage, BaseProofsStore};
 use jsonrpsee_types::error::ErrorObject;
 use reth_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
 use reth_rpc_api::eth::helpers::FullEthApi;

@@ -12,8 +12,11 @@ extern crate alloc;
 #[macro_use]
 extern crate tracing;
 
-pub mod errors;
-pub use errors::{WitnessOracleError, WitnessOracleResult};
+mod errors;
+pub use errors::{
+    ChannelError, ChannelResult, PreimageOracleError, PreimageOracleResult, WitnessOracleError,
+    WitnessOracleResult,
+};
 
 mod key;
 pub use key::{PreimageKey, PreimageKeyType};

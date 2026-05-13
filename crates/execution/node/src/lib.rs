@@ -11,31 +11,36 @@
 use reth_db_api as _;
 
 /// CLI argument parsing for the Base node.
-pub mod args;
-pub use args::TxpoolOrdering;
+mod args;
+pub use args::{RollupArgs, TxpoolOrdering};
 
 /// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
 /// trait.
-pub mod engine;
-pub use engine::{BaseEngineTypes, BasePostExecutionValidator};
+mod engine;
+pub use engine::{
+    BaseEngineTypes, BaseEngineValidator, BasePostExecutionValidator, validate_withdrawals_presence,
+};
 
-pub mod node;
+mod node;
 pub use node::*;
 
-pub mod rpc;
+mod rpc;
 pub use rpc::BaseEngineApiBuilder;
 
 mod storage;
 pub use storage::BaseStorage;
 
-pub mod version;
+mod version;
 pub use version::CLIENT_NAME;
 
-pub mod proof_history;
+mod proof_history;
+pub use proof_history::launch_node_with_proof_history;
 
 /// Helpers for running test node instances.
 #[cfg(feature = "test-utils")]
-pub mod utils;
+mod utils;
+#[cfg(feature = "test-utils")]
+pub use utils::{BaseNode as TestBaseNode, advance_chain, payload_attributes, setup};
 
 use base_common_evm as _;
 #[cfg(feature = "test-utils")]

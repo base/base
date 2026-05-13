@@ -25,8 +25,7 @@ use std::{hint::black_box, sync::Arc};
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, U256, keccak256};
 use base_execution_trie::{
-    BaseProofsInitialStateStore, BaseProofsStorage, MdbxProofsStorage,
-    provider::BaseProofsStateProviderRef,
+    BaseProofsInitialStateStore, BaseProofsStateProviderRef, BaseProofsStorage, MdbxProofsStorage,
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng};

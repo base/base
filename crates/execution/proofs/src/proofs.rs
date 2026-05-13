@@ -1,12 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use base_execution_exex::BaseProofsExEx;
-use base_execution_rpc::{
-    debug::{DebugApiExt, DebugApiOverrideServer},
-    eth::proofs::{EthApiExt, EthApiOverrideServer},
-};
+use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiOverrideServer};
 use base_execution_trie::{BaseProofsStorage, MdbxProofsStorage};
-use base_node_core::args::RollupArgs;
+use base_node_core::RollupArgs;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;

@@ -4,10 +4,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use base_proof::{CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider};
 use base_proof_preimage::{HintWriter, NativeChannel, OracleReader};
-use base_proof_succinct_client_utils::witness::{
-    BlobData, WitnessData,
-    executor::{WitnessExecutor, get_inputs_for_pipeline},
-    preimage_store::PreimageStore,
+use base_proof_succinct_client_utils::{
+    BlobData, PreimageStore, WitnessData, WitnessExecutor, WitnessPipelineParts,
+    get_inputs_for_pipeline,
 };
 use sp1_sdk::SP1Stdin;
 
@@ -62,15 +61,15 @@ pub trait WitnessGenerator {
         let l1_config = Arc::new(boot_info.l1_config.clone());
         let pipeline = self
             .get_executor()
-            .create_pipeline(
+            .create_pipeline(WitnessPipelineParts {
                 rollup_config,
                 l1_config,
-                Arc::clone(&cursor),
-                Arc::clone(&oracle),
+                cursor: Arc::clone(&cursor),
+                oracle: Arc::clone(&oracle),
                 beacon,
-                l1_provider.clone(),
-                l2_provider.clone(),
-            )
+                l1_provider: l1_provider.clone(),
+                l2_provider: l2_provider.clone(),
+            })
             .await
             .unwrap();
         let _ = self.get_executor().run(boot_info, pipeline, cursor, l2_provider).await?;

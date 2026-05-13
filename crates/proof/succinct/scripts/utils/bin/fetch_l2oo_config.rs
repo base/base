@@ -5,13 +5,11 @@ use std::{env, sync::Arc};
 use alloy_eips::BlockId;
 use anyhow::{Result, bail};
 use base_proof_succinct_host_utils::{
-    OP_SUCCINCT_L2_OUTPUT_ORACLE_CONFIG_PATH,
-    fetcher::{OPSuccinctDataFetcher, RPCMode},
-    host::OPSuccinctHost,
+    OP_SUCCINCT_L2_OUTPUT_ORACLE_CONFIG_PATH, OPSuccinctDataFetcher, OPSuccinctHost, RPCMode,
     setup_logger,
 };
 use base_proof_succinct_proof_utils::initialize_host;
-use base_proof_succinct_scripts::config_common::{
+use base_proof_succinct_scripts::{
     TWO_WEEKS_IN_SECONDS, find_project_root, get_address, get_shared_config_data, write_config_file,
 };
 use serde::{Deserialize, Serialize};
@@ -116,9 +114,12 @@ async fn update_l2oo_config() -> Result<()> {
     };
 
     if starting_block_number == 0 {
-        log::warn!("Starting L2 block number is 0. Make sure this is intended.");
+        tracing::warn!("starting L2 block number is 0; make sure this is intended");
     } else {
-        log::info!("Using starting L2 block number: {starting_block_number}");
+        tracing::info!(
+            starting_block_number = starting_block_number,
+            "using starting L2 block number"
+        );
     }
 
     let starting_block_number_hex = format!("0x{starting_block_number:x}");
@@ -177,13 +178,13 @@ async fn main() -> Result<()> {
     // directory, the .env file in the root of the repo is used.
     if let Some(root) = find_project_root() {
         dotenv::from_path(root.join(&args.env_file)).ok();
-        log::info!("Loaded {} from project root", args.env_file);
+        tracing::info!(env_file = %args.env_file, "loaded env file from project root");
     } else {
         // Try to load the env file in case it's present
         if dotenv::from_path(args.env_file.clone()).is_ok() {
-            log::info!("Loaded {} from current directory", args.env_file);
+            tracing::info!(env_file = %args.env_file, "loaded env file from current directory");
         } else {
-            log::error!("Could not find env file. {} file not loaded", args.env_file);
+            tracing::error!(env_file = %args.env_file, "could not find env file");
         }
     }
 

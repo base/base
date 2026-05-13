@@ -484,14 +484,14 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use base_common_consensus::{BaseReceipt, serde_bincode_compat};
+    /// use base_common_consensus::{BaseReceipt, SerdeBincodeBaseReceipt};
     /// use serde::{Deserialize, Serialize, de::DeserializeOwned};
     /// use serde_with::serde_as;
     ///
     /// #[serde_as]
     /// #[derive(Serialize, Deserialize)]
     /// struct Data {
-    ///     #[serde_as(as = "serde_bincode_compat::BaseReceipt<'_>")]
+    ///     #[serde_as(as = "SerdeBincodeBaseReceipt<'_>")]
     ///     receipt: BaseReceipt,
     /// }
     /// ```
@@ -506,7 +506,7 @@ pub(super) mod serde_bincode_compat {
         /// EIP-7702 receipt
         Eip7702(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
         /// Deposit receipt
-        Deposit(crate::serde_bincode_compat::DepositReceipt<'a, alloy_primitives::Log>),
+        Deposit(crate::SerdeBincodeDepositReceipt<'a, alloy_primitives::Log>),
     }
 
     impl<'a> From<&'a super::BaseReceipt> for BaseReceipt<'a> {

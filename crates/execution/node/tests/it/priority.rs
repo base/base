@@ -7,16 +7,12 @@ use alloy_genesis::Genesis;
 use alloy_network::TxSignerSync;
 use alloy_primitives::{Address, ChainId, TxKind};
 use base_execution_chainspec::BaseChainSpecBuilder;
-use base_execution_payload_builder::builder::BasePayloadTransactions;
+use base_execution_payload_builder::BasePayloadTransactions;
 use base_execution_txpool::BasePooledTransaction;
 use base_node_core::{
-    BaseNode,
-    args::RollupArgs,
-    node::{
-        BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNodeComponentBuilder,
-        BaseNodeTypes, BasePayloadBuilder, BasePoolBuilder,
-    },
-    utils::payload_attributes,
+    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BaseNode,
+    BaseNodeComponentBuilder, BaseNodeTypes, BasePayloadBuilder, BasePoolBuilder, RollupArgs,
+    payload_attributes,
 };
 use reth_chainspec::EthChainSpec;
 use reth_db::test_utils::create_test_rw_db_with_path;

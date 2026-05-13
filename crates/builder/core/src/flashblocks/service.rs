@@ -3,7 +3,7 @@ use std::sync::Arc;
 use base_builder_publish::WebSocketPublisher;
 use base_execution_evm::BaseEvmConfig;
 use base_node_core::{
-    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, node::BasePoolBuilder,
+    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BasePoolBuilder,
 };
 use base_node_runner::{
     BaseNode, BaseNodeTypes, PayloadServiceBuilder as BasePayloadServiceBuilder,

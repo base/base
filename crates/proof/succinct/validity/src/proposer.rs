@@ -4,15 +4,13 @@ use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, network::ReceiptResponse};
 use anyhow::{Context, Result, anyhow};
-use base_proof_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
+use base_proof_succinct_client_utils::{hash_rollup_config, u32_to_u8};
 use base_proof_succinct_elfs::AGGREGATION_ELF;
 use base_proof_succinct_host_utils::{
-    DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
+    DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract, MetricsGauge,
+    OPSuccinctDataFetcher, OPSuccinctHost,
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
-    fetcher::OPSuccinctDataFetcher,
-    host::OPSuccinctHost,
-    metrics::MetricsGauge,
-    network::{determine_network_mode, get_network_signer},
+    determine_network_mode, get_network_signer,
 };
 use base_proof_succinct_proof_utils::{
     ClusterProofConfig, ClusterProofHandle, ClusterProofHandleJson, cluster_poll_proof,
@@ -33,9 +31,12 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use crate::{
-    CommitmentConfig, ContractConfig, OPSuccinctProofRequester, ProgramConfig,
+    CommitmentConfig, ContractConfig, OPSuccinctProofRequester, ProgramConfig, ProofRequesterInput,
     RequestExecutionStatistics, RequesterConfig, ValidityGauge,
-    db::{DriverDBClient, OPSuccinctRequest, RequestMode, RequestStatus, RequestType},
+    db::{
+        AggregationRequestInput, DriverDBClient, OPSuccinctRequest, RangeRequestInput, RequestMode,
+        RequestStatus, RequestType,
+    },
     find_gaps, get_latest_proposed_block_number, get_ranges_to_prove_by_blocks,
     get_ranges_to_prove_by_gas,
 };
@@ -184,31 +185,31 @@ where
         };
         program_config.log();
 
-        let proof_requester = Arc::new(OPSuccinctProofRequester::new(
+        let proof_requester = Arc::new(OPSuccinctProofRequester::new(ProofRequesterInput {
             host,
-            network_prover.clone(),
-            Arc::clone(&fetcher),
-            Arc::clone(&db_client),
-            program_config.clone(),
-            requester_config.mock,
-            is_cluster,
+            network_prover: network_prover.clone(),
+            fetcher: Arc::clone(&fetcher),
+            db_client: Arc::clone(&db_client),
+            program_config: program_config.clone(),
+            mock: requester_config.mock,
+            cluster: is_cluster,
             cluster_config,
             cluster_handles,
-            requester_config.range_proof_strategy,
-            requester_config.agg_proof_strategy,
-            requester_config.agg_proof_mode,
-            requester_config.safe_db_fallback,
-            requester_config.max_price_per_pgu,
-            requester_config.proving_timeout,
-            requester_config.intermediate_root_interval,
-            requester_config.range_cycle_limit,
-            requester_config.range_gas_limit,
-            requester_config.agg_cycle_limit,
-            requester_config.agg_gas_limit,
-            requester_config.whitelist.clone(),
-            requester_config.min_auction_period,
-            requester_config.auction_timeout,
-        )?);
+            range_strategy: requester_config.range_proof_strategy,
+            agg_strategy: requester_config.agg_proof_strategy,
+            agg_mode: requester_config.agg_proof_mode,
+            safe_db_fallback: requester_config.safe_db_fallback,
+            max_price_per_pgu: requester_config.max_price_per_pgu,
+            proving_timeout: requester_config.proving_timeout,
+            intermediate_root_interval: requester_config.intermediate_root_interval,
+            range_cycle_limit: requester_config.range_cycle_limit,
+            range_gas_limit: requester_config.range_gas_limit,
+            agg_cycle_limit: requester_config.agg_cycle_limit,
+            agg_gas_limit: requester_config.agg_gas_limit,
+            whitelist: requester_config.whitelist.clone(),
+            min_auction_period: requester_config.min_auction_period,
+            auction_timeout: requester_config.auction_timeout,
+        })?);
 
         let l2oo_contract =
             OPSuccinctL2OOContract::new(requester_config.l2oo_address, provider.clone());
@@ -258,7 +259,7 @@ where
             .await?
         {
             Some(block_number) => {
-                tracing::debug!("Found finalized block number: {}", block_number);
+                tracing::debug!(block_number, "found finalized block number");
                 block_number
             }
             None => {
@@ -332,7 +333,10 @@ where
         if ranges_to_prove.is_empty() {
             warn!("No range proof requests inserted into the database.")
         } else {
-            info!("Inserting {} range proof requests into the database.", ranges_to_prove.len());
+            info!(
+                range_count = ranges_to_prove.len(),
+                "inserting range proof requests into the database"
+            );
 
             // Create range proof requests for the ranges to prove in parallel
             let new_range_requests = stream::iter(ranges_to_prove)
@@ -343,13 +347,18 @@ where
                         RequestMode::Real
                     };
                     OPSuccinctRequest::create_range_request(
-                        mode,
-                        range.start,
-                        range.end,
-                        self.program_config.commitments.range_vkey_commitment,
-                        self.program_config.commitments.rollup_config_hash,
-                        self.requester_config.l1_chain_id,
-                        self.requester_config.l2_chain_id,
+                        RangeRequestInput {
+                            mode,
+                            start_block: range.start,
+                            end_block: range.end,
+                            range_vkey_commitment: self
+                                .program_config
+                                .commitments
+                                .range_vkey_commitment,
+                            rollup_config_hash: self.program_config.commitments.rollup_config_hash,
+                            l1_chain_id: self.requester_config.l1_chain_id,
+                            l2_chain_id: self.requester_config.l2_chain_id,
+                        },
                         Arc::clone(&self.driver_config.fetcher),
                     )
                 })
@@ -923,7 +932,7 @@ where
         let submission_interval =
             contract_submission_interval.max(self.requester_config.submission_interval) as i64;
 
-        debug!("Submission interval for aggregation proof: {}.", submission_interval);
+        debug!(submission_interval, "resolved aggregation proof submission interval");
 
         // If the highest proven contiguous block number is greater than the latest proposed block
         // number plus the submission interval, create an aggregation proof.
@@ -1018,26 +1027,33 @@ where
                         return Err(anyhow!("Checkpoint block transaction reverted: {receipt:?}"));
                     }
 
-                    tracing::info!("Checkpointed L1 block number: {:?}.", latest_header.number);
+                    tracing::info!(
+                        l1_block_number = latest_header.number,
+                        "checkpointed L1 block number"
+                    );
 
                     (latest_header.hash_slow(), latest_header.number as i64)
                 };
 
             // Create an aggregation proof request to cover the range with the checkpointed L1 block
             // hash.
-            let agg_request = OPSuccinctRequest::new_agg_request(
-                if self.requester_config.mock { RequestMode::Mock } else { RequestMode::Real },
-                latest_proposed_block_number,
-                highest_proven_contiguous_block_number,
-                self.program_config.commitments.range_vkey_commitment,
-                self.program_config.commitments.agg_vkey_hash,
-                self.program_config.commitments.rollup_config_hash,
-                self.requester_config.l1_chain_id,
-                self.requester_config.l2_chain_id,
+            let agg_request = OPSuccinctRequest::new_agg_request(AggregationRequestInput {
+                mode: if self.requester_config.mock {
+                    RequestMode::Mock
+                } else {
+                    RequestMode::Real
+                },
+                start_block: latest_proposed_block_number,
+                end_block: highest_proven_contiguous_block_number,
+                range_vkey_commitment: self.program_config.commitments.range_vkey_commitment,
+                aggregation_vkey_hash: self.program_config.commitments.agg_vkey_hash,
+                rollup_config_hash: self.program_config.commitments.rollup_config_hash,
+                l1_chain_id: self.requester_config.l1_chain_id,
+                l2_chain_id: self.requester_config.l2_chain_id,
                 checkpointed_l1_block_number,
                 checkpointed_l1_block_hash,
-                self.driver_config.signer.address(),
-            );
+                prover_address: self.driver_config.signer.address(),
+            });
 
             self.driver_config.driver_db_client.insert_request(&agg_request).await?;
 
@@ -1338,7 +1354,7 @@ where
             }
         };
 
-        info!("Relayed aggregation proof. Transaction hash: {:?}", transaction_hash);
+        info!(transaction_hash = ?transaction_hash, "relayed aggregation proof");
 
         // Update the request to status RELAYED.
         self.driver_config
@@ -1786,7 +1802,7 @@ where
                 }
                 Err(e) => {
                     // Log the error
-                    tracing::error!("Error in proposer loop: {:?}", e);
+                    tracing::error!(error = ?e, "error in proposer loop");
                     // Update the error gauge
                     ValidityGauge::TotalErrorCount.increment(1.0);
                     // Pause for 10 seconds before restarting

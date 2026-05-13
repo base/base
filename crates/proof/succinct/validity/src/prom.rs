@@ -1,4 +1,4 @@
-use base_proof_succinct_host_utils::metrics::MetricsGauge;
+use base_proof_succinct_host_utils::MetricsGauge;
 use strum::EnumMessage;
 use strum_macros::{Display, EnumIter};
 

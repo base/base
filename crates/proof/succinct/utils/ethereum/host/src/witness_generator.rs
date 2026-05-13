@@ -3,11 +3,10 @@ use std::fmt;
 use anyhow::Result;
 use async_trait::async_trait;
 use base_proof::OracleBlobProvider;
-use base_proof_succinct_client_utils::witness::DefaultWitnessData;
-use base_proof_succinct_ethereum_client_utils::executor::ETHDAWitnessExecutor;
-use base_proof_succinct_host_utils::witness_generation::{
-    DefaultOracleBase, WitnessGenerator, online_blob_store::OnlineBlobStore,
-    preimage_witness_collector::PreimageWitnessCollector,
+use base_proof_succinct_client_utils::DefaultWitnessData;
+use base_proof_succinct_ethereum_client_utils::ETHDAWitnessExecutor;
+use base_proof_succinct_host_utils::{
+    DefaultOracleBase, OnlineBlobStore, PreimageWitnessCollector, WitnessGenerator,
 };
 use rkyv::to_bytes;
 use sp1_sdk::SP1Stdin;

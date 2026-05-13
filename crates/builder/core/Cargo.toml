@@ -187,6 +187,10 @@ tempfile.workspace = true
 hyper-util.workspace = true
 http-body-util.workspace = true
 
+[[bench]]
+name = "state_root"
+harness = false
+
 [features]
 default = [ "jemalloc", "metrics" ]
 metrics = [
@@ -235,7 +239,3 @@ test-utils = [
 	"rlimit",
 	"testcontainers",
 ]
-
-[[bench]]
-name = "state_root"
-harness = false

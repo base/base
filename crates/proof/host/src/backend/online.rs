@@ -3,8 +3,7 @@ use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use base_proof::{Hint, HintType};
 use base_proof_preimage::{
-    HintRouter, PreimageFetcher, PreimageKey,
-    errors::{PreimageOracleError, PreimageOracleResult},
+    HintRouter, PreimageFetcher, PreimageKey, PreimageOracleError, PreimageOracleResult,
 };
 use tokio::{sync::RwLock, time};
 use tracing::{debug, error, trace, warn};
@@ -190,9 +189,7 @@ mod tests {
     use base_common_genesis::RollupConfig;
     use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
     use base_proof::{Hint, HintType};
-    use base_proof_preimage::{
-        HintRouter, PreimageFetcher, PreimageKey, errors::PreimageOracleError,
-    };
+    use base_proof_preimage::{HintRouter, PreimageFetcher, PreimageKey, PreimageOracleError};
     use base_proof_primitives::ProofRequest;
     use tokio::sync::RwLock;
 

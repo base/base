@@ -1,20 +1,21 @@
-//! Succinct zkVM client utilities for Base proof generation.
+#![doc = include_str!("../README.md")]
 
-pub mod boot;
+extern crate alloc;
+
+mod boot;
+pub use boot::*;
 
 mod oracle;
 pub use oracle::BlobStore;
 
-/// FPVM-accelerated precompile providers.
-pub mod precompiles;
+mod precompiles;
+pub use precompiles::*;
 
-/// Shared types for range and aggregation programs.
-pub mod types;
+mod types;
+pub use types::*;
 
-extern crate alloc;
+mod client;
+pub use client::*;
 
-/// High-level client helpers for derivation and execution.
-pub mod client;
-
-/// Witness data, preimage storage, and block execution.
-pub mod witness;
+mod witness;
+pub use witness::*;

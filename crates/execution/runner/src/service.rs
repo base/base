@@ -1,8 +1,8 @@
 //! Trait for customizing the payload service used by the node.
 
 use base_node_core::{
-    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder,
-    node::{BasePayloadBuilder, BasePoolBuilder},
+    BaseConsensusBuilder, BaseExecutorBuilder, BaseNetworkBuilder, BasePayloadBuilder,
+    BasePoolBuilder,
 };
 use reth_node_builder::{
     NodeComponentsBuilder,

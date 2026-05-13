@@ -52,10 +52,13 @@ use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 // so it can be processed by the state processor
 const SLEEP_TIME: u64 = 10;
 
+type FlashblocksSender = mpsc::Sender<(Flashblock, oneshot::Sender<()>)>;
+type FlashblocksReceiverQueue = mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>;
+
 /// Components that allow tests to interact with the Flashblocks worker tasks.
 #[derive(Clone)]
 pub struct FlashblocksParts {
-    sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
+    sender: FlashblocksSender,
     state: Arc<FlashblocksState>,
 }
 
@@ -90,9 +93,8 @@ pub struct FlashblocksTestExtension {
 }
 
 struct FlashblocksTestExtensionInner {
-    sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
-    #[allow(clippy::type_complexity)]
-    receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
+    sender: FlashblocksSender,
+    receiver: Arc<Mutex<Option<FlashblocksReceiverQueue>>>,
     state: Arc<FlashblocksState>,
     process_canonical: bool,
 }

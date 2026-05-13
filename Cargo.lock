@@ -1885,53 +1885,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "audit-archiver"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "audit-archiver-lib",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3",
- "base-cli-utils",
- "clap",
- "dotenvy",
- "jsonrpsee",
- "moka",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "audit-archiver-lib"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "anyhow",
- "async-trait",
- "aws-config",
- "aws-sdk-s3",
- "base-bundles",
- "base-metrics",
- "bytes",
- "futures",
- "jsonrpsee",
- "jsonrpsee-types",
- "metrics",
- "moka",
- "rdkafka",
- "serde",
- "serde_json",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "aurora-engine-modexp"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2723,19 +2676,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "base-common-chains",
- "clap",
- "eyre",
- "figment",
- "serde",
- "tracing",
-]
-
-[[package]]
 name = "base-access-lists"
 version = "0.0.0"
 dependencies = [
@@ -2813,6 +2753,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-audit-archiver-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "base-audit-archiver-lib",
+ "base-cli-utils",
+ "clap",
+ "dotenvy",
+ "jsonrpsee",
+ "moka",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-audit-archiver-lib"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "anyhow",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "base-bundles",
+ "base-metrics",
+ "bytes",
+ "futures",
+ "jsonrpsee",
+ "jsonrpsee-types",
+ "metrics",
+ "moka",
+ "rdkafka",
+ "serde",
+ "serde_json",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "base-balance-monitor"
 version = "0.0.0"
 dependencies = [
@@ -2822,6 +2809,82 @@ dependencies = [
  "alloy-provider",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "base-basectl-bin"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-basectl-cli",
+ "clap",
+ "rustls 0.23.39",
+ "tokio",
+]
+
+[[package]]
+name = "base-basectl-cli"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth",
+ "alloy-sol-types",
+ "anyhow",
+ "arboard",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-flashblocks",
+ "base-common-genesis",
+ "base-common-network",
+ "base-consensus-gossip",
+ "base-consensus-rpc",
+ "base-protocol",
+ "chrono",
+ "crossterm",
+ "dirs 6.0.0",
+ "futures",
+ "jsonrpsee",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-based"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth",
+ "alloy-transport-http",
+ "anyhow",
+ "async-trait",
+ "cadence",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-based-bin"
+version = "0.0.0"
+dependencies = [
+ "base-based",
+ "base-cli-utils",
+ "cadence",
+ "clap",
+ "serde",
+ "tokio",
  "tracing",
 ]
 
@@ -2948,6 +3011,19 @@ dependencies = [
  "futures",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-common-chains",
+ "clap",
+ "eyre",
+ "figment",
+ "serde",
  "tracing",
 ]
 
@@ -3880,6 +3956,67 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-devnet"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types-engine",
+ "alloy-signer",
+ "alloy-signer-local",
+ "base-batcher-service",
+ "base-builder-core",
+ "base-bundle-extension",
+ "base-common-genesis",
+ "base-common-network",
+ "base-common-rpc-types",
+ "base-consensus-disc",
+ "base-consensus-gossip",
+ "base-consensus-node",
+ "base-consensus-peers",
+ "base-consensus-rpc",
+ "base-consensus-sources",
+ "base-execution-chainspec",
+ "base-execution-rpc",
+ "base-execution-txpool",
+ "base-flashblocks",
+ "base-flashblocks-node",
+ "base-node-core",
+ "base-node-runner",
+ "base-protocol",
+ "base-runtime",
+ "base-tx-forwarding",
+ "base-txpool-rpc",
+ "base-txpool-tracing",
+ "eyre",
+ "hex",
+ "jsonrpsee",
+ "k256",
+ "libp2p",
+ "nanoid",
+ "rand 0.9.4",
+ "reqwest 0.13.2",
+ "reth-db",
+ "reth-node-builder",
+ "reth-node-core",
+ "reth-provider",
+ "reth-tasks",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "testcontainers",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-engine-tree"
 version = "0.0.0"
 dependencies = [
@@ -4411,6 +4548,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-ingress-rpc-bin"
+version = "0.0.0"
+dependencies = [
+ "alloy-provider",
+ "anyhow",
+ "base-audit-archiver-lib",
+ "base-bundles",
+ "base-cli-utils",
+ "base-common-network",
+ "base-ingress-rpc-lib",
+ "clap",
+ "dotenvy",
+ "jsonrpsee",
+ "rdkafka",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-ingress-rpc-lib"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local",
+ "anyhow",
+ "async-trait",
+ "axum 0.8.9",
+ "backon",
+ "base-audit-archiver-lib",
+ "base-bundles",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-network",
+ "base-execution-evm",
+ "base-metrics",
+ "clap",
+ "jsonrpsee",
+ "metrics",
+ "moka",
+ "rdkafka",
+ "reth-rpc-eth-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "base-jwt"
 version = "0.0.0"
 dependencies = [
@@ -4484,6 +4677,36 @@ dependencies = [
  "tracing-indicatif",
  "tracing-subscriber 0.3.23",
  "url",
+]
+
+[[package]]
+name = "base-mempool-rebroadcaster"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-rpc-types-eth",
+ "alloy-trie",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "base-mempool-rebroadcaster-bin"
+version = "0.0.0"
+dependencies = [
+ "base-cli-utils",
+ "base-mempool-rebroadcaster",
+ "clap",
+ "dotenvy",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5676,6 +5899,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-websocket-proxy"
+version = "0.0.0"
+dependencies = [
+ "axum 0.8.9",
+ "backoff",
+ "base-metrics",
+ "brotli",
+ "futures",
+ "http 1.4.0",
+ "metrics",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "base-websocket-proxy-bin"
+version = "0.0.0"
+dependencies = [
+ "axum 0.8.9",
+ "base-cli-utils",
+ "base-metrics",
+ "base-websocket-proxy",
+ "brotli",
+ "clap",
+ "dotenvy",
+ "futures",
+ "hostname",
+ "metrics-exporter-prometheus",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-witness-diff"
 version = "0.0.0"
 dependencies = [
@@ -5837,82 +6101,6 @@ name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
-
-[[package]]
-name = "basectl"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "basectl-cli",
- "clap",
- "rustls 0.23.39",
- "tokio",
-]
-
-[[package]]
-name = "basectl-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-contract",
- "alloy-eips",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-eth",
- "alloy-sol-types",
- "anyhow",
- "arboard",
- "base-common-chains",
- "base-common-consensus",
- "base-common-flashblocks",
- "base-common-genesis",
- "base-common-network",
- "base-consensus-gossip",
- "base-consensus-rpc",
- "base-protocol",
- "chrono",
- "crossterm",
- "dirs 6.0.0",
- "futures",
- "jsonrpsee",
- "ratatui",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "based"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-eth",
- "alloy-transport-http",
- "anyhow",
- "async-trait",
- "cadence",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "based-bin"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "based",
- "cadence",
- "clap",
- "serde",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "bcrypt-pbkdf"
@@ -8021,67 +8209,6 @@ dependencies = [
  "rustc_version 0.4.1",
  "syn 2.0.117",
  "unicode-xid",
-]
-
-[[package]]
-name = "devnet"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-genesis",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-client",
- "alloy-rpc-types-engine",
- "alloy-signer",
- "alloy-signer-local",
- "base-batcher-service",
- "base-builder-core",
- "base-bundle-extension",
- "base-common-genesis",
- "base-common-network",
- "base-common-rpc-types",
- "base-consensus-disc",
- "base-consensus-gossip",
- "base-consensus-node",
- "base-consensus-peers",
- "base-consensus-rpc",
- "base-consensus-sources",
- "base-execution-chainspec",
- "base-execution-rpc",
- "base-execution-txpool",
- "base-flashblocks",
- "base-flashblocks-node",
- "base-node-core",
- "base-node-runner",
- "base-protocol",
- "base-runtime",
- "base-tx-forwarding",
- "base-txpool-rpc",
- "base-txpool-tracing",
- "eyre",
- "hex",
- "jsonrpsee",
- "k256",
- "libp2p",
- "nanoid",
- "rand 0.9.4",
- "reqwest 0.13.2",
- "reth-db",
- "reth-node-builder",
- "reth-node-core",
- "reth-provider",
- "reth-tasks",
- "serde",
- "serde_json",
- "tempfile",
- "testcontainers",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -10711,62 +10838,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ingress-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-provider",
- "anyhow",
- "audit-archiver-lib",
- "base-bundles",
- "base-cli-utils",
- "base-common-network",
- "clap",
- "dotenvy",
- "ingress-rpc-lib",
- "jsonrpsee",
- "rdkafka",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ingress-rpc-lib"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-signer-local",
- "anyhow",
- "async-trait",
- "audit-archiver-lib",
- "axum 0.8.9",
- "backon",
- "base-bundles",
- "base-common-consensus",
- "base-common-evm",
- "base-common-network",
- "base-execution-evm",
- "base-metrics",
- "clap",
- "jsonrpsee",
- "metrics",
- "moka",
- "rdkafka",
- "reth-rpc-eth-types",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "url",
- "uuid",
- "wiremock",
-]
-
-[[package]]
 name = "inlinable_string"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12261,36 +12332,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
-]
-
-[[package]]
-name = "mempool-rebroadcaster"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-rpc-types-eth",
- "alloy-trie",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "mempool-rebroadcaster-bin"
-version = "0.0.0"
-dependencies = [
- "base-cli-utils",
- "clap",
- "dotenvy",
- "mempool-rebroadcaster",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -24178,47 +24219,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
 dependencies = [
  "rustls-pki-types",
-]
-
-[[package]]
-name = "websocket-proxy"
-version = "0.0.0"
-dependencies = [
- "axum 0.8.9",
- "backoff",
- "base-metrics",
- "brotli",
- "futures",
- "http 1.4.0",
- "metrics",
- "reqwest 0.13.2",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "websocket-proxy-bin"
-version = "0.0.0"
-dependencies = [
- "axum 0.8.9",
- "base-cli-utils",
- "base-metrics",
- "brotli",
- "clap",
- "dotenvy",
- "futures",
- "hostname",
- "metrics-exporter-prometheus",
- "serde",
- "tokio",
- "tokio-util",
- "tracing",
- "websocket-proxy",
 ]
 
 [[package]]

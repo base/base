@@ -396,7 +396,7 @@ impl RollupConfig {
             tracing::info!(target: "upgrades", block_number, "Activating jovian upgrade");
         } else if self.is_first_base_azul_block(timestamp) {
             for line in Self::AZUL_ACTIVATION_BANNER.lines() {
-                tracing::info!(target: "upgrades", "{line}");
+                tracing::info!(target: "upgrades", line, "azul activation banner");
             }
             tracing::info!(target: "upgrades", block_number, "Activating azul upgrade");
         } else if self.is_first_beryl_block(timestamp) {

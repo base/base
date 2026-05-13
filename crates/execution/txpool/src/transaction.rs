@@ -19,7 +19,7 @@ use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
 };
 
-use crate::estimated_da_size::DataAvailabilitySized;
+use crate::DataAvailabilitySized;
 
 /// Assumed L2 block time in seconds, used to convert block-based bundle windows
 /// to time-based bounds.

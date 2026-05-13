@@ -101,6 +101,14 @@ rayon.workspace = true
 serde_json = { workspace = true, features = ["std"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 
+[[bench]]
+name = "pending_state"
+harness = false
+
+[[bench]]
+name = "sender_recovery"
+harness = false
+
 [features]
 test-utils = [
 	"base-node-core/test-utils",
@@ -127,11 +135,3 @@ test-utils = [
 	"reth-revm/test-utils",
 	"reth-transaction-pool/test-utils",
 ]
-
-[[bench]]
-name = "pending_state"
-harness = false
-
-[[bench]]
-name = "sender_recovery"
-harness = false

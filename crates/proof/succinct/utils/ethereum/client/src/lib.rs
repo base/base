@@ -1,4 +1,4 @@
-//! Ethereum DA witness executor for Base zkVM proofs.
+#![doc = include_str!("../README.md")]
 
-/// Ethereum DA witness pipeline executor.
-pub mod executor;
+mod executor;
+pub use executor::*;

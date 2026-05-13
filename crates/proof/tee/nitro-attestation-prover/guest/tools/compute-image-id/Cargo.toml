@@ -1,10 +1,22 @@
 [workspace]
 
+[workspace.lints.rust]
+missing-docs = "warn"
+unused-must-use = "deny"
+rust-2018-idioms = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
 [package]
-name = "compute-image-id"
+name = "base-compute-image-id"
 version = "0.0.0"
 edition = "2021"
 publish = false
+
+[[bin]]
+name = "compute-image-id"
+path = "src/main.rs"
 
 [dependencies]
 # These versions MUST match what `risc0-zkvm` in ../Cargo.toml resolves to.
@@ -13,10 +25,5 @@ publish = false
 risc0-binfmt = "=3.0.4"
 risc0-zkos-v1compat = "=2.2.2"
 
-[lints.rust]
-missing-docs = "warn"
-unused-must-use = "deny"
-rust-2018-idioms = "deny"
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
+[lints]
+workspace = true
