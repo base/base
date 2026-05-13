@@ -132,6 +132,8 @@ impl StorageCtx {
     pub fn gas_refunded(&self) -> i64 { Self::with_storage(|s| s.gas_refunded()) }
     /// Returns whether the current call context is static.
     pub fn is_static(&self) -> bool { Self::with_storage(|s| s.is_static()) }
+    /// Returns the address that called this precompile.
+    pub fn caller(&self) -> Address { Self::with_storage(|s| s.caller()) }
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
     pub fn deduct_gas(&mut self, gas: u64) -> Result<()> {

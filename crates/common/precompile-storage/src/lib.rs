@@ -17,8 +17,10 @@ pub mod types;
 
 /// In-memory storage backend for tests.
 pub mod hashmap;
-/// Production EVM-backed storage provider (stub).
+/// Production EVM-backed storage provider.
 pub mod evm;
+
+pub use evm::EvmPrecompileStorageProvider;
 
 pub use error::{BasePrecompileError, IntoPrecompileResult, Result};
 pub use packing::FieldLocation;

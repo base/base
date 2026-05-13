@@ -20,6 +20,7 @@ pub struct HashMapStorageProvider {
     timestamp: U256,
     beneficiary: Address,
     block_number: u64,
+    caller: Address,
     is_static: bool,
     counter_sload: u64,
     counter_sstore: u64,
@@ -54,6 +55,7 @@ impl HashMapStorageProvider {
             ),
             beneficiary: Address::ZERO,
             block_number: 0,
+            caller: Address::ZERO,
             is_static: false,
             counter_sload: 0,
             counter_sstore: 0,
@@ -159,6 +161,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.is_static
     }
 
+    fn caller(&self) -> alloy_primitives::Address {
+        self.caller
+    }
+
     fn checkpoint(&mut self) -> JournalCheckpoint {
         let idx = self.snapshots.len();
         self.snapshots.push(Snapshot {
@@ -192,63 +198,82 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
 #[cfg(any(test, feature = "test-utils"))]
 impl HashMapStorageProvider {
+    /// Injects an SLOAD failure at the given address and slot (test-utils only).
     pub fn fail_next_sload_at(&mut self, address: Address, slot: U256) {
         self.fail_on_sload = Some((address, slot));
     }
 
+    /// Returns account info for the given address (test-utils only).
     pub fn get_account_info(&self, address: Address) -> Option<&AccountInfo> {
         self.accounts.get(&address)
     }
 
+    /// Returns emitted events for the given address (test-utils only).
     pub fn get_events(&self, address: Address) -> &Vec<LogData> {
         static EMPTY: Vec<LogData> = Vec::new();
         self.events.get(&address).unwrap_or(&EMPTY)
     }
 
+    /// Sets the nonce for the given address (test-utils only).
     pub fn set_nonce(&mut self, address: Address, nonce: u64) {
         let account = self.accounts.entry(address).or_default();
         account.nonce = nonce;
     }
 
+    /// Overrides the block timestamp (test-utils only).
     pub fn set_timestamp(&mut self, timestamp: U256) {
         self.timestamp = timestamp;
     }
 
+    /// Overrides the block beneficiary (test-utils only).
     pub fn set_beneficiary(&mut self, beneficiary: Address) {
         self.beneficiary = beneficiary;
     }
 
+    /// Overrides the block number (test-utils only).
     pub fn set_block_number(&mut self, block_number: u64) {
         self.block_number = block_number;
     }
 
+    /// Sets the caller address (test-utils only).
+    pub fn set_caller(&mut self, caller: Address) {
+        self.caller = caller;
+    }
+
+    /// Clears all transient storage (test-utils only).
     pub fn clear_transient(&mut self) {
         self.transient.clear();
     }
 
+    /// Clears emitted events for the given address (test-utils only).
     pub fn clear_events(&mut self, address: Address) {
         let _ = self.events.entry(address).and_modify(|v| v.clear()).or_default();
     }
 
+    /// Returns the SLOAD counter (test-utils only).
     pub fn counter_sload(&self) -> u64 {
         self.counter_sload
     }
 
+    /// Returns the SSTORE counter (test-utils only).
     pub fn counter_sstore(&self) -> u64 {
         self.counter_sstore
     }
 
+    /// Resets the SLOAD/SSTORE counters (test-utils only).
     pub fn reset_counters(&mut self) {
         self.counter_sload = 0;
         self.counter_sstore = 0;
     }
 
+    /// Returns an iterator over all stored (address, slot, value) triples (test-utils only).
     pub fn into_storage(self) -> impl Iterator<Item = (Address, U256, U256)> {
         self.internals
             .into_iter()
             .map(|((addr, slot), value)| (addr, slot, value))
     }
 
+    /// Reads a storage slot directly without journal overhead (test-utils only).
     pub fn sload_direct(&self, address: Address, key: U256) -> U256 {
         self.internals.get(&(address, key)).copied().unwrap_or(U256::ZERO)
     }

@@ -62,6 +62,9 @@ pub trait PrecompileStorageProvider {
     /// Returns whether the current call context is static.
     fn is_static(&self) -> bool;
 
+    /// Returns the address that called this precompile.
+    fn caller(&self) -> Address;
+
     /// Creates a new journal checkpoint for atomic state management.
     fn checkpoint(&mut self) -> JournalCheckpoint;
     /// Commits all state changes since the given checkpoint.
