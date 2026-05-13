@@ -982,4 +982,18 @@ mod tests {
             ClusterBackend::determine_status(ProofType::OpSuccinctSp1ClusterCompressed, &sessions);
         assert_eq!(result.status, ProofStatus::Failed);
     }
+
+    #[test]
+    fn test_determine_status_snark_stark_completed_snark_submitting_returns_running() {
+        let sessions = vec![
+            make_session(SessionType::Stark, DbSessionStatus::Completed),
+            make_session(SessionType::Snark, DbSessionStatus::Submitting),
+        ];
+        let result = ClusterBackend::determine_status(
+            ProofType::OpSuccinctSp1ClusterSnarkGroth16,
+            &sessions,
+        );
+        assert_eq!(result.status, ProofStatus::Running);
+        assert!(result.error_message.is_none());
+    }
 }
