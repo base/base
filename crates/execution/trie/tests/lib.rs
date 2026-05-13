@@ -6,7 +6,8 @@ use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorageError, BaseProofsStore, BlockStateDiff,
-    InMemoryProofsStorage, db::MdbxProofsStorage,
+    InMemoryProofsStorage,
+    db::{MdbxProofsStorage, RocksdbProofsStorage},
 };
 use reth_primitives_traits::Account;
 use reth_trie::{
@@ -77,9 +78,15 @@ fn create_mdbx_proofs_storage() -> MdbxProofsStorage {
     MdbxProofsStorage::new(path.path()).unwrap()
 }
 
+fn create_rocksdb_proofs_storage() -> RocksdbProofsStorage {
+    let path = TempDir::new().unwrap().keep();
+    RocksdbProofsStorage::new(&path).unwrap()
+}
+
 /// Test basic storage and retrieval of earliest block number
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_earliest_block_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -102,6 +109,7 @@ fn test_earliest_block_operations<S: BaseProofsStore + BaseProofsInitialStateSto
 /// Test storing and retrieving trie updates
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_trie_updates_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -132,6 +140,7 @@ fn test_trie_updates_operations<S: BaseProofsStore + BaseProofsInitialStateStore
 /// Test cursor operations on empty trie
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_cursor_empty_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -150,6 +159,7 @@ fn test_cursor_empty_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test cursor operations with single entry
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_cursor_single_entry<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -178,6 +188,7 @@ fn test_cursor_single_entry<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test cursor operations with multiple entries
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_cursor_multiple_entries<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -219,6 +230,7 @@ fn test_cursor_multiple_entries<S: BaseProofsStore + BaseProofsInitialStateStore
 /// Test `seek_exact` with existing path
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_seek_exact_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -238,6 +250,7 @@ fn test_seek_exact_existing_path<S: BaseProofsStore + BaseProofsInitialStateStor
 /// Test `seek_exact` with non-existing path
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_seek_exact_non_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -257,6 +270,7 @@ fn test_seek_exact_non_existing_path<S: BaseProofsStore + BaseProofsInitialState
 /// Test `seek_exact` with empty path
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_seek_exact_empty_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -276,6 +290,7 @@ fn test_seek_exact_empty_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test seek to existing path
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_seek_to_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -295,6 +310,7 @@ fn test_seek_to_existing_path<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test seek between existing nodes
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_seek_between_existing_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -318,6 +334,7 @@ fn test_seek_between_existing_nodes<S: BaseProofsStore + BaseProofsInitialStateS
 /// Test seek after all nodes
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_seek_after_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -338,6 +355,7 @@ fn test_seek_after_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test seek before all nodes
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_seek_before_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -363,6 +381,7 @@ fn test_seek_before_all_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test next without prior seek
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_next_without_prior_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -383,6 +402,7 @@ fn test_next_without_prior_seek<S: BaseProofsStore + BaseProofsInitialStateStore
 /// Test next after seek
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_next_after_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -407,6 +427,7 @@ fn test_next_after_seek<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test next at end of trie
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_next_at_end_of_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -428,6 +449,7 @@ fn test_next_at_end_of_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test multiple consecutive next calls
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_multiple_consecutive_next<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -456,6 +478,7 @@ fn test_multiple_consecutive_next<S: BaseProofsStore + BaseProofsInitialStateSto
 /// Test current after operations
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_current_after_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -486,6 +509,7 @@ fn test_current_after_operations<S: BaseProofsStore + BaseProofsInitialStateStor
 /// Test current with no prior operations
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_current_no_prior_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -505,6 +529,7 @@ fn test_current_no_prior_operations<S: BaseProofsStore + BaseProofsInitialStateS
 /// Test same path with different blocks
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_same_path_different_blocks<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -533,6 +558,7 @@ fn test_same_path_different_blocks<S: BaseProofsStore + BaseProofsInitialStateSt
 /// Test deleted branch nodes
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_deleted_branch_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -570,6 +596,7 @@ fn test_deleted_branch_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test account-specific cursor
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_account_specific_cursor<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -607,6 +634,7 @@ fn test_account_specific_cursor<S: BaseProofsStore + BaseProofsInitialStateStore
 /// Test state trie cursor
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_state_trie_cursor<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -639,6 +667,7 @@ fn test_state_trie_cursor<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test mixed account and state data
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_mixed_account_state_data<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -680,6 +709,7 @@ fn test_mixed_account_state_data<S: BaseProofsStore + BaseProofsInitialStateStor
 /// Test lexicographic ordering
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_lexicographic_ordering<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -719,6 +749,7 @@ fn test_lexicographic_ordering<S: BaseProofsStore + BaseProofsInitialStateStore>
 /// Test path prefix scenarios
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_path_prefix_scenarios<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -753,6 +784,7 @@ fn test_path_prefix_scenarios<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test complex nibble combinations
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_complex_nibble_combinations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -795,6 +827,7 @@ fn test_complex_nibble_combinations<S: BaseProofsStore + BaseProofsInitialStateS
 /// Test store and retrieve single account
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_and_retrieve_single_account<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -820,6 +853,7 @@ fn test_store_and_retrieve_single_account<S: BaseProofsStore + BaseProofsInitial
 /// Test account cursor navigation
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_account_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -855,9 +889,65 @@ fn test_account_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateSto
     Ok(())
 }
 
+/// Test that a `RocksDB` cursor reads from the snapshot captured when it is created.
+#[test]
+#[serial]
+fn test_rocksdb_account_cursor_uses_creation_snapshot() -> Result<(), BaseProofsStorageError> {
+    let storage = create_rocksdb_proofs_storage();
+    let key1 = B256::repeat_byte(0x01);
+    let key2 = B256::repeat_byte(0x02);
+    let account1 = create_test_account_with_values(1, 100, 0xAA);
+    let account2 = create_test_account_with_values(2, 200, 0xBB);
+
+    let block1 = BlockWithParent::new(B256::ZERO, NumHash::new(1, B256::repeat_byte(0x11)));
+    let mut post_state = HashedPostState::default();
+    post_state.accounts.insert(key1, Some(account1));
+    post_state.accounts.insert(key2, Some(account2));
+    storage.store_trie_updates(
+        block1,
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdatesSorted::default(),
+            sorted_post_state: post_state.into_sorted(),
+        },
+    )?;
+
+    let mut cursor = storage.account_hashed_cursor(1)?;
+    let first = cursor.seek(key1)?.expect("first account exists");
+    assert_eq!(first.0, key1);
+
+    let replacement_block1 =
+        BlockWithParent::new(B256::ZERO, NumHash::new(1, B256::repeat_byte(0x22)));
+    let mut replacement_post_state = HashedPostState::default();
+    replacement_post_state.accounts.insert(key1, Some(account1));
+    storage.replace_updates(
+        BlockNumHash::new(0, B256::ZERO),
+        vec![(
+            replacement_block1,
+            BlockStateDiff {
+                sorted_trie_updates: TrieUpdatesSorted::default(),
+                sorted_post_state: replacement_post_state.into_sorted(),
+            },
+        )],
+    )?;
+
+    let next = cursor.next()?.expect("existing cursor keeps its original snapshot");
+    assert_eq!(next.0, key2);
+    assert_eq!(next.1.nonce, account2.nonce);
+
+    let mut fresh_cursor = storage.account_hashed_cursor(1)?;
+    let fresh_result = fresh_cursor.seek(key2)?;
+    assert!(
+        !matches!(fresh_result, Some((found_key, _)) if found_key == key2),
+        "fresh cursor should not see the replaced account"
+    );
+
+    Ok(())
+}
+
 /// Test account block versioning
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_account_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -889,6 +979,7 @@ fn test_account_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStor
 /// Test store and retrieve storage
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 
 fn test_store_and_retrieve_storage<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -919,6 +1010,7 @@ fn test_store_and_retrieve_storage<S: BaseProofsStore + BaseProofsInitialStateSt
 /// Test storage cursor navigation
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -951,6 +1043,7 @@ fn test_storage_cursor_navigation<S: BaseProofsStore + BaseProofsInitialStateSto
 /// Test storage account isolation
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_account_isolation<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -986,6 +1079,7 @@ fn test_storage_account_isolation<S: BaseProofsStore + BaseProofsInitialStateSto
 /// Test storage block versioning
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1013,6 +1107,7 @@ fn test_storage_block_versioning<S: BaseProofsStore + BaseProofsInitialStateStor
 /// Test storage zero value deletion
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_zero_value_deletion<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1052,6 +1147,7 @@ fn test_storage_zero_value_deletion<S: BaseProofsStore + BaseProofsInitialStateS
 /// Test that zero values are skipped during iteration
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_storage_cursor_skips_zero_values<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1101,6 +1197,7 @@ fn test_storage_cursor_skips_zero_values<S: BaseProofsStore + BaseProofsInitialS
 /// Test empty cursors
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_empty_cursors<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1121,6 +1218,7 @@ fn test_empty_cursors<S: BaseProofsStore + BaseProofsInitialStateStore>(
 /// Test cursor boundary conditions
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_cursor_boundary_conditions<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1150,6 +1248,7 @@ fn test_cursor_boundary_conditions<S: BaseProofsStore + BaseProofsInitialStateSt
 /// Test large batch operations
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_large_batch_operations<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1188,6 +1287,7 @@ fn test_large_batch_operations<S: BaseProofsStore + BaseProofsInitialStateStore>
 /// it should iterate all existing values for that address and create deletion entries for them.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1279,6 +1379,7 @@ fn test_store_trie_updates_with_wiped_storage<S: BaseProofsStore + BaseProofsIni
 /// downstream of `LiveTrieCollector`.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_trie_updates_with_wiped_storage_and_new_slots<
     S: BaseProofsStore + BaseProofsInitialStateStore,
@@ -1362,6 +1463,7 @@ fn test_store_trie_updates_with_wiped_storage_and_new_slots<
 /// through the cursor APIs.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_store_trie_updates_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1536,6 +1638,7 @@ fn test_store_trie_updates_comprehensive<S: BaseProofsStore + BaseProofsInitialS
 /// (`hashed_accounts`, `hashed_storages`, `account_branches`, `storage_branches`).
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_replace_updates_applies_all_updates<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1797,12 +1900,83 @@ fn test_replace_updates_applies_all_updates<S: BaseProofsStore + BaseProofsIniti
     Ok(())
 }
 
+/// Test that multi-block replacements make wiped storage see storage added earlier in the
+/// replacement chain.
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
+#[serial]
+fn test_replace_updates_wipes_storage_added_by_prior_replacement_block<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let common_block = BlockWithParent::new(B256::ZERO, NumHash::new(1, B256::repeat_byte(0xA1)));
+    storage.store_trie_updates(common_block, BlockStateDiff::default())?;
+
+    let old_block_2 =
+        BlockWithParent::new(common_block.block.hash, NumHash::new(2, B256::repeat_byte(0xB2)));
+    let old_block_3 =
+        BlockWithParent::new(old_block_2.block.hash, NumHash::new(3, B256::repeat_byte(0xB3)));
+    storage.store_trie_updates(old_block_2, BlockStateDiff::default())?;
+    storage.store_trie_updates(old_block_3, BlockStateDiff::default())?;
+
+    let storage_address = B256::repeat_byte(0x44);
+    let storage_slot = B256::repeat_byte(0x55);
+    let storage_value = U256::from(0x1234);
+
+    let replacement_block_2 =
+        BlockWithParent::new(common_block.block.hash, NumHash::new(2, B256::repeat_byte(0xC2)));
+    let replacement_block_3 = BlockWithParent::new(
+        replacement_block_2.block.hash,
+        NumHash::new(3, B256::repeat_byte(0xC3)),
+    );
+
+    let mut replacement_post_state_2 = HashedPostState::default();
+    let mut replacement_storage_2 = HashedStorage::new(false);
+    replacement_storage_2.storage.insert(storage_slot, storage_value);
+    replacement_post_state_2.storages.insert(storage_address, replacement_storage_2);
+
+    let mut replacement_post_state_3 = HashedPostState::default();
+    replacement_post_state_3.storages.insert(storage_address, HashedStorage::new(true));
+
+    storage.replace_updates(
+        BlockNumHash::new(common_block.block.number, common_block.block.hash),
+        vec![
+            (
+                replacement_block_2,
+                BlockStateDiff {
+                    sorted_trie_updates: TrieUpdatesSorted::default(),
+                    sorted_post_state: replacement_post_state_2.into_sorted(),
+                },
+            ),
+            (
+                replacement_block_3,
+                BlockStateDiff {
+                    sorted_trie_updates: TrieUpdatesSorted::default(),
+                    sorted_post_state: replacement_post_state_3.into_sorted(),
+                },
+            ),
+        ],
+    )?;
+
+    let mut storage_cursor = storage.storage_hashed_cursor(storage_address, 3)?;
+    let storage_result = storage_cursor.seek(storage_slot)?;
+    assert!(
+        !matches!(storage_result, Some((found_slot, _)) if found_slot == storage_slot),
+        "storage added by replacement block 2 should be wiped by replacement block 3"
+    );
+
+    Ok(())
+}
+
 /// Test that pure deletions (nodes only in `removed_nodes`) are properly stored
 ///
 /// This test verifies that when a node appears only in `removed_nodes` (not in updates),
 /// it is properly stored as a deletion and subsequent queries return None for that path.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_pure_deletions_stored_correctly<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
@@ -1937,6 +2111,7 @@ fn test_pure_deletions_stored_correctly<S: BaseProofsStore + BaseProofsInitialSt
 /// when processing trie updates that both remove and update the same node.
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[test_case(create_rocksdb_proofs_storage(); "Rocksdb")]
 #[serial]
 fn test_updates_take_precedence_over_removals<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,

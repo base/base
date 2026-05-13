@@ -518,7 +518,8 @@ impl MdbxProofsStorage {
         let mut storage_trie_keys = Vec::<StorageTrieKey>::with_capacity(storage_trie_len);
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
             if nodes.is_deleted && append_mode {
-                let mut ro = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
+                let cursor = tx.cursor_dup_read::<StorageTrieHistory>()?;
+                let mut ro = MdbxTrieCursor::new(cursor, block_number - 1, Some(*hashed_address));
                 let keys = self.wipe_and_overlay(
                     tx,
                     block_number,
@@ -546,7 +547,8 @@ impl MdbxProofsStorage {
         let mut hashed_storage_keys = Vec::<HashedStorageKey>::with_capacity(hashed_storage_len);
         for (hashed_address, storage) in sorted_post_state.storages {
             if append_mode && storage.is_wiped() {
-                let mut ro = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
+                let cursor = tx.cursor_dup_read::<HashedStorageHistory>()?;
+                let mut ro = MdbxStorageCursor::new(cursor, block_number - 1, hashed_address);
                 let keys = self.wipe_and_overlay(
                     tx,
                     block_number,
