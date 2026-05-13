@@ -3497,7 +3497,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "base-cli-utils",
- "base-common-chains",
  "base-common-genesis",
  "base-common-network",
  "base-consensus-cli",
@@ -3514,7 +3513,6 @@ dependencies = [
  "rstest",
  "serde",
  "serde_json",
- "strum",
  "tempfile",
  "tokio",
  "tracing",
@@ -3550,6 +3548,7 @@ dependencies = [
  "reqwest 0.13.2",
  "rstest",
  "serde_json",
+ "strum",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -3972,13 +3971,23 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "backon",
+ "base-bundle-extension",
+ "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
  "base-execution-trie",
+ "base-flashblocks",
+ "base-flashblocks-node",
+ "base-metering",
  "base-node-core",
+ "base-node-runner",
+ "base-proofs-extension",
+ "base-tx-forwarding",
+ "base-txpool-rpc",
+ "base-txpool-tracing",
  "clap",
  "eyre",
  "futures",
@@ -4007,6 +4016,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -5547,22 +5557,11 @@ dependencies = [
 name = "base-reth-node"
 version = "0.0.0"
 dependencies = [
- "base-bundle-extension",
  "base-cli-utils",
  "base-execution-cli",
- "base-flashblocks",
- "base-flashblocks-node",
- "base-metering",
- "base-node-core",
- "base-node-runner",
- "base-proofs-extension",
  "base-reth-cli",
- "base-tx-forwarding",
- "base-txpool-rpc",
- "base-txpool-tracing",
  "clap",
  "reth-cli-util",
- "url",
 ]
 
 [[package]]

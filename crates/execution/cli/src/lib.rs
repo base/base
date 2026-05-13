@@ -13,6 +13,8 @@ pub mod app;
 pub mod chainspec;
 /// Base CLI commands.
 pub mod commands;
+/// Standard Base execution-node runner wiring.
+pub mod standard_node;
 
 use std::{ffi::OsString, fmt, marker::PhantomData};
 
@@ -31,6 +33,7 @@ use reth_node_core::{
     args::{LogArgs, TraceArgs},
     version::version_metadata,
 };
+pub use standard_node::{StandardBaseRethNode, StandardNodeArgs};
 // This allows us to manually enable node metrics features, required for proper jemalloc metric
 // reporting
 use reth_node_metrics as _;

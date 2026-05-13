@@ -1,23 +1,16 @@
 //! Contains the CLI entry point for the Base consensus binary.
 
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use alloy_chains::Chain;
-use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use base_cli_utils::{CliStyles, LogConfig, RuntimeManager};
-use base_common_chains::Registry;
 use base_consensus_cli::{
-    L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, P2PArgs, RpcArgs, SequencerArgs,
+    ConsensusNodeArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, RpcArgs,
 };
-use base_consensus_node::{
-    DelegateL2Client, EngineConfig, FollowNode, L1Config, L1ConfigBuilder, NodeMode,
-    RollupNodeBuilder,
-};
+use base_consensus_node::{DelegateL2Client, EngineConfig, FollowNode, L1Config, NodeMode};
 use base_consensus_providers::OnlineBeaconClient;
 use clap::{Args, Parser, Subcommand};
-use eyre::Context;
-use strum::IntoEnumIterator;
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -248,64 +241,17 @@ impl Follow {
 /// Node CLI arguments.
 #[derive(Args, Clone, Debug)]
 pub struct Node {
-    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(
-        long = "chain",
-        short = 'n',
-        global = true,
-        default_value = "8453",
-        env = "BASE_NODE_NETWORK"
-    )]
-    pub l2_chain_id: Chain,
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
+
     /// Metrics configuration.
     #[command(flatten)]
     pub metrics: MetricsArgs,
-    /// The mode to run the node in.
-    #[arg(
-        long = "mode",
-        default_value_t = NodeMode::Validator,
-        env = "BASE_NODE_MODE",
-        help = format!(
-            "The mode to run the node in. Supported modes are: {}",
-            NodeMode::iter()
-                .map(|mode| format!("\"{}\"", mode.to_string()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    )]
-    pub node_mode: NodeMode,
 
-    /// L1 RPC CLI arguments.
-    #[clap(flatten)]
-    pub l1_rpc_args: L1ClientArgs,
-
-    /// L2 engine CLI arguments.
-    #[clap(flatten)]
-    pub l2_client_args: L2ClientArgs,
-
-    /// L1 configuration file.
-    #[clap(flatten)]
-    pub l1_config: L1ConfigFile,
-    /// L2 configuration file.
-    #[clap(flatten)]
-    pub l2_config: L2ConfigFile,
-
-    /// P2P CLI arguments.
+    /// Consensus node arguments.
     #[command(flatten)]
-    pub p2p_flags: P2PArgs,
-    /// RPC CLI arguments.
-    #[command(flatten)]
-    pub rpc_flags: RpcArgs,
-    /// SEQUENCER CLI arguments.
-    #[command(flatten)]
-    pub sequencer_flags: SequencerArgs,
-
-    /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
-    #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
-    pub safedb_path: Option<PathBuf>,
+    pub args: ConsensusNodeArgs,
 }
 
 impl Node {
@@ -322,132 +268,44 @@ impl Node {
             base_cli_utils::register_version_metrics!();
         })?;
 
-        // Run the subcommand.
-        RuntimeManager::new().run_until_ctrl_c(self.exec())
-    }
-
-    /// Returns the signer [`Address`] from the rollup config for the given l2 chain id.
-    fn genesis_signer(&self) -> eyre::Result<Address> {
-        let id = self.l2_chain_id;
-        Registry::unsafe_block_signer(id.id())
-            .ok_or_else(|| eyre::eyre!("No unsafe block signer found for chain ID: {id}"))
-    }
-
-    /// Validates that a sequencer signing key is configured when running in sequencer mode.
-    fn validate_sequencer_key(&self) -> eyre::Result<()> {
-        if self.node_mode.is_sequencer() {
-            let signer = &self.p2p_flags.signer;
-            if signer.sequencer_key.is_none()
-                && signer.sequencer_key_path.is_none()
-                && signer.endpoint.is_none()
-            {
-                eyre::bail!(
-                    "sequencer mode requires a signing key; \
-                     provide --p2p.sequencer.key, --p2p.sequencer.key.path, \
-                     or --p2p.signer.endpoint"
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Run the Node subcommand.
-    pub async fn exec(&self) -> eyre::Result<()> {
-        self.validate_sequencer_key()?;
-
-        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
-
-        info!(
-            target: "rollup_node",
-            chain_id = cfg.l2_chain_id.id(),
-            "Starting rollup node services"
-        );
-        for hf in cfg.hardforks.to_string().lines() {
-            info!(target: "rollup_node", hardfork = %hf, "hardfork");
-        }
-
-        let l1_chain_config =
-            self.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
-        let l1_config = L1ConfigBuilder {
-            chain_config: l1_chain_config,
-            trust_rpc: self.l1_rpc_args.l1_trust_rpc,
-            beacon: self.l1_rpc_args.l1_beacon.clone(),
-            rpc_url: self.l1_rpc_args.l1_eth_rpc.clone(),
-            slot_duration_override: self.l1_rpc_args.l1_slot_duration_override,
-            verifier_l1_confs: self.l1_rpc_args.l1_verifier_confs,
-        };
+        let cfg = self.args.load_rollup_config()?;
 
         // If metrics are enabled, initialize the global cli metrics.
         if self.metrics.enabled {
             init_rollup_config_metrics(&cfg);
-            init_p2p_metrics(&self.p2p_flags);
+            init_p2p_metrics(&self.args.p2p_flags);
         }
 
-        let jwt_secret = self.l2_client_args.validate_jwt().await?;
-
-        self.p2p_flags.check_ports()?;
-        let genesis_signer = self.genesis_signer().ok();
-        let p2p_config = self
-            .p2p_flags
-            .clone()
-            .config(
-                &cfg,
-                self.l2_chain_id.into(),
-                Some(self.l1_rpc_args.l1_eth_rpc.clone()),
-                genesis_signer,
-            )
-            .await?;
-        let rpc_config = self.rpc_flags.clone().into();
-
-        let engine_config = EngineConfig {
-            config: Arc::new(cfg.clone()),
-            l2_url: self.l2_client_args.l2_engine_rpc.clone(),
-            l2_jwt_secret: jwt_secret,
-            l1_url: self.l1_rpc_args.l1_eth_rpc.clone(),
-            mode: self.node_mode,
-        };
-
-        let mut builder = RollupNodeBuilder::new(
-            cfg,
-            l1_config,
-            self.l2_client_args.l2_trust_rpc,
-            engine_config,
-            p2p_config,
-            rpc_config,
-        )
-        .with_sequencer_config(self.sequencer_flags.config());
-        if let Some(path) = self.safedb_path.clone() {
-            builder = builder.with_safedb_path(path);
-        }
-        builder.build().await.wrap_err("Failed to build rollup node")?.start().await.map_err(
-            |e| {
-                error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
-                eyre::eyre!("{e}")
-            },
-        )?;
-
-        Ok(())
+        // Run the subcommand.
+        RuntimeManager::new()
+            .run_until_ctrl_c(self.args.start_with_overrides(cfg, Default::default()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Mutex};
 
     use alloy_chains::Chain;
     use alloy_primitives::B256;
-    use base_consensus_cli::{P2PArgs, SignerArgs};
+    use base_consensus_cli::{ConsensusNodeArgs, P2PArgs, SequencerArgs, SignerArgs};
     use base_consensus_node::NodeMode;
     use rstest::rstest;
     use url::Url;
 
     use super::*;
 
-    fn default_node() -> Node {
-        Node {
+    static SIGNER_ENV_LOCK: Mutex<()> = Mutex::new(());
+    const SIGNER_ENV_KEYS: &[&str] = &[
+        "BASE_NODE_P2P_SEQUENCER_KEY",
+        "BASE_NODE_P2P_SEQUENCER_KEY_PATH",
+        "BASE_NODE_P2P_SIGNER_ENDPOINT",
+        "BASE_NODE_P2P_SIGNER_ADDRESS",
+    ];
+
+    fn default_node_args() -> ConsensusNodeArgs {
+        ConsensusNodeArgs {
             l2_chain_id: Chain::from(8453_u64),
-            logging: LogArgs::default(),
-            metrics: MetricsArgs::default(),
             node_mode: NodeMode::default(),
             l1_rpc_args: L1ClientArgs::default(),
             l2_client_args: L2ClientArgs::default(),
@@ -481,22 +339,27 @@ mod tests {
     #[case::key_path(vec![("BASE_NODE_P2P_SEQUENCER_KEY_PATH", "/tmp/key.hex")])]
     #[case::remote_endpoint(vec![("BASE_NODE_P2P_SIGNER_ENDPOINT", "http://localhost:8080"), ("BASE_NODE_P2P_SIGNER_ADDRESS", "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a")])]
     fn test_validate_sequencer_key_env_var(#[case] env_vars: Vec<(&str, &str)>) {
+        let _guard = SIGNER_ENV_LOCK.lock().unwrap();
+
+        for k in SIGNER_ENV_KEYS {
+            // SAFETY: guarded by SIGNER_ENV_LOCK.
+            unsafe { std::env::remove_var(k) }
+        }
         for (k, v) in &env_vars {
-            // SAFETY: each rstest case uses distinct env var names, so concurrent
-            // test threads do not read or write the same variables simultaneously.
+            // SAFETY: guarded by SIGNER_ENV_LOCK.
             unsafe { std::env::set_var(k, v) }
         }
         let signer = SignerArgs::parse_from(["test"]);
-        for (k, _) in &env_vars {
-            // SAFETY: see above.
+        for k in SIGNER_ENV_KEYS {
+            // SAFETY: guarded by SIGNER_ENV_LOCK.
             unsafe { std::env::remove_var(k) }
         }
-        let node = Node {
+        let args = ConsensusNodeArgs {
             node_mode: NodeMode::Sequencer,
             p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
-            ..default_node()
+            ..default_node_args()
         };
-        assert!(node.validate_sequencer_key().is_ok());
+        assert!(args.validate_sequencer_key().is_ok());
     }
 
     #[rstest]
@@ -510,11 +373,11 @@ mod tests {
         #[case] signer: SignerArgs,
         #[case] expected_ok: bool,
     ) {
-        let node = Node {
+        let args = ConsensusNodeArgs {
             node_mode: mode,
             p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
-            ..default_node()
+            ..default_node_args()
         };
-        assert_eq!(node.validate_sequencer_key().is_ok(), expected_ok);
+        assert_eq!(args.validate_sequencer_key().is_ok(), expected_ok);
     }
 }

@@ -53,6 +53,7 @@ tracing = { workspace = true, features = ["std"] }
 
 # misc
 eyre.workspace = true
+strum.workspace = true
 thiserror = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 
