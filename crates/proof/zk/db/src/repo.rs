@@ -605,6 +605,117 @@ impl ProofRequestRepo {
         Ok(id)
     }
 
+    /// Reserve a `(proof_request_id, session_type)` slot before submitting expensive work
+    /// to a backend. Returns `Some(reservation_id)` if this caller won the race and should
+    /// proceed; `None` if another caller already holds the active row.
+    ///
+    /// The synthetic `reservation_id` is written to `backend_session_id` so the partial
+    /// unique index `idx_proof_sessions_request_type_running_unique` enforces single-winner
+    /// semantics. Callers must follow up with [`Self::activate_reserved_proof_session`] on
+    /// success or [`Self::fail_reserved_proof_session`] on failure so the slot is either
+    /// updated to the real backend session id or released by transitioning to FAILED.
+    pub async fn reserve_proof_session(
+        &self,
+        proof_request_id: Uuid,
+        session_type: SessionType,
+    ) -> Result<Option<String>> {
+        let reservation_id = format!(
+            "reservation-{}-{}",
+            session_type.as_str().to_ascii_lowercase(),
+            Uuid::new_v4()
+        );
+
+        // The partial unique index is restricted to rows with status = 'RUNNING'; the
+        // matching predicate must be repeated here so Postgres infers that index for
+        // ON CONFLICT.
+        let row = sqlx::query(
+            r#"
+            INSERT INTO proof_sessions (
+                proof_request_id, session_type, backend_session_id, status, metadata
+            )
+            VALUES ($1, $2, $3, $4, NULL)
+            ON CONFLICT (proof_request_id, session_type)
+                WHERE status = 'RUNNING'
+                DO NOTHING
+            RETURNING backend_session_id
+            "#,
+        )
+        .bind(proof_request_id)
+        .bind(session_type.as_str())
+        .bind(&reservation_id)
+        .bind(SessionStatus::Running.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.get("backend_session_id")))
+    }
+
+    /// Swap a reservation row's synthetic `backend_session_id` for the real one returned
+    /// by the proving backend. Returns `true` when the reserved row was found and
+    /// updated. A `false` return means the reservation was no longer eligible (e.g.
+    /// already failed or activated by an out-of-band path) and the caller should treat
+    /// the backend job as orphaned.
+    pub async fn activate_reserved_proof_session(
+        &self,
+        reservation_id: &str,
+        session: CreateProofSession,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_sessions
+            SET backend_session_id = $1,
+                metadata = $2,
+                error_message = NULL
+            WHERE backend_session_id = $3
+              AND proof_request_id = $4
+              AND session_type = $5
+              AND status = 'RUNNING'
+            "#,
+        )
+        .bind(&session.backend_session_id)
+        .bind(&session.metadata)
+        .bind(reservation_id)
+        .bind(session.proof_request_id)
+        .bind(session.session_type.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a reservation row as FAILED so the partial unique index releases the slot
+    /// and a future poll can retry. Used when the backend submit step itself fails
+    /// after a successful reservation.
+    pub async fn fail_reserved_proof_session(
+        &self,
+        proof_request_id: Uuid,
+        session_type: SessionType,
+        reservation_id: &str,
+        error_message: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_sessions
+            SET status = $1,
+                error_message = $2,
+                completed_at = NOW()
+            WHERE backend_session_id = $3
+              AND proof_request_id = $4
+              AND session_type = $5
+              AND status = 'RUNNING'
+            "#,
+        )
+        .bind(SessionStatus::Failed.as_str())
+        .bind(error_message)
+        .bind(reservation_id)
+        .bind(proof_request_id)
+        .bind(session_type.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Get a proof session by backend session ID
     pub async fn get_session_by_backend_id(
         &self,

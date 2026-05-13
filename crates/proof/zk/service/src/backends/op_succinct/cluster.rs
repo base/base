@@ -611,11 +611,94 @@ impl ClusterBackend {
     }
 
     /// Submit an aggregation proof (stage 2) after the STARK proof completes.
+    ///
+    /// Concurrent pollers race here (`StatusPoller` + `GetProof` RPC, see
+    /// `proof_request_manager.rs`). To prevent duplicate Groth16 jobs from being
+    /// enqueued on the SP1 cluster, the SNARK session row is reserved in Postgres
+    /// **before** any expensive work. The partial unique index
+    /// `idx_proof_sessions_request_type_running_unique` ensures only one caller wins;
+    /// the others observe `Ok(None)` and never reach `create_request`.
     async fn submit_aggregation_proof(
         &self,
         proof_request: &ProofRequest,
         repo: &ProofRequestRepo,
     ) -> anyhow::Result<()> {
+        let reservation_id = match repo
+            .reserve_proof_session(proof_request.id, SessionType::Snark)
+            .await
+        {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                info!(
+                    proof_request_id = %proof_request.id,
+                    "SNARK session already reserved by another worker; skipping aggregation submit"
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                // Defer to the next poll rather than terminalizing the request on a
+                // transient store error.
+                warn!(
+                    proof_request_id = %proof_request.id,
+                    error = %e,
+                    "failed to reserve SNARK proof session; deferring aggregation to next poll"
+                );
+                return Ok(());
+            }
+        };
+
+        match self.build_aggregation_session(proof_request).await {
+            Ok(session) => {
+                let backend_session_id = session.backend_session_id.clone();
+                let activated =
+                    repo.activate_reserved_proof_session(&reservation_id, session).await?;
+                if !activated {
+                    warn!(
+                        proof_request_id = %proof_request.id,
+                        reservation_id = %reservation_id,
+                        backend_session_id = %backend_session_id,
+                        "SNARK reservation row missing at activation time; backend job may be orphaned"
+                    );
+                } else {
+                    info!(
+                        proof_request_id = %proof_request.id,
+                        backend_session_id = %backend_session_id,
+                        "activated SNARK proof session for aggregation"
+                    );
+                }
+                Ok(())
+            }
+            Err(e) => {
+                let error_message = format!("aggregation submit failed: {e}");
+                if let Err(fail_err) = repo
+                    .fail_reserved_proof_session(
+                        proof_request.id,
+                        SessionType::Snark,
+                        &reservation_id,
+                        &error_message,
+                    )
+                    .await
+                {
+                    warn!(
+                        proof_request_id = %proof_request.id,
+                        reservation_id = %reservation_id,
+                        error = %fail_err,
+                        "failed to release SNARK reservation after submit failure"
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Build the aggregation stdin, submit it to the SP1 cluster, and return the
+    /// resulting [`CreateProofSession`] descriptor. The DB write happens in the caller
+    /// via [`ProofRequestRepo::activate_reserved_proof_session`] so that the reservation
+    /// flow stays atomic with respect to the cluster submit.
+    async fn build_aggregation_session(
+        &self,
+        proof_request: &ProofRequest,
+    ) -> anyhow::Result<CreateProofSession> {
         let BackendConfig::OpSuccinct {
             cluster_rpc,
             artifact_client,
@@ -635,7 +718,6 @@ impl ClusterBackend {
             .parse()
             .map_err(|e| anyhow::anyhow!("invalid prover_address in DB: {e}"))?;
 
-        // 1. Deserialize STARK proof.
         let stark_receipt_bytes = proof_request
             .stark_receipt
             .as_ref()
@@ -645,14 +727,12 @@ impl ClusterBackend {
             bincode::serde::decode_from_slice(stark_receipt_bytes, bincode::config::standard())
                 .map_err(|e| anyhow::anyhow!("Failed to deserialize STARK proof: {e}"))?;
 
-        // 2. Extract boot_info from public values.
         let mut public_values = stark_proof_with_pv.public_values.clone();
         let boot_info: base_proof_succinct_client_utils::boot::BootInfoStruct =
             public_values.read();
         let boot_infos = vec![boot_info];
         let proofs = vec![stark_proof_with_pv.proof];
 
-        // 3. Fetch L1 headers for aggregation.
         let fetcher = self.provider.fetcher();
         let header = fetcher
             .get_latest_l1_head_in_batch(&boot_infos)
@@ -672,7 +752,6 @@ impl ClusterBackend {
             "fetched L1 headers for aggregation proof"
         );
 
-        // 4. Build aggregation stdin.
         let stdin = get_agg_proof_stdin(
             proofs,
             boot_infos,
@@ -683,7 +762,6 @@ impl ClusterBackend {
         )
         .map_err(|e| anyhow::anyhow!("Failed to build aggregation stdin: {e}"))?;
 
-        // 5. Submit aggregation ELF with Groth16 mode.
         let proof_config = ProofRequestConfig {
             cluster_rpc: cluster_rpc.clone(),
             mode: ProofMode::Groth16,
@@ -709,7 +787,6 @@ impl ClusterBackend {
             "aggregation proof (Groth16) submitted to SP1 cluster"
         );
 
-        // 6. Create SNARK session in DB.
         let start_time_secs = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("system time before UNIX epoch")
@@ -724,21 +801,12 @@ impl ClusterBackend {
             "start_time_secs": start_time_secs,
         });
 
-        let session = CreateProofSession {
+        Ok(CreateProofSession {
             proof_request_id: proof_request.id,
             session_type: SessionType::Snark,
             backend_session_id: cluster_proof_request.proof_id,
             metadata: Some(metadata),
-        };
-
-        repo.create_proof_session(session).await?;
-
-        info!(
-            proof_request_id = %proof_request.id,
-            "created SNARK proof session for aggregation"
-        );
-
-        Ok(())
+        })
     }
 }
 
