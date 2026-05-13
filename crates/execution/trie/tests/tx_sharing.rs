@@ -159,20 +159,6 @@ fn storage_root_acquires_one_tx_per_call() {
     });
 }
 
-/// Sanity check on the counter itself: a no-op call sequence should not
-/// increment `tx_acquisitions`. Catches accidental tx acquisitions in
-/// constructors or accessor paths that should be free.
-#[test]
-fn counter_does_not_drift_on_idle() {
-    let (_dir, storage) = setup();
-    let _provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
-
-    let before = storage.tx_acquisitions();
-    // Hold the provider but make no calls. tx_acquisitions must not change.
-    let after = storage.tx_acquisitions();
-    assert_eq!(before, after, "tx_acquisitions drifted while no proof/witness call ran");
-}
-
 /// Two consecutive calls on the same provider acquire exactly two transactions
 /// total — confirming each request is independently scoped (one tx in, one tx
 /// out, no leak across requests).

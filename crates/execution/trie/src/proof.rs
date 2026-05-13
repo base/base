@@ -49,10 +49,7 @@ pub trait DatabaseProof<'tx, S: BaseProofsStore + 'tx> {
 }
 
 impl<'tx, S> DatabaseProof<'tx, S>
-    for Proof<
-        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
-    >
+    for Proof<BaseProofsTrieCursorFactory<'tx, S>, BaseProofsHashedAccountCursorFactory<'tx, S>>
 where
     S: BaseProofsStore + 'tx + Clone,
 {
@@ -126,8 +123,8 @@ pub trait DatabaseStorageProof<'tx, S: BaseProofsStore + 'tx> {
 impl<'tx, S> DatabaseStorageProof<'tx, S>
     for proof::StorageProof<
         'static,
-        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,
@@ -228,10 +225,7 @@ pub trait DatabaseStateRoot<'tx, S: BaseProofsStore + 'tx + Clone>: Sized {
 }
 
 impl<'tx, S> DatabaseStateRoot<'tx, S>
-    for StateRoot<
-        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
-    >
+    for StateRoot<BaseProofsTrieCursorFactory<'tx, S>, BaseProofsHashedAccountCursorFactory<'tx, S>>
 where
     S: BaseProofsStore + 'tx + Clone,
 {
@@ -332,8 +326,8 @@ pub trait DatabaseStorageRoot<'tx, S: BaseProofsStore + 'tx + Clone> {
 
 impl<'tx, S> DatabaseStorageRoot<'tx, S>
     for StorageRoot<
-        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,
@@ -377,8 +371,8 @@ pub trait DatabaseTrieWitness<'tx, S: BaseProofsStore + 'tx + Clone> {
 
 impl<'tx, S> DatabaseTrieWitness<'tx, S>
     for TrieWitness<
-        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,

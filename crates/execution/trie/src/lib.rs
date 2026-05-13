@@ -49,9 +49,7 @@ pub use cursor::{
 };
 
 pub mod cursor_factory;
-pub use cursor_factory::{
-    BaseProofsHashedAccountCursorFactory, BaseProofsTrieCursorFactory,
-};
+pub use cursor_factory::{BaseProofsHashedAccountCursorFactory, BaseProofsTrieCursorFactory};
 
 pub mod error;
 pub use error::{BaseProofsStorageError, BaseProofsStorageResult};

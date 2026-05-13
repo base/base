@@ -320,10 +320,7 @@ where
         = BaseProofsHashedCursorWithMetrics<S::AccountHashedCursor<'tx>>
     where
         Self: 'tx;
-    type Tx<'tx>
-        = S::Tx<'tx>
-    where
-        Self: 'tx;
+    type Tx = S::Tx;
 
     #[inline]
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -374,20 +371,20 @@ where
     }
 
     #[inline]
-    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx<'_>> {
+    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
         self.tx_acquisitions.fetch_add(1, Ordering::Relaxed);
         self.storage.ro_tx()
     }
 
     #[inline]
-    fn storage_trie_cursor_with_tx<'a, 'tx>(
+    fn storage_trie_cursor_with_tx<'tx>(
         &self,
-        tx: &'a Self::Tx<'tx>,
+        tx: &'tx Self::Tx,
         hashed_address: B256,
         max_block_number: u64,
-    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'a>>
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
     where
-        Self: 'a + 'tx,
+        Self: 'tx,
     {
         let cursor =
             self.storage.storage_trie_cursor_with_tx(tx, hashed_address, max_block_number)?;
@@ -395,27 +392,27 @@ where
     }
 
     #[inline]
-    fn account_trie_cursor_with_tx<'a, 'tx>(
+    fn account_trie_cursor_with_tx<'tx>(
         &self,
-        tx: &'a Self::Tx<'tx>,
+        tx: &'tx Self::Tx,
         max_block_number: u64,
-    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'a>>
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
     where
-        Self: 'a + 'tx,
+        Self: 'tx,
     {
         let cursor = self.storage.account_trie_cursor_with_tx(tx, max_block_number)?;
         Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 
     #[inline]
-    fn storage_hashed_cursor_with_tx<'a, 'tx>(
+    fn storage_hashed_cursor_with_tx<'tx>(
         &self,
-        tx: &'a Self::Tx<'tx>,
+        tx: &'tx Self::Tx,
         hashed_address: B256,
         max_block_number: u64,
-    ) -> BaseProofsStorageResult<Self::StorageCursor<'a>>
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
     where
-        Self: 'a + 'tx,
+        Self: 'tx,
     {
         let cursor =
             self.storage.storage_hashed_cursor_with_tx(tx, hashed_address, max_block_number)?;
@@ -423,13 +420,13 @@ where
     }
 
     #[inline]
-    fn account_hashed_cursor_with_tx<'a, 'tx>(
+    fn account_hashed_cursor_with_tx<'tx>(
         &self,
-        tx: &'a Self::Tx<'tx>,
+        tx: &'tx Self::Tx,
         max_block_number: u64,
-    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'a>>
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
     where
-        Self: 'a + 'tx,
+        Self: 'tx,
     {
         let cursor = self.storage.account_hashed_cursor_with_tx(tx, max_block_number)?;
         Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
