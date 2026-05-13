@@ -29,8 +29,10 @@ use reth_primitives_traits::{TxTy, WithEncoded};
 use reth_storage_errors as _;
 #[cfg(feature = "std")]
 use reth_storage_errors::any::AnyError;
-use revm::context::{BlockEnv, TxEnv};
-use revm::primitives::{Address, B256, Bytes as RevmBytes};
+use revm::{
+    context::{BlockEnv, TxEnv},
+    primitives::{Address, B256, Bytes as RevmBytes},
+};
 
 use crate::{BaseBlockAssembler, BaseEvmEnvBuilder, BaseRethReceiptBuilder};
 
