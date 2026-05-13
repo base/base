@@ -7,7 +7,7 @@ use syn::{Expr, Ident, Visibility};
 
 pub(crate) fn gen_handler_field_decl(field: &LayoutField<'_>) -> proc_macro2::TokenStream {
     let field_name = field.name;
-    let doc_str = format!("Storage handler for the `{}` slot.", field_name);
+    let doc_str = format!("Storage handler for the `{field_name}` slot.");
     let handler_type = match &field.kind {
         FieldKind::Direct(ty) => {
             quote! { <#ty as ::base_precompile_storage::StorableType>::Handler }
