@@ -64,6 +64,10 @@ where
 {
     type Error = base_proof_executor::ExecutorError;
 
+    fn is_deposit_only_retryable(error: &Self::Error) -> bool {
+        error.is_deposit_only_retryable()
+    }
+
     /// Waits for the executor to be ready.
     async fn wait_until_ready(&mut self) {
         /* no-op for the stateless executor */

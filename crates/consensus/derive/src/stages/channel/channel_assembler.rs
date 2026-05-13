@@ -73,10 +73,10 @@ where
         {
             warn!(
                 target: "channel_assembler",
-                "Channel (ID: {}) timed out at L1 origin #{}, open block #{}. Discarding channel.",
-                hex::encode(channel.id()),
-                origin.number,
-                channel.open_block_number()
+                channel_id = %hex::encode(channel.id()),
+                origin_number = origin.number,
+                open_block_number = channel.open_block_number(),
+                "Channel timed out at L1 origin; discarding channel"
             );
             self.channel = None;
         }
@@ -88,9 +88,9 @@ where
         if next_frame.number == 0 {
             info!(
                 target: "channel_assembler",
-                "Starting new channel (ID: {}) at L1 origin #{}",
-                hex::encode(next_frame.id),
-                origin.number
+                channel_id = %hex::encode(next_frame.id),
+                origin_number = origin.number,
+                "Starting new channel"
             );
             self.channel = Some(Channel::new(next_frame.id, origin));
         }
@@ -108,17 +108,30 @@ where
             // frame.
             debug!(
                 target: "channel_assembler",
-                "Adding frame #{} to channel (ID: {}) at L1 origin #{}",
-                next_frame.number,
-                hex::encode(channel.id()),
-                origin.number
+                frame_number = next_frame.number,
+                channel_id = %hex::encode(channel.id()),
+                origin_number = origin.number,
+                "Adding frame to channel"
             );
+            let expected_frame_number = channel.len();
+            if usize::from(next_frame.number) != expected_frame_number {
+                warn!(
+                    target: "channel_assembler",
+                    channel_id = %hex::encode(channel.id()),
+                    frame_channel_id = %hex::encode(next_frame.id),
+                    frame_number = next_frame.number,
+                    expected_frame_number,
+                    origin_number = origin.number,
+                    "Dropping out-of-order frame"
+                );
+                return Err(PipelineError::NotEnoughData.temp());
+            }
             if channel.add_frame(next_frame, origin).is_err() {
                 error!(
                     target: "channel_assembler",
-                    "Failed to add frame to channel (ID: {}) at L1 origin #{}",
-                    hex::encode(channel.id()),
-                    origin.number
+                    channel_id = %hex::encode(channel.id()),
+                    origin_number = origin.number,
+                    "Failed to add frame to channel"
                 );
                 return Err(PipelineError::NotEnoughData.temp());
             }
@@ -135,9 +148,10 @@ where
             if channel.size() > max_rlp_bytes_per_channel as usize {
                 warn!(
                     target: "channel_assembler",
-                    "Compressed channel size exceeded max RLP bytes per channel, dropping channel (ID: {}) with {} bytes",
-                    hex::encode(channel.id()),
-                    channel.size()
+                    channel_id = %hex::encode(channel.id()),
+                    channel_size = channel.size(),
+                    max_rlp_bytes_per_channel,
+                    "Compressed channel size exceeded max RLP bytes per channel; dropping channel"
                 );
                 self.channel = None;
                 return Err(PipelineError::NotEnoughData.temp());
@@ -150,8 +164,8 @@ where
 
                 info!(
                     target: "channel_assembler",
-                    "Channel (ID: {}) ready for decompression.",
-                    hex::encode(channel.id()),
+                    channel_id = %hex::encode(channel.id()),
+                    "Channel ready for decompression"
                 );
 
                 // Reset the channel and return the compressed bytes.
@@ -328,6 +342,33 @@ mod tests {
         assert_eq!(error_logs.len(), 1);
         let error_str = "Failed to add frame to channel";
         assert!(error_logs[0].contains(error_str));
+    }
+
+    #[tokio::test]
+    async fn test_assembler_rejects_out_of_order_frame_holocene() {
+        let frames = [
+            crate::frame!(0xFF, 0, b"zero".to_vec(), false),
+            crate::frame!(0xFF, 2, b"two".to_vec(), true),
+            crate::frame!(0xFF, 1, b"one".to_vec(), false),
+        ];
+        let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
+        let cfg = Arc::new(RollupConfig {
+            hardforks: HardForkConfig { holocene_time: Some(0), ..Default::default() },
+            ..Default::default()
+        });
+        let mut assembler = ChannelAssembler::new(cfg, mock);
+        assembler.prev.block_info = Some(BlockInfo::default());
+
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert_eq!(assembler.channel.as_ref().unwrap().len(), 1);
+
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert_eq!(assembler.channel.as_ref().unwrap().len(), 1);
+
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        let channel = assembler.channel.as_ref().unwrap();
+        assert_eq!(channel.len(), 2);
+        assert!(!channel.is_ready());
     }
 
     #[tokio::test]

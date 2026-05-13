@@ -224,11 +224,13 @@ impl L1BlockInfo {
     }
 
     /// Calculate the operator fee for the given `gas`.
+    ///
+    /// Missing scalars fall back to zero so the txpool bootstrap window (post-Isthmus tx
+    /// evaluated before the first L1 attributes deposit seeds these fields) does not panic;
+    /// this matches the execution path, where uninitialized `L1_BLOCK_INFO` slots read as zero.
     fn operator_fee_charge_inner(&self, gas: U256, spec_id: BaseSpecId) -> U256 {
-        let operator_fee_scalar =
-            self.operator_fee_scalar.expect("Missing operator fee scalar for isthmus L1 Block");
-        let operator_fee_constant =
-            self.operator_fee_constant.expect("Missing operator fee constant for isthmus L1 Block");
+        let operator_fee_scalar = self.operator_fee_scalar.unwrap_or_default();
+        let operator_fee_constant = self.operator_fee_constant.unwrap_or_default();
 
         let product = if spec_id.is_enabled_in(BaseUpgrade::Jovian) {
             gas.saturating_mul(operator_fee_scalar)
@@ -712,6 +714,27 @@ mod tests {
             BaseSpecId::new(BaseUpgrade::Jovian),
         );
         assert_eq!(jovian_fee, U256::from(100_000_010u64));
+    }
+
+    #[test]
+    fn operator_fee_charge_returns_zero_when_isthmus_scalars_unset() {
+        // Regression: pre-first-head txpool validation must not panic when the L1 attributes
+        // deposit has not yet seeded the Isthmus scalars.
+        let l1_block_info = L1BlockInfo::default();
+
+        let isthmus_fee = l1_block_info.operator_fee_charge(
+            &[0xab],
+            U256::from(50_000u64),
+            BaseSpecId::new(BaseUpgrade::Isthmus),
+        );
+        assert_eq!(isthmus_fee, U256::ZERO);
+
+        let jovian_fee = l1_block_info.operator_fee_charge(
+            &[0xab],
+            U256::from(50_000u64),
+            BaseSpecId::new(BaseUpgrade::Jovian),
+        );
+        assert_eq!(jovian_fee, U256::ZERO);
     }
 
     #[test]

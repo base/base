@@ -158,14 +158,15 @@ The application contents are compressed with [snappy][snappy] single-block-compr
 
 ##### Message ID computation
 
-[Same as L1][l1-message-id], with recognition of compression:
+[Same as L1][l1-message-id], with recognition of compression and topic binding.
+Let `topic_len` be the 8-byte little-endian length of `message.topic`.
 
 - If `message.data` has a valid snappy decompression, set `message-id` to the first 20 bytes of the `SHA256` hash of
-  the concatenation of `MESSAGE_DOMAIN_VALID_SNAPPY` with the snappy decompressed message data,
-  i.e. `SHA256(MESSAGE_DOMAIN_VALID_SNAPPY + snappy_decompress(message.data))[:20]`.
+  the concatenation of `MESSAGE_DOMAIN_VALID_SNAPPY`, `topic_len`, `message.topic`, and the snappy decompressed message data,
+  i.e. `SHA256(MESSAGE_DOMAIN_VALID_SNAPPY + topic_len + message.topic + snappy_decompress(message.data))[:20]`.
 - Otherwise, set `message-id` to the first 20 bytes of the `SHA256` hash of
-  the concatenation of `MESSAGE_DOMAIN_INVALID_SNAPPY` with the raw message data,
-  i.e. `SHA256(MESSAGE_DOMAIN_INVALID_SNAPPY + message.data)[:20]`.
+  the concatenation of `MESSAGE_DOMAIN_INVALID_SNAPPY`, `topic_len`, `message.topic`, and the raw message data,
+  i.e. `SHA256(MESSAGE_DOMAIN_INVALID_SNAPPY + topic_len + message.topic + message.data)[:20]`.
 
 #### Heartbeat and parameters
 

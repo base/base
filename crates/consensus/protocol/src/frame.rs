@@ -37,6 +37,20 @@ use crate::ChannelId;
 /// ensure compatibility and enable future protocol upgrades.
 pub const DERIVATION_VERSION_0: u8 = 0;
 
+/// Maximum number of derivation payload bytes that fit in a single EIP-4844 blob.
+///
+/// The blob codec packs 127 data bytes into every 128 blob bytes across 1024
+/// rounds, then reserves 4 bytes for the blob encoding version and length
+/// header.
+pub const BLOB_MAX_DATA_SIZE: usize = (4 * 31 + 3) * 1024 - 4;
+
+/// Size of the derivation-version byte prepended to each blob payload.
+pub const BLOB_DERIVATION_PREFIX_SIZE: usize = 1;
+
+/// Largest serialized frame that can fit in one blob after reserving the
+/// derivation-version prefix.
+pub const MAX_BLOB_FRAME_SIZE: usize = BLOB_MAX_DATA_SIZE - BLOB_DERIVATION_PREFIX_SIZE;
+
 /// A frame decoding error.
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameDecodingError {

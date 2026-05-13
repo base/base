@@ -188,6 +188,7 @@ impl BlockWatcher {
                 block_number: receipt.block_number().unwrap_or(block_number),
                 gas_used: receipt.gas_used(),
                 effective_gas_price: receipt.effective_gas_price(),
+                success: receipt.status(),
             })
             .collect())
     }

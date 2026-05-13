@@ -121,7 +121,7 @@ impl<TM: TxManager> SubmissionQueue<TM> {
                             pipeline.requeue(id);
                         }
                         drop(permit);
-                        continue;
+                        break;
                     }
                 },
                 DaType::Calldata => TxCandidate {

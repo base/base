@@ -20,18 +20,26 @@ mod prove_block;
 pub struct ProverServiceServer {
     repo: ProofRequestRepo,
     manager: ProofRequestManager,
+    /// Shared `retry_count` cap with [`crate::worker::StatusPoller`] (same as `retry_or_fail_stuck_request`).
+    max_proof_retries: i32,
 }
 
 impl fmt::Debug for ProverServiceServer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProverServiceServer").finish_non_exhaustive()
+        f.debug_struct("ProverServiceServer")
+            .field("max_proof_retries", &self.max_proof_retries)
+            .finish_non_exhaustive()
     }
 }
 
 impl ProverServiceServer {
     /// Create a new prover service server.
-    pub const fn new(repo: ProofRequestRepo, manager: ProofRequestManager) -> Self {
-        Self { repo, manager }
+    pub const fn new(
+        repo: ProofRequestRepo,
+        manager: ProofRequestManager,
+        max_proof_retries: i32,
+    ) -> Self {
+        Self { repo, manager, max_proof_retries }
     }
 }
 

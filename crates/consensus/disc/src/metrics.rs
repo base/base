@@ -7,6 +7,10 @@ base_metrics::define_metrics! {
     #[label(name = "type", default = ["discovered", "session_established", "unverifiable_enr"])]
     discovery_event: gauge,
 
+    #[describe("ENRs dropped before forwarding to the gossip service")]
+    #[label(name = "reason", default = ["backpressure", "closed"])]
+    discovery_dropped: gauge,
+
     #[describe("Requests made to find a node through the discv5 peer discovery service")]
     find_node_request: gauge,
 
