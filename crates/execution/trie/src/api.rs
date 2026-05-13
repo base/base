@@ -89,6 +89,16 @@ pub trait BaseProofsStore: Send + Sync + Debug {
     where
         Self: 'tx;
 
+    /// Read-only transaction reused across cursor calls within one request.
+    ///
+    /// Proof, state-root, and witness paths open one [`Self::Tx`] at entry and pass it
+    /// to every cursor allocation that follows, eliminating the per-cursor MDBX
+    /// `mdbx_txn_begin_ex` → `lck_rdt_lock` mutex contention that reth PR #22631 fixes
+    /// upstream via tx pooling.
+    type Tx<'tx>: Debug + Send + Sync
+    where
+        Self: 'tx;
+
     /// Get the earliest block number and hash that has been stored
     ///
     /// This is used to determine the block number of trie nodes with block number 0.
@@ -123,6 +133,47 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>;
+
+    /// Open one read-only transaction for a proof/root/witness request.
+    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx<'_>>;
+
+    /// Storage trie cursor reusing `tx`.
+    fn storage_trie_cursor_with_tx<'a, 'tx>(
+        &self,
+        tx: &'a Self::Tx<'tx>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'a>>
+    where
+        Self: 'a + 'tx;
+
+    /// Account trie cursor reusing `tx`.
+    fn account_trie_cursor_with_tx<'a, 'tx>(
+        &self,
+        tx: &'a Self::Tx<'tx>,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'a>>
+    where
+        Self: 'a + 'tx;
+
+    /// Storage hashed cursor reusing `tx`.
+    fn storage_hashed_cursor_with_tx<'a, 'tx>(
+        &self,
+        tx: &'a Self::Tx<'tx>,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'a>>
+    where
+        Self: 'a + 'tx;
+
+    /// Account hashed cursor reusing `tx`.
+    fn account_hashed_cursor_with_tx<'a, 'tx>(
+        &self,
+        tx: &'a Self::Tx<'tx>,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'a>>
+    where
+        Self: 'a + 'tx;
 
     /// Store a batch of trie updates.
     ///
