@@ -33,11 +33,11 @@ use reth_node_core::{
     args::{LogArgs, TraceArgs},
     version::version_metadata,
 };
-pub use standard_node::{StandardBaseRethNode, StandardNodeArgs};
 // This allows us to manually enable node metrics features, required for proper jemalloc metric
 // reporting
 use reth_node_metrics as _;
 use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
+pub use standard_node::{StandardBaseRethNode, StandardNodeArgs};
 
 /// The main base-reth cli interface.
 ///
