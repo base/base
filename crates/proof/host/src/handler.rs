@@ -1,5 +1,7 @@
 use std::{
+    any::Any,
     collections::{HashMap, HashSet, VecDeque},
+    panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
 };
 
@@ -18,6 +20,7 @@ use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
+use futures::FutureExt;
 use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 
@@ -103,20 +106,23 @@ impl PayloadWitnessPrefetcher {
         }
 
         let prefetcher = self.clone();
-        let cleanup_prefetcher = prefetcher.clone();
-        let handle = tokio::spawn(async move {
-            if !prefetcher.schedule_lookahead_inner(kv, parent_block_hash).await {
-                prefetcher.unmark_lookahead_scheduled(parent_block_hash);
-            }
-        });
         std::mem::drop(tokio::spawn(async move {
-            if let Err(err) = handle.await {
-                cleanup_prefetcher.unmark_lookahead_scheduled(parent_block_hash);
+            let result = AssertUnwindSafe(async move {
+                let mut scheduled_guard =
+                    ScheduledLookaheadGuard::new(prefetcher.clone(), parent_block_hash);
+                if prefetcher.schedule_lookahead_inner(kv, parent_block_hash).await {
+                    scheduled_guard.keep_scheduled();
+                }
+            })
+            .catch_unwind()
+            .await;
+
+            if let Err(panic) = result {
                 warn!(
                     target: HOST_SERVER_TARGET,
                     ?parent_block_hash,
-                    error = %err,
-                    "payload witness lookahead task failed"
+                    panic = %panic_payload_message(panic.as_ref()),
+                    "payload witness lookahead task panicked"
                 );
             }
         }));
@@ -184,18 +190,16 @@ impl PayloadWitnessPrefetcher {
         }
 
         let prefetcher = self.clone();
-        let cleanup_prefetcher = prefetcher.clone();
-        let handle = tokio::spawn(async move {
-            prefetcher.prefetch_block(kv, block_number).await;
-        });
         std::mem::drop(tokio::spawn(async move {
-            if let Err(err) = handle.await {
-                cleanup_prefetcher.unmark_block_scheduled(block_number);
+            let result =
+                AssertUnwindSafe(prefetcher.prefetch_block(kv, block_number)).catch_unwind().await;
+
+            if let Err(panic) = result {
                 warn!(
                     target: HOST_SERVER_TARGET,
                     block_number,
-                    error = %err,
-                    "payload witness prefetch task failed"
+                    panic = %panic_payload_message(panic.as_ref()),
+                    "payload witness prefetch task panicked"
                 );
             }
         }));
@@ -360,7 +364,8 @@ impl PayloadWitnessPrefetcher {
         };
 
         if let Err(err) =
-            insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await
+            insert_execution_witness_preimages_batched(Arc::clone(&kv), execute_payload_response)
+                .await
         {
             warn!(
                 target: HOST_SERVER_TARGET,
@@ -375,6 +380,36 @@ impl PayloadWitnessPrefetcher {
         self.mark_ready(parent_block_hash, payload_attributes);
 
         true
+    }
+}
+
+#[derive(Debug)]
+struct ScheduledLookaheadGuard {
+    prefetcher: PayloadWitnessPrefetcher,
+    parent_block_hash: B256,
+    keep_scheduled: bool,
+}
+
+impl ScheduledLookaheadGuard {
+    const fn new(prefetcher: PayloadWitnessPrefetcher, parent_block_hash: B256) -> Self {
+        Self { prefetcher, parent_block_hash, keep_scheduled: false }
+    }
+
+    const fn keep_scheduled(&mut self) {
+        self.keep_scheduled = true;
+    }
+}
+
+impl Drop for ScheduledLookaheadGuard {
+    fn drop(&mut self) {
+        if !self.keep_scheduled {
+            debug!(
+                target: HOST_SERVER_TARGET,
+                parent_block_hash = ?self.parent_block_hash,
+                "payload witness lookahead unscheduled"
+            );
+            self.prefetcher.unmark_lookahead_scheduled(self.parent_block_hash);
+        }
     }
 }
 
@@ -408,11 +443,10 @@ impl Drop for ScheduledBlockGuard {
     }
 }
 
-async fn insert_execution_witness_preimages(
-    kv: SharedKeyValueStore,
+fn execution_witness_preimages(
     execute_payload_response: ExecutionWitness,
-) -> Result<()> {
-    let mut preimages = execute_payload_response
+) -> impl Iterator<Item = (PreimageKey, Vec<u8>)> {
+    execute_payload_response
         .state
         .into_iter()
         .chain(execute_payload_response.codes)
@@ -422,7 +456,24 @@ async fn insert_execution_witness_preimages(
             let computed_hash = keccak256(&preimage_bytes);
             (PreimageKey::new_keccak256(*computed_hash), preimage_bytes)
         })
-        .peekable();
+}
+
+async fn insert_execution_witness_preimages(
+    kv: SharedKeyValueStore,
+    execute_payload_response: ExecutionWitness,
+) -> Result<()> {
+    let mut kv_lock = kv.write().await;
+    for (key, preimage_bytes) in execution_witness_preimages(execute_payload_response) {
+        kv_lock.set(key.into(), preimage_bytes)?;
+    }
+    Ok(())
+}
+
+async fn insert_execution_witness_preimages_batched(
+    kv: SharedKeyValueStore,
+    execute_payload_response: ExecutionWitness,
+) -> Result<()> {
+    let mut preimages = execution_witness_preimages(execute_payload_response).peekable();
 
     while preimages.peek().is_some() {
         {
@@ -437,6 +488,16 @@ async fn insert_execution_witness_preimages(
         tokio::task::yield_now().await;
     }
     Ok(())
+}
+
+fn panic_payload_message(payload: &(dyn Any + Send)) -> &str {
+    if let Some(message) = payload.downcast_ref::<&'static str>() {
+        message
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.as_str()
+    } else {
+        "unknown panic payload"
+    }
 }
 
 fn payload_attributes_from_l2_block(
@@ -1040,6 +1101,33 @@ mod tests {
         prefetcher.unmark_lookahead_scheduled(parent_block_hash);
 
         assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
+    }
+
+    #[test]
+    fn test_scheduled_lookahead_guard_unmarks_on_drop() {
+        let prefetcher = test_prefetcher();
+        let parent_block_hash = B256::new([7; 32]);
+        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
+
+        {
+            let _guard = ScheduledLookaheadGuard::new(prefetcher.clone(), parent_block_hash);
+        }
+
+        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
+    }
+
+    #[test]
+    fn test_scheduled_lookahead_guard_keeps_successful_lookahead_scheduled() {
+        let prefetcher = test_prefetcher();
+        let parent_block_hash = B256::new([7; 32]);
+        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
+
+        {
+            let mut guard = ScheduledLookaheadGuard::new(prefetcher.clone(), parent_block_hash);
+            guard.keep_scheduled();
+        }
+
+        assert!(!prefetcher.mark_lookahead_scheduled(parent_block_hash));
     }
 
     #[test]
