@@ -19,6 +19,7 @@ pub struct MetricsCollector {
     failed_count: u64,
     reverted_count: u64,
     failure_reasons: HashMap<String, u64>,
+    receipt_gap_reasons: HashMap<String, u64>,
     rolling: RollingWindow,
     block_receipt_delay_rolling: RollingWindow,
     flashblocks_rolling: RollingWindow,
@@ -34,6 +35,7 @@ impl MetricsCollector {
             failed_count: 0,
             reverted_count: 0,
             failure_reasons: HashMap::new(),
+            receipt_gap_reasons: HashMap::new(),
             rolling: RollingWindow::new(),
             block_receipt_delay_rolling: RollingWindow::new(),
             flashblocks_rolling: RollingWindow::new(),
@@ -84,6 +86,11 @@ impl MetricsCollector {
         *self.failure_reasons.entry(reason.to_string()).or_insert(0) += count;
     }
 
+    /// Records transactions that landed but could not be enriched with canonical receipts.
+    pub fn record_receipt_gaps(&mut self, reason: &str, count: u64) {
+        *self.receipt_gap_reasons.entry(reason.to_string()).or_insert(0) += count;
+    }
+
     /// Returns the number of confirmed transactions.
     pub const fn confirmed_count(&self) -> usize {
         self.transactions.len()
@@ -115,6 +122,7 @@ impl MetricsCollector {
             self.submitted_count,
             self.failed_count,
             &self.failure_reasons,
+            &self.receipt_gap_reasons,
             &self.throughput_samples,
             config,
         )
@@ -127,6 +135,7 @@ impl MetricsCollector {
         self.failed_count = 0;
         self.reverted_count = 0;
         self.failure_reasons.clear();
+        self.receipt_gap_reasons.clear();
         self.rolling = RollingWindow::new();
         self.block_receipt_delay_rolling = RollingWindow::new();
         self.flashblocks_rolling = RollingWindow::new();

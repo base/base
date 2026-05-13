@@ -13,7 +13,7 @@ mod flashblock_watcher;
 pub use flashblock_watcher::FlashblockWatcher;
 
 mod block_watcher;
-pub use block_watcher::BlockWatcher;
+pub use block_watcher::{BlockWatcher, ReceiptBackfillReport};
 
 mod results_tracker;
 pub use results_tracker::{

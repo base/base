@@ -129,6 +129,7 @@ impl FlashblockWatcher {
         flashblock: &Flashblock,
         included_at: Instant,
     ) -> Vec<FlashblockInclusion> {
+        let block_number = flashblock.metadata.block_number;
         flashblock
             .diff
             .transactions
@@ -137,7 +138,7 @@ impl FlashblockWatcher {
                 let envelope = BaseTxEnvelope::decode_2718_exact(tx_bytes.as_ref())
                     .inspect_err(|e| warn!(error = %e, "failed to decode flashblock transaction"))
                     .ok()?;
-                Some(FlashblockInclusion { tx_hash: envelope.tx_hash(), included_at })
+                Some(FlashblockInclusion { tx_hash: envelope.tx_hash(), block_number, included_at })
             })
             .collect()
     }

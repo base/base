@@ -244,6 +244,12 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             }
             _ => println!("Blocks: no confirmed transactions"),
         }
+        if summary.receipt_gaps.total > 0 {
+            println!("Receipt gaps: {}", summary.receipt_gaps.total);
+            for (reason, count) in &summary.receipt_gaps.reasons {
+                println!("  {count:>6}x  {reason}");
+            }
+        }
         if !summary.top_failure_reasons.is_empty() {
             println!("Top failures:");
             for (reason, count) in &summary.top_failure_reasons {

@@ -19,6 +19,17 @@ const BLOCK_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// after the first submissions.
 const INITIAL_BLOCK_LOOKBACK: u64 = 8;
 
+/// Result of a bounded canonical receipt backfill.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReceiptBackfillReport {
+    /// Number of block receipt requests completed successfully.
+    pub blocks_fetched: u64,
+    /// Number of block header or receipt requests that failed.
+    pub failures: u64,
+    /// Whether the backfill stopped because the maximum duration elapsed.
+    pub timed_out: bool,
+}
+
 /// Tracks canonical blocks and their receipts.
 #[derive(Debug)]
 pub struct BlockWatcher {
@@ -42,6 +53,91 @@ impl BlockWatcher {
         tokio::spawn(async move {
             self.run().await;
         })
+    }
+
+    /// Backfills receipts from `first_block` until pending transactions clear or time runs out.
+    pub async fn backfill_until_idle(
+        &self,
+        first_block: u64,
+        max_duration: Duration,
+    ) -> ReceiptBackfillReport {
+        let started_at = Instant::now();
+        let mut next_block = first_block;
+        let mut report = ReceiptBackfillReport::default();
+
+        info!(first_block, max_duration_secs = max_duration.as_secs(), "starting receipt backfill");
+
+        while !self.cancel_token.is_cancelled()
+            && started_at.elapsed() < max_duration
+            && self.results_tracker.pending_count() > 0
+        {
+            let latest_block = match self.fetch_latest_block_observation().await {
+                Ok(Some(block)) => block,
+                Ok(None) => {
+                    self.sleep_poll_interval().await;
+                    continue;
+                }
+                Err(e) => {
+                    report.failures = report.failures.saturating_add(1);
+                    warn!(error = %e, "receipt backfill latest-block poll failed");
+                    self.sleep_poll_interval().await;
+                    continue;
+                }
+            };
+
+            if next_block > latest_block.number {
+                self.sleep_poll_interval().await;
+                continue;
+            }
+
+            for block_number in next_block..=latest_block.number {
+                if self.cancel_token.is_cancelled()
+                    || started_at.elapsed() >= max_duration
+                    || self.results_tracker.pending_count() == 0
+                {
+                    break;
+                }
+
+                let block = if block_number == latest_block.number {
+                    Some(latest_block)
+                } else {
+                    match self.fetch_block_observation(block_number).await {
+                        Ok(block) => block,
+                        Err(e) => {
+                            report.failures = report.failures.saturating_add(1);
+                            warn!(block = block_number, error = %e, "receipt backfill block header failed");
+                            break;
+                        }
+                    }
+                };
+                let Some(block) = block else {
+                    break;
+                };
+
+                match self.fetch_and_record_receipts(block).await {
+                    Ok(()) => {
+                        report.blocks_fetched = report.blocks_fetched.saturating_add(1);
+                        next_block = block_number.saturating_add(1);
+                    }
+                    Err(e) => {
+                        report.failures = report.failures.saturating_add(1);
+                        warn!(block = block_number, error = %e, "receipt backfill receipts failed");
+                        break;
+                    }
+                }
+            }
+        }
+
+        report.timed_out =
+            started_at.elapsed() >= max_duration && self.results_tracker.pending_count() > 0;
+        info!(
+            blocks_fetched = report.blocks_fetched,
+            failures = report.failures,
+            timed_out = report.timed_out,
+            pending = self.results_tracker.pending_count(),
+            "receipt backfill complete"
+        );
+        report
     }
 
     async fn run(&self) {
@@ -126,6 +222,14 @@ impl BlockWatcher {
         }
 
         debug!("block watcher stopped");
+    }
+
+    async fn sleep_poll_interval(&self) {
+        tokio::select! {
+            biased;
+            _ = self.cancel_token.cancelled() => {}
+            _ = tokio::time::sleep(BLOCK_POLL_INTERVAL) => {}
+        }
     }
 
     async fn fetch_latest_block_observation(

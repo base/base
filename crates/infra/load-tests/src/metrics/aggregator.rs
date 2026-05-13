@@ -26,6 +26,7 @@ impl<'a> MetricsAggregator<'a> {
         submitted: u64,
         failed: u64,
         failure_reasons: &HashMap<String, u64>,
+        receipt_gap_reasons: &HashMap<String, u64>,
         throughput_samples: &[ThroughputSample],
         config: Option<ConfigSummary>,
     ) -> MetricsSummary {
@@ -33,6 +34,11 @@ impl<'a> MetricsAggregator<'a> {
             failure_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
         top_failure_reasons.sort_by(|a, b| b.1.cmp(&a.1));
         top_failure_reasons.truncate(3);
+
+        let mut receipt_gap_reasons: Vec<(String, u64)> =
+            receipt_gap_reasons.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        receipt_gap_reasons.sort_by(|a, b| b.1.cmp(&a.1));
+        let receipt_gap_count = receipt_gap_reasons.iter().map(|(_, count)| *count).sum();
 
         let tps_values: Vec<f64> = throughput_samples.iter().map(|s| s.tps).collect();
         let gps_values: Vec<f64> = throughput_samples.iter().map(|s| s.gps).collect();
@@ -46,6 +52,10 @@ impl<'a> MetricsAggregator<'a> {
             throughput: self.compute_throughput(duration, submitted, failed),
             throughput_percentiles: Self::compute_throughput_percentiles(&tps_values, &gps_values),
             throughput_timeseries: throughput_samples.to_vec(),
+            receipt_gaps: ReceiptGapSummary {
+                total: receipt_gap_count,
+                reasons: receipt_gap_reasons,
+            },
             gas: self.compute_gas(),
             block_range: self.compute_block_range(),
             top_failure_reasons,
@@ -206,6 +216,15 @@ impl<'a> MetricsAggregator<'a> {
     }
 }
 
+/// Transactions that landed but could not be enriched by canonical receipts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReceiptGapSummary {
+    /// Total number of landed transactions missing canonical receipt metrics.
+    pub total: u64,
+    /// Reasons sorted by descending count.
+    pub reasons: Vec<(String, u64)>,
+}
+
 /// Summary of all collected metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MetricsSummary {
@@ -227,6 +246,8 @@ pub struct MetricsSummary {
     pub throughput_percentiles: ThroughputPercentiles,
     /// Throughput samples over time for graphing.
     pub throughput_timeseries: Vec<ThroughputSample>,
+    /// Landed transactions that could not be enriched with canonical receipts.
+    pub receipt_gaps: ReceiptGapSummary,
     /// Gas usage statistics.
     pub gas: GasMetrics,
     /// Range of blocks containing confirmed test transactions.

@@ -13,4 +13,4 @@ mod collector;
 pub use collector::MetricsCollector;
 
 mod aggregator;
-pub use aggregator::{MetricsAggregator, MetricsSummary};
+pub use aggregator::{MetricsAggregator, MetricsSummary, ReceiptGapSummary};

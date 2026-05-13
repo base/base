@@ -54,6 +54,7 @@ const SUBMIT_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const SUBMIT_WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(12);
 const PENDING_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(60);
 const CONFIRMATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(65);
+const RECEIPT_BACKFILL_LOOKBACK: u64 = 8;
 const TXPOOL_CLEAR_CONCURRENCY: usize = 64;
 
 /// Executes load tests by generating and submitting transactions at a target rate.
@@ -941,6 +942,22 @@ impl LoadRunner {
         self.gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
         info!(gas_price = self.gas_price, "fetched current gas price");
 
+        let receipt_backfill_first_block = match self
+            .client
+            .get_block_number()
+            .await
+            .rpc("get block number")
+        {
+            Ok(block_number) => Some(block_number.saturating_sub(RECEIPT_BACKFILL_LOOKBACK)),
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "failed to capture start block for receipt backfill, will use flashblock range"
+                );
+                None
+            }
+        };
+
         for account in self.accounts.accounts() {
             if !self.nonce_managers.contains_key(&account.address) {
                 let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
@@ -973,16 +990,6 @@ impl LoadRunner {
         let flashblock_watcher_task = Some(
             FlashblockWatcher::new(
                 self.config.flashblocks_ws.clone(),
-                results_tracker.clone(),
-                self.cancel_token.clone(),
-            )
-            .start(),
-        );
-
-        info!(url = %self.config.query_rpc, "starting block watcher");
-        let block_watcher_task = Some(
-            BlockWatcher::new(
-                RootProvider::<Base>::new_http(self.config.query_rpc.clone()),
                 results_tracker.clone(),
                 self.cancel_token.clone(),
             )
@@ -1297,8 +1304,8 @@ impl LoadRunner {
             &mut self.collector,
         );
 
-        // Keep background watchers alive through the drain so late flashblock
-        // inclusions and block observations can still be joined into metrics.
+        // Keep the flashblock watcher alive through receipt backfill so late
+        // flashblock inclusions can still release and classify pending txs.
         self.stop_flag.store(true, Ordering::SeqCst);
 
         if let Some(display) = &self.display {
@@ -1313,37 +1320,48 @@ impl LoadRunner {
             in_flight,
             elapsed_secs = elapsed.as_secs(),
             actual_tps = submitted as f64 / elapsed.as_secs_f64(),
-            "load test complete, draining confirmations"
+            "load test complete, backfilling receipts"
         );
 
-        let drain_start = Instant::now();
-        let results_poll_interval = Duration::from_millis(600);
         let mut last_confirmed_at = start.elapsed();
 
-        while drain_start.elapsed() < CONFIRMATION_DRAIN_TIMEOUT {
-            let metrics = results_tracker.drain_confirmed_metrics();
-            if !metrics.is_empty() {
-                last_confirmed_at = start.elapsed();
-                for metrics in metrics {
-                    self.collector.record_confirmed(metrics);
-                }
-            }
-
-            let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
-            if expired > 0 {
-                self.collector.record_failures("expired without confirmation", expired);
-            }
-
-            if results_tracker.pending_count() == 0 {
-                break;
-            }
-
-            tokio::time::sleep(results_poll_interval).await;
+        let receipt_backfill_first_block = receipt_backfill_first_block.or_else(|| {
+            results_tracker
+                .flashblock_block_range()
+                .map(|(first, _)| first.saturating_sub(RECEIPT_BACKFILL_LOOKBACK))
+        });
+        let mut receipt_backfill_timed_out = false;
+        if let Some(first_block) = receipt_backfill_first_block {
+            let receipt_backfill = BlockWatcher::new(
+                RootProvider::<Base>::new_http(self.config.query_rpc.clone()),
+                results_tracker.clone(),
+                self.cancel_token.clone(),
+            )
+            .backfill_until_idle(first_block, CONFIRMATION_DRAIN_TIMEOUT)
+            .await;
+            receipt_backfill_timed_out = receipt_backfill.timed_out;
+        } else {
+            warn!("skipping receipt backfill because no block range was observed");
         }
 
         for metrics in results_tracker.drain_confirmed_metrics() {
             self.collector.record_confirmed(metrics);
             last_confirmed_at = start.elapsed();
+        }
+
+        let receipt_gap_count = results_tracker.drain_flashblock_landed_without_receipts();
+        if receipt_gap_count > 0 {
+            let reason = if receipt_backfill_timed_out {
+                "receipt_backfill_timeout"
+            } else {
+                "landed via flashblock, receipt missing"
+            };
+            self.collector.record_receipt_gaps(reason, receipt_gap_count);
+        }
+
+        let expired = results_tracker.expire_pending(PENDING_CONFIRMATION_TIMEOUT);
+        if expired > 0 {
+            self.collector.record_failures("expired without confirmation", expired);
         }
 
         // Now safe to stop background watcher tasks.
@@ -1355,13 +1373,6 @@ impl LoadRunner {
                 _ => {}
             }
         }
-        if let Some(task) = block_watcher_task {
-            match tokio::time::timeout(Duration::from_secs(2), task).await {
-                Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
-                _ => {}
-            }
-        }
-
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
 
