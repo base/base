@@ -6,6 +6,7 @@ use base_consensus_cli::{
 use base_execution_cli::ExecutionNodeArgs;
 use clap::{Args, Parser, Subcommand};
 use reth_cli_runner::CliRunner;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::config::{ChainArg, ResolvedChainConfig};
@@ -107,9 +108,11 @@ impl RpcCommand {
         let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
+            let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
             let handle = launched.handle;
-            let _execution_node = handle.node;
+            // Keep the execution node handle alive until both services have coordinated shutdown.
+            let execution_node = handle.node;
             let execution_exit = handle.node_exit_future;
 
             let overrides = ConsensusNodeOverrides {
@@ -117,12 +120,37 @@ impl RpcCommand {
                 l2_engine_jwt_secret: None,
             };
 
-            tokio::select! {
-                result = execution_exit => result,
-                result = consensus_args.start_with_overrides(rollup_config, overrides) => {
-                    result.map_err(|e| eyre::eyre!(e))
+            let consensus_cancellation = CancellationToken::new();
+            let consensus_exit = consensus_args.start_with_overrides_and_cancellation(
+                rollup_config,
+                overrides,
+                consensus_cancellation.clone(),
+            );
+            tokio::pin!(execution_exit);
+            tokio::pin!(consensus_exit);
+
+            let result = tokio::select! {
+                result = &mut execution_exit => {
+                    consensus_cancellation.cancel();
+                    let consensus_result = consensus_exit.await;
+                    result?;
+                    consensus_result
                 }
-            }
+                result = &mut consensus_exit => {
+                    let consensus_result = result;
+                    task_executor
+                        .initiate_graceful_shutdown()
+                        .map_err(|e| eyre::eyre!("failed to signal execution node shutdown: {e}"))?
+                        .ignore_guard()
+                        .await;
+                    let execution_result = execution_exit.await;
+                    consensus_result?;
+                    execution_result
+                }
+            };
+
+            drop(execution_node);
+            result
         })
     }
 }

@@ -11,6 +11,7 @@ use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, R
 use clap::Args;
 use eyre::Context;
 use strum::IntoEnumIterator;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use url::Url;
 
@@ -328,10 +329,24 @@ impl ConsensusNodeArgs {
         cfg: RollupConfig,
         overrides: ConsensusNodeOverrides,
     ) -> eyre::Result<()> {
-        self.build_rollup_node_with_overrides(cfg, overrides).await?.start().await.map_err(|e| {
-            error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
-            eyre::eyre!(e)
-        })
+        self.start_with_overrides_and_cancellation(cfg, overrides, CancellationToken::new()).await
+    }
+
+    /// Starts a rollup node with caller-supplied endpoint overrides and cancellation.
+    pub async fn start_with_overrides_and_cancellation(
+        &self,
+        cfg: RollupConfig,
+        overrides: ConsensusNodeOverrides,
+        cancellation: CancellationToken,
+    ) -> eyre::Result<()> {
+        self.build_rollup_node_with_overrides(cfg, overrides)
+            .await?
+            .start_with_cancellation(cancellation)
+            .await
+            .map_err(|e| {
+                error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
+                eyre::eyre!(e)
+            })
     }
 
     /// Returns the configured genesis signer address for the selected L2 chain.

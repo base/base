@@ -156,11 +156,11 @@ mod tests {
     #[rstest]
     #[case::disable_rpc(&["--rpc.disabled"], |args: &mut RpcArgs| { args.rpc_disabled = true; })]
     #[case::no_restart(&["--rpc.no-restart"], |args: &mut RpcArgs| { args.no_restart = true; })]
-    #[case::disable_rpc(&["--rpc.addr", "1.1.1.1"], |args: &mut RpcArgs| { args.listen_addr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)); })]
-    #[case::disable_rpc(&["--port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
-    #[case::disable_rpc_alias(&["--rpc.port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
-    #[case::disable_rpc(&["--rpc.enable-admin"], |args: &mut RpcArgs| { args.enable_admin = true; })]
-    #[case::disable_rpc(&["--rpc.admin-state", "/"], |args: &mut RpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
+    #[case::set_addr(&["--rpc.addr", "1.1.1.1"], |args: &mut RpcArgs| { args.listen_addr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)); })]
+    #[case::set_port(&["--port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
+    #[case::set_port_alias(&["--rpc.port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
+    #[case::enable_admin(&["--rpc.enable-admin"], |args: &mut RpcArgs| { args.enable_admin = true; })]
+    #[case::admin_state(&["--rpc.admin-state", "/"], |args: &mut RpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
     fn test_parse_rpc_args(#[case] args: &[&str], #[case] mutate: impl Fn(&mut RpcArgs)) {
         let args = [&["base-consensus"], args].concat();
         let cli = RpcArgs::parse_from(args);
@@ -172,10 +172,10 @@ mod tests {
     #[rstest]
     #[case::disable_rpc(&["--rpc.disabled"], |args: &mut EmbeddedRpcArgs| { args.rpc_disabled = true; })]
     #[case::no_restart(&["--rpc.no-restart"], |args: &mut EmbeddedRpcArgs| { args.no_restart = true; })]
-    #[case::disable_rpc(&["--rpc.addr", "1.1.1.1"], |args: &mut EmbeddedRpcArgs| { args.listen_addr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)); })]
-    #[case::disable_rpc_alias(&["--rpc.port", "8743"], |args: &mut EmbeddedRpcArgs| { args.listen_port = 8743; })]
-    #[case::disable_rpc(&["--rpc.enable-admin"], |args: &mut EmbeddedRpcArgs| { args.enable_admin = true; })]
-    #[case::disable_rpc(&["--rpc.admin-state", "/"], |args: &mut EmbeddedRpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
+    #[case::set_addr(&["--rpc.addr", "1.1.1.1"], |args: &mut EmbeddedRpcArgs| { args.listen_addr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)); })]
+    #[case::set_port(&["--rpc.port", "8743"], |args: &mut EmbeddedRpcArgs| { args.listen_port = 8743; })]
+    #[case::enable_admin(&["--rpc.enable-admin"], |args: &mut EmbeddedRpcArgs| { args.enable_admin = true; })]
+    #[case::admin_state(&["--rpc.admin-state", "/"], |args: &mut EmbeddedRpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
     fn test_parse_embedded_rpc_args(
         #[case] args: &[&str],
         #[case] mutate: impl Fn(&mut EmbeddedRpcArgs),

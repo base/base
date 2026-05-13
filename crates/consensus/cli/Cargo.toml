@@ -49,6 +49,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 
 # tokio
 tokio.workspace = true
+tokio-util.workspace = true
 
 # tracing
 tracing = { workspace = true, features = ["std"] }

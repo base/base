@@ -2738,6 +2738,7 @@ dependencies = [
  "reth-cli-runner",
  "serde",
  "tokio",
+ "tokio-util",
  "url",
 ]
 
@@ -3542,6 +3543,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
