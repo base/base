@@ -200,7 +200,7 @@ impl View for ConductorView {
             }
         } else {
             // Conductor table: 2 border + 1 header + 16 data rows = 19 lines.
-            // Validator table: 2 border + 1 header + 14 data rows = 17 lines.
+            // Validator/RPC node table: 2 border + 1 header + 14 data rows = 17 lines.
             let conductor_height = 19u16;
             let validator_height = 17u16;
             let sections = Layout::default()
@@ -622,7 +622,7 @@ fn render_cluster_table(
 
 fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeStatus]) {
     let block = Block::default()
-        .title(" Validators ")
+        .title(" Validator / RPC Nodes ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(COLOR_BASE_BLUE));
 

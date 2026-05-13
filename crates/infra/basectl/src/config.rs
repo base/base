@@ -17,7 +17,7 @@ pub struct ProofsConfig {
     pub anchor_state_registry: Address,
 }
 
-/// Configuration for a single validator (non-sequencing) node in the local devnet.
+/// Configuration for a single validator/RPC (non-sequencing) node in the local devnet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorNodeConfig {
     /// Human-readable name for this node (e.g. "base-client").
@@ -31,6 +31,8 @@ pub struct ValidatorNodeConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker_el: Option<String>,
     /// Docker container name for the CL process.
+    ///
+    /// Unified validator/RPC nodes may use the same container for EL and CL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker_cl: Option<String>,
 }
@@ -281,7 +283,7 @@ impl MonitoringConfig {
                 cl_rpc: Url::parse("http://localhost:8549").unwrap(),
                 el_rpc: Some(Url::parse("http://localhost:8545").unwrap()),
                 docker_el: Some("base-client".to_string()),
-                docker_cl: Some("base-client-cl".to_string()),
+                docker_cl: Some("base-client".to_string()),
             }]),
             proofs: None,
         }
@@ -433,6 +435,13 @@ mod tests {
         assert_eq!(devnet.l1_rpc.as_str(), "http://localhost:4545/");
         assert!(devnet.consensus_node_rpc.is_some());
         assert_eq!(devnet.consensus_node_rpc.unwrap().as_str(), "http://localhost:7549/");
+        let validators = devnet.validators.expect("devnet should include validator/RPC node");
+        assert_eq!(validators.len(), 1);
+        assert_eq!(validators[0].name, "base-client");
+        assert_eq!(validators[0].cl_rpc.as_str(), "http://localhost:8549/");
+        assert_eq!(validators[0].el_rpc.as_ref().unwrap().as_str(), "http://localhost:8545/");
+        assert_eq!(validators[0].docker_el.as_deref(), Some("base-client"));
+        assert_eq!(validators[0].docker_cl.as_deref(), Some("base-client"));
     }
 
     #[tokio::test]
