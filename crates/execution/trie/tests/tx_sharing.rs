@@ -17,7 +17,10 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{Address, B256, U256, keccak256};
+use alloy_primitives::{
+    Address, B256, U256, keccak256,
+    map::{B256Map, B256Set},
+};
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, MdbxProofsStorage,
     provider::BaseProofsStateProviderRef,
@@ -29,7 +32,35 @@ use reth_provider::{
 use reth_trie_common::{HashedPostState, HashedStorage, MultiProofTargets, TrieInput};
 use tempfile::TempDir;
 
-/// Builds a small populated MDBX-backed storage and a state provider over it.
+/// Number of accounts we seed and target per test request.
+///
+/// Picked large enough that the underlying account trie has multiple branch
+/// nodes so that `account_trie_cursor` has to open and walk repeatedly within
+/// a single request.
+const ACCOUNTS: u8 = 8;
+
+/// Number of storage slots seeded per account and targeted per request.
+///
+/// Combined with [`ACCOUNTS`] this yields `ACCOUNTS * SLOTS = 32` storage
+/// entries spread across `ACCOUNTS` distinct storage tries, forcing each
+/// overlay path that touches storage to open multiple distinct
+/// `storage_hashed_cursor` and `storage_trie_cursor` cursors per request.
+const SLOTS: u8 = 4;
+
+/// Returns the seeded `(address, [slot; SLOTS])` pairs in the order they were
+/// inserted.
+fn seed_layout() -> Vec<(Address, Vec<B256>)> {
+    (0..ACCOUNTS)
+        .map(|a| {
+            let address = Address::repeat_byte(0x10 | a);
+            let slots = (0..SLOTS).map(|s| B256::repeat_byte(0x01 | (s << 4))).collect();
+            (address, slots)
+        })
+        .collect()
+}
+
+/// Builds an MDBX-backed storage seeded with several accounts and storage
+/// slots so cursor walks have non-trivial work to do.
 ///
 /// Returns the temp dir (must be kept alive for the duration of the test) and
 /// the wrapped storage so the test can read its `tx_acquisitions` counter
@@ -38,24 +69,66 @@ fn setup() -> (TempDir, BaseProofsStorage<Arc<MdbxProofsStorage>>) {
     let dir = TempDir::new().expect("temp dir");
     let mdbx = Arc::new(MdbxProofsStorage::new(dir.path()).expect("mdbx env"));
 
-    // Seed a tiny base state so cursor walks have something to traverse.
-    // The exact contents do not matter; we are counting tx acquisitions, not
-    // verifying proof contents.
-    let address = Address::repeat_byte(0x11);
-    let hashed_address = keccak256(address);
-    let account = Account { nonce: 1, balance: U256::from(1_000), bytecode_hash: None };
-    mdbx.store_hashed_accounts(vec![(hashed_address, Some(account))])
-        .expect("store hashed accounts");
-    mdbx.store_hashed_storages(
-        hashed_address,
-        vec![(keccak256(B256::repeat_byte(0x01)), U256::from(42))],
-    )
-    .expect("store hashed storages");
+    let mut hashed_accounts = Vec::with_capacity(ACCOUNTS as usize);
+    for (i, (address, slots)) in seed_layout().into_iter().enumerate() {
+        let hashed_address = keccak256(address);
+        let account = Account {
+            nonce: i as u64 + 1,
+            balance: U256::from(1_000 * (i as u64 + 1)),
+            bytecode_hash: None,
+        };
+        hashed_accounts.push((hashed_address, Some(account)));
+
+        let hashed_slots: Vec<_> = slots
+            .iter()
+            .enumerate()
+            .map(|(j, slot)| (keccak256(slot), U256::from(42 + j as u64)))
+            .collect();
+        mdbx.store_hashed_storages(hashed_address, hashed_slots).expect("store hashed storages");
+    }
+    mdbx.store_hashed_accounts(hashed_accounts).expect("store hashed accounts");
 
     mdbx.set_initial_state_anchor(BlockNumHash::new(0, B256::ZERO)).expect("anchor");
     mdbx.commit_initial_state().expect("commit");
 
     (dir, BaseProofsStorage::from(mdbx))
+}
+
+/// Builds [`MultiProofTargets`] covering every seeded account and slot so the
+/// overlay paths that take targets actually walk both account and storage
+/// tries multiple times per request.
+fn full_targets() -> MultiProofTargets {
+    let mut targets = B256Map::default();
+    for (address, slots) in seed_layout() {
+        let hashed_slots: B256Set = slots.iter().map(keccak256).collect();
+        targets.insert(keccak256(address), hashed_slots);
+    }
+    MultiProofTargets::from_iter(targets)
+}
+
+/// Builds a [`HashedPostState`] referencing every seeded account and slot.
+///
+/// We do not actually mutate values — we only need the prefix sets to be
+/// non-empty so the state-root, witness, and multiproof computations descend
+/// into both account and storage tries instead of short-circuiting on an
+/// empty input.
+fn full_post_state() -> HashedPostState {
+    let mut state = HashedPostState::default();
+    for (i, (address, slots)) in seed_layout().into_iter().enumerate() {
+        let hashed_address = keccak256(address);
+        let account = Account {
+            nonce: i as u64 + 1,
+            balance: U256::from(1_000 * (i as u64 + 1)),
+            bytecode_hash: None,
+        };
+        state.accounts.insert(hashed_address, Some(account));
+        let hashed_slots = slots
+            .into_iter()
+            .enumerate()
+            .map(|(i, slot)| (keccak256(slot), U256::from(42 + i as u64)));
+        state.storages.insert(hashed_address, HashedStorage::from_iter(false, hashed_slots));
+    }
+    state
 }
 
 /// Asserts that `body` causes exactly `expected` increments on `storage.tx_acquisitions()`.
@@ -80,8 +153,7 @@ fn assert_tx_acquisitions<F>(
 fn proof_acquires_one_tx_per_call() {
     let (_dir, storage) = setup();
     let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
-    let address = Address::repeat_byte(0x11);
-    let slots = [B256::repeat_byte(0x01)];
+    let (address, slots) = seed_layout().into_iter().next().expect("seed");
 
     assert_tx_acquisitions(&storage, 1, "proof", || {
         provider.proof(TrieInput::default(), address, &slots).expect("proof");
@@ -94,9 +166,7 @@ fn multiproof_acquires_one_tx_per_call() {
     let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
 
     assert_tx_acquisitions(&storage, 1, "multiproof", || {
-        provider
-            .multiproof(TrieInput::default(), MultiProofTargets::default())
-            .expect("multiproof");
+        provider.multiproof(TrieInput::default(), full_targets()).expect("multiproof");
     });
 }
 
@@ -106,7 +176,9 @@ fn witness_acquires_one_tx_per_call() {
     let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
 
     assert_tx_acquisitions(&storage, 1, "witness", || {
-        provider.witness(TrieInput::default(), HashedPostState::default()).expect("witness");
+        provider
+            .witness(TrieInput::from_state(full_post_state()), full_post_state())
+            .expect("witness");
     });
 }
 
@@ -116,22 +188,22 @@ fn state_root_acquires_one_tx_per_call() {
     let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
 
     assert_tx_acquisitions(&storage, 1, "state_root", || {
-        provider.state_root(HashedPostState::default()).expect("state_root");
+        provider.state_root(full_post_state()).expect("state_root");
     });
 
     assert_tx_acquisitions(&storage, 1, "state_root_with_updates", || {
-        provider
-            .state_root_with_updates(HashedPostState::default())
-            .expect("state_root_with_updates");
+        provider.state_root_with_updates(full_post_state()).expect("state_root_with_updates");
     });
 
     assert_tx_acquisitions(&storage, 1, "state_root_from_nodes", || {
-        provider.state_root_from_nodes(TrieInput::default()).expect("state_root_from_nodes");
+        provider
+            .state_root_from_nodes(TrieInput::from_state(full_post_state()))
+            .expect("state_root_from_nodes");
     });
 
     assert_tx_acquisitions(&storage, 1, "state_root_from_nodes_with_updates", || {
         provider
-            .state_root_from_nodes_with_updates(TrieInput::default())
+            .state_root_from_nodes_with_updates(TrieInput::from_state(full_post_state()))
             .expect("state_root_from_nodes_with_updates");
     });
 }
@@ -140,21 +212,23 @@ fn state_root_acquires_one_tx_per_call() {
 fn storage_root_acquires_one_tx_per_call() {
     let (_dir, storage) = setup();
     let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
-    let address = Address::repeat_byte(0x11);
+    let (address, slots) = seed_layout().into_iter().next().expect("seed");
+    let hashed_storage = HashedStorage::from_iter(
+        false,
+        slots.iter().enumerate().map(|(i, slot)| (keccak256(slot), U256::from(42 + i as u64))),
+    );
 
     assert_tx_acquisitions(&storage, 1, "storage_root", || {
-        provider.storage_root(address, HashedStorage::new(false)).expect("storage_root");
+        provider.storage_root(address, hashed_storage.clone()).expect("storage_root");
     });
 
     assert_tx_acquisitions(&storage, 1, "storage_proof", || {
-        provider
-            .storage_proof(address, B256::repeat_byte(0x01), HashedStorage::new(false))
-            .expect("storage_proof");
+        provider.storage_proof(address, slots[0], hashed_storage.clone()).expect("storage_proof");
     });
 
     assert_tx_acquisitions(&storage, 1, "storage_multiproof", || {
         provider
-            .storage_multiproof(address, &[B256::repeat_byte(0x01)], HashedStorage::new(false))
+            .storage_multiproof(address, &slots, hashed_storage.clone())
             .expect("storage_multiproof");
     });
 }
@@ -166,8 +240,7 @@ fn storage_root_acquires_one_tx_per_call() {
 fn back_to_back_calls_acquire_one_tx_each() {
     let (_dir, storage) = setup();
     let provider = BaseProofsStateProviderRef::new(Box::<NoopProvider>::default(), &storage, 0);
-    let address = Address::repeat_byte(0x11);
-    let slots = [B256::repeat_byte(0x01)];
+    let (address, slots) = seed_layout().into_iter().next().expect("seed");
 
     let before = storage.tx_acquisitions();
     provider.proof(TrieInput::default(), address, &slots).expect("proof 1");
@@ -184,8 +257,7 @@ fn concurrent_calls_acquire_one_tx_per_request() {
     const N: u64 = 8;
 
     let (_dir, storage) = setup();
-    let address = Address::repeat_byte(0x11);
-    let slots = [B256::repeat_byte(0x01)];
+    let (address, slots) = seed_layout().into_iter().next().expect("seed");
 
     let before = storage.tx_acquisitions();
 
