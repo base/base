@@ -5601,6 +5601,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-snark-e2e"
+version = "0.0.0"
+dependencies = [
+ "base-zk-service",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "base-test-utils"
 version = "0.0.0"
 dependencies = [
