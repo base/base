@@ -172,6 +172,39 @@ else
   echo "Base Azul activation block is unset; leaving base.azul and osakaTime unchanged"
 fi
 
+if [ -n "${L2_BASE_BERYL_BLOCK:-}" ]; then
+  L2_BASE_BERYL_TIME=$((L2_GENESIS_TIME + L2_BLOCK_TIME * L2_BASE_BERYL_BLOCK))
+
+  echo ""
+  echo "=== Configuring Base Beryl Activation ==="
+  echo "L2 genesis time: $L2_GENESIS_TIME"
+  echo "L2 block time: $L2_BLOCK_TIME"
+  echo "Base Beryl activation block: $L2_BASE_BERYL_BLOCK"
+  echo "Derived Base Beryl activation timestamp: $L2_BASE_BERYL_TIME"
+
+  TMP_ROLLUP=$(mktemp)
+  jq \
+    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
+    '.base = ((.base // {}) + {beryl: $beryl_time})' \
+    "$OUTPUT_DIR/rollup.json" \
+    >"$TMP_ROLLUP"
+  mv "$TMP_ROLLUP" "$OUTPUT_DIR/rollup.json"
+
+  TMP_GENESIS=$(mktemp)
+  jq \
+    --argjson beryl_time "$L2_BASE_BERYL_TIME" \
+    '.config.base = ((.config.base // {}) + {beryl: $beryl_time})' \
+    "$OUTPUT_DIR/genesis.json" \
+    >"$TMP_GENESIS"
+  mv "$TMP_GENESIS" "$OUTPUT_DIR/genesis.json"
+
+  echo "Patched Base Beryl activation into rollup and genesis configs"
+else
+  echo ""
+  echo "=== Configuring Base Beryl Activation ==="
+  echo "Base Beryl activation block is unset; leaving base.beryl unchanged"
+fi
+
 echo "Writing rollup-conductor.json (base fields stripped for op-conductor compatibility)..."
 jq 'del(.base)' "$OUTPUT_DIR/rollup.json" >"$OUTPUT_DIR/rollup-conductor.json"
 echo "rollup-conductor.json written to $OUTPUT_DIR/rollup-conductor.json"

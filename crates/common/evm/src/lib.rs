@@ -25,7 +25,7 @@ pub use transaction::{
 mod handler;
 pub use handler::{BaseHandler, IsTxError};
 
-mod precompiles;
+pub mod precompiles;
 pub use precompiles::BasePrecompiles;
 
 mod api;

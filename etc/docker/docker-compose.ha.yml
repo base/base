@@ -100,6 +100,7 @@ services:
       - ${SEQUENCER_KEY}
       - --p2p.scoring
       - Off
+      - --rpc.enable-admin
 
   base-batcher:
     depends_on:
@@ -265,6 +266,7 @@ services:
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --p2p.scoring
       - Off
+      - --rpc.enable-admin
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:${L2_SEQ1_CL_RPC_PORT}/healthz"]
       <<: *sequencer-healthcheck
@@ -406,6 +408,7 @@ services:
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --p2p.scoring
       - Off
+      - --rpc.enable-admin
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:${L2_SEQ2_CL_RPC_PORT}/healthz"]
       <<: *sequencer-healthcheck

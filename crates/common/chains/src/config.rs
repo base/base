@@ -453,7 +453,7 @@ const DEVNET: ChainConfig = ChainConfig {
     isthmus_timestamp: 0,
     jovian_timestamp: 0,
     azul_timestamp: Some(0),
-    beryl_timestamp: None,
+    beryl_timestamp: Some(0),
 
     genesis_l1_hash: B256::ZERO,
     genesis_l1_number: 0,

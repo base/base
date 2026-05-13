@@ -46,6 +46,10 @@ accounts:
 smoke:
     ./etc/scripts/devnet/smoke.sh
 
+# Tests the Counter native precompile (requires Beryl active)
+test-counter *args:
+    ./etc/scripts/devnet/test-counter-precompile.sh {{ args }}
+
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 

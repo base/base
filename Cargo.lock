@@ -3315,6 +3315,8 @@ dependencies = [
  "base-common-consensus",
  "base-common-flz",
  "base-common-precompiles",
+ "base-precompile-counter",
+ "base-precompile-storage",
  "reth-evm",
  "revm",
  "rstest",
