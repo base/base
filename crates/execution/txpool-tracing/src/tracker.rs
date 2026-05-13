@@ -38,7 +38,7 @@ impl Tracker {
     pub const MAX_SIZE: usize = 20_000;
 
     /// Block inclusion duration above this threshold increments the slow counter.
-    const SLOW_BLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_millis(2500);
+    const SLOW_BLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_secs(3);
     /// Flashblock inclusion duration above this threshold increments the slow counter.
     const SLOW_FLASHBLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_millis(1000);
 
