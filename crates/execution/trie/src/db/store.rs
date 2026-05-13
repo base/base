@@ -69,6 +69,29 @@ struct HistoryDeleteBatch {
     hashed_storage: Vec<(<HashedStorageHistory as Table>::Key, u64)>,
 }
 
+/// Strategy for writing versioned history entries to a `DupSort` table.
+///
+/// Different code paths have different ordering guarantees and need different
+/// MDBX write primitives.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum WriteMode {
+    /// Use MDBX `MDBX_APPENDDUP` fast-path append.
+    ///
+    /// Caller guarantees that per-key subkeys are monotonically increasing across
+    /// all entries currently in the table plus this batch. This holds for
+    /// single-block writes: every entry uses the same subkey == new `block_number`,
+    /// and that `block_number` is strictly greater than any previously written
+    /// `block_number` for these keys (enforced by `OutOfOrder` parent validation).
+    Append,
+    /// Use MDBX `upsert` (B-tree search + insert/update). No ordering constraints.
+    ///
+    /// Used when batching multiple consecutive blocks into a single transaction:
+    /// subsequent blocks within the same transaction may write keys lexicographically
+    /// smaller than keys written by earlier blocks, which would violate the
+    /// `MDBX_APPENDDUP` table-wide ordering check.
+    Upsert,
+}
+
 impl MdbxProofsStorage {
     /// Creates a new [`MdbxProofsStorage`] instance with the given path.
     pub fn new(path: &Path) -> Result<Self, BaseProofsStorageError> {
@@ -156,21 +179,14 @@ impl MdbxProofsStorage {
     ///
     /// # Parameters
     /// - `block_number`: Target block number for versioning entries
-    /// - `items`: **Must be sorted** - iterator of entries to persist
-    /// - `append_mode`: Mode selector for write strategy:
-    ///   - `true` (Append): Appends all entries including tombstones for forward progress
-    ///   - `false` (Prune): Removes tombstones, writes non-tombstones to block 0
-    ///
-    /// The cost of pruning is the cost of (append + deleting tombstones + deleting old block 0).
-    /// The tombstones deletion is expensive as it requires a seek for each (key + subkey).
-    ///
-    /// Uses [`reth_db::mdbx::cursor::Cursor::upsert`] for upsert operation.
+    /// - `items`: **Must be sorted** by key - iterator of entries to persist
+    /// - `mode`: Write strategy. See [`WriteMode`] for the per-variant contract.
     fn persist_history_batch<T, I, V>(
         &self,
         tx: &(impl DbTxMut + DbTx),
         block_number: T::SubKey,
         items: I,
-        append_mode: bool,
+        mode: WriteMode,
     ) -> BaseProofsStorageResult<Vec<T::Key>>
     where
         T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
@@ -180,51 +196,14 @@ impl MdbxProofsStorage {
     {
         let mut cur = tx.cursor_dup_write::<T>()?;
         let mut keys = Vec::<T::Key>::new();
-
-        // Materialize iterator to enable partitioning and collect keys
-        let mut pairs: Vec<(T::Key, T::Value)> = Vec::new();
         for it in items {
             let (k, vv) = it.into_kv(block_number);
-            pairs.push((k.clone(), vv));
-            keys.push(k)
-        }
-
-        if append_mode {
-            // Append all entries (including tombstones) to preserve full history
-            for (k, vv) in pairs {
-                cur.append_dup(k.clone(), vv)?;
+            match mode {
+                WriteMode::Append => cur.append_dup(k.clone(), vv)?,
+                WriteMode::Upsert => cur.upsert(k.clone(), &vv)?,
             }
-            return Ok(keys);
+            keys.push(k);
         }
-
-        // Drop current cursor to start clean for Phase 1
-        drop(cur);
-
-        // Phase 1: Batch Delete (Sequential)
-        // Remove all existing state at Block 0 for these keys.
-        {
-            let mut del_cur = tx.cursor_dup_write::<T>()?;
-            for (k, _) in &pairs {
-                // Seek to (Key, Block 0)
-                if let Some(vv) = del_cur.seek_by_key_subkey(k.clone(), 0)?
-                    && vv.block_number == 0
-                {
-                    del_cur.delete_current()?;
-                }
-            }
-        }
-
-        // Phase 2: Batch Write (Sequential)
-        // Write new values (skipping tombstones).
-        {
-            let mut write_cur = tx.cursor_dup_write::<T>()?;
-            for (k, vv) in pairs {
-                if vv.value.0.is_some() {
-                    write_cur.upsert(k, &vv)?;
-                }
-            }
-        }
-
         Ok(keys)
     }
 
@@ -398,6 +377,7 @@ impl MdbxProofsStorage {
         hashed_address: B256,
         mut next: Next,
         new_entries: I,
+        mode: WriteMode,
     ) -> BaseProofsStorageResult<Vec<T::Key>>
     where
         T: Table<Value = VersionedValue<V>> + DupSort,
@@ -420,7 +400,10 @@ impl MdbxProofsStorage {
         for (k, value) in merged {
             let key: T::Key = (hashed_address, k, Option::<V>::None).into_key();
             let vv: T::Value = VersionedValue { block_number, value: MaybeDeleted(value) };
-            cur.append_dup(key.clone(), vv)?;
+            match mode {
+                WriteMode::Append => cur.append_dup(key.clone(), vv)?,
+                WriteMode::Upsert => cur.upsert(key.clone(), &vv)?,
+            }
             keys.push(key);
         }
         Ok(keys)
@@ -489,13 +472,14 @@ impl MdbxProofsStorage {
         })
     }
 
-    /// Write trie/state history for `block_number` from `block_state_diff`.
+    /// Write trie/state history for `block_number` from `block_state_diff` using
+    /// the given `mode` (see [`WriteMode`] for the per-variant contract).
     fn store_trie_updates_for_block(
         &self,
         tx: &<DatabaseEnv as Database>::TXMut,
         block_number: u64,
         block_state_diff: BlockStateDiff,
-        append_mode: bool,
+        mode: WriteMode,
     ) -> BaseProofsStorageResult<ChangeSet> {
         let BlockStateDiff { sorted_trie_updates, sorted_post_state } = block_state_diff;
 
@@ -506,18 +490,18 @@ impl MdbxProofsStorage {
             tx,
             block_number,
             sorted_trie_updates.account_nodes_ref().iter().cloned(),
-            append_mode,
+            mode,
         )?;
         let hashed_account_keys = self.persist_history_batch(
             tx,
             block_number,
             sorted_post_state.accounts.iter().copied(),
-            append_mode,
+            mode,
         )?;
 
         let mut storage_trie_keys = Vec::<StorageTrieKey>::with_capacity(storage_trie_len);
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
-            if nodes.is_deleted && append_mode {
+            if nodes.is_deleted {
                 let mut ro = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
                 let keys = self.wipe_and_overlay(
                     tx,
@@ -525,6 +509,7 @@ impl MdbxProofsStorage {
                     *hashed_address,
                     || Ok(ro.next()?),
                     nodes.storage_nodes_ref().iter().cloned(),
+                    mode,
                 )?;
                 storage_trie_keys.extend(keys);
                 continue;
@@ -538,14 +523,14 @@ impl MdbxProofsStorage {
                     .iter()
                     .cloned()
                     .map(|(path, node)| (*hashed_address, path, node)),
-                append_mode,
+                mode,
             )?;
             storage_trie_keys.extend(keys);
         }
 
         let mut hashed_storage_keys = Vec::<HashedStorageKey>::with_capacity(hashed_storage_len);
         for (hashed_address, storage) in sorted_post_state.storages {
-            if append_mode && storage.is_wiped() {
+            if storage.is_wiped() {
                 let mut ro = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
                 let keys = self.wipe_and_overlay(
                     tx,
@@ -556,6 +541,7 @@ impl MdbxProofsStorage {
                         .storage_slots_ref()
                         .iter()
                         .map(|(slot, val)| (*slot, Some(StorageValue(*val)))),
+                    mode,
                 )?;
                 hashed_storage_keys.extend(keys);
                 continue;
@@ -567,7 +553,7 @@ impl MdbxProofsStorage {
                     .storage_slots_ref()
                     .iter()
                     .map(|(key, val)| (hashed_address, *key, Some(StorageValue(*val)))),
-                append_mode,
+                mode,
             )?;
             hashed_storage_keys.extend(keys);
         }
@@ -603,13 +589,11 @@ impl MdbxProofsStorage {
         }
 
         let change_set =
-            &self.store_trie_updates_for_block(tx, block_number, block_state_diff, true)?;
+            &self.store_trie_updates_for_block(tx, block_number, block_state_diff, WriteMode::Append)?;
 
-        // Cursor for recording all changes made in this block for all history tables
         let mut change_set_cursor = tx.new_cursor::<BlockChangeSet>()?;
         change_set_cursor.append(block_number, change_set)?;
 
-        // Update proof window's latest block
         Self::inner_set_latest_block_number(tx, block_number, block_ref.block.hash)?;
 
         Ok(WriteCounts {
@@ -618,6 +602,103 @@ impl MdbxProofsStorage {
             hashed_accounts_written_total: change_set.hashed_account_keys.len() as u64,
             hashed_storages_written_total: change_set.hashed_storage_keys.len() as u64,
         })
+    }
+
+    /// Apply one block's writes inside an already-open MDBX write transaction.
+    ///
+    /// Validates the block's parent against `expected_parent_hash` (returning
+    /// [`BaseProofsStorageError::OutOfOrder`] on mismatch), persists the diff using
+    /// `mode`, appends the per-block [`BlockChangeSet`], and advances
+    /// `ProofWindow::LatestBlock`. Used by both single-block and batched writers
+    /// so the per-block correctness invariants live in one place.
+    fn apply_block_in_txn(
+        &self,
+        tx: &<DatabaseEnv as Database>::TXMut,
+        block_ref: BlockWithParent,
+        block_state_diff: BlockStateDiff,
+        expected_parent_hash: B256,
+        mode: WriteMode,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        let block_number = block_ref.block.number;
+
+        if expected_parent_hash != block_ref.parent {
+            return Err(BaseProofsStorageError::OutOfOrder {
+                block_number,
+                parent_block_hash: block_ref.parent,
+                latest_block_hash: expected_parent_hash,
+            });
+        }
+
+        let change_set =
+            &self.store_trie_updates_for_block(tx, block_number, block_state_diff, mode)?;
+
+        let mut change_set_cursor = tx.new_cursor::<BlockChangeSet>()?;
+        change_set_cursor.append(block_number, change_set)?;
+
+        Self::inner_set_latest_block_number(tx, block_number, block_ref.block.hash)?;
+
+        Ok(WriteCounts {
+            account_trie_updates_written_total: change_set.account_trie_keys.len() as u64,
+            storage_trie_updates_written_total: change_set.storage_trie_keys.len() as u64,
+            hashed_accounts_written_total: change_set.hashed_account_keys.len() as u64,
+            hashed_storages_written_total: change_set.hashed_storage_keys.len() as u64,
+        })
+    }
+
+    /// Write a contiguous batch of blocks inside a single MDBX write transaction.
+    ///
+    /// All blocks must form a chain (block[i+1].parent == block[i].hash) and the
+    /// first block's parent must match the storage's current latest block hash.
+    /// On any error, the entire transaction is aborted so no entries persist.
+    ///
+    /// Uses [`WriteMode::Upsert`] because successive blocks within the same
+    /// transaction may write keys lexicographically smaller than keys written by
+    /// earlier blocks, which would violate `MDBX_APPENDDUP`.
+    ///
+    /// Note on commit semantics: [`reth_db::Database::update`] commits
+    /// unconditionally, so we drive the transaction manually here to abort on
+    /// the first per-block error.
+    fn store_trie_updates_batch_inner(
+        &self,
+        blocks: Vec<(BlockWithParent, BlockStateDiff)>,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        if blocks.is_empty() {
+            return Ok(WriteCounts::default());
+        }
+
+        let tx = self.env.tx_mut()?;
+
+        let outcome: BaseProofsStorageResult<WriteCounts> = (|| {
+            let mut total = WriteCounts::default();
+            let mut expected_parent =
+                self.inner_get_latest_block_number_hash(&tx)?.map_or(B256::ZERO, |(_, h)| h);
+
+            for (block_ref, diff) in blocks {
+                let next_parent = block_ref.block.hash;
+                let counts = self.apply_block_in_txn(
+                    &tx,
+                    block_ref,
+                    diff,
+                    expected_parent,
+                    WriteMode::Upsert,
+                )?;
+                total += counts;
+                expected_parent = next_parent;
+            }
+
+            Ok(total)
+        })();
+
+        match outcome {
+            Ok(counts) => {
+                tx.commit()?;
+                Ok(counts)
+            }
+            Err(e) => {
+                tx.abort();
+                Err(e)
+            }
+        }
     }
 
     /// Return `BlockNumHash` for the initial state anchor.
@@ -715,6 +796,13 @@ impl BaseProofsStore for MdbxProofsStorage {
     ) -> BaseProofsStorageResult<WriteCounts> {
         self.env
             .update(|tx| self.store_trie_updates_append_only(tx, block_ref, block_state_diff))?
+    }
+
+    fn store_trie_updates_batch(
+        &self,
+        blocks: Vec<(BlockWithParent, BlockStateDiff)>,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        self.store_trie_updates_batch_inner(blocks)
     }
 
     fn fetch_trie_updates(&self, block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
@@ -1014,7 +1102,7 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
         account_nodes.sort_by_key(|(key, _)| *key);
 
         self.env.update(|tx| {
-            self.persist_history_batch(tx, 0, account_nodes.into_iter(), true)?;
+            self.persist_history_batch(tx, 0, account_nodes.into_iter(), WriteMode::Append)?;
             Ok(())
         })?
     }
@@ -1036,7 +1124,7 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
                 tx,
                 0,
                 storage_nodes.into_iter().map(|(path, node)| (hashed_address, path, node)),
-                true,
+                WriteMode::Append,
             )?;
             Ok(())
         })?
@@ -1051,11 +1139,10 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
             return Ok(());
         }
 
-        // sort the accounts by key to ensure insertion is efficient
         accounts.sort_by_key(|(key, _)| *key);
 
         self.env.update(|tx| {
-            self.persist_history_batch(tx, 0, accounts.into_iter(), true)?;
+            self.persist_history_batch(tx, 0, accounts.into_iter(), WriteMode::Append)?;
             Ok(())
         })?
     }
@@ -1070,7 +1157,6 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
             return Ok(());
         }
 
-        // sort the storages by key to ensure insertion is efficient
         storages.sort_by_key(|(key, _)| *key);
 
         self.env.update(|tx| {
@@ -1080,7 +1166,7 @@ impl BaseProofsInitialStateStore for MdbxProofsStorage {
                 storages
                     .into_iter()
                     .map(|(key, val)| (hashed_address, key, Some(StorageValue(val)))),
-                true,
+                WriteMode::Append,
             )?;
             Ok(())
         })?

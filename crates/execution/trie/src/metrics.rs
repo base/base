@@ -367,6 +367,19 @@ where
     }
 
     #[inline]
+    fn store_trie_updates_batch(
+        &self,
+        blocks: Vec<(BlockWithParent, BlockStateDiff)>,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        let last_block_number = blocks.last().map(|(block_ref, _)| block_ref.block.number);
+        let result = self.storage.store_trie_updates_batch(blocks)?;
+        if let Some(n) = last_block_number {
+            BlockMetrics::latest_number().set(n as f64);
+        }
+        Ok(result)
+    }
+
+    #[inline]
     fn fetch_trie_updates(&self, block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
         self.storage.fetch_trie_updates(block_number)
     }

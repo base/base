@@ -13,8 +13,8 @@ use std::{sync::Arc, time::Duration};
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
 use base_execution_trie::{
-    BaseProofStoragePrunerTask, BaseProofsStorage, BaseProofsStore, live::LiveTrieCollector,
-    metrics::BlockMetrics,
+    BaseProofStoragePrunerTask, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
+    live::LiveTrieCollector, metrics::BlockMetrics,
 };
 use futures::TryStreamExt;
 use reth_execution_types::Chain;
@@ -32,6 +32,12 @@ const MAX_PRUNE_BLOCKS_STARTUP: u64 = 1000;
 
 /// How many blocks to process in a single batch before yielding. Default is 50 blocks.
 const SYNC_BLOCKS_BATCH_SIZE: usize = 50;
+
+/// Maximum number of consecutive cache-hit blocks to coalesce into a single
+/// proofs-storage write transaction. Larger values amortize commit/fsync over
+/// more blocks (the primary throughput win) but hold the MDBX writer lock
+/// longer, increasing pruner contention. Must be `<= SYNC_BLOCKS_BATCH_SIZE`.
+const STORE_BLOCKS_BATCH_SIZE: usize = 32;
 
 /// Default proofs history window: 1 month of blocks at 2s block time
 const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 1_296_000;
@@ -419,7 +425,6 @@ where
         target: u64,
     ) {
         loop {
-            // Check for higher-priority state (e.g. revert) before processing.
             if sync_target.has_pending_state() {
                 return;
             }
@@ -450,8 +455,41 @@ where
                 "Processing proofs storage sync batch"
             );
 
+            let mut pending: Vec<(BlockWithParent, BlockStateDiff)> =
+                Vec::with_capacity(STORE_BLOCKS_BATCH_SIZE);
+
             for block_num in (latest + 1)..=end {
+                let should_verify = verification_interval > 0
+                    && block_num.is_multiple_of(verification_interval);
                 let cached = sync_target.take(block_num);
+
+                if !should_verify
+                    && let Some(cached) = cached.as_ref()
+                {
+                    let sorted = cached.trie_data.get();
+                    pending.push((
+                        cached.block_with_parent,
+                        BlockStateDiff {
+                            sorted_trie_updates: (*sorted.trie_updates).clone(),
+                            sorted_post_state: (*sorted.hashed_state).clone(),
+                        },
+                    ));
+                    if pending.len() >= STORE_BLOCKS_BATCH_SIZE
+                        && let Err(e) = Self::flush_pending_batch(&mut pending, collector)
+                    {
+                        error!(target: "base::exex", error = ?e, "Batched block writes failed");
+                        return;
+                    }
+                    continue;
+                }
+
+                if !pending.is_empty()
+                    && let Err(e) = Self::flush_pending_batch(&mut pending, collector)
+                {
+                    error!(target: "base::exex", error = ?e, "Batched block writes failed");
+                    return;
+                }
+
                 if let Err(e) = Self::process_block(
                     block_num,
                     cached,
@@ -464,9 +502,29 @@ where
                 }
             }
 
+            if !pending.is_empty()
+                && let Err(e) = Self::flush_pending_batch(&mut pending, collector)
+            {
+                error!(target: "base::exex", error = ?e, "Batched block writes failed");
+                return;
+            }
+
             info!(target: "base::exex", latest_stored = latest, target, "Batch processed, yielding");
             task::yield_now().await;
         }
+    }
+
+    /// Persist any queued cache-hit blocks as a single proofs-storage transaction
+    /// and clear the queue. No-op when `pending` is empty.
+    fn flush_pending_batch(
+        pending: &mut Vec<(BlockWithParent, BlockStateDiff)>,
+        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
+    ) -> eyre::Result<()> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        collector.store_block_updates_batch(std::mem::take(pending))?;
+        Ok(())
     }
 
     fn process_block(

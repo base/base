@@ -134,6 +134,28 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         block_state_diff: BlockStateDiff,
     ) -> BaseProofsStorageResult<WriteCounts>;
 
+    /// Store a contiguous batch of consecutive blocks atomically.
+    ///
+    /// All blocks must form a chain (`block[i+1].parent == block[i].hash`) and the
+    /// first block's parent must match the storage's current latest block hash.
+    /// On any error, no entries from the batch are persisted.
+    ///
+    /// Backends with transactional storage (e.g. MDBX) should override this to
+    /// use a single transaction so the entire batch shares one commit/fsync.
+    /// The default implementation falls through to per-block
+    /// [`store_trie_updates`](Self::store_trie_updates) calls; that is correct
+    /// for non-durable backends but yields no perf benefit on durable ones.
+    fn store_trie_updates_batch(
+        &self,
+        blocks: Vec<(BlockWithParent, BlockStateDiff)>,
+    ) -> BaseProofsStorageResult<WriteCounts> {
+        let mut total = WriteCounts::default();
+        for (block_ref, diff) in blocks {
+            total += self.store_trie_updates(block_ref, diff)?;
+        }
+        Ok(total)
+    }
+
     /// Fetch all updates for a given block number.
     fn fetch_trie_updates(&self, block_number: u64) -> BaseProofsStorageResult<BlockStateDiff>;
 
