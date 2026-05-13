@@ -9,7 +9,6 @@ use alloy_chains::Chain;
 use base_common_chains::ChainConfig as BuiltInChainConfig;
 use base_consensus_cli::ConsensusChainArgs;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_cli::chainspec::chain_value_parser;
 use eyre::WrapErr;
 use figment::{
     Figment,
@@ -28,6 +27,8 @@ pub(crate) enum BuiltInChain {
     Mainnet,
     /// Base sepolia.
     Sepolia,
+    /// Local Base devnet.
+    Dev,
     /// Base zeronet.
     Zeronet,
 }
@@ -36,9 +37,10 @@ impl BuiltInChain {
     /// Returns the canonical CLI name for this chain.
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
-            Self::Mainnet => "mainnet",
-            Self::Sepolia => "sepolia",
-            Self::Zeronet => "zeronet",
+            Self::Mainnet => BuiltInChainConfig::MAINNET_NAME,
+            Self::Sepolia => BuiltInChainConfig::SEPOLIA_NAME,
+            Self::Dev => BuiltInChainConfig::DEVNET_NAME,
+            Self::Zeronet => BuiltInChainConfig::ZERONET_NAME,
         }
     }
 
@@ -47,6 +49,7 @@ impl BuiltInChain {
         match self {
             Self::Mainnet => BuiltInChainConfig::mainnet(),
             Self::Sepolia => BuiltInChainConfig::sepolia(),
+            Self::Dev => BuiltInChainConfig::devnet(),
             Self::Zeronet => BuiltInChainConfig::zeronet(),
         }
     }
@@ -63,11 +66,15 @@ impl FromStr for BuiltInChain {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.to_ascii_lowercase().as_str() {
-            "mainnet" => Ok(Self::Mainnet),
-            "sepolia" => Ok(Self::Sepolia),
-            "zeronet" => Ok(Self::Zeronet),
+            BuiltInChainConfig::MAINNET_NAME | "mainnet" => Ok(Self::Mainnet),
+            BuiltInChainConfig::SEPOLIA_NAME | BuiltInChainConfig::SEPOLIA_ALIAS | "sepolia" => {
+                Ok(Self::Sepolia)
+            }
+            BuiltInChainConfig::DEVNET_NAME | "devnet" => Ok(Self::Dev),
+            BuiltInChainConfig::ZERONET_NAME | "zeronet" => Ok(Self::Zeronet),
             _ => Err(format!(
-                "unsupported built-in chain `{value}`; expected one of mainnet, sepolia, zeronet"
+                "unsupported built-in chain `{value}`; expected one of base, base-sepolia, \
+                 base-zeronet, dev"
             )),
         }
     }
@@ -78,7 +85,7 @@ impl FromStr for BuiltInChain {
 pub(crate) enum ChainArg {
     /// Use one of the built-in static chains.
     BuiltIn(BuiltInChain),
-    /// Load chain settings from a file.
+    /// Load chain settings from a TOML file.
     File(PathBuf),
 }
 
@@ -104,8 +111,6 @@ pub(crate) enum ResolvedChainSource {
     BuiltIn(BuiltInChain),
     /// The config came from a TOML file.
     Toml(PathBuf),
-    /// The execution chainspec came from a genesis JSON file.
-    Genesis(PathBuf),
 }
 
 /// The resolved chain config used by the `base` binary.
@@ -171,11 +176,6 @@ impl ResolvedChainConfig {
                     })?;
                 Ok(Arc::new(BaseChainSpec::try_from(config)?))
             }
-            ResolvedChainSource::Genesis(path) => {
-                chain_value_parser(path.to_str().ok_or_else(|| {
-                    eyre::eyre!("execution genesis path is not valid UTF-8: {}", path.display())
-                })?)
-            }
         }
     }
 
@@ -214,7 +214,10 @@ impl ChainResolver {
     /// Resolves a chain config from a file.
     pub(crate) fn resolve_file(path: &Path) -> eyre::Result<ResolvedChainConfig> {
         if path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("json")) {
-            return Self::resolve_genesis_file(path);
+            return Err(eyre::eyre!(
+                "execution genesis JSON files are not accepted by `base --chain`; use a built-in \
+                 chain name like `dev`, `base`, `base-sepolia`, or `base-zeronet`"
+            ));
         }
 
         Self::resolve_toml_file(path)
@@ -225,25 +228,6 @@ impl ChainResolver {
         let figment =
             Figment::new().merge(Toml::file(path)).merge(Env::prefixed(BASE_CHAIN_ENV_PREFIX));
         Self::extract(figment, ResolvedChainSource::Toml(path.to_path_buf()))
-    }
-
-    /// Resolves a chain config from an execution genesis JSON file.
-    pub(crate) fn resolve_genesis_file(path: &Path) -> eyre::Result<ResolvedChainConfig> {
-        let path_str = path.to_str().ok_or_else(|| {
-            eyre::eyre!("execution genesis path is not valid UTF-8: {}", path.display())
-        })?;
-        let chain_spec = chain_value_parser(path_str).wrap_err_with(|| {
-            format!("failed to resolve execution genesis from {}", path.display())
-        })?;
-        let l2_chain_id = chain_spec.chain.id();
-        let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("custom").to_owned();
-
-        Ok(ResolvedChainConfig {
-            name,
-            l2_chain_id,
-            l1_chain_id: 0,
-            source: ResolvedChainSource::Genesis(path.to_path_buf()),
-        })
     }
 
     /// Extracts the merged chain values into the public resolved config.
@@ -257,9 +241,6 @@ impl ChainResolver {
             }
             ResolvedChainSource::Toml(path) => {
                 format!("failed to resolve chain config from {}", path.display())
-            }
-            ResolvedChainSource::Genesis(path) => {
-                format!("failed to resolve execution genesis from {}", path.display())
             }
         })?;
 
@@ -286,7 +267,7 @@ mod tests {
             let resolved =
                 ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Mainnet)).resolve().unwrap();
 
-            assert_eq!(resolved.name, "mainnet");
+            assert_eq!(resolved.name, "base");
             assert_eq!(resolved.l2_chain_id, 8453);
             assert_eq!(resolved.l1_chain_id, 1);
             assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Mainnet));
@@ -301,9 +282,25 @@ mod tests {
             let resolved =
                 ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Sepolia)).resolve().unwrap();
 
-            assert_eq!(resolved.name, "sepolia");
+            assert_eq!(resolved.name, "base-sepolia");
             assert_eq!(resolved.l2_chain_id, 84532);
             assert_eq!(resolved.l1_chain_id, 11155111);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn resolves_dev_builtin() {
+        with_cleared_env(|_| {
+            let resolved =
+                ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Dev)).resolve().unwrap();
+
+            assert_eq!(resolved.name, "dev");
+            assert_eq!(resolved.l2_chain_id, 1337);
+            assert_eq!(resolved.l1_chain_id, 900);
+            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Dev));
+            assert_eq!(resolved.execution_chain_spec().unwrap().chain.id(), 1337);
 
             Ok(())
         });
@@ -315,7 +312,7 @@ mod tests {
             let resolved =
                 ChainResolver::new(ChainArg::BuiltIn(BuiltInChain::Zeronet)).resolve().unwrap();
 
-            assert_eq!(resolved.name, "zeronet");
+            assert_eq!(resolved.name, "base-zeronet");
             assert_eq!(resolved.l2_chain_id, 763360);
             assert_eq!(resolved.source, ResolvedChainSource::BuiltIn(BuiltInChain::Zeronet));
 
@@ -344,20 +341,9 @@ mod tests {
     }
 
     #[test]
-    fn resolves_custom_genesis_file() {
-        with_cleared_env(|jail| {
-            let path = jail.directory().join("genesis.json");
-            jail.create_file(&path, BuiltInChainConfig::sepolia().genesis_json)?;
+    fn rejects_execution_genesis_file() {
+        let err = ChainResolver::resolve_file(Path::new("genesis.json")).unwrap_err();
 
-            let resolved = ChainResolver::resolve_file(&path).unwrap();
-
-            assert_eq!(resolved.name, "genesis");
-            assert_eq!(resolved.l2_chain_id, 84532);
-            assert_eq!(resolved.l1_chain_id, 0);
-            assert_eq!(resolved.source, ResolvedChainSource::Genesis(path.clone()));
-            assert_eq!(resolved.execution_chain_spec().unwrap().chain.id(), 84532);
-
-            Ok(())
-        });
+        assert!(err.to_string().contains("execution genesis JSON files are not accepted"));
     }
 }

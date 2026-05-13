@@ -197,6 +197,7 @@ impl ChainConfig {
         match id {
             8453 => Some(&MAINNET),
             84532 => Some(&SEPOLIA),
+            1337 => Some(&DEVNET),
             763360 => Some(&ZERONET),
             _ => None,
         }
@@ -564,5 +565,12 @@ mod tests {
             assert!(ChainConfig::by_name(name).is_some(), "{name} should resolve");
         }
         assert_eq!(ChainConfig::by_name(ChainConfig::SEPOLIA_ALIAS), Some(ChainConfig::sepolia()));
+    }
+
+    #[test]
+    fn known_chain_ids_resolve() {
+        for config in ChainConfig::all() {
+            assert_eq!(ChainConfig::by_chain_id(config.chain_id), Some(config));
+        }
     }
 }

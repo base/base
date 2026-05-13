@@ -12,18 +12,19 @@ Supported CLI forms:
 
 ```text
 base node rpc
-base --chain sepolia node rpc
-base -c sepolia node rpc
-base --chain zeronet node rpc
-base node rpc --chain sepolia
-base node rpc --chain /path/to/genesis.json
+base --chain base-sepolia node rpc
+base -c base-sepolia node rpc
+base --chain base-zeronet node rpc
+base node rpc --chain dev
 base --chain ./chain.toml node rpc
 base -c ./chain.toml node rpc
 ```
 
 Chain selection currently supports:
 
-- built-in names: `mainnet`, `sepolia`, `zeronet`
+- built-in names from `base-common-chains`: `base`, `base-sepolia`,
+  `base_sepolia`, `base-zeronet`, `dev`
+- short aliases: `mainnet`, `sepolia`, `zeronet`, `devnet`
 - TOML files for custom chains:
 
 ```toml
@@ -31,9 +32,6 @@ name = "custom-chain"
 l2_chain_id = 84532
 l1_chain_id = 11155111
 ```
-
-- execution genesis JSON files, matching the `base-reth-node --chain
-  /path/to/genesis.json` behavior
 
 For embedded consensus, the L2 engine endpoint is supplied by `base node rpc`.
 Do not pass `--l2-engine-rpc` in unified mode. Execution networking keeps the

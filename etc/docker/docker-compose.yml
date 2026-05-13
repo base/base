@@ -482,7 +482,7 @@ services:
       - node
       - rpc
       - --chain
-      - /genesis/l2/genesis.json
+      - dev
       - --datadir=/data
       - --http
       - --http.addr=0.0.0.0

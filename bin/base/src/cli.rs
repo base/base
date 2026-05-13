@@ -24,7 +24,7 @@ base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
 )]
 pub(crate) struct BaseCli {
     /// Chain selection.
-    #[arg(long, short = 'c', global = true, default_value = "mainnet", env = "BASE_CHAIN")]
+    #[arg(long, short = 'c', global = true, default_value = "base", env = "BASE_CHAIN")]
     pub(crate) chain: ChainArg,
 
     /// Logging configuration.
@@ -164,13 +164,21 @@ mod tests {
 
     #[test]
     fn parses_named_chain_selector() {
-        let cli = BaseCli::parse_from(node_rpc_args(&["base", "-c", "sepolia", "node", "rpc"]));
+        let cli =
+            BaseCli::parse_from(node_rpc_args(&["base", "-c", "base-sepolia", "node", "rpc"]));
 
         assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
     }
 
     #[test]
     fn parses_global_chain_after_rpc_subcommand() {
+        let cli = BaseCli::parse_from(node_rpc_args(&["base", "node", "rpc", "--chain", "dev"]));
+
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Dev)));
+    }
+
+    #[test]
+    fn parses_legacy_short_chain_alias() {
         let cli =
             BaseCli::parse_from(node_rpc_args(&["base", "node", "rpc", "--chain", "sepolia"]));
 
@@ -211,7 +219,7 @@ mod tests {
             "node",
             "rpc",
             "--chain",
-            "/genesis/l2/genesis.json",
+            "dev",
             "--datadir=/data",
             "--http",
             "--http.addr=0.0.0.0",
@@ -278,7 +286,7 @@ mod tests {
             "-vvv",
         ]);
 
-        assert!(matches!(cli.chain, ChainArg::File(_)));
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Dev)));
         let BaseCommand::Node(node) = cli.command;
         let NodeSubcommand::Rpc(rpc) = node.command;
 
