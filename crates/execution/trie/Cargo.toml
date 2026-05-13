@@ -50,13 +50,14 @@ thiserror.workspace = true
 auto_impl.workspace = true
 parking_lot.workspace = true
 derive_more.workspace = true
+rocksdb.workspace = true
 eyre = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 eyre.workspace = true
-rand_08.workspace = true
 mockall.workspace = true
+rand_08.workspace = true
 tempfile.workspace = true
 test-case.workspace = true
 reth-node-api.workspace = true
@@ -78,6 +79,10 @@ tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"
 
 # misc
 serial_test.workspace = true
+
+[[bench]]
+name = "proofs_storage_write"
+harness = false
 
 [features]
 serde-bincode-compat = [

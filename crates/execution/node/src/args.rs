@@ -25,6 +25,17 @@ pub enum TxpoolOrdering {
     Timestamp,
 }
 
+/// On-disk database backend for proofs history.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ProofsHistoryDbBackend {
+    /// Store proofs history in RocksDB.
+    Rocksdb,
+    /// Store proofs history in MDBX.
+    #[default]
+    Mdbx,
+}
+
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -89,6 +100,15 @@ pub struct RollupArgs {
     #[arg(long = "proofs-history.storage-path", value_name = "PROOFS_HISTORY_STORAGE_PATH")]
     pub proofs_history_storage_path: Option<PathBuf>,
 
+    /// The on-disk database backend for proofs history.
+    #[arg(
+        long = "proofs-history.db",
+        visible_aliases = ["proofs-history.db-backend", "proofs-db"],
+        value_name = "PROOFS_HISTORY_DB",
+        default_value = "mdbx"
+    )]
+    pub proofs_history_db: ProofsHistoryDbBackend,
+
     /// The window to span blocks for proofs history. Value is the number of blocks.
     /// Default is 1 month of blocks based on 2 seconds block time.
     /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
@@ -118,6 +138,18 @@ pub struct RollupArgs {
         value_parser = humantime::parse_duration
     )]
     pub proofs_history_prune_interval: Duration,
+
+    /// Minimum distance from the current latest block that automatic pruning may touch.
+    ///
+    /// Defaults to 12 hours of blocks based on 2 seconds block time.
+    /// 12 * 60 * 60 / 2 = `21_600`
+    #[arg(
+        long = "proofs-history.prune-finality-margin-blocks",
+        value_name = "PROOFS_HISTORY_PRUNE_FINALITY_MARGIN_BLOCKS",
+        default_value_t = 21_600
+    )]
+    pub proofs_history_prune_finality_margin_blocks: u64,
+
     /// Verification interval: perform full block execution every N blocks for data integrity.
     /// - 0: Disabled (Default) (always use fast path with pre-computed data from notifications)
     /// - 1: Always verify (always execute blocks, slowest)
@@ -155,8 +187,10 @@ impl Default for RollupArgs {
             max_inflight_delegated_slots: 1,
             proofs_history: false,
             proofs_history_storage_path: None,
+            proofs_history_db: ProofsHistoryDbBackend::default(),
             proofs_history_window: 1_296_000,
             proofs_history_prune_interval: Duration::from_secs(15),
+            proofs_history_prune_finality_margin_blocks: 21_600,
             proofs_history_verification_interval: 0,
             base_protocol: true,
         }
@@ -278,6 +312,49 @@ mod tests {
         ])
         .args;
         assert_eq!(args.txpool_ordering, TxpoolOrdering::Timestamp);
+    }
+
+    #[test]
+    fn test_parse_proofs_history_db_default() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Mdbx);
+    }
+
+    #[test]
+    fn test_parse_proofs_history_db_mdbx() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--proofs-history",
+            "--proofs-history.db",
+            "mdbx",
+        ])
+        .args;
+        assert!(args.proofs_history);
+        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Mdbx);
+    }
+
+    #[test]
+    fn test_parse_proofs_history_db_alias() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--proofs-history",
+            "--proofs-db",
+            "mdbx",
+        ])
+        .args;
+        assert!(args.proofs_history);
+        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Mdbx);
+    }
+
+    #[test]
+    fn test_parse_proofs_history_prune_finality_margin_blocks() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--proofs-history.prune-finality-margin-blocks",
+            "64",
+        ])
+        .args;
+        assert_eq!(args.proofs_history_prune_finality_margin_blocks, 64);
     }
 
     #[test]
