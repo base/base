@@ -15,8 +15,9 @@ use tracing::{error, info};
 use url::Url;
 
 use crate::{
-    ConsensusChainArgs, L1ClientArgs, L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs,
-    MetricsArgs, P2PArgs, RpcArgs, SequencerArgs, metrics::CliMetrics,
+    ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedRpcArgs, L1ClientArgs, L1ConfigFile,
+    L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, P2PArgs, RpcArgs, SequencerArgs,
+    metrics::CliMetrics,
 };
 
 /// Overrides supplied by callers that embed consensus alongside another service.
@@ -135,6 +136,73 @@ pub struct ConsensusNodeConfigArgs {
     /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
     #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
     pub safedb_path: Option<PathBuf>,
+}
+
+/// Consensus node configuration arguments for embedded callers.
+#[derive(Args, Clone, Debug)]
+pub struct EmbeddedConsensusNodeConfigArgs {
+    /// The mode to run the node in.
+    #[arg(
+        long = "mode",
+        default_value_t = NodeMode::Validator,
+        env = "BASE_NODE_MODE",
+        help = format!(
+            "The mode to run the node in. Supported modes are: {}",
+            NodeMode::iter()
+                .map(|mode| format!("\"{}\"", mode.to_string()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    )]
+    pub node_mode: NodeMode,
+
+    /// L1 RPC CLI arguments.
+    #[clap(flatten)]
+    pub l1_rpc_args: L1ClientArgs,
+
+    /// L2 engine CLI arguments.
+    #[clap(flatten)]
+    pub l2_client_args: EmbeddedL2ClientArgs,
+
+    /// L1 configuration file.
+    #[clap(flatten)]
+    pub l1_config: L1ConfigFile,
+
+    /// L2 configuration file.
+    #[clap(flatten)]
+    pub l2_config: L2ConfigFile,
+
+    /// P2P CLI arguments.
+    #[command(flatten)]
+    pub p2p_flags: P2PArgs,
+
+    /// RPC CLI arguments.
+    #[command(flatten)]
+    pub rpc_flags: EmbeddedRpcArgs,
+
+    /// SEQUENCER CLI arguments.
+    #[command(flatten)]
+    pub sequencer_flags: SequencerArgs,
+
+    /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
+    #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
+    pub safedb_path: Option<PathBuf>,
+}
+
+impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
+    fn from(args: EmbeddedConsensusNodeConfigArgs) -> Self {
+        Self {
+            node_mode: args.node_mode,
+            l1_rpc_args: args.l1_rpc_args,
+            l2_client_args: args.l2_client_args.into(),
+            l1_config: args.l1_config,
+            l2_config: args.l2_config,
+            p2p_flags: args.p2p_flags,
+            rpc_flags: args.rpc_flags.into(),
+            sequencer_flags: args.sequencer_flags,
+            safedb_path: args.safedb_path,
+        }
+    }
 }
 
 impl ConsensusNodeArgs {
@@ -276,7 +344,7 @@ impl ConsensusNodeArgs {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Mutex};
+    use std::{path::PathBuf, process::Command};
 
     use alloy_chains::Chain;
     use alloy_primitives::B256;
@@ -286,13 +354,13 @@ mod tests {
     use super::*;
     use crate::SignerArgs;
 
-    static SIGNER_ENV_LOCK: Mutex<()> = Mutex::new(());
     const SIGNER_ENV_KEYS: &[&str] = &[
         "BASE_NODE_P2P_SEQUENCER_KEY",
         "BASE_NODE_P2P_SEQUENCER_KEY_PATH",
         "BASE_NODE_P2P_SIGNER_ENDPOINT",
         "BASE_NODE_P2P_SIGNER_ADDRESS",
     ];
+    const SIGNER_ENV_CHILD_TEST: &str = "node::tests::validates_sequencer_key_from_env_child";
 
     fn default_node_config_args() -> ConsensusNodeConfigArgs {
         ConsensusNodeConfigArgs {
@@ -319,21 +387,29 @@ mod tests {
         ("BASE_NODE_P2P_SIGNER_ADDRESS", "0xAf6E19BE0F9cE7f8afd49a1824851023A8249e8a"),
     ])]
     fn validates_sequencer_key_from_env(#[case] env_vars: Vec<(&str, &str)>) {
-        let _guard = SIGNER_ENV_LOCK.lock().unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command.arg("--exact").arg(SIGNER_ENV_CHILD_TEST).arg("--ignored");
 
         for key in SIGNER_ENV_KEYS {
-            // SAFETY: guarded by SIGNER_ENV_LOCK.
-            unsafe { std::env::remove_var(key) }
+            command.env_remove(key);
         }
-        for (key, value) in &env_vars {
-            // SAFETY: guarded by SIGNER_ENV_LOCK.
-            unsafe { std::env::set_var(key, value) }
+        for (key, value) in env_vars {
+            command.env(key, value);
         }
+        let output = command.output().unwrap();
+
+        assert!(
+            output.status.success(),
+            "child env parsing test failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "spawned by validates_sequencer_key_from_env with isolated process env"]
+    fn validates_sequencer_key_from_env_child() {
         let signer = SignerArgs::parse_from(["test"]);
-        for key in SIGNER_ENV_KEYS {
-            // SAFETY: guarded by SIGNER_ENV_LOCK.
-            unsafe { std::env::remove_var(key) }
-        }
         let args = ConsensusNodeArgs::new(
             ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
             ConsensusNodeConfigArgs {
