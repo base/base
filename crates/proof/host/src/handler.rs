@@ -175,48 +175,32 @@ impl PayloadWitnessPrefetcher {
         timeout: Duration,
     ) -> Option<PayloadWitnessReady> {
         loop {
-            let (notify, in_flight_keys) = {
+            let notified = {
                 let mut state = self.inner.state.lock().await;
                 match keys.iter().find_map(|key| state.entries.get(key).cloned()) {
                     Some(PayloadWitnessCacheEntry::Ready { ready, keys }) => {
                         Self::remove_cache_keys(&mut state, &keys);
                         return Some(ready);
                     }
-                    Some(PayloadWitnessCacheEntry::InFlight { notify, keys }) => (notify, keys),
+                    Some(PayloadWitnessCacheEntry::InFlight { notify, .. }) => {
+                        Arc::clone(&notify).notified_owned()
+                    }
                     None => return None,
                 }
             };
 
-            if tokio::time::timeout(timeout, notify.notified()).await.is_ok() {
+            if tokio::time::timeout(timeout, notified).await.is_ok() {
                 continue;
             }
 
             let mut state = self.inner.state.lock().await;
-            match keys.iter().find_map(|key| state.entries.get(key).cloned()) {
-                Some(PayloadWitnessCacheEntry::Ready { ready, keys }) => {
-                    Self::remove_cache_keys(&mut state, &keys);
-                    return Some(ready);
-                }
-                Some(PayloadWitnessCacheEntry::InFlight { notify: entry_notify, keys, .. })
-                    if Arc::ptr_eq(&entry_notify, &notify) =>
-                {
-                    Self::remove_cache_keys(&mut state, &keys);
-                }
-                _ if in_flight_keys.iter().any(|key| {
-                    matches!(
-                        state.entries.get(key),
-                        Some(PayloadWitnessCacheEntry::InFlight { notify: entry_notify, .. })
-                            if Arc::ptr_eq(entry_notify, &notify)
-                    )
-                }) =>
-                {
-                    Self::remove_cache_keys(&mut state, &in_flight_keys);
-                }
-                _ => {}
+            if let Some(PayloadWitnessCacheEntry::Ready { ready, keys }) =
+                keys.iter().find_map(|key| state.entries.get(key).cloned())
+            {
+                Self::remove_cache_keys(&mut state, &keys);
+                return Some(ready);
             }
 
-            drop(state);
-            notify.notify_waiters();
             return None;
         }
     }
@@ -1369,17 +1353,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_payload_witness_prefetch_timeout_removes_in_flight_aliases() {
+    async fn test_payload_witness_prefetch_timeout_preserves_in_flight_aliases() {
         let prefetcher = PayloadWitnessPrefetcher::new();
         let keys = [B256::new([0x03u8; 32]), B256::new([0x04u8; 32])];
-        prefetcher.try_mark_in_flight(&keys).await.unwrap();
+        let notify = prefetcher.try_mark_in_flight(&keys).await.unwrap();
 
         let ready = prefetcher.take_ready_or_wait_for(&[keys[0]], Duration::from_millis(1)).await;
-        let state = prefetcher.inner.state.lock().await;
 
         assert!(ready.is_none());
-        assert!(!state.entries.contains_key(&keys[0]));
-        assert!(!state.entries.contains_key(&keys[1]));
+        {
+            let state = prefetcher.inner.state.lock().await;
+            assert!(state.entries.contains_key(&keys[0]));
+            assert!(state.entries.contains_key(&keys[1]));
+        }
+
+        prefetcher.mark_ready(&keys, test_payload_witness_ready(2), notify).await;
+        let ready =
+            prefetcher.take_ready_or_wait_for(&[keys[1]], Duration::from_millis(1)).await.unwrap();
+
+        assert_eq!(ready.block_number, 2);
     }
 
     #[tokio::test]
