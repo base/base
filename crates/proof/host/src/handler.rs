@@ -26,6 +26,7 @@ use crate::{
     HostConfig, HostError, HostProviders, Metrics, Result, SharedKeyValueStore, store_ordered_trie,
 };
 
+const HOST_SERVER_TARGET: &str = "host_server";
 const PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS: u64 = 10;
 const PAYLOAD_WITNESS_PREFETCH_MAX_IN_FLIGHT: usize = 10;
 const PAYLOAD_WITNESS_PREFETCH_MAX_READY: usize = 16;
@@ -136,10 +137,13 @@ impl Drop for PayloadWitnessInFlightGuard {
             return;
         }
 
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
         let prefetcher = self.prefetcher.clone();
         let keys = self.keys.clone();
         let notify = Arc::clone(&self.notify);
-        tokio::spawn(async move {
+        handle.spawn(async move {
             prefetcher.mark_failed(&keys, notify).await;
         });
     }
@@ -241,7 +245,7 @@ impl PayloadWitnessPrefetcher {
                 Ok(None) => {
                     prefetcher.unmark_lookahead_parent_scheduled(parent_block_hash).await;
                     debug!(
-                        target: "host_server",
+                        target: HOST_SERVER_TARGET,
                         ?parent_block_hash,
                         "payload witness prefetch skipped: parent block not found"
                     );
@@ -250,7 +254,7 @@ impl PayloadWitnessPrefetcher {
                 Err(err) => {
                     prefetcher.unmark_lookahead_parent_scheduled(parent_block_hash).await;
                     debug!(
-                        target: "host_server",
+                        target: HOST_SERVER_TARGET,
                         ?parent_block_hash,
                         error = %err,
                         "payload witness prefetch skipped: failed to fetch parent block"
@@ -319,7 +323,7 @@ impl PayloadWitnessPrefetcher {
             if let Err(err) = handle.await {
                 cleanup_prefetcher.unmark_block_scheduled(block_number).await;
                 warn!(
-                    target: "host_server",
+                    target: HOST_SERVER_TARGET,
                     block_number = %block_number,
                     error = %err,
                     "payload witness prefetch task failed"
@@ -385,6 +389,8 @@ impl PayloadWitnessPrefetcher {
         }
 
         drop(state);
+        // notify_waiters wakes existing waiters but stores no permit; notify_one stores a permit
+        // for any racy caller that observes the entry transition without seeing the wake.
         notify.notify_waiters();
         notify.notify_one();
     }
@@ -400,6 +406,8 @@ impl PayloadWitnessPrefetcher {
         }
 
         drop(state);
+        // notify_waiters wakes existing waiters but stores no permit; notify_one stores a permit
+        // for any racy caller that observes the entry transition without seeing the wake.
         notify.notify_waiters();
         notify.notify_one();
     }
@@ -443,7 +451,7 @@ impl PayloadWitnessPrefetcher {
             Ok(Some(block)) => block,
             Ok(None) => {
                 debug!(
-                    target: "host_server",
+                    target: HOST_SERVER_TARGET,
                     block_number,
                     "payload witness prefetch skipped: block not found"
                 );
@@ -451,7 +459,7 @@ impl PayloadWitnessPrefetcher {
             }
             Err(err) => {
                 debug!(
-                    target: "host_server",
+                    target: HOST_SERVER_TARGET,
                     block_number,
                     error = %err,
                     "payload witness prefetch skipped: failed to fetch block"
@@ -465,7 +473,7 @@ impl PayloadWitnessPrefetcher {
             Ok(payload_attributes) => payload_attributes,
             Err(err) => {
                 debug!(
-                    target: "host_server",
+                    target: HOST_SERVER_TARGET,
                     block_number,
                     error = %err,
                     "payload witness prefetch skipped: failed to reconstruct payload attributes"
@@ -480,7 +488,7 @@ impl PayloadWitnessPrefetcher {
             Ok(keys) => keys,
             Err(err) => {
                 debug!(
-                    target: "host_server",
+                    target: HOST_SERVER_TARGET,
                     block_number,
                     error = %err,
                     "payload witness prefetch skipped: failed to compute cache key"
@@ -495,7 +503,7 @@ impl PayloadWitnessPrefetcher {
         let in_flight = PayloadWitnessInFlightGuard::new(self.clone(), keys.clone(), notify);
 
         info!(
-            target: "host_server",
+            target: HOST_SERVER_TARGET,
             block_number,
             ?parent_block_hash,
             payload_timestamp,
@@ -516,7 +524,7 @@ impl PayloadWitnessPrefetcher {
             Ok(response) => response,
             Err(err) => {
                 warn!(
-                    target: "host_server",
+                    target: HOST_SERVER_TARGET,
                     block_number,
                     ?parent_block_hash,
                     payload_timestamp,
@@ -536,7 +544,7 @@ impl PayloadWitnessPrefetcher {
             insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await
         {
             warn!(
-                target: "host_server",
+                target: HOST_SERVER_TARGET,
                 block_number,
                 ?parent_block_hash,
                 payload_timestamp,
@@ -562,7 +570,7 @@ impl PayloadWitnessPrefetcher {
             .await;
 
         info!(
-            target: "host_server",
+            target: HOST_SERVER_TARGET,
             block_number,
             ?parent_block_hash,
             payload_timestamp,
@@ -1130,15 +1138,12 @@ async fn handle_hint_inner(
                 .map_or(0, |transactions| transactions.len());
             let payload_timestamp = payload_attributes.payload_attributes.timestamp;
 
-            let prefetched_ready = match payload_witness_prefetcher.as_ref() {
-                Some(prefetcher) => {
+            if let Some(prefetcher) = payload_witness_prefetcher.as_ref()
+                && let Some(ready) =
                     prefetcher.take_ready_or_wait(&payload_witness_cache_keys).await
-                }
-                None => None,
-            };
-            if let Some(ready) = prefetched_ready {
+            {
                 info!(
-                    target: "host_server",
+                    target: HOST_SERVER_TARGET,
                     block_number = ready.block_number,
                     parent_block_hash = ?ready.parent_block_hash,
                     payload_timestamp = ready.payload_timestamp,
@@ -1155,11 +1160,9 @@ async fn handle_hint_inner(
                     prefetch_insert_elapsed_ms = ready.insert_elapsed.as_millis(),
                     "debug_executePayload witness served from host prefetch cache"
                 );
-                if let Some(prefetcher) = payload_witness_prefetcher.as_ref() {
-                    prefetcher
-                        .schedule_lookahead(cfg, providers, Arc::clone(&kv), parent_block_hash)
-                        .await;
-                }
+                prefetcher
+                    .schedule_lookahead(cfg, providers, Arc::clone(&kv), parent_block_hash)
+                    .await;
                 return Ok(());
             }
 
@@ -1176,7 +1179,7 @@ async fn handle_hint_inner(
                 Ok(response) => response,
                 Err(err) => {
                     warn!(
-                        target: "host_server",
+                        target: HOST_SERVER_TARGET,
                         parent_block_hash = ?parent_block_hash,
                         payload_timestamp,
                         tx_count,
@@ -1195,7 +1198,7 @@ async fn handle_hint_inner(
             let insert_elapsed = insert_start.elapsed();
 
             info!(
-                target: "host_server",
+                target: HOST_SERVER_TARGET,
                 parent_block_hash = ?parent_block_hash,
                 payload_timestamp,
                 tx_count,
