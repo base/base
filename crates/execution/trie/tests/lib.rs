@@ -6,7 +6,7 @@ use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorageError, BaseProofsStore, BlockStateDiff,
-    InMemoryProofsStorage, db::MdbxProofsStorage,
+    InMemoryProofsStorage, WriteCounts, db::MdbxProofsStorage,
 };
 use reth_primitives_traits::Account;
 use reth_trie::{
@@ -2049,6 +2049,193 @@ fn test_updates_take_precedence_over_removals<S: BaseProofsStore + BaseProofsIni
         branch_75.state_mask, initial_branch.state_mask,
         "Block 75 should see the initial branch, not the updated one"
     );
+
+    Ok(())
+}
+
+const fn batch_block(num: u64, parent: B256) -> BlockWithParent {
+    BlockWithParent::new(parent, NumHash::new(num, B256::repeat_byte(num as u8)))
+}
+
+fn diff_with_account(addr_byte: u8, nonce: u64) -> BlockStateDiff {
+    let mut post_state = HashedPostState::default();
+    post_state
+        .accounts
+        .insert(B256::repeat_byte(addr_byte), Some(create_test_account_with_values(nonce, 0, 0)));
+    BlockStateDiff {
+        sorted_trie_updates: TrieUpdatesSorted::default(),
+        sorted_post_state: post_state.into_sorted(),
+    }
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_batch_advances_proof_window<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let earliest_hash = B256::repeat_byte(100);
+    storage.set_earliest_block_number(100, earliest_hash)?;
+
+    let block_101 = batch_block(101, earliest_hash);
+    let block_102 = batch_block(102, block_101.block.hash);
+    let block_103 = batch_block(103, block_102.block.hash);
+
+    let counts = storage.store_trie_updates_batch(vec![
+        (block_101, BlockStateDiff::default()),
+        (block_102, BlockStateDiff::default()),
+        (block_103, BlockStateDiff::default()),
+    ])?;
+
+    let (latest_num, _latest_hash) =
+        storage.get_latest_block_number()?.expect("latest block tracked");
+    assert_eq!(latest_num, 103);
+    assert_eq!(counts, WriteCounts::default());
+
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_batch_persists_each_block<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let earliest_hash = B256::repeat_byte(50);
+    storage.set_earliest_block_number(50, earliest_hash)?;
+
+    let block_51 = batch_block(51, earliest_hash);
+    let block_52 = batch_block(52, block_51.block.hash);
+    let block_53 = batch_block(53, block_52.block.hash);
+
+    storage.store_trie_updates_batch(vec![
+        (block_51, diff_with_account(0xA1, 51)),
+        (block_52, diff_with_account(0xA2, 52)),
+        (block_53, diff_with_account(0xA3, 53)),
+    ])?;
+
+    for (n, addr_byte, nonce) in [(51, 0xA1, 51), (52, 0xA2, 52), (53, 0xA3, 53)] {
+        let mut cursor = storage.account_hashed_cursor(n)?;
+        let entry = cursor.seek(B256::repeat_byte(addr_byte))?.expect("account present");
+        assert_eq!(entry.0, B256::repeat_byte(addr_byte));
+        assert_eq!(entry.1.nonce, nonce, "block {n} account should have nonce {nonce}");
+    }
+
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_batch_empty_is_noop<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+
+    let counts = storage.store_trie_updates_batch(Vec::new())?;
+    assert_eq!(counts, WriteCounts::default());
+    assert_eq!(storage.get_latest_block_number()?, Some((0, B256::ZERO)));
+
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_batch_rejects_bad_first_parent_mdbx<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let earliest_hash = B256::repeat_byte(70);
+    storage.set_earliest_block_number(70, earliest_hash)?;
+
+    let bad_parent = B256::repeat_byte(0xEE);
+    let block_71 = batch_block(71, bad_parent);
+
+    let res = storage
+        .store_trie_updates_batch(vec![(block_71, BlockStateDiff::default())]);
+    assert!(matches!(res, Err(BaseProofsStorageError::OutOfOrder { .. })));
+
+    assert_eq!(storage.get_latest_block_number()?, Some((70, earliest_hash)));
+
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_batch_atomic_on_chain_break_mdbx<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let earliest_hash = B256::repeat_byte(200);
+    storage.set_earliest_block_number(200, earliest_hash)?;
+
+    let block_201 = batch_block(201, earliest_hash);
+    let block_202_bad_parent = BlockWithParent::new(
+        B256::repeat_byte(0xEE),
+        NumHash::new(202, B256::repeat_byte(202)),
+    );
+    let block_203 = batch_block(203, block_202_bad_parent.block.hash);
+
+    let res = storage.store_trie_updates_batch(vec![
+        (block_201, diff_with_account(0xB1, 1)),
+        (block_202_bad_parent, diff_with_account(0xB2, 2)),
+        (block_203, diff_with_account(0xB3, 3)),
+    ]);
+    assert!(matches!(res, Err(BaseProofsStorageError::OutOfOrder { .. })));
+
+    assert_eq!(storage.get_latest_block_number()?, Some((200, earliest_hash)));
+
+    let mut cursor = storage.account_hashed_cursor(300)?;
+    assert!(
+        cursor.seek(B256::repeat_byte(0xB1))?.is_none(),
+        "block 201 account must NOT be visible after rollback"
+    );
+
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_batch_handles_cross_block_unsorted_keys<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let earliest_hash = B256::repeat_byte(10);
+    storage.set_earliest_block_number(10, earliest_hash)?;
+
+    let mut diff_high = BlockStateDiff::default();
+    let mut post_high = HashedPostState::default();
+    post_high
+        .accounts
+        .insert(B256::repeat_byte(0xF0), Some(create_test_account_with_values(11, 0, 0)));
+    diff_high.sorted_post_state = post_high.into_sorted();
+
+    let mut diff_low = BlockStateDiff::default();
+    let mut post_low = HashedPostState::default();
+    post_low
+        .accounts
+        .insert(B256::repeat_byte(0x10), Some(create_test_account_with_values(12, 0, 0)));
+    diff_low.sorted_post_state = post_low.into_sorted();
+
+    let block_11 = batch_block(11, earliest_hash);
+    let block_12 = batch_block(12, block_11.block.hash);
+
+    storage.store_trie_updates_batch(vec![(block_11, diff_high), (block_12, diff_low)])?;
+
+    let mut cursor = storage.account_hashed_cursor(12)?;
+    assert!(cursor.seek(B256::repeat_byte(0x10))?.is_some());
+    let mut cursor = storage.account_hashed_cursor(12)?;
+    assert!(cursor.seek(B256::repeat_byte(0xF0))?.is_some());
 
     Ok(())
 }

@@ -12,7 +12,7 @@
 use reth_ethereum_primitives as _;
 
 pub mod api;
-pub use api::{BaseProofsInitialStateStore, BaseProofsStore, BlockStateDiff};
+pub use api::{BaseProofsInitialStateStore, BaseProofsStore, BlockStateDiff, WriteCounts};
 
 pub mod initialize;
 pub use initialize::InitializationJob;

@@ -182,6 +182,65 @@ where
         Ok(())
     }
 
+    /// Store trie updates for a contiguous batch of blocks atomically in a single
+    /// underlying storage transaction.
+    ///
+    /// On `OutOfOrder` (parent mismatch on the first block, or any chain break
+    /// inside the batch), the entire batch is silently skipped — matching the
+    /// per-block [`store_block_updates`] behavior used when notifications race
+    /// with already-stored data.
+    pub fn store_block_updates_batch(
+        &self,
+        blocks: Vec<(BlockWithParent, BlockStateDiff)>,
+    ) -> Result<(), BaseProofsStorageError> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        let start = Instant::now();
+        let mut operation_durations = OperationDurations::default();
+
+        let first_block_number = blocks.first().map(|(b, _)| b.block.number);
+        let last_block_number = blocks.last().map(|(b, _)| b.block.number);
+        let batch_len = blocks.len();
+
+        let storage_result = match self.storage.store_trie_updates_batch(blocks) {
+            Ok(res) => res,
+            Err(BaseProofsStorageError::OutOfOrder {
+                block_number,
+                latest_block_hash,
+                parent_block_hash,
+            }) => {
+                warn!(
+                    block_number,
+                    ?latest_block_hash,
+                    ?parent_block_hash,
+                    batch_len,
+                    "Skipping out of order block batch"
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        };
+
+        let write_duration = start.elapsed();
+        operation_durations.total_duration_seconds = write_duration;
+        operation_durations.write_duration_seconds = write_duration;
+
+        Self::record_storage_metrics(&operation_durations, Some(&storage_result));
+
+        info!(
+            ?first_block_number,
+            ?last_block_number,
+            batch_len,
+            ?operation_durations,
+            ?storage_result,
+            "Trie updates batch stored successfully",
+        );
+
+        Ok(())
+    }
+
     /// Handles chain reorganizations by replacing block updates after a common ancestor.
     ///
     /// This method removes all block updates after the latest common ancestor (the block before
