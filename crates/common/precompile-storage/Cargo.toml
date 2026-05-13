@@ -38,11 +38,13 @@ name = "contract"
 required-features = ["test-utils"]
 
 [features]
-default = ["std"]
+default = [ "std" ]
 std = [
-    "alloy-primitives/std",
-    "alloy-sol-types/std",
-    "revm/std",
-    "thiserror/std",
+	"alloy-primitives/std",
+	"alloy-sol-types/std",
+	"revm/std",
+	"thiserror/std",
+	"alloy-evm/std",
+	"derive_more/std"
 ]
 test-utils = []
