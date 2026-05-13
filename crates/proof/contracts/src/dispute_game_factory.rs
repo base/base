@@ -16,6 +16,15 @@ sol! {
         /// Error returned when a game with the same UUID already exists.
         error GameAlreadyExists(bytes32 uuid);
 
+        /// Result entry returned by `findLatestGames`.
+        struct GameSearchResult {
+            uint256 index;
+            bytes32 metadata;
+            uint64 timestamp;
+            bytes32 rootClaim;
+            bytes extraData;
+        }
+
         /// Creates a new dispute game with proof data passed to `initializeWithInitData`.
         function createWithInitData(
             uint32 gameType,
@@ -48,6 +57,15 @@ sol! {
             bytes32 rootClaim,
             bytes calldata extraData
         ) external view returns (address proxy, uint64 timestamp);
+
+        /// Iterates the factory list backward from `start`, returning up to
+        /// `n` games of `gameType`. The on-chain loop visits every index it
+        /// passes; only entries matching `gameType` are appended to the result.
+        function findLatestGames(
+            uint32 gameType,
+            uint256 start,
+            uint256 n
+        ) external view returns (GameSearchResult[] memory);
     }
 }
 
@@ -86,6 +104,18 @@ pub trait DisputeGameFactoryClient: Send + Sync {
         root_claim: B256,
         extra_data: Bytes,
     ) -> Result<Address, ContractError>;
+
+    /// Backward-iterates the factory list from `start` and returns up to
+    /// `n` games of `game_type` as `(factory_index, proxy)` pairs ordered
+    /// by descending index. The on-chain loop visits every index it passes,
+    /// including non-matching `game_type`s, so callers should expect fewer
+    /// than `n` results when other types are interleaved.
+    async fn find_latest_games(
+        &self,
+        game_type: u32,
+        start: u64,
+        n: u64,
+    ) -> Result<Vec<(u64, Address)>, ContractError>;
 }
 
 /// The 4-byte selector for `GameAlreadyExists(bytes32)`.
@@ -164,6 +194,38 @@ impl DisputeGameFactoryClient for DisputeGameFactoryContractClient {
             })?;
 
         Ok(result.proxy)
+    }
+
+    async fn find_latest_games(
+        &self,
+        game_type: u32,
+        start: u64,
+        n: u64,
+    ) -> Result<Vec<(u64, Address)>, ContractError> {
+        let results = self
+            .contract
+            .findLatestGames(game_type, U256::from(start), U256::from(n))
+            .call()
+            .await
+            .map_err(|e| ContractError::Call {
+                context: format!("findLatestGames(start={start}, n={n}) failed"),
+                source: e,
+            })?;
+
+        results
+            .into_iter()
+            .map(|entry| {
+                let index: u64 = entry.index.try_into().map_err(|_| {
+                    ContractError::Validation("findLatestGames index overflows u64".into())
+                })?;
+                // GameId metadata layout (LibUDT.LibGameId.unpack):
+                //   [bits 224..256] gameType (uint32)
+                //   [bits 160..224] timestamp (uint64)
+                //   [bits   0..160] proxy (address), last 20 bytes of the bytes32
+                let proxy = Address::from_slice(&entry.metadata.0[12..32]);
+                Ok((index, proxy))
+            })
+            .collect()
     }
 }
 

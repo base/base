@@ -1,0 +1,96 @@
+[package]
+name = "base-challenger-v2"
+description = "Base Challenger v2"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Alloy
+alloy-rlp.workspace = true
+alloy-provider.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-trie = { workspace = true, features = ["std"] }
+alloy-consensus = { workspace = true, optional = true }
+
+# Tx Manager
+base-tx-manager.workspace = true
+
+# Balance Monitor
+base-balance-monitor.workspace = true
+
+# Proof
+base-proof-rpc.workspace = true
+base-zk-client.workspace = true
+base-proof-contracts.workspace = true
+base-proof-primitives = { workspace = true, features = ["rpc-client"] }
+
+# Protocol
+base-protocol.workspace = true
+base-common-consensus.workspace = true
+
+# JSON-RPC
+jsonrpsee.workspace = true
+
+# Async
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+
+# Tracing
+tracing.workspace = true
+
+# Serialization
+serde.workspace = true
+
+# Error handling
+eyre.workspace = true
+thiserror.workspace = true
+
+# CLI
+base-cli-utils.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+
+# Metrics
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
+
+# TLS
+rustls = { workspace = true, features = ["ring"] }
+
+# Runtime
+tokio-util.workspace = true
+base-runtime = { workspace = true, features = ["tokio"] }
+
+# Health
+base-health = { workspace = true, features = ["axum-server"] }
+
+# Misc
+url.workspace = true
+humantime.workspace = true
+uuid = { workspace = true, features = ["v5"] }
+derive_more = { workspace = true, features = ["debug"] }
+
+# Test utilities (optional)
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+rstest.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+base-challenger-v2 = { path = ".", features = ["test-utils"] }
+
+[features]
+metrics = [ "base-metrics/metrics", "base-tx-manager/metrics", "dep:metrics" ]
+test-utils = [
+	"alloy-consensus",
+	"base-protocol/test-utils",
+	"base-runtime/test-utils",
+	"serde_json",
+]

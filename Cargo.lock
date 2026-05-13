@@ -3231,6 +3231,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-challenger-v2"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rlp",
+ "alloy-rpc-types-eth",
+ "alloy-trie",
+ "async-trait",
+ "base-balance-monitor",
+ "base-challenger-v2",
+ "base-cli-utils",
+ "base-common-consensus",
+ "base-health",
+ "base-metrics",
+ "base-proof-contracts",
+ "base-proof-primitives",
+ "base-proof-rpc",
+ "base-protocol",
+ "base-runtime",
+ "base-tx-manager",
+ "base-zk-client",
+ "clap",
+ "derive_more 2.1.1",
+ "eyre",
+ "futures",
+ "humantime",
+ "jsonrpsee",
+ "metrics",
+ "rstest",
+ "rustls 0.23.39",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "base-cli-utils"
 version = "0.0.0"
 dependencies = [

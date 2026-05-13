@@ -37,6 +37,7 @@ members = [
   "crates/proof/rpc",
   "crates/proof/proposer",
   "crates/proof/challenge",
+  "crates/proof/challenge-v2",
   "crates/proof/succinct/utils/client",
   "crates/proof/succinct/utils/host",
   "crates/proof/succinct/utils/build",
@@ -226,6 +227,7 @@ base-zk-db = { path = "crates/proof/zk/db" }
 base-zk-outbox = { path = "crates/proof/zk/outbox" }
 base-zk-service = { path = "crates/proof/zk/service" }
 base-challenger = { path = "crates/proof/challenge" }
+base-challenger-v2 = { path = "crates/proof/challenge-v2" }
 base-proof-contracts = { path = "crates/proof/contracts" }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar" }
 base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host" }

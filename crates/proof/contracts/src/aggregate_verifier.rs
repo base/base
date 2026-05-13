@@ -148,6 +148,13 @@ sol! {
 
         /// Returns the address of the `AnchorStateRegistry` contract.
         function anchorStateRegistry() external view returns (address);
+
+        /// Closes the game by attempting to update the anchor state in the
+        /// `AnchorStateRegistry`. Reverts if the game is paused, unresolved,
+        /// or not finalized; the inner `setAnchorState` call is best-effort
+        /// (try/catch). Use [`encode_close_game_calldata`] to construct
+        /// ABI-encoded calldata for this function.
+        function closeGame() external;
     }
 }
 
@@ -753,6 +760,16 @@ pub fn encode_claim_credit_calldata() -> Bytes {
     Bytes::from(call.abi_encode())
 }
 
+/// Encodes the calldata for `IAggregateVerifier.closeGame()`.
+///
+/// Best-effort call to update the anchor state in the
+/// `AnchorStateRegistry` after a game has resolved and finalized. Reverts
+/// if the game is paused, unresolved, or not yet finalized.
+pub fn encode_close_game_calldata() -> Bytes {
+    let call = IAggregateVerifier::closeGameCall {};
+    Bytes::from(call.abi_encode())
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_sol_types::SolCall as _;
@@ -846,6 +863,22 @@ mod tests {
     fn test_encode_claim_credit_calldata_has_selector() {
         let calldata = encode_claim_credit_calldata();
         assert_eq!(&calldata[..4], &IAggregateVerifier::claimCreditCall::SELECTOR);
+    }
+
+    #[test]
+    fn test_encode_close_game_calldata_has_selector() {
+        let calldata = encode_close_game_calldata();
+        assert_eq!(&calldata[..4], &IAggregateVerifier::closeGameCall::SELECTOR);
+        assert_eq!(calldata.len(), 4, "closeGame() takes no args");
+    }
+
+    #[test]
+    fn test_close_game_selector_differs_from_others() {
+        let close = encode_close_game_calldata();
+        let resolve = encode_resolve_calldata();
+        let claim = encode_claim_credit_calldata();
+        assert_ne!(&close[..4], &resolve[..4]);
+        assert_ne!(&close[..4], &claim[..4]);
     }
 
     #[test]
