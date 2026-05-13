@@ -136,7 +136,27 @@ pub trait EthApiOverride {
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<alloy_primitives::Bytes>;
 
-    /// Estimates gas with flashblock state support.
+    /// Estimates gas required to execute a transaction.
+    ///
+    /// On Flashblocks endpoints this estimate is anchored against the current
+    /// pending Flashblock state rather than the last sealed block. That means
+    /// the estimate reflects the cumulative gas used by all transactions
+    /// already pre-confirmed in the in-progress block — so estimates returned
+    /// during a block's pre-confirmation window can differ from estimates
+    /// returned a few hundred milliseconds later, even when nothing about the
+    /// caller's own transaction has changed.
+    ///
+    /// # Default block parameter
+    ///
+    /// If `block_number` is omitted, this method defaults to `"pending"`
+    /// resolved against the latest Flashblock state — NOT the sealed
+    /// `"latest"` head. Callers that want a stable estimate independent of
+    /// in-progress Flashblock activity should pass an explicit block tag.
+    ///
+    /// # Error mode parity
+    ///
+    /// Errors mirror standard `eth_estimateGas` — same EVM-revert decoding,
+    /// same "execution reverted" wrapper, same out-of-gas semantics.
     #[method(name = "estimateGas")]
     async fn estimate_gas(
         &self,
@@ -145,7 +165,33 @@ pub trait EthApiOverride {
         overrides: Option<StateOverride>,
     ) -> RpcResult<U256>;
 
-    /// Simulates transactions with flashblock state support.
+    /// Simulates one or more transaction bundles against the current
+    /// pre-confirmed Flashblock state.
+    ///
+    /// Drops in as a Flashblocks-anchored replacement for the standard
+    /// `eth_simulateV1`. Supports the same `blockStateCalls`, `stateOverrides`,
+    /// `blockOverrides`, `traceTransfers`, and `validation` inputs.
+    ///
+    /// # Block parameter
+    ///
+    /// `block_number` defaults to `"pending"` resolved against the in-progress
+    /// Flashblock state. Pass an explicit block tag (e.g. `"latest"`) to
+    /// simulate against a sealed block instead.
+    ///
+    /// # Determinism
+    ///
+    /// Two calls to `simulate_v1` made within the same Flashblock window
+    /// against the same `block_number` return identical results. Across
+    /// Flashblock boundaries (~200ms), results can change as new transactions
+    /// are pre-confirmed into the pending block — there is currently no
+    /// in-band way to "pin" a simulation to a specific Flashblock; callers
+    /// that want determinism should pass a sealed-block tag.
+    ///
+    /// # Endpoint availability
+    ///
+    /// Only available on the Flashblocks-aware RPC endpoints
+    /// (`mainnet-preconf.base.org`, `sepolia-preconf.base.org`). Standard
+    /// public endpoints return a `Method not found` error.
     #[method(name = "simulateV1")]
     async fn simulate_v1(
         &self,
@@ -153,11 +199,46 @@ pub trait EthApiOverride {
         block_number: Option<BlockId>,
     ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Base>>>>;
 
-    /// Returns logs matching the filter, including pending flashblock logs.
+    /// Returns logs matching the filter, including pending Flashblock logs.
+    ///
+    /// Unlike the standard JSON-RPC `eth_getLogs`, this implementation
+    /// includes logs from pre-confirmed transactions in the current
+    /// Flashblock state when the filter's block range overlaps the pending
+    /// block.
+    ///
+    /// # Block range semantics
+    ///
+    /// - `fromBlock`/`toBlock` accept the same tags as `eth_getLogs` plus the
+    ///   implicit `"pending"` resolution to the in-progress Flashblock.
+    /// - A filter with `toBlock="latest"` excludes pending Flashblock logs.
+    ///   To include them, set `toBlock="pending"` (or omit it).
+    /// - Logs from pending Flashblock transactions are returned with
+    ///   `blockHash` set to the partial-block hash at time of evaluation —
+    ///   this hash WILL change as more transactions accumulate in the
+    ///   Flashblock. Consumers should not persist or compare against it
+    ///   until the block is sealed.
+    ///
+    /// # Result ordering
+    ///
+    /// Logs are returned in (`blockNumber`, `transactionIndex`, `logIndex`)
+    /// order. For pending Flashblock logs, `blockNumber` is the in-progress
+    /// block's number, and `logIndex` is monotonically increasing within
+    /// that block.
     #[method(name = "getLogs")]
     async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>>;
 
-    /// Returns the number of transactions in a block by block number.
+    /// Returns the number of transactions in a block, identified by block
+    /// number or tag.
+    ///
+    /// When `number` resolves to the in-progress Flashblock state (the
+    /// `"pending"` tag), returns the count of transactions pre-confirmed
+    /// into that block so far. This count strictly increases over the
+    /// ~2 second block-building window as new Flashblocks arrive (one
+    /// every ~200ms).
+    ///
+    /// Returns `None` for an out-of-range block number; never returns a
+    /// stale count from a previously-sealed block when called with
+    /// `"pending"`.
     #[method(name = "getBlockTransactionCountByNumber")]
     async fn get_block_transaction_count_by_number(
         &self,

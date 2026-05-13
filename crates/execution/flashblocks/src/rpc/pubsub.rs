@@ -1,8 +1,44 @@
-//! `eth_` `PubSub` RPC extension for flashblocks and standard subscriptions
+//! `eth_` `PubSub` RPC extension for flashblocks and standard subscriptions.
 //!
-//! This module provides an extended `eth_subscribe` implementation that supports both
-//! standard Ethereum subscription types (newHeads, logs, newPendingTransactions, syncing)
-//! and Base-specific flashblocks subscriptions (newFlashblocks, pendingLogs).
+//! This module provides an extended `eth_subscribe` implementation that
+//! supports both standard Ethereum subscription types (`newHeads`, `logs`,
+//! `newPendingTransactions`, `syncing`) and Base-specific flashblocks
+//! subscriptions (`newFlashblocks`, `pendingLogs`, `newFlashblockTransactions`).
+//!
+//! # Transport and delivery
+//!
+//! Subscriptions are delivered over WebSocket only — the HTTP transport does
+//! not support `eth_subscribe`. Each `eth_subscribe` call returns a
+//! hex-encoded subscription ID; subsequent notifications arrive as
+//! `eth_subscription` messages on the same connection.
+//!
+//! Flashblock-driven subscriptions emit notifications at the ~200ms
+//! Flashblock cadence. Standard subscriptions (`newHeads`, `logs`, etc.)
+//! retain their existing per-block cadence and are delegated to reth's
+//! upstream pub/sub implementation unchanged.
+//!
+//! # Backpressure and ordering
+//!
+//! Per-subscription delivery is FIFO with no batching. If the WebSocket
+//! client is slower than the server's emission rate (200ms for Flashblocks),
+//! the server's per-connection send buffer will fill and the slowest
+//! subscription will eventually be force-closed by the runtime. Consumers
+//! that perform heavy per-notification work should debounce, throttle, or
+//! offload to a background worker.
+//!
+//! No backfill on reconnect: a client that disconnects and reconnects will
+//! not receive notifications that arrived during the disconnect window.
+//! Use standard JSON-RPC (`eth_getBlockByNumber` with `"pending"`,
+//! `eth_getLogs`, etc.) to recover state, then resubscribe.
+//!
+//! # Reorg / sequencer failover
+//!
+//! Flashblock subscriptions do NOT explicitly emit a reorg signal. A reorg
+//! or sequencer failover manifests as the next notification carrying a
+//! `parent_hash` that does not match the previous notification's
+//! `parent_hash` for the same block number. Consumers caching Flashblock
+//! state across notifications MUST check this — see the architecture page
+//! for the canonical pattern.
 
 use std::sync::Arc;
 
