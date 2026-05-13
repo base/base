@@ -59,6 +59,10 @@ impl TryFrom<&str> for ProofStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "VARCHAR", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SessionStatus {
+    /// Reservation placeholder before the backend job has been submitted. The row holds a
+    /// synthetic `backend_session_id` so the partial unique index serializes concurrent
+    /// reservations; sync loops skip it because they only poll RUNNING rows.
+    Submitting,
     /// Backend session is actively running.
     Running,
     /// Backend session completed successfully.
@@ -71,6 +75,7 @@ impl SessionStatus {
     /// Convert enum to static string representation
     pub const fn as_str(&self) -> &'static str {
         match self {
+            Self::Submitting => "SUBMITTING",
             Self::Running => "RUNNING",
             Self::Completed => "COMPLETED",
             Self::Failed => "FAILED",
@@ -89,6 +94,7 @@ impl TryFrom<&str> for SessionStatus {
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         match s {
+            "SUBMITTING" => Ok(Self::Submitting),
             "RUNNING" => Ok(Self::Running),
             "COMPLETED" => Ok(Self::Completed),
             "FAILED" => Ok(Self::Failed),

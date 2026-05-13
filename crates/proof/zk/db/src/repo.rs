@@ -502,21 +502,22 @@ impl ProofRequestRepo {
 
         let retry_count: i32 = row.get("retry_count");
 
-        // Fail any RUNNING sessions before resetting so the retried run cannot collide with
-        // `idx_proof_sessions_request_type_running_unique`. No-op on the normal reaper path,
-        // since `get_stuck_requests` already excludes requests that have a RUNNING session.
+        // Fail any active sessions before resetting so the retried run cannot collide with
+        // `idx_proof_sessions_request_type_active_unique`. No-op on the normal reaper path,
+        // since `get_stuck_requests` already excludes requests that have an active session.
         sqlx::query(
             r#"
             UPDATE proof_sessions
             SET status = $1,
                 error_message = COALESCE(error_message, $2),
                 completed_at = NOW()
-            WHERE proof_request_id = $3 AND status = $4
+            WHERE proof_request_id = $3 AND status IN ($4, $5)
             "#,
         )
         .bind(SessionStatus::Failed.as_str())
         .bind("cleared during stuck-request retry")
         .bind(id)
+        .bind(SessionStatus::Submitting.as_str())
         .bind(SessionStatus::Running.as_str())
         .execute(&mut *tx)
         .await?;
@@ -628,11 +629,17 @@ impl ProofRequestRepo {
     /// to a backend. Returns `Some(reservation_id)` if this caller won the race and should
     /// proceed; `None` if another caller already holds the active row.
     ///
-    /// The synthetic `reservation_id` is written to `backend_session_id` so the partial
-    /// unique index `idx_proof_sessions_request_type_running_unique` enforces single-winner
-    /// semantics. Callers must follow up with [`Self::activate_reserved_proof_session`] on
-    /// success or [`Self::fail_reserved_proof_session`] on failure so the slot is either
-    /// updated to the real backend session id or released by transitioning to FAILED.
+    /// The row is inserted with `status = 'SUBMITTING'` and a synthetic
+    /// `backend_session_id`. The partial unique index
+    /// `idx_proof_sessions_request_type_active_unique` covers both `SUBMITTING` and
+    /// `RUNNING`, so concurrent reservations and a later activation of the same slot
+    /// remain serialized end-to-end. Sync loops only poll `RUNNING` rows, so the
+    /// reservation row is invisible to them until activation.
+    ///
+    /// Callers must follow up with [`Self::activate_reserved_proof_session`] on success
+    /// (which transitions the row to `RUNNING` with the real backend session id) or
+    /// [`Self::fail_reserved_proof_session`] on failure (which transitions the row to
+    /// `FAILED` and releases the slot).
     pub async fn reserve_proof_session(
         &self,
         proof_request_id: Uuid,
@@ -644,9 +651,8 @@ impl ProofRequestRepo {
             Uuid::new_v4()
         );
 
-        // The partial unique index is restricted to rows with status = 'RUNNING'; the
-        // matching predicate must be repeated here so Postgres infers that index for
-        // ON CONFLICT.
+        // The ON CONFLICT predicate must mirror the partial unique index predicate so
+        // Postgres infers that index for conflict resolution.
         let row = sqlx::query(
             r#"
             INSERT INTO proof_sessions (
@@ -654,7 +660,7 @@ impl ProofRequestRepo {
             )
             VALUES ($1, $2, $3, $4, NULL)
             ON CONFLICT (proof_request_id, session_type)
-                WHERE status = 'RUNNING'
+                WHERE status IN ('SUBMITTING', 'RUNNING')
                 DO NOTHING
             RETURNING backend_session_id
             "#,
@@ -662,18 +668,18 @@ impl ProofRequestRepo {
         .bind(proof_request_id)
         .bind(session_type.as_str())
         .bind(&reservation_id)
-        .bind(SessionStatus::Running.as_str())
+        .bind(SessionStatus::Submitting.as_str())
         .fetch_optional(&self.pool)
         .await?;
 
         Ok(row.map(|r| r.get("backend_session_id")))
     }
 
-    /// Swap a reservation row's synthetic `backend_session_id` for the real one returned
-    /// by the proving backend. Returns `true` when the reserved row was found and
-    /// updated. A `false` return means the reservation was no longer eligible (e.g.
-    /// already failed or activated by an out-of-band path) and the caller should treat
-    /// the backend job as orphaned.
+    /// Promote a reservation row from `SUBMITTING` to `RUNNING`, swapping the synthetic
+    /// `backend_session_id` for the real one returned by the proving backend. Returns
+    /// `true` when the reserved row was found and updated. A `false` return means the
+    /// reservation was no longer eligible (e.g. already failed or activated by an
+    /// out-of-band path) and the caller should treat the backend job as orphaned.
     pub async fn activate_reserved_proof_session(
         &self,
         reservation_id: &str,
@@ -684,27 +690,30 @@ impl ProofRequestRepo {
             UPDATE proof_sessions
             SET backend_session_id = $1,
                 metadata = $2,
+                status = $3,
                 error_message = NULL
-            WHERE backend_session_id = $3
-              AND proof_request_id = $4
-              AND session_type = $5
-              AND status = 'RUNNING'
+            WHERE backend_session_id = $4
+              AND proof_request_id = $5
+              AND session_type = $6
+              AND status = $7
             "#,
         )
         .bind(&session.backend_session_id)
         .bind(&session.metadata)
+        .bind(SessionStatus::Running.as_str())
         .bind(reservation_id)
         .bind(session.proof_request_id)
         .bind(session.session_type.as_str())
+        .bind(SessionStatus::Submitting.as_str())
         .execute(&self.pool)
         .await?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    /// Mark a reservation row as FAILED so the partial unique index releases the slot
-    /// and a future poll can retry. Used when the backend submit step itself fails
-    /// after a successful reservation.
+    /// Mark a `SUBMITTING` reservation row as `FAILED` so the partial unique index
+    /// releases the slot and a future poll can retry. Used when the backend submit step
+    /// itself fails after a successful reservation.
     pub async fn fail_reserved_proof_session(
         &self,
         proof_request_id: Uuid,
@@ -721,7 +730,7 @@ impl ProofRequestRepo {
             WHERE backend_session_id = $3
               AND proof_request_id = $4
               AND session_type = $5
-              AND status = 'RUNNING'
+              AND status = $6
             "#,
         )
         .bind(SessionStatus::Failed.as_str())
@@ -729,6 +738,7 @@ impl ProofRequestRepo {
         .bind(reservation_id)
         .bind(proof_request_id)
         .bind(session_type.as_str())
+        .bind(SessionStatus::Submitting.as_str())
         .execute(&self.pool)
         .await?;
 

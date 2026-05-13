@@ -616,7 +616,7 @@ impl ClusterBackend {
     /// `proof_request_manager.rs`). To prevent duplicate Groth16 jobs from being
     /// enqueued on the SP1 cluster, the SNARK session row is reserved in Postgres
     /// **before** any expensive work. The partial unique index
-    /// `idx_proof_sessions_request_type_running_unique` ensures only one caller wins;
+    /// `idx_proof_sessions_request_type_active_unique` ensures only one caller wins;
     /// the others observe `Ok(None)` and never reach `create_request`.
     async fn submit_aggregation_proof(
         &self,

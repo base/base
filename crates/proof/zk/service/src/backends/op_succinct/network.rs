@@ -417,7 +417,7 @@ impl NetworkBackend {
     ///
     /// Concurrent pollers race here; the SNARK session row is reserved in Postgres
     /// **before** any expensive work so that the partial unique index
-    /// `idx_proof_sessions_request_type_running_unique` ensures only one caller
+    /// `idx_proof_sessions_request_type_active_unique` ensures only one caller
     /// reaches the network prover. See cluster.rs for details.
     async fn submit_aggregation_proof(
         &self,
