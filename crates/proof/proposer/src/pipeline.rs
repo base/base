@@ -991,6 +991,27 @@ where
             .await
     }
 
+    async fn fetch_canonical_root_results(
+        &self,
+        blocks: Vec<u64>,
+    ) -> HashMap<u64, Result<B256, ProposerError>> {
+        stream::iter(blocks)
+            .map(|block_number| {
+                let rollup = &self.rollup_client;
+                async move {
+                    let result = rollup
+                        .output_at_block(block_number)
+                        .await
+                        .map(|out| out.output_root)
+                        .map_err(ProposerError::Rpc);
+                    (block_number, result)
+                }
+            })
+            .buffered(self.config.recovery_scan_concurrency)
+            .collect()
+            .await
+    }
+
     async fn build_proof_requests_for(
         &self,
         recovered: &RecoveredState,
@@ -1006,74 +1027,116 @@ where
 
         let (l1_head, output_roots, l2_heads) = tokio::try_join!(
             async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
-            self.fetch_canonical_roots(output_blocks),
+            async { Ok(self.fetch_canonical_root_results(output_blocks).await) },
             async {
-                stream::iter(start_blocks)
+                let headers = stream::iter(start_blocks)
                     .map(|block_number| {
                         let l2 = &self.l2_client;
                         async move {
-                            let header = l2
+                            let result = l2
                                 .header_by_number(Some(block_number))
                                 .await
-                                .map_err(ProposerError::Rpc)?;
-                            Ok((block_number, header))
+                                .map_err(ProposerError::Rpc);
+                            (block_number, result)
                         }
                     })
                     .buffered(self.config.recovery_scan_concurrency)
-                    .try_collect::<HashMap<_, _>>()
-                    .await
+                    .collect::<HashMap<_, _>>()
+                    .await;
+                Ok(headers)
             },
         )?;
 
-        plans
-            .iter()
-            .map(|plan| {
-                let agreed_l2_head = l2_heads.get(&plan.start_block).ok_or_else(|| {
-                    ProposerError::Internal(format!(
-                        "missing L2 header for start block {}",
-                        plan.start_block
-                    ))
-                })?;
-                let agreed_output_root = if plan.start_block == recovered.l2_block_number {
-                    recovered.output_root
-                } else {
-                    *output_roots.get(&plan.start_block).ok_or_else(|| {
-                        ProposerError::Internal(format!(
-                            "missing output root for start block {}",
-                            plan.start_block
-                        ))
-                    })?
-                };
-                let claimed_l2_output_root =
-                    *output_roots.get(&plan.target_block).ok_or_else(|| {
-                        ProposerError::Internal(format!(
-                            "missing output root for target block {}",
-                            plan.target_block
-                        ))
-                    })?;
+        let mut requests = Vec::with_capacity(plans.len());
+        for plan in plans {
+            let agreed_l2_head = match l2_heads.get(&plan.start_block) {
+                Some(Ok(header)) => header,
+                Some(Err(e)) => {
+                    warn!(
+                        error = %e,
+                        start_block = plan.start_block,
+                        target_block = plan.target_block,
+                        "Skipping proof request after L2 header fetch failed"
+                    );
+                    continue;
+                }
+                None => {
+                    warn!(
+                        start_block = plan.start_block,
+                        target_block = plan.target_block,
+                        "Skipping proof request because L2 header is missing"
+                    );
+                    continue;
+                }
+            };
 
-                let request = ProofRequest {
-                    l1_head: l1_head.hash,
-                    agreed_l2_head_hash: agreed_l2_head.hash,
-                    agreed_l2_output_root: agreed_output_root,
-                    claimed_l2_output_root,
-                    claimed_l2_block_number: plan.target_block,
-                    proposer: self.config.driver.proposer_address,
-                    intermediate_block_interval: self.config.driver.intermediate_block_interval,
-                    l1_head_number: l1_head.number,
-                    image_hash: self.config.driver.tee_image_hash,
-                };
+            let agreed_output_root = if plan.start_block == recovered.l2_block_number {
+                recovered.output_root
+            } else {
+                match output_roots.get(&plan.start_block) {
+                    Some(Ok(root)) => *root,
+                    Some(Err(e)) => {
+                        warn!(
+                            error = %e,
+                            start_block = plan.start_block,
+                            target_block = plan.target_block,
+                            "Skipping proof request after start output fetch failed"
+                        );
+                        continue;
+                    }
+                    None => {
+                        warn!(
+                            start_block = plan.start_block,
+                            target_block = plan.target_block,
+                            "Skipping proof request because start output is missing"
+                        );
+                        continue;
+                    }
+                }
+            };
 
-                info!(
-                    from_block = plan.start_block,
-                    to_block = plan.target_block,
-                    l1_head_number = l1_head.number,
-                    "Built proof request for parallel proving"
-                );
+            let claimed_l2_output_root = match output_roots.get(&plan.target_block) {
+                Some(Ok(root)) => *root,
+                Some(Err(e)) => {
+                    warn!(
+                        error = %e,
+                        target_block = plan.target_block,
+                        "Skipping proof request after target output fetch failed"
+                    );
+                    continue;
+                }
+                None => {
+                    warn!(
+                        target_block = plan.target_block,
+                        "Skipping proof request because target output is missing"
+                    );
+                    continue;
+                }
+            };
 
-                Ok((*plan, request))
-            })
-            .collect()
+            let request = ProofRequest {
+                l1_head: l1_head.hash,
+                agreed_l2_head_hash: agreed_l2_head.hash,
+                agreed_l2_output_root: agreed_output_root,
+                claimed_l2_output_root,
+                claimed_l2_block_number: plan.target_block,
+                proposer: self.config.driver.proposer_address,
+                intermediate_block_interval: self.config.driver.intermediate_block_interval,
+                l1_head_number: l1_head.number,
+                image_hash: self.config.driver.tee_image_hash,
+            };
+
+            info!(
+                from_block = plan.start_block,
+                to_block = plan.target_block,
+                l1_head_number = l1_head.number,
+                "Built proof request for parallel proving"
+            );
+
+            requests.push((*plan, request));
+        }
+
+        Ok(requests)
     }
 
     /// Recovers the TEE signer from the aggregate proposal and checks
@@ -2229,6 +2292,65 @@ mod tests {
             state.proved.contains_key(&TEST_BLOCK_INTERVAL),
             "proved entries must not be removed by dispatch"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_keeps_successful_plans_when_later_output_fetch_fails() {
+        let cancel = CancellationToken::new();
+        let safe_head = TEST_BLOCK_INTERVAL * 2;
+
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
+            delay: Duration::from_secs(3600),
+            block_interval: TEST_BLOCK_INTERVAL,
+        });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(safe_head, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: Some(TEST_BLOCK_INTERVAL),
+        });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
+        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 2,
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    block_interval: TEST_BLOCK_INTERVAL,
+                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                    ..Default::default()
+                },
+            },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            factory,
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel,
+        );
+
+        let recovered = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::ZERO,
+            l2_block_number: TEST_ANCHOR_BLOCK,
+        };
+        let mut state = PipelineState::new();
+
+        pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
+
+        assert!(state.inflight.contains(&TEST_BLOCK_INTERVAL));
+        assert!(!state.inflight.contains(&(TEST_BLOCK_INTERVAL * 2)));
+        assert_eq!(state.inflight.len(), 1);
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
