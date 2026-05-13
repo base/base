@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_jwt::{JwtError, JwtSecretReader, JwtValidator};
+use tracing::warn;
 use url::Url;
 
 const DEFAULT_L2_ENGINE_TIMEOUT: u64 = 30_000;
@@ -81,7 +82,13 @@ impl L2ClientArgs {
         l2_engine_rpc: &Url,
     ) -> eyre::Result<JwtSecret> {
         if l2_engine_rpc.scheme() == "file" {
-            return Ok(self.jwt_secret().unwrap_or_else(|_| JwtSecret::random()));
+            return Ok(self.jwt_secret().unwrap_or_else(|e| {
+                warn!(
+                    error = %e,
+                    "Failed to load JWT secret for IPC endpoint, generating random secret"
+                );
+                JwtSecret::random()
+            }));
         }
 
         let jwt_secret = self.jwt_secret().map_err(|e| eyre::eyre!(e))?;

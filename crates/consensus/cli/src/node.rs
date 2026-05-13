@@ -72,13 +72,7 @@ impl ConsensusNodeCommand {
 #[derive(Args, Clone, Debug)]
 pub struct ConsensusNodeArgs {
     /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(
-        long = "chain",
-        short = 'n',
-        global = true,
-        default_value = "8453",
-        env = "BASE_NODE_NETWORK"
-    )]
+    #[arg(long = "chain", short = 'n', default_value = "8453", env = "BASE_NODE_NETWORK")]
     pub l2_chain_id: Chain,
 
     /// The mode to run the node in.
@@ -132,7 +126,7 @@ pub struct ConsensusNodeArgs {
 impl ConsensusNodeArgs {
     /// Loads the configured L2 rollup config.
     pub fn load_rollup_config(&self) -> eyre::Result<RollupConfig> {
-        self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))
+        self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!(e))
     }
 
     /// Validates that a sequencer signing key is configured when running in sequencer mode.
@@ -179,8 +173,7 @@ impl ConsensusNodeArgs {
             info!(target: "rollup_node", hardfork = %hf, "hardfork");
         }
 
-        let l1_chain_config =
-            self.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+        let l1_chain_config = self.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!(e))?;
         let l1_config = L1ConfigBuilder {
             chain_config: l1_chain_config,
             trust_rpc: self.l1_rpc_args.l1_trust_rpc,
@@ -250,7 +243,7 @@ impl ConsensusNodeArgs {
     ) -> eyre::Result<()> {
         self.build_rollup_node_with_overrides(cfg, overrides).await?.start().await.map_err(|e| {
             error!(target: "rollup_node", error = %e, "Failed to start rollup node service");
-            eyre::eyre!("{e}")
+            eyre::eyre!(e)
         })
     }
 

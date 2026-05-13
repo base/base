@@ -219,15 +219,19 @@ impl StandardBaseRethNode {
         Ok(runner)
     }
 
-    /// Launches the node and waits for it to exit.
-    pub async fn run(builder: BaseNodeBuilder, args: StandardNodeArgs) -> eyre::Result<()> {
+    /// Builds a standard runner with process version metrics registered on startup.
+    pub fn runner_with_version_metrics(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
         let mut runner = Self::runner(args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();
             Ok(())
         });
+        Ok(runner)
+    }
 
-        runner.run(builder).await
+    /// Launches the node and waits for it to exit.
+    pub async fn run(builder: BaseNodeBuilder, args: StandardNodeArgs) -> eyre::Result<()> {
+        Self::runner_with_version_metrics(args)?.run(builder).await
     }
 
     /// Launches the node and returns immediately with a handle.
@@ -235,6 +239,6 @@ impl StandardBaseRethNode {
         builder: BaseNodeBuilder,
         args: StandardNodeArgs,
     ) -> eyre::Result<LaunchedBaseNode> {
-        Self::runner(args)?.launch(builder).await
+        Self::runner_with_version_metrics(args)?.launch(builder).await
     }
 }

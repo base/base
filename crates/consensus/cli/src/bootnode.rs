@@ -25,13 +25,7 @@ use crate::{L2ConfigFile, LogArgs, MetricsArgs, metrics::CliMetrics};
 #[derive(Args, Clone, Debug)]
 pub struct Bootnode {
     /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(
-        long = "chain",
-        short = 'n',
-        global = true,
-        default_value = "8453",
-        env = "BASE_NODE_NETWORK"
-    )]
+    #[arg(long = "chain", short = 'n', default_value = "8453", env = "BASE_NODE_NETWORK")]
     pub l2_chain_id: Chain,
 
     /// Logging configuration.
@@ -55,13 +49,7 @@ pub struct Bootnode {
 #[derive(Args, Clone, Debug)]
 pub struct BootnodeEnr {
     /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(
-        long = "chain",
-        short = 'n',
-        global = true,
-        default_value = "8453",
-        env = "BASE_NODE_NETWORK"
-    )]
+    #[arg(long = "chain", short = 'n', default_value = "8453", env = "BASE_NODE_NETWORK")]
     pub l2_chain_id: Chain,
 
     /// L2 configuration file.
@@ -81,7 +69,7 @@ impl Bootnode {
             ["libp2p_gossipsub=error"]
         )?;
 
-        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
 
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
@@ -127,7 +115,7 @@ impl Bootnode {
 impl BootnodeEnr {
     /// Runs the CLI.
     pub fn run(self) -> eyre::Result<()> {
-        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
         let enr = self.p2p.local_enr(cfg.l2_chain_id.id())?;
         self.p2p.write_enr_output(&enr)?;
         println!("{enr}");

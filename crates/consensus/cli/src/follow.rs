@@ -88,13 +88,7 @@ pub struct ConsensusFollowNodeArgs {
     pub l2_client_args: L2ClientArgs,
 
     /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(
-        long = "chain",
-        short = 'n',
-        global = true,
-        default_value = "8453",
-        env = "BASE_NODE_NETWORK"
-    )]
+    #[arg(long = "chain", short = 'n', default_value = "8453", env = "BASE_NODE_NETWORK")]
     pub l2_chain_id: Chain,
 
     /// Gate sync behind proofs progress via `debug_proofsSyncStatus`.
@@ -130,7 +124,7 @@ pub struct ConsensusFollowNodeArgs {
 impl ConsensusFollowNodeArgs {
     /// Loads the configured L2 rollup config.
     pub fn load_rollup_config(&self) -> eyre::Result<RollupConfig> {
-        self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))
+        self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!(e))
     }
 
     /// Builds a follow node with default external endpoint configuration.
@@ -230,7 +224,7 @@ impl ConsensusFollowNodeArgs {
             .await
             .map_err(|e| {
                 error!(target: "rollup_node", error = %e, "Failed to start follow node");
-                eyre::eyre!("{e}")
+                eyre::eyre!(e)
             })?;
 
         Ok(())
@@ -261,8 +255,7 @@ impl ConsensusFollowNodeArgs {
 
     /// Builds the L1 configuration for the follow node.
     pub fn l1_config(&self, cfg: &RollupConfig) -> eyre::Result<L1Config> {
-        let l1_chain_config =
-            self.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+        let l1_chain_config = self.l1_config.load(cfg.l1_chain_id).map_err(|e| eyre::eyre!(e))?;
         let l1_beacon = OnlineBeaconClient::new_http(self.l1_rpc_args.l1_beacon.to_string());
 
         Ok(L1Config {
