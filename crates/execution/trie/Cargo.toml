@@ -44,6 +44,9 @@ serde.workspace = true
 bytes.workspace = true
 bincode = { workspace = true, features = ["serde"] }
 
+# rocksdb (optional backend)
+rocksdb = { workspace = true, optional = true }
+
 # misc
 tracing.workspace = true
 thiserror.workspace = true
@@ -97,3 +100,4 @@ metrics = [
 	"reth-evm/metrics",
 	"reth-trie/metrics",
 ]
+rocksdb = ["dep:rocksdb"]

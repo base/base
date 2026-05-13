@@ -1,16 +1,26 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+
+#[cfg(not(feature = "rocksdb"))]
+use std::time::Duration;
 
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
-use base_execution_trie::{BaseProofsStorage, MdbxProofsStorage};
+use base_execution_trie::BaseProofsStorage;
+#[cfg(not(feature = "rocksdb"))]
+use base_execution_trie::MdbxProofsStorage;
+#[cfg(feature = "rocksdb")]
+use base_execution_trie::rocksdb::RocksdbProofsStorage;
 use base_node_core::args::RollupArgs;
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
+#[cfg(not(feature = "rocksdb"))]
 use reth_db::database_metrics::DatabaseMetrics;
 use reth_node_api::FullNodeComponents;
+#[cfg(not(feature = "rocksdb"))]
 use reth_tasks::TaskExecutor;
+#[cfg(not(feature = "rocksdb"))]
 use tokio::time::sleep;
 use tracing::{error, info};
 
@@ -47,29 +57,45 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                 .expect("Path must be provided if not using in-memory storage");
             info!(target: "reth::cli", "Using on-disk storage for proofs history");
 
+            #[cfg(not(feature = "rocksdb"))]
             let mdbx = match MdbxProofsStorage::new(&path)
                 .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))
             {
-                Ok(mdbx) => mdbx,
+                Ok(mdbx) => Arc::new(mdbx),
                 Err(e) => {
                     error!(target: "reth::cli", error = ?e, "Failed to create MdbxProofsStorage, continuing without proofs history");
                     return hooks;
                 }
             };
-            let mdbx = Arc::new(mdbx);
+            #[cfg(not(feature = "rocksdb"))]
             let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&mdbx).into();
+
+            #[cfg(feature = "rocksdb")]
+            let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
+                match RocksdbProofsStorage::new(&path)
+                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))
+                {
+                    Ok(rocksdb) => Arc::new(rocksdb).into(),
+                    Err(e) => {
+                        error!(target: "reth::cli", error = ?e, "Failed to create RocksdbProofsStorage, continuing without proofs history");
+                        return hooks;
+                    }
+                };
 
             let storage_exec = storage.clone();
 
-            // ignore unused if metrics feature is disabled
-            hooks = hooks.add_node_started_hook(move |node| {
-                spawn_proofs_db_metrics(
-                    node.task_executor,
-                    mdbx,
-                    node.config.metrics.push_gateway_interval,
-                );
-                Ok(())
-            });
+            #[cfg(not(feature = "rocksdb"))]
+            {
+                // ignore unused if metrics feature is disabled
+                hooks = hooks.add_node_started_hook(move |node| {
+                    spawn_proofs_db_metrics(
+                        node.task_executor,
+                        mdbx,
+                        node.config.metrics.push_gateway_interval,
+                    );
+                    Ok(())
+                });
+            }
 
             hooks = hooks
                 .install_exex("proofs-history", async move |exex_context| {
@@ -107,6 +133,7 @@ impl FromExtensionConfig for ProofsHistoryExtension {
 }
 
 /// Spawns a task that periodically reports metrics for the proofs DB.
+#[cfg(not(feature = "rocksdb"))]
 fn spawn_proofs_db_metrics(
     executor: TaskExecutor,
     storage: Arc<MdbxProofsStorage>,

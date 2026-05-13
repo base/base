@@ -1,6 +1,9 @@
 //! Node luncher with proof history support.
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+
+#[cfg(not(feature = "rocksdb"))]
+use std::time::Duration;
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_exex::BaseProofsExEx;
@@ -8,13 +11,20 @@ use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
-use base_execution_trie::{BaseProofsStorage, db::MdbxProofsStorage};
+use base_execution_trie::BaseProofsStorage;
+#[cfg(not(feature = "rocksdb"))]
+use base_execution_trie::db::MdbxProofsStorage;
+#[cfg(feature = "rocksdb")]
+use base_execution_trie::rocksdb::RocksdbProofsStorage;
 use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;
+#[cfg(not(feature = "rocksdb"))]
 use reth_db_api::database_metrics::DatabaseMetrics;
 use reth_node_builder::{FullNodeComponents, NodeBuilder, WithLaunchContext};
+#[cfg(not(feature = "rocksdb"))]
 use reth_tasks::TaskExecutor;
+#[cfg(not(feature = "rocksdb"))]
 use tokio::time::sleep;
 use tracing::info;
 
@@ -45,23 +55,36 @@ pub async fn launch_node_with_proof_history(
             .expect("Path must be provided if not using in-memory storage");
         info!(target: "reth::cli", "Using on-disk storage for proofs history");
 
+        #[cfg(not(feature = "rocksdb"))]
         let mdbx = Arc::new(
             MdbxProofsStorage::new(&path)
                 .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
         );
+        #[cfg(not(feature = "rocksdb"))]
         let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&mdbx).into();
+
+        #[cfg(feature = "rocksdb")]
+        let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
+            RocksdbProofsStorage::new(&path)
+                .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+        )
+        .into();
 
         let storage_exec = storage.clone();
 
-        node_builder = node_builder
-            .on_node_started(move |node| {
+        #[cfg(not(feature = "rocksdb"))]
+        {
+            node_builder = node_builder.on_node_started(move |node| {
                 spawn_proofs_db_metrics(
                     node.task_executor,
                     mdbx,
                     node.config.metrics.push_gateway_interval,
                 );
                 Ok(())
-            })
+            });
+        }
+
+        node_builder = node_builder
             .install_exex("proofs-history", async move |exex_context| {
                 Ok(BaseProofsExEx::builder(exex_context, storage_exec)
                     .with_proofs_history_window(proofs_history_window)
@@ -91,6 +114,7 @@ pub async fn launch_node_with_proof_history(
     handle.node_exit_future.await
 }
 /// Spawns a task that periodically reports metrics for the proofs DB.
+#[cfg(not(feature = "rocksdb"))]
 fn spawn_proofs_db_metrics(
     executor: TaskExecutor,
     storage: Arc<MdbxProofsStorage>,

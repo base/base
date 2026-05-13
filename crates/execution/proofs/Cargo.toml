@@ -32,3 +32,7 @@ tracing = { workspace = true, features = ["std"] }
 
 # misc
 eyre.workspace = true
+
+[features]
+default = []
+rocksdb = ["base-execution-trie/rocksdb"]

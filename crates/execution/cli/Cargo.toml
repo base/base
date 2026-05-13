@@ -73,6 +73,8 @@ otlp-logs = [ "reth-node-core/otlp-logs", "reth-tracing/otlp-logs" ]
 
 asm-keccak = [ "base-node-core/asm-keccak", "reth-node-core/asm-keccak" ]
 
+rocksdb = [ "base-execution-trie/rocksdb", "base-node-core/rocksdb" ]
+
 keccak-cache-global = [
 	"base-node-core/keccak-cache-global",
 	"reth-node-core/keccak-cache-global",

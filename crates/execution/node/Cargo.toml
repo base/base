@@ -148,6 +148,7 @@ test-utils = [
 	"serde_json",
 ]
 reth-codec = []
+rocksdb = ["base-execution-trie/rocksdb"]
 
 [[test]]
 name = "e2e_testsuite"

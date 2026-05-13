@@ -4,9 +4,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_common_consensus::BasePrimitives;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_trie::{
-    BaseProofsStorage, BaseProofsStore, InitializationJob, db::MdbxProofsStorage,
-};
+use base_execution_trie::{BaseProofsStorage, BaseProofsStore, InitializationJob};
+#[cfg(not(feature = "rocksdb"))]
+use base_execution_trie::db::MdbxProofsStorage;
+#[cfg(feature = "rocksdb")]
+use base_execution_trie::rocksdb::RocksdbProofsStorage;
 use clap::Parser;
 use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
@@ -48,9 +50,16 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         let Environment { provider_factory, .. } = self.env.init::<N>(AccessRights::RO)?;
 
         // Create the proofs storage
+        #[cfg(not(feature = "rocksdb"))]
         let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
             MdbxProofsStorage::new(&self.storage_path)
                 .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
+        )
+        .into();
+        #[cfg(feature = "rocksdb")]
+        let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
+            RocksdbProofsStorage::new(&self.storage_path)
+                .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
         )
         .into();
 
