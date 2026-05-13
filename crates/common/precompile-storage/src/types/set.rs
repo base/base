@@ -7,12 +7,7 @@
 //! - **Positions Mapping**: A `Mapping<T, u32>` at `base_slot + 1` (1-indexed, 0 = not present)
 
 use alloy_primitives::{Address, U256};
-use std::{
-    collections::HashSet,
-    fmt,
-    hash::Hash,
-    ops::Deref,
-};
+use std::{collections::HashSet, fmt, hash::Hash, ops::Deref};
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -26,26 +21,36 @@ pub struct Set<T>(Vec<T>);
 
 impl<T> Set<T> {
     /// Creates a new empty set.
-    pub const fn new() -> Self { Self(Vec::new()) }
+    pub const fn new() -> Self {
+        Self(Vec::new())
+    }
 
     /// Creates a set from a vector already known to contain no duplicates.
-    pub const fn new_unchecked(vec: Vec<T>) -> Self { Self(vec) }
+    pub const fn new_unchecked(vec: Vec<T>) -> Self {
+        Self(vec)
+    }
 }
 
 impl<T> Deref for Set<T> {
     type Target = [T];
-    fn deref(&self) -> &[T] { &self.0 }
+    fn deref(&self) -> &[T] {
+        &self.0
+    }
 }
 
 impl<T> From<Set<T>> for Vec<T> {
-    fn from(set: Set<T>) -> Self { set.0 }
+    fn from(set: Set<T>) -> Self {
+        set.0
+    }
 }
 
 impl<T: Eq + Hash + Clone> From<Vec<T>> for Set<T> {
     fn from(vec: Vec<T>) -> Self {
         let (mut seen, mut deduped) = (HashSet::new(), Vec::new());
         for item in vec {
-            if seen.insert(item.clone()) { deduped.push(item); }
+            if seen.insert(item.clone()) {
+                deduped.push(item);
+            }
         }
         Self(deduped)
     }
@@ -60,13 +65,17 @@ impl<T: Eq + Hash + Clone> FromIterator<T> for Set<T> {
 impl<T> IntoIterator for Set<T> {
     type Item = T;
     type IntoIter = std::vec::IntoIter<T>;
-    fn into_iter(self) -> Self::IntoIter { self.0.into_iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
 }
 
 impl<'a, T> IntoIterator for &'a Set<T> {
     type Item = &'a T;
     type IntoIter = std::slice::Iter<'a, T>;
-    fn into_iter(self) -> Self::IntoIter { self.0.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
 }
 
 /// Type-safe handler for accessing `Set<T>` in storage.
@@ -143,13 +152,19 @@ where
     }
 
     /// Returns the base storage slot for this set.
-    pub const fn base_slot(&self) -> U256 { self.base_slot }
+    pub const fn base_slot(&self) -> U256 {
+        self.base_slot
+    }
 
     /// Returns the number of elements in the set.
-    pub fn len(&self) -> Result<usize> { self.values.len() }
+    pub fn len(&self) -> Result<usize> {
+        self.values.len()
+    }
 
     /// Returns whether the set is empty.
-    pub fn is_empty(&self) -> Result<bool> { self.values.is_empty() }
+    pub fn is_empty(&self) -> Result<bool> {
+        self.values.is_empty()
+    }
 
     /// Returns true if the value is in the set.
     pub fn contains(&self, value: &T) -> Result<bool>
@@ -165,7 +180,9 @@ where
         T: StorageKey + Hash + Eq + Clone,
         T::Handler: Handler<T>,
     {
-        if self.contains(&value)? { return Ok(false); }
+        if self.contains(&value)? {
+            return Ok(false);
+        }
         let length = self.values.len()?;
         self.positions.at_mut(&value).write(checked_position(length)?)?;
         self.values.push(value)?;
@@ -179,7 +196,9 @@ where
         T::Handler: Handler<T>,
     {
         let position = self.positions.at(value).read()?;
-        if position == 0 { return Ok(false); }
+        if position == 0 {
+            return Ok(false);
+        }
 
         let len = self.values.len()?;
         let last_index = len - 1;
@@ -202,7 +221,9 @@ where
     where
         T::Handler: Handler<T>,
     {
-        if index >= self.len()? { return Ok(None); }
+        if index >= self.len()? {
+            return Ok(None);
+        }
         Ok(Some(self.values[index].read()?))
     }
 
@@ -215,7 +236,9 @@ where
         let end = end.min(len);
         let start = start.min(end);
         let mut result = Vec::new();
-        for i in start..end { result.push(self.values[i].read()?); }
+        for i in start..end {
+            result.push(self.values[i].read()?);
+        }
         Ok(result)
     }
 }
@@ -228,7 +251,9 @@ where
     fn read(&self) -> Result<Set<T>> {
         let len = self.len()?;
         let mut vec = Vec::new();
-        for i in 0..len { vec.push(self.values[i].read()?); }
+        for i in 0..len {
+            vec.push(self.values[i].read()?);
+        }
         Ok(Set(vec))
     }
 
@@ -248,7 +273,9 @@ where
 
         Slot::<U256>::new(self.values.len_slot(), self.address).write(U256::from(new_len))?;
 
-        for i in new_len..old_len { self.values[i].delete()?; }
+        for i in new_len..old_len {
+            self.values[i].delete()?;
+        }
         Ok(())
     }
 
@@ -261,9 +288,15 @@ where
         self.values.delete()
     }
 
-    fn t_read(&self) -> Result<Set<T>> { unimplemented!("Set does not support transient storage") }
-    fn t_write(&mut self, _: Set<T>) -> Result<()> { unimplemented!("Set does not support transient storage") }
-    fn t_delete(&mut self) -> Result<()> { unimplemented!("Set does not support transient storage") }
+    fn t_read(&self) -> Result<Set<T>> {
+        unimplemented!("Set does not support transient storage")
+    }
+    fn t_write(&mut self, _: Set<T>) -> Result<()> {
+        unimplemented!("Set does not support transient storage")
+    }
+    fn t_delete(&mut self) -> Result<()> {
+        unimplemented!("Set does not support transient storage")
+    }
 }
 
 impl<T> fmt::Debug for SetHandler<T>
@@ -271,9 +304,7 @@ where
     T: Storable + StorageKey + Hash + Eq + Clone + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SetHandler")
-            .field("base_slot", &self.base_slot)
-            .finish()
+        f.debug_struct("SetHandler").field("base_slot", &self.base_slot).finish()
     }
 }
 

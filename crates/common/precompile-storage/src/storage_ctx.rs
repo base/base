@@ -78,19 +78,29 @@ impl StorageCtx {
     ) -> Result<T> {
         let mut result: Option<Result<T>> = None;
         Self::try_with_storage(|s| {
-            s.with_account_info(address, &mut |info| { result = Some(f(info)); })
+            s.with_account_info(address, &mut |info| {
+                result = Some(f(info));
+            })
         })?;
         result.unwrap()
     }
 
     /// Returns the current chain ID.
-    pub fn chain_id(&self) -> u64 { Self::with_storage(|s| s.chain_id()) }
+    pub fn chain_id(&self) -> u64 {
+        Self::with_storage(|s| s.chain_id())
+    }
     /// Returns the current block timestamp.
-    pub fn timestamp(&self) -> U256 { Self::with_storage(|s| s.timestamp()) }
+    pub fn timestamp(&self) -> U256 {
+        Self::with_storage(|s| s.timestamp())
+    }
     /// Returns the block beneficiary (coinbase).
-    pub fn beneficiary(&self) -> Address { Self::with_storage(|s| s.beneficiary()) }
+    pub fn beneficiary(&self) -> Address {
+        Self::with_storage(|s| s.beneficiary())
+    }
     /// Returns the current block number.
-    pub fn block_number(&self) -> u64 { Self::with_storage(|s| s.block_number()) }
+    pub fn block_number(&self) -> u64 {
+        Self::with_storage(|s| s.block_number())
+    }
 
     /// Sets the bytecode at the given address.
     pub fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
@@ -123,17 +133,29 @@ impl StorageCtx {
     }
 
     /// Adds gas to the refund counter.
-    pub fn refund_gas(&mut self, gas: i64) { Self::with_storage(|s| s.refund_gas(gas)) }
+    pub fn refund_gas(&mut self, gas: i64) {
+        Self::with_storage(|s| s.refund_gas(gas))
+    }
     /// Returns the gas limit for this precompile call.
-    pub fn gas_limit(&self) -> u64 { Self::with_storage(|s| s.gas_limit()) }
+    pub fn gas_limit(&self) -> u64 {
+        Self::with_storage(|s| s.gas_limit())
+    }
     /// Returns the gas used so far.
-    pub fn gas_used(&self) -> u64 { Self::with_storage(|s| s.gas_used()) }
+    pub fn gas_used(&self) -> u64 {
+        Self::with_storage(|s| s.gas_used())
+    }
     /// Returns the gas refunded so far.
-    pub fn gas_refunded(&self) -> i64 { Self::with_storage(|s| s.gas_refunded()) }
+    pub fn gas_refunded(&self) -> i64 {
+        Self::with_storage(|s| s.gas_refunded())
+    }
     /// Returns whether the current call context is static.
-    pub fn is_static(&self) -> bool { Self::with_storage(|s| s.is_static()) }
+    pub fn is_static(&self) -> bool {
+        Self::with_storage(|s| s.is_static())
+    }
     /// Returns the address that called this precompile.
-    pub fn caller(&self) -> Address { Self::with_storage(|s| s.caller()) }
+    pub fn caller(&self) -> Address {
+        Self::with_storage(|s| s.caller())
+    }
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
     pub fn deduct_gas(&mut self, gas: u64) -> Result<()> {
@@ -252,15 +274,25 @@ impl StorageCtx {
     }
 
     /// Clears all transient storage (test-utils only).
-    pub fn clear_transient(&mut self) { self.as_hashmap().clear_transient() }
+    pub fn clear_transient(&mut self) {
+        self.as_hashmap().clear_transient()
+    }
     /// Clears emitted events for the given address (test-utils only).
-    pub fn clear_events(&mut self, address: Address) { self.as_hashmap().clear_events(address); }
+    pub fn clear_events(&mut self, address: Address) {
+        self.as_hashmap().clear_events(address);
+    }
     /// Returns the SLOAD counter (test-utils only).
-    pub fn counter_sload(&self) -> u64 { self.as_hashmap().counter_sload() }
+    pub fn counter_sload(&self) -> u64 {
+        self.as_hashmap().counter_sload()
+    }
     /// Returns the SSTORE counter (test-utils only).
-    pub fn counter_sstore(&self) -> u64 { self.as_hashmap().counter_sstore() }
+    pub fn counter_sstore(&self) -> u64 {
+        self.as_hashmap().counter_sstore()
+    }
     /// Resets the SLOAD/SSTORE counters (test-utils only).
-    pub fn reset_counters(&mut self) { self.as_hashmap().reset_counters() }
+    pub fn reset_counters(&mut self) {
+        self.as_hashmap().reset_counters()
+    }
 
     /// Returns true if the contract at the given address has non-empty bytecode (test-utils only).
     pub fn has_bytecode(&self, address: Address) -> Result<bool> {
@@ -285,7 +317,7 @@ mod tests {
     fn test_reentrant_with_storage_panics() {
         let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, || {
-            StorageCtx::with_storage(|_| { StorageCtx::with_storage(|_| ()) })
+            StorageCtx::with_storage(|_| StorageCtx::with_storage(|_| ()))
         });
     }
 

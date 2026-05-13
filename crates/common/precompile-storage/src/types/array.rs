@@ -88,8 +88,7 @@ impl<T: StorableType, const N: usize> Index<usize> for ArrayHandler<T, N> {
     fn index(&self, index: usize) -> &Self::Output {
         assert!(index < N, "index out of bounds: {index} >= {N}");
         let (base_slot, address) = (self.base_slot, self.address);
-        self.cache
-            .get_or_insert(&index, || Self::compute_handler(base_slot, address, index))
+        self.cache.get_or_insert(&index, || Self::compute_handler(base_slot, address, index))
     }
 }
 
@@ -97,8 +96,7 @@ impl<T: StorableType, const N: usize> IndexMut<usize> for ArrayHandler<T, N> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         assert!(index < N, "index out of bounds: {index} >= {N}");
         let (base_slot, address) = (self.base_slot, self.address);
-        self.cache
-            .get_or_insert_mut(&index, || Self::compute_handler(base_slot, address, index))
+        self.cache.get_or_insert_mut(&index, || Self::compute_handler(base_slot, address, index))
     }
 }
 

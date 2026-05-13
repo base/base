@@ -36,9 +36,8 @@ impl<K, V: StorableType> Mapping<K, V> {
         K: StorageKey + Hash + Eq + Clone,
     {
         let (base_slot, address) = (self.base_slot, self.address);
-        self.cache.get_or_insert(key, || {
-            V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address)
-        })
+        self.cache
+            .get_or_insert(key, || V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address))
     }
 
     /// Returns a mutable handler for the given key (mutable access, cached).

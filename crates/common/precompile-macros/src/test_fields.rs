@@ -8,8 +8,7 @@ use syn::{Expr, Ident, Token, parse::ParseStream, punctuated::Punctuated};
 use crate::utils::to_camel_case;
 
 pub(crate) fn gen_layout(input: TokenStream2) -> TokenStream {
-    let parser =
-        syn::punctuated::Punctuated::<Ident, syn::Token![,]>::parse_terminated;
+    let parser = syn::punctuated::Punctuated::<Ident, syn::Token![,]>::parse_terminated;
     let idents = match syn::parse::Parser::parse2(parser, input) {
         Ok(idents) => idents,
         Err(err) => return err.to_compile_error().into(),

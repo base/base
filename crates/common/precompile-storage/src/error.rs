@@ -6,7 +6,9 @@ use revm::{
 };
 
 /// Top-level error type for all Base native precompile operations.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, derive_more::From, derive_more::TryInto)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, thiserror::Error, derive_more::From, derive_more::TryInto,
+)]
 pub enum BasePrecompileError {
     /// EVM panic (arithmetic under/overflow, out-of-bounds access, enum conversion).
     #[error("Panic({0:?})")]

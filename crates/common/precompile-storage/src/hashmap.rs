@@ -118,11 +118,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
-    fn emit_event(
-        &mut self,
-        address: Address,
-        event: LogData,
-    ) -> Result<(), BasePrecompileError> {
+    fn emit_event(&mut self, address: Address, event: LogData) -> Result<(), BasePrecompileError> {
         self.events.entry(address).or_default().push(event);
         Ok(())
     }
@@ -167,10 +163,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn checkpoint(&mut self) -> JournalCheckpoint {
         let idx = self.snapshots.len();
-        self.snapshots.push(Snapshot {
-            internals: self.internals.clone(),
-            events: self.events.clone(),
-        });
+        self.snapshots
+            .push(Snapshot { internals: self.internals.clone(), events: self.events.clone() });
         JournalCheckpoint { log_i: 0, journal_i: idx }
     }
 
@@ -268,9 +262,7 @@ impl HashMapStorageProvider {
 
     /// Returns an iterator over all stored (address, slot, value) triples (test-utils only).
     pub fn into_storage(self) -> impl Iterator<Item = (Address, U256, U256)> {
-        self.internals
-            .into_iter()
-            .map(|((addr, slot), value)| (addr, slot, value))
+        self.internals.into_iter().map(|((addr, slot), value)| (addr, slot, value))
     }
 
     /// Reads a storage slot directly without journal overhead (test-utils only).

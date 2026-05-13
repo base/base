@@ -15,10 +15,10 @@ pub mod storage_ctx;
 /// Storage types: `Slot`, `Mapping`, `Vec`, `Set`, primitives.
 pub mod types;
 
-/// In-memory storage backend for tests.
-pub mod hashmap;
 /// Production EVM-backed storage provider.
 pub mod evm;
+/// In-memory storage backend for tests.
+pub mod hashmap;
 
 pub use evm::EvmPrecompileStorageProvider;
 
@@ -30,8 +30,4 @@ pub use provider::{
 };
 pub use registration::NativePrecompile;
 pub use storage_ctx::{CheckpointGuard, StorageCtx};
-pub use types::{
-    Mapping, Set, SetHandler, Slot,
-    array::ArrayHandler,
-    vec::VecHandler,
-};
+pub use types::{Mapping, Set, SetHandler, Slot, array::ArrayHandler, vec::VecHandler};

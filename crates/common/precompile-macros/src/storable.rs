@@ -38,15 +38,21 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
     };
 
     if fields.is_empty() {
-        return Err(syn::Error::new_spanned(&input.ident, "`Storable` cannot be derived for empty structs"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`Storable` cannot be derived for empty structs",
+        ));
     }
 
-    let field_infos: Vec<_> = fields.iter().map(|f| FieldInfo {
-        name: f.ident.as_ref().unwrap().clone(),
-        ty: f.ty.clone(),
-        slot: None,
-        base_slot: None,
-    }).collect();
+    let field_infos: Vec<_> = fields
+        .iter()
+        .map(|f| FieldInfo {
+            name: f.ident.as_ref().unwrap().clone(),
+            ty: f.ty.clone(),
+            slot: None,
+            base_slot: None,
+        })
+        .collect();
 
     let layout_fields = packing::allocate_slots(&field_infos)?;
 
@@ -156,20 +162,32 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
 
 fn derive_unit_enum_impl(input: &DeriveInput, data_enum: &DataEnum) -> syn::Result<TokenStream> {
     if extract_storable_array_sizes(&input.attrs)?.is_some() {
-        return Err(syn::Error::new_spanned(&input.ident, "`storable_arrays` is only supported for structs"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`storable_arrays` is only supported for structs",
+        ));
     }
 
     if !has_repr_u8(&input.attrs)? {
-        return Err(syn::Error::new_spanned(&input.ident, "`Storable` unit enums must be annotated with `#[repr(u8)]`"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`Storable` unit enums must be annotated with `#[repr(u8)]`",
+        ));
     }
 
     if data_enum.variants.is_empty() {
-        return Err(syn::Error::new_spanned(&input.ident, "`Storable` cannot be derived for empty enums"));
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`Storable` cannot be derived for empty enums",
+        ));
     }
 
     for variant in &data_enum.variants {
         if !matches!(variant.fields, Fields::Unit) {
-            return Err(syn::Error::new_spanned(variant, "`Storable` enums must use unit variants only"));
+            return Err(syn::Error::new_spanned(
+                variant,
+                "`Storable` enums must use unit variants only",
+            ));
         }
     }
 
@@ -222,9 +240,13 @@ fn derive_unit_enum_impl(input: &DeriveInput, data_enum: &DataEnum) -> syn::Resu
 fn has_repr_u8(attrs: &[Attribute]) -> syn::Result<bool> {
     let mut repr_u8 = false;
     for attr in attrs {
-        if !attr.path().is_ident("repr") { continue; }
+        if !attr.path().is_ident("repr") {
+            continue;
+        }
         attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("u8") { repr_u8 = true; }
+            if meta.path.is_ident("u8") {
+                repr_u8 = true;
+            }
             Ok(())
         })?;
     }
@@ -233,7 +255,10 @@ fn has_repr_u8(attrs: &[Attribute]) -> syn::Result<bool> {
 
 fn validate_sequential_discriminants(data_enum: &DataEnum) -> syn::Result<()> {
     if data_enum.variants.len() > usize::from(u8::MAX) + 1 {
-        return Err(syn::Error::new_spanned(&data_enum.variants, "`Storable` unit enums must have at most 256 variants"));
+        return Err(syn::Error::new_spanned(
+            &data_enum.variants,
+            "`Storable` unit enums must have at most 256 variants",
+        ));
     }
     for variant in &data_enum.variants {
         if variant.discriminant.is_some() {
@@ -272,7 +297,9 @@ fn gen_handler_struct(
 ) -> TokenStream {
     let handler_name = format_ident!("{}Handler", struct_name);
     let handler_fields = fields.iter().map(gen_handler_field_decl);
-    let field_inits = fields.iter().enumerate()
+    let field_inits = fields
+        .iter()
+        .enumerate()
         .map(|(idx, field)| gen_handler_field_init(field, idx, fields, Some(mod_ident)));
 
     quote! {
@@ -335,7 +362,9 @@ fn gen_handler_struct(
 }
 
 fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
-    if fields.is_empty() { return quote! {}; }
+    if fields.is_empty() {
+        return quote! {};
+    }
 
     let field_loads = fields.iter().enumerate().map(|(idx, (name, ty))| {
         let loc_const = PackingConstants::new(name).location();
@@ -383,7 +412,9 @@ fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
 }
 
 fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
-    if fields.is_empty() { return quote! {}; }
+    if fields.is_empty() {
+        return quote! {};
+    }
 
     let field_stores = fields.iter().enumerate().map(|(idx, (name, ty))| {
         let loc_const = PackingConstants::new(name).location();

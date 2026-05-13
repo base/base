@@ -5,8 +5,7 @@
 use alloy_primitives::{Address, U256};
 
 use crate::provider::{
-    FromWord, Layout, LayoutCtx, Packable, StorableType, StorageKey,
-    sealed::OnlyPrimitives,
+    FromWord, Layout, LayoutCtx, Packable, StorableType, StorageKey, sealed::OnlyPrimitives,
 };
 use crate::types::Slot;
 
@@ -101,9 +100,8 @@ mod tests {
     use proptest::prelude::*;
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
-        any::<[u64; 4]>().prop_map(|limbs| {
-            U256::from_limbs(limbs) % (U256::MAX - U256::from(10000u64))
-        })
+        any::<[u64; 4]>()
+            .prop_map(|limbs| U256::from_limbs(limbs) % (U256::MAX - U256::from(10000u64)))
     }
 
     fn arb_address() -> impl Strategy<Value = Address> {

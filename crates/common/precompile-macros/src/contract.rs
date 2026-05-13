@@ -45,20 +45,14 @@ pub(crate) enum FieldKind<'a> {
     Mapping { key: &'a Type, value: &'a Type },
 }
 
-pub(crate) fn generate(
-    input: DeriveInput,
-    address: Option<&Expr>,
-) -> proc_macro::TokenStream {
+pub(crate) fn generate(input: DeriveInput, address: Option<&Expr>) -> proc_macro::TokenStream {
     match gen_output(input, address) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
 
-fn gen_output(
-    input: DeriveInput,
-    address: Option<&Expr>,
-) -> syn::Result<TokenStream> {
+fn gen_output(input: DeriveInput, address: Option<&Expr>) -> syn::Result<TokenStream> {
     let (ident, vis) = (input.ident.clone(), input.vis.clone());
     let fields = parse_fields(input)?;
 

@@ -74,8 +74,8 @@ pub trait PrecompileStorageProvider {
 
     /// Computes keccak256 and charges the appropriate gas.
     fn keccak256(&mut self, data: &[u8]) -> Result<B256> {
-        let num_words = u64::try_from(data.len().div_ceil(32))
-            .map_err(|_| BasePrecompileError::OutOfGas)?;
+        let num_words =
+            u64::try_from(data.len().div_ceil(32)).map_err(|_| BasePrecompileError::OutOfGas)?;
         let price = KECCAK256WORD
             .checked_mul(num_words)
             .and_then(|w| w.checked_add(KECCAK256))
@@ -108,8 +108,7 @@ pub trait ContractStorage {
 
     /// Returns true if the contract has bytecode deployed at its address.
     fn is_initialized(&self) -> Result<bool> {
-        self.storage()
-            .with_account_info(self.address(), |info| Ok(!info.is_empty_code_hash()))
+        self.storage().with_account_info(self.address(), |info| Ok(!info.is_empty_code_hash()))
     }
 }
 
@@ -232,8 +231,7 @@ pub trait Storable: StorableType + Sized {
             Some(offset) => {
                 let bytes = Self::BYTES;
                 let current = storage.load(slot)?;
-                let cleared =
-                    crate::packing::delete_from_word(current, offset, bytes)?;
+                let cleared = crate::packing::delete_from_word(current, offset, bytes)?;
                 storage.store(slot, cleared)
             }
         }
@@ -280,8 +278,7 @@ impl<T: Packable> Storable for T {
             None => storage.store(slot, self.to_word()),
             Some(offset) => {
                 let current = storage.load(slot)?;
-                let updated =
-                    crate::packing::insert_into_word(current, self, offset, Self::BYTES)?;
+                let updated = crate::packing::insert_into_word(current, self, offset, Self::BYTES)?;
                 storage.store(slot, updated)
             }
         }

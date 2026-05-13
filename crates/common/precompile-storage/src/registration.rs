@@ -9,7 +9,6 @@ use revm::precompile::PrecompileResult;
 
 use crate::provider::PrecompileStorageProvider;
 
-
 /// Trait that every native precompile must implement.
 ///
 /// # Example
