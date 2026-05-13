@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 
@@ -19,7 +19,7 @@ use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
-use tokio::sync::{Mutex, Notify, Semaphore};
+use tokio::sync::{Notify, Semaphore};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -120,14 +120,14 @@ impl PayloadWitnessInFlightGuard {
         Self { prefetcher, keys, notify, completed: false }
     }
 
-    async fn mark_ready(mut self, ready: PayloadWitnessReady) {
-        self.prefetcher.mark_ready(&self.keys, ready, Arc::clone(&self.notify)).await;
+    fn mark_ready(mut self, ready: PayloadWitnessReady) {
         self.completed = true;
+        self.prefetcher.mark_ready(&self.keys, ready, Arc::clone(&self.notify));
     }
 
-    async fn mark_failed(mut self) {
-        self.prefetcher.mark_failed(&self.keys, Arc::clone(&self.notify)).await;
+    fn mark_failed(mut self) {
         self.completed = true;
+        self.prefetcher.mark_failed(&self.keys, Arc::clone(&self.notify));
     }
 }
 
@@ -137,15 +137,7 @@ impl Drop for PayloadWitnessInFlightGuard {
             return;
         }
 
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
-        let prefetcher = self.prefetcher.clone();
-        let keys = self.keys.clone();
-        let notify = Arc::clone(&self.notify);
-        handle.spawn(async move {
-            prefetcher.mark_failed(&keys, notify).await;
-        });
+        self.prefetcher.mark_failed(&self.keys, Arc::clone(&self.notify));
     }
 }
 
@@ -176,14 +168,16 @@ impl PayloadWitnessPrefetcher {
     ) -> Option<PayloadWitnessReady> {
         loop {
             let notified = {
-                let mut state = self.inner.state.lock().await;
+                let mut state = self.lock_state();
                 match keys.iter().find_map(|key| state.entries.get(key).cloned()) {
                     Some(PayloadWitnessCacheEntry::Ready { ready, keys }) => {
                         Self::remove_cache_keys(&mut state, &keys);
                         return Some(ready);
                     }
                     Some(PayloadWitnessCacheEntry::InFlight { notify, .. }) => {
-                        Arc::clone(&notify).notified_owned()
+                        let mut notified = Box::pin(Arc::clone(&notify).notified_owned());
+                        notified.as_mut().enable();
+                        notified
                     }
                     None => return None,
                 }
@@ -193,7 +187,7 @@ impl PayloadWitnessPrefetcher {
                 continue;
             }
 
-            let mut state = self.inner.state.lock().await;
+            let mut state = self.lock_state();
             if let Some(PayloadWitnessCacheEntry::Ready { ready, keys }) =
                 keys.iter().find_map(|key| state.entries.get(key).cloned())
             {
@@ -216,7 +210,7 @@ impl PayloadWitnessPrefetcher {
             return;
         }
 
-        if !self.mark_lookahead_parent_scheduled(parent_block_hash).await {
+        if !self.mark_lookahead_parent_scheduled(parent_block_hash) {
             return;
         }
 
@@ -227,7 +221,7 @@ impl PayloadWitnessPrefetcher {
             let parent_block = match providers.l2.get_block_by_hash(parent_block_hash).await {
                 Ok(Some(block)) => block,
                 Ok(None) => {
-                    prefetcher.unmark_lookahead_parent_scheduled(parent_block_hash).await;
+                    prefetcher.unmark_lookahead_parent_scheduled(parent_block_hash);
                     debug!(
                         target: HOST_SERVER_TARGET,
                         ?parent_block_hash,
@@ -236,7 +230,7 @@ impl PayloadWitnessPrefetcher {
                     return;
                 }
                 Err(err) => {
-                    prefetcher.unmark_lookahead_parent_scheduled(parent_block_hash).await;
+                    prefetcher.unmark_lookahead_parent_scheduled(parent_block_hash);
                     debug!(
                         target: HOST_SERVER_TARGET,
                         ?parent_block_hash,
@@ -253,7 +247,7 @@ impl PayloadWitnessPrefetcher {
                 current_block_number + PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS;
 
             for block_number in first_prefetch_block..=last_prefetch_block {
-                if !prefetcher.mark_block_scheduled(block_number).await {
+                if !prefetcher.mark_block_scheduled(block_number) {
                     continue;
                 }
 
@@ -267,8 +261,8 @@ impl PayloadWitnessPrefetcher {
         });
     }
 
-    async fn mark_lookahead_parent_scheduled(&self, parent_block_hash: B256) -> bool {
-        let mut state = self.inner.state.lock().await;
+    fn mark_lookahead_parent_scheduled(&self, parent_block_hash: B256) -> bool {
+        let mut state = self.lock_state();
         if !state.scheduled_lookahead_parents.insert(parent_block_hash) {
             return false;
         }
@@ -285,8 +279,8 @@ impl PayloadWitnessPrefetcher {
         true
     }
 
-    async fn unmark_lookahead_parent_scheduled(&self, parent_block_hash: B256) {
-        let mut state = self.inner.state.lock().await;
+    fn unmark_lookahead_parent_scheduled(&self, parent_block_hash: B256) {
+        let mut state = self.lock_state();
         state.scheduled_lookahead_parents.remove(&parent_block_hash);
         state.scheduled_lookahead_parent_order.retain(|parent| *parent != parent_block_hash);
     }
@@ -305,7 +299,7 @@ impl PayloadWitnessPrefetcher {
         });
         tokio::spawn(async move {
             if let Err(err) = handle.await {
-                cleanup_prefetcher.unmark_block_scheduled(block_number).await;
+                cleanup_prefetcher.unmark_block_scheduled(block_number);
                 warn!(
                     target: HOST_SERVER_TARGET,
                     block_number = %block_number,
@@ -316,18 +310,18 @@ impl PayloadWitnessPrefetcher {
         });
     }
 
-    async fn mark_block_scheduled(&self, block_number: u64) -> bool {
-        let mut state = self.inner.state.lock().await;
+    fn mark_block_scheduled(&self, block_number: u64) -> bool {
+        let mut state = self.lock_state();
         state.scheduled_blocks.insert(block_number)
     }
 
-    async fn unmark_block_scheduled(&self, block_number: u64) {
-        let mut state = self.inner.state.lock().await;
+    fn unmark_block_scheduled(&self, block_number: u64) {
+        let mut state = self.lock_state();
         state.scheduled_blocks.remove(&block_number);
     }
 
-    async fn try_mark_in_flight(&self, keys: &[B256]) -> Option<Arc<Notify>> {
-        let mut state = self.inner.state.lock().await;
+    fn try_mark_in_flight(&self, keys: &[B256]) -> Option<Arc<Notify>> {
+        let mut state = self.lock_state();
         if keys.iter().any(|key| state.entries.contains_key(key)) {
             return None;
         }
@@ -346,9 +340,17 @@ impl PayloadWitnessPrefetcher {
         Some(notify)
     }
 
-    async fn mark_ready(&self, keys: &[B256], ready: PayloadWitnessReady, notify: Arc<Notify>) {
-        let mut state = self.inner.state.lock().await;
+    fn mark_ready(&self, keys: &[B256], ready: PayloadWitnessReady, notify: Arc<Notify>) {
+        let mut state = self.lock_state();
         let cache_keys = Arc::<[B256]>::from(keys);
+        let existing_key_sets = cache_keys
+            .iter()
+            .filter_map(|key| state.entries.get(key).map(PayloadWitnessCacheEntry::keys))
+            .collect::<Vec<_>>();
+        for existing_keys in existing_key_sets {
+            Self::remove_cache_keys(&mut state, &existing_keys);
+        }
+
         for key in cache_keys.iter() {
             state.entries.insert(
                 *key,
@@ -379,8 +381,8 @@ impl PayloadWitnessPrefetcher {
         notify.notify_one();
     }
 
-    async fn mark_failed(&self, keys: &[B256], notify: Arc<Notify>) {
-        let mut state = self.inner.state.lock().await;
+    fn mark_failed(&self, keys: &[B256], notify: Arc<Notify>) {
+        let mut state = self.lock_state();
         let failed_keys = keys.iter().find_map(|key| match state.entries.get(key) {
             Some(PayloadWitnessCacheEntry::InFlight { keys, .. }) => Some(Arc::clone(keys)),
             _ => None,
@@ -394,6 +396,10 @@ impl PayloadWitnessPrefetcher {
         // for any racy caller that observes the entry transition without seeing the wake.
         notify.notify_waiters();
         notify.notify_one();
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, PayloadWitnessPrefetchState> {
+        self.inner.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn remove_cache_keys(state: &mut PayloadWitnessPrefetchState, keys: &[B256]) {
@@ -411,7 +417,7 @@ impl PayloadWitnessPrefetcher {
         block_number: u64,
     ) {
         self.prefetch_block_inner(cfg, providers, kv, block_number).await;
-        self.unmark_block_scheduled(block_number).await;
+        self.unmark_block_scheduled(block_number);
     }
 
     async fn prefetch_block_inner(
@@ -481,7 +487,7 @@ impl PayloadWitnessPrefetcher {
             }
         };
 
-        let Some(notify) = self.try_mark_in_flight(&keys).await else {
+        let Some(notify) = self.try_mark_in_flight(&keys) else {
             return;
         };
         let in_flight = PayloadWitnessInFlightGuard::new(self.clone(), keys.clone(), notify);
@@ -516,7 +522,7 @@ impl PayloadWitnessPrefetcher {
                     error = %err,
                     "payload witness prefetch failed: debug_executePayload failed"
                 );
-                in_flight.mark_failed().await;
+                in_flight.mark_failed();
                 return;
             }
         };
@@ -536,22 +542,20 @@ impl PayloadWitnessPrefetcher {
                 error = %err,
                 "payload witness prefetch failed: preimage insertion failed"
             );
-            in_flight.mark_failed().await;
+            in_flight.mark_failed();
             return;
         }
         let insert_elapsed = insert_start.elapsed();
 
-        in_flight
-            .mark_ready(PayloadWitnessReady {
-                block_number,
-                parent_block_hash,
-                payload_timestamp,
-                tx_count,
-                stats,
-                rpc_elapsed,
-                insert_elapsed,
-            })
-            .await;
+        in_flight.mark_ready(PayloadWitnessReady {
+            block_number,
+            parent_block_hash,
+            payload_timestamp,
+            tx_count,
+            stats,
+            rpc_elapsed,
+            insert_elapsed,
+        });
 
         info!(
             target: HOST_SERVER_TARGET,
@@ -1340,11 +1344,11 @@ mod tests {
         let prefetcher = PayloadWitnessPrefetcher::new();
         let keys = [B256::new([0x01u8; 32]), B256::new([0x02u8; 32])];
         let notify = Arc::new(Notify::new());
-        prefetcher.mark_ready(&keys, test_payload_witness_ready(1), notify).await;
+        prefetcher.mark_ready(&keys, test_payload_witness_ready(1), notify);
 
         let ready =
             prefetcher.take_ready_or_wait_for(&[keys[1]], Duration::from_millis(1)).await.unwrap();
-        let state = prefetcher.inner.state.lock().await;
+        let state = prefetcher.lock_state();
 
         assert_eq!(ready.block_number, 1);
         assert!(!state.entries.contains_key(&keys[0]));
@@ -1356,18 +1360,18 @@ mod tests {
     async fn test_payload_witness_prefetch_timeout_preserves_in_flight_aliases() {
         let prefetcher = PayloadWitnessPrefetcher::new();
         let keys = [B256::new([0x03u8; 32]), B256::new([0x04u8; 32])];
-        let notify = prefetcher.try_mark_in_flight(&keys).await.unwrap();
+        let notify = prefetcher.try_mark_in_flight(&keys).unwrap();
 
         let ready = prefetcher.take_ready_or_wait_for(&[keys[0]], Duration::from_millis(1)).await;
 
         assert!(ready.is_none());
         {
-            let state = prefetcher.inner.state.lock().await;
+            let state = prefetcher.lock_state();
             assert!(state.entries.contains_key(&keys[0]));
             assert!(state.entries.contains_key(&keys[1]));
         }
 
-        prefetcher.mark_ready(&keys, test_payload_witness_ready(2), notify).await;
+        prefetcher.mark_ready(&keys, test_payload_witness_ready(2), notify);
         let ready =
             prefetcher.take_ready_or_wait_for(&[keys[1]], Duration::from_millis(1)).await.unwrap();
 
@@ -1379,22 +1383,22 @@ mod tests {
         let prefetcher = PayloadWitnessPrefetcher::new();
         let parent = B256::new([0xAAu8; 32]);
 
-        assert!(prefetcher.mark_lookahead_parent_scheduled(parent).await);
-        assert!(!prefetcher.mark_lookahead_parent_scheduled(parent).await);
+        assert!(prefetcher.mark_lookahead_parent_scheduled(parent));
+        assert!(!prefetcher.mark_lookahead_parent_scheduled(parent));
 
         for index in 0..PAYLOAD_WITNESS_PREFETCH_MAX_LOOKAHEAD_PARENTS {
             let next_parent = B256::new([index as u8; 32]);
-            assert!(prefetcher.mark_lookahead_parent_scheduled(next_parent).await);
+            assert!(prefetcher.mark_lookahead_parent_scheduled(next_parent));
         }
 
-        assert!(prefetcher.mark_lookahead_parent_scheduled(parent).await);
+        assert!(prefetcher.mark_lookahead_parent_scheduled(parent));
     }
 
     #[tokio::test]
     async fn test_payload_witness_in_flight_guard_drop_removes_aliases() {
         let prefetcher = PayloadWitnessPrefetcher::new();
         let keys = [B256::new([0x05u8; 32]), B256::new([0x06u8; 32])];
-        let notify = prefetcher.try_mark_in_flight(&keys).await.unwrap();
+        let notify = prefetcher.try_mark_in_flight(&keys).unwrap();
         let guard = PayloadWitnessInFlightGuard::new(prefetcher.clone(), keys.to_vec(), notify);
 
         drop(guard);
@@ -1402,7 +1406,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 {
-                    let state = prefetcher.inner.state.lock().await;
+                    let state = prefetcher.lock_state();
                     if !state.entries.contains_key(&keys[0])
                         && !state.entries.contains_key(&keys[1])
                     {
@@ -1424,22 +1428,55 @@ mod tests {
             let second_key =
                 B256::new([(index + PAYLOAD_WITNESS_PREFETCH_MAX_READY + 1) as u8; 32]);
             let notify = Arc::new(Notify::new());
-            prefetcher
-                .mark_ready(
-                    &[first_key, second_key],
-                    test_payload_witness_ready(index as u64),
-                    notify,
-                )
-                .await;
+            prefetcher.mark_ready(
+                &[first_key, second_key],
+                test_payload_witness_ready(index as u64),
+                notify,
+            );
         }
 
         let evicted_keys =
             [B256::new([0u8; 32]), B256::new([(PAYLOAD_WITNESS_PREFETCH_MAX_READY + 1) as u8; 32])];
-        let state = prefetcher.inner.state.lock().await;
+        let state = prefetcher.lock_state();
 
         assert_eq!(state.ready_order.len(), PAYLOAD_WITNESS_PREFETCH_MAX_READY);
         assert!(!state.entries.contains_key(&evicted_keys[0]));
         assert!(!state.entries.contains_key(&evicted_keys[1]));
+    }
+
+    #[tokio::test]
+    async fn test_payload_witness_ready_replaces_overlapping_aliases() {
+        let prefetcher = PayloadWitnessPrefetcher::new();
+        let shared_key = B256::new([0x11u8; 32]);
+        let old_alias = B256::new([0x12u8; 32]);
+        let new_alias = B256::new([0x13u8; 32]);
+
+        prefetcher.mark_ready(
+            &[shared_key, old_alias],
+            test_payload_witness_ready(1),
+            Arc::new(Notify::new()),
+        );
+        prefetcher.mark_ready(
+            &[shared_key, new_alias],
+            test_payload_witness_ready(2),
+            Arc::new(Notify::new()),
+        );
+
+        assert!(
+            prefetcher
+                .take_ready_or_wait_for(&[old_alias], Duration::from_millis(1))
+                .await
+                .is_none()
+        );
+        let ready = prefetcher
+            .take_ready_or_wait_for(&[new_alias], Duration::from_millis(1))
+            .await
+            .unwrap();
+        let state = prefetcher.lock_state();
+
+        assert_eq!(ready.block_number, 2);
+        assert!(state.entries.is_empty());
+        assert!(state.ready_order.is_empty());
     }
 
     #[tokio::test]
