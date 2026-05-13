@@ -687,11 +687,9 @@ impl ProofRequestRepo {
         Ok(row.map(|r| r.get("backend_session_id")))
     }
 
-    /// Promote a reservation row from `SUBMITTING` to `RUNNING`, swapping the synthetic
-    /// `backend_session_id` for the real one returned by the proving backend. Returns
-    /// `true` when the reserved row was found and updated. A `false` return means the
-    /// reservation was no longer eligible (e.g. already failed or activated by an
-    /// out-of-band path) and the caller should treat the backend job as orphaned.
+    /// Promote a `SUBMITTING` reservation row to `RUNNING` with the real backend session
+    /// id. Returns `false` if the row was no longer eligible (failed or activated
+    /// out-of-band); the caller should then treat the backend job as orphaned.
     pub async fn activate_reserved_proof_session(
         &self,
         reservation_id: &str,
@@ -856,7 +854,7 @@ impl ProofRequestRepo {
               AND NOT EXISTS (
                   SELECT 1 FROM proof_sessions ps
                   WHERE ps.proof_request_id = pr.id
-                    AND ps.status = 'RUNNING'
+                    AND ps.status IN ('SUBMITTING', 'RUNNING')
               )
             ORDER BY pr.created_at ASC
             "#,

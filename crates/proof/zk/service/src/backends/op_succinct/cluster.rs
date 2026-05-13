@@ -614,12 +614,9 @@ impl ClusterBackend {
 
     /// Submit an aggregation proof (stage 2) after the STARK proof completes.
     ///
-    /// Concurrent pollers race here (`StatusPoller` + `GetProof` RPC, see
-    /// `proof_request_manager.rs`). To prevent duplicate Groth16 jobs from being
-    /// enqueued on the SP1 cluster, the SNARK session row is reserved in Postgres
-    /// **before** any expensive work. The partial unique index
-    /// `idx_proof_sessions_request_type_active_unique` ensures only one caller wins;
-    /// the others observe `Ok(None)` and never reach `create_request`.
+    /// Concurrent pollers race here; the SNARK session is reserved via
+    /// `idx_proof_sessions_request_type_active_unique` so only one caller reaches
+    /// `create_request`. The others observe `Ok(None)` and skip.
     async fn submit_aggregation_proof(
         &self,
         proof_request: &ProofRequest,
@@ -658,10 +655,9 @@ impl ClusterBackend {
                 {
                     Ok(v) => v,
                     Err(e) => {
-                        // Cluster job has already been submitted but the DB activation
-                        // failed. Release the reservation so the partial unique index
-                        // does not permanently block future SNARK attempts; the in-flight
-                        // cluster job is orphaned and will fall on the floor.
+                        // DB activation failed after the cluster job was submitted. Release
+                        // the reservation so the unique index doesn't permanently block
+                        // retries; the in-flight cluster job is orphaned.
                         let error_message =
                             format!("failed to activate reserved SNARK session: {e}");
                         if let Err(fail_err) = repo
@@ -729,10 +725,9 @@ impl ClusterBackend {
         }
     }
 
-    /// Build the aggregation stdin, submit it to the SP1 cluster, and return the
-    /// resulting [`CreateProofSession`] descriptor. The DB write happens in the caller
-    /// via [`ProofRequestRepo::activate_reserved_proof_session`] so that the reservation
-    /// flow stays atomic with respect to the cluster submit.
+    /// Build aggregation stdin and submit to the SP1 cluster, returning the resulting
+    /// [`CreateProofSession`]. The DB write happens in the caller via
+    /// [`ProofRequestRepo::activate_reserved_proof_session`].
     async fn build_aggregation_session(
         &self,
         proof_request: &ProofRequest,

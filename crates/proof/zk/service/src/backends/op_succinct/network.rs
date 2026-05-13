@@ -458,10 +458,9 @@ impl NetworkBackend {
                 {
                     Ok(v) => v,
                     Err(e) => {
-                        // Network job has already been submitted but the DB activation
-                        // failed. Release the reservation so the partial unique index
-                        // does not permanently block future SNARK attempts; the in-flight
-                        // network job is orphaned and will fall on the floor.
+                        // DB activation failed after the network job was submitted. Release
+                        // the reservation so the unique index doesn't permanently block
+                        // retries; the in-flight network job is orphaned.
                         let error_message =
                             format!("failed to activate reserved SNARK session: {e}");
                         if let Err(fail_err) = repo
