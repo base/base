@@ -4675,6 +4675,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-precompile-macros"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "base-precompile-storage"
+version = "0.0.0"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-precompile-macros",
+ "derive_more 2.1.1",
+ "proptest",
+ "revm",
+ "scoped-tls",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "base-proof"
 version = "0.0.0"
 dependencies = [
