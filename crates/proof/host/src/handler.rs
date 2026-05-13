@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex},
 };
 
@@ -30,13 +30,17 @@ const PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS: u64 = 10;
 const PAYLOAD_WITNESS_PREFETCH_MAX_IN_FLIGHT: usize = 10;
 const PAYLOAD_WITNESS_PREFETCH_MAX_READY: usize = 16;
 const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 128;
+const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_LOOKAHEADS: usize = 128;
+const PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE: usize = 1024;
 
 #[derive(Debug, Default)]
 struct PayloadWitnessPrefetchState {
-    ready: HashSet<B256>,
+    ready: HashMap<B256, BasePayloadAttributes>,
     ready_order: VecDeque<B256>,
     scheduled_blocks: HashSet<u64>,
     scheduled_block_order: VecDeque<u64>,
+    scheduled_lookaheads: HashSet<B256>,
+    scheduled_lookahead_order: VecDeque<B256>,
 }
 
 #[derive(Debug)]
@@ -50,8 +54,8 @@ struct PayloadWitnessPrefetchInner {
 /// Best-effort host-only prefetch cache for `debug_executePayload` witnesses.
 ///
 /// The guest still sends and validates the real `L2PayloadWitness` hint. Prefetch results are only
-/// used to skip the foreground RPC after the canonical child for a hinted parent has already been
-/// prefetched.
+/// used to skip the foreground RPC when the prefetched payload attributes match the hinted payload
+/// attributes for the same parent block hash.
 #[derive(Debug, Clone)]
 pub(crate) struct PayloadWitnessPrefetcher {
     inner: Arc<PayloadWitnessPrefetchInner>,
@@ -69,11 +73,21 @@ impl PayloadWitnessPrefetcher {
         }
     }
 
-    fn take_ready(&self, parent_block_hash: B256) -> bool {
+    fn take_ready(
+        &self,
+        parent_block_hash: B256,
+        payload_attributes: &BasePayloadAttributes,
+    ) -> bool {
         let mut state = self.lock_state();
-        if !state.ready.remove(&parent_block_hash) {
+        let Some(ready_payload_attributes) = state.ready.get(&parent_block_hash) else {
+            return false;
+        };
+        if ready_payload_attributes != payload_attributes {
+            state.ready.remove(&parent_block_hash);
+            state.ready_order.retain(|hash| hash != &parent_block_hash);
             return false;
         }
+        state.ready.remove(&parent_block_hash);
         state.ready_order.retain(|hash| hash != &parent_block_hash);
         true
     }
@@ -86,55 +100,14 @@ impl PayloadWitnessPrefetcher {
         if !self.inner.cfg.prover.enable_experimental_witness_endpoint {
             return;
         }
+        if !self.mark_lookahead_scheduled(parent_block_hash) {
+            return;
+        }
 
         let prefetcher = self.clone();
-        let providers = Arc::clone(&self.inner.providers);
         let handle = tokio::spawn(async move {
-            let parent_block = match providers.l2.get_block_by_hash(parent_block_hash).await {
-                Ok(Some(block)) => block,
-                Ok(None) => {
-                    debug!(
-                        target: HOST_SERVER_TARGET,
-                        ?parent_block_hash,
-                        "payload witness prefetch skipped: parent block not found"
-                    );
-                    return;
-                }
-                Err(err) => {
-                    debug!(
-                        target: HOST_SERVER_TARGET,
-                        ?parent_block_hash,
-                        error = %err,
-                        "payload witness prefetch skipped: failed to fetch parent block"
-                    );
-                    return;
-                }
-            };
-
-            // The witness hint identifies the current payload by parent hash plus payload
-            // attributes, so the current payload number is the parent block number plus one.
-            let parent_block_number = parent_block.header.inner.number;
-            let Some(current_block_number) = parent_block_number.checked_add(1) else {
-                debug!(
-                    target: HOST_SERVER_TARGET,
-                    parent_block_number,
-                    "payload witness prefetch skipped: block number overflow"
-                );
-                return;
-            };
-            let Some(first_prefetch_block) = current_block_number.checked_add(1) else {
-                debug!(
-                    target: HOST_SERVER_TARGET,
-                    current_block_number,
-                    "payload witness prefetch skipped: no future block number available"
-                );
-                return;
-            };
-            let last_prefetch_block =
-                current_block_number.saturating_add(PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS);
-
-            for block_number in first_prefetch_block..=last_prefetch_block {
-                prefetcher.spawn_prefetch_block(Arc::clone(&kv), block_number);
+            if !prefetcher.schedule_lookahead_inner(kv, parent_block_hash).await {
+                prefetcher.unmark_lookahead_scheduled(parent_block_hash);
             }
         });
         std::mem::drop(tokio::spawn(async move {
@@ -147,6 +120,62 @@ impl PayloadWitnessPrefetcher {
                 );
             }
         }));
+    }
+
+    async fn schedule_lookahead_inner(
+        &self,
+        kv: SharedKeyValueStore,
+        parent_block_hash: B256,
+    ) -> bool {
+        let parent_block = match self.inner.providers.l2.get_block_by_hash(parent_block_hash).await
+        {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    ?parent_block_hash,
+                    "payload witness prefetch skipped: parent block not found"
+                );
+                return false;
+            }
+            Err(err) => {
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    ?parent_block_hash,
+                    error = %err,
+                    "payload witness prefetch skipped: failed to fetch parent block"
+                );
+                return false;
+            }
+        };
+
+        // The witness hint identifies the current payload by parent hash plus payload
+        // attributes, so the current payload number is the parent block number plus one.
+        let parent_block_number = parent_block.header.inner.number;
+        let Some(current_block_number) = parent_block_number.checked_add(1) else {
+            debug!(
+                target: HOST_SERVER_TARGET,
+                parent_block_number,
+                "payload witness prefetch skipped: block number overflow"
+            );
+            return false;
+        };
+        let Some(first_prefetch_block) = current_block_number.checked_add(1) else {
+            debug!(
+                target: HOST_SERVER_TARGET,
+                current_block_number,
+                "payload witness prefetch skipped: no future block number available"
+            );
+            return false;
+        };
+        let last_prefetch_block =
+            current_block_number.saturating_add(PAYLOAD_WITNESS_PREFETCH_LOOKAHEAD_BLOCKS);
+
+        for block_number in first_prefetch_block..=last_prefetch_block {
+            self.spawn_prefetch_block(Arc::clone(&kv), block_number);
+        }
+
+        true
     }
 
     fn spawn_prefetch_block(&self, kv: SharedKeyValueStore, block_number: u64) {
@@ -195,9 +224,35 @@ impl PayloadWitnessPrefetcher {
         state.scheduled_block_order.retain(|scheduled| scheduled != &block_number);
     }
 
-    fn mark_ready(&self, parent_block_hash: B256) {
+    fn mark_lookahead_scheduled(&self, parent_block_hash: B256) -> bool {
         let mut state = self.lock_state();
-        if state.ready.remove(&parent_block_hash) {
+        if state.scheduled_lookaheads.contains(&parent_block_hash) {
+            return false;
+        }
+
+        while state.scheduled_lookaheads.len() >= PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_LOOKAHEADS
+        {
+            let Some(oldest) = state.scheduled_lookahead_order.pop_front() else {
+                break;
+            };
+            state.scheduled_lookaheads.remove(&oldest);
+        }
+
+        state.scheduled_lookaheads.insert(parent_block_hash);
+        state.scheduled_lookahead_order.push_back(parent_block_hash);
+
+        true
+    }
+
+    fn unmark_lookahead_scheduled(&self, parent_block_hash: B256) {
+        let mut state = self.lock_state();
+        state.scheduled_lookaheads.remove(&parent_block_hash);
+        state.scheduled_lookahead_order.retain(|scheduled| scheduled != &parent_block_hash);
+    }
+
+    fn mark_ready(&self, parent_block_hash: B256, payload_attributes: BasePayloadAttributes) {
+        let mut state = self.lock_state();
+        if state.ready.remove(&parent_block_hash).is_some() {
             state.ready_order.retain(|hash| hash != &parent_block_hash);
         }
 
@@ -208,7 +263,7 @@ impl PayloadWitnessPrefetcher {
             state.ready.remove(&oldest);
         }
 
-        state.ready.insert(parent_block_hash);
+        state.ready.insert(parent_block_hash, payload_attributes);
         state.ready_order.push_back(parent_block_hash);
     }
 
@@ -270,7 +325,7 @@ impl PayloadWitnessPrefetcher {
                 return false;
             }
         };
-        if self.lock_state().ready.contains(&parent_block_hash) {
+        if self.lock_state().ready.contains_key(&parent_block_hash) {
             return false;
         }
 
@@ -281,7 +336,7 @@ impl PayloadWitnessPrefetcher {
             .client()
             .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
                 "debug_executePayload",
-                (parent_block_hash, payload_attributes),
+                (parent_block_hash, payload_attributes.clone()),
             )
             .await
         {
@@ -311,7 +366,7 @@ impl PayloadWitnessPrefetcher {
             return false;
         }
 
-        self.mark_ready(parent_block_hash);
+        self.mark_ready(parent_block_hash, payload_attributes);
 
         true
     }
@@ -360,9 +415,15 @@ async fn insert_execution_witness_preimages(
         })
         .collect::<Vec<_>>();
 
-    let mut kv_lock = kv.write().await;
-    for (key, preimage_bytes) in preimages {
-        kv_lock.set(key.into(), preimage_bytes)?;
+    let mut preimages = preimages.into_iter().peekable();
+    while preimages.peek().is_some() {
+        let mut kv_lock = kv.write().await;
+        for _ in 0..PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE {
+            let Some((key, preimage_bytes)) = preimages.next() else {
+                break;
+            };
+            kv_lock.set(key.into(), preimage_bytes)?;
+        }
     }
     Ok(())
 }
@@ -795,7 +856,7 @@ async fn handle_hint_inner(
                 serde_json::from_slice(&hint.data[32..])?;
 
             if let Some(prefetcher) = payload_witness_prefetcher.as_ref()
-                && prefetcher.take_ready(parent_block_hash)
+                && prefetcher.take_ready(parent_block_hash, &payload_attributes)
             {
                 debug!(
                     target: HOST_SERVER_TARGET,
@@ -919,13 +980,28 @@ mod tests {
     #[test]
     fn test_payload_witness_ready_cache_evicts_oldest_entry() {
         let prefetcher = test_prefetcher();
+        let payload_attributes = BasePayloadAttributes::default();
 
         for i in 0..=PAYLOAD_WITNESS_PREFETCH_MAX_READY {
-            prefetcher.mark_ready(B256::new([i as u8; 32]));
+            prefetcher.mark_ready(B256::new([i as u8; 32]), payload_attributes.clone());
         }
 
-        assert!(!prefetcher.take_ready(B256::new([0; 32])));
-        assert!(prefetcher.take_ready(B256::new([1; 32])));
+        assert!(!prefetcher.take_ready(B256::new([0; 32]), &payload_attributes));
+        assert!(prefetcher.take_ready(B256::new([1; 32]), &payload_attributes));
+    }
+
+    #[test]
+    fn test_payload_witness_ready_cache_rejects_mismatched_attributes() {
+        let prefetcher = test_prefetcher();
+        let parent_block_hash = B256::new([1; 32]);
+        let payload_attributes = BasePayloadAttributes::default();
+        let mismatched_payload_attributes =
+            BasePayloadAttributes { gas_limit: Some(1), ..Default::default() };
+
+        prefetcher.mark_ready(parent_block_hash, payload_attributes.clone());
+
+        assert!(!prefetcher.take_ready(parent_block_hash, &mismatched_payload_attributes));
+        assert!(!prefetcher.take_ready(parent_block_hash, &payload_attributes));
     }
 
     #[test]
@@ -938,6 +1014,19 @@ mod tests {
 
         assert!(!prefetcher.mark_block_scheduled(1));
         assert!(prefetcher.mark_block_scheduled(0));
+    }
+
+    #[test]
+    fn test_payload_witness_lookahead_cache_dedupes_parent_hash() {
+        let prefetcher = test_prefetcher();
+        let parent_block_hash = B256::new([7; 32]);
+
+        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
+        assert!(!prefetcher.mark_lookahead_scheduled(parent_block_hash));
+
+        prefetcher.unmark_lookahead_scheduled(parent_block_hash);
+
+        assert!(prefetcher.mark_lookahead_scheduled(parent_block_hash));
     }
 
     #[test]
