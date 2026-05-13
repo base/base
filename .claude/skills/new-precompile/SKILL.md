@@ -1,3 +1,8 @@
+---
+name: new-precompile
+description: "Guide for adding a new native precompile. Use when creating a new precompile domain or adding a precompile to an existing domain. Triggers on: new precompile, add precompile, create precompile, native precompile."
+---
+
 # New Native Precompile
 
 ## Step 1 — Do you need a new domain or add to an existing one?
@@ -194,8 +199,124 @@ pub use <name>::{<Name>, <NAME>_ADDRESS, dispatch};
 
 ## Registration
 
+Wiring a domain precompile into the live EVM requires **four concrete edits** across two crates.
+The domain crate (`base-precompile-<domain>`) never imports from `base-common-evm`; the dependency
+only flows the other way.
+
+---
+
+### Step R1 — Create the EVM entry point
+
+**New file:** `crates/common/evm/src/precompiles/<name>/mod.rs`
+
 ```rust
-// BasePrecompiles::register::<Name>();
+//! EVM entry point for the <Name> native precompile.
+
+use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
+use alloy_primitives::{Address, Bytes, address};
+use base_precompile_<domain>::{<Name>, dispatch};
+use base_precompile_storage::{EvmPrecompileStorageProvider, StorageCtx};
+use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+
+/// Canonical address of the <Name> precompile.
+pub const ADDRESS: Address = address!("<20-byte-hex>");
+
+/// EVM entry point for the <Name> precompile.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct <Name>Precompile;
+
+impl <Name>Precompile {
+    /// Returns a [`DynPrecompile`] registerable with [`PrecompilesMap`].
+    pub fn precompile() -> DynPrecompile {
+        DynPrecompile::new_stateful(PrecompileId::Custom("<Name>".into()), Self::run)
+    }
+
+    fn run(input: PrecompileInput<'_>) -> PrecompileResult {
+        if !input.is_direct_call() {
+            return Ok(PrecompileOutput::new_reverted(0, Bytes::new()));
+        }
+        // Capture calldata before consuming input into the provider.
+        let calldata: Bytes = input.data.to_vec().into();
+        let mut provider = EvmPrecompileStorageProvider::new(input);
+        StorageCtx::enter(&mut provider, || {
+            let mut pc = <Name>::new();
+            dispatch(&mut pc, &calldata)
+        })
+    }
+}
+```
+
+Key points:
+- `is_direct_call()` guard rejects DELEGATECALL/CALLCODE — always include it.
+- Calldata is cloned **before** `input` is consumed by `EvmPrecompileStorageProvider::new`.
+- `StorageCtx::enter` works here because `EvmPrecompileStorageProvider` is `Sized`; it sets the
+  thread-local that `#[contract]`-generated storage types read from.
+
+---
+
+### Step R2 — Expose the sub-module
+
+**File:** `crates/common/evm/src/precompiles/mod.rs`
+
+Add one line:
+
+```rust
+pub mod <name>;
+```
+
+---
+
+### Step R3 — Register it fork-gated in the factory
+
+**File:** `crates/common/evm/src/factory.rs`
+
+Import the entry point at the top:
+
+```rust
+use crate::precompiles::<name>::<Name>Precompile;
+```
+
+Inside `BaseEvmFactory::precompiles`, add the address inside the correct fork guard.
+If the fork already has a `set_precompile_lookup` block, add an `else if` branch to it.
+If this is the first precompile at a new fork, add a new `if` block:
+
+```rust
+if spec.is_enabled_in(BaseUpgrade::<Fork>) {
+    precompiles.set_precompile_lookup(|address: &alloy_primitives::Address| {
+        if *address == crate::precompiles::<name>::ADDRESS {
+            Some(<Name>Precompile::precompile())
+        } else {
+            None
+        }
+    });
+}
+```
+
+> Multiple precompiles at the **same fork** share one `set_precompile_lookup` call — use
+> chained `if / else if` inside a single block. Each fork gets its own `if spec.is_enabled_in`
+> block.
+
+---
+
+### Step R4 — Add the domain crate as a dependency of `base-common-evm`
+
+**File:** `crates/common/evm/Cargo.toml`
+
+```toml
+base-precompile-<domain> = { path = "../precompile-<domain>" }
+```
+
+---
+
+### Checklist
+
+```
+[ ] crates/common/evm/src/precompiles/<name>/mod.rs   created
+[ ] crates/common/evm/src/precompiles/mod.rs          pub mod <name>; added
+[ ] crates/common/evm/src/factory.rs                  address in fork guard + import
+[ ] crates/common/evm/Cargo.toml                      domain crate dep added
+[ ] cargo check -p base-common-evm                    compiles clean
+[ ] cargo test  -p base-common-evm                    all tests pass
 ```
 
 ## Slot rules (brief)
