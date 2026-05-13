@@ -356,8 +356,11 @@ where
                 .push(flashblock.clone());
         }
 
-        let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
-        let canonical_block = earliest_block_number - 1;
+        let earliest_block_number = match flashblocks_per_block.keys().min() {
+            Some(n) => *n,
+            None => return Ok(None),
+        };
+        let canonical_block = earliest_block_number.saturating_sub(1);
         let mut last_block_header = self
             .client
             .header_by_number(canonical_block)
