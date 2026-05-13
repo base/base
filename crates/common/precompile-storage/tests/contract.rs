@@ -5,9 +5,7 @@
 use alloy_primitives::{Address, U256, address};
 use base_precompile_macros::contract;
 use base_precompile_storage::{
-    Mapping, StorageCtx,
-    hashmap::{HashMapStorageProvider, setup_storage},
-    provider::{Handler, StorageKey},
+    Handler, HashMapStorageProvider, Mapping, StorageCtx, StorageKey, setup_storage,
 };
 
 const TEST_ADDR: Address = address!("0000000000000000000000000000000000001234");

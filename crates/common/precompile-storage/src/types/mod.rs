@@ -2,24 +2,22 @@
 //!
 //! Re-exports core traits from [`crate::provider`] and defines `HandlerCache`.
 
-pub mod array;
-pub mod bytes_like;
-pub mod mapping;
-pub mod primitives;
-pub mod set;
-pub mod slot;
-pub mod vec;
+mod array;
+mod bytes_like;
+mod mapping;
+mod primitives;
+mod set;
+mod slot;
+mod vec;
 
 use std::{cell::RefCell, collections::HashMap, hash::Hash};
 
-pub use bytes_like::*;
+pub use array::ArrayHandler;
+pub use bytes_like::BytesLikeHandler;
 pub use mapping::Mapping;
 pub use set::{Set, SetHandler};
 pub use slot::Slot;
-
-pub use crate::provider::{
-    FromWord, Handler, Layout, LayoutCtx, Packable, Storable, StorableType, StorageKey,
-};
+pub use vec::VecHandler;
 
 /// Cache for computed handlers with stable references.
 ///
@@ -58,13 +56,11 @@ impl<K: Hash + Eq + Clone, H> HandlerCache<K, H> {
 
     /// Returns a mutable reference to a lazily initialized handler for the given key.
     pub fn get_or_insert_mut(&mut self, key: &K, f: impl FnOnce() -> H) -> &mut H {
-        let mut cache = self.inner.borrow_mut();
-        if let Some(boxed) = cache.get_mut(key) {
-            // SAFETY: Box provides stable heap address. `&mut self` ensures exclusive access.
-            return unsafe { &mut *(boxed.as_mut() as *mut H) };
+        // Using get_mut() requires &mut self (exclusive access) — no borrow guard needed.
+        let cache = self.inner.get_mut();
+        if !cache.contains_key(key) {
+            cache.insert(key.clone(), Box::new(f()));
         }
-        let boxed = cache.entry(key.clone()).or_insert_with(|| Box::new(f()));
-        // SAFETY: Box provides stable heap address. `&mut self` ensures exclusive access.
-        unsafe { &mut *(boxed.as_mut() as *mut H) }
+        cache.get_mut(key).unwrap().as_mut()
     }
 }

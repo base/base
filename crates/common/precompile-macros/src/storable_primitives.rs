@@ -153,12 +153,12 @@ fn gen_complete_impl_set(config: &TypeConfig) -> TokenStream {
 
     let full_word_storable_impl = if config.byte_count < 32 {
         quote! {
-            impl ::base_precompile_storage::provider::sealed::OnlyPrimitives for #type_path {}
+            impl ::base_precompile_storage::sealed::OnlyPrimitives for #type_path {}
             impl ::base_precompile_storage::Packable for #type_path {}
         }
     } else {
         quote! {
-            impl ::base_precompile_storage::provider::sealed::OnlyPrimitives for #type_path {}
+            impl ::base_precompile_storage::sealed::OnlyPrimitives for #type_path {}
             impl ::base_precompile_storage::Storable for #type_path {
                 #[inline]
                 fn load<S: ::base_precompile_storage::StorageOps>(
@@ -289,7 +289,7 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
     let ArrayConfig { elem_type, array_size, elem_byte_count, elem_is_packable } = config;
 
     let slot_count_expr = if *elem_is_packable {
-        quote! { ::base_precompile_storage::packing::calc_packed_slot_count(#array_size, #elem_byte_count) }
+        quote! { ::base_precompile_storage::calc_packed_slot_count(#array_size, #elem_byte_count) }
     } else {
         quote! { #array_size }
     };
@@ -321,7 +321,7 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
             #[inline]
             fn load<S: ::base_precompile_storage::StorageOps>(storage: &S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<Self> {
                 debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays can only be loaded with LayoutCtx::FULL");
-                use ::base_precompile_storage::packing::{calc_element_slot, calc_element_offset, extract_from_word};
+                use ::base_precompile_storage::{calc_element_slot, calc_element_offset, extract_from_word};
                 let base_slot = slot;
                 #load_impl
             }
@@ -329,7 +329,7 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
             #[inline]
             fn store<S: ::base_precompile_storage::StorageOps>(&self, storage: &mut S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<()> {
                 debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays can only be stored with LayoutCtx::FULL");
-                use ::base_precompile_storage::packing::{calc_element_slot, calc_element_offset, insert_into_word};
+                use ::base_precompile_storage::{calc_element_slot, calc_element_offset, insert_into_word};
                 let base_slot = slot;
                 #store_impl
             }
@@ -353,7 +353,7 @@ fn gen_packed_array_load(array_size: &usize, elem_byte_count: &usize) -> TokenSt
 
 fn gen_packed_array_store(array_size: &usize, elem_byte_count: &usize) -> TokenStream {
     quote! {
-        let slot_count = ::base_precompile_storage::packing::calc_packed_slot_count(#array_size, #elem_byte_count);
+        let slot_count = ::base_precompile_storage::calc_packed_slot_count(#array_size, #elem_byte_count);
         for slot_idx in 0..slot_count {
             let slot_addr = base_slot + ::alloy_primitives::U256::from(slot_idx);
             let mut slot_value = ::alloy_primitives::U256::ZERO;

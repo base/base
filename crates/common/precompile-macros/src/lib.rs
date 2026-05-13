@@ -1,6 +1,8 @@
 #![doc = include_str!("../README.md")]
 
 mod contract;
+pub(crate) use contract::{FieldInfo, FieldKind};
+
 mod layout;
 mod packing;
 mod storable;
@@ -9,8 +11,6 @@ mod storable_tests;
 mod test_fields;
 mod utils;
 
-use contract::ContractConfig;
-pub(crate) use contract::{FieldInfo, FieldKind};
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
 
@@ -19,7 +19,7 @@ use syn::{DeriveInput, parse_macro_input};
 /// Its packing and encoding schemes aim to be an exact representation of the storage model used by Solidity.
 #[proc_macro_attribute]
 pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let config = parse_macro_input!(attr as ContractConfig);
+    let config = parse_macro_input!(attr as contract::ContractConfig);
     let input = parse_macro_input!(item as DeriveInput);
     contract::generate(input, config.address.as_ref())
 }
@@ -27,11 +27,7 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Derives the `Storable` trait for structs with named fields and `#[repr(u8)]` unit enums.
 #[proc_macro_derive(Storable, attributes(storable_arrays))]
 pub fn derive_storage_block(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    match storable::derive_impl(input) {
-        Ok(tokens) => tokens.into(),
-        Err(err) => err.to_compile_error().into(),
-    }
+    storable::derive(parse_macro_input!(input as DeriveInput))
 }
 
 /// Generate `StorableType` and `Storable` implementations for all standard integer types.
