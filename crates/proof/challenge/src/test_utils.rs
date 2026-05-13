@@ -176,6 +176,15 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     ) -> Result<Address, ContractError> {
         Ok(Address::ZERO)
     }
+
+    async fn find_latest_games(
+        &self,
+        _game_type: u32,
+        _start: u64,
+        _n: u64,
+    ) -> Result<Vec<(u64, Address)>, ContractError> {
+        unimplemented!("find_latest_games is not used in challenger v1 tests")
+    }
 }
 
 /// Mock anchor-state registry with a mutable anchor snapshot.
@@ -540,6 +549,15 @@ impl DisputeGameFactoryClient for ErrorOnIndexFactory {
     ) -> Result<Address, ContractError> {
         self.inner.games(game_type, root_claim, extra_data).await
     }
+
+    async fn find_latest_games(
+        &self,
+        _game_type: u32,
+        _start: u64,
+        _n: u64,
+    ) -> Result<Vec<(u64, Address)>, ContractError> {
+        unimplemented!("find_latest_games is not used in challenger v1 tests")
+    }
 }
 
 /// Mock factory that records queried indices and can return errors for specific indices.
@@ -598,6 +616,15 @@ impl DisputeGameFactoryClient for RecordingDisputeGameFactory {
         extra_data: Bytes,
     ) -> Result<Address, ContractError> {
         self.inner.games(game_type, root_claim, extra_data).await
+    }
+
+    async fn find_latest_games(
+        &self,
+        _game_type: u32,
+        _start: u64,
+        _n: u64,
+    ) -> Result<Vec<(u64, Address)>, ContractError> {
+        unimplemented!("find_latest_games is not used in challenger v1 tests")
     }
 }
 

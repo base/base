@@ -93,6 +93,9 @@ pub enum ValidatorError {
     BlockNotAvailable {
         /// The block number that was requested.
         block_number: u64,
+        /// The underlying [`RpcError`] (chained via [`std::error::Error::source`]).
+        #[source]
+        source: RpcError,
     },
 
     /// The hash returned by the RPC does not match the hash recomputed from
@@ -153,11 +156,11 @@ impl<L2: L2Provider> L2OutputValidator<L2> {
 impl<L2: L2Provider> OutputValidator for L2OutputValidator<L2> {
     async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError> {
         let rpc_header =
-            self.l2.header_by_number(Some(block_number)).await.map_err(|e| match &e {
-                RpcError::HeaderNotFound(_) | RpcError::BlockNotFound(_) => {
-                    ValidatorError::BlockNotAvailable { block_number }
+            self.l2.header_by_number(Some(block_number)).await.map_err(|e| match e {
+                e @ (RpcError::HeaderNotFound(_) | RpcError::BlockNotFound(_)) => {
+                    ValidatorError::BlockNotAvailable { block_number, source: e }
                 }
-                _ => ValidatorError::Rpc(e),
+                e => ValidatorError::Rpc(e),
             })?;
 
         let rpc_hash = rpc_header.hash;
@@ -334,7 +337,7 @@ mod tests {
             let err = validator.compute_output_root(999).await.expect_err("must fail");
 
             assert!(
-                matches!(err, ValidatorError::BlockNotAvailable { block_number: 999 }),
+                matches!(err, ValidatorError::BlockNotAvailable { block_number: 999, .. }),
                 "expected BlockNotAvailable, got {err:?}"
             );
         }
@@ -347,7 +350,7 @@ mod tests {
             let err = validator.compute_output_root(42).await.expect_err("must fail");
 
             assert!(
-                matches!(err, ValidatorError::BlockNotAvailable { block_number: 42 }),
+                matches!(err, ValidatorError::BlockNotAvailable { block_number: 42, .. }),
                 "expected BlockNotAvailable, got {err:?}"
             );
         }

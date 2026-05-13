@@ -211,6 +211,15 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         let key = (game_type, root_claim, extra_data);
         Ok(self.uuid_games.get(&key).copied().unwrap_or(Address::ZERO))
     }
+
+    async fn find_latest_games(
+        &self,
+        _game_type: u32,
+        _start: u64,
+        _n: u64,
+    ) -> Result<Vec<(u64, Address)>, ContractError> {
+        unimplemented!("find_latest_games is not used in proposer tests")
+    }
 }
 
 /// Mock aggregate verifier contract client for tests.

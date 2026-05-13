@@ -365,6 +365,15 @@ async fn test_step_scan_error_propagated() {
         ) -> Result<alloy_primitives::Address, ContractError> {
             unreachable!()
         }
+
+        async fn find_latest_games(
+            &self,
+            _game_type: u32,
+            _start: u64,
+            _n: u64,
+        ) -> Result<Vec<(u64, Address)>, ContractError> {
+            unreachable!()
+        }
     }
 
     let factory = Arc::new(FailingFactory);

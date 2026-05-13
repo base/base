@@ -529,12 +529,11 @@ mod tests {
     }
 
     mod discovery {
+        use super::*;
         use crate::test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockGameState,
             addr, factory_game,
         };
-
-        use super::*;
 
         const IMPL_ADDR: Address = address!("00000000000000000000000000000000000000ff");
         const GAME_TYPE: u32 = 0;
@@ -880,12 +879,11 @@ mod tests {
     }
 
     mod discovery_run {
+        use super::*;
         use crate::test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockGameState,
             factory_game,
         };
-
-        use super::*;
 
         const IMPL_ADDR: Address = address!("00000000000000000000000000000000000000ff");
         const GAME_TYPE: u32 = 0;
