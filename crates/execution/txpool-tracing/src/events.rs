@@ -3,7 +3,6 @@
 use std::time::Instant;
 
 use alloy_primitives::Address;
-
 use chrono::{DateTime, Local};
 use derive_more::Display;
 
