@@ -92,9 +92,7 @@ pub trait BaseProofsStore: Send + Sync + Debug {
     /// Read-only transaction reused across cursor calls within one request.
     ///
     /// Proof, state-root, and witness paths open one [`Self::Tx`] at entry and pass it
-    /// to every cursor allocation that follows, eliminating the per-cursor MDBX
-    /// `mdbx_txn_begin_ex` → `lck_rdt_lock` mutex contention that reth PR #22631 fixes
-    /// upstream via tx pooling.
+    /// to every cursor allocation that follows.
     type Tx: Debug + Send + Sync;
 
     /// Get the earliest block number and hash that has been stored
@@ -132,7 +130,7 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>;
 
-    /// Open one read-only transaction for a proof/root/witness request.
+    /// Open one read-only transaction for a request-scoped cursor factory.
     fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx>;
 
     /// Storage trie cursor reusing `tx`.

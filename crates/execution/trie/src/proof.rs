@@ -385,8 +385,10 @@ where
     ) -> Result<B256Map<Bytes>, TrieWitnessError> {
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
-        let tx =
-            storage.ro_tx().map_err(Into::<DatabaseError>::into).map_err(StateProofError::from)?;
+        let tx = storage.ro_tx().map_err(|error| {
+            let error = Into::<DatabaseError>::into(error);
+            StateProofError::from(error)
+        })?;
         let trie_factory = BaseProofsTrieCursorFactory::new(storage, &tx, block_number);
         let hashed_factory = BaseProofsHashedAccountCursorFactory::new(storage, &tx, block_number);
         TrieWitness::new(trie_factory.clone(), hashed_factory.clone())
