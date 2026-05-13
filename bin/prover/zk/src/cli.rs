@@ -94,8 +94,13 @@ struct ZkArgs {
     #[arg(long, env = "STUCK_REQUEST_TIMEOUT_MINS", default_value_t = 10)]
     stuck_request_timeout_mins: i32,
 
-    #[arg(long, env = "MAX_PROOF_RETRIES", default_value_t = 3)]
-    max_proof_retries: u32,
+    #[arg(
+        long,
+        env = "MAX_PROOF_RETRIES",
+        default_value_t = 3,
+        value_parser = clap::value_parser!(i32).range(0..)
+    )]
+    max_proof_retries: i32,
 
     #[arg(long, env = "SP1_PROVER", default_value = "cluster")]
     prover_mode: String,
@@ -344,13 +349,14 @@ impl ZkArgs {
             manager.clone(),
             self.status_poller_interval_secs,
             self.stuck_request_timeout_mins,
-            self.max_proof_retries as i32,
+            self.max_proof_retries,
         );
         let status_handle = tokio::spawn(async move {
             status_poller.run().await;
         });
 
-        let prover_server = ProverServiceServer::new(repo.clone(), manager.clone());
+        let prover_server =
+            ProverServiceServer::new(repo.clone(), manager.clone(), self.max_proof_retries);
 
         let addr = self.grpc_listen_addr.parse()?;
 

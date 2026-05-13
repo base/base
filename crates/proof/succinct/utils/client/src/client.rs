@@ -123,40 +123,45 @@ where
         let outcome = match driver.executor.execute_payload(attributes.clone()).await {
             Ok(outcome) => outcome,
             Err(e) => {
-                error!(target: "client", "Failed to execute L2 block: {}", e);
+                error!(target: "client", error = %e, "Failed to execute L2 block");
 
-                if cfg.is_holocene_active(attributes.payload_attributes.timestamp) {
-                    // Retry with a deposit-only block.
-                    warn!(target: "client", "Flushing current channel and retrying deposit only block");
-
-                    // Flush the current batch and channel - if a block was replaced with a
-                    // deposit-only block due to execution failure, the
-                    // batch and channel it is contained in is forwards
-                    // invalidated.
-                    driver.pipeline.signal(Signal::FlushChannel).await?;
-
-                    // Strip out all transactions that are not deposits.
-                    attributes.transactions = attributes.transactions.map(|txs: Vec<Bytes>| {
-                        txs.into_iter()
-                            .filter(|tx| !tx.is_empty() && tx[0] == OpTxType::Deposit as u8)
-                            .collect::<Vec<_>>()
-                    });
-
-                    // Retry the execution.
-                    driver.executor.update_safe_head(tip_cursor.l2_safe_head_header.clone());
-                    match driver.executor.execute_payload(attributes.clone()).await {
-                        Ok(header) => header,
-                        Err(e) => {
-                            error!(
-                                target: "client",
-                                "Critical - Failed to execute deposit-only block: {e}",
-                            );
-                            return Err(DriverError::Executor(e));
-                        }
-                    }
-                } else {
+                if !cfg.is_holocene_active(attributes.payload_attributes.timestamp) {
                     // Pre-Holocene, discard the block if execution fails.
                     continue;
+                }
+
+                if !E::is_deposit_only_retryable(&e) {
+                    return Err(DriverError::Executor(e));
+                }
+
+                // Retry with a deposit-only block.
+                warn!(target: "client", "Flushing current channel and retrying deposit only block");
+
+                // Flush the current batch and channel - if a block was replaced with a
+                // deposit-only block due to execution failure, the
+                // batch and channel it is contained in is forwards
+                // invalidated.
+                driver.pipeline.signal(Signal::FlushChannel).await?;
+
+                // Strip out all transactions that are not deposits.
+                attributes.transactions = attributes.transactions.map(|txs: Vec<Bytes>| {
+                    txs.into_iter()
+                        .filter(|tx| !tx.is_empty() && tx[0] == OpTxType::Deposit as u8)
+                        .collect::<Vec<_>>()
+                });
+
+                // Retry the execution.
+                driver.executor.update_safe_head(tip_cursor.l2_safe_head_header.clone());
+                match driver.executor.execute_payload(attributes.clone()).await {
+                    Ok(header) => header,
+                    Err(e) => {
+                        error!(
+                            target: "client",
+                            error = %e,
+                            "Critical - Failed to execute deposit-only block",
+                        );
+                        return Err(DriverError::Executor(e));
+                    }
                 }
             }
         };

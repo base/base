@@ -4247,6 +4247,8 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "async-trait",
  "base-common-chains",
  "base-common-consensus",

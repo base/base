@@ -7,10 +7,10 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader, Transaction};
+use alloy_primitives::U256;
 use base_common_chains::Upgrades;
-use base_common_evm::L1BlockInfo;
+use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
-use base_execution_evm::RethL1BlockInfo;
 use parking_lot::RwLock;
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
@@ -251,17 +251,14 @@ where
 
             let encoded = valid_tx.transaction().encoded_2718();
 
-            let cost_addition = match l1_block_info.l1_tx_data_fee(
-                self.chain_spec(),
-                self.block_timestamp(),
+            // Must mirror the execution-side cost in `BaseHandler` (L1 data fee + operator fee
+            // post-Isthmus); otherwise operator-fee-underfunded txs get admitted but never execute.
+            let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
+            let cost_addition = l1_block_info.tx_cost(
                 &encoded,
-                false,
-            ) {
-                Ok(cost) => cost,
-                Err(err) => {
-                    return TransactionValidationOutcome::Error(*valid_tx.hash(), Box::new(err));
-                }
-            };
+                U256::from(valid_tx.transaction().gas_limit()),
+                spec_id,
+            );
             let cost = valid_tx.transaction().cost().saturating_add(cost_addition);
 
             // Checks for max cost
@@ -311,5 +308,148 @@ where
             new_tip_block.header(),
             new_tip_block.body().transactions().first(),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_consensus::{SignableTransaction, TxEip1559, transaction::SignerRecoverable};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, TxKind, U256, bytes, hex::decode};
+    use alloy_signer::SignerSync;
+    use base_common_chains::ChainConfig;
+    use base_common_consensus::{BasePrimitives, BaseTransactionSigned, BaseTxEnvelope, TxDeposit};
+    use base_execution_chainspec::BaseChainSpec;
+    use base_execution_evm::BaseEvmConfig;
+    use base_test_utils::Account;
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_transaction_pool::{
+        TransactionOrigin, TransactionValidationOutcome, blobstore::InMemoryBlobStore,
+        validate::EthTransactionValidatorBuilder,
+    };
+
+    use super::*;
+    use crate::BasePooledTransaction;
+
+    /// L1 attribute deposit calldata that activates Isthmus and seeds a non-zero
+    /// `operator_fee_scalar`/`operator_fee_constant`. Mirrors the fixture used by
+    /// `parse_l1_info_isthmus` in `crates/execution/evm/src/l1.rs`.
+    const ISTHMUS_L1_INFO_DATA_HEX: &str = concat!(
+        "098999be00000558000c5fc500000000000000030000000067a9f765",
+        "0000000000000029000000000000000000000000000000000000000000000000",
+        "00000000006a6d090000000000000000000000000000000000000000000000000000000000000001",
+        "72fcc8e8886636bdbe96ba0e4baab67ea7e7811633f52b52e8cf7a5123213b6f",
+        "000000000000000000000000d3f2c5afb2d76f5579f326b0cd7da5f5a4126c35",
+        "00004e2000000000000001f4",
+    );
+
+    /// Regression test for `HackerOne` #74725.
+    ///
+    /// Asserts that the txpool affordability check accounts for the post-Isthmus operator fee, so a
+    /// sender funded only for `tx.cost + l1_data_fee` (but not the additional operator fee) is
+    /// rejected at admission instead of being accepted and later failing during execution with
+    /// `LackOfFundForMaxFee`.
+    #[tokio::test]
+    async fn rejects_tx_underfunded_for_operator_fee_post_isthmus() {
+        let chain_config = ChainConfig::mainnet();
+        let chain_spec = Arc::new(BaseChainSpec::mainnet());
+
+        let signer = Account::Alice.signer();
+        let sender = signer.address();
+        let tx = TxEip1559 {
+            chain_id: chain_config.chain_id,
+            nonce: 0,
+            gas_limit: 50_000,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            access_list: Default::default(),
+            input: bytes!("FACADE"),
+        };
+        let gas_limit = tx.gas_limit;
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
+        let recovered_tx = envelope.clone().try_into_recovered().unwrap();
+        let encoded = recovered_tx.encoded_2718();
+
+        let isthmus_data = decode(ISTHMUS_L1_INFO_DATA_HEX).expect("valid hex fixture");
+        let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
+        let l1_only_cost = base_execution_evm::RethL1BlockInfo::l1_tx_data_fee(
+            &mut l1_block_info,
+            Arc::clone(&chain_spec),
+            chain_config.isthmus_timestamp,
+            &encoded,
+            false,
+        )
+        .unwrap();
+        let full_additional_cost = l1_block_info.tx_cost(
+            &encoded,
+            U256::from(gas_limit),
+            BaseSpecId::from_timestamp(Arc::clone(&chain_spec), chain_config.isthmus_timestamp),
+        );
+        let base_tx_cost = U256::from(envelope.value()).saturating_add(U256::from(
+            envelope.max_fee_per_gas().saturating_mul(envelope.gas_limit() as u128),
+        ));
+        let balance = base_tx_cost.saturating_add(l1_only_cost);
+
+        assert!(
+            full_additional_cost > l1_only_cost,
+            "fixture must produce a non-zero operator fee post-Isthmus"
+        );
+        assert!(
+            base_tx_cost.saturating_add(full_additional_cost) > balance,
+            "balance must be insufficient once the operator fee is included"
+        );
+
+        let client = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::clone(&chain_spec))
+            .with_genesis_block();
+        client.add_account(sender, ExtendedAccount::new(0, balance));
+        let evm_config = BaseEvmConfig::base(Arc::clone(&chain_spec));
+        let inner = EthTransactionValidatorBuilder::new(client, evm_config)
+            .no_shanghai()
+            .no_cancun()
+            .build(InMemoryBlobStore::default());
+        let validator =
+            BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
+
+        let header = alloy_consensus::Header {
+            timestamp: chain_config.isthmus_timestamp,
+            ..Default::default()
+        };
+        let l1_info_tx: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 0,
+            is_system_transaction: false,
+            input: isthmus_data.into(),
+        }
+        .into();
+        validator.update_l1_block_info(&header, Some(&l1_info_tx));
+
+        let pooled_tx: BasePooledTransaction =
+            BasePooledTransaction::new(recovered_tx, envelope.encode_2718_len());
+        let outcome = validator.validate_one(TransactionOrigin::External, pooled_tx).await;
+
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, err) => {
+                assert!(
+                    matches!(
+                        err,
+                        InvalidPoolTransactionError::Consensus(
+                            InvalidTransactionError::InsufficientFunds(_)
+                        )
+                    ),
+                    "expected InsufficientFunds, got: {err:?}"
+                );
+            }
+            other => panic!(
+                "expected operator-fee-underfunded tx to be rejected at admission, got {other:?}"
+            ),
+        }
     }
 }
