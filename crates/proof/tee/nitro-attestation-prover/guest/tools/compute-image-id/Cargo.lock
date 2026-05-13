@@ -15,7 +15,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "base-compute-image-id"
+name = "compute-image-id"
 version = "0.0.0"
 dependencies = [
  "risc0-binfmt",

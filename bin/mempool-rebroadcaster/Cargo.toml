@@ -1,5 +1,5 @@
 [package]
-name = "base-mempool-rebroadcaster-bin"
+name = "mempool-rebroadcaster-bin"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

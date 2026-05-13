@@ -1,15 +1,11 @@
 [package]
-name = "base-proof-succinct-range-program"
+name = "range"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-
-[[bin]]
-name = "range"
-path = "src/main.rs"
 
 [dependencies]
 rkyv.workspace = true

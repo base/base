@@ -1,15 +1,11 @@
 [package]
-name = "base-proof-succinct-aggregation-program"
+name = "aggregation"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-
-[[bin]]
-name = "aggregation"
-path = "src/main.rs"
 
 [dependencies]
 sha2.workspace = true

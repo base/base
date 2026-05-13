@@ -1,5 +1,5 @@
 [package]
-name = "base-websocket-proxy-bin"
+name = "websocket-proxy-bin"
 description = "WebSocket Proxy Binary"
 version.workspace = true
 edition.workspace = true

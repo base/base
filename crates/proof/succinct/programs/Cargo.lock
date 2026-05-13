@@ -1018,7 +1018,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-succinct-aggregation-program"
+name = "aggregation"
 version = "0.0.0"
 dependencies = [
  "alloy-consensus",
@@ -1085,7 +1085,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-succinct-range-program"
+name = "range"
 version = "0.0.0"
 dependencies = [
  "base-proof",

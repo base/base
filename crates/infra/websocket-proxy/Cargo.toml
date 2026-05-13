@@ -1,5 +1,5 @@
 [package]
-name = "base-websocket-proxy"
+name = "websocket-proxy"
 description = "WebSocket Proxy"
 version.workspace = true
 edition.workspace = true

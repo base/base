@@ -211,12 +211,12 @@ base-flashblocks-node = { path = "crates/execution/flashblocks-node" }
 
 # Infra
 base-load-tests = { path = "crates/infra/load-tests" }
-based = { path = "crates/infra/based", package = "base-based" }
-basectl-cli = { path = "crates/infra/basectl", package = "base-basectl-cli" }
-audit-archiver-lib = { path = "crates/infra/audit", package = "base-audit-archiver-lib" }
-ingress-rpc-lib = { path = "crates/infra/ingress-rpc", package = "base-ingress-rpc-lib" }
-websocket-proxy = { path = "crates/infra/websocket-proxy", package = "base-websocket-proxy" }
-mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster", package = "base-mempool-rebroadcaster" }
+based = { path = "crates/infra/based" }
+basectl-cli = { path = "crates/infra/basectl" }
+audit-archiver-lib = { path = "crates/infra/audit" }
+ingress-rpc-lib = { path = "crates/infra/ingress-rpc" }
+websocket-proxy = { path = "crates/infra/websocket-proxy" }
+mempool-rebroadcaster = { path = "crates/infra/mempool-rebroadcaster" }
 
 # Proof
 base-proof-rpc = { path = "crates/proof/rpc" }
