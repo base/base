@@ -9,6 +9,7 @@ use alloy_chains::Chain;
 use base_common_chains::ChainConfig as BuiltInChainConfig;
 use base_consensus_cli::ConsensusChainArgs;
 use base_execution_chainspec::BaseChainSpec;
+use base_execution_cli::chainspec::chain_value_parser;
 use eyre::WrapErr;
 use figment::{
     Figment,
@@ -77,7 +78,7 @@ impl FromStr for BuiltInChain {
 pub(crate) enum ChainArg {
     /// Use one of the built-in static chains.
     BuiltIn(BuiltInChain),
-    /// Load chain settings from a TOML file.
+    /// Load chain settings from a file.
     File(PathBuf),
 }
 
@@ -102,7 +103,9 @@ pub(crate) enum ResolvedChainSource {
     /// The config came from a built-in static chain.
     BuiltIn(BuiltInChain),
     /// The config came from a TOML file.
-    File(PathBuf),
+    Toml(PathBuf),
+    /// The execution chainspec came from a genesis JSON file.
+    Genesis(PathBuf),
 }
 
 /// The resolved chain config used by the `base` binary.
@@ -154,11 +157,26 @@ impl ResolvedChainConfig {
 
     /// Returns the execution chainspec for this chain.
     pub(crate) fn execution_chain_spec(&self) -> eyre::Result<Arc<BaseChainSpec>> {
-        let config =
-            base_common_chains::ChainConfig::by_chain_id(self.l2_chain_id).ok_or_else(|| {
-                eyre::eyre!("no built-in execution chainspec for L2 chain ID {}", self.l2_chain_id)
-            })?;
-        Ok(Arc::new(BaseChainSpec::try_from(config)?))
+        match &self.source {
+            ResolvedChainSource::BuiltIn(chain) => {
+                Ok(Arc::new(BaseChainSpec::try_from(chain.chain_config())?))
+            }
+            ResolvedChainSource::Toml(_) => {
+                let config = base_common_chains::ChainConfig::by_chain_id(self.l2_chain_id)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "no built-in execution chainspec for L2 chain ID {}",
+                            self.l2_chain_id
+                        )
+                    })?;
+                Ok(Arc::new(BaseChainSpec::try_from(config)?))
+            }
+            ResolvedChainSource::Genesis(path) => {
+                chain_value_parser(path.to_str().ok_or_else(|| {
+                    eyre::eyre!("execution genesis path is not valid UTF-8: {}", path.display())
+                })?)
+            }
+        }
     }
 
     /// Returns the consensus chain arguments for this chain.
@@ -193,11 +211,39 @@ impl ChainResolver {
         }
     }
 
-    /// Resolves a chain config from a TOML file.
+    /// Resolves a chain config from a file.
     pub(crate) fn resolve_file(path: &Path) -> eyre::Result<ResolvedChainConfig> {
+        if path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("json")) {
+            return Self::resolve_genesis_file(path);
+        }
+
+        Self::resolve_toml_file(path)
+    }
+
+    /// Resolves a chain config from a TOML file.
+    pub(crate) fn resolve_toml_file(path: &Path) -> eyre::Result<ResolvedChainConfig> {
         let figment =
             Figment::new().merge(Toml::file(path)).merge(Env::prefixed(BASE_CHAIN_ENV_PREFIX));
-        Self::extract(figment, ResolvedChainSource::File(path.to_path_buf()))
+        Self::extract(figment, ResolvedChainSource::Toml(path.to_path_buf()))
+    }
+
+    /// Resolves a chain config from an execution genesis JSON file.
+    pub(crate) fn resolve_genesis_file(path: &Path) -> eyre::Result<ResolvedChainConfig> {
+        let path_str = path.to_str().ok_or_else(|| {
+            eyre::eyre!("execution genesis path is not valid UTF-8: {}", path.display())
+        })?;
+        let chain_spec = chain_value_parser(path_str).wrap_err_with(|| {
+            format!("failed to resolve execution genesis from {}", path.display())
+        })?;
+        let l2_chain_id = chain_spec.chain.id();
+        let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("custom").to_owned();
+
+        Ok(ResolvedChainConfig {
+            name,
+            l2_chain_id,
+            l1_chain_id: 0,
+            source: ResolvedChainSource::Genesis(path.to_path_buf()),
+        })
     }
 
     /// Extracts the merged chain values into the public resolved config.
@@ -209,8 +255,11 @@ impl ChainResolver {
             ResolvedChainSource::BuiltIn(chain) => {
                 format!("failed to resolve chain config for built-in chain `{chain}`")
             }
-            ResolvedChainSource::File(path) => {
+            ResolvedChainSource::Toml(path) => {
                 format!("failed to resolve chain config from {}", path.display())
+            }
+            ResolvedChainSource::Genesis(path) => {
+                format!("failed to resolve execution genesis from {}", path.display())
             }
         })?;
 
@@ -288,7 +337,25 @@ mod tests {
             assert_eq!(resolved.name, "custom-chain");
             assert_eq!(resolved.l2_chain_id, 999);
             assert_eq!(resolved.l1_chain_id, 11155111);
-            assert_eq!(resolved.source, ResolvedChainSource::File(path));
+            assert_eq!(resolved.source, ResolvedChainSource::Toml(path));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn resolves_custom_genesis_file() {
+        with_cleared_env(|jail| {
+            let path = jail.directory().join("genesis.json");
+            jail.create_file(&path, BuiltInChainConfig::sepolia().genesis_json)?;
+
+            let resolved = ChainResolver::resolve_file(&path).unwrap();
+
+            assert_eq!(resolved.name, "genesis");
+            assert_eq!(resolved.l2_chain_id, 84532);
+            assert_eq!(resolved.l1_chain_id, 0);
+            assert_eq!(resolved.source, ResolvedChainSource::Genesis(path.clone()));
+            assert_eq!(resolved.execution_chain_spec().unwrap().chain.id(), 84532);
 
             Ok(())
         });

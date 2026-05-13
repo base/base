@@ -448,16 +448,18 @@ services:
     restart: unless-stopped
 
   base-client:
-    image: base-reth-node:local
+    image: base:local
     build:
       <<: *rust-service-build
-      target: client
+      target: base
     container_name: base-client
     depends_on:
       setup-l2:
         condition: service_completed_successfully
       base-el-bootnode:
         condition: service_started
+      base-builder-cl:
+        condition: service_healthy
     ports:
       - "${L2_CLIENT_HTTP_PORT}:${L2_CLIENT_HTTP_PORT}"     # HTTP RPC
       - "${L2_CLIENT_WS_PORT}:${L2_CLIENT_WS_PORT}"         # WebSocket
@@ -465,19 +467,23 @@ services:
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}"       # P2P
       - "${L2_CLIENT_P2P_PORT}:${L2_CLIENT_P2P_PORT}/udp"   # Discovery
       - "${L2_CLIENT_METRICS_PORT}:${L2_CLIENT_METRICS_PORT}"  # Metrics
+      - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # Consensus RPC
+      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # Consensus P2P TCP
+      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}/udp" # Consensus P2P UDP
     volumes:
       - ../../.devnet/l2/client:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
       - ../../.devnet/l1/configs:/genesis:ro
       - ../../.devnet/l2/configs:/genesis/l2:ro
     environment:
       - OTEL_SERVICE_NAME=base-client
-    entrypoint: /app/base-client
+    entrypoint: /app/base
     command:
       - node
-      - --chain=/genesis/l2/genesis.json
+      - rpc
+      - --chain
+      - /genesis/l2/genesis.json
       - --datadir=/data
-      - --tracing-otlp=http://jaeger:4318
-      - --tracing-otlp.filter=debug,providers::state::overlay=off,trie=off
       - --http
       - --http.addr=0.0.0.0
       - --http.port=${L2_CLIENT_HTTP_PORT}
@@ -493,6 +499,7 @@ services:
       - --authrpc.port=${L2_CLIENT_AUTH_PORT}
       - --authrpc.addr=0.0.0.0
       - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --auth-ipc.path=/data/engine.ipc
       - --port=${L2_CLIENT_P2P_PORT}
       - --discovery.port=${L2_CLIENT_P2P_PORT}
       - --nat=extip:${L2_CLIENT_ADVERTISE_IP}
@@ -520,55 +527,10 @@ services:
       - --metering.state-root-time-us=${METERING_STATE_ROOT_TIME_US}
       - --metering.da-bytes=${METERING_DA_BYTES}
       - --metering.target-flashblocks-per-block=${METERING_TARGET_FLASHBLOCKS_PER_BLOCK}
-      - --color=never
-      - -vvv
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_CLIENT_HTTP_PORT}"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
-    networks:
-      default:
-        ipv4_address: ${L2_CLIENT_ADVERTISE_IP}
-    restart: unless-stopped
-
-  base-client-cl:
-    image: base-consensus:local
-    build:
-      <<: *rust-service-build
-      target: consensus
-    container_name: base-client-cl
-    depends_on:
-      base-client:
-        condition: service_healthy
-      base-builder-cl:
-        condition: service_healthy
-      base-cl-bootnode:
-        condition: service_healthy
-    ports:
-      - "${L2_CLIENT_CL_RPC_PORT}:${L2_CLIENT_CL_RPC_PORT}"     # RPC
-      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}"     # P2P TCP
-      - "${L2_CLIENT_CL_P2P_PORT}:${L2_CLIENT_CL_P2P_PORT}/udp" # P2P UDP
-      - "${L2_CLIENT_CL_METRICS_PORT}:${L2_CLIENT_CL_METRICS_PORT}"  # Metrics
-    volumes:
-      - ../../.devnet/l2/client-cl:/data
-      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
-    entrypoint: /app/base-consensus
-    command:
-      - node
-      - --chain
-      - ${L2_CHAIN_ID}
       - --l1-eth-rpc
       - http://l1-el:${L1_HTTP_PORT}
       - --l1-beacon
       - http://l1-cl:${L1_CL_HTTP_PORT}
-      - --l2-engine-rpc
-      - ws://base-client:${L2_CLIENT_AUTH_PORT}
-      - --l2-engine-jwt-secret
-      - /genesis/jwt.hex
       - --l2-config-file
       - /genesis/l2/rollup.json
       - --l1-config-file
@@ -585,23 +547,24 @@ services:
       - "${L2_CLIENT_CL_P2P_PORT}"
       - --p2p.advertise.ip
       - base-client-cl
-      - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
-      - --metrics.port
-      - "${L2_CLIENT_CL_METRICS_PORT}"
       - --p2p.bootnodes-file
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --p2p.scoring
       - Off
       - --l1.verifier-confs
       - "${BASE_NODE_VERIFIER_L1_CONFS}"
+      - -vvv
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:${L2_CLIENT_CL_RPC_PORT}/healthz"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_CLIENT_HTTP_PORT}"]
       interval: 250ms
       timeout: 1s
       retries: 240
       start_period: 250ms
+    networks:
+      default:
+        ipv4_address: ${L2_CLIENT_ADVERTISE_IP}
+        aliases:
+          - base-client-cl
     restart: unless-stopped
 
   jaeger:

@@ -205,6 +205,90 @@ mod tests {
     }
 
     #[test]
+    fn parses_devnet_unified_client_args() {
+        let cli = BaseCli::parse_from([
+            "base",
+            "node",
+            "rpc",
+            "--chain",
+            "/genesis/l2/genesis.json",
+            "--datadir=/data",
+            "--http",
+            "--http.addr=0.0.0.0",
+            "--http.port=8545",
+            "--ws",
+            "--ws.addr=0.0.0.0",
+            "--ws.port=8546",
+            "--authrpc.port=8551",
+            "--authrpc.addr=0.0.0.0",
+            "--authrpc.jwtsecret=/genesis/jwt.hex",
+            "--auth-ipc.path=/data/engine.ipc",
+            "--port=30303",
+            "--discovery.port=30303",
+            "--metrics=0.0.0.0:8090",
+            "--txpool.nolocals",
+            "--rollup.txpool-max-inflight-delegated-slots=32768",
+            "--txpool.pending-max-count=200000",
+            "--txpool.pending-max-size=512",
+            "--txpool.basefee-max-count=200000",
+            "--txpool.basefee-max-size=512",
+            "--txpool.queued-max-count=200000",
+            "--txpool.queued-max-size=512",
+            "--txpool.max-account-slots=256",
+            "--txpool.max-batch-size=1024",
+            "--rpc.txfeecap=0",
+            "--rpc.gascap=600000000",
+            "--rpc.eth-proof-window=1209600",
+            "--flashblocks-url=ws://base-builder:7111",
+            "--bootnodes=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303",
+            "--rollup.discovery.v4",
+            "--rollup.sequencer=http://base-builder:7545",
+            "--enable-metering",
+            "--metering.gas-limit=60000000",
+            "--metering.execution-time-us=5000000",
+            "--metering.state-root-time-us=1000000",
+            "--metering.da-bytes=1572860",
+            "--metering.target-flashblocks-per-block=10",
+            "--l1-eth-rpc",
+            "http://l1-el:8545",
+            "--l1-beacon",
+            "http://l1-cl:5052",
+            "--l2-config-file",
+            "/genesis/l2/rollup.json",
+            "--l1-config-file",
+            "/genesis/el/chain-config.json",
+            "--l1-slot-duration-override",
+            "4",
+            "--rpc.addr",
+            "0.0.0.0",
+            "--rpc.port",
+            "8549",
+            "--p2p.listen.tcp",
+            "8003",
+            "--p2p.listen.udp",
+            "8003",
+            "--p2p.advertise.ip",
+            "127.0.0.1",
+            "--p2p.bootnodes-file",
+            "/bootnodes/enr.txt",
+            "--p2p.scoring",
+            "Off",
+            "--l1.verifier-confs",
+            "15",
+            "-vvv",
+        ]);
+
+        assert!(matches!(cli.chain, ChainArg::File(_)));
+        let BaseCommand::Node(node) = cli.command;
+        let NodeSubcommand::Rpc(rpc) = node.command;
+
+        assert_eq!(rpc.execution.rpc.auth_ipc_path, "/data/engine.ipc");
+        assert_eq!(rpc.execution.network.port, 30303);
+        assert_eq!(rpc.consensus.rpc_flags.listen_port, 8549);
+        assert_eq!(rpc.consensus.p2p_flags.listen_tcp_port, 8003);
+    }
+
+    #[test]
     fn chain_arg_uses_base_chain_env_var() {
         let command = BaseCli::command();
         let chain_arg =
