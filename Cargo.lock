@@ -4838,6 +4838,7 @@ dependencies = [
  "base-proof-preimage",
  "base-proof-primitives",
  "base-protocol",
+ "futures",
  "metrics",
  "proptest",
  "revm",
