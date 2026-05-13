@@ -210,17 +210,16 @@ impl Tracker {
             // but do update the event log with the final event (i.e., included/dropped).
             event_log.push(Local::now(), event);
 
-            if event == TxEvent::BlockInclusion {
-                if let Some(pending_time) = event_log.pending_time {
-                    let time_pending_to_inclusion = received_at.duration_since(pending_time);
-                    Metrics::inclusion_duration()
-                        .record(time_pending_to_inclusion.as_millis() as f64);
+            if event == TxEvent::BlockInclusion
+                && let Some(pending_time) = event_log.pending_time
+            {
+                let time_pending_to_inclusion = received_at.duration_since(pending_time);
+                Metrics::inclusion_duration().record(time_pending_to_inclusion.as_millis() as f64);
 
-                    if time_pending_to_inclusion > Self::SLOW_BLOCK_INCLUSION_THRESHOLD {
-                        Metrics::slow_inclusions().increment(1);
-                    } else {
-                        Metrics::healthy_inclusions().increment(1);
-                    }
+                if time_pending_to_inclusion > Self::SLOW_BLOCK_INCLUSION_THRESHOLD {
+                    Metrics::slow_inclusions().increment(1);
+                } else {
+                    Metrics::healthy_inclusions().increment(1);
                 }
             }
 
