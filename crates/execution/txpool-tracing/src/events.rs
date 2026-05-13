@@ -55,7 +55,7 @@ pub struct NonceSlot {
 
 impl NonceSlot {
     /// Creates a new nonce slot key.
-    pub fn new(sender: Address, nonce: u64) -> Self {
+    pub const fn new(sender: Address, nonce: u64) -> Self {
         Self { sender, nonce }
     }
 }

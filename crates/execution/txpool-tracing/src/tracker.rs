@@ -210,8 +210,8 @@ impl Tracker {
             // but do update the event log with the final event (i.e., included/dropped).
             event_log.push(Local::now(), event);
 
-            if event == TxEvent::BlockInclusion {
-                if let Some(pending_time) = event_log.pending_time {
+            if event == TxEvent::BlockInclusion
+                && let Some(pending_time) = event_log.pending_time {
                     let time_pending_to_inclusion = received_at.duration_since(pending_time);
                     Metrics::inclusion_duration()
                         .record(time_pending_to_inclusion.as_millis() as f64);
@@ -222,7 +222,6 @@ impl Tracker {
                         Metrics::healthy_inclusions().increment(1);
                     }
                 }
-            }
 
             self.nonce_completed(&tx_hash, &event, received_at);
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
@@ -304,15 +303,13 @@ impl Tracker {
     }
 
     fn nonce_completed(&mut self, tx_hash: &TxHash, event: &TxEvent, received_at: Instant) {
-        if let Some(slot) = self.tx_nonce_slots.pop(tx_hash) {
-            if let Some(summary) = self.nonce_summaries.pop(&slot) {
-                if *event == TxEvent::BlockInclusion {
+        if let Some(slot) = self.tx_nonce_slots.pop(tx_hash)
+            && let Some(summary) = self.nonce_summaries.pop(&slot)
+                && *event == TxEvent::BlockInclusion {
                     let e2e_duration = received_at.duration_since(summary.first_seen);
                     Metrics::e2e_inclusion_duration().record(e2e_duration.as_millis() as f64);
                     Metrics::replacement_count().record(summary.replacement_count as f64);
                 }
-            }
-        }
     }
 
     /// Logs an [`EventLog`] through tracing.
