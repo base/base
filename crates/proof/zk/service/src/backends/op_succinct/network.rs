@@ -374,6 +374,9 @@ impl NetworkBackend {
         Ok(())
     }
 
+    /// Determine final status based on sessions and proof type. `Submitting` sessions
+    /// are treated as in-flight (neither failed nor completed), keeping the request in
+    /// `Running` until activation transitions the row to `RUNNING`.
     fn determine_status(proof_type: ProofType, sessions: &[ProofSession]) -> ProofProcessingResult {
         if sessions.is_empty() {
             return ProofProcessingResult { status: ProofStatus::Pending, error_message: None };

@@ -1,17 +1,10 @@
--- Migration 009: Enforce at most one ACTIVE session per (proof_request, session_type)
--- Prevents concurrent status pollers from creating duplicate SNARK Groth16 jobs on
--- the SP1 cluster. See CHAIN-4254 (Immunefi 75630).
+-- Migration 009: Enforce at most one active session per (proof_request, session_type)
+-- to prevent concurrent pollers from creating duplicate SNARK Groth16 jobs on the
+-- SP1 cluster. See CHAIN-4254 (Immunefi 75630).
 --
--- The index is partial on the active states (SUBMITTING and RUNNING) so terminal
--- (FAILED/COMPLETED) sessions remain as audit history without blocking a retried
--- request from creating a fresh session for the same (proof_request_id, session_type)
--- pair. SUBMITTING covers the reservation window between slot reservation and the
--- moment the row is updated with the real backend session id; RUNNING covers the
--- live backend job thereafter.
-
--- Resolve any pre-existing active duplicates before adding the constraint. Terminal
--- duplicates are left alone since the partial index does not see them. SUBMITTING
--- did not exist before this migration, so only RUNNING rows can be duplicated here.
+-- The index is partial on (SUBMITTING, RUNNING); terminal sessions remain as audit
+-- history. Pre-existing duplicates (only RUNNING is possible since SUBMITTING is new)
+-- are de-duplicated below before the index is added.
 WITH ranked AS (
     SELECT
         id,
