@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod sync_target;
-use std::{sync::Arc, time::Duration};
+use std::{cmp, sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
@@ -39,6 +39,9 @@ const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 1_296_000;
 /// Default interval between proof-storage prune runs. Default is 15 seconds.
 const DEFAULT_PRUNE_INTERVAL: Duration = Duration::from_secs(15);
 
+/// Default automatic prune finality margin: 12 hours of blocks at 2s block time.
+const DEFAULT_PRUNE_FINALITY_MARGIN_BLOCKS: u64 = 21_600;
+
 /// Default verification interval: disabled
 const DEFAULT_VERIFICATION_INTERVAL: u64 = 0; // disabled
 
@@ -52,6 +55,7 @@ where
     storage: BaseProofsStorage<Storage>,
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
+    proofs_history_prune_finality_margin_blocks: u64,
     verification_interval: u64,
 }
 
@@ -66,6 +70,7 @@ where
             storage,
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW,
             proofs_history_prune_interval: DEFAULT_PRUNE_INTERVAL,
+            proofs_history_prune_finality_margin_blocks: DEFAULT_PRUNE_FINALITY_MARGIN_BLOCKS,
             verification_interval: DEFAULT_VERIFICATION_INTERVAL,
         }
     }
@@ -82,6 +87,12 @@ where
         self
     }
 
+    /// Sets the finality margin for automatic proof-storage pruning.
+    pub const fn with_proofs_history_prune_finality_margin_blocks(mut self, blocks: u64) -> Self {
+        self.proofs_history_prune_finality_margin_blocks = blocks;
+        self
+    }
+
     /// Sets the verification interval.
     pub const fn with_verification_interval(mut self, interval: u64) -> Self {
         self.verification_interval = interval;
@@ -95,6 +106,8 @@ where
             storage: self.storage,
             proofs_history_window: self.proofs_history_window,
             proofs_history_prune_interval: self.proofs_history_prune_interval,
+            proofs_history_prune_finality_margin_blocks: self
+                .proofs_history_prune_finality_margin_blocks,
             verification_interval: self.verification_interval,
         }
     }
@@ -119,7 +132,7 @@ where
 /// use base_execution_chainspec::BaseChainSpec;
 /// use base_execution_exex::BaseProofsExEx;
 /// use base_node_core::{BaseNode, args::RollupArgs};
-/// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, db::MdbxProofsStorage};
+/// use base_execution_trie::{InMemoryProofsStorage, BaseProofsStorage, RocksdbProofsStorage};
 /// use reth_provider::providers::BlockchainProvider;
 /// use std::{sync::Arc, time::Duration};
 ///
@@ -136,8 +149,8 @@ where
 /// # let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 /// # let storage_path = temp_dir.path().join("proofs_storage");
 ///
-/// # let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::new(
-/// #    MdbxProofsStorage::new(&storage_path).expect("Failed to create MdbxProofsStorage"),
+/// # let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
+/// #    RocksdbProofsStorage::new(&storage_path).expect("Failed to create RocksdbProofsStorage"),
 /// # ).into();
 ///
 /// let storage_exec = storage.clone();
@@ -180,6 +193,8 @@ where
     proofs_history_window: u64,
     /// Interval between proof-storage prune runs
     proofs_history_prune_interval: Duration,
+    /// Minimum distance from latest that automatic pruning may touch.
+    proofs_history_prune_finality_margin_blocks: u64,
     /// Verification interval: perform full block execution every N blocks for data integrity.
     /// If 0, verification is disabled (always use fast path when available).
     /// If 1, verification is always enabled (always execute blocks).
@@ -233,6 +248,7 @@ where
             self.storage.clone(),
             self.ctx.provider().clone(),
             self.proofs_history_window,
+            self.proofs_history_prune_finality_margin_blocks,
             self.proofs_history_prune_interval,
         );
         self.ctx
@@ -272,7 +288,7 @@ where
         // Check if we have accumulated too much history for the configured window.
         // If the gap between what we have and what we want to keep is too large, the auto-pruner
         // will stall the node.
-        let target_earliest = latest_block_number.saturating_sub(self.proofs_history_window);
+        let target_earliest = self.prune_target_earliest_block(latest_block_number);
         if target_earliest > earliest_block_number {
             let blocks_to_prune = target_earliest - earliest_block_number;
             if blocks_to_prune > MAX_PRUNE_BLOCKS_STARTUP {
@@ -291,6 +307,13 @@ where
         BlockMetrics::earliest_number().set(earliest_block_number as f64);
 
         Ok(())
+    }
+
+    fn prune_target_earliest_block(&self, latest_block_number: u64) -> u64 {
+        let retention_target = latest_block_number.saturating_sub(self.proofs_history_window);
+        let stable_target =
+            latest_block_number.saturating_sub(self.proofs_history_prune_finality_margin_blocks);
+        cmp::min(retention_target, stable_target)
     }
 
     /// Spawn the background sync task and return the shared [`SyncTarget`].
@@ -688,7 +711,7 @@ mod tests {
     use alloy_consensus::private::alloy_primitives::B256;
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use base_execution_trie::{
-        BaseProofsStorage, BaseProofsStore, BlockStateDiff, db::MdbxProofsStorage,
+        BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
     use reth_db::test_utils::tempdir_path;
     use reth_ethereum_primitives::{Block, Receipt};
@@ -792,6 +815,7 @@ mod tests {
         BaseProofsExEx::builder(ctx, storage)
             .with_proofs_history_window(20)
             .with_proofs_history_prune_interval(Duration::from_secs(3600))
+            .with_proofs_history_prune_finality_margin_blocks(0)
             .with_verification_interval(1000)
             .build()
     }
@@ -800,8 +824,8 @@ mod tests {
     async fn handle_notification_chain_committed() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
@@ -827,8 +851,8 @@ mod tests {
     async fn handle_notification_chain_committed_caches_already_stored_blocks() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
@@ -861,8 +885,8 @@ mod tests {
     async fn handle_notification_chain_reorged() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
         store_blocks(1, 10, &proofs);
@@ -905,8 +929,8 @@ mod tests {
     async fn handle_notification_chain_reorged_beyond_stored_blocks() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
         store_blocks(1, 10, &proofs);
@@ -945,8 +969,8 @@ mod tests {
     async fn handle_notification_chain_reverted() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
         store_blocks(1, 10, &proofs);
@@ -983,8 +1007,8 @@ mod tests {
     async fn handle_notification_chain_reverted_beyond_stored_blocks() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
         store_blocks(1, 5, &proofs);
@@ -1021,8 +1045,8 @@ mod tests {
     async fn ensure_initialized_errors_on_storage_not_initialized() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         let (ctx, _handle) =
             reth_exex_test_utils::test_exex_context().await.expect("exex test context");
@@ -1035,8 +1059,8 @@ mod tests {
     async fn ensure_initialized_errors_when_prune_exceeds_threshold() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
@@ -1063,8 +1087,8 @@ mod tests {
     async fn ensure_initialized_succeeds() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
@@ -1079,8 +1103,8 @@ mod tests {
     async fn handle_notification_schedules_async_on_gap() {
         // MDBX proofs storage
         let dir = tempdir_path();
-        let store = Arc::new(MdbxProofsStorage::new(dir.as_path()).expect("env"));
-        let proofs: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&store).into();
+        let store = Arc::new(RocksdbProofsStorage::new(dir.as_path()).expect("env"));
+        let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         init_storage(proofs.clone());
 
