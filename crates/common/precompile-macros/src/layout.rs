@@ -160,16 +160,19 @@ pub(crate) fn gen_constructor(
             }
 
             #[cfg(any(test, feature = "test-utils"))]
+            /// Returns all events emitted by this contract (test-utils only).
             pub fn emitted_events(&self) -> &Vec<::alloy_primitives::LogData> {
                 self.storage.get_events(self.address)
             }
 
             #[cfg(any(test, feature = "test-utils"))]
+            /// Clears all events emitted by this contract (test-utils only).
             pub fn clear_emitted_events(&mut self) {
                 self.storage.clear_events(self.address);
             }
 
             #[cfg(any(test, feature = "test-utils"))]
+            /// Asserts that emitted events match the expected list (test-utils only).
             pub fn assert_emitted_events(&self, expected: Vec<impl ::alloy_primitives::IntoLogData>) {
                 let emitted = self.storage.get_events(self.address);
                 assert_eq!(emitted.len(), expected.len());

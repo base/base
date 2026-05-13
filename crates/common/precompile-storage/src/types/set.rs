@@ -352,7 +352,7 @@ mod tests {
 
             let addrs: Vec<Address> = (0..5u8).map(|i| Address::from([i; 20])).collect();
             let set = Set::from(addrs.clone());
-            handler.write(set.clone()).unwrap();
+            handler.write(set).unwrap();
 
             let loaded = handler.read().unwrap();
             assert_eq!(loaded.len(), addrs.len());

@@ -36,3 +36,5 @@ mod hashmap;
 pub use hashmap::HashMapStorageProvider;
 #[cfg(any(test, feature = "test-utils"))]
 pub use hashmap::setup_storage;
+#[cfg(any(test, feature = "test-utils"))]
+pub use packing::gen_word_from;

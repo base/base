@@ -194,7 +194,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 #[cfg(any(test, feature = "test-utils"))]
 impl HashMapStorageProvider {
     /// Injects an SLOAD failure at the given address and slot (test-utils only).
-    pub fn fail_next_sload_at(&mut self, address: Address, slot: U256) {
+    pub const fn fail_next_sload_at(&mut self, address: Address, slot: U256) {
         self.fail_on_sload = Some((address, slot));
     }
 
@@ -216,22 +216,22 @@ impl HashMapStorageProvider {
     }
 
     /// Overrides the block timestamp (test-utils only).
-    pub fn set_timestamp(&mut self, timestamp: U256) {
+    pub const fn set_timestamp(&mut self, timestamp: U256) {
         self.timestamp = timestamp;
     }
 
     /// Overrides the block beneficiary (test-utils only).
-    pub fn set_beneficiary(&mut self, beneficiary: Address) {
+    pub const fn set_beneficiary(&mut self, beneficiary: Address) {
         self.beneficiary = beneficiary;
     }
 
     /// Overrides the block number (test-utils only).
-    pub fn set_block_number(&mut self, block_number: u64) {
+    pub const fn set_block_number(&mut self, block_number: u64) {
         self.block_number = block_number;
     }
 
     /// Sets the caller address (test-utils only).
-    pub fn set_caller(&mut self, caller: Address) {
+    pub const fn set_caller(&mut self, caller: Address) {
         self.caller = caller;
     }
 
@@ -246,17 +246,17 @@ impl HashMapStorageProvider {
     }
 
     /// Returns the SLOAD counter (test-utils only).
-    pub fn counter_sload(&self) -> u64 {
+    pub const fn counter_sload(&self) -> u64 {
         self.counter_sload
     }
 
     /// Returns the SSTORE counter (test-utils only).
-    pub fn counter_sstore(&self) -> u64 {
+    pub const fn counter_sstore(&self) -> u64 {
         self.counter_sstore
     }
 
     /// Resets the SLOAD/SSTORE counters (test-utils only).
-    pub fn reset_counters(&mut self) {
+    pub const fn reset_counters(&mut self) {
         self.counter_sload = 0;
         self.counter_sstore = 0;
     }

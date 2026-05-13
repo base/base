@@ -144,10 +144,6 @@ mod tests {
     use super::*;
     use crate::{hashmap::setup_storage, provider::StorageKey};
 
-    fn arb_address() -> impl Strategy<Value = Address> {
-        any::<[u8; 20]>().prop_map(Address::from)
-    }
-
     fn arb_u256() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>().prop_map(U256::from_limbs)
     }
