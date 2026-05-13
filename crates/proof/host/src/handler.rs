@@ -38,7 +38,7 @@ const PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE: usize = 1024;
 
 #[derive(Debug, Default)]
 struct PayloadWitnessPrefetchState {
-    ready: HashMap<B256, BasePayloadAttributes>,
+    ready: HashMap<B256, B256>,
     ready_order: VecDeque<B256>,
     scheduled_blocks: HashSet<u64>,
     scheduled_block_order: VecDeque<u64>,
@@ -76,16 +76,12 @@ impl PayloadWitnessPrefetcher {
         }
     }
 
-    fn take_ready(
-        &self,
-        parent_block_hash: B256,
-        payload_attributes: &BasePayloadAttributes,
-    ) -> bool {
+    fn take_ready(&self, parent_block_hash: B256, payload_attributes_digest: B256) -> bool {
         let mut state = self.lock_state();
-        let Some(ready_payload_attributes) = state.ready.get(&parent_block_hash) else {
+        let Some(ready_payload_attributes_digest) = state.ready.get(&parent_block_hash) else {
             return false;
         };
-        if ready_payload_attributes != payload_attributes {
+        if *ready_payload_attributes_digest != payload_attributes_digest {
             return false;
         }
         state.ready.remove(&parent_block_hash);
@@ -256,7 +252,7 @@ impl PayloadWitnessPrefetcher {
         state.scheduled_lookahead_order.retain(|scheduled| scheduled != &parent_block_hash);
     }
 
-    fn mark_ready(&self, parent_block_hash: B256, payload_attributes: BasePayloadAttributes) {
+    fn mark_ready(&self, parent_block_hash: B256, payload_attributes_digest: B256) {
         let mut state = self.lock_state();
         if state.ready.remove(&parent_block_hash).is_some() {
             state.ready_order.retain(|hash| hash != &parent_block_hash);
@@ -269,7 +265,7 @@ impl PayloadWitnessPrefetcher {
             state.ready.remove(&oldest);
         }
 
-        state.ready.insert(parent_block_hash, payload_attributes);
+        state.ready.insert(parent_block_hash, payload_attributes_digest);
         state.ready_order.push_back(parent_block_hash);
     }
 
@@ -342,6 +338,20 @@ impl PayloadWitnessPrefetcher {
             return false;
         }
 
+        let payload_attributes_digest = match payload_attributes_digest(&payload_attributes) {
+            Ok(digest) => digest,
+            Err(err) => {
+                warn!(
+                    target: HOST_SERVER_TARGET,
+                    block_number,
+                    ?parent_block_hash,
+                    error = %err,
+                    "payload witness prefetch skipped: failed to digest payload attributes"
+                );
+                return false;
+            }
+        };
+
         let execute_payload_response = match self
             .inner
             .providers
@@ -349,7 +359,7 @@ impl PayloadWitnessPrefetcher {
             .client()
             .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
                 "debug_executePayload",
-                (parent_block_hash, payload_attributes.clone()),
+                (parent_block_hash, payload_attributes),
             )
             .await
         {
@@ -380,7 +390,7 @@ impl PayloadWitnessPrefetcher {
             return false;
         }
 
-        self.mark_ready(parent_block_hash, payload_attributes);
+        self.mark_ready(parent_block_hash, payload_attributes_digest);
 
         true
     }
@@ -491,6 +501,10 @@ fn panic_payload_message(payload: &(dyn Any + Send)) -> &str {
     } else {
         "unknown panic payload"
     }
+}
+
+fn payload_attributes_digest(payload_attributes: &BasePayloadAttributes) -> Result<B256> {
+    Ok(keccak256(serde_json::to_vec(payload_attributes)?))
 }
 
 fn payload_attributes_from_l2_block(
@@ -917,14 +931,15 @@ async fn handle_hint_inner(
             }
 
             let parent_block_hash = B256::from_slice(&hint.data.as_ref()[..32]);
-            let payload_attributes: BasePayloadAttributes =
-                serde_json::from_slice(&hint.data[32..])?;
+            let encoded_payload_attributes = &hint.data[32..];
 
             if let Some(prefetcher) = payload_witness_prefetcher.as_ref()
-                && prefetcher.take_ready(parent_block_hash, &payload_attributes)
+                && prefetcher.take_ready(parent_block_hash, keccak256(encoded_payload_attributes))
             {
                 // Prefetched preimages are written into the same proof-session KV store, which is
-                // append-only for the lifetime of a proof request.
+                // append-only for the lifetime of a proof request. The guest emits this hint with
+                // serde_json::to_vec(BasePayloadAttributes), matching the digest stored by
+                // prefetch, so the ready cache does not retain or compare full transaction bytes.
                 debug!(
                     target: HOST_SERVER_TARGET,
                     ?parent_block_hash,
@@ -933,6 +948,9 @@ async fn handle_hint_inner(
                 prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
                 return Ok(());
             }
+
+            let payload_attributes: BasePayloadAttributes =
+                serde_json::from_slice(encoded_payload_attributes)?;
 
             let execute_payload_response = match providers
                 .l2
@@ -1048,13 +1066,14 @@ mod tests {
     fn test_payload_witness_ready_cache_evicts_oldest_entry() {
         let prefetcher = test_prefetcher();
         let payload_attributes = BasePayloadAttributes::default();
+        let digest = payload_attributes_digest(&payload_attributes).unwrap();
 
         for i in 0..=PAYLOAD_WITNESS_PREFETCH_MAX_READY {
-            prefetcher.mark_ready(B256::new([i as u8; 32]), payload_attributes.clone());
+            prefetcher.mark_ready(B256::new([i as u8; 32]), digest);
         }
 
-        assert!(!prefetcher.take_ready(B256::new([0; 32]), &payload_attributes));
-        assert!(prefetcher.take_ready(B256::new([1; 32]), &payload_attributes));
+        assert!(!prefetcher.take_ready(B256::new([0; 32]), digest));
+        assert!(prefetcher.take_ready(B256::new([1; 32]), digest));
     }
 
     #[test]
@@ -1062,13 +1081,15 @@ mod tests {
         let prefetcher = test_prefetcher();
         let parent_block_hash = B256::new([1; 32]);
         let payload_attributes = BasePayloadAttributes::default();
+        let digest = payload_attributes_digest(&payload_attributes).unwrap();
         let mismatched_payload_attributes =
             BasePayloadAttributes { gas_limit: Some(1), ..Default::default() };
+        let mismatched_digest = payload_attributes_digest(&mismatched_payload_attributes).unwrap();
 
-        prefetcher.mark_ready(parent_block_hash, payload_attributes.clone());
+        prefetcher.mark_ready(parent_block_hash, digest);
 
-        assert!(!prefetcher.take_ready(parent_block_hash, &mismatched_payload_attributes));
-        assert!(prefetcher.take_ready(parent_block_hash, &payload_attributes));
+        assert!(!prefetcher.take_ready(parent_block_hash, mismatched_digest));
+        assert!(prefetcher.take_ready(parent_block_hash, digest));
     }
 
     #[test]
