@@ -664,6 +664,49 @@ where
         &self,
         cache: &mut Option<CachedRecovery>,
     ) -> Option<(RecoveredState, u64)> {
+        if let Some(cached) = cache.as_ref() {
+            let safe_head = match self.latest_safe_block_number().await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(error = %e, "Failed to fetch safe head, retrying next tick");
+                    return None;
+                }
+            };
+
+            let next_proposal_block =
+                match cached.state.l2_block_number.checked_add(self.config.driver.block_interval) {
+                    Some(block) => block,
+                    None => {
+                        warn!(
+                            cached_block = cached.state.l2_block_number,
+                            block_interval = self.config.driver.block_interval,
+                            "Cannot compute next proposal block, retrying next tick"
+                        );
+                        return None;
+                    }
+                };
+
+            if safe_head < next_proposal_block {
+                debug!(
+                    safe_head,
+                    cached_block = cached.state.l2_block_number,
+                    next_proposal_block,
+                    "Safe head below next proposal target, skipping recovery"
+                );
+                return Some((cached.state, safe_head));
+            }
+
+            let state = match self.recover_latest_state(cache).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
+                    return None;
+                }
+            };
+
+            return Some((state, safe_head));
+        }
+
         let (state_result, safe_head_result) =
             tokio::join!(self.recover_latest_state(cache), self.latest_safe_block_number(),);
 
@@ -692,7 +735,7 @@ where
     /// # Strategy
     ///
     /// 1. Read `game_count` from the factory and anchor root from the registry
-    ///    (2 RPC calls per tick — always needed for cache validation).
+    ///    once the safe head is high enough to need recovery.
     /// 2. **Cache check — fast path.** If both `game_count` and `anchor_root`
     ///    match the cache, return the cached state immediately (zero RPCs).
     /// 3. **Forward walk.** Walk from the anchor block, stepping by
@@ -1337,7 +1380,14 @@ enum SubmitOutcome {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
@@ -1432,6 +1482,7 @@ mod tests {
             game_count_override: Some(n as u64),
             uuid_games,
             games_should_fail: false,
+            game_count_calls: None,
         };
 
         (factory, output_roots)
@@ -1924,6 +1975,31 @@ mod tests {
         assert_eq!(state2.parent_address, state1.parent_address);
         assert_eq!(state2.l2_block_number, state1.l2_block_number);
         assert_eq!(state2.output_root, state1.output_root);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_tick_skips_recovery_when_safe_head_below_cached_next_target() {
+        let game_count_calls = Arc::new(AtomicUsize::new(0));
+        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        factory.game_count_calls = Some(Arc::clone(&game_count_calls));
+        let pipeline = recovery_pipeline(factory, HashMap::new());
+
+        let cached = CachedRecovery {
+            game_count: 0,
+            state: RecoveredState {
+                parent_address: Address::ZERO,
+                output_root: B256::ZERO,
+                l2_block_number: TEST_ANCHOR_BLOCK,
+            },
+        };
+        let mut state = PipelineState::new();
+        state.cached_recovery = Some(cached);
+
+        pipeline.tick(&mut state).await.unwrap();
+
+        assert_eq!(game_count_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(state.cached_recovery, Some(cached));
+        assert!(state.inflight.is_empty());
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
