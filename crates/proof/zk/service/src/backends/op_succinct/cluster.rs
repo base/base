@@ -650,8 +650,44 @@ impl ClusterBackend {
         match self.build_aggregation_session(proof_request).await {
             Ok(session) => {
                 let backend_session_id = session.backend_session_id.clone();
-                let activated =
-                    repo.activate_reserved_proof_session(&reservation_id, session).await?;
+                let activated = match repo
+                    .activate_reserved_proof_session(&reservation_id, session)
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // Cluster job has already been submitted but the DB activation
+                        // failed. Release the reservation so the partial unique index
+                        // does not permanently block future SNARK attempts; the in-flight
+                        // cluster job is orphaned and will fall on the floor.
+                        let error_message =
+                            format!("failed to activate reserved SNARK session: {e}");
+                        if let Err(fail_err) = repo
+                            .fail_reserved_proof_session(
+                                proof_request.id,
+                                SessionType::Snark,
+                                &reservation_id,
+                                &error_message,
+                            )
+                            .await
+                        {
+                            warn!(
+                                proof_request_id = %proof_request.id,
+                                reservation_id = %reservation_id,
+                                error = %fail_err,
+                                "failed to release SNARK reservation after activation error"
+                            );
+                        }
+                        error!(
+                            proof_request_id = %proof_request.id,
+                            reservation_id = %reservation_id,
+                            backend_session_id = %backend_session_id,
+                            error = %e,
+                            "failed to activate reserved SNARK session; backend job may be orphaned"
+                        );
+                        return Err(e.into());
+                    }
+                };
                 if !activated {
                     warn!(
                         proof_request_id = %proof_request.id,
