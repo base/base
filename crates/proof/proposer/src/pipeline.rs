@@ -42,7 +42,7 @@ use base_proof_contracts::{
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
 use eyre::Result;
-use futures::{StreamExt, TryStreamExt, stream};
+use futures::{StreamExt, stream};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
@@ -971,8 +971,20 @@ where
         blocks: Vec<u64>,
         bypass_cache: bool,
     ) -> Result<HashMap<u64, B256>, ProposerError> {
+        self.fetch_canonical_root_results_with(blocks, bypass_cache)
+            .await
+            .into_iter()
+            .map(|(block_number, result)| result.map(|root| (block_number, root)))
+            .collect()
+    }
+
+    async fn fetch_canonical_root_results_with(
+        &self,
+        blocks: Vec<u64>,
+        bypass_cache: bool,
+    ) -> HashMap<u64, Result<B256, ProposerError>> {
         if blocks.is_empty() {
-            return Ok(HashMap::new());
+            return HashMap::new();
         }
         stream::iter(blocks)
             .map(|block_number| {
@@ -983,28 +995,7 @@ where
                     } else {
                         rollup.output_at_block(block_number).await
                     };
-                    output.map(|out| (block_number, out.output_root)).map_err(ProposerError::Rpc)
-                }
-            })
-            .buffered(self.config.recovery_scan_concurrency)
-            .try_collect()
-            .await
-    }
-
-    async fn fetch_canonical_root_results(
-        &self,
-        blocks: Vec<u64>,
-    ) -> HashMap<u64, Result<B256, ProposerError>> {
-        stream::iter(blocks)
-            .map(|block_number| {
-                let rollup = &self.rollup_client;
-                async move {
-                    let result = rollup
-                        .output_at_block(block_number)
-                        .await
-                        .map(|out| out.output_root)
-                        .map_err(ProposerError::Rpc);
-                    (block_number, result)
+                    (block_number, output.map(|out| out.output_root).map_err(ProposerError::Rpc))
                 }
             })
             .buffered(self.config.recovery_scan_concurrency)
@@ -1025,11 +1016,11 @@ where
             .into_iter()
             .collect();
 
-        let (l1_head, output_roots, l2_heads) = tokio::try_join!(
+        let (l1_head_result, output_roots, l2_heads) = tokio::join!(
             async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
-            async { Ok(self.fetch_canonical_root_results(output_blocks).await) },
+            self.fetch_canonical_root_results_with(output_blocks, false),
             async {
-                let headers = stream::iter(start_blocks)
+                stream::iter(start_blocks)
                     .map(|block_number| {
                         let l2 = &self.l2_client;
                         async move {
@@ -1042,10 +1033,10 @@ where
                     })
                     .buffered(self.config.recovery_scan_concurrency)
                     .collect::<HashMap<_, _>>()
-                    .await;
-                Ok(headers)
+                    .await
             },
-        )?;
+        );
+        let l1_head = l1_head_result?;
 
         let mut requests = Vec::with_capacity(plans.len());
         for plan in plans {
@@ -1056,17 +1047,17 @@ where
                         error = %e,
                         start_block = plan.start_block,
                         target_block = plan.target_block,
-                        "Skipping proof request after L2 header fetch failed"
+                        "Stopping proof request batch after L2 header fetch failed"
                     );
-                    continue;
+                    break;
                 }
                 None => {
                     warn!(
                         start_block = plan.start_block,
                         target_block = plan.target_block,
-                        "Skipping proof request because L2 header is missing"
+                        "Stopping proof request batch because L2 header is missing"
                     );
-                    continue;
+                    break;
                 }
             };
 
@@ -1080,17 +1071,17 @@ where
                             error = %e,
                             start_block = plan.start_block,
                             target_block = plan.target_block,
-                            "Skipping proof request after start output fetch failed"
+                            "Stopping proof request batch after start output fetch failed"
                         );
-                        continue;
+                        break;
                     }
                     None => {
                         warn!(
                             start_block = plan.start_block,
                             target_block = plan.target_block,
-                            "Skipping proof request because start output is missing"
+                            "Stopping proof request batch because start output is missing"
                         );
-                        continue;
+                        break;
                     }
                 }
             };
@@ -1101,16 +1092,16 @@ where
                     warn!(
                         error = %e,
                         target_block = plan.target_block,
-                        "Skipping proof request after target output fetch failed"
+                        "Stopping proof request batch after target output fetch failed"
                     );
-                    continue;
+                    break;
                 }
                 None => {
                     warn!(
                         target_block = plan.target_block,
-                        "Skipping proof request because target output is missing"
+                        "Stopping proof request batch because target output is missing"
                     );
-                    continue;
+                    break;
                 }
             };
 
