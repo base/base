@@ -50,7 +50,7 @@ pub fn init_metrics(port: &u16) {
     ));
 
     if let Err(e) = builder.install() {
-        warn!("Failed to start metrics server: {}. Will continue without metrics.", e);
+        warn!(error = %e, "Failed to start metrics server. Will continue without metrics.");
     }
 
     // Spawn a thread to collect process metrics.
