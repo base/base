@@ -42,6 +42,9 @@ pub mod provider;
 
 pub mod live;
 
+mod overlay;
+pub use overlay::ProofsBatchOverlay;
+
 pub mod cursor;
 #[cfg(not(feature = "metrics"))]
 pub use cursor::{

@@ -11,14 +11,17 @@ use reth_provider::{
     StateRootProvider,
 };
 use reth_revm::database::StateProviderDatabase;
-use reth_trie_common::{HashedPostStateSorted, updates::TrieUpdatesSorted};
+use reth_trie_common::{
+    HashedPostState, HashedPostStateSorted,
+    updates::{TrieUpdates, TrieUpdatesSorted},
+};
 use tracing::{info, warn};
 
 use crate::{
-    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore, BlockStateDiff,
+    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore, BlockStateDiff, ProofsBatchOverlay,
     api::{OperationDurations, WriteCounts},
     metrics::BlockMetrics,
-    provider::BaseProofsStateProviderRef,
+    provider::{BaseProofsStateProviderRef, OverlayedBaseProofsStateProviderRef},
 };
 
 /// Live trie collector for external proofs storage.
@@ -133,6 +136,39 @@ where
         );
 
         Ok(())
+    }
+
+    /// Execute a block against a batch-local overlay without storing updates.
+    pub fn execute_block_with_overlay(
+        &self,
+        block: &RecoveredBlock<BlockTy<Evm::Primitives>>,
+        overlay: &ProofsBatchOverlay,
+    ) -> Result<(HashedPostState, TrieUpdates), BaseProofsStorageError> {
+        let parent_block_number = block.number() - 1;
+        let state_provider = OverlayedBaseProofsStateProviderRef::new(
+            self.provider.state_by_block_hash(block.parent_hash())?,
+            self.storage,
+            parent_block_number,
+            overlay,
+        );
+
+        let db = StateProviderDatabase::new(&state_provider);
+        let block_executor = self.evm_config.batch_executor(db);
+        let execution_result = block_executor.execute(&(*block).clone())?;
+
+        let hashed_state = state_provider.hashed_post_state(&execution_result.state);
+        let (state_root, trie_updates) =
+            state_provider.state_root_with_updates(hashed_state.clone())?;
+
+        if state_root != block.state_root() {
+            return Err(BaseProofsStorageError::StateRootMismatch {
+                block_number: block.number(),
+                current_state_hash: state_root,
+                expected_state_hash: block.state_root(),
+            });
+        }
+
+        Ok((hashed_state, trie_updates))
     }
 
     /// Store trie updates for a given block.
