@@ -30,8 +30,7 @@ impl BootnodeCommand {
     /// Runs both discovery-only bootnodes.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
         let consensus_chain = resolved_chain.consensus_chain_args();
-        let rollup_config =
-            self.l2_config.load(&consensus_chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
+        let rollup_config = self.l2_config.load(&consensus_chain.l2_chain_id)?;
 
         CliMetrics::init_rollup_config(&rollup_config);
         CliMetrics::init_bootnode_p2p(&self.consensus);
