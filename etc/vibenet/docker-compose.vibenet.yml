@@ -7,17 +7,16 @@
 #
 # Layers on:
 #   - FAUCET_ADDR propagated into setup-l1 so the faucet EOA is prefunded on L1.
-#   - nginx-gateway: public HTTP gateway, host-routed and rate-limited.
-#   - vibenet-faucet: axum service, private to the docker network.
+#   - next-app: Next.js app serving landing, faucet UI+API, and block explorer.
+#     Built from the sibling base/ui repo (../../../ui from etc/docker/).
+#     Override with VIBENET_UI_IMAGE to pull a pre-built image instead.
 #   - vibenet-setup: one-shot. Sweeps anvil balances -> faucet on L2, then
 #     deploys demo contracts and writes /shared/contracts.json.
-#   - proxyd: per-method rate limits.
-  #   - vibescan: in-house block explorer. Indexes address -> tx mappings in
-  #     sqlite and reads full bodies from base-client on demand. Listens on
-  #     :8080 internally; nginx terminates the `explorer.vibes.base.org`
-  #     server block to it.
+#   - vibenet-config-renderer: renders vibenet.yaml -> config.json for the UI.
+#   - proxyd: per-method JSON-RPC rate limits.
+#   - base-client: WS port exposed directly (no nginx proxy).
 #
-# Public TLS can be layered with `docker-compose.public.yml`.
+# Public TLS + subdomain routing can be layered with docker-compose.caddy.yml.
 
 services:
   # --- Prefund the faucet on L1 via the existing setup-l1 anvil genesis ----
@@ -25,24 +24,13 @@ services:
     environment:
       - FAUCET_ADDR=${FAUCET_ADDR}
 
-  # --- Defense-in-depth memory caps on long-running core services ---------
-  # The public vibenet host stays up for weeks at a time. Without cgroup
-  # limits, a single runaway container (e.g. Jaeger's unbounded in-memory
-  # trace ring pre-fix) can swallow all host RAM, force swap, and starve
-  # the kernel page cache — making every other service IO-bound.
-  #
-  # These limits are sized for a 503 GiB bare-metal host (Hetzner AX-series).
-  # Caps are generous enough that normal operation never trips them; if a
-  # service does regress, cgroups OOM-kill the offender (and `restart:
-  # unless-stopped` from the base compose brings it back) instead of
-  # taking the host down with it. Total cap budget ≈ 165 GiB, ~33% of RAM.
-  #
-  # L1 services (l1-el / l1-cl / l1-vc) are deliberately uncapped: they
-  # run against a tiny anvil genesis and their footprint is bounded by
-  # the L1 chain state, not by request volume.
+  # --- Defense-in-depth memory caps on long-running core services ----------
   base-client:
     mem_limit: 96g
     memswap_limit: 96g
+    # Expose WebSocket RPC directly — no nginx proxy needed.
+    ports:
+      - "127.0.0.1:${VIBENET_WS_HOST_PORT:-18081}:${L2_CLIENT_WS_PORT}"
   base-client-cl:
     mem_limit: 16g
     memswap_limit: 16g
@@ -56,105 +44,55 @@ services:
     mem_limit: 8g
     memswap_limit: 8g
 
-  # --- Public HTTP gateway --------------------------------------------------
-  nginx-gateway:
-    image: nginx:1.27-alpine
-    container_name: vibenet-nginx
-    # Loopback-only host ports for local dev. The optional public `:443`
-    # listener is added by `docker-compose.public.yml`.
-    #   ${VIBENET_HOST_PORT}          -> UI / admin              (:8080)
-    #   ${VIBENET_RPC_HOST_PORT}      -> RPC / WS                 (:8081)
-    #   ${VIBENET_EXPLORER_HOST_PORT} -> vibescan explorer         (:8082)
-    #   ${VIBENET_FAUCET_HOST_PORT}   -> faucet                    (:8083)
-    ports:
-      - "127.0.0.1:${VIBENET_HOST_PORT:-18080}:8080"
-      - "127.0.0.1:${VIBENET_RPC_HOST_PORT:-18081}:8081"
-      - "127.0.0.1:${VIBENET_EXPLORER_HOST_PORT:-18082}:8082"
-      - "127.0.0.1:${VIBENET_FAUCET_HOST_PORT:-18083}:8083"
+  # --- Next.js app: landing page, faucet, block explorer -------------------
+  # Replaces nginx-gateway + vibenet-faucet + vibescan from the original Rust stack.
+  # Built from the sibling base/ui repo at ../../../ui (relative to etc/docker/).
+  # Set VIBENET_UI_IMAGE to skip the local build and pull a pre-built image:
+  #   VIBENET_UI_IMAGE=ghcr.io/base/ui:main just vibe
+  next-app:
+    image: ${VIBENET_UI_IMAGE:-vibenet-ui:local}
+    build:
+      context: ../../../ui
+      dockerfile: Dockerfile
+    container_name: vibenet-next-app
     depends_on:
-      vibenet-faucet:
-        condition: service_started
       base-client:
         condition: service_healthy
-      proxyd:
-        condition: service_healthy
-      grafana:
-        condition: service_started
       vibenet-config-renderer:
         condition: service_completed_successfully
-      vibenet-htpasswd:
-        condition: service_completed_successfully
-      vibescan:
-        condition: service_started
-    volumes:
-      - ../vibenet/nginx/vibenet.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - vibenet-htpasswd:/etc/nginx/htpasswd-dir:ro
-      - vibenet-config:/srv/config:ro
-      - vibenet-shared:/srv/shared:ro
-      - ../../crates/vibenet/ui/public:/srv/ui:ro
-    # nginx:alpine auto-runs envsubst on /etc/nginx/templates/*.template
-    # and writes the result to /etc/nginx/conf.d/*.conf before starting.
-    # The template no longer references any env vars, but the envsubst step
-    # is still a no-op on static content so we leave it in place.
-    mem_limit: 512m
-    memswap_limit: 512m
-    restart: unless-stopped
-
-  # --- Writes ADMIN_HTPASSWD into a shared volume for nginx basic-auth -----
-  vibenet-htpasswd:
-    image: alpine:3.21
-    container_name: vibenet-htpasswd
     environment:
-      - ADMIN_HTPASSWD=${ADMIN_HTPASSWD:-}
-    volumes:
-      - vibenet-htpasswd:/out
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        if [ -z "$${ADMIN_HTPASSWD}" ]; then
-          echo "WARNING: ADMIN_HTPASSWD is unset; admin panel will deny all" >&2
-          printf 'disabled:$$2y$$05$$invalidhash\n' > /out/htpasswd
-        else
-          printf '%s\n' "$${ADMIN_HTPASSWD}" > /out/htpasswd
-        fi
-        chmod 644 /out/htpasswd
-    restart: "no"
-
-  # --- Faucet service -------------------------------------------------------
-  # Drips ETH and mints USDV. The shared volume is mounted read-only so the
-  # faucet can resolve the USDV token address from /shared/contracts.json
-  # (written by vibenet-setup). We intentionally do NOT depend_on setup so
-  # ETH drips keep working even before the token is deployed; USDV drips
-  # return a 503 with a helpful message during that window.
-  vibenet-faucet:
-    image: base-vibenet-faucet:local
-    build:
-      context: ../..
-      dockerfile: etc/vibenet/faucet/Dockerfile
-      args:
-        PROFILE: ${CARGO_PROFILE:-release}
-    container_name: vibenet-faucet
-    depends_on:
-      base-client:
-        condition: service_healthy
-    environment:
-      - VIBENET_FAUCET_BIND=0.0.0.0:8080
+      # Explorer indexer (background process inside the container)
+      - VIBESCAN_RPC_HTTP_URL=http://base-client:${L2_CLIENT_HTTP_PORT}
+      - VIBESCAN_RPC_WS_URL=ws://base-client:${L2_CLIENT_WS_PORT}
+      - VIBESCAN_CHAIN_ID=${L2_CHAIN_ID}
+      - VIBESCAN_DB_PATH=/data/vibescan.db
+      - VIBESCAN_START_BLOCK=${VIBESCAN_START_BLOCK:-0}
+      - VIBESCAN_BACKFILL_CONCURRENCY=${VIBESCAN_BACKFILL_CONCURRENCY:-16}
+      # Faucet signer
       - VIBENET_FAUCET_RPC_URL=http://base-client:${L2_CLIENT_HTTP_PORT}
       - VIBENET_FAUCET_CHAIN_ID=${L2_CHAIN_ID}
       - VIBENET_FAUCET_PRIVATE_KEY=${FAUCET_PRIVATE_KEY}
-      - VIBENET_FAUCET_ADDR=${FAUCET_ADDR}
       - VIBENET_FAUCET_DRIP_WEI=${VIBENET_FAUCET_DRIP_WEI:-100000000000000000}
       - VIBENET_FAUCET_IP_COOLDOWN_SECS=${VIBENET_FAUCET_IP_COOLDOWN_SECS:-3600}
       - VIBENET_FAUCET_ADDR_COOLDOWN_SECS=${VIBENET_FAUCET_ADDR_COOLDOWN_SECS:-3600}
-      - VIBENET_FAUCET_TRUSTED_PROXIES=${VIBENET_FAUCET_TRUSTED_PROXIES:-private,loopback}
       - VIBENET_FAUCET_CONTRACTS_PATH=/shared/contracts.json
       - VIBENET_FAUCET_USDV_DRIP_UNITS=${VIBENET_FAUCET_USDV_DRIP_UNITS:-1000000000}
-      - RUST_LOG=info,base_vibenet_faucet=debug
+      # Rendered config + contract addresses (written by renderer/setup containers)
+      - VIBENET_CONFIG_PATH=/config/config.json
+      - VIBENET_CONTRACTS_PATH=/shared/contracts.json
+      # Branch/commit info surfaced in the landing page footer
+      - VIBENET_BRANCH=${VIBENET_BRANCH:-unknown}
+      - VIBENET_COMMIT=${VIBENET_COMMIT:-unknown}
+    ports:
+      # UI + faucet + explorer all on a single port for local dev.
+      # In production the caddy overlay routes subdomains to this port.
+      - "127.0.0.1:${VIBENET_HOST_PORT:-18080}:3000"
     volumes:
       - vibenet-shared:/shared:ro
-    mem_limit: 512m
-    memswap_limit: 512m
+      - vibenet-config:/config:ro
+      - vibescan-data:/data
+    mem_limit: 1g
+    memswap_limit: 1g
     restart: unless-stopped
 
   # --- One-shot contract deployer ------------------------------------------
@@ -181,7 +119,6 @@ services:
     entrypoint: ["/usr/local/bin/deploy-contracts.sh"]
 
   # --- Renders vibenet.yaml into config.json for the UI --------------------
-  # yq runs at startup and writes to a shared volume exposed at /config.json.
   vibenet-config-renderer:
     image: mikefarah/yq:4.44.3
     container_name: vibenet-config-renderer
@@ -203,43 +140,7 @@ services:
         echo "Wrote /out/config.json"
     restart: "no"
 
-  # --- vibescan block explorer ---------------------------------------------
-  # In-house explorer. Subscribes to newHeads over WS, persists a compact
-  # address -> activity index in sqlite, and reads bodies/receipts/balances
-  # directly from base-client on demand. Talks to base-client over the
-  # docker network and bypasses proxyd so backfill isn't rate-limited by
-  # our public RPC budget.
-  vibescan:
-    image: vibescan:local
-    build:
-      context: ../..
-      dockerfile: etc/vibenet/explorer/Dockerfile
-      args:
-        PROFILE: ${CARGO_PROFILE:-release}
-    container_name: vibenet-vibescan
-    depends_on:
-      base-client:
-        condition: service_healthy
-    environment:
-      - VIBESCAN_BIND=0.0.0.0:8080
-      - VIBESCAN_RPC_HTTP_URL=http://base-client:${L2_CLIENT_HTTP_PORT}
-      - VIBESCAN_RPC_WS_URL=ws://base-client:${L2_CLIENT_WS_PORT}
-      - VIBESCAN_CHAIN_ID=${L2_CHAIN_ID}
-      - VIBESCAN_DB_PATH=/data/vibescan.sqlite
-      - VIBESCAN_START_BLOCK=${VIBESCAN_START_BLOCK:-0}
-      - VIBESCAN_BACKFILL_CONCURRENCY=${VIBESCAN_BACKFILL_CONCURRENCY:-16}
-      - VIBESCAN_PUBLIC_RPC_URL=${VIBESCAN_PUBLIC_RPC_URL:-}
-      - VIBESCAN_PUBLIC_FAUCET_URL=${VIBESCAN_PUBLIC_FAUCET_URL:-}
-      - VIBENET_BRANCH=${VIBENET_BRANCH:-unknown}
-      - VIBENET_COMMIT=${VIBENET_COMMIT:-unknown}
-      - VIBESCAN_LOG=info,sqlx=warn,hyper=warn
-    volumes:
-      - vibescan-data:/data
-    mem_limit: 2g
-    memswap_limit: 2g
-    restart: unless-stopped
-
-  # --- proxyd (Go) as a second line of defense with per-method rate limits -
+  # --- proxyd: per-method JSON-RPC rate limits -----------------------------
   proxyd:
     image: proxyd:local
     build:
@@ -249,6 +150,9 @@ services:
     depends_on:
       base-client:
         condition: service_healthy
+    ports:
+      # HTTP RPC exposed directly (WS goes straight to base-client above).
+      - "127.0.0.1:${VIBENET_RPC_HOST_PORT:-18082}:8080"
     volumes:
       - ../vibenet/proxyd/proxyd-ratelimit.toml:/config/proxyd-ratelimit.toml:ro
     command: ["/config/proxyd-ratelimit.toml"]
@@ -265,5 +169,4 @@ services:
 volumes:
   vibenet-shared:
   vibenet-config:
-  vibenet-htpasswd:
   vibescan-data:

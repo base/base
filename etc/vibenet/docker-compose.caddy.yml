@@ -1,0 +1,41 @@
+# Production TLS + subdomain routing overlay for vibenet.
+#
+# Activated automatically by `just vibe` when Cloudflare Origin CA
+# certificates are present at /etc/vibenet/tls/origin.{crt,key}.
+#
+# Replaces the original docker-compose.public.yml nginx TLS overlay.
+# Caddy is strictly simpler: subdomain routing and TLS termination in
+# a single ~10-line Caddyfile with no template escaping required.
+#
+# Subdomain routing:
+#   vibes.base.org          → next-app:3000  (landing, config, contracts)
+#   faucet.vibes.base.org   → next-app:3000  (Next.js proxy.ts rewrites to /faucet)
+#   explorer.vibes.base.org → next-app:3000  (Next.js proxy.ts rewrites to /explorer)
+#   rpc.vibes.base.org      → proxyd:8080    (HTTP JSON-RPC)
+#   rpc.vibes.base.org/ws   → base-client:WS (WebSocket RPC upgrade)
+
+services:
+  caddy:
+    image: caddy:2.9-alpine
+    container_name: vibenet-caddy
+    ports:
+      - "${VIBENET_PUBLIC_BIND_ADDR:-0.0.0.0}:443:443"
+      - "${VIBENET_PUBLIC_BIND_ADDR:-0.0.0.0}:80:80"
+    volumes:
+      - ../vibenet/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/vibenet/tls/origin.crt:/etc/caddy/tls/origin.crt:ro
+      - /etc/vibenet/tls/origin.key:/etc/caddy/tls/origin.key:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      next-app:
+        condition: service_started
+      proxyd:
+        condition: service_healthy
+    mem_limit: 256m
+    memswap_limit: 256m
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
