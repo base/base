@@ -936,7 +936,7 @@ impl SequencerEngineClient for ActionEngineClient {
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
-    ) -> Result<(), NodeEngineClientError> {
+    ) -> Result<L2BlockInfo, NodeEngineClientError> {
         // Extract the V1 payload for execution.
         let v1 = payload.execution_payload.as_v1();
         let head_hash = v1.block_hash;
@@ -960,7 +960,7 @@ impl SequencerEngineClient for ActionEngineClient {
                 seq_num: 0,
             };
         }
-        Ok(())
+        Ok(guard.canonical_head)
     }
 
     async fn get_unsafe_head(&self) -> Result<L2BlockInfo, NodeEngineClientError> {

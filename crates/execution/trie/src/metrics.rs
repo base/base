@@ -3,7 +3,10 @@
 use std::{
     fmt::Debug,
     future::Future,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -267,12 +270,17 @@ impl<C: HashedStorageCursor> HashedStorageCursor for BaseProofsHashedCursorWithM
 pub struct BaseProofsStorageWithMetrics<S> {
     storage: S,
     metrics: Arc<StorageMetrics>,
+    tx_acquisitions: Arc<AtomicU64>,
 }
 
 impl<S> BaseProofsStorageWithMetrics<S> {
     /// Initializes new [`StorageMetrics`] and wraps given storage instance.
     pub fn new(storage: S) -> Self {
-        Self { storage, metrics: Arc::new(StorageMetrics) }
+        Self {
+            storage,
+            metrics: Arc::new(StorageMetrics),
+            tx_acquisitions: Arc::new(AtomicU64::new(0)),
+        }
     }
 
     /// Get the underlying storage.
@@ -283,6 +291,12 @@ impl<S> BaseProofsStorageWithMetrics<S> {
     /// Get the metrics.
     pub const fn metrics(&self) -> &Arc<StorageMetrics> {
         &self.metrics
+    }
+
+    /// Read-only transactions acquired since this wrapper was created. Used by
+    /// integration tests to verify request-scoped transaction sharing.
+    pub fn tx_acquisitions(&self) -> u64 {
+        self.tx_acquisitions.load(Ordering::Relaxed)
     }
 }
 
@@ -306,6 +320,7 @@ where
         = BaseProofsHashedCursorWithMetrics<S::AccountHashedCursor<'tx>>
     where
         Self: 'tx;
+    type Tx = S::Tx;
 
     #[inline]
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -352,6 +367,69 @@ where
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let cursor = self.storage.account_hashed_cursor(max_block_number)?;
+        Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+    }
+
+    #[inline]
+    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
+        let tx = self.storage.ro_tx()?;
+        self.tx_acquisitions.fetch_add(1, Ordering::Relaxed);
+        Ok(tx)
+    }
+
+    #[inline]
+    fn storage_trie_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        let cursor =
+            self.storage.storage_trie_cursor_with_tx(tx, hashed_address, max_block_number)?;
+        Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+    }
+
+    #[inline]
+    fn account_trie_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        let cursor = self.storage.account_trie_cursor_with_tx(tx, max_block_number)?;
+        Ok(BaseProofsTrieCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+    }
+
+    #[inline]
+    fn storage_hashed_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        let cursor =
+            self.storage.storage_hashed_cursor_with_tx(tx, hashed_address, max_block_number)?;
+        Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
+    }
+
+    #[inline]
+    fn account_hashed_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        let cursor = self.storage.account_hashed_cursor_with_tx(tx, max_block_number)?;
         Ok(BaseProofsHashedCursorWithMetrics::new(cursor, Arc::clone(&self.metrics)))
     }
 

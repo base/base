@@ -1,0 +1,50 @@
+[package]
+name = "base-precompile-storage"
+description = "EVM storage abstractions and runtime traits for Base native precompiles"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-evm.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types = { workspace = true, features = ["std"] }
+
+# revm
+revm.workspace = true
+
+# base
+base-precompile-macros = { path = "../precompile-macros" }
+
+# misc
+scoped-tls.workspace = true
+thiserror.workspace = true
+derive_more = { workspace = true, features = ["from", "try_into"] }
+
+[dev-dependencies]
+proptest.workspace = true
+alloy-primitives = { workspace = true, features = ["rand"] }
+
+[[test]]
+name = "contract"
+required-features = ["test-utils"]
+
+[features]
+default = [ "std" ]
+std = [
+	"alloy-evm/std",
+	"alloy-primitives/std",
+	"alloy-sol-types/std",
+	"derive_more/std",
+	"revm/std",
+	"thiserror/std",
+]
+test-utils = []

@@ -61,5 +61,6 @@ serde = [
 	"alloy-primitives/serde",
 	"base-common-genesis/serde",
 	"dep:serde",
+	"revm/serde",
 ]
 test-utils = []

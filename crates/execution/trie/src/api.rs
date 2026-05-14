@@ -89,6 +89,9 @@ pub trait BaseProofsStore: Send + Sync + Debug {
     where
         Self: 'tx;
 
+    /// Transaction type used by request-scoped cursor factories.
+    type Tx: Debug + Send + Sync;
+
     /// Get the earliest block number and hash that has been stored
     ///
     /// This is used to determine the block number of trie nodes with block number 0.
@@ -123,6 +126,47 @@ pub trait BaseProofsStore: Send + Sync + Debug {
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>;
+
+    /// Open a transaction for a request-scoped cursor factory.
+    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx>;
+
+    /// Storage trie cursor reusing `tx`.
+    fn storage_trie_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
+    where
+        Self: 'tx;
+
+    /// Account trie cursor reusing `tx`.
+    fn account_trie_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
+    where
+        Self: 'tx;
+
+    /// Storage hashed cursor reusing `tx`.
+    fn storage_hashed_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
+    where
+        Self: 'tx;
+
+    /// Account hashed cursor reusing `tx`.
+    fn account_hashed_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
+    where
+        Self: 'tx;
 
     /// Store a batch of trie updates.
     ///

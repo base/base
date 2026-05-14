@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use alloy_rpc_types_engine::JwtSecret;
 use base_jwt::{JwtError, JwtSecretReader, JwtValidator};
+use tracing::warn;
 use url::Url;
 
 const DEFAULT_L2_ENGINE_TIMEOUT: u64 = 30_000;
@@ -15,6 +16,35 @@ pub struct L2ClientArgs {
     /// URI of the engine API endpoint of an L2 execution client.
     #[arg(long, visible_alias = "l2", env = "BASE_NODE_L2_ENGINE_RPC")]
     pub l2_engine_rpc: Url,
+    /// JWT secret for the auth-rpc endpoint of the execution client.
+    /// This MUST be a valid path to a file containing the hex-encoded JWT secret.
+    #[arg(long, visible_alias = "l2.jwt-secret", env = "BASE_NODE_L2_ENGINE_AUTH")]
+    pub l2_engine_jwt_secret: Option<PathBuf>,
+    /// Hex encoded JWT secret to use for the authenticated engine-API RPC server.
+    /// This MUST be a valid hex-encoded JWT secret of 64 digits.
+    #[arg(long, visible_alias = "l2.jwt-secret-encoded", env = "BASE_NODE_L2_ENGINE_AUTH_ENCODED")]
+    pub l2_engine_jwt_encoded: Option<JwtSecret>,
+    /// Timeout for http calls in milliseconds.
+    #[arg(
+        long,
+        visible_alias = "l2.timeout",
+        env = "BASE_NODE_L2_ENGINE_TIMEOUT",
+        default_value_t = DEFAULT_L2_ENGINE_TIMEOUT
+    )]
+    pub l2_engine_timeout: u64,
+    /// If false, block hash verification is performed for all retrieved blocks.
+    #[arg(
+        long,
+        visible_alias = "l2.trust-rpc",
+        env = "BASE_NODE_L2_TRUST_RPC",
+        default_value_t = DEFAULT_L2_TRUST_RPC
+    )]
+    pub l2_trust_rpc: bool,
+}
+
+/// L2 client arguments for embedded consensus nodes.
+#[derive(Clone, Debug, clap::Args)]
+pub struct EmbeddedL2ClientArgs {
     /// JWT secret for the auth-rpc endpoint of the execution client.
     /// This MUST be a valid path to a file containing the hex-encoded JWT secret.
     #[arg(long, visible_alias = "l2.jwt-secret", env = "BASE_NODE_L2_ENGINE_AUTH")]
@@ -53,6 +83,29 @@ impl Default for L2ClientArgs {
     }
 }
 
+impl Default for EmbeddedL2ClientArgs {
+    fn default() -> Self {
+        Self {
+            l2_engine_jwt_secret: None,
+            l2_engine_jwt_encoded: None,
+            l2_engine_timeout: DEFAULT_L2_ENGINE_TIMEOUT,
+            l2_trust_rpc: DEFAULT_L2_TRUST_RPC,
+        }
+    }
+}
+
+impl From<EmbeddedL2ClientArgs> for L2ClientArgs {
+    fn from(args: EmbeddedL2ClientArgs) -> Self {
+        Self {
+            l2_engine_jwt_secret: args.l2_engine_jwt_secret,
+            l2_engine_jwt_encoded: args.l2_engine_jwt_encoded,
+            l2_engine_timeout: args.l2_engine_timeout,
+            l2_trust_rpc: args.l2_trust_rpc,
+            ..Self::default()
+        }
+    }
+}
+
 impl L2ClientArgs {
     /// Returns the L2 JWT secret for the engine API.
     ///
@@ -72,8 +125,26 @@ impl L2ClientArgs {
     /// Since the engine client will fail if the jwt token is invalid, this ensures
     /// that the jwt token passed as a cli arg is correct.
     pub async fn validate_jwt(&self) -> eyre::Result<JwtSecret> {
+        self.resolve_jwt_secret_for_endpoint(&self.l2_engine_rpc).await
+    }
+
+    /// Resolves and validates the L2 JWT secret for the given engine endpoint.
+    pub async fn resolve_jwt_secret_for_endpoint(
+        &self,
+        l2_engine_rpc: &Url,
+    ) -> eyre::Result<JwtSecret> {
+        if l2_engine_rpc.scheme() == "file" {
+            return Ok(self.jwt_secret().unwrap_or_else(|e| {
+                warn!(
+                    error = %e,
+                    "Failed to load JWT secret for IPC endpoint, generating random secret"
+                );
+                JwtSecret::random()
+            }));
+        }
+
         let jwt_secret = self.jwt_secret().map_err(|e| eyre::eyre!(e))?;
         let validator = JwtValidator::new(jwt_secret);
-        validator.validate_with_engine(self.l2_engine_rpc.clone()).await.map_err(|e| eyre::eyre!(e))
+        validator.validate_with_engine(l2_engine_rpc.clone()).await.map_err(|e| eyre::eyre!(e))
     }
 }

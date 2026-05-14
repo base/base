@@ -2,6 +2,10 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -168,6 +172,8 @@ pub struct MockDisputeGameFactory {
     pub uuid_games: HashMap<(u32, B256, Bytes), Address>,
     /// When true, all `games()` calls return an error.
     pub games_should_fail: bool,
+    /// Optional counter incremented on every `game_count()` call.
+    pub game_count_calls: Option<Arc<AtomicUsize>>,
 }
 
 impl MockDisputeGameFactory {
@@ -178,6 +184,7 @@ impl MockDisputeGameFactory {
             game_count_override: None,
             uuid_games: HashMap::new(),
             games_should_fail: false,
+            game_count_calls: None,
         }
     }
 }
@@ -185,6 +192,9 @@ impl MockDisputeGameFactory {
 #[async_trait]
 impl DisputeGameFactoryClient for MockDisputeGameFactory {
     async fn game_count(&self) -> Result<u64, ContractError> {
+        if let Some(calls) = &self.game_count_calls {
+            calls.fetch_add(1, Ordering::SeqCst);
+        }
         Ok(self.game_count_override.unwrap_or(self.games.len() as u64))
     }
     async fn game_at_index(&self, index: u64) -> Result<GameAtIndex, ContractError> {

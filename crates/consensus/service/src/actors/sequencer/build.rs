@@ -66,9 +66,8 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
     /// Starts building the next L2 block on top of an explicit `parent`, returning a handle to
     /// the in-flight payload.
     ///
-    /// Unlike [`Self::build`], this bypasses the watch channel and uses the provided
-    /// `parent` directly. Call this when the correct parent is already known (e.g., the
-    /// block just sealed) to avoid racing against the engine's internal state update.
+    /// Use this when the caller already knows the correct parent, such as after an acknowledged
+    /// local insert. That avoids racing the unsafe-head watch channel publication path.
     ///
     /// Returns `Ok(None)` for temporary or reset conditions that should be retried on the
     /// next tick.

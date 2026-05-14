@@ -4,7 +4,7 @@ Minimal scaffolding for the unified Base node binary.
 
 The current implementation only does four things:
 
-- parses the public `base` CLI surface for `--chain` and `node rpc`
+- parses the public `base` CLI surface for `--chain` and `rpc`
 - initializes workspace-standard logging
 - initializes the Prometheus recorder when metrics are enabled
 - logs `Hello, I'm running this chain` with the resolved chain config
@@ -12,12 +12,12 @@ The current implementation only does four things:
 Supported CLI forms:
 
 ```text
-base node rpc
-base --chain sepolia node rpc
-base -c sepolia node rpc
-base --chain zeronet node rpc
-base --chain ./chain.toml node rpc
-base -c ./chain.toml node rpc
+base rpc
+base --chain sepolia rpc
+base -c sepolia rpc
+base --chain zeronet rpc
+base --chain ./chain.toml rpc
+base -c ./chain.toml rpc
 ```
 
 Chain selection currently supports:

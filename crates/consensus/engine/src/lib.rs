@@ -15,8 +15,8 @@ pub use task_queue::{
     DelegatedForkchoiceTask, DelegatedForkchoiceTaskError, DelegatedForkchoiceUpdate, Engine,
     EngineBuildError, EngineResetError, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
     EngineTaskErrors, EngineTaskExt, FinalizeTask, FinalizeTaskError, GetPayloadTask,
-    InsertPayloadSafety, InsertTask, InsertTaskError, SealTask, SealTaskError, SynchronizeTask,
-    SynchronizeTaskError,
+    InsertPayloadSafety, InsertTask, InsertTaskError, InsertTaskResult, SealTask, SealTaskError,
+    SynchronizeTask, SynchronizeTaskError,
 };
 
 mod attributes;

@@ -18,7 +18,7 @@ mod recovery;
 pub use recovery::RecoveryModeGuard;
 
 mod seal;
-pub use seal::{PayloadSealer, SealState, SealStepError};
+pub use seal::{PayloadSealer, SealState, SealStepError, SealStepOutcome};
 
 mod ticker;
 pub use ticker::ScheduledTicker;

@@ -10,9 +10,9 @@ mod engine;
 pub use engine::MockEngineDerivationClient;
 pub use engine::{
     BootstrapRole, BuildRequest, EngineActor, EngineActorRequest, EngineClientError,
-    EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessingRequest,
-    EngineProcessor, EngineProcessorOptions, EngineRequestReceiver, EngineRpcProcessor,
-    EngineRpcRequest, GetPayloadRequest, QueuedEngineDerivationClient, ResetRequest, SealRequest,
+    EngineClientResult, EngineConfig, EngineDerivationClient, EngineError, EngineProcessor,
+    EngineProcessorOptions, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient, ResetRequest,
 };
 
 mod rpc;
@@ -51,8 +51,9 @@ pub use sequencer::{
     Conductor, ConductorClient, ConductorError, DelayedL1OriginSelectorProvider, L1OriginSelector,
     L1OriginSelectorError, L1OriginSelectorProvider, OriginSelector, PayloadBuilder, PayloadSealer,
     PendingStopSender, PoolActivation, QueuedSequencerEngineClient, RecoveryModeGuard,
-    ScheduledTicker, SealState, SealStepError, SequencerActor, SequencerActorError,
-    SequencerAdminQuery, SequencerConfig, SequencerEngineClient, UnsealedPayloadHandle,
+    ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig, SequencerEngineClient,
+    UnsealedPayloadHandle,
 };
 #[cfg(test)]
 pub use sequencer::{MockConductor, MockOriginSelector, MockSequencerEngineClient};

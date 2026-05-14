@@ -30,6 +30,9 @@ sol! {
         /// unrespected, blacklisted, retired, or resolved as `CHALLENGER_WINS`.
         error InvalidParentGame();
 
+        /// Error bubbled from `TEEVerifier` when a proof signer is not registered.
+        error InvalidSigner(address signer);
+
         /// Returns the root claim (output root) of this game.
         function rootClaim() external pure returns (bytes32);
 
@@ -304,6 +307,11 @@ pub const fn l1_origin_too_old_selector() -> [u8; 4] {
 /// The 4-byte selector for `InvalidParentGame()`.
 pub const fn invalid_parent_game_selector() -> [u8; 4] {
     IAggregateVerifier::InvalidParentGame::SELECTOR
+}
+
+/// The 4-byte selector for `TEEVerifier.InvalidSigner(address)`.
+pub const fn invalid_signer_selector() -> [u8; 4] {
+    IAggregateVerifier::InvalidSigner::SELECTOR
 }
 
 /// Concrete implementation backed by Alloy's sol-generated contract bindings.
@@ -861,6 +869,15 @@ mod tests {
         assert_eq!(selector.len(), 4);
         assert_ne!(selector, [0u8; 4]);
         assert_ne!(selector, l1_origin_too_old_selector());
+    }
+
+    #[test]
+    fn test_invalid_signer_selector() {
+        let selector = invalid_signer_selector();
+        assert_eq!(selector.len(), 4);
+        assert_ne!(selector, [0u8; 4]);
+        assert_ne!(selector, l1_origin_too_old_selector());
+        assert_ne!(selector, invalid_parent_game_selector());
     }
 
     #[test]
