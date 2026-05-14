@@ -1,4 +1,4 @@
-//! Contains error types for the [`crate::FinalizeTask`].
+//! Error types for [`crate::Engine::finalize`].
 
 use alloy_transport::{RpcError, TransportErrorKind};
 use base_protocol::FromBlockError;
@@ -8,7 +8,7 @@ use crate::{
     EngineTaskError, SynchronizeTaskError, task_queue::tasks::task::EngineTaskErrorSeverity,
 };
 
-/// An error that occurs when running the [`crate::FinalizeTask`].
+/// An error that occurs when running [`crate::Engine::finalize`].
 #[derive(Debug, Error)]
 pub enum FinalizeTaskError {
     /// The block is not safe, and therefore cannot be finalized.

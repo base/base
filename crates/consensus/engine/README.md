@@ -6,38 +6,29 @@ An extensible implementation of the [Base][base-specs] rollup node engine client
 
 ## Overview
 
-The `base-consensus-engine` crate provides an engine client for interacting with Ethereum execution layers. It implements the Engine API specification and manages execution layer state through direct engine methods and a small priority queue for remaining derived-state operations.
+The `base-consensus-engine` crate provides an engine client for interacting with Ethereum execution layers. It implements the Engine API specification and manages execution layer state through direct engine methods.
 
 ## Key Components
 
 - **[`Engine`](crate::Engine)** - Main engine state owner that executes engine operations atomically
 - **[`EngineClient`](crate::EngineClient)** - HTTP client for Engine API communication with JWT authentication
 - **[`EngineState`](crate::EngineState)** - Tracks the current state of the execution layer
-- **Task Types** - Specialized tasks for remaining queued engine operations:
-  - [`DelegatedForkchoiceTask`](crate::DelegatedForkchoiceTask) - Apply delegated safe and finalized labels
-  - [`FinalizeTask`](crate::FinalizeTask) - Finalize safe payloads on L1 confirmation
-  - [`SynchronizeTask`](crate::SynchronizeTask) - Internal task for execution layer forkchoice synchronization
+- **[`SynchronizeTask`](crate::SynchronizeTask)** - Internal helper for execution layer forkchoice synchronization
 
 ## Architecture
 
-The engine owns state directly. Sequencer build, get-payload, insert, and safe-head consolidation operations call `Engine` methods directly, while the remaining delegated forkchoice and finalize operations are still queued and executed atomically:
+The engine owns state directly. Engine actor request paths call `Engine` methods directly, keeping state mutation serialized through one mutable owner:
 
 ```text
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│   Engine    │◄───┤  Task Queue  │◄───┤  Engine     │
-│   Client    │    │   (Priority) │    │  Tasks      │
-└─────────────┘    └──────────────┘    └─────────────┘
-       │                   │                   │
-       ▼                   ▼                   ▼
-┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│ Engine API  │    │ Engine State │    │  Rollup     │
-│ (HTTP/JWT)  │    │   Updates    │    │  Config     │
-└─────────────┘    └──────────────┘    └─────────────┘
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ EngineActor │───▶│   Engine    │───▶│ Engine API  │
+│  Requests   │    │   State     │    │ (HTTP/JWT)  │
+└─────────────┘    └─────────────┘    └─────────────┘
 ```
 
 - **Automatic Forkchoice Handling**: [`Engine::build`](crate::Engine::build) automatically performs forkchoice updates during block building, eliminating the need for explicit forkchoice management in user code.
 - **Internal Synchronization**: [`SynchronizeTask`](crate::SynchronizeTask) handles internal execution layer synchronization and is primarily used by direct engine methods and other tasks rather than directly by users.
-- **Priority-Based Execution**: Tasks are executed in priority order to ensure optimal sequencer performance and block processing efficiency.
+- **Serialized Execution**: The engine actor owns one mutable [`Engine`](crate::Engine), so each request updates execution-layer state before the next request is processed.
 
 ## Engine API Compatibility
 
@@ -55,7 +46,7 @@ Version selection follows Base hardfork activation times (Bedrock, Canyon, Delta
 
 ## Module Organization
 
-- **Task Queue** - Remaining queued execution logic via [`Engine`](crate::Engine)
+- **Task Queue** - Engine state owner and operation logic via [`Engine`](crate::Engine)
 - **Client** - HTTP client for Engine API communication via [`EngineClient`](crate::EngineClient)
 - **State** - Engine state management and synchronization via [`EngineState`](crate::EngineState)
 - **Versions** - Engine API version selection via [`EngineForkchoiceVersion`](crate::EngineForkchoiceVersion),

@@ -1,10 +1,7 @@
-//! Task and its associated types for finalizing an L2 block.
-
-mod task;
-pub use task::FinalizeTask;
+//! Error types for finalizing an L2 block.
 
 mod error;
 pub use error::FinalizeTaskError;
 
 #[cfg(test)]
-mod task_test;
+mod direct_test;

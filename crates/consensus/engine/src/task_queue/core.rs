@@ -1,6 +1,6 @@
-//! The [`Engine`] owns execution-layer state and drains queued [`EngineTask`]s.
+//! The [`Engine`] owns execution-layer state and executes engine operations serially.
 
-use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
+use std::{marker::PhantomData, sync::Arc, time::Instant};
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_rpc_types_engine::{
@@ -14,32 +14,28 @@ use base_common_rpc_types_engine::{
 };
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
-use tokio::sync::watch::Sender;
+use tokio::{sync::watch::Sender, task::yield_now};
 
 use super::{EngineTaskExt, build_and_seal};
 use crate::{
-    BuildTaskError, ConsolidateInput, ConsolidateTaskError, EngineBuildError, EngineClient,
-    EngineForkchoiceVersion, EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate,
-    EngineTask, EngineTaskError, EngineTaskErrorSeverity, InsertPayloadSafety, InsertTaskError,
+    BuildTaskError, ConsolidateInput, ConsolidateTaskError, DelegatedForkchoiceTaskError,
+    DelegatedForkchoiceUpdate, EngineBuildError, EngineClient, EngineForkchoiceVersion,
+    EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate, EngineTaskError,
+    EngineTaskErrorSeverity, FinalizeTaskError, InsertPayloadSafety, InsertTaskError,
     InsertTaskResult, Metrics, SealTaskError, SyncStartError, SynchronizeTask,
     SynchronizeTaskError, find_starting_forkchoice, task_queue::EngineTaskErrors,
 };
 
-/// The [`Engine`] task queue.
+/// The [`Engine`] state owner.
 ///
-/// Tasks of a shared [`EngineTask`] variant are processed in FIFO order, providing synchronization
-/// guarantees for the L2 execution layer and other actors. A priority queue, ordered by
-/// [`EngineTask`]'s [`Ord`] implementation, is used to prioritize tasks executed by the
-/// [`Engine::drain`] method.
+/// The engine actor owns one [`Engine`] and calls direct methods for each request, providing
+/// synchronization guarantees for the L2 execution layer and other actors.
 ///
-///  Because tasks are executed one at a time, they are considered to be atomic operations over the
-/// [`EngineState`], and are given exclusive access to the engine state during execution.
+/// Because operations are executed one at a time, they are considered to be atomic operations over
+/// the [`EngineState`], and are given exclusive access to the engine state during execution.
 ///
-/// Tasks within the queue are also considered fallible. If they fail with a temporary error,
-/// they are not popped from the queue, the error is returned, and they are retried on the
-/// next call to [`Engine::drain`]. Tasks that fail with a [`EngineTaskErrorSeverity::Flush`]
-/// error are popped from the queue before the error is returned, so that the derivation
-/// pipeline can be flushed without the offending task being retried in-place.
+/// Legacy queue length subscriptions remain for RPC compatibility and always report zero because
+/// engine operations now execute directly.
 #[derive(Debug)]
 pub struct Engine<EngineClient_: EngineClient> {
     /// The state of the engine.
@@ -48,10 +44,8 @@ pub struct Engine<EngineClient_: EngineClient> {
     state_sender: Sender<EngineState>,
     /// A sender that can be used to notify the engine actor of task queue length changes.
     task_queue_length: Sender<usize>,
-    /// The task queue.
-    tasks: BinaryHeap<(EngineTask<EngineClient_>, Reverse<u64>)>,
-    /// Monotonic sequence number used to preserve FIFO order within equal-priority tasks.
-    next_task_sequence: u64,
+    /// Associates this engine with its execution client type.
+    _client: PhantomData<EngineClient_>,
 }
 
 impl<EngineClient_: EngineClient> Engine<EngineClient_> {
@@ -61,13 +55,8 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         state_sender: Sender<EngineState>,
         task_queue_length: Sender<usize>,
     ) -> Self {
-        Self {
-            state: initial_state,
-            state_sender,
-            task_queue_length,
-            tasks: BinaryHeap::default(),
-            next_task_sequence: 0,
-        }
+        task_queue_length.send_replace(0);
+        Self { state: initial_state, state_sender, task_queue_length, _client: PhantomData }
     }
 
     /// Returns a reference to the inner [`EngineState`].
@@ -700,6 +689,212 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         Self::reconcile_unsafe_to_safe(state, client, config, &input).await
     }
 
+    /// Applies delegated safe and finalized labels directly against the execution layer.
+    pub async fn delegated_forkchoice(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        update: DelegatedForkchoiceUpdate,
+    ) -> Result<(), DelegatedForkchoiceTaskError> {
+        let _task_timer = base_metrics::timed!(Metrics::engine_task_duration(
+            Metrics::DELEGATED_FORKCHOICE_TASK_LABEL
+        ));
+
+        loop {
+            match Self::delegated_forkchoice_with_state(
+                &mut self.state,
+                Arc::clone(&client),
+                Arc::clone(&config),
+                update,
+            )
+            .await
+            {
+                Ok(()) => {
+                    self.state_sender.send_replace(self.state);
+                    Metrics::engine_task_count(Metrics::DELEGATED_FORKCHOICE_TASK_LABEL)
+                        .increment(1);
+                    return Ok(());
+                }
+                Err(err) => {
+                    let severity = err.severity();
+                    Metrics::engine_task_failure(
+                        Metrics::DELEGATED_FORKCHOICE_TASK_LABEL,
+                        severity.as_label(),
+                    )
+                    .increment(1);
+
+                    match severity {
+                        EngineTaskErrorSeverity::Temporary => {
+                            trace!(target: "engine", error = %err, "Temporary engine error");
+                            yield_now().await;
+                        }
+                        EngineTaskErrorSeverity::Critical => {
+                            error!(target: "engine", error = %err, "Critical engine error");
+                            return Err(err);
+                        }
+                        EngineTaskErrorSeverity::Reset => {
+                            warn!(target: "engine", "Engine requested derivation reset");
+                            return Err(err);
+                        }
+                        EngineTaskErrorSeverity::Flush => {
+                            warn!(target: "engine", "Engine requested derivation flush");
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Applies delegated safe and finalized labels using the provided engine state.
+    pub async fn delegated_forkchoice_with_state(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        update: DelegatedForkchoiceUpdate,
+    ) -> Result<(), DelegatedForkchoiceTaskError> {
+        Self::consolidate_with_state(
+            state,
+            Arc::clone(&client),
+            Arc::clone(&config),
+            ConsolidateInput::BlockInfo(update.safe_l2),
+        )
+        .await?;
+
+        let actual_safe = state.sync_state.safe_head().block_info.number;
+        let Some(remote_finalized) = update.finalized_l2_number else { return Ok(()) };
+
+        let finalized_target = remote_finalized.min(actual_safe);
+        let current_finalized = state.sync_state.finalized_head().block_info.number;
+        if finalized_target <= current_finalized {
+            debug!(
+                target: "engine",
+                actual_safe,
+                current_finalized,
+                finalized_target,
+                "Skipping delegated finalized update"
+            );
+            return Ok(());
+        }
+
+        Self::finalize_with_state(state, client, config, finalized_target).await?;
+
+        Ok(())
+    }
+
+    /// Finalizes an L2 block directly against the execution layer.
+    pub async fn finalize(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        block_number: u64,
+    ) -> Result<(), FinalizeTaskError> {
+        let _task_timer =
+            base_metrics::timed!(Metrics::engine_task_duration(Metrics::FINALIZE_TASK_LABEL));
+
+        loop {
+            match Self::finalize_with_state(
+                &mut self.state,
+                Arc::clone(&client),
+                Arc::clone(&config),
+                block_number,
+            )
+            .await
+            {
+                Ok(()) => {
+                    self.state_sender.send_replace(self.state);
+                    Metrics::engine_task_count(Metrics::FINALIZE_TASK_LABEL).increment(1);
+                    return Ok(());
+                }
+                Err(err) => {
+                    let severity = err.severity();
+                    Metrics::engine_task_failure(Metrics::FINALIZE_TASK_LABEL, severity.as_label())
+                        .increment(1);
+
+                    match severity {
+                        EngineTaskErrorSeverity::Temporary => {
+                            trace!(target: "engine", error = %err, "Temporary engine error");
+                            yield_now().await;
+                        }
+                        EngineTaskErrorSeverity::Critical => {
+                            error!(target: "engine", error = %err, "Critical engine error");
+                            return Err(err);
+                        }
+                        EngineTaskErrorSeverity::Reset => {
+                            warn!(target: "engine", "Engine requested derivation reset");
+                            return Err(err);
+                        }
+                        EngineTaskErrorSeverity::Flush => {
+                            warn!(target: "engine", "Engine requested derivation flush");
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Finalizes an L2 block using the provided engine state.
+    pub async fn finalize_with_state(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        block_number: u64,
+    ) -> Result<(), FinalizeTaskError> {
+        let current_finalized = state.sync_state.finalized_head().block_info.number;
+        if block_number < current_finalized {
+            debug!(
+                target: "engine",
+                block_number,
+                current_finalized,
+                "Skipping stale finalized update"
+            );
+            return Ok(());
+        }
+
+        if state.sync_state.safe_head().block_info.number < block_number {
+            return Err(FinalizeTaskError::BlockNotSafe);
+        }
+
+        let block_fetch_start = Instant::now();
+        let block = client
+            .get_l2_block(block_number.into())
+            .full()
+            .await
+            .map_err(FinalizeTaskError::TransportError)?
+            .ok_or(FinalizeTaskError::BlockNotFound(block_number))?
+            .into_consensus();
+        let block_info = L2BlockInfo::from_block_and_genesis(
+            &block.map_transactions(|tx| tx.inner.inner.into_inner()),
+            &client.cfg().genesis,
+        )
+        .map_err(FinalizeTaskError::FromBlock)?;
+        let block_fetch_duration = block_fetch_start.elapsed();
+
+        let fcu_start = Instant::now();
+        SynchronizeTask::new(
+            client,
+            config,
+            EngineSyncStateUpdate { finalized_head: Some(block_info), ..Default::default() },
+        )
+        .execute(state)
+        .await?;
+        let fcu_duration = fcu_start.elapsed();
+        let total_duration = block_fetch_start.elapsed();
+        Metrics::engine_finalize_duration_seconds().record(total_duration.as_secs_f64());
+
+        info!(
+            target: "engine",
+            hash = %block_info.block_info.hash,
+            number = block_info.block_info.number,
+            ?block_fetch_duration,
+            ?fcu_duration,
+            "Updated finalized head"
+        );
+
+        Ok(())
+    }
+
     /// Validates a forkchoice update status returned while starting a build.
     pub fn validate_forkchoice_status(status: PayloadStatusEnum) -> Result<(), BuildTaskError> {
         match status {
@@ -865,20 +1060,9 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         Ok(payload_envelope)
     }
 
-    /// Enqueues a new [`EngineTask`] for execution.
-    /// Updates the queue length and notifies listeners of the change.
-    pub fn enqueue(&mut self, task: EngineTask<EngineClient_>) {
-        let sequence = self.next_task_sequence;
-        self.next_task_sequence =
-            self.next_task_sequence.checked_add(1).expect("engine task sequence overflow");
-        self.tasks.push((task, Reverse(sequence)));
-        self.task_queue_length.send_replace(self.tasks.len());
-        Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
-    }
-
     /// Resets the engine by finding a plausible sync starting point via
     /// [`find_starting_forkchoice`]. The state will be updated to the starting point, and a
-    /// forkchoice update will be enqueued in order to reorg the execution layer.
+    /// forkchoice update will be sent directly in order to reorg the execution layer.
     pub async fn reset(
         &mut self,
         client: Arc<EngineClient_>,
@@ -965,47 +1149,15 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         Ok(self.state.el_sync_finished)
     }
 
-    /// Clears the task queue.
+    /// Clears the legacy task queue signal.
     pub fn clear(&mut self) {
-        self.tasks.clear();
-        self.next_task_sequence = 0;
         self.task_queue_length.send_replace(0);
         Metrics::engine_task_queue_depth().set(0.0);
     }
 
-    /// Attempts to drain the queue by executing all [`EngineTask`]s in-order. If any task returns
-    /// an error along the way, it is not popped from the queue (in case it must be retried) and
-    /// the error is returned.
-    ///
-    /// Exception: tasks that fail with [`EngineTaskErrorSeverity::Flush`] are popped from the
-    /// queue before the error is returned. The poisoned task must not be retried in-place — the
-    /// engine processor will signal the derivation pipeline to flush its buffered batch/channel
-    /// state and the next call to [`Engine::drain`] will proceed with the remaining tasks. Any
-    /// [`EngineState`] mutations the task made before failing are published to subscribers prior
-    /// to popping, mirroring the success path so watch consumers (e.g. the RPC state view) stay
-    /// in sync.
+    /// Drains any pending direct-engine work.
     pub async fn drain(&mut self) -> Result<(), EngineTaskErrors> {
-        // Drain tasks in order of priority, halting on errors for a retry to be attempted.
-        while let Some((task, _)) = self.tasks.peek() {
-            // Execute the task.
-            let outcome = match task.execute(&mut self.state).await {
-                Ok(()) => Ok(()),
-                Err(err) if err.severity() == EngineTaskErrorSeverity::Flush => Err(err),
-                Err(err) => return Err(err),
-            };
-
-            // Update the state and notify the engine actor.
-            self.state_sender.send_replace(self.state);
-
-            // Pop the task from the queue now that it's been executed.
-            self.tasks.pop();
-
-            self.task_queue_length.send_replace(self.tasks.len());
-            Metrics::engine_task_queue_depth().set(self.tasks.len() as f64);
-
-            outcome?;
-        }
-
+        self.clear();
         Ok(())
     }
 }
@@ -1041,8 +1193,8 @@ mod tests {
     use tokio::sync::watch;
 
     use crate::{
-        Engine, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-        EngineTaskErrorSeverity, InsertPayloadSafety, SealTask, SealTaskError,
+        Engine, EngineState, EngineSyncStateUpdate, EngineTaskError, EngineTaskErrorSeverity,
+        InsertPayloadSafety, SealTaskError,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
@@ -1079,79 +1231,6 @@ mod tests {
             },
             payload_id: None,
         }
-    }
-
-    fn test_engine() -> Engine<crate::test_utils::MockEngineClient> {
-        let (state_tx, _) = watch::channel(EngineState::default());
-        let (queue_tx, _) = watch::channel(0usize);
-        Engine::new(EngineState::default(), state_tx, queue_tx)
-    }
-
-    #[test]
-    fn equal_priority_seal_tasks_are_fifo() {
-        let client = Arc::new(test_engine_client_builder().build());
-        let cfg = Arc::new(RollupConfig::default());
-        let attributes = TestAttributesBuilder::new().build();
-        let mut engine = test_engine();
-        let first_payload_id = PayloadId::new([1; 8]);
-        let second_payload_id = PayloadId::new([2; 8]);
-
-        engine.enqueue(EngineTask::Seal(Box::new(SealTask::new(
-            Arc::clone(&client),
-            Arc::clone(&cfg),
-            first_payload_id,
-            attributes.clone(),
-            InsertPayloadSafety::Unsafe,
-            None,
-        ))));
-        engine.enqueue(EngineTask::Seal(Box::new(SealTask::new(
-            Arc::clone(&client),
-            Arc::clone(&cfg),
-            second_payload_id,
-            attributes,
-            InsertPayloadSafety::Unsafe,
-            None,
-        ))));
-
-        let (first, _) = engine.tasks.pop().expect("first task should be queued");
-        let (second, _) = engine.tasks.pop().expect("second task should be queued");
-
-        match first {
-            EngineTask::Seal(task) => {
-                assert_eq!(task.payload_id, first_payload_id);
-            }
-            other => panic!("expected first seal task, got {other:?}"),
-        }
-
-        match second {
-            EngineTask::Seal(task) => {
-                assert_eq!(task.payload_id, second_payload_id);
-            }
-            other => panic!("expected second seal task, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn clear_publishes_zero_queue_length() {
-        let (state_tx, _) = watch::channel(EngineState::default());
-        let (queue_tx, queue_rx) = watch::channel(0usize);
-        let client = Arc::new(test_engine_client_builder().build());
-        let cfg = Arc::new(RollupConfig::default());
-        let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
-
-        engine.enqueue(EngineTask::Seal(Box::new(SealTask::new(
-            client,
-            cfg,
-            PayloadId::new([1; 8]),
-            TestAttributesBuilder::new().build(),
-            InsertPayloadSafety::Unsafe,
-            None,
-        ))));
-        assert_eq!(*queue_rx.borrow(), 1);
-
-        engine.clear();
-
-        assert_eq!(*queue_rx.borrow(), 0);
     }
 
     fn valid_fcu_with_payload(payload_id: PayloadId) -> ForkchoiceUpdated {
@@ -1526,7 +1605,6 @@ mod tests {
             .await
             .expect_err("invalid FCU must fail build");
         assert_eq!(err.severity(), EngineTaskErrorSeverity::Flush);
-        assert_eq!(engine.tasks.len(), 0, "direct build must not enqueue poisoned work");
         assert_eq!(*queue_rx.borrow(), 0, "queue length watch must remain unchanged");
     }
 }
