@@ -19,7 +19,7 @@ mod scanner;
 pub use scanner::{ClassifyError, GameDiscovery, GameInfo, GameSituation};
 
 mod submit;
-pub use submit::{DisputeAction, DisputeRequest};
+pub use submit::{DisputeAction, DisputeRequest, SubmissionTask};
 
 mod prove;
 pub use prove::{ProofError, TeeProofError, TeeProofProvider, TeeProofResult};

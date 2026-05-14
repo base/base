@@ -5,13 +5,15 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
-use alloy_consensus::Header as ConsensusHeader;
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_consensus::{
+    Eip658Value, Header as ConsensusHeader, Receipt, ReceiptEnvelope, ReceiptWithBloom,
+};
+use alloy_primitives::{Address, B256, Bloom, Bytes, U256, keccak256};
 use alloy_rlp::Encodable;
-use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader};
+use alloy_rpc_types_eth::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
 use alloy_trie::{HashBuilder, Nibbles, TrieAccount, proof::ProofRetainer};
 use async_trait::async_trait;
 use base_common_consensus::Predeploys;
@@ -21,6 +23,7 @@ use base_proof_contracts::{
     GameInfo as VerifierGameInfo, GameStatus,
 };
 use base_proof_rpc::{BaseBlock, L2Provider, RpcError, RpcResult};
+use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
 use base_zk_client::{
     GetProofRequest, GetProofResponse, ProofJobStatus, ProveBlockRequest, ProveBlockResponse,
     ZkProofError, ZkProofProvider,
@@ -699,5 +702,102 @@ impl TeeProofProvider for MockTeeProofProvider {
             .expect("responses lock poisoned")
             .pop_front()
             .expect("MockTeeProofProvider: prove_range called without an enqueued response")
+    }
+}
+
+/// Builds a minimal [`TransactionReceipt`] with the given execution
+/// status and transaction hash. Used by [`MockTxManager`] to feed
+/// success/revert receipts to a [`crate::SubmissionTask`] under test.
+pub const fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
+    let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
+        receipt: Receipt {
+            status: Eip658Value::Eip658(success),
+            cumulative_gas_used: 21_000,
+            logs: Vec::new(),
+        },
+        logs_bloom: Bloom::ZERO,
+    });
+    TransactionReceipt {
+        inner,
+        transaction_hash: tx_hash,
+        transaction_index: Some(0),
+        block_hash: Some(B256::ZERO),
+        block_number: Some(1),
+        gas_used: 21_000,
+        effective_gas_price: 1_000_000_000,
+        blob_gas_used: None,
+        blob_gas_price: None,
+        from: Address::ZERO,
+        to: Some(Address::ZERO),
+        contract_address: None,
+    }
+}
+
+/// Mock [`TxManager`] backed by a FIFO response queue.
+///
+/// Cheaply [`Clone`]d so a test can keep one handle to inspect calls
+/// while another is moved into a spawned [`crate::SubmissionTask`];
+/// both views share the same internal state through an [`Arc`].
+#[derive(Debug, Clone)]
+pub struct MockTxManager {
+    state: Arc<MockTxManagerState>,
+    sender_address: Address,
+}
+
+#[derive(Debug, Default)]
+struct MockTxManagerState {
+    responses: Mutex<VecDeque<SendResponse>>,
+    calls: Mutex<Vec<TxCandidate>>,
+}
+
+impl MockTxManager {
+    /// Creates a new mock that reports `sender_address` as its sender.
+    pub fn new(sender_address: Address) -> Self {
+        Self { state: Arc::new(MockTxManagerState::default()), sender_address }
+    }
+
+    /// Enqueues a successful receipt with `success == true`.
+    pub fn push_success(&self, tx_hash: B256) {
+        self.push_response(Ok(receipt_with_status(true, tx_hash)));
+    }
+
+    /// Enqueues a confirmed receipt that reverted on-chain
+    /// (`success == false`).
+    pub fn push_revert(&self, tx_hash: B256) {
+        self.push_response(Ok(receipt_with_status(false, tx_hash)));
+    }
+
+    /// Enqueues an error response (`send` returns `Err(error)`).
+    pub fn push_error(&self, error: base_tx_manager::TxManagerError) {
+        self.push_response(Err(error));
+    }
+
+    /// Snapshot of every [`TxCandidate`] passed to `send` so far.
+    pub fn calls(&self) -> Vec<TxCandidate> {
+        self.state.calls.lock().expect("calls lock poisoned").clone()
+    }
+
+    fn push_response(&self, response: SendResponse) {
+        self.state.responses.lock().expect("responses lock poisoned").push_back(response);
+    }
+}
+
+impl TxManager for MockTxManager {
+    async fn send(&self, candidate: TxCandidate) -> SendResponse {
+        self.state.calls.lock().expect("calls lock poisoned").push(candidate);
+        self.state
+            .responses
+            .lock()
+            .expect("responses lock poisoned")
+            .pop_front()
+            .expect("MockTxManager: send called without an enqueued response")
+    }
+
+    async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
+        unimplemented!("send_async is not exercised by SubmissionTask tests")
+    }
+
+    fn sender_address(&self) -> Address {
+        self.sender_address
     }
 }
