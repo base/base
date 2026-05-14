@@ -1,6 +1,7 @@
 //! RPC trait definitions and implementations for flashblocks.
 
 mod eth;
+mod log_filter_limit;
 mod pubsub;
 mod types;
 
