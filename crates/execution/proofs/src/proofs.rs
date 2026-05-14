@@ -63,8 +63,12 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                     {
                         Ok(rocksdb) => rocksdb,
                         Err(e) => {
-                            error!(target: "reth::cli", error = ?e, "Failed to create RocksdbProofsStorage, continuing without proofs history");
-                            return hooks;
+                            error!(
+                                target: "reth::cli",
+                                error = ?e,
+                                "Failed to create RocksdbProofsStorage"
+                            );
+                            return hooks.add_node_started_hook(move |_| Err(e));
                         }
                     };
                     hooks = install_proofs_history(
@@ -81,8 +85,12 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                     {
                         Ok(mdbx) => mdbx,
                         Err(e) => {
-                            error!(target: "reth::cli", error = ?e, "Failed to create MdbxProofsStorage, continuing without proofs history");
-                            return hooks;
+                            error!(
+                                target: "reth::cli",
+                                error = ?e,
+                                "Failed to create MdbxProofsStorage"
+                            );
+                            return hooks.add_node_started_hook(move |_| Err(e));
                         }
                     };
                     hooks = install_proofs_history(
