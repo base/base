@@ -11,8 +11,7 @@ use base_node_core::args::ProofsHistoryDbBackend;
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
-use reth_node_core::primitives::AlloyBlockHeader as _;
-use reth_node_core::version::version_metadata;
+use reth_node_core::{primitives::AlloyBlockHeader as _, version::version_metadata};
 use reth_provider::{BlockReader, TransactionVariant};
 use tracing::{info, warn};
 
