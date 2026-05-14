@@ -2,9 +2,29 @@
 
 //! clap [Args](clap::Args) for Base rollup configuration
 
-use std::{path::PathBuf, time::Duration};
+use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
 
 use clap::{ValueEnum, builder::ArgPredicate};
+use tokio::sync::Semaphore;
+
+/// Default maximum concurrent `eth_getProof` requests served by the Base proofs override.
+pub const DEFAULT_PROOFS_GET_PROOF_PERMITS: NonZeroUsize =
+    NonZeroUsize::new(32).expect("default getProof permits must be non-zero");
+
+/// Parser for the `eth_getProof` concurrency-limit CLI flag.
+#[derive(Debug)]
+pub struct GetProofPermitsParser;
+
+impl GetProofPermitsParser {
+    /// Parses a positive permit count and rejects values that exceed [`Semaphore::MAX_PERMITS`].
+    pub fn parse(value: &str) -> Result<NonZeroUsize, String> {
+        let permits = value.parse::<NonZeroUsize>().map_err(|err| err.to_string())?;
+        if permits.get() > Semaphore::MAX_PERMITS {
+            return Err(format!("value must be less than or equal to {}", Semaphore::MAX_PERMITS));
+        }
+        Ok(permits)
+    }
+}
 
 /// Transaction ordering strategy for the mempool.
 ///
@@ -134,6 +154,18 @@ pub struct RollupArgs {
     )]
     pub proofs_history_verification_interval: u64,
 
+    /// Maximum concurrent `eth_getProof` requests served by the Base proofs override.
+    /// Start at 32 and watch `base_rpc.eth_api_ext.get_proof_semaphore_wait_duration` before
+    /// raising; scale up only after the shared-MDBX-read-tx proof path is deployed and MDBX lock
+    /// contention is healthy.
+    #[arg(
+        long = "proofs.get-proof-permits",
+        value_name = "PROOFS_GET_PROOF_PERMITS",
+        default_value_t = DEFAULT_PROOFS_GET_PROOF_PERMITS,
+        value_parser = GetProofPermitsParser::parse
+    )]
+    pub proofs_get_proof_permits: NonZeroUsize,
+
     /// Enable the Base discv5 protocol identity.
     ///
     /// When enabled, the node advertises itself with the `basev0` protocol ID in discv5,
@@ -158,6 +190,7 @@ impl Default for RollupArgs {
             proofs_history_window: 1_296_000,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
+            proofs_get_proof_permits: DEFAULT_PROOFS_GET_PROOF_PERMITS,
             base_protocol: true,
         }
     }
@@ -295,5 +328,50 @@ mod tests {
         ])
         .args;
         assert!(!args.base_protocol);
+    }
+
+    #[test]
+    fn test_parse_proofs_get_proof_permits_default() {
+        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
+        assert_eq!(args.proofs_get_proof_permits, DEFAULT_PROOFS_GET_PROOF_PERMITS);
+    }
+
+    #[test]
+    fn test_parse_proofs_get_proof_permits() {
+        let expected_args = RollupArgs {
+            proofs_get_proof_permits: NonZeroUsize::new(64).expect("non-zero"),
+            ..Default::default()
+        };
+        let args =
+            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs.get-proof-permits", "64"])
+                .args;
+        assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn test_parse_proofs_get_proof_permits_rejects_zero() {
+        let err = match CommandParser::<RollupArgs>::try_parse_from([
+            "reth",
+            "--proofs.get-proof-permits",
+            "0",
+        ]) {
+            Ok(_) => panic!("zero permits should be rejected"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn test_parse_proofs_get_proof_permits_rejects_too_large() {
+        let oversized = (Semaphore::MAX_PERMITS + 1).to_string();
+        let err = match CommandParser::<RollupArgs>::try_parse_from([
+            "reth",
+            "--proofs.get-proof-permits",
+            oversized.as_str(),
+        ]) {
+            Ok(_) => panic!("oversized permits should be rejected"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 }

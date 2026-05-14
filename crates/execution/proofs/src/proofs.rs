@@ -40,6 +40,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
+        let proofs_get_proof_permits = args.proofs_get_proof_permits;
 
         if proofs_history_enabled {
             let path = args
@@ -81,7 +82,11 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         .run())
                 })
                 .add_rpc_module(move |ctx| {
-                    let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
+                    let api_ext = EthApiExt::new(
+                        ctx.registry.eth_api().clone(),
+                        storage.clone(),
+                        proofs_get_proof_permits,
+                    );
                     let debug_ext = DebugApiExt::new(
                         ctx.node().provider().clone(),
                         ctx.registry.eth_api().clone(),

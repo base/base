@@ -32,6 +32,7 @@ pub async fn launch_node_with_proof_history(
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
+        proofs_get_proof_permits,
         ..
     } = args;
 
@@ -72,7 +73,11 @@ pub async fn launch_node_with_proof_history(
                     .boxed())
             })
             .extend_rpc_modules(move |ctx| {
-                let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
+                let api_ext = EthApiExt::new(
+                    ctx.registry.eth_api().clone(),
+                    storage.clone(),
+                    proofs_get_proof_permits,
+                );
                 let debug_ext = DebugApiExt::new(
                     ctx.node().provider().clone(),
                     ctx.registry.eth_api().clone(),

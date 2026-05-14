@@ -1,6 +1,6 @@
 //! Historical proofs RPC server implementation.
 
-use std::time::Instant;
+use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
 use alloy_eips::BlockId;
 use alloy_primitives::Address;
@@ -13,6 +13,8 @@ use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::{ErrorCode, ErrorObject};
 use reth_provider::StateProofProvider;
 use reth_rpc_api::eth::helpers::FullEthApi;
+use reth_rpc_server_types::result::internal_rpc_err;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{metrics::EthApiExtMetrics, state::BaseStateProviderFactory};
 
@@ -51,10 +53,44 @@ pub trait EthApiOverride {
     ) -> RpcResult<EIP1186AccountProofResponse>;
 }
 
-#[derive(Debug)]
 /// Overrides applied to the `eth_` namespace of the RPC API for historical proofs `ExEx`.
+#[derive(Debug)]
 pub struct EthApiExt<Eth, P> {
     state_provider_factory: BaseStateProviderFactory<Eth, P>,
+    get_proof_semaphore: Arc<Semaphore>,
+}
+
+/// Holds one `eth_getProof` concurrency permit and records available permits on release.
+#[derive(Debug)]
+pub struct GetProofPermit {
+    semaphore: Arc<Semaphore>,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl GetProofPermit {
+    /// Acquires one `eth_getProof` concurrency permit and records wait/availability metrics.
+    pub async fn acquire(semaphore: Arc<Semaphore>) -> RpcResult<Self> {
+        let semaphore_wait_start = Instant::now();
+        let permit = Arc::clone(&semaphore)
+            .acquire_owned()
+            .await
+            .map_err(|err| internal_rpc_err(err.to_string()))?;
+
+        EthApiExtMetrics::get_proof_semaphore_wait_duration()
+            .record(semaphore_wait_start.elapsed().as_secs_f64());
+        EthApiExtMetrics::get_proof_semaphore_available_permits()
+            .set(semaphore.available_permits() as f64);
+
+        Ok(Self { semaphore, permit: Some(permit) })
+    }
+}
+
+impl Drop for GetProofPermit {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        EthApiExtMetrics::get_proof_semaphore_available_permits()
+            .set(self.semaphore.available_permits() as f64);
+    }
 }
 
 impl<Eth, P> EthApiExt<Eth, P>
@@ -64,8 +100,19 @@ where
     P: BaseProofsStore + Clone + 'static,
 {
     /// Creates a new instance of the `EthApiExt`.
-    pub const fn new(eth_api: Eth, preimage_store: BaseProofsStorage<P>) -> Self {
-        Self { state_provider_factory: BaseStateProviderFactory::new(eth_api, preimage_store) }
+    pub fn new(
+        eth_api: Eth,
+        preimage_store: BaseProofsStorage<P>,
+        max_concurrent: NonZeroUsize,
+    ) -> Self {
+        let max_concurrent = max_concurrent.get();
+        let get_proof_semaphore = Arc::new(Semaphore::new(max_concurrent));
+        EthApiExtMetrics::get_proof_semaphore_available_permits().set(max_concurrent as f64);
+
+        Self {
+            state_provider_factory: BaseStateProviderFactory::new(eth_api, preimage_store),
+            get_proof_semaphore,
+        }
     }
 }
 
@@ -88,9 +135,9 @@ where
         let start = Instant::now();
         EthApiExtMetrics::get_proof_requests().increment(1);
 
-        let storage_keys = keys.iter().map(|key| key.as_b256()).collect::<Vec<_>>();
-
         let result = async {
+            let _permit = GetProofPermit::acquire(Arc::clone(&self.get_proof_semaphore)).await?;
+            let storage_keys = keys.iter().map(|key| key.as_b256()).collect::<Vec<_>>();
             let proof = self
                 .state_provider_factory
                 .state_provider(block_number)
@@ -98,7 +145,6 @@ where
                 .map_err(Into::into)?
                 .proof(Default::default(), address, &storage_keys)
                 .map_err(Into::into)?;
-
             Ok(proof.into_eip1186_response(keys))
         }
         .await;
