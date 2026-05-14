@@ -176,14 +176,14 @@ impl Engine {
     }
 
     /// Inserts an external unsafe payload, retrying temporary failures.
-    pub async fn insert_unsafe_payload<EngineClient_: EngineClient>(
+    pub async fn insert_unsafe_payload<EngineClient_>(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
     ) -> InsertTaskResult
     where
-        EngineClient_: 'static,
+        EngineClient_: EngineClient + 'static,
     {
         self.insert_payload_with_retry_inner(
             client,
@@ -226,7 +226,7 @@ impl Engine {
     }
 
     /// Inserts a payload and retries temporary failures.
-    pub async fn insert_payload_with_retry<EngineClient_: EngineClient>(
+    pub async fn insert_payload_with_retry<EngineClient_>(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
@@ -234,13 +234,13 @@ impl Engine {
         payload_safety: InsertPayloadSafety,
     ) -> InsertTaskResult
     where
-        EngineClient_: 'static,
+        EngineClient_: EngineClient + 'static,
     {
         self.insert_payload_with_retry_inner(client, config, envelope, payload_safety, false).await
     }
 
     /// Inserts a payload and retries temporary failures.
-    pub async fn insert_payload_with_retry_inner<EngineClient_: EngineClient>(
+    pub async fn insert_payload_with_retry_inner<EngineClient_>(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
@@ -249,7 +249,7 @@ impl Engine {
         require_unsafe_head_advance: bool,
     ) -> InsertTaskResult
     where
-        EngineClient_: 'static,
+        EngineClient_: EngineClient + 'static,
     {
         self.retry_with_severity(Metrics::INSERT_TASK_LABEL, move |state| {
             let client = Arc::clone(&client);
@@ -489,14 +489,14 @@ impl Engine {
     }
 
     /// Consolidates the safe head directly against the execution layer.
-    pub async fn consolidate<EngineClient_: EngineClient>(
+    pub async fn consolidate<EngineClient_>(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         input: ConsolidateInput,
     ) -> Result<(), ConsolidateTaskError>
     where
-        EngineClient_: 'static,
+        EngineClient_: EngineClient + 'static,
     {
         self.retry_with_severity(Metrics::CONSOLIDATE_TASK_LABEL, move |state| {
             let client = Arc::clone(&client);
@@ -725,14 +725,14 @@ impl Engine {
     }
 
     /// Applies delegated safe and finalized labels directly against the execution layer.
-    pub async fn delegated_forkchoice<EngineClient_: EngineClient>(
+    pub async fn delegated_forkchoice<EngineClient_>(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         update: DelegatedForkchoiceUpdate,
     ) -> Result<(), DelegatedForkchoiceTaskError>
     where
-        EngineClient_: 'static,
+        EngineClient_: EngineClient + 'static,
     {
         self.retry_with_severity(Metrics::DELEGATED_FORKCHOICE_TASK_LABEL, move |state| {
             let client = Arc::clone(&client);
@@ -781,14 +781,14 @@ impl Engine {
     }
 
     /// Finalizes an L2 block directly against the execution layer.
-    pub async fn finalize<EngineClient_: EngineClient>(
+    pub async fn finalize<EngineClient_>(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         block_number: u64,
     ) -> Result<(), FinalizeTaskError>
     where
-        EngineClient_: 'static,
+        EngineClient_: EngineClient + 'static,
     {
         self.retry_with_severity(Metrics::FINALIZE_TASK_LABEL, move |state| {
             let client = Arc::clone(&client);
