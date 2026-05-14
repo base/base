@@ -1,11 +1,12 @@
 # Load test runner - transaction submission for network load testing
 #
 # Usage:
-#   just load-test devnet                                - Load test local devnet (uses Anvil Account #1)
-#   just load-test devnet --continuous                   - Load test devnet indefinitely (Ctrl-C to stop)
-#   just load-test devnet-continuous (jldc)              - Alias: devnet continuous mode
-#   FUNDER_KEY=0x... just load-test sepolia              - Load test sepolia
-#   FUNDER_KEY=0x... just load-test recover sepolia      - Recover funds from sepolia test accounts
+#   just load-test run                                   - Load test devnet (uses Anvil Account #1)
+#   just load-test run sepolia                           - Load test sepolia (requires FUNDER_KEY)
+#   just load-test continuous                            - Load test devnet indefinitely (Ctrl-C to stop)
+#   just load-test continuous sepolia                    - Load test sepolia indefinitely
+#   just load-test recover                               - Recover funds from devnet test accounts
+#   just load-test recover sepolia                       - Recover funds from sepolia test accounts
 
 set positional-arguments := true
 set working-directory := '../../..'
@@ -14,19 +15,18 @@ set working-directory := '../../..'
 default:
     @just --justfile {{source_file()}} --list
 
-# Run load test against devnet (local) - uses Anvil Account #1
-devnet *args:
-    FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d cargo run -p base-load-tester-bin --bin base-load-tester -- crates/infra/load-tests/examples/devnet.yaml {{args}}
+# Run load test against a network (devnet uses Anvil Account #1 by default)
+run network='devnet' *args:
+    #!/usr/bin/env bash
+    if [ -z "${FUNDER_KEY:-}" ] && [ "{{network}}" = "devnet" ]; then
+        export FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+    fi
+    cargo run -p base-load-tester-bin --bin base-load-tester -- crates/infra/load-tests/examples/{{network}}.yaml {{args}}
 
-# Run load test against devnet indefinitely (Ctrl-C to stop)
-devnet-continuous:
-    FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d cargo run -p base-load-tester-bin --bin base-load-tester -- crates/infra/load-tests/examples/devnet.yaml --continuous
+# Run load test against a network indefinitely (Ctrl-C to stop)
+continuous network='devnet':
+    just --justfile {{source_file()}} run {{network}} --continuous
 
-# Run load test against sepolia network (requires FUNDER_KEY env var)
-sepolia *args:
-    cargo run -p base-load-tester-bin --bin base-load-tester -- crates/infra/load-tests/examples/sepolia.yaml {{args}}
-
-# Recover/drain funds from load test accounts back to funder (requires FUNDER_KEY env var)
-# Usage: just load-test recover <network>  (e.g., just load-test recover sepolia)
-recover network:
-    cargo run -p base-load-tester-bin --bin base-load-tester -- crates/infra/load-tests/examples/{{network}}.yaml --drain-only
+# Recover/drain funds from load test accounts back to funder
+recover network='devnet':
+    just --justfile {{source_file()}} run {{network}} --drain-only

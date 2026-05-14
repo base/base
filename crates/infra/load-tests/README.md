@@ -19,10 +19,10 @@ Load testing and benchmarking framework for Base infrastructure.
 
 ```bash
 # Run load test against local devnet (uses Anvil Account #1)
-just load-test devnet
+just load-test run
 
 # Run load test against sepolia (requires funded key)
-FUNDER_KEY=0x... just load-test sepolia
+FUNDER_KEY=0x... just load-test run sepolia
 ```
 
 Or run directly with cargo:
