@@ -9,7 +9,7 @@
 //! buffer of recent chunks are compressed.
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io::Read,
     path::{Path, PathBuf},
 };
@@ -25,6 +25,10 @@ const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;
 /// Number of extra chunks beyond the tip to compress as a safety buffer.
 const EXTRA_CHUNKS_BUFFER: u64 = 2;
 
+/// Maximum number of chunks allowed before bailing to prevent OOM.
+/// At 500k blocks per file, 100k chunks covers 50 billion blocks.
+const MAX_CHUNKS: u64 = 100_000;
+
 /// Static file component types that produce chunked archives.
 const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
     ("headers", "headers"),
@@ -39,7 +43,7 @@ const CHUNKED_COMPONENTS: &[(&str, &str)] = &[
 ///
 /// Matches reth's `SnapshotManifest` JSON format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct SnapshotManifest {
+pub struct SnapshotManifest {
     /// Block number this snapshot was taken at.
     pub block: u64,
     /// Chain ID.
@@ -54,7 +58,7 @@ pub(crate) struct SnapshotManifest {
 
 /// Checksum metadata for an extracted file within an archive.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct OutputFileChecksum {
+pub struct OutputFileChecksum {
     /// Relative path under the target datadir.
     pub path: String,
     /// File size in bytes.
@@ -77,13 +81,15 @@ impl SnapshotGenerator {
     /// remotely and don't need to be re-compressed.
     ///
     /// Returns the list of files created in the output directory.
+    ///
+    /// From <https://github.com/paradigmxyz/reth/blob/420693521fccd1437071a15a4a54a3a98b5492cf/crates/cli/commands/src/download/manifest.rs>
     pub fn generate_manifest(
         source_datadir: &Path,
         output_dir: &Path,
         chain_id: u64,
         block: Option<u64>,
         blocks_per_file: Option<u64>,
-        skip_ranges: &HashSet<(u64, u64)>,
+        remote_static_files: &HashMap<String, u64>,
     ) -> Result<Vec<PathBuf>> {
         std::fs::create_dir_all(output_dir)
             .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
@@ -93,6 +99,10 @@ impl SnapshotGenerator {
             Some(b) => b,
             None => infer_block_from_headers(source_datadir)?,
         };
+
+        let remote_filenames: HashSet<&str> =
+            remote_static_files.keys().map(String::as_str).collect();
+        let skip_ranges = Self::compute_skip_ranges(&remote_filenames, block, blocks_per_file)?;
 
         info!(
             source = %source_datadir.display(),
@@ -104,17 +114,29 @@ impl SnapshotGenerator {
             "generating snapshot archives"
         );
 
+        let static_files_dir = source_datadir.join("static_files");
+        let static_dir =
+            if static_files_dir.exists() { static_files_dir } else { source_datadir.to_path_buf() };
+        let dir_listing = read_static_dir(&static_dir)?;
+
         let mut components = BTreeMap::new();
 
+        let num_chunks = block.div_ceil(blocks_per_file);
+        if num_chunks > MAX_CHUNKS {
+            bail!(
+                "too many chunks ({num_chunks}) for block {block} with blocks_per_file \
+                 {blocks_per_file} — increase --blocks-per-file or check --block"
+            );
+        }
+
         for &(key, segment_name) in CHUNKED_COMPONENTS {
-            let num_chunks = block.div_ceil(blocks_per_file);
             let mut planned = Vec::new();
             let mut found_any = false;
 
             for i in 0..num_chunks {
                 let start = i * blocks_per_file;
-                let end = (i + 1) * blocks_per_file - 1;
-                let source_files = find_source_files(source_datadir, segment_name, start, end)?;
+                let end = start.checked_add(blocks_per_file - 1).context("block range overflow")?;
+                let source_files = filter_source_files(&dir_listing, segment_name, start, end);
 
                 if source_files.is_empty() {
                     if found_any {
@@ -135,7 +157,9 @@ impl SnapshotGenerator {
                 });
             }
 
-            if found_any {
+            if !found_any {
+                info!(component = key, "no static files found, skipping component");
+            } else {
                 let packaged: Vec<PackagedChunk> = planned
                     .into_par_iter()
                     .map(|p| {
@@ -206,8 +230,10 @@ impl SnapshotGenerator {
             );
         }
 
-        let timestamp =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .context("system clock is before UNIX epoch")?
+            .as_secs();
 
         let manifest =
             SnapshotManifest { block, chain_id, storage_version: 2, timestamp, components };
@@ -224,10 +250,10 @@ impl SnapshotGenerator {
     /// Determines which chunk ranges can be skipped based on what already exists
     /// remotely. Keeps the tip chunk and `EXTRA_CHUNKS_BUFFER` additional chunks.
     pub fn compute_skip_ranges(
-        remote_filenames: &HashSet<String>,
+        remote_filenames: &HashSet<&str>,
         block: u64,
         blocks_per_file: u64,
-    ) -> HashSet<(u64, u64)> {
+    ) -> Result<HashSet<(u64, u64)>> {
         let num_chunks = block.div_ceil(blocks_per_file);
         let keep_from = num_chunks.saturating_sub(1 + EXTRA_CHUNKS_BUFFER);
 
@@ -237,11 +263,13 @@ impl SnapshotGenerator {
                 continue;
             }
             let start = i * blocks_per_file;
-            let end = (i + 1) * blocks_per_file - 1;
+            let end = start
+                .checked_add(blocks_per_file - 1)
+                .context("block range overflow in skip computation")?;
 
             let dominated_by_remote = CHUNKED_COMPONENTS.iter().all(|&(key, _)| {
                 let filename = chunk_filename(key, start, end);
-                remote_filenames.contains(&filename)
+                remote_filenames.contains(filename.as_str())
             });
 
             if dominated_by_remote {
@@ -249,7 +277,7 @@ impl SnapshotGenerator {
             }
         }
 
-        skip
+        Ok(skip)
     }
 }
 
@@ -304,30 +332,39 @@ struct PlannedFile {
     relative_path: PathBuf,
 }
 
-fn find_source_files(
-    source_datadir: &Path,
-    segment_name: &str,
-    start: u64,
-    end: u64,
-) -> Result<Vec<PathBuf>> {
-    let static_files_dir = source_datadir.join("static_files");
-    let dir =
-        if static_files_dir.exists() { static_files_dir } else { source_datadir.to_path_buf() };
-    let prefix = format!("static_file_{segment_name}_{start}_{end}");
+/// Cached directory entry: (filename, full path).
+type DirEntry = (String, PathBuf);
 
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(&dir)? {
+/// Reads a directory once, returning all file entries as (name, path) pairs.
+fn read_static_dir(dir: &Path) -> Result<Vec<DirEntry>> {
+    let mut entries = Vec::new();
+    for entry in
+        std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?
+    {
         let entry = entry?;
         if !entry.file_type()?.is_file() {
             continue;
         }
-        if entry.file_name().to_string_lossy().starts_with(&prefix) {
-            files.push(entry.path());
-        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        entries.push((name, entry.path()));
     }
+    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    Ok(entries)
+}
 
-    files.sort_unstable();
-    Ok(files)
+/// Filters the cached directory listing for files matching a chunk prefix.
+fn filter_source_files(
+    dir_listing: &[DirEntry],
+    segment_name: &str,
+    start: u64,
+    end: u64,
+) -> Vec<PathBuf> {
+    let prefix = format!("static_file_{segment_name}_{start}_{end}");
+    dir_listing
+        .iter()
+        .filter(|(name, _)| name.starts_with(&prefix))
+        .map(|(_, path)| path.clone())
+        .collect()
 }
 
 fn state_source_files(source_datadir: &Path) -> Result<Vec<PlannedFile>> {
@@ -441,14 +478,23 @@ fn write_archive_from_planned_files(
 
     let mut output_files = Vec::with_capacity(files.len());
     for planned in files {
+        let expected_size = std::fs::metadata(&planned.source_path)?.len();
         let mut header = tar::Header::new_gnu();
-        header.set_size(std::fs::metadata(&planned.source_path)?.len());
+        header.set_size(expected_size);
         header.set_mode(0o644);
         header.set_cksum();
 
         let source_file = std::fs::File::open(&planned.source_path)?;
         let mut reader = HashingReader::new(source_file);
         builder.append_data(&mut header, &planned.relative_path, &mut reader)?;
+
+        if reader.bytes_read != expected_size {
+            bail!(
+                "file size changed during archiving: {} (expected {expected_size}, read {})",
+                planned.source_path.display(),
+                reader.bytes_read
+            );
+        }
 
         output_files.push(OutputFileChecksum {
             path: planned.relative_path.to_string_lossy().to_string(),
@@ -457,7 +503,6 @@ fn write_archive_from_planned_files(
         });
     }
 
-    builder.finish()?;
     let encoder = builder.into_inner()?;
     encoder.finish()?;
 
@@ -565,7 +610,8 @@ mod tests {
 
         // block=2_000_000, blocks_per_file=500_000 → 4 chunks (indices 0-3)
         // tip = chunk 3, buffer = 2 → keep chunks 1,2,3 → skip chunk 0
-        let skip = SnapshotGenerator::compute_skip_ranges(&remote, 2_000_000, 500_000);
+        let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
+        let skip = SnapshotGenerator::compute_skip_ranges(&refs, 2_000_000, 500_000).unwrap();
 
         assert!(skip.contains(&(0, 499_999)), "chunk 0 should be skipped");
         assert!(!skip.contains(&(500_000, 999_999)), "chunk 1 should NOT be skipped (in buffer)");
@@ -585,14 +631,16 @@ mod tests {
         }
 
         // block=1_000_000 → 2 chunks, tip + buffer(2) = 3 → keep all
-        let skip = SnapshotGenerator::compute_skip_ranges(&remote, 1_000_000, 500_000);
+        let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
+        let skip = SnapshotGenerator::compute_skip_ranges(&refs, 1_000_000, 500_000).unwrap();
         assert!(skip.is_empty(), "should keep all chunks when count <= tip + buffer");
     }
 
     #[test]
     fn compute_skip_ranges_skips_nothing_when_remote_empty() {
         let remote = HashSet::new();
-        let skip = SnapshotGenerator::compute_skip_ranges(&remote, 5_000_000, 500_000);
+        let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
+        let skip = SnapshotGenerator::compute_skip_ranges(&refs, 5_000_000, 500_000).unwrap();
         assert!(skip.is_empty(), "nothing to skip when remote is empty");
     }
 
@@ -602,7 +650,8 @@ mod tests {
         // Only add headers, not other components
         remote.insert(chunk_filename("headers", 0, 499_999));
 
-        let skip = SnapshotGenerator::compute_skip_ranges(&remote, 5_000_000, 500_000);
+        let refs: HashSet<&str> = remote.iter().map(String::as_str).collect();
+        let skip = SnapshotGenerator::compute_skip_ranges(&refs, 5_000_000, 500_000).unwrap();
         assert!(
             !skip.contains(&(0, 499_999)),
             "should not skip range if not all components are present remotely"
@@ -617,14 +666,14 @@ mod tests {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
 
-        let skip = HashSet::new();
+        let remote = HashMap::new();
         let files = SnapshotGenerator::generate_manifest(
             source.path(),
             output.path(),
             8453,
             Some(0),
             Some(500_000),
-            &skip,
+            &remote,
         )
         .unwrap();
 
@@ -639,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_manifest_skips_specified_ranges() {
+    fn generate_manifest_skips_finalized_ranges_via_remote() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
 
@@ -647,21 +696,29 @@ mod tests {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::write(db_dir.join("mdbx.dat"), b"state").unwrap();
 
+        // 4 header chunks → block=2M, bpf=500k
+        // tip=chunk3, buffer=2 → keep 1,2,3 → skip chunk 0
         let sf = source.path().join("static_files");
         std::fs::create_dir_all(&sf).unwrap();
-        std::fs::write(sf.join("static_file_headers_0_499999"), b"h0").unwrap();
-        std::fs::write(sf.join("static_file_headers_500000_999999"), b"h1").unwrap();
+        for i in 0..4u64 {
+            let start = i * 500_000;
+            let end = (i + 1) * 500_000 - 1;
+            std::fs::write(sf.join(format!("static_file_headers_{start}_{end}")), b"data").unwrap();
+        }
 
-        let mut skip = HashSet::new();
-        skip.insert((0u64, 499_999u64));
+        // Simulate all chunked components existing remotely for range 0-499999
+        let mut remote = HashMap::new();
+        for &(key, _) in CHUNKED_COMPONENTS {
+            remote.insert(chunk_filename(key, 0, 499_999), 0u64);
+        }
 
         let files = SnapshotGenerator::generate_manifest(
             source.path(),
             output.path(),
             8453,
-            Some(1_000_000),
+            Some(2_000_000),
             Some(500_000),
-            &skip,
+            &remote,
         )
         .unwrap();
 
@@ -672,11 +729,15 @@ mod tests {
 
         assert!(
             !filenames.contains(&"headers-0-499999.tar.zst".to_string()),
-            "skipped range should not produce an archive"
+            "finalized range 0 should be skipped (all components exist remotely)"
         );
         assert!(
             filenames.contains(&"headers-500000-999999.tar.zst".to_string()),
-            "non-skipped range should produce an archive"
+            "buffer range should be compressed"
+        );
+        assert!(
+            filenames.contains(&"headers-1500000-1999999.tar.zst".to_string()),
+            "tip range should be compressed"
         );
     }
 }
