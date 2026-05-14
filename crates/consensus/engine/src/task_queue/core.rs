@@ -1,6 +1,6 @@
 //! The [`Engine`] owns execution-layer state and executes engine operations serially.
 
-use std::{marker::PhantomData, sync::Arc, time::Instant};
+use std::{fmt::Display, future::Future, marker::PhantomData, pin::Pin, sync::Arc, time::Instant};
 
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
 use alloy_rpc_types_engine::{
@@ -221,38 +221,38 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
-    ) -> InsertTaskResult {
-        self.insert_payload_with_retry(client, config, envelope, InsertPayloadSafety::Unsafe).await
+    ) -> InsertTaskResult
+    where
+        EngineClient_: 'static,
+    {
+        self.insert_payload_with_retry_inner(
+            client,
+            config,
+            envelope,
+            InsertPayloadSafety::Unsafe,
+            false,
+        )
+        .await
     }
 
-    /// Inserts a local sequencer unsafe payload once and returns the insertion result.
+    /// Inserts a local sequencer unsafe payload and returns the insertion result.
     pub async fn insert_local_unsafe_payload(
         &mut self,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
-    ) -> InsertTaskResult {
-        let _task_timer =
-            base_metrics::timed!(Metrics::engine_task_duration(Metrics::INSERT_TASK_LABEL));
-
-        let result = Self::insert_payload_with_state(
-            &mut self.state,
+    ) -> InsertTaskResult
+    where
+        EngineClient_: 'static,
+    {
+        self.insert_payload_with_retry_inner(
             client,
             config,
             envelope,
             InsertPayloadSafety::Unsafe,
             true,
         )
-        .await;
-
-        self.state_sender.send_replace(self.state);
-        Metrics::engine_task_count(Metrics::INSERT_TASK_LABEL).increment(1);
-        if let Err(err) = &result {
-            Metrics::engine_task_failure(Metrics::INSERT_TASK_LABEL, err.severity().as_label())
-                .increment(1);
-        }
-
-        result
+        .await
     }
 
     /// Inserts a payload and retries temporary failures.
@@ -262,30 +262,71 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         config: Arc<RollupConfig>,
         envelope: BaseExecutionPayloadEnvelope,
         payload_safety: InsertPayloadSafety,
-    ) -> InsertTaskResult {
-        let _task_timer =
-            base_metrics::timed!(Metrics::engine_task_duration(Metrics::INSERT_TASK_LABEL));
+    ) -> InsertTaskResult
+    where
+        EngineClient_: 'static,
+    {
+        self.insert_payload_with_retry_inner(client, config, envelope, payload_safety, false).await
+    }
+
+    /// Inserts a payload and retries temporary failures.
+    pub async fn insert_payload_with_retry_inner(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        envelope: BaseExecutionPayloadEnvelope,
+        payload_safety: InsertPayloadSafety,
+        require_unsafe_head_advance: bool,
+    ) -> InsertTaskResult
+    where
+        EngineClient_: 'static,
+    {
+        self.retry_with_severity(Metrics::INSERT_TASK_LABEL, move |state| {
+            let client = Arc::clone(&client);
+            let config = Arc::clone(&config);
+            let envelope = envelope.clone();
+            Box::pin(async move {
+                Self::insert_payload_with_state(
+                    state,
+                    client,
+                    config,
+                    envelope,
+                    payload_safety,
+                    require_unsafe_head_advance,
+                )
+                .await
+            })
+        })
+        .await
+    }
+
+    /// Retries an engine operation until it succeeds or returns a non-temporary error.
+    pub async fn retry_with_severity<Output, Error, Operation>(
+        &mut self,
+        label: &'static str,
+        mut operation: Operation,
+    ) -> Result<Output, Error>
+    where
+        Output: Send,
+        Error: Display + EngineTaskError + Send,
+        Operation: for<'state> FnMut(
+            &'state mut EngineState,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<Output, Error>> + Send + 'state>,
+        >,
+    {
+        let _task_timer = base_metrics::timed!(Metrics::engine_task_duration(label));
 
         loop {
-            match Self::insert_payload_with_state(
-                &mut self.state,
-                Arc::clone(&client),
-                Arc::clone(&config),
-                envelope.clone(),
-                payload_safety,
-                false,
-            )
-            .await
-            {
-                Ok(inserted_head) => {
+            match operation(&mut self.state).await {
+                Ok(output) => {
                     self.state_sender.send_replace(self.state);
-                    Metrics::engine_task_count(Metrics::INSERT_TASK_LABEL).increment(1);
-                    return Ok(inserted_head);
+                    Metrics::engine_task_count(label).increment(1);
+                    return Ok(output);
                 }
                 Err(err) => {
                     let severity = err.severity();
-                    Metrics::engine_task_failure(Metrics::INSERT_TASK_LABEL, severity.as_label())
-                        .increment(1);
+                    Metrics::engine_task_failure(label, severity.as_label()).increment(1);
 
                     match severity {
                         EngineTaskErrorSeverity::Temporary => {
@@ -319,45 +360,56 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         payload_safety: InsertPayloadSafety,
         require_unsafe_head_advance: bool,
     ) -> InsertTaskResult {
-        let time_start = Instant::now();
+        let total_insert_start = Instant::now();
         let BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload } = envelope;
         let parent_beacon_block_root = parent_beacon_block_root.unwrap_or_default();
-        let new_payload_start = Instant::now();
-        let (response, block): (_, BaseBlock) = match execution_payload {
+        let block: BaseBlock = match &execution_payload {
+            BaseExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload.clone())
+                .try_into_block()
+                .map_err(InsertTaskError::FromBlockError)?,
+            BaseExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload.clone())
+                .try_into_block()
+                .map_err(InsertTaskError::FromBlockError)?,
+            BaseExecutionPayload::V3(payload) => BaseExecutionPayload::V3(payload.clone())
+                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
+                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
+                ))
+                .map_err(InsertTaskError::FromBlockError)?,
+            BaseExecutionPayload::V4(payload) => BaseExecutionPayload::V4(payload.clone())
+                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
+                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
+                    PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+                ))
+                .map_err(InsertTaskError::FromBlockError)?,
+        };
+
+        let advances_safe_head = payload_safety.advances_safe_head();
+        let new_block_ref = L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)
+            .map_err(InsertTaskError::L2BlockInfoConstruction)?;
+
+        if !Self::is_unsafe_payload_applicable(state, payload_safety, &new_block_ref) {
+            return Ok(state.sync_state.unsafe_head());
+        }
+
+        let new_payload_rpc_start = Instant::now();
+        let response = match execution_payload {
             BaseExecutionPayload::V1(payload) => {
-                let block = BaseExecutionPayload::V1(payload.clone())
-                    .try_into_block()
-                    .map_err(InsertTaskError::FromBlockError)?;
                 let payload_input =
                     ExecutionPayloadInputV2 { execution_payload: payload, withdrawals: None };
-                (client.new_payload_v2(payload_input).await, block)
+                client.new_payload_v2(payload_input).await
             }
             BaseExecutionPayload::V2(payload) => {
-                let block = BaseExecutionPayload::V2(payload.clone())
-                    .try_into_block()
-                    .map_err(InsertTaskError::FromBlockError)?;
                 let payload_input = ExecutionPayloadInputV2 {
                     execution_payload: payload.payload_inner,
                     withdrawals: Some(payload.withdrawals),
                 };
-                (client.new_payload_v2(payload_input).await, block)
+                client.new_payload_v2(payload_input).await
             }
             BaseExecutionPayload::V3(payload) => {
-                let block = BaseExecutionPayload::V3(payload.clone())
-                    .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
-                        CancunPayloadFields::new(parent_beacon_block_root, vec![]),
-                    ))
-                    .map_err(InsertTaskError::FromBlockError)?;
-                (client.new_payload_v3(payload, parent_beacon_block_root).await, block)
+                client.new_payload_v3(payload, parent_beacon_block_root).await
             }
             BaseExecutionPayload::V4(payload) => {
-                let block = BaseExecutionPayload::V4(payload.clone())
-                    .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
-                        CancunPayloadFields::new(parent_beacon_block_root, vec![]),
-                        PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
-                    ))
-                    .map_err(InsertTaskError::FromBlockError)?;
-                (client.new_payload_v4(payload, parent_beacon_block_root).await, block)
+                client.new_payload_v4(payload, parent_beacon_block_root).await
             }
         };
 
@@ -376,11 +428,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         if !Self::check_new_payload_status(&response.status) {
             return Err(InsertTaskError::UnexpectedPayloadStatus(response.status));
         }
-        let new_payload_duration = new_payload_start.elapsed();
-
-        let advances_safe_head = payload_safety.advances_safe_head();
-        let new_block_ref = L2BlockInfo::from_block_and_genesis(&block, &rollup_config.genesis)
-            .map_err(InsertTaskError::L2BlockInfoConstruction)?;
+        let new_payload_rpc_duration = new_payload_rpc_start.elapsed();
 
         SynchronizeTask::new(
             Arc::clone(&client),
@@ -399,19 +447,70 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             return Err(InsertTaskError::ForkchoiceUpdateDidNotAdvance);
         }
 
-        let total_duration = time_start.elapsed();
+        let total_insert_duration = total_insert_start.elapsed();
 
         info!(
             target: "engine",
             hash = %new_block_ref.block_info.hash,
             number = new_block_ref.block_info.number,
             payload_safety = payload_safety.as_label(),
-            total_duration = ?total_duration,
-            new_payload_duration = ?new_payload_duration,
+            total_insert_duration = ?total_insert_duration,
+            new_payload_rpc_duration = ?new_payload_rpc_duration,
             "Inserted new payload"
         );
 
         Ok(new_block_ref)
+    }
+
+    /// Returns whether an unsafe payload should be imported into the execution layer.
+    pub fn is_unsafe_payload_applicable(
+        state: &EngineState,
+        payload_safety: InsertPayloadSafety,
+        new_unsafe_ref: &L2BlockInfo,
+    ) -> bool {
+        if payload_safety.advances_safe_head() {
+            return true;
+        }
+
+        let unsafe_head = state.sync_state.unsafe_head();
+        if new_unsafe_ref.block_info.hash == unsafe_head.block_info.hash {
+            debug!(
+                target: "engine",
+                hash = %new_unsafe_ref.block_info.hash,
+                number = new_unsafe_ref.block_info.number,
+                "Skipping already processed unsafe payload"
+            );
+            return false;
+        }
+
+        if new_unsafe_ref.block_info.number <= unsafe_head.block_info.number {
+            info!(
+                target: "engine",
+                hash = %new_unsafe_ref.block_info.hash,
+                number = new_unsafe_ref.block_info.number,
+                unsafe_hash = %unsafe_head.block_info.hash,
+                unsafe_number = unsafe_head.block_info.number,
+                "Skipping unsafe payload older than current unsafe head"
+            );
+            return false;
+        }
+
+        if new_unsafe_ref.block_info.number == unsafe_head.block_info.number.saturating_add(1)
+            && new_unsafe_ref.block_info.parent_hash != unsafe_head.block_info.hash
+        {
+            info!(
+                target: "engine",
+                hash = %new_unsafe_ref.block_info.hash,
+                number = new_unsafe_ref.block_info.number,
+                parent_hash = %new_unsafe_ref.block_info.parent_hash,
+                unsafe_hash = %unsafe_head.block_info.hash,
+                unsafe_number = unsafe_head.block_info.number,
+                "Skipping unsafe payload that does not build onto current unsafe head"
+            );
+            return false;
+        }
+
+        true
     }
 
     /// Checks the response of the `engine_newPayload` call.
@@ -425,53 +524,19 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         input: ConsolidateInput,
-    ) -> Result<(), ConsolidateTaskError> {
-        let _task_timer =
-            base_metrics::timed!(Metrics::engine_task_duration(Metrics::CONSOLIDATE_TASK_LABEL));
-
-        loop {
-            match Self::consolidate_with_state(
-                &mut self.state,
-                Arc::clone(&client),
-                Arc::clone(&config),
-                input.clone(),
+    ) -> Result<(), ConsolidateTaskError>
+    where
+        EngineClient_: 'static,
+    {
+        self.retry_with_severity(Metrics::CONSOLIDATE_TASK_LABEL, move |state| {
+            let client = Arc::clone(&client);
+            let config = Arc::clone(&config);
+            let input = input.clone();
+            Box::pin(
+                async move { Self::consolidate_with_state(state, client, config, input).await },
             )
-            .await
-            {
-                Ok(()) => {
-                    self.state_sender.send_replace(self.state);
-                    Metrics::engine_task_count(Metrics::CONSOLIDATE_TASK_LABEL).increment(1);
-                    return Ok(());
-                }
-                Err(err) => {
-                    let severity = err.severity();
-                    Metrics::engine_task_failure(
-                        Metrics::CONSOLIDATE_TASK_LABEL,
-                        severity.as_label(),
-                    )
-                    .increment(1);
-
-                    match severity {
-                        EngineTaskErrorSeverity::Temporary => {
-                            trace!(target: "engine", error = %err, "Temporary engine error");
-                            yield_now().await;
-                        }
-                        EngineTaskErrorSeverity::Critical => {
-                            error!(target: "engine", error = %err, "Critical engine error");
-                            return Err(err);
-                        }
-                        EngineTaskErrorSeverity::Reset => {
-                            warn!(target: "engine", "Engine requested derivation reset");
-                            return Err(err);
-                        }
-                        EngineTaskErrorSeverity::Flush => {
-                            warn!(target: "engine", "Engine requested derivation flush");
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-        }
+        })
+        .await
     }
 
     /// Consolidates the safe head using the provided engine state.
@@ -695,55 +760,18 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         update: DelegatedForkchoiceUpdate,
-    ) -> Result<(), DelegatedForkchoiceTaskError> {
-        let _task_timer = base_metrics::timed!(Metrics::engine_task_duration(
-            Metrics::DELEGATED_FORKCHOICE_TASK_LABEL
-        ));
-
-        loop {
-            match Self::delegated_forkchoice_with_state(
-                &mut self.state,
-                Arc::clone(&client),
-                Arc::clone(&config),
-                update,
-            )
-            .await
-            {
-                Ok(()) => {
-                    self.state_sender.send_replace(self.state);
-                    Metrics::engine_task_count(Metrics::DELEGATED_FORKCHOICE_TASK_LABEL)
-                        .increment(1);
-                    return Ok(());
-                }
-                Err(err) => {
-                    let severity = err.severity();
-                    Metrics::engine_task_failure(
-                        Metrics::DELEGATED_FORKCHOICE_TASK_LABEL,
-                        severity.as_label(),
-                    )
-                    .increment(1);
-
-                    match severity {
-                        EngineTaskErrorSeverity::Temporary => {
-                            trace!(target: "engine", error = %err, "Temporary engine error");
-                            yield_now().await;
-                        }
-                        EngineTaskErrorSeverity::Critical => {
-                            error!(target: "engine", error = %err, "Critical engine error");
-                            return Err(err);
-                        }
-                        EngineTaskErrorSeverity::Reset => {
-                            warn!(target: "engine", "Engine requested derivation reset");
-                            return Err(err);
-                        }
-                        EngineTaskErrorSeverity::Flush => {
-                            warn!(target: "engine", "Engine requested derivation flush");
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-        }
+    ) -> Result<(), DelegatedForkchoiceTaskError>
+    where
+        EngineClient_: 'static,
+    {
+        self.retry_with_severity(Metrics::DELEGATED_FORKCHOICE_TASK_LABEL, move |state| {
+            let client = Arc::clone(&client);
+            let config = Arc::clone(&config);
+            Box::pin(async move {
+                Self::delegated_forkchoice_with_state(state, client, config, update).await
+            })
+        })
+        .await
     }
 
     /// Applies delegated safe and finalized labels using the provided engine state.
@@ -788,50 +816,18 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         block_number: u64,
-    ) -> Result<(), FinalizeTaskError> {
-        let _task_timer =
-            base_metrics::timed!(Metrics::engine_task_duration(Metrics::FINALIZE_TASK_LABEL));
-
-        loop {
-            match Self::finalize_with_state(
-                &mut self.state,
-                Arc::clone(&client),
-                Arc::clone(&config),
-                block_number,
+    ) -> Result<(), FinalizeTaskError>
+    where
+        EngineClient_: 'static,
+    {
+        self.retry_with_severity(Metrics::FINALIZE_TASK_LABEL, move |state| {
+            let client = Arc::clone(&client);
+            let config = Arc::clone(&config);
+            Box::pin(
+                async move { Self::finalize_with_state(state, client, config, block_number).await },
             )
-            .await
-            {
-                Ok(()) => {
-                    self.state_sender.send_replace(self.state);
-                    Metrics::engine_task_count(Metrics::FINALIZE_TASK_LABEL).increment(1);
-                    return Ok(());
-                }
-                Err(err) => {
-                    let severity = err.severity();
-                    Metrics::engine_task_failure(Metrics::FINALIZE_TASK_LABEL, severity.as_label())
-                        .increment(1);
-
-                    match severity {
-                        EngineTaskErrorSeverity::Temporary => {
-                            trace!(target: "engine", error = %err, "Temporary engine error");
-                            yield_now().await;
-                        }
-                        EngineTaskErrorSeverity::Critical => {
-                            error!(target: "engine", error = %err, "Critical engine error");
-                            return Err(err);
-                        }
-                        EngineTaskErrorSeverity::Reset => {
-                            warn!(target: "engine", "Engine requested derivation reset");
-                            return Err(err);
-                        }
-                        EngineTaskErrorSeverity::Flush => {
-                            warn!(target: "engine", "Engine requested derivation flush");
-                            return Err(err);
-                        }
-                    }
-                }
-            }
-        }
+        })
+        .await
     }
 
     /// Finalizes an L2 block using the provided engine state.
@@ -1189,8 +1185,12 @@ mod tests {
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
     use base_common_genesis::RollupConfig;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-    use base_protocol::L1BlockInfoBedrock;
-    use tokio::sync::watch;
+    use base_protocol::{L1BlockInfoBedrock, L2BlockInfo};
+    use tokio::{
+        sync::watch,
+        task::yield_now,
+        time::{Duration, timeout},
+    };
 
     use crate::{
         Engine, EngineState, EngineSyncStateUpdate, EngineTaskError, EngineTaskErrorSeverity,
@@ -1255,9 +1255,26 @@ mod tests {
         .encoded_2718()
     }
 
+    fn l2_block_info(block_number: u64, hash: B256, parent_hash: B256) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: base_protocol::BlockInfo {
+                hash,
+                number: block_number,
+                parent_hash,
+                timestamp: block_number,
+            },
+            l1_origin: Default::default(),
+            seq_num: 0,
+        }
+    }
+
     fn bedrock_payload(block_number: u64) -> BaseExecutionPayload {
+        bedrock_payload_with_parent(block_number, B256::ZERO)
+    }
+
+    fn bedrock_payload_with_parent(block_number: u64, parent_hash: B256) -> BaseExecutionPayload {
         BaseExecutionPayload::V1(ExecutionPayloadV1 {
-            parent_hash: B256::ZERO,
+            parent_hash,
             fee_recipient: Address::ZERO,
             state_root: B256::ZERO,
             receipts_root: B256::ZERO,
@@ -1452,6 +1469,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn local_unsafe_payload_retries_temporary_insert_errors() {
+        let (state_tx, _) = watch::channel(EngineState::default());
+        let (queue_tx, _) = watch::channel(0usize);
+        let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
+        let client = Arc::new(
+            test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
+        );
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload(2),
+        };
+
+        let insert = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move {
+                engine
+                    .insert_local_unsafe_payload(
+                        client,
+                        Arc::new(RollupConfig::default()),
+                        envelope,
+                    )
+                    .await
+            })
+        };
+
+        for _ in 0..10 {
+            if client.last_new_payload_v2().await.is_some() {
+                break;
+            }
+            yield_now().await;
+        }
+
+        assert!(
+            !insert.is_finished(),
+            "local insert should retry instead of returning the first temporary error"
+        );
+
+        client.set_new_payload_v2_response(valid_payload_status()).await;
+        let inserted_head = timeout(Duration::from_secs(1), insert)
+            .await
+            .expect("local insert should complete after the temporary error is cleared")
+            .expect("local insert task should join")
+            .expect("local insert should succeed after retry");
+
+        assert_eq!(inserted_head.block_info.number, 2);
+    }
+
+    #[tokio::test]
     async fn safe_payload_insert_advances_safe_heads() {
         let client = test_insert_client();
         let envelope = BaseExecutionPayloadEnvelope {
@@ -1474,6 +1539,81 @@ mod tests {
         assert_eq!(state.sync_state.unsafe_head().block_info.number, 3);
         assert_eq!(state.sync_state.local_safe_head().block_info.number, 3);
         assert_eq!(state.sync_state.safe_head().block_info.number, 3);
+    }
+
+    #[tokio::test]
+    async fn unsafe_payload_insert_skips_already_processed_payload() {
+        let unsafe_head = l2_block_info(2, B256::with_last_byte(2), B256::with_last_byte(1));
+        let client = Arc::new(test_engine_client_builder().build());
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload_with_parent(2, B256::with_last_byte(1)),
+        };
+        let mut state = TestEngineStateBuilder::new().with_unsafe_head(unsafe_head).build();
+
+        let inserted_head = Engine::insert_payload_with_state(
+            &mut state,
+            client,
+            Arc::new(RollupConfig::default()),
+            envelope,
+            InsertPayloadSafety::Unsafe,
+            false,
+        )
+        .await
+        .expect("already processed unsafe payload should be skipped");
+
+        assert_eq!(inserted_head, unsafe_head);
+        assert_eq!(state.sync_state.unsafe_head(), unsafe_head);
+    }
+
+    #[tokio::test]
+    async fn unsafe_payload_insert_skips_older_payload() {
+        let unsafe_head = l2_block_info(10, B256::with_last_byte(10), B256::with_last_byte(9));
+        let client = Arc::new(test_engine_client_builder().build());
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload_with_parent(9, B256::with_last_byte(8)),
+        };
+        let mut state = TestEngineStateBuilder::new().with_unsafe_head(unsafe_head).build();
+
+        let inserted_head = Engine::insert_payload_with_state(
+            &mut state,
+            client,
+            Arc::new(RollupConfig::default()),
+            envelope,
+            InsertPayloadSafety::Unsafe,
+            false,
+        )
+        .await
+        .expect("older unsafe payload should be skipped");
+
+        assert_eq!(inserted_head, unsafe_head);
+        assert_eq!(state.sync_state.unsafe_head(), unsafe_head);
+    }
+
+    #[tokio::test]
+    async fn unsafe_payload_insert_skips_next_block_with_wrong_parent() {
+        let unsafe_head = l2_block_info(10, B256::with_last_byte(10), B256::with_last_byte(9));
+        let client = Arc::new(test_engine_client_builder().build());
+        let envelope = BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: bedrock_payload_with_parent(11, B256::with_last_byte(99)),
+        };
+        let mut state = TestEngineStateBuilder::new().with_unsafe_head(unsafe_head).build();
+
+        let inserted_head = Engine::insert_payload_with_state(
+            &mut state,
+            client,
+            Arc::new(RollupConfig::default()),
+            envelope,
+            InsertPayloadSafety::Unsafe,
+            false,
+        )
+        .await
+        .expect("wrong-parent next unsafe payload should be skipped");
+
+        assert_eq!(inserted_head, unsafe_head);
+        assert_eq!(state.sync_state.unsafe_head(), unsafe_head);
     }
 
     #[tokio::test]

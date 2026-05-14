@@ -1090,7 +1090,7 @@ mod tests {
             safe_head: None,
             local_payload: false,
             envelope: unsafe_payload(11, B256::with_last_byte(99), B256::with_last_byte(11)),
-            expect_unsafe_head_advance: true,
+            expect_unsafe_head_advance: false,
             expect_handler_error: false,
         }
     )]
@@ -1115,7 +1115,7 @@ mod tests {
             local_payload: true,
             envelope: unsafe_payload(6_400, B256::with_last_byte(99), B256::with_last_byte(100)),
             expect_unsafe_head_advance: false,
-            expect_handler_error: true,
+            expect_handler_error: false,
         }
     )]
     #[case::validator_preserves_immediate_unsafe_payload_insertion(
