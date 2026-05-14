@@ -37,7 +37,7 @@ impl<P, H> BaseProofStoragePruner<P, H> {
         Self { provider, block_hash_reader, retention_blocks, prune_batch_size }
     }
 
-    fn target_earliest_block(&self, latest_block: u64) -> u64 {
+    const fn target_earliest_block(&self, latest_block: u64) -> u64 {
         latest_block.saturating_sub(self.retention_blocks)
     }
 }

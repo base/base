@@ -57,10 +57,9 @@ pub async fn launch_node_with_proof_history(
     let mut node_builder = builder.node(BaseNode::new(args.clone()));
 
     if proofs_history {
-        let path = args
-            .proofs_history_storage_path
-            .clone()
-            .expect("Path must be provided if not using in-memory storage");
+        let path = args.proofs_history_storage_path.clone().ok_or_else(|| {
+            eyre::eyre!("--proofs-history requires --proofs-history.storage-path")
+        })?;
         info!(target: "reth::cli", "Using on-disk storage for proofs history");
 
         match proofs_history_db {
