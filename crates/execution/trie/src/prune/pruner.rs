@@ -22,8 +22,6 @@ pub struct BaseProofStoragePruner<P, H> {
     block_hash_reader: H,
     /// Keep at least these many recent blocks.
     retention_blocks: u64,
-    /// Keep pruning at least this far behind the latest block.
-    prune_finality_margin_blocks: u64,
     /// Maximum number of blocks to prune in one database transaction
     prune_batch_size: u64,
 }
@@ -34,22 +32,13 @@ impl<P, H> BaseProofStoragePruner<P, H> {
         provider: BaseProofsStorage<P>,
         block_hash_reader: H,
         retention_blocks: u64,
-        prune_finality_margin_blocks: u64,
         prune_batch_size: u64,
     ) -> Self {
-        Self {
-            provider,
-            block_hash_reader,
-            retention_blocks,
-            prune_finality_margin_blocks,
-            prune_batch_size,
-        }
+        Self { provider, block_hash_reader, retention_blocks, prune_batch_size }
     }
 
     fn target_earliest_block(&self, latest_block: u64) -> u64 {
-        let retention_target = latest_block.saturating_sub(self.retention_blocks);
-        let stable_target = latest_block.saturating_sub(self.prune_finality_margin_blocks);
-        cmp::min(retention_target, stable_target)
+        latest_block.saturating_sub(self.retention_blocks)
     }
 }
 
@@ -86,7 +75,6 @@ where
             to_block = target_earliest_block,
             latest_block,
             retention_blocks = self.retention_blocks,
-            prune_finality_margin_blocks = self.prune_finality_margin_blocks,
            "Starting pruning proof storage",
         );
 
@@ -119,6 +107,20 @@ where
     /// Prunes a single batch of blocks.
     fn prune_batch(&self, start_block: u64, end_block: u64) -> Result<PrunerOutput, PrunerError> {
         let batch_start_time = Instant::now();
+        if end_block == 0 {
+            trace!(
+                target: "trie::pruner",
+                start_block,
+                end_block,
+                "Skipping proof storage prune batch at genesis block",
+            );
+            return Ok(PrunerOutput {
+                duration: batch_start_time.elapsed(),
+                start_block,
+                end_block,
+                ..Default::default()
+            });
+        }
 
         // Fetch block hashes for the new earliest block of this batch
         let new_earliest_block_hash = self
@@ -147,8 +149,6 @@ where
                 )
             })?
             .ok_or(PrunerError::BlockNotFound(parent_block_num))?;
-
-        batch_start_time.elapsed();
 
         let block_with_parent = BlockWithParent {
             parent: parent_block_hash,
@@ -448,8 +448,7 @@ mod tests {
             .withf(move |block_num| *block_num == 3)
             .returning(move |_| Ok(Some(b256(3))));
 
-        let pruner =
-            BaseProofStoragePruner::new(clone_storage(&store), block_hash_reader, 1, 0, 1000);
+        let pruner = BaseProofStoragePruner::new(clone_storage(&store), block_hash_reader, 1, 1000);
         let out = pruner.run_inner().expect("pruner ok");
         assert_eq!(out.start_block, 0);
         assert_eq!(out.end_block, 4, "pruned up to 4 (inclusive); new earliest is 4");
@@ -547,7 +546,7 @@ mod tests {
         assert!(latest.is_none());
 
         let block_hash_reader = MockBlockHashReader::new();
-        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 10, 0, 1000);
+        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 10, 1000);
         let out = pruner.run_inner().expect("ok");
         assert_eq!(out, PrunerOutput::default(), "should early-return default output");
     }
@@ -570,7 +569,7 @@ mod tests {
         assert_eq!(latest.unwrap().0, 3);
 
         let block_hash_reader = MockBlockHashReader::new();
-        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 1, 0, 1000);
+        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 1, 1000);
         let out = pruner.run_inner().expect("ok");
         assert_eq!(out, PrunerOutput::default(), "should early-return default output");
     }
@@ -599,41 +598,8 @@ mod tests {
 
         // Require min_block_interval=2 (or greater) so interval < min
         let block_hash_reader = MockBlockHashReader::new();
-        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 2, 0, 1000);
+        let pruner = BaseProofStoragePruner::new(store, block_hash_reader, 2, 1000);
         let out = pruner.run_inner().expect("ok");
         assert_eq!(out, PrunerOutput::default(), "no pruning should occur");
-    }
-
-    #[tokio::test]
-    async fn run_inner_respects_prune_finality_margin() {
-        let dir = TempDir::new().unwrap();
-        let store: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-            BaseProofsStorage::from(Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")));
-
-        store.set_earliest_block_number(0, B256::ZERO).expect("set earliest");
-        let mut parent = B256::ZERO;
-        for number in 1..=10 {
-            let block = block(number, parent);
-            store.store_trie_updates(block, BlockStateDiff::default()).expect("store block");
-            parent = b256(number);
-        }
-
-        let mut block_hash_reader = MockBlockHashReader::new();
-        block_hash_reader
-            .expect_block_hash()
-            .withf(move |block_num| *block_num == 5)
-            .returning(move |_| Ok(Some(b256(5))));
-        block_hash_reader
-            .expect_block_hash()
-            .withf(move |block_num| *block_num == 4)
-            .returning(move |_| Ok(Some(b256(4))));
-
-        let pruner =
-            BaseProofStoragePruner::new(clone_storage(&store), block_hash_reader, 1, 5, 1000);
-        let out = pruner.run_inner().expect("ok");
-        assert_eq!(out.end_block, 5);
-
-        let earliest = store.get_earliest_block_number().unwrap().unwrap();
-        assert_eq!(earliest.0, 5);
     }
 }

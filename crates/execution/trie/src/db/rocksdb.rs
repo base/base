@@ -11,6 +11,8 @@ use std::{
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
+#[cfg(feature = "metrics")]
+use metrics::Label;
 use parking_lot::Mutex;
 use reth_db::{
     DatabaseError,
@@ -86,8 +88,9 @@ struct RocksdbPreparedHistoryDeletes {
 }
 
 /// Preprocessed delete work for a prune range.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 struct RocksdbHistoryDeleteBatch {
+    block_numbers: Vec<u64>,
     account_trie: Vec<(<AccountTrieHistory as Table>::Key, u64)>,
     storage_trie: Vec<(<StorageTrieHistory as Table>::Key, u64)>,
     hashed_account: Vec<(<HashedAccountHistory as Table>::Key, u64)>,
@@ -101,7 +104,7 @@ pub struct RocksdbReadSnapshot {
 }
 
 /// Cursor over `RocksDB` versioned history rows.
-pub struct RocksdbVersionedCursor<T: Table + DupSort> {
+struct RocksdbVersionedCursor<T: Table + DupSort> {
     snapshot: Arc<RocksdbReadSnapshot>,
     max_block_number: u64,
     current_key: Option<T::Key>,
@@ -147,7 +150,7 @@ impl RocksdbReadSnapshot {
     fn new(db: Arc<RocksDb>) -> Self {
         let snapshot = db.snapshot();
         // SAFETY: `SnapshotWithThreadMode` stores a DB reference and a RocksDB snapshot pointer.
-        // This wrapper owns an `Arc` to that same DB and declares `snapshot` before `_db`, so the
+        // This wrapper owns an `Arc` to that same DB and declares `snapshot` before `db`, so the
         // snapshot is dropped and released before the last owned DB handle can be dropped.
         let snapshot = unsafe {
             std::mem::transmute::<
@@ -296,7 +299,6 @@ impl RocksdbProofsStorage {
         let mut db_options = Options::default();
         db_options.create_if_missing(true);
         db_options.create_missing_column_families(true);
-        db_options.enable_statistics();
         db_options.set_max_background_jobs(8);
 
         let cf_options = Self::cf_options();
@@ -566,7 +568,8 @@ impl RocksdbProofsStorage {
         let mut storage_trie_keys = Vec::with_capacity(storage_trie_len);
         for (hashed_address, nodes) in sorted_trie_updates.storage_tries_ref() {
             if nodes.is_deleted && append_mode {
-                let mut cursor = self.storage_trie_cursor(*hashed_address, block_number - 1)?;
+                let mut cursor =
+                    self.storage_trie_cursor(*hashed_address, block_number.saturating_sub(1))?;
                 let keys = self.wipe_and_overlay::<StorageTrieHistory, _, _, _, _, _>(
                     batch,
                     block_number,
@@ -594,7 +597,8 @@ impl RocksdbProofsStorage {
         let mut hashed_storage_keys = Vec::with_capacity(hashed_storage_len);
         for (hashed_address, storage) in sorted_post_state.storages {
             if append_mode && storage.is_wiped() {
-                let mut cursor = self.storage_hashed_cursor(hashed_address, block_number - 1)?;
+                let mut cursor =
+                    self.storage_hashed_cursor(hashed_address, block_number.saturating_sub(1))?;
                 let keys = self.wipe_and_overlay::<HashedStorageHistory, _, _, _, _, _>(
                     batch,
                     block_number,
@@ -920,6 +924,7 @@ impl RocksdbProofsStorage {
         let mut history = RocksdbHistoryDeleteBatch::default();
 
         for (block_number, change_set) in self.iter_change_sets(block_range)? {
+            history.block_numbers.push(block_number);
             history
                 .account_trie
                 .extend(change_set.account_trie_keys.into_iter().map(|key| (key, block_number)));
@@ -945,31 +950,33 @@ impl RocksdbProofsStorage {
     fn delete_history_ranged(
         &self,
         batch: &mut WriteBatch,
-        block_range: impl RangeBounds<u64>,
         history: RocksdbHistoryDeleteBatch,
     ) -> BaseProofsStorageResult<WriteCounts> {
         let cf = self.cf(<BlockChangeSet as Table>::NAME)?;
-        for (block_number, _) in self.iter_change_sets(block_range)? {
-            batch.delete_cf(&cf, encode_block_number(block_number));
+        for block_number in &history.block_numbers {
+            batch.delete_cf(&cf, encode_block_number(*block_number));
         }
 
-        self.delete_dup_sorted::<AccountTrieHistory, _, _>(batch, history.clone().account_trie)?;
-        self.delete_dup_sorted::<StorageTrieHistory, _, _>(batch, history.clone().storage_trie)?;
-        self.delete_dup_sorted::<HashedAccountHistory, _, _>(
-            batch,
-            history.clone().hashed_account,
-        )?;
-        self.delete_dup_sorted::<HashedStorageHistory, _, _>(
-            batch,
-            history.clone().hashed_storage,
-        )?;
+        let RocksdbHistoryDeleteBatch {
+            block_numbers: _,
+            account_trie,
+            storage_trie,
+            hashed_account,
+            hashed_storage,
+        } = history;
+        let counts = WriteCounts {
+            account_trie_updates_written_total: account_trie.len() as u64,
+            storage_trie_updates_written_total: storage_trie.len() as u64,
+            hashed_accounts_written_total: hashed_account.len() as u64,
+            hashed_storages_written_total: hashed_storage.len() as u64,
+        };
 
-        Ok(WriteCounts {
-            account_trie_updates_written_total: history.account_trie.len() as u64,
-            storage_trie_updates_written_total: history.storage_trie.len() as u64,
-            hashed_accounts_written_total: history.hashed_account.len() as u64,
-            hashed_storages_written_total: history.hashed_storage.len() as u64,
-        })
+        self.delete_dup_sorted::<AccountTrieHistory, _, _>(batch, account_trie)?;
+        self.delete_dup_sorted::<StorageTrieHistory, _, _>(batch, storage_trie)?;
+        self.delete_dup_sorted::<HashedAccountHistory, _, _>(batch, hashed_account)?;
+        self.delete_dup_sorted::<HashedStorageHistory, _, _>(batch, hashed_storage)?;
+
+        Ok(counts)
     }
 
     fn iter_change_sets(
@@ -1366,8 +1373,6 @@ impl BaseProofsStore for RocksdbProofsStorage {
     }
 
     fn unwind_history(&self, to: BlockWithParent) -> BaseProofsStorageResult<()> {
-        let history_to_delete = self.collect_history_ranged(to.block.number..)?;
-
         let _guard = self.write_lock.lock();
         let Some(proof_window) = self.get_proof_window()? else {
             return Ok(());
@@ -1384,8 +1389,9 @@ impl BaseProofsStore for RocksdbProofsStorage {
             });
         }
 
+        let history_to_delete = self.collect_history_ranged(to.block.number..)?;
         let mut batch = WriteBatch::default();
-        self.delete_history_ranged(&mut batch, to.block.number.., history_to_delete)?;
+        self.delete_history_ranged(&mut batch, history_to_delete)?;
         self.put_proof_window(
             &mut batch,
             ProofWindowKey::LatestBlock,
@@ -1419,11 +1425,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
         let _guard = self.write_lock.lock();
         let history_to_delete = self.collect_history_ranged(latest_common_block.number + 1..)?;
         let mut batch = WriteBatch::default();
-        self.delete_history_ranged(
-            &mut batch,
-            latest_common_block.number + 1..,
-            history_to_delete,
-        )?;
+        self.delete_history_ranged(&mut batch, history_to_delete)?;
         self.put_proof_window(
             &mut batch,
             ProofWindowKey::LatestBlock,
@@ -1592,6 +1594,86 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
     }
 }
 
+#[cfg(feature = "metrics")]
+impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
+    fn gauge_metrics(&self) -> Vec<(&'static str, f64, Vec<Label>)> {
+        let mut metrics = Vec::new();
+
+        for table in Self::column_families() {
+            let Some(cf) = self.db.cf_handle(table) else {
+                continue;
+            };
+
+            let estimated_num_keys = self
+                .db
+                .property_int_value_cf(&cf, rocksdb::properties::ESTIMATE_NUM_KEYS)
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+            let sst_size = self
+                .db
+                .property_int_value_cf(&cf, rocksdb::properties::LIVE_SST_FILES_SIZE)
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+            let memtable_size = self
+                .db
+                .property_int_value_cf(&cf, rocksdb::properties::SIZE_ALL_MEM_TABLES)
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+            let pending_compaction_bytes = self
+                .db
+                .property_int_value_cf(&cf, rocksdb::properties::ESTIMATE_PENDING_COMPACTION_BYTES)
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+
+            metrics.push((
+                "base_proof_storage.table_size",
+                (sst_size + memtable_size) as f64,
+                vec![Label::new("table", table)],
+            ));
+            metrics.push((
+                "base_proof_storage.table_entries",
+                estimated_num_keys as f64,
+                vec![Label::new("table", table)],
+            ));
+            metrics.push((
+                "base_proof_storage.pending_compaction_bytes",
+                pending_compaction_bytes as f64,
+                vec![Label::new("table", table)],
+            ));
+            metrics.push((
+                "base_proof_storage.sst_size",
+                sst_size as f64,
+                vec![Label::new("table", table)],
+            ));
+            metrics.push((
+                "base_proof_storage.memtable_size",
+                memtable_size as f64,
+                vec![Label::new("table", table)],
+            ));
+        }
+
+        let wal_size: u64 = std::fs::read_dir(self.db.path())
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "log"))
+                    .filter_map(|entry| entry.metadata().ok())
+                    .map(|metadata| metadata.len())
+                    .sum()
+            })
+            .unwrap_or(0);
+
+        metrics.push(("base_proof_storage.wal_size", wal_size as f64, vec![]));
+
+        metrics
+    }
+}
+
+#[cfg(not(feature = "metrics"))]
 impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
 
 impl<T, V> RocksdbVersionedCursor<T>
@@ -1601,7 +1683,7 @@ where
     T::Value: Decompress,
 {
     /// Creates a cursor over a `RocksDB` history column family.
-    pub fn new(db: Arc<RocksDb>, max_block_number: u64) -> Self {
+    fn new(db: Arc<RocksDb>, max_block_number: u64) -> Self {
         let snapshot = Arc::new(RocksdbReadSnapshot::new(db));
         Self::new_with_snapshot(snapshot, max_block_number)
     }

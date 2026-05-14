@@ -40,8 +40,6 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let proofs_history_db = args.proofs_history_db;
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
-        let proofs_history_prune_finality_margin_blocks =
-            args.proofs_history_prune_finality_margin_blocks;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
 
         if proofs_history_enabled {
@@ -81,9 +79,6 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                             Ok(BaseProofsExEx::builder(exex_context, storage_exec)
                                 .with_proofs_history_prune_interval(proofs_history_prune_interval)
                                 .with_proofs_history_window(proofs_history_window)
-                                .with_proofs_history_prune_finality_margin_blocks(
-                                    proofs_history_prune_finality_margin_blocks,
-                                )
                                 .with_verification_interval(proofs_history_verification_interval)
                                 .build()
                                 .run())
@@ -133,9 +128,6 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                             Ok(BaseProofsExEx::builder(exex_context, storage_exec)
                                 .with_proofs_history_prune_interval(proofs_history_prune_interval)
                                 .with_proofs_history_window(proofs_history_window)
-                                .with_proofs_history_prune_finality_margin_blocks(
-                                    proofs_history_prune_finality_margin_blocks,
-                                )
                                 .with_verification_interval(proofs_history_verification_interval)
                                 .build()
                                 .run())

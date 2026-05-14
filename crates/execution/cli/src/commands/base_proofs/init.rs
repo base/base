@@ -42,7 +42,7 @@ pub struct InitCommand<C: ChainSpecParser> {
         long = "proofs-history.db",
         visible_aliases = ["proofs-history.db-backend", "proofs-db"],
         value_name = "PROOFS_HISTORY_DB",
-        default_value = "mdbx"
+        default_value = "rocksdb"
     )]
     pub proofs_history_db: ProofsHistoryDbBackend,
 }
@@ -52,7 +52,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
         self,
     ) -> eyre::Result<()> {
-        let InitCommand { env, storage_path, proofs_history_db } = self;
+        let Self { env, storage_path, proofs_history_db } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
         info!(

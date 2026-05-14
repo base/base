@@ -28,9 +28,6 @@ pub use db::{
     RocksdbProofsStorage, RocksdbReadSnapshot, RocksdbStorageCursor, RocksdbTrieCursor,
 };
 
-/// Default on-disk proofs storage backend.
-pub type DefaultProofsStorage = MdbxProofsStorage;
-
 pub mod metrics;
 #[cfg(feature = "metrics")]
 pub use metrics::{
