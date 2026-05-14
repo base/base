@@ -23,9 +23,9 @@ scrape_configs:
     static_configs:
       - targets: ['base-client-cl:8300']
 
-  - job_name: 'l2_unified'
+  - job_name: 'l2_base_rpc'
     static_configs:
-      - targets: ['base-unified:8190']
+      - targets: ['base-rpc:8190']
 
   - job_name: 'batcher'
     static_configs:

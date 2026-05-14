@@ -289,12 +289,12 @@ impl MonitoringConfig {
                     docker_cl: Some("base-client-cl".to_string()),
                 },
                 ValidatorNodeConfig {
-                    name: "base-unified".to_string(),
+                    name: "base-rpc".to_string(),
                     binary: Some("/app/base".to_string()),
                     cl_rpc: Url::parse("http://localhost:8649").unwrap(),
                     el_rpc: Some(Url::parse("http://localhost:8645").unwrap()),
-                    docker_el: Some("base-unified".to_string()),
-                    docker_cl: Some("base-unified".to_string()),
+                    docker_el: Some("base-rpc".to_string()),
+                    docker_cl: Some("base-rpc".to_string()),
                 },
             ]),
             proofs: None,
@@ -455,12 +455,12 @@ mod tests {
         assert_eq!(validators[0].el_rpc.as_ref().unwrap().as_str(), "http://localhost:8545/");
         assert_eq!(validators[0].docker_el.as_deref(), Some("base-client"));
         assert_eq!(validators[0].docker_cl.as_deref(), Some("base-client-cl"));
-        assert_eq!(validators[1].name, "base-unified");
+        assert_eq!(validators[1].name, "base-rpc");
         assert_eq!(validators[1].binary.as_deref(), Some("/app/base"));
         assert_eq!(validators[1].cl_rpc.as_str(), "http://localhost:8649/");
         assert_eq!(validators[1].el_rpc.as_ref().unwrap().as_str(), "http://localhost:8645/");
-        assert_eq!(validators[1].docker_el.as_deref(), Some("base-unified"));
-        assert_eq!(validators[1].docker_cl.as_deref(), Some("base-unified"));
+        assert_eq!(validators[1].docker_el.as_deref(), Some("base-rpc"));
+        assert_eq!(validators[1].docker_cl.as_deref(), Some("base-rpc"));
     }
 
     #[tokio::test]
