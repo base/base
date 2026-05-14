@@ -9,7 +9,7 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo};
 use thiserror::Error;
-use tokio::{sync::watch::Sender, task::yield_now};
+use tokio::sync::watch::Sender;
 
 use super::EngineTaskExt;
 use crate::{
@@ -89,44 +89,35 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         let _task_timer =
             base_metrics::timed!(Metrics::engine_task_duration(Metrics::BUILD_TASK_LABEL));
 
-        loop {
-            match Self::build_with_state(
-                &self.state,
-                client.as_ref(),
-                config.as_ref(),
-                attributes.clone(),
-            )
+        match Self::build_with_state(&self.state, client.as_ref(), config.as_ref(), attributes)
             .await
-            {
-                Ok(payload_id) => {
-                    self.state_sender.send_replace(self.state);
-                    Metrics::engine_task_count(Metrics::BUILD_TASK_LABEL).increment(1);
-                    return Ok(payload_id);
-                }
-                Err(err) => {
-                    let severity = err.severity();
-                    Metrics::engine_task_failure(Metrics::BUILD_TASK_LABEL, severity.as_label())
-                        .increment(1);
+        {
+            Ok(payload_id) => {
+                self.state_sender.send_replace(self.state);
+                Metrics::engine_task_count(Metrics::BUILD_TASK_LABEL).increment(1);
+                Ok(payload_id)
+            }
+            Err(err) => {
+                let severity = err.severity();
+                Metrics::engine_task_failure(Metrics::BUILD_TASK_LABEL, severity.as_label())
+                    .increment(1);
 
-                    match severity {
-                        EngineTaskErrorSeverity::Temporary => {
-                            trace!(target: "engine", error = %err, "Temporary engine error");
-                            yield_now().await;
-                        }
-                        EngineTaskErrorSeverity::Critical => {
-                            error!(target: "engine", error = %err, "Critical engine error");
-                            return Err(err);
-                        }
-                        EngineTaskErrorSeverity::Reset => {
-                            warn!(target: "engine", "Engine requested derivation reset");
-                            return Err(err);
-                        }
-                        EngineTaskErrorSeverity::Flush => {
-                            warn!(target: "engine", "Engine requested derivation flush");
-                            return Err(err);
-                        }
+                match severity {
+                    EngineTaskErrorSeverity::Temporary => {
+                        trace!(target: "engine", error = %err, "Temporary engine error");
+                    }
+                    EngineTaskErrorSeverity::Critical => {
+                        error!(target: "engine", error = %err, "Critical engine error");
+                    }
+                    EngineTaskErrorSeverity::Reset => {
+                        warn!(target: "engine", "Engine requested derivation reset");
+                    }
+                    EngineTaskErrorSeverity::Flush => {
+                        warn!(target: "engine", "Engine requested derivation flush");
                     }
                 }
+
+                Err(err)
             }
         }
     }
@@ -183,9 +174,20 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         .await;
 
         self.state_sender.send_replace(self.state);
-        Metrics::engine_task_count(Metrics::GET_PAYLOAD_TASK_LABEL).increment(1);
-
-        result
+        match result {
+            Ok(envelope) => {
+                Metrics::engine_task_count(Metrics::GET_PAYLOAD_TASK_LABEL).increment(1);
+                Ok(envelope)
+            }
+            Err(err) => {
+                Metrics::engine_task_failure(
+                    Metrics::GET_PAYLOAD_TASK_LABEL,
+                    err.severity().as_label(),
+                )
+                .increment(1);
+                Err(err)
+            }
+        }
     }
 
     /// Fetches a sealed payload using the provided engine state.
@@ -372,7 +374,11 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                     execution_payload: match payload.execution_payload.into_payload() {
                         ExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload),
                         ExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload),
-                        _ => unreachable!("the response should be a V1 or V2 payload"),
+                        other => {
+                            return Err(SealTaskError::UnexpectedPayloadVersion(format!(
+                                "{other:?}"
+                            )));
+                        }
                     },
                 }
             }

@@ -173,13 +173,27 @@ where
 
     /// Handles an [`EngineTaskErrors`] according to its severity.
     async fn handle_engine_task_error(&mut self, err: EngineTaskErrors) -> Result<(), EngineError> {
-        match err.severity() {
+        let severity = err.severity();
+        if severity == EngineTaskErrorSeverity::Critical {
+            error!(target: "engine", ?err, "Critical engine task error");
+            return Err(err.into());
+        }
+
+        self.handle_engine_task_error_severity(severity, format!("{err:?}")).await
+    }
+
+    async fn handle_engine_task_error_severity(
+        &mut self,
+        severity: EngineTaskErrorSeverity,
+        error: String,
+    ) -> Result<(), EngineError> {
+        match severity {
             EngineTaskErrorSeverity::Critical => {
-                error!(target: "engine", ?err, "Critical error draining engine tasks");
-                Err(err.into())
+                error!(target: "engine", %error, "Critical engine task error");
+                Err(EngineError::CriticalEngineTask(error))
             }
             EngineTaskErrorSeverity::Reset => {
-                warn!(target: "engine", ?err, "Received reset request");
+                warn!(target: "engine", %error, "Received reset request");
                 self.reset().await
             }
             EngineTaskErrorSeverity::Flush => {
@@ -187,7 +201,7 @@ where
                 // by the engine api. Post-holocene, the payload is replaced by
                 // a "deposits-only" block and re-executed. At the same time,
                 // the channel and any remaining buffered batches are flushed.
-                warn!(target: "engine", ?err, "Invalid payload, Flushing derivation pipeline.");
+                warn!(target: "engine", %error, "Invalid payload, Flushing derivation pipeline.");
                 match self.derivation_client.send_signal(Signal::FlushChannel).await {
                     Ok(_) => {
                         debug!(target: "engine", "Sent flush signal to derivation actor");
@@ -200,7 +214,7 @@ where
                 }
             }
             EngineTaskErrorSeverity::Temporary => {
-                trace!(target: "engine", ?err, "Temporary error draining engine tasks");
+                trace!(target: "engine", %error, "Temporary engine task error");
                 Ok(())
             }
         }
@@ -653,12 +667,18 @@ where
                         {
                             Ok(payload_id) => {
                                 result_tx
-                                    .send(payload_id)
+                                    .send(Ok(payload_id))
                                     .await
                                     .map_err(|_| EngineError::ChannelClosed)?;
                             }
                             Err(err) => {
-                                self.handle_engine_task_error(EngineTaskErrors::Build(err)).await?;
+                                let severity = err.severity();
+                                let error = format!("{err:?}");
+                                result_tx
+                                    .send(Err(err))
+                                    .await
+                                    .map_err(|_| EngineError::ChannelClosed)?;
+                                self.handle_engine_task_error_severity(severity, error).await?;
                             }
                         }
                     }
@@ -769,7 +789,7 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
-        Engine, EngineState,
+        Engine, EngineState, EngineTaskError, EngineTaskErrorSeverity,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
@@ -1695,7 +1715,7 @@ mod tests {
             .with_parent(parent_block)
             .with_timestamp(attributes_timestamp)
             .build();
-        let (build_result_tx, _build_result_rx) = mpsc::channel(1);
+        let (build_result_tx, mut build_result_rx) = mpsc::channel(1);
         req_tx
             .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
                 attributes,
@@ -1703,6 +1723,16 @@ mod tests {
             })))
             .await
             .expect("failed to send build request");
+
+        let build_result =
+            tokio::time::timeout(std::time::Duration::from_secs(5), build_result_rx.recv())
+                .await
+                .expect("timed out waiting for build result")
+                .expect("build result channel closed before response");
+        assert!(matches!(
+            build_result,
+            Err(err) if err.severity() == EngineTaskErrorSeverity::Flush
+        ));
 
         let received = tokio::time::timeout(std::time::Duration::from_secs(5), signal_rx.recv())
             .await
