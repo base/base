@@ -85,6 +85,9 @@ pub struct BaseEvmConfig<
     pub _pd: PhantomData<N>,
 }
 
+/// Helper type with backwards compatible methods to obtain executor providers.
+pub type BaseExecutorProvider = BaseEvmConfig;
+
 impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
     for BaseEvmConfig<ChainSpec, N, R, EvmFactory>
 {
