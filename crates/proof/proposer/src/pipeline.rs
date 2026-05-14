@@ -1378,6 +1378,15 @@ where
                         "Proof L1 origin is too old, discarding proof to re-prove"
                     );
                     Err(SubmitAction::Discard(e))
+                } else if e.is_invalid_signer() {
+                    propose_timer.disarm();
+                    warn!(
+                        error = %e,
+                        target_block,
+                        "Proof signer is invalid on-chain, discarding proof to re-prove"
+                    );
+                    Metrics::tee_signer_invalid_total().increment(1);
+                    Err(SubmitAction::Discard(e))
                 } else {
                     propose_timer.disarm();
                     Err(SubmitAction::Failed(e))
@@ -2668,6 +2677,21 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct InvalidSignerOutputProposer;
+
+    #[async_trait]
+    impl OutputProposer for InvalidSignerOutputProposer {
+        async fn propose_output(
+            &self,
+            _proposal: &Proposal,
+            _parent_address: Address,
+            _intermediate_roots: &[B256],
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::InvalidSigner)
+        }
+    }
+
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_validate_and_submit_intermediate_roots_match() {
         // MockRollupClient returns B256::repeat_byte(n) for blocks without
@@ -2721,6 +2745,27 @@ mod tests {
         assert!(
             matches!(result, Err(SubmitAction::Discard(ProposerError::L1OriginTooOld))),
             "stale L1 origin should discard the proof, got {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_validate_and_submit_discards_invalid_signer() {
+        let pipeline = recovery_pipeline_full_with_output_proposer(
+            MockDisputeGameFactory::with_games(vec![]),
+            HashMap::new(),
+            TEST_ANCHOR_BLOCK,
+            SUBMIT_BLOCK_INTERVAL,
+            SUBMIT_INTERMEDIATE_INTERVAL,
+            Arc::new(InvalidSignerOutputProposer),
+        );
+        let proof_result = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+
+        let result =
+            pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
+
+        assert!(
+            matches!(result, Err(SubmitAction::Discard(ProposerError::InvalidSigner))),
+            "invalid signer should discard the proof, got {result:?}"
         );
     }
 

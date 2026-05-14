@@ -10,7 +10,8 @@ mod aggregate_verifier;
 pub use aggregate_verifier::{
     AggregateVerifierClient, AggregateVerifierContractClient, GameInfo, GameStatus,
     encode_challenge_calldata, encode_claim_credit_calldata, encode_nullify_calldata,
-    encode_resolve_calldata, invalid_parent_game_selector, l1_origin_too_old_selector,
+    encode_resolve_calldata, invalid_parent_game_selector, invalid_signer_selector,
+    l1_origin_too_old_selector,
 };
 
 mod delayed_weth;
