@@ -302,29 +302,7 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
 /// Returns the [`BaseSpecId`] at the given timestamp using the [`Upgrades`] trait from
 /// `base-common-chains`.
 fn base_spec_id(chain_spec: &impl Upgrades, timestamp: u64) -> BaseSpecId {
-    if chain_spec.is_beryl_active_at_timestamp(timestamp) {
-        BaseSpecId::BERYL
-    } else if chain_spec.is_base_azul_active_at_timestamp(timestamp) {
-        BaseSpecId::AZUL
-    } else if chain_spec.is_jovian_active_at_timestamp(timestamp) {
-        BaseSpecId::JOVIAN
-    } else if chain_spec.is_isthmus_active_at_timestamp(timestamp) {
-        BaseSpecId::ISTHMUS
-    } else if chain_spec.is_holocene_active_at_timestamp(timestamp) {
-        BaseSpecId::HOLOCENE
-    } else if chain_spec.is_granite_active_at_timestamp(timestamp) {
-        BaseSpecId::GRANITE
-    } else if chain_spec.is_fjord_active_at_timestamp(timestamp) {
-        BaseSpecId::FJORD
-    } else if chain_spec.is_ecotone_active_at_timestamp(timestamp) {
-        BaseSpecId::ECOTONE
-    } else if chain_spec.is_canyon_active_at_timestamp(timestamp) {
-        BaseSpecId::CANYON
-    } else if chain_spec.is_regolith_active_at_timestamp(timestamp) {
-        BaseSpecId::REGOLITH
-    } else {
-        BaseSpecId::BEDROCK
-    }
+    BaseSpecId::from_timestamp(chain_spec, timestamp)
 }
 
 /// An extension trait for [`L1BlockInfo`] that allows us to calculate the L1 cost of a transaction
@@ -426,12 +404,12 @@ mod tests {
     fn sanity_l1_block_ecotone() {
         // rig
 
-        // OP Mainnet Ecotone compatibility fixture, block 118024092.
+        // Legacy Ecotone compatibility fixture, block 118024092.
         // <https://optimistic.etherscan.io/block/118024092>
         const TIMESTAMP: u64 = 1711603765;
         assert!(BaseChainSpec::mainnet().is_ecotone_active_at_timestamp(TIMESTAMP));
 
-        // First transaction in the OP Mainnet compatibility fixture, block 118024092.
+        // First transaction in the legacy compatibility fixture, block 118024092.
         //
         // https://optimistic.etherscan.io/getRawTx?tx=0x88501da5d5ca990347c2193be90a07037af1e3820bb40774c8154871c7669150
         const TX: [u8; 251] = hex!(
@@ -468,7 +446,7 @@ mod tests {
     fn parse_l1_info_fjord() {
         // rig
 
-        // L1 block info from an OP Mainnet compatibility fixture, block 124665056
+        // L1 block info from a legacy compatibility fixture, block 124665056.
         // (stored in input of tx at index 0).
         //
         // https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
@@ -476,8 +454,8 @@ mod tests {
             "440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a3000000000000000000000000000000000000000000000000000000003ef1278700000000000000000000000000000000000000000000000000000000000000012fdf87b89884a61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a590000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985"
         );
 
-        // expected l1 block info verified against expected l1 fee for tx. l1 tx fee listed on OP
-        // mainnet block scanner
+        // expected l1 block info verified against expected l1 fee for tx from the legacy
+        // compatibility fixture's block scanner.
         //
         // https://github.com/bluealloy/revm/blob/fa5650ee8a4d802f4f3557014dd157adfb074460/crates/revm/src/optimism/l1block.rs#L414-L443
         let l1_base_fee = U256::from(1055991687);

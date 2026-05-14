@@ -80,7 +80,8 @@ impl FollowNode {
         cancellation_token: CancellationToken,
         engine_request_rx: mpsc::Receiver<EngineActorRequest>,
         derivation_client: QueuedEngineDerivationClient,
-    ) -> EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>, EngineRpcProcessor<E>> {
+    ) -> (EngineActor<EngineProcessor<E, QueuedEngineDerivationClient>>, EngineRpcProcessor<E>)
+    {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
@@ -106,12 +107,10 @@ impl FollowNode {
             engine_queue_length_rx,
         );
 
-        EngineActor::new(
-            cancellation_token,
-            engine_request_rx,
-            engine_processor,
-            engine_rpc_processor,
-        )
+        let engine_actor =
+            EngineActor::new(cancellation_token, engine_request_rx, engine_processor);
+
+        (engine_actor, engine_rpc_processor)
     }
 
     /// Starts the follow node.
@@ -140,8 +139,9 @@ impl FollowNode {
 
         let (derivation_actor_request_tx, derivation_actor_request_rx) = mpsc::channel(1024);
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
+        let (engine_rpc_request_tx, engine_rpc_request_rx) = mpsc::channel(1024);
 
-        let engine_actor = self.create_engine_actor(
+        let (engine_actor, engine_rpc_processor) = self.create_engine_actor(
             engine_client,
             cancellation.clone(),
             engine_actor_request_rx,
@@ -162,13 +162,17 @@ impl FollowNode {
         .with_proofs_max_blocks_ahead(self.proofs_max_blocks_ahead);
 
         // Create the RPC server actor if configured.
-        let rpc = self.rpc_builder.clone().map(|b| {
+        let rpc_builder = self.rpc_builder.clone();
+        let engine_rpc_actor = rpc_builder
+            .as_ref()
+            .map(|_| (engine_rpc_processor, (cancellation.clone(), engine_rpc_request_rx)));
+        let rpc = rpc_builder.map(|b| {
             // Follow nodes do not run derivation, so they never produce confirmed safe
             // heads to record. Safe head tracking is disabled; the RPC endpoint returns
             // an error if queried.
             RpcActor::new(
                 b,
-                QueuedEngineRpcClient::new(engine_actor_request_tx.clone()),
+                QueuedEngineRpcClient::new(engine_rpc_request_tx),
                 None::<crate::QueuedSequencerAdminAPIClient>,
                 Arc::new(DisabledSafeDB) as Arc<dyn SafeDBReader>,
             )
@@ -223,6 +227,7 @@ impl FollowNode {
                 )),
                 Some((derivation, ())),
                 Some((engine_actor, ())),
+                engine_rpc_actor,
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
             ]

@@ -161,6 +161,20 @@ impl Registry {
                                 let _ = pong_error_tx.send(());
                                 return;
                             }
+                            Some(Ok(Message::Ping(_))) => {
+                                // This is a no-op, but needs to be handled separately from the
+                                // catch-all [`Some(Ok(_))`] arm below as otherwise client pings would be unexpected
+                                // behavior and cause the connection to be shut down
+                                trace!(message = "received ping from client", client = client_id);
+                            }
+                            Some(Ok(_)) => {
+                                debug!(
+                                    message = "unexpected inbound frame from client, disconnecting",
+                                    client = client_id,
+                                );
+                                let _ = pong_error_tx.send(());
+                                return;
+                            }
                             Some(Err(e)) => {
                                 trace!(
                                     message = "error receiving from client",
@@ -175,7 +189,6 @@ impl Registry {
                                 let _ = pong_error_tx.send(());
                                 return;
                             }
-                            _ => {}
                         }
                     }
 

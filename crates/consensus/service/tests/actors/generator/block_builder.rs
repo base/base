@@ -22,7 +22,7 @@ pub(crate) enum PayloadVersion {
 }
 
 impl SeedGenerator {
-    /// Generate a random op execution payload.
+    /// Generate a random Base execution payload.
     pub(crate) fn random_valid_payload(
         &mut self,
         version: PayloadVersion,

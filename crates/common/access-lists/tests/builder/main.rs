@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_sol_types::SolCall;
 use base_access_lists::{FBALBuilderDb, FlashblockAccessList};
-use base_common_evm::{BaseContext, BaseSpecId, BaseTransaction, Builder, DefaultBase};
+use base_common_evm::{
+    BaseContext, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase,
+};
 use base_test_utils::{
     AccessListContract, ContractFactory, DEVNET_CHAIN_ID, GENESIS_GAS_LIMIT, Logic, Logic2, Proxy,
     SimpleStorage,
@@ -45,7 +47,7 @@ fn block_env() -> BlockEnv {
 
 /// Builds the static cfg environment used for access-list tests.
 fn cfg_env() -> CfgEnv<BaseSpecId> {
-    let mut cfg_env = CfgEnv::new_with_spec(BaseSpecId::JOVIAN);
+    let mut cfg_env = CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::LATEST));
     cfg_env.chain_id = DEVNET_CHAIN_ID;
     cfg_env
 }

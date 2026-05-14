@@ -81,7 +81,7 @@ Contract addresses for swap testing and related tokens.
 | Contract | Address |
 |----------|---------|
 | Uniswap V3 Router | `0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4` |
-| Aerodrome CL `SwapRouter` | `0x6a786a4f9bc46fF861260545C490a7356c5ecbFe` |
+| Aerodrome CL `SwapRouter` | `0xD75e6a0C801F24ebb3125E360a5A064f6b9FEFaC` |
 | Load Test Token A (LTTA) | `0x15948C3043A980A8d980d4D615A5E4c9514B0D64` |
 | Load Test Token B (LTTB) | `0x4dc9ccF2C5A346c4032B648006B4774Ad2a021c4` |
 

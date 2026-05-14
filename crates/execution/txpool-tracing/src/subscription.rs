@@ -7,11 +7,11 @@ use futures::StreamExt;
 use reth_node_api::NodePrimitives;
 use reth_provider::CanonStateNotification;
 use reth_tracing::tracing::debug;
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{FullTransactionEvent, TransactionPool};
 use tokio::sync::broadcast::Receiver;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::tracker::Tracker;
+use crate::{NonceSlot, tracker::Tracker};
 
 /// Subscription task that tracks transaction timing from mempool to block inclusion.
 ///
@@ -40,8 +40,10 @@ pub async fn tracex_subscription<N, Pool, FB>(
 
     loop {
         tokio::select! {
-            // Track # of transactions dropped and replaced.
-            Some(full_event) = all_events_stream.next() => tracker.handle_event(full_event),
+            Some(full_event) = all_events_stream.next() => {
+                let nonce_slot = resolve_nonce_slot(&full_event, &pool);
+                tracker.handle_event(full_event, nonce_slot);
+            },
 
             // Use canonical state notifications to track time to inclusion.
             Some(Ok(notification)) = canonical_stream.next() => {
@@ -56,4 +58,15 @@ pub async fn tracex_subscription<N, Pool, FB>(
             }
         }
     }
+}
+
+fn resolve_nonce_slot<Pool: TransactionPool>(
+    event: &FullTransactionEvent<Pool::Transaction>,
+    pool: &Pool,
+) -> Option<NonceSlot> {
+    let tx_hash = match event {
+        FullTransactionEvent::Pending(hash) | FullTransactionEvent::Queued(hash, _) => hash,
+        _ => return None,
+    };
+    pool.get(tx_hash).map(|tx| NonceSlot::new(tx.sender(), tx.nonce()))
 }

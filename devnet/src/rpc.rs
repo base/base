@@ -15,8 +15,8 @@ pub struct DevnetRpcClient {
     l1_provider: RootProvider,
     l2_builder_provider: RootProvider<Base>,
     l2_client_provider: RootProvider<Base>,
-    l2_builder_op_client: HttpClient,
-    l2_client_op_client: HttpClient,
+    l2_builder_consensus_client: HttpClient,
+    l2_client_consensus_client: HttpClient,
 }
 
 impl DevnetRpcClient {
@@ -25,21 +25,21 @@ impl DevnetRpcClient {
         l1_url: &str,
         l2_builder_url: &str,
         l2_client_url: &str,
-        l2_builder_op_rpc_url: &str,
-        l2_client_op_rpc_url: &str,
+        l2_builder_consensus_rpc_url: &str,
+        l2_client_consensus_rpc_url: &str,
     ) -> Result<Self> {
         let l1_provider = Self::create_provider(l1_url)?;
         let l2_builder_provider = Self::create_provider(l2_builder_url)?;
         let l2_client_provider = Self::create_provider(l2_client_url)?;
-        let l2_builder_op_client = Self::create_http_client(l2_builder_op_rpc_url)?;
-        let l2_client_op_client = Self::create_http_client(l2_client_op_rpc_url)?;
+        let l2_builder_consensus_client = Self::create_http_client(l2_builder_consensus_rpc_url)?;
+        let l2_client_consensus_client = Self::create_http_client(l2_client_consensus_rpc_url)?;
 
         Ok(Self {
             l1_provider,
             l2_builder_provider,
             l2_client_provider,
-            l2_builder_op_client,
-            l2_client_op_client,
+            l2_builder_consensus_client,
+            l2_client_consensus_client,
         })
     }
 
@@ -87,7 +87,7 @@ impl DevnetRpcClient {
 
     /// Get sync status from the L2 builder consensus node.
     pub async fn l2_builder_sync_status(&self) -> Result<SyncStatus> {
-        self.l2_builder_op_client
+        self.l2_builder_consensus_client
             .sync_status()
             .await
             .wrap_err("Failed to get L2 builder sync status")
@@ -95,6 +95,9 @@ impl DevnetRpcClient {
 
     /// Get sync status from the L2 client consensus node.
     pub async fn l2_client_sync_status(&self) -> Result<SyncStatus> {
-        self.l2_client_op_client.sync_status().await.wrap_err("Failed to get L2 client sync status")
+        self.l2_client_consensus_client
+            .sync_status()
+            .await
+            .wrap_err("Failed to get L2 client sync status")
     }
 }

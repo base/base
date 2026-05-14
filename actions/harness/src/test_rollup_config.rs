@@ -156,8 +156,8 @@ impl TestRollupConfigBuilder {
 
     /// Sets the Base Azul activation timestamp.
     ///
-    /// Base Azul is a standalone Base-specific fork, independent of the OP
-    /// cascade chain. Chaining after any `through_*` method is fine.
+    /// Base Azul is a standalone Base-specific fork, independent of the
+    /// inherited fork cascade. Chaining after any `through_*` method is fine.
     pub const fn with_azul_at(mut self, t: u64) -> Self {
         self.config.hardforks.base.azul = Some(t);
         self
@@ -165,7 +165,7 @@ impl TestRollupConfigBuilder {
 
     /// Sets the Beryl activation timestamp.
     ///
-    /// Beryl is a standalone Base-specific fork, independent of the OP cascade chain.
+    /// Beryl is a standalone Base-specific fork, independent of the inherited fork cascade.
     pub const fn with_beryl_at(mut self, t: u64) -> Self {
         self.config.hardforks.base.beryl = Some(t);
         self

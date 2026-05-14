@@ -12,27 +12,27 @@ use revm::{
     inspector::NoOpInspector,
 };
 
-use super::OpZkvmPrecompiles;
+use super::BaseZkvmPrecompiles;
 
 /// Factory producing [`BaseEvm`]s with ZKVM-accelerated precompile overrides enabled.
 #[derive(Debug, Clone)]
-pub struct ZkvmOpEvmFactory {}
+pub struct ZkvmBaseEvmFactory {}
 
-impl ZkvmOpEvmFactory {
-    /// Creates a new [`ZkvmOpEvmFactory`].
+impl ZkvmBaseEvmFactory {
+    /// Creates a new [`ZkvmBaseEvmFactory`].
     pub const fn new() -> Self {
         Self {}
     }
 }
 
-impl Default for ZkvmOpEvmFactory {
+impl Default for ZkvmBaseEvmFactory {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl EvmFactory for ZkvmOpEvmFactory {
-    type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, OpZkvmPrecompiles>;
+impl EvmFactory for ZkvmBaseEvmFactory {
+    type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, BaseZkvmPrecompiles>;
     type Context<DB: Database> = BaseContext<DB>;
     type Tx = BaseTransaction<TxEnv>;
     type Error<DBError: core::error::Error + Send + Sync + 'static> =
@@ -40,7 +40,7 @@ impl EvmFactory for ZkvmOpEvmFactory {
     type HaltReason = BaseHaltReason;
     type Spec = BaseSpecId;
     type BlockEnv = BlockEnv;
-    type Precompiles = OpZkvmPrecompiles;
+    type Precompiles = BaseZkvmPrecompiles;
 
     fn create_evm<DB: Database>(
         &self,
@@ -54,7 +54,7 @@ impl EvmFactory for ZkvmOpEvmFactory {
             .with_cfg(input.cfg_env)
             .build_base()
             .with_inspector(NoOpInspector {})
-            .with_precompiles(OpZkvmPrecompiles::new_with_spec(spec_id))
+            .with_precompiles(BaseZkvmPrecompiles::new_with_spec(spec_id))
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -69,6 +69,6 @@ impl EvmFactory for ZkvmOpEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_with_inspector(inspector)
-            .with_precompiles(OpZkvmPrecompiles::new_with_spec(spec_id))
+            .with_precompiles(BaseZkvmPrecompiles::new_with_spec(spec_id))
     }
 }

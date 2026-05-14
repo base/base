@@ -19,15 +19,24 @@ workspace = true
 # workspace
 base-cli-utils.workspace = true
 base-common-chains.workspace = true
+base-consensus-cli.workspace = true
+base-execution-cli.workspace = true
+base-execution-chainspec.workspace = true
+
+# alloy
+alloy-chains = { workspace = true, features = ["std"] }
+
+# reth
+reth-cli-runner.workspace = true
 
 # cli
 clap = { workspace = true, features = ["env"] }
 
-# tracing
-tracing = { workspace = true, features = ["std"] }
-
 # misc
+url.workspace = true
 eyre.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 figment = { workspace = true, features = ["env", "toml"] }
 

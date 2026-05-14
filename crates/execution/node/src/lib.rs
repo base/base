@@ -17,7 +17,7 @@ pub use args::TxpoolOrdering;
 /// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
 /// trait.
 pub mod engine;
-pub use engine::BaseEngineTypes;
+pub use engine::{BaseEngineTypes, BasePostExecutionValidator};
 
 pub mod node;
 pub use node::*;

@@ -414,6 +414,7 @@ where
     {
         let evm_config = BaseEvmConfig::base(chain_spec);
         let evm_env = evm_config.next_evm_env(header, &attributes)?;
+        let spec = evm_env.cfg_env.spec;
         let precompile_addrs = metered_opcodes.precompiles.keys().copied().collect();
         let inspector = MeteringInspector::new(precompile_addrs, metered_opcodes.opcodes.clone());
         let evm = evm_config.evm_with_env_and_inspector(&mut db, evm_env, inspector);
@@ -436,7 +437,7 @@ where
                 .ok_or_else(|| eyre!("Account not found for address: {from}"))?
                 .ok_or_else(|| eyre!("Account is none for tx: {tx_hash}"))?;
 
-            validate_tx(account, tx, &mut l1_block_info)
+            validate_tx(account, tx, &mut l1_block_info, spec)
                 .map_err(|e| eyre!("Transaction {tx_hash} validation failed: {e}"))?;
 
             let gas_used = builder

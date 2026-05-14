@@ -374,6 +374,9 @@ impl NetworkBackend {
         Ok(())
     }
 
+    /// Determine final status based on sessions and proof type. `Submitting` sessions
+    /// are treated as in-flight (neither failed nor completed), keeping the request in
+    /// `Running` until activation transitions the row to `RUNNING`.
     fn determine_status(proof_type: ProofType, sessions: &[ProofSession]) -> ProofProcessingResult {
         if sessions.is_empty() {
             return ProofProcessingResult { status: ProofStatus::Pending, error_message: None };
@@ -413,11 +416,125 @@ impl NetworkBackend {
         }
     }
 
+    /// Submit an aggregation proof (stage 2) after the STARK proof completes.
+    ///
+    /// Concurrent pollers race here; the SNARK session row is reserved in Postgres
+    /// **before** any expensive work so that the partial unique index
+    /// `idx_proof_sessions_request_type_active_unique` ensures only one caller
+    /// reaches the network prover. See cluster.rs for details.
     async fn submit_aggregation_proof(
         &self,
         proof_request: &ProofRequest,
         repo: &ProofRequestRepo,
     ) -> anyhow::Result<()> {
+        let reservation_id = match repo
+            .reserve_proof_session(proof_request.id, SessionType::Snark)
+            .await
+        {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                info!(
+                    proof_request_id = %proof_request.id,
+                    "SNARK session already reserved by another worker; skipping aggregation submit"
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                warn!(
+                    proof_request_id = %proof_request.id,
+                    error = %e,
+                    "failed to reserve SNARK proof session; deferring aggregation to next poll"
+                );
+                return Ok(());
+            }
+        };
+
+        match self.build_aggregation_session(proof_request).await {
+            Ok(session) => {
+                let backend_session_id = session.backend_session_id.clone();
+                let activated = match repo
+                    .activate_reserved_proof_session(&reservation_id, session)
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // DB activation failed after the network job was submitted. Release
+                        // the reservation so the unique index doesn't permanently block
+                        // retries; the in-flight network job is orphaned.
+                        let error_message =
+                            format!("failed to activate reserved SNARK session: {e}");
+                        if let Err(fail_err) = repo
+                            .fail_reserved_proof_session(
+                                proof_request.id,
+                                SessionType::Snark,
+                                &reservation_id,
+                                &error_message,
+                            )
+                            .await
+                        {
+                            warn!(
+                                proof_request_id = %proof_request.id,
+                                reservation_id = %reservation_id,
+                                error = %fail_err,
+                                "failed to release SNARK reservation after activation error"
+                            );
+                        }
+                        error!(
+                            proof_request_id = %proof_request.id,
+                            reservation_id = %reservation_id,
+                            backend_session_id = %backend_session_id,
+                            error = %e,
+                            "failed to activate reserved SNARK session; backend job may be orphaned"
+                        );
+                        return Err(e.into());
+                    }
+                };
+                if !activated {
+                    warn!(
+                        proof_request_id = %proof_request.id,
+                        reservation_id = %reservation_id,
+                        backend_session_id = %backend_session_id,
+                        "SNARK reservation row missing at activation time; backend job may be orphaned"
+                    );
+                } else {
+                    info!(
+                        proof_request_id = %proof_request.id,
+                        backend_session_id = %backend_session_id,
+                        "activated SNARK proof session for aggregation"
+                    );
+                }
+                Ok(())
+            }
+            Err(e) => {
+                let error_message = format!("aggregation submit failed: {e}");
+                if let Err(fail_err) = repo
+                    .fail_reserved_proof_session(
+                        proof_request.id,
+                        SessionType::Snark,
+                        &reservation_id,
+                        &error_message,
+                    )
+                    .await
+                {
+                    warn!(
+                        proof_request_id = %proof_request.id,
+                        reservation_id = %reservation_id,
+                        error = %fail_err,
+                        "failed to release SNARK reservation after submit failure"
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Build the aggregation stdin, submit it to the SP1 Network, and return the
+    /// resulting [`CreateProofSession`] descriptor. The DB write happens in the caller
+    /// via [`ProofRequestRepo::activate_reserved_proof_session`].
+    async fn build_aggregation_session(
+        &self,
+        proof_request: &ProofRequest,
+    ) -> anyhow::Result<CreateProofSession> {
         let BackendConfig::Network { network_prover, agg_pk, range_vk, .. } = &self.config else {
             unreachable!("validated in constructor");
         };
@@ -429,7 +546,6 @@ impl NetworkBackend {
             .parse()
             .map_err(|e| anyhow::anyhow!("invalid prover_address in DB: {e}"))?;
 
-        // Deserialize STARK proof.
         let stark_receipt_bytes = proof_request
             .stark_receipt
             .as_ref()
@@ -439,14 +555,12 @@ impl NetworkBackend {
             bincode::serde::decode_from_slice(stark_receipt_bytes, bincode::config::standard())
                 .map_err(|e| anyhow::anyhow!("failed to deserialize STARK proof: {e}"))?;
 
-        // Extract boot_info from public values.
         let mut public_values = stark_proof_with_pv.public_values.clone();
         let boot_info: base_proof_succinct_client_utils::boot::BootInfoStruct =
             public_values.read();
         let boot_infos = vec![boot_info];
         let proofs = vec![stark_proof_with_pv.proof];
 
-        // Fetch L1 headers for aggregation.
         let fetcher = self.provider.fetcher();
         let header = fetcher
             .get_latest_l1_head_in_batch(&boot_infos)
@@ -466,7 +580,6 @@ impl NetworkBackend {
             "fetched L1 headers for aggregation proof"
         );
 
-        // Build aggregation stdin.
         let stdin = get_agg_proof_stdin(
             proofs,
             boot_infos,
@@ -477,7 +590,6 @@ impl NetworkBackend {
         )
         .map_err(|e| anyhow::anyhow!("failed to build aggregation stdin: {e}"))?;
 
-        // Submit aggregation ELF with Groth16 mode to SP1 Network.
         let timeout = self.timeout();
         let strategy = self.fulfillment_strategy();
 
@@ -504,21 +616,12 @@ impl NetworkBackend {
             "proof_id": proof_id.to_string(),
         });
 
-        let session = CreateProofSession {
+        Ok(CreateProofSession {
             proof_request_id: proof_request.id,
             session_type: SessionType::Snark,
             backend_session_id: proof_id.to_string(),
             metadata: Some(metadata),
-        };
-
-        repo.create_proof_session(session).await?;
-
-        info!(
-            proof_request_id = %proof_request.id,
-            "created SNARK proof session for aggregation"
-        );
-
-        Ok(())
+        })
     }
 }
 
@@ -614,6 +717,20 @@ mod tests {
         let result =
             NetworkBackend::determine_status(ProofType::OpSuccinctSp1ClusterCompressed, &sessions);
         assert_eq!(result.status, ProofStatus::Failed);
+    }
+
+    #[test]
+    fn test_determine_status_snark_stark_completed_snark_submitting_returns_running() {
+        let sessions = vec![
+            make_session(SessionType::Stark, DbSessionStatus::Completed),
+            make_session(SessionType::Snark, DbSessionStatus::Submitting),
+        ];
+        let result = NetworkBackend::determine_status(
+            ProofType::OpSuccinctSp1ClusterSnarkGroth16,
+            &sessions,
+        );
+        assert_eq!(result.status, ProofStatus::Running);
+        assert!(result.error_message.is_none());
     }
 
     #[test]

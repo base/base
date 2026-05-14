@@ -717,7 +717,7 @@ pub(super) mod serde_bincode_compat {
 
         /// Tests a bincode round-trip for [`BaseTxEnvelope`] using an arbitrary instance.
         #[test]
-        fn test_op_tx_envelope_bincode_roundtrip_arbitrary() {
+        fn test_base_tx_envelope_bincode_roundtrip_arbitrary() {
             #[serde_as]
             #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
             struct Data {

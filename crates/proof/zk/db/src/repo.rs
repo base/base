@@ -2,10 +2,10 @@ use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    CreateOutboxEntry, CreateProofRequest, CreateProofSession, MarkOutboxError,
-    MarkOutboxProcessed, OutboxEntry, ProofRequest, ProofRequestListItem, ProofRequestPage,
-    ProofSession, ProofStatus, ProofType, RetryOutcome, SessionStatus, SessionType,
-    UpdateProofSession, UpdateReceipt,
+    CreateOutboxEntry, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    CreateProofSession, MarkOutboxError, MarkOutboxProcessed, OutboxEntry, ProofRequest,
+    ProofRequestListItem, ProofRequestPage, ProofSession, ProofStatus, ProofType, RetryOutcome,
+    SessionStatus, SessionType, UpdateProofSession, UpdateReceipt,
 };
 
 /// Repository for proof request database operations
@@ -73,10 +73,18 @@ impl ProofRequestRepo {
 
     /// Atomically create a proof request and outbox entry in a transaction.
     ///
-    /// When a `session_id` is provided in the request, it is used as the proof
-    /// request UUID and the insert uses `ON CONFLICT (id) DO NOTHING` so that
-    /// duplicate submissions return the existing request ID without error.
-    pub async fn create_with_outbox(&self, req: CreateProofRequest) -> Result<Uuid> {
+    /// On `session_id` conflict, lock the row `FOR UPDATE` and branch on state:
+    /// parameter mismatch → [`CreateProofRequestError::IdCollision`];
+    /// `CREATED` / `PENDING` / `RUNNING` / `SUCCEEDED` → [`CreateProofRequestOutcome::Replayed`];
+    /// `FAILED` with room under `max_retries` → reset, bump `retry_count`, new outbox row
+    /// ([`CreateProofRequestOutcome::Requeued`]); `FAILED` at cap → [`CreateProofRequestOutcome::RetryExhausted`].
+    ///
+    /// Use the same `max_retries` as [`Self::retry_or_fail_stuck_request`] (shared `retry_count` cap).
+    pub async fn create_with_outbox(
+        &self,
+        req: CreateProofRequest,
+        max_retries: i32,
+    ) -> std::result::Result<CreateProofRequestOutcome, CreateProofRequestError> {
         let id = req.session_id.unwrap_or_else(Uuid::new_v4);
 
         let start_block_number = i64::try_from(req.start_block_number)
@@ -111,7 +119,7 @@ impl ProofRequestRepo {
 
         let mut tx = self.pool.begin().await?;
 
-        let result = sqlx::query(
+        let insert_result = sqlx::query(
             r#"
             INSERT INTO proof_requests (
                 id, start_block_number, number_of_blocks_to_prove,
@@ -134,26 +142,128 @@ impl ProofRequestRepo {
         .execute(&mut *tx)
         .await?;
 
-        if result.rows_affected() == 0 {
-            tx.rollback().await?;
-            return Ok(id);
+        if insert_result.rows_affected() > 0 {
+            sqlx::query(
+                r#"
+                INSERT INTO proof_request_outbox (proof_request_id, request_params)
+                VALUES ($1, $2)
+                "#,
+            )
+            .bind(id)
+            .bind(&request_params)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+            return Ok(CreateProofRequestOutcome::Created(id));
         }
 
-        sqlx::query(
+        // Conflict path: `FOR UPDATE` serializes with stuck recovery and workers.
+        let row = sqlx::query(
             r#"
-            INSERT INTO proof_request_outbox (proof_request_id, request_params)
-            VALUES ($1, $2)
+            SELECT start_block_number, number_of_blocks_to_prove, sequence_window,
+                   proof_type, status, prover_address, l1_head,
+                   intermediate_root_interval, retry_count
+            FROM proof_requests
+            WHERE id = $1
+            FOR UPDATE
             "#,
         )
         .bind(id)
-        .bind(&request_params)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
 
-        // Commit transaction
-        tx.commit().await?;
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Err(CreateProofRequestError::SessionRowMissingAfterConflict { id });
+        };
 
-        Ok(id)
+        let params = CreateOutboxRequestParams {
+            start_block_number,
+            number_of_blocks_to_prove,
+            sequence_window,
+            proof_type: req.proof_type.as_str(),
+            prover_address: req.prover_address.as_deref(),
+            l1_head: req.l1_head.as_deref(),
+            intermediate_root_interval,
+        };
+        if let Some(field) = params.first_mismatch(&row) {
+            tx.rollback().await?;
+            return Err(CreateProofRequestError::IdCollision { id, field });
+        }
+
+        let status_str: &str = row.get("status");
+        let status = ProofStatus::try_from(status_str).map_err(|e| {
+            sqlx::Error::Protocol(format!("Unknown proof status '{status_str}': {e}"))
+        })?;
+
+        match status {
+            ProofStatus::Created
+            | ProofStatus::Pending
+            | ProofStatus::Running
+            | ProofStatus::Succeeded => {
+                tx.rollback().await?;
+                Ok(CreateProofRequestOutcome::Replayed(id))
+            }
+            ProofStatus::Failed => {
+                let retry_count: i32 = row.get("retry_count");
+                if retry_count >= max_retries {
+                    tx.rollback().await?;
+                    return Ok(CreateProofRequestOutcome::RetryExhausted(id));
+                }
+
+                // Fail any active sessions before resetting so the requeued run cannot
+                // collide with `idx_proof_sessions_request_type_active_unique`. Mirrors
+                // the cleanup in `retry_or_fail_stuck_request`.
+                sqlx::query(
+                    r#"
+                    UPDATE proof_sessions
+                    SET status = $1,
+                        error_message = COALESCE(error_message, $2),
+                        completed_at = NOW()
+                    WHERE proof_request_id = $3 AND status IN ($4, $5)
+                    "#,
+                )
+                .bind(SessionStatus::Failed.as_str())
+                .bind("cleared during create_with_outbox requeue")
+                .bind(id)
+                .bind(SessionStatus::Submitting.as_str())
+                .bind(SessionStatus::Running.as_str())
+                .execute(&mut *tx)
+                .await?;
+
+                sqlx::query(
+                    r#"
+                    UPDATE proof_requests
+                    SET status = $1,
+                        retry_count = retry_count + 1,
+                        error_message = NULL,
+                        stark_receipt = NULL,
+                        snark_receipt = NULL,
+                        completed_at = NULL
+                    WHERE id = $2
+                    "#,
+                )
+                .bind(ProofStatus::Created.as_str())
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+
+                sqlx::query(
+                    r#"
+                    INSERT INTO proof_request_outbox (proof_request_id, request_params)
+                    VALUES ($1, $2)
+                    "#,
+                )
+                .bind(id)
+                .bind(&request_params)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
+                Ok(CreateProofRequestOutcome::Requeued(id))
+            }
+        }
     }
 
     /// Get a proof request by ID
@@ -412,6 +522,26 @@ impl ProofRequestRepo {
 
         let retry_count: i32 = row.get("retry_count");
 
+        // Fail any active sessions before resetting so the retried run cannot collide with
+        // `idx_proof_sessions_request_type_active_unique`. No-op on the normal reaper path,
+        // since `get_stuck_requests` already excludes requests that have an active session.
+        sqlx::query(
+            r#"
+            UPDATE proof_sessions
+            SET status = $1,
+                error_message = COALESCE(error_message, $2),
+                completed_at = NOW()
+            WHERE proof_request_id = $3 AND status IN ($4, $5)
+            "#,
+        )
+        .bind(SessionStatus::Failed.as_str())
+        .bind("cleared during stuck-request retry")
+        .bind(id)
+        .bind(SessionStatus::Submitting.as_str())
+        .bind(SessionStatus::Running.as_str())
+        .execute(&mut *tx)
+        .await?;
+
         if retry_count >= max_retries {
             sqlx::query(
                 r#"
@@ -515,6 +645,116 @@ impl ProofRequestRepo {
         Ok(id)
     }
 
+    /// Reserve a `(proof_request_id, session_type)` slot for a future backend submission.
+    /// Returns `Some(reservation_id)` for the single race winner; `None` if another
+    /// caller already holds an active (`SUBMITTING` or `RUNNING`) row.
+    ///
+    /// The row is inserted as `SUBMITTING` so sync loops (which only poll `RUNNING`
+    /// rows) skip it until activation. Callers must follow up with
+    /// [`Self::activate_reserved_proof_session`] on success or
+    /// [`Self::fail_reserved_proof_session`] on failure.
+    pub async fn reserve_proof_session(
+        &self,
+        proof_request_id: Uuid,
+        session_type: SessionType,
+    ) -> Result<Option<String>> {
+        let reservation_id = format!(
+            "reservation-{}-{}",
+            session_type.as_str().to_ascii_lowercase(),
+            Uuid::new_v4()
+        );
+
+        // ON CONFLICT predicate mirrors the partial unique index predicate.
+        let row = sqlx::query(
+            r#"
+            INSERT INTO proof_sessions (
+                proof_request_id, session_type, backend_session_id, status, metadata
+            )
+            VALUES ($1, $2, $3, $4, NULL)
+            ON CONFLICT (proof_request_id, session_type)
+                WHERE status IN ('SUBMITTING', 'RUNNING')
+                DO NOTHING
+            RETURNING backend_session_id
+            "#,
+        )
+        .bind(proof_request_id)
+        .bind(session_type.as_str())
+        .bind(&reservation_id)
+        .bind(SessionStatus::Submitting.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.get("backend_session_id")))
+    }
+
+    /// Promote a `SUBMITTING` reservation row to `RUNNING` with the real backend session
+    /// id. Returns `false` if the row was no longer eligible (failed or activated
+    /// out-of-band); the caller should then treat the backend job as orphaned.
+    pub async fn activate_reserved_proof_session(
+        &self,
+        reservation_id: &str,
+        session: CreateProofSession,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_sessions
+            SET backend_session_id = $1,
+                metadata = $2,
+                status = $3,
+                error_message = NULL
+            WHERE backend_session_id = $4
+              AND proof_request_id = $5
+              AND session_type = $6
+              AND status = $7
+            "#,
+        )
+        .bind(&session.backend_session_id)
+        .bind(&session.metadata)
+        .bind(SessionStatus::Running.as_str())
+        .bind(reservation_id)
+        .bind(session.proof_request_id)
+        .bind(session.session_type.as_str())
+        .bind(SessionStatus::Submitting.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark a `SUBMITTING` reservation row as `FAILED` so the partial unique index
+    /// releases the slot and a future poll can retry. Used when the backend submit step
+    /// itself fails after a successful reservation.
+    pub async fn fail_reserved_proof_session(
+        &self,
+        proof_request_id: Uuid,
+        session_type: SessionType,
+        reservation_id: &str,
+        error_message: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            r#"
+            UPDATE proof_sessions
+            SET status = $1,
+                error_message = $2,
+                completed_at = NOW()
+            WHERE backend_session_id = $3
+              AND proof_request_id = $4
+              AND session_type = $5
+              AND status = $6
+            "#,
+        )
+        .bind(SessionStatus::Failed.as_str())
+        .bind(error_message)
+        .bind(reservation_id)
+        .bind(proof_request_id)
+        .bind(session_type.as_str())
+        .bind(SessionStatus::Submitting.as_str())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Get a proof session by backend session ID
     pub async fn get_session_by_backend_id(
         &self,
@@ -614,7 +854,7 @@ impl ProofRequestRepo {
               AND NOT EXISTS (
                   SELECT 1 FROM proof_sessions ps
                   WHERE ps.proof_request_id = pr.id
-                    AND ps.status = 'RUNNING'
+                    AND ps.status IN ('SUBMITTING', 'RUNNING')
               )
             ORDER BY pr.created_at ASC
             "#,
@@ -1059,6 +1299,48 @@ fn row_to_proof_session(row: &sqlx::postgres::PgRow) -> Result<ProofSession> {
         created_at: row.get("created_at"),
         completed_at: row.get("completed_at"),
     })
+}
+
+/// Incoming fields compared to a locked `proof_requests` row for idempotency checks.
+#[derive(Debug, Clone)]
+struct CreateOutboxRequestParams<'a> {
+    start_block_number: i64,
+    number_of_blocks_to_prove: i64,
+    sequence_window: Option<i64>,
+    proof_type: &'a str,
+    prover_address: Option<&'a str>,
+    l1_head: Option<&'a str>,
+    intermediate_root_interval: Option<i64>,
+}
+
+impl CreateOutboxRequestParams<'_> {
+    /// First field name that disagrees with `row`, or `None`. Stable for [`CreateProofRequestError::IdCollision`].
+    fn first_mismatch(&self, row: &sqlx::postgres::PgRow) -> Option<&'static str> {
+        if row.get::<i64, _>("start_block_number") != self.start_block_number {
+            return Some("start_block_number");
+        }
+        if row.get::<i64, _>("number_of_blocks_to_prove") != self.number_of_blocks_to_prove {
+            return Some("number_of_blocks_to_prove");
+        }
+        if row.get::<Option<i64>, _>("sequence_window") != self.sequence_window {
+            return Some("sequence_window");
+        }
+        if row.get::<&str, _>("proof_type") != self.proof_type {
+            return Some("proof_type");
+        }
+        if row.get::<Option<&str>, _>("prover_address") != self.prover_address {
+            return Some("prover_address");
+        }
+        if row.get::<Option<&str>, _>("l1_head") != self.l1_head {
+            return Some("l1_head");
+        }
+        if row.get::<Option<i64>, _>("intermediate_root_interval")
+            != self.intermediate_root_interval
+        {
+            return Some("intermediate_root_interval");
+        }
+        None
+    }
 }
 
 /// Build the canonical JSON payload for outbox entries.

@@ -2,7 +2,7 @@
 
 Action tests are a framework for integration-testing the Base rollup protocol
 by composing simulated actors and driving them through discrete, reproducible
-scenarios. The pattern is borrowed from the op-e2e Go framework, but
+scenarios. The pattern draws on prior end-to-end harness designs, but is
 implemented in Rust and built directly on the same types the production node
 uses.
 

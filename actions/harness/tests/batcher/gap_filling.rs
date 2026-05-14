@@ -2,8 +2,8 @@
 //!
 //! When the batcher is repointed between L2 nodes with different safe heads,
 //! it must properly reset its encoder and start submitting from the current
-//! safe head. This mirrors the op-batcher's `computeSyncActions` →
-//! `startAfresh` → `channelManager.Clear()` flow.
+//! safe head. This mirrors the production batcher flow that starts fresh and
+//! clears channel manager state after a source divergence.
 //!
 //! The core invariant: **the batcher always submits blocks starting from
 //! `safe_head + 1`**, regardless of what it was previously posting.
@@ -41,7 +41,7 @@ impl DummyL2Info {
 /// [`Batcher`] instance that is "repointed" between nodes via
 /// [`signal_reorg`].
 ///
-/// Scenario (maps to the op-batcher's `computeSyncActions` logic):
+/// Scenario (maps to the batcher's source-divergence handling):
 ///
 /// 1. **Phase 1** — Batcher at node A (safe head 0 → 5):
 ///    Posts blocks 1-5. Verifier derives them; safe head advances to 5.
@@ -244,7 +244,7 @@ async fn batcher_gap_fill_with_safe_head_tracking() {
 /// it is repointed to a different node.
 ///
 /// Each `Batcher` instance starts with a clean [`BatchEncoder`], which
-/// is the state that results from the op-batcher's `startAfresh` path.
+/// is the state that results from the batcher's fresh-start path.
 ///
 /// [`BatchEncoder`]: base_batcher_encoder::BatchEncoder
 #[tokio::test]

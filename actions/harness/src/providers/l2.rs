@@ -41,8 +41,8 @@ impl From<L2ProviderError> for PipelineErrorKind {
 pub struct ActionL2ChainProvider {
     /// L2 blocks by block number.
     blocks: Arc<Mutex<HashMap<u64, L2BlockInfo>>>,
-    /// Op blocks (headers + txs) by block number, needed for batch validation.
-    op_blocks: Arc<Mutex<HashMap<u64, BaseBlock>>>,
+    /// Base blocks (headers + txs) by block number, needed for batch validation.
+    base_blocks: Arc<Mutex<HashMap<u64, BaseBlock>>>,
     /// System configs by L2 block number.
     system_configs: Arc<Mutex<HashMap<u64, SystemConfig>>>,
 }
@@ -91,8 +91,8 @@ impl ActionL2ChainProvider {
     }
 
     /// Insert a known L2 block with transactions into the provider.
-    pub fn insert_op_block(&self, number: u64, block: BaseBlock) {
-        self.op_blocks.lock().expect("L2 op blocks lock poisoned").insert(number, block);
+    pub fn insert_base_block(&self, number: u64, block: BaseBlock) {
+        self.base_blocks.lock().expect("L2 base blocks lock poisoned").insert(number, block);
     }
 
     /// Insert a system config for the given L2 block number.
@@ -118,9 +118,9 @@ impl BatchValidationProvider for ActionL2ChainProvider {
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, L2ProviderError> {
-        self.op_blocks
+        self.base_blocks
             .lock()
-            .expect("L2 op blocks lock poisoned")
+            .expect("L2 base blocks lock poisoned")
             .get(&number)
             .cloned()
             .ok_or(L2ProviderError::BlockNotFound(number))

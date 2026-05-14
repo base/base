@@ -621,11 +621,25 @@ where
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
+    ///
+    /// When `no_tx_pool` is set the attribute-supplied transaction list is the consensus input
+    /// for the payload (derived from L1 batches by `base-consensus`), not a list of optional
+    /// pre-include candidates. In that mode an `InvalidTx` from any sequencer transaction must
+    /// be propagated as a fatal error so the EL rejects the payload, matching the strictness of
+    /// the proof executor. Silently skipping the offending transaction would diverge the EL
+    /// safe-head from the proof-derived state and break Holocene's deposit-only fallback (the
+    /// EL would freeze a skip-and-continue block while the proof path produces a deposit-only
+    /// replacement root).
+    ///
+    /// When `no_tx_pool` is `false` the builder is composing a new block from mempool plus
+    /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
+    /// so the historical skip-and-continue behavior is preserved.
     pub fn execute_sequencer_transactions(
         &self,
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::new();
+        let no_tx_pool = self.attributes().no_tx_pool();
 
         for sequencer_tx in self.attributes().sequencer_transactions() {
             // A sequencer's block should never contain blob transactions.
@@ -648,12 +662,16 @@ where
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
-                })) => {
+                })) if !no_tx_pool => {
                     trace!(target: "payload_builder", %error, ?sequencer_tx, "Error in sequencer transaction, skipping.");
                     continue;
                 }
                 Err(err) => {
-                    // this is an error that we should treat as fatal for this attempt
+                    // Either a fatal execution error, or an `InvalidTx` from an
+                    // attribute-derived (`no_tx_pool=true`) transaction list. The latter must
+                    // be fatal so the EL rejects the payload exactly like the proof executor
+                    // does, allowing Holocene's deposit-only fallback to apply consistently
+                    // across both consumers of the same L1 input.
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };

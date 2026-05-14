@@ -6,11 +6,9 @@ use std::{
     path::PathBuf,
 };
 
-use alloy_chains::Chain;
 use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_genesis::RollupConfig;
-use base_consensus_cli::L2ConfigFile;
 use base_consensus_disc::{Discv5Builder, LocalNode};
 use base_consensus_peers::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
 use clap::Args;
@@ -20,24 +18,11 @@ use libp2p::identity::Keypair;
 use tokio::time::Duration;
 use tracing::{debug, info, warn};
 
-use crate::{
-    cli::{LogArgs, MetricsArgs},
-    metrics::{init_bootnode_p2p_metrics, init_rollup_config_metrics, record_bootnode_up},
-};
+use crate::{ConsensusChainArgs, L2ConfigFile, LogArgs, MetricsArgs, metrics::CliMetrics};
 
 /// Base consensus bootnode arguments.
 #[derive(Args, Clone, Debug)]
 pub struct Bootnode {
-    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(
-        long = "chain",
-        short = 'n',
-        global = true,
-        default_value = "8453",
-        env = "BASE_NODE_NETWORK"
-    )]
-    pub l2_chain_id: Chain,
-
     /// Logging configuration.
     #[command(flatten)]
     pub logging: LogArgs,
@@ -58,16 +43,6 @@ pub struct Bootnode {
 /// Prints the deterministic ENR for a Base consensus bootnode.
 #[derive(Args, Clone, Debug)]
 pub struct BootnodeEnr {
-    /// L2 Chain ID or name (8453 = Base Mainnet, 84532 = Base Sepolia).
-    #[arg(
-        long = "chain",
-        short = 'n',
-        global = true,
-        default_value = "8453",
-        env = "BASE_NODE_NETWORK"
-    )]
-    pub l2_chain_id: Chain,
-
     /// L2 configuration file.
     #[clap(flatten)]
     pub l2_config: L2ConfigFile,
@@ -79,18 +54,18 @@ pub struct BootnodeEnr {
 
 impl Bootnode {
     /// Runs the CLI.
-    pub fn run(self) -> eyre::Result<()> {
+    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
         base_cli_utils::init_tracing!(
             LogConfig::from(self.logging.clone()),
             ["libp2p_gossipsub=error"]
         )?;
 
-        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+        let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
 
         base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
             base_cli_utils::register_version_metrics!();
-            init_rollup_config_metrics(&cfg);
-            init_bootnode_p2p_metrics(&self.p2p);
+            CliMetrics::init_rollup_config(&cfg);
+            CliMetrics::init_bootnode_p2p(&self.p2p);
         })?;
 
         RuntimeManager::new().run_until_ctrl_c(self.exec(cfg))
@@ -112,7 +87,7 @@ impl Bootnode {
             enr = %local_enr,
             "Consensus bootnode started"
         );
-        record_bootnode_up();
+        CliMetrics::record_bootnode_up();
 
         while let Some(enr) = discovered_enrs.recv().await {
             debug!(
@@ -130,8 +105,8 @@ impl Bootnode {
 
 impl BootnodeEnr {
     /// Runs the CLI.
-    pub fn run(self) -> eyre::Result<()> {
-        let cfg = self.l2_config.load(&self.l2_chain_id).map_err(|e| eyre::eyre!("{e}"))?;
+    pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
+        let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
         let enr = self.p2p.local_enr(cfg.l2_chain_id.id())?;
         self.p2p.write_enr_output(&enr)?;
         println!("{enr}");
@@ -233,7 +208,7 @@ impl Default for BootnodeP2PArgs {
 
 impl BootnodeP2PArgs {
     /// Checks if the configured listen port is available on the system.
-    fn check_ports(&self) -> eyre::Result<()> {
+    pub fn check_ports(&self) -> eyre::Result<()> {
         if self.listen_udp_port == 0 {
             return Ok(());
         }
@@ -244,7 +219,10 @@ impl BootnodeP2PArgs {
     }
 
     /// Builds the discovery driver from the CLI arguments.
-    fn discovery_driver(&self, chain_id: u64) -> eyre::Result<base_consensus_disc::Discv5Driver> {
+    pub fn discovery_driver(
+        &self,
+        chain_id: u64,
+    ) -> eyre::Result<base_consensus_disc::Discv5Driver> {
         let keypair = self.keypair(chain_id)?;
         let local_node_key = Self::local_node_key(keypair)?;
         let advertised = self.advertised_node(local_node_key);
@@ -297,7 +275,8 @@ impl BootnodeP2PArgs {
         Ok(())
     }
 
-    fn keypair(&self, chain_id: u64) -> eyre::Result<Keypair> {
+    /// Loads the libp2p keypair for the bootnode.
+    pub fn keypair(&self, chain_id: u64) -> eyre::Result<Keypair> {
         if let Some(mut private_key) = self.private_key {
             return SecretKeyLoader::parse(&mut private_key.0).map_err(Into::into);
         }
@@ -307,7 +286,8 @@ impl BootnodeP2PArgs {
         SecretKeyLoader::load(&key_path).map_err(Into::into)
     }
 
-    fn default_key_path(chain_id: u64) -> PathBuf {
+    /// Returns the default key path for the given chain.
+    pub fn default_key_path(chain_id: u64) -> PathBuf {
         let mut path = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push(".base");
         path.push(chain_id.to_string());
@@ -315,7 +295,8 @@ impl BootnodeP2PArgs {
         path
     }
 
-    fn local_node_key(keypair: Keypair) -> eyre::Result<k256::ecdsa::SigningKey> {
+    /// Converts a libp2p keypair into a discv5 signing key.
+    pub fn local_node_key(keypair: Keypair) -> eyre::Result<k256::ecdsa::SigningKey> {
         let secp256k1_key = keypair
             .try_into_secp256k1()
             .map_err(|e| eyre::eyre!("P2P keypair must be secp256k1: {e}"))?
@@ -326,7 +307,8 @@ impl BootnodeP2PArgs {
             .map_err(|e| eyre::eyre!("Failed to convert P2P keypair into discv5 signing key: {e}"))
     }
 
-    fn advertised_node(&self, signing_key: k256::ecdsa::SigningKey) -> LocalNode {
+    /// Builds the advertised local node metadata.
+    pub fn advertised_node(&self, signing_key: k256::ecdsa::SigningKey) -> LocalNode {
         LocalNode::new(
             signing_key,
             self.advertised_ip(),
@@ -335,19 +317,23 @@ impl BootnodeP2PArgs {
         )
     }
 
-    pub(crate) fn advertised_ip(&self) -> IpAddr {
+    /// Returns the advertised IP address.
+    pub fn advertised_ip(&self) -> IpAddr {
         self.advertise_ip.unwrap_or(self.listen_ip)
     }
 
-    pub(crate) fn advertised_tcp_port(&self) -> u16 {
+    /// Returns the advertised TCP port.
+    pub fn advertised_tcp_port(&self) -> u16 {
         self.advertise_tcp_port.unwrap_or(self.listen_tcp_port)
     }
 
-    pub(crate) fn advertised_udp_port(&self) -> u16 {
+    /// Returns the advertised UDP port.
+    pub fn advertised_udp_port(&self) -> u16 {
         self.advertise_udp_port.unwrap_or(self.listen_udp_port)
     }
 
-    fn discovery_config(&self) -> Config {
+    /// Builds the discv5 configuration.
+    pub fn discovery_config(&self) -> Config {
         let listen_config = SocketAddr::new(self.listen_ip, self.listen_udp_port).into();
         let mut builder = ConfigBuilder::new(listen_config);
 
@@ -359,7 +345,8 @@ impl BootnodeP2PArgs {
         builder.build()
     }
 
-    fn bootstore(&self, chain_id: u64) -> Option<BootStoreFile> {
+    /// Returns the bootstore configuration.
+    pub fn bootstore(&self, chain_id: u64) -> Option<BootStoreFile> {
         if self.disable_bootstore {
             None
         } else {
@@ -371,7 +358,8 @@ impl BootnodeP2PArgs {
         }
     }
 
-    fn bootnodes(&self) -> eyre::Result<BootNodes> {
+    /// Parses configured bootnodes.
+    pub fn bootnodes(&self) -> eyre::Result<BootNodes> {
         self.bootnodes
             .iter()
             .map(|bootnode| {
@@ -383,7 +371,8 @@ impl BootnodeP2PArgs {
     }
 }
 
-fn resolve_host(host: &str) -> Result<IpAddr, String> {
+/// Resolves an IP address or DNS hostname.
+pub fn resolve_host(host: &str) -> Result<IpAddr, String> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(ip);
     }

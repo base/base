@@ -109,8 +109,7 @@ where
 /// # Examples
 ///
 /// The following example shows how to install the `ExEx` with either in-memory or persistent storage.
-/// This can be used when launching an OP-Reth node via a binary.
-/// We are currently using it in optimism/bin/src/main.rs.
+/// This can be used when launching a Base node via a binary.
 ///
 /// ```
 /// use futures::FutureExt;
@@ -127,7 +126,7 @@ where
 /// let config = NodeConfig::new(Arc::new(BaseChainSpec::mainnet()));
 /// let db = create_test_rw_db();
 /// let args = RollupArgs::default();
-/// let op_node = BaseNode::new(args);
+/// let base_node = BaseNode::new(args);
 ///
 /// // Create in-memory or persistent storage
 /// let storage: BaseProofsStorage<Arc<InMemoryProofsStorage>> =
@@ -153,7 +152,7 @@ where
 /// let _builder = NodeBuilder::new(config)
 ///     .with_database(db)
 ///     .with_types_and_provider::<BaseNode, BlockchainProvider<NodeTypesWithDBAdapter<BaseNode, _>>>()
-///     .with_components(op_node.components())
+///     .with_components(base_node.components())
 ///     .install_exex("proofs-history", move |exex_context| async move {
 ///         Ok(BaseProofsExEx::builder(exex_context, storage_exec)
 ///             .with_proofs_history_window(proofs_history_window)
@@ -256,7 +255,7 @@ where
             Some((n, _)) => n,
             None => {
                 return Err(eyre::eyre!(
-                    "Proofs storage not initialized. Please run 'op-reth initialize-op-proofs --proofs-history.storage-path <PATH>' first."
+                    "Proofs storage not initialized. Please run 'base-reth-node proofs init --proofs-history.storage-path <PATH>' first."
                 ));
             }
         };
@@ -265,7 +264,7 @@ where
             Some((n, _)) => n,
             None => {
                 return Err(eyre::eyre!(
-                    "Proofs storage not initialized. Please run 'op-reth initialize-op-proofs --proofs-history.storage-path <PATH>' first."
+                    "Proofs storage not initialized. Please run 'base-reth-node proofs init --proofs-history.storage-path <PATH>' first."
                 ));
             }
         };
@@ -280,7 +279,7 @@ where
                 return Err(eyre::eyre!(
                     "Configuration requires pruning {} blocks, which exceeds the safety threshold of {}. \
                      Huge prune operations can stall the node. \
-                     Please run 'op-reth proofs prune' manually before starting the node.",
+                     Please run 'base-reth-node proofs prune' manually before starting the node.",
                     blocks_to_prune,
                     MAX_PRUNE_BLOCKS_STARTUP
                 ));

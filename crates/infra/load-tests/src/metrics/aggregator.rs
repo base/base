@@ -129,6 +129,7 @@ impl<'a> MetricsAggregator<'a> {
         failed: u64,
     ) -> ThroughputMetrics {
         let confirmed = self.transactions.len() as u64;
+        let total_reverted = self.transactions.iter().filter(|t| t.reverted).count() as u64;
         let total_gas: u64 = self.transactions.iter().map(|t| t.gas_used).sum();
         let duration_secs = duration.as_secs_f64();
 
@@ -142,6 +143,7 @@ impl<'a> MetricsAggregator<'a> {
             total_submitted: submitted,
             total_confirmed: confirmed,
             total_failed: failed,
+            total_reverted,
             tps,
             gps,
             duration,

@@ -1,5 +1,6 @@
 use std::array::TryFromSliceError;
 
+use alloy_primitives::B256;
 use alloy_rlp::Error as RlpError;
 use alloy_transport::TransportError;
 use base_proof_client::FaultProofProgramError;
@@ -67,6 +68,14 @@ pub enum HostError {
     /// Error fetching code hash preimage.
     #[error("Error fetching code hash preimage: {0}")]
     CodeHashPreimageFetchFailed(String),
+    /// State node preimage hash mismatch.
+    #[error("State node preimage hash mismatch: expected {expected}, actual {actual}")]
+    StateNodePreimageHashMismatch {
+        /// Expected hash.
+        expected: B256,
+        /// Actual hash.
+        actual: B256,
+    },
     /// Failed to serve a preimage request.
     #[error("Failed to serve preimage request: {0}")]
     PreimageRequestFailed(PreimageOracleError),

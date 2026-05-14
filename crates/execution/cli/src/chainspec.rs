@@ -24,8 +24,8 @@ impl ChainSpecParser for BaseChainSpecParser {
 /// The value parser matches either a known chain, the path
 /// to a json file, or a json formatted string in-memory. The json needs to be a Genesis struct.
 pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<BaseChainSpec>, eyre::Error> {
-    if let Some(op_chain_spec) = BaseChainSpec::parse_chain(s) {
-        Ok(op_chain_spec)
+    if let Some(base_chain_spec) = BaseChainSpec::parse_chain(s) {
+        Ok(base_chain_spec)
     } else {
         Ok(Arc::new(parse_genesis(s)?.into()))
     }

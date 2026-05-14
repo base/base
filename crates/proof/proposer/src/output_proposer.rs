@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_proof_contracts::{
     encode_create_calldata, encode_extra_data, game_already_exists_selector,
-    l1_origin_too_old_selector,
+    invalid_parent_game_selector, invalid_signer_selector, l1_origin_too_old_selector,
 };
 use base_proof_primitives::Proposal;
 use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
@@ -18,6 +18,8 @@ use crate::error::ProposerError;
 
 const GAME_ALREADY_EXISTS: &str = "GameAlreadyExists";
 const L1_ORIGIN_TOO_OLD: &str = "L1OriginTooOld";
+const INVALID_PARENT_GAME: &str = "InvalidParentGame";
+const INVALID_SIGNER: &str = "InvalidSigner";
 
 /// Classifies a [`TxManagerError`] into a [`ProposerError`].
 ///
@@ -27,6 +29,8 @@ const L1_ORIGIN_TOO_OLD: &str = "L1OriginTooOld";
 fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     let game_exists_selector = game_already_exists_selector();
     let l1_origin_selector = l1_origin_too_old_selector();
+    let invalid_parent_selector = invalid_parent_game_selector();
+    let invalid_signer = invalid_signer_selector();
 
     if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
         if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
@@ -41,6 +45,18 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
         if data.as_ref().is_some_and(|d| d.starts_with(&l1_origin_selector)) {
             return ProposerError::L1OriginTooOld;
         }
+        if reason.as_deref().is_some_and(|r| r.contains(INVALID_PARENT_GAME)) {
+            return ProposerError::InvalidParentGame;
+        }
+        if data.as_ref().is_some_and(|d| d.starts_with(&invalid_parent_selector)) {
+            return ProposerError::InvalidParentGame;
+        }
+        if reason.as_deref().is_some_and(|r| r.contains(INVALID_SIGNER)) {
+            return ProposerError::InvalidSigner;
+        }
+        if data.as_ref().is_some_and(|d| d.starts_with(&invalid_signer)) {
+            return ProposerError::InvalidSigner;
+        }
         return ProposerError::TxManager(err);
     }
 
@@ -54,6 +70,15 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
         || msg.contains(L1_ORIGIN_TOO_OLD)
     {
         return ProposerError::L1OriginTooOld;
+    }
+    if msg.contains(&alloy_primitives::hex::encode(invalid_parent_selector))
+        || msg.contains(INVALID_PARENT_GAME)
+    {
+        return ProposerError::InvalidParentGame;
+    }
+    if msg.contains(&alloy_primitives::hex::encode(invalid_signer)) || msg.contains(INVALID_SIGNER)
+    {
+        return ProposerError::InvalidSigner;
     }
     ProposerError::TxManager(err)
 }
@@ -354,6 +379,8 @@ mod tests {
     enum ExpectedClassification {
         GameAlreadyExists,
         L1OriginTooOld,
+        InvalidParentGame,
+        InvalidSigner,
         TxManager,
     }
 
@@ -414,6 +441,62 @@ mod tests {
         ExpectedClassification::L1OriginTooOld,
         "L1OriginTooOld raw data contains selector"
     )]
+    #[case::rpc_with_invalid_parent_selector_hex(
+        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::invalid_parent_game_selector()))),
+        ExpectedClassification::InvalidParentGame,
+        "InvalidParentGame selector hex in Rpc message"
+    )]
+    #[case::rpc_with_invalid_parent_name(
+        TxManagerError::Rpc(format!("{INVALID_PARENT_GAME}()")),
+        ExpectedClassification::InvalidParentGame,
+        "InvalidParentGame name in Rpc message"
+    )]
+    #[case::reverted_with_invalid_parent_reason(
+        TxManagerError::ExecutionReverted {
+            reason: Some(format!("{INVALID_PARENT_GAME}()")),
+            data: None,
+        },
+        ExpectedClassification::InvalidParentGame,
+        "InvalidParentGame reason string contains name"
+    )]
+    #[case::reverted_with_invalid_parent_selector_data(
+        TxManagerError::ExecutionReverted {
+            reason: None,
+            data: Some(Bytes::from(base_proof_contracts::invalid_parent_game_selector().to_vec())),
+        },
+        ExpectedClassification::InvalidParentGame,
+        "InvalidParentGame raw data contains selector"
+    )]
+    #[case::rpc_with_invalid_signer_selector_hex(
+        TxManagerError::Rpc(format!("execution reverted: 0x{}", alloy_primitives::hex::encode(base_proof_contracts::invalid_signer_selector()))),
+        ExpectedClassification::InvalidSigner,
+        "InvalidSigner selector hex in Rpc message"
+    )]
+    #[case::rpc_with_invalid_signer_name(
+        TxManagerError::Rpc(format!("{INVALID_SIGNER}(0x0000000000000000000000000000000000000000)")),
+        ExpectedClassification::InvalidSigner,
+        "InvalidSigner name in Rpc message"
+    )]
+    #[case::reverted_with_invalid_signer_reason(
+        TxManagerError::ExecutionReverted {
+            reason: Some(format!("{INVALID_SIGNER}(0x0000000000000000000000000000000000000000)")),
+            data: None,
+        },
+        ExpectedClassification::InvalidSigner,
+        "InvalidSigner reason string contains name"
+    )]
+    #[case::reverted_with_invalid_signer_selector_data(
+        {
+            let mut data = base_proof_contracts::invalid_signer_selector().to_vec();
+            data.extend_from_slice(Address::ZERO.as_slice());
+            TxManagerError::ExecutionReverted {
+                reason: None,
+                data: Some(Bytes::from(data)),
+            }
+        },
+        ExpectedClassification::InvalidSigner,
+        "InvalidSigner raw data contains selector"
+    )]
     #[case::reverted_other_error(
         TxManagerError::ExecutionReverted {
             reason: Some("SomeOtherError()".to_string()),
@@ -442,6 +525,14 @@ mod tests {
                 matches!(result, ProposerError::L1OriginTooOld),
                 "{scenario}: expected L1OriginTooOld, got {result:?}"
             ),
+            ExpectedClassification::InvalidParentGame => assert!(
+                matches!(result, ProposerError::InvalidParentGame),
+                "{scenario}: expected InvalidParentGame, got {result:?}"
+            ),
+            ExpectedClassification::InvalidSigner => assert!(
+                matches!(result, ProposerError::InvalidSigner),
+                "{scenario}: expected InvalidSigner, got {result:?}"
+            ),
             ExpectedClassification::TxManager => assert!(
                 matches!(result, ProposerError::TxManager(_)),
                 "{scenario}: expected TxManager, got {result:?}"
@@ -461,5 +552,23 @@ mod tests {
     #[case::other_error(ProposerError::Contract("other".into()), false)]
     fn test_is_l1_origin_too_old(#[case] err: ProposerError, #[case] expected: bool) {
         assert_eq!(err.is_l1_origin_too_old(), expected);
+    }
+
+    #[rstest]
+    #[case::invalid_parent_game(ProposerError::InvalidParentGame, true)]
+    #[case::game_already_exists(ProposerError::GameAlreadyExists, false)]
+    #[case::l1_origin_too_old(ProposerError::L1OriginTooOld, false)]
+    #[case::other_error(ProposerError::Contract("other".into()), false)]
+    fn test_is_invalid_parent_game(#[case] err: ProposerError, #[case] expected: bool) {
+        assert_eq!(err.is_invalid_parent_game(), expected);
+    }
+
+    #[rstest]
+    #[case::invalid_signer(ProposerError::InvalidSigner, true)]
+    #[case::invalid_parent_game(ProposerError::InvalidParentGame, false)]
+    #[case::l1_origin_too_old(ProposerError::L1OriginTooOld, false)]
+    #[case::other_error(ProposerError::Contract("other".into()), false)]
+    fn test_is_invalid_signer(#[case] err: ProposerError, #[case] expected: bool) {
+        assert_eq!(err.is_invalid_signer(), expected);
     }
 }

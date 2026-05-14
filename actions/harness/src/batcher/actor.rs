@@ -77,8 +77,8 @@ pub enum BatcherError {
 ///
 /// On construction, `Batcher` spawns a [`BatchDriver`] as a background tokio
 /// task backed by a [`ChannelBlockSource`] for L2 block delivery and a
-/// [`ChannelL1HeadSource`] fed by [`L1MinerTxManager`]. This mirrors the op-batcher
-/// production architecture: the driver owns its encoding pipeline and
+/// [`ChannelL1HeadSource`] fed by [`L1MinerTxManager`]. This mirrors the production
+/// batcher architecture: the driver owns its encoding pipeline and
 /// transaction manager and runs its own async loop.
 ///
 /// Each call to [`advance`] drives one complete batch cycle:
@@ -402,8 +402,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// In production, this corresponds to the batcher detecting that the
     /// L2 unsafe chain has diverged (e.g. because it was repointed to a
-    /// different sequencer node). The op-batcher's `computeSyncActions`
-    /// achieves the same effect via `startAfresh` → `channelManager.Clear()`.
+    /// different sequencer node). The batcher achieves the same effect by
+    /// starting fresh and clearing the channel manager state.
     ///
     /// The `new_safe_head` is forwarded to the driver for logging. The
     /// actual catchup position is determined by the [`safe_head_rx`] watch

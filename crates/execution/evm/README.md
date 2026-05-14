@@ -22,7 +22,7 @@ base-execution-evm = { workspace = true }
 ```rust,ignore
 use base_execution_evm::BaseEvmConfig;
 
-let evm_config = BaseEvmConfig::optimism(chain_spec);
+let evm_config = BaseEvmConfig::base(chain_spec);
 let env = evm_config.evm_env(&header, &parent)?;
 ```
 

@@ -53,6 +53,7 @@ impl ProposerService {
             dispute_game_factory = %config.dispute_game_factory_addr,
             game_type = config.game_type,
             tee_image_hash = %config.tee_image_hash,
+            prover_timeout = ?config.prover_timeout,
             poll_interval = ?config.poll_interval,
             rpc_timeout = ?config.rpc_timeout,
             max_parallel_proofs = config.max_parallel_proofs,
@@ -89,7 +90,7 @@ impl ProposerService {
         info!(endpoint = %config.rollup_rpc, "Rollup client initialized");
 
         let prover_client = HttpClientBuilder::default()
-            .request_timeout(crate::constants::PROVER_TIMEOUT)
+            .request_timeout(config.prover_timeout)
             .build(config.prover_rpc.as_str())
             .wrap_err("failed to create prover RPC client")?;
         info!(endpoint = %config.prover_rpc, "Prover RPC client initialized");

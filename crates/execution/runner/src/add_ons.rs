@@ -308,8 +308,8 @@ where
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct BaseAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
-    /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
-    /// network.
+    /// Sequencer client, configured to forward submitted transactions to sequencer of the given
+    /// Base network.
     sequencer_url: Option<String>,
     /// Headers to use for the sequencer client requests.
     sequencer_headers: Vec<String>,

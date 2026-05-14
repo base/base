@@ -462,7 +462,7 @@ impl BatcherService {
         );
 
         // Optionally block startup until the rollup node reports a non-zero
-        // sync status. Mirrors op-batcher's `--wait-node-sync`.
+        // sync status. Mirrors the reference batcher's `--wait-node-sync`.
         if self.config.wait_node_sync {
             Self::wait_for_node_sync(
                 &rollup_client,

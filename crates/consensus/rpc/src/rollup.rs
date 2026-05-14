@@ -1,6 +1,6 @@
 //! Implements the rollup client rpc endpoints. These endpoints serve data about the rollup state.
 //!
-//! Implemented in the op-node in <https://github.com/ethereum-optimism/optimism/blob/174e55f0a1e73b49b80a561fd3fedd4fea5770c6/op-service/sources/rollupclient.go#L16>
+//! The method names remain compatible with the legacy rollup RPC namespace.
 
 use std::{
     fmt::Debug,
@@ -81,7 +81,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     async fn output_at_block(&self, block_num: BlockNumberOrTag) -> RpcResult<OutputResponse> {
         const RPC_METHOD: &str = "optimism_outputAtBlock";
 
-        Metrics::rpc_calls("op_outputAtBlock").increment(1.0);
+        Metrics::rpc_calls("base_outputAtBlock").increment(1.0);
 
         let request_id = RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
@@ -139,7 +139,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
         &self,
         block_num: BlockNumberOrTag,
     ) -> RpcResult<SafeHeadResponse> {
-        Metrics::rpc_calls("op_safeHeadAtL1Block").increment(1.0);
+        Metrics::rpc_calls("base_safeHeadAtL1Block").increment(1.0);
 
         let number = match block_num {
             BlockNumberOrTag::Number(n) => n,
@@ -169,7 +169,7 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     async fn sync_status(&self) -> RpcResult<SyncStatus> {
         const RPC_METHOD: &str = "optimism_syncStatus";
 
-        Metrics::rpc_calls("op_syncStatus").increment(1.0);
+        Metrics::rpc_calls("base_syncStatus").increment(1.0);
 
         let request_id = RPC_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let (l1_sync_status_send, l1_sync_status_recv) = tokio::sync::oneshot::channel();
@@ -218,13 +218,13 @@ impl<EngineRpcClient_: EngineRpcClient + 'static> RollupNodeApiServer
     }
 
     async fn rollup_config(&self) -> RpcResult<RollupConfig> {
-        Metrics::rpc_calls("op_rollupConfig").increment(1.0);
+        Metrics::rpc_calls("base_rollupConfig").increment(1.0);
 
         self.engine_client.get_config().await
     }
 
     async fn version(&self) -> RpcResult<String> {
-        Metrics::rpc_calls("op_version").increment(1.0);
+        Metrics::rpc_calls("base_version").increment(1.0);
 
         const RPC_VERSION: &str = env!("CARGO_PKG_VERSION");
 

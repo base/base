@@ -5,14 +5,10 @@
 
 use clap::Parser;
 
-pub mod bootnode;
-pub mod cli;
-pub mod metrics;
-
 fn main() {
     base_cli_utils::init_common!();
 
-    if let Err(err) = cli::Cli::parse().run() {
+    if let Err(err) = base_consensus_cli::ConsensusCli::parse().run() {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
