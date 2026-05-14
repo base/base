@@ -279,15 +279,16 @@ impl<'a, Storage: BaseProofsStore + Clone> StateRootProvider
         let overlay_nodes_sorted = self.overlay.parent_trie().clone_into_sorted();
         let overlay_state_sorted = self.overlay.read_state().clone_into_sorted();
         let state_sorted = state.into_sorted();
+        let tx = self.storage.ro_tx().map_err(Into::<ProviderError>::into)?;
 
         Ok(StateRoot::new(
             InMemoryTrieCursorFactory::new(
-                BaseProofsTrieCursorFactory::new(self.storage, self.block_number),
+                BaseProofsTrieCursorFactory::new(self.storage, &tx, self.block_number),
                 &overlay_nodes_sorted,
             ),
             HashedPostStateCursorFactory::new(
                 HashedPostStateCursorFactory::new(
-                    BaseProofsHashedAccountCursorFactory::new(self.storage, self.block_number),
+                    BaseProofsHashedAccountCursorFactory::new(self.storage, &tx, self.block_number),
                     &overlay_state_sorted,
                 ),
                 &state_sorted,
@@ -302,18 +303,19 @@ impl<'a, Storage: BaseProofsStore + Clone> StateRootProvider
         let overlay_state_sorted = self.overlay.read_state().clone_into_sorted();
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
+        let tx = self.storage.ro_tx().map_err(Into::<ProviderError>::into)?;
 
         Ok(StateRoot::new(
             InMemoryTrieCursorFactory::new(
                 InMemoryTrieCursorFactory::new(
-                    BaseProofsTrieCursorFactory::new(self.storage, self.block_number),
+                    BaseProofsTrieCursorFactory::new(self.storage, &tx, self.block_number),
                     &overlay_nodes_sorted,
                 ),
                 &nodes_sorted,
             ),
             HashedPostStateCursorFactory::new(
                 HashedPostStateCursorFactory::new(
-                    BaseProofsHashedAccountCursorFactory::new(self.storage, self.block_number),
+                    BaseProofsHashedAccountCursorFactory::new(self.storage, &tx, self.block_number),
                     &overlay_state_sorted,
                 ),
                 &state_sorted,
@@ -331,15 +333,16 @@ impl<'a, Storage: BaseProofsStore + Clone> StateRootProvider
         let overlay_nodes_sorted = self.overlay.parent_trie().clone_into_sorted();
         let overlay_state_sorted = self.overlay.read_state().clone_into_sorted();
         let state_sorted = state.into_sorted();
+        let tx = self.storage.ro_tx().map_err(Into::<ProviderError>::into)?;
 
         Ok(StateRoot::new(
             InMemoryTrieCursorFactory::new(
-                BaseProofsTrieCursorFactory::new(self.storage, self.block_number),
+                BaseProofsTrieCursorFactory::new(self.storage, &tx, self.block_number),
                 &overlay_nodes_sorted,
             ),
             HashedPostStateCursorFactory::new(
                 HashedPostStateCursorFactory::new(
-                    BaseProofsHashedAccountCursorFactory::new(self.storage, self.block_number),
+                    BaseProofsHashedAccountCursorFactory::new(self.storage, &tx, self.block_number),
                     &overlay_state_sorted,
                 ),
                 &state_sorted,
@@ -357,18 +360,19 @@ impl<'a, Storage: BaseProofsStore + Clone> StateRootProvider
         let overlay_state_sorted = self.overlay.read_state().clone_into_sorted();
         let nodes_sorted = input.nodes.into_sorted();
         let state_sorted = input.state.into_sorted();
+        let tx = self.storage.ro_tx().map_err(Into::<ProviderError>::into)?;
 
         Ok(StateRoot::new(
             InMemoryTrieCursorFactory::new(
                 InMemoryTrieCursorFactory::new(
-                    BaseProofsTrieCursorFactory::new(self.storage, self.block_number),
+                    BaseProofsTrieCursorFactory::new(self.storage, &tx, self.block_number),
                     &overlay_nodes_sorted,
                 ),
                 &nodes_sorted,
             ),
             HashedPostStateCursorFactory::new(
                 HashedPostStateCursorFactory::new(
-                    BaseProofsHashedAccountCursorFactory::new(self.storage, self.block_number),
+                    BaseProofsHashedAccountCursorFactory::new(self.storage, &tx, self.block_number),
                     &overlay_state_sorted,
                 ),
                 &state_sorted,
