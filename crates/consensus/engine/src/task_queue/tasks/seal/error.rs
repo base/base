@@ -96,8 +96,9 @@ impl EngineTaskError for SealTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {
             Self::PayloadInsertionFailed(inner) => inner.severity(),
-            Self::GetPayloadFailed(_) => EngineTaskErrorSeverity::Temporary,
-            Self::UnexpectedPayloadVersion(_) => EngineTaskErrorSeverity::Temporary,
+            Self::GetPayloadFailed(_) | Self::UnexpectedPayloadVersion(_) => {
+                EngineTaskErrorSeverity::Temporary
+            }
             Self::HoloceneInvalidFlush => EngineTaskErrorSeverity::Flush,
             Self::UnsafeHeadChangedSinceBuild => EngineTaskErrorSeverity::Reset,
             Self::DepositOnlyPayloadReattemptFailed
