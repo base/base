@@ -226,8 +226,6 @@ services:
       - ${L2_CHAIN_ID}
       - --l2-config-file
       - /genesis/l2/rollup.json
-      - --p2p.listen.ip
-      - 0.0.0.0
       - --p2p.listen.tcp
       - "${L2_CL_BOOTNODE_P2P_PORT}"
       - --p2p.listen.udp
@@ -377,8 +375,6 @@ services:
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
       - "4"
-      - --rpc.addr
-      - "0.0.0.0"
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
       - --rpc.enable-admin
@@ -393,8 +389,6 @@ services:
       - --p2p.bootnodes-file
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
       - --metrics.port
       - "${L2_BUILDER_CL_METRICS_PORT}"
       - --mode
@@ -576,8 +570,6 @@ services:
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
       - "4"
-      - --rpc.addr
-      - "0.0.0.0"
       - --rpc.port
       - "${L2_CLIENT_CL_RPC_PORT}"
       - --p2p.listen.tcp
@@ -587,8 +579,6 @@ services:
       - --p2p.advertise.ip
       - base-client-cl
       - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
       - --metrics.port
       - "${L2_CLIENT_CL_METRICS_PORT}"
       - --p2p.bootnodes-file
@@ -678,8 +668,6 @@ services:
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
       - "4"
-      - --rpc.addr
-      - "0.0.0.0"
       - --rpc.port
       - "${L2_UNIFIED_CL_RPC_PORT}"
       - --rpc.enable-admin
