@@ -39,7 +39,7 @@ use reth_node_core::{
 // reporting
 use reth_node_metrics as _;
 use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
-pub use standard_node::{StandardBaseRethNode, StandardNodeArgs};
+pub use standard_node::{RpcStandardNodeArgs, StandardBaseRethNode, StandardNodeArgs};
 
 /// The main base-reth cli interface.
 ///

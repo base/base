@@ -16,9 +16,9 @@ use tracing::{error, info};
 use url::Url;
 
 use crate::{
-    ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedRpcArgs, L1ClientArgs, L1ConfigFile,
-    L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, P2PArgs, RpcArgs, SequencerArgs,
-    metrics::CliMetrics,
+    ConsensusChainArgs, EmbeddedL2ClientArgs, EmbeddedP2PArgs, EmbeddedRpcArgs, L1ClientArgs,
+    L1ConfigFile, L2ClientArgs, L2ConfigFile, LogArgs, MetricsArgs, P2PArgs, RpcArgs,
+    SequencerArgs, metrics::CliMetrics,
 };
 
 /// Overrides supplied by callers that embed consensus alongside another service.
@@ -142,21 +142,6 @@ pub struct ConsensusNodeConfigArgs {
 /// Consensus node configuration arguments for embedded callers.
 #[derive(Args, Clone, Debug)]
 pub struct EmbeddedConsensusNodeConfigArgs {
-    /// The mode to run the node in.
-    #[arg(
-        long = "mode",
-        default_value_t = NodeMode::Validator,
-        env = "BASE_NODE_MODE",
-        help = format!(
-            "The mode to run the node in. Supported modes are: {}",
-            NodeMode::iter()
-                .map(|mode| format!("\"{}\"", mode.to_string()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    )]
-    pub node_mode: NodeMode,
-
     /// L1 RPC CLI arguments.
     #[clap(flatten)]
     pub l1_rpc_args: L1ClientArgs,
@@ -175,15 +160,11 @@ pub struct EmbeddedConsensusNodeConfigArgs {
 
     /// P2P CLI arguments.
     #[command(flatten)]
-    pub p2p_flags: P2PArgs,
+    pub p2p_flags: EmbeddedP2PArgs,
 
     /// RPC CLI arguments.
     #[command(flatten)]
     pub rpc_flags: EmbeddedRpcArgs,
-
-    /// SEQUENCER CLI arguments.
-    #[command(flatten)]
-    pub sequencer_flags: SequencerArgs,
 
     /// Path to the `SafeDB` directory. If not set, safe head tracking is disabled.
     #[arg(long = "safedb.path", env = "BASE_NODE_SAFEDB_PATH")]
@@ -193,14 +174,14 @@ pub struct EmbeddedConsensusNodeConfigArgs {
 impl From<EmbeddedConsensusNodeConfigArgs> for ConsensusNodeConfigArgs {
     fn from(args: EmbeddedConsensusNodeConfigArgs) -> Self {
         Self {
-            node_mode: args.node_mode,
+            node_mode: NodeMode::Validator,
             l1_rpc_args: args.l1_rpc_args,
             l2_client_args: args.l2_client_args.into(),
             l1_config: args.l1_config,
             l2_config: args.l2_config,
-            p2p_flags: args.p2p_flags,
+            p2p_flags: args.p2p_flags.into(),
             rpc_flags: args.rpc_flags.into(),
-            sequencer_flags: args.sequencer_flags,
+            sequencer_flags: SequencerArgs::default(),
             safedb_path: args.safedb_path,
         }
     }

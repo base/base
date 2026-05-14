@@ -45,47 +45,27 @@ pub(crate) struct BaseCli {
 #[derive(Subcommand, Clone, Debug)]
 #[non_exhaustive]
 pub(crate) enum BaseCommand {
-    /// Start the integrated Base node.
-    #[command(name = "node")]
-    Node(NodeArgs),
+    /// Run the integrated node in RPC mode.
+    #[command(name = "rpc")]
+    Rpc(RpcCommand),
 }
 
 impl BaseCommand {
     /// Runs the selected top-level command.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
         match self {
-            Self::Node(node) => node.run(resolved_chain),
+            Self::Rpc(rpc) => rpc.run(resolved_chain),
         }
     }
 }
 
-/// Arguments for `base node`.
+/// Arguments for `base rpc`.
 #[derive(Args, Clone, Debug)]
-pub(crate) struct NodeArgs {
-    /// The node flavor to run.
-    #[command(subcommand)]
-    pub(crate) command: NodeSubcommand,
-}
-
-impl NodeArgs {
-    /// Runs the selected `node` subcommand.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        match self.command {
-            NodeSubcommand::Rpc(rpc) => rpc.run(resolved_chain),
-        }
-    }
-}
-
-/// Subcommands for `base node`.
-#[derive(Subcommand, Clone, Debug)]
-pub(crate) enum NodeSubcommand {
-    /// Run the integrated node in RPC mode.
-    #[command(name = "rpc")]
-    Rpc(RpcCommand),
-}
-
-/// Arguments for `base node rpc`.
-#[derive(Args, Clone, Debug)]
+#[command(
+    mut_arg("builder_disallow", |arg| arg.hide(true).long("__builder-disallow-disabled")),
+    mut_arg("sequencer", |arg| arg.hide(true).long("__rollup-sequencer-disabled")),
+    mut_arg("sequencer_headers", |arg| arg.hide(true).long("__rollup-sequencer-headers-disabled"))
+)]
 pub(crate) struct RpcCommand {
     /// Execution node arguments.
     #[command(flatten)]
@@ -176,48 +156,45 @@ mod tests {
     const REQUIRED_CONSENSUS_ARGS: &[&str] =
         &["--l1-eth-rpc", "http://localhost:8545", "--l1-beacon", "http://localhost:5052"];
 
-    fn node_rpc_args(args: &'static [&'static str]) -> Vec<&'static str> {
+    fn rpc_args(args: &'static [&'static str]) -> Vec<&'static str> {
         let mut full_args = Vec::from(args);
         full_args.extend_from_slice(REQUIRED_CONSENSUS_ARGS);
         full_args
     }
 
     #[test]
-    fn parses_default_chain_for_node_rpc() {
-        let cli = BaseCli::parse_from(node_rpc_args(&["base", "node", "rpc"]));
+    fn parses_default_chain_for_rpc() {
+        let cli = BaseCli::parse_from(rpc_args(&["base", "rpc"]));
 
         assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Mainnet)));
-        assert!(matches!(cli.command, BaseCommand::Node(_)));
+        assert!(matches!(cli.command, BaseCommand::Rpc(_)));
     }
 
     #[test]
     fn parses_named_chain_selector() {
-        let cli = BaseCli::parse_from(node_rpc_args(&["base", "-c", "sepolia", "node", "rpc"]));
+        let cli = BaseCli::parse_from(rpc_args(&["base", "-c", "sepolia", "rpc"]));
 
         assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
     }
 
     #[test]
     fn parses_global_chain_after_rpc_subcommand() {
-        let cli =
-            BaseCli::parse_from(node_rpc_args(&["base", "node", "rpc", "--chain", "sepolia"]));
+        let cli = BaseCli::parse_from(rpc_args(&["base", "rpc", "--chain", "sepolia"]));
 
         assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
     }
 
     #[test]
     fn parses_path_chain_selector() {
-        let cli =
-            BaseCli::parse_from(node_rpc_args(&["base", "--chain", "./chain.toml", "node", "rpc"]));
+        let cli = BaseCli::parse_from(rpc_args(&["base", "--chain", "./chain.toml", "rpc"]));
 
         assert!(matches!(cli.chain, ChainArg::File(_)));
     }
 
     #[test]
     fn parses_execution_port_and_consensus_rpc_port() {
-        let cli = BaseCli::parse_from(node_rpc_args(&[
+        let cli = BaseCli::parse_from(rpc_args(&[
             "base",
-            "node",
             "rpc",
             "--port",
             "30333",
@@ -225,8 +202,7 @@ mod tests {
             "9546",
         ]));
 
-        let BaseCommand::Node(node) = cli.command;
-        let NodeSubcommand::Rpc(rpc) = node.command;
+        let BaseCommand::Rpc(rpc) = cli.command;
 
         assert_eq!(rpc.execution.network.port, 30333);
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 9546);
@@ -243,12 +219,117 @@ mod tests {
 
     #[test]
     fn rejects_multiple_chain_selectors() {
-        let err = BaseCli::try_parse_from(node_rpc_args(&[
-            "base", "-c", "mainnet", "--chain", "sepolia", "node", "rpc",
+        let err = BaseCli::try_parse_from(rpc_args(&[
+            "base", "-c", "mainnet", "--chain", "sepolia", "rpc",
         ]))
         .unwrap_err();
 
         let rendered = err.to_string();
         assert!(rendered.contains("cannot be used multiple times"));
+    }
+
+    #[test]
+    fn rejects_legacy_node_rpc_path() {
+        let err = BaseCli::try_parse_from(rpc_args(&["base", "node", "rpc"])).unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("node"));
+    }
+
+    #[test]
+    fn rejects_rpc_mode_arg() {
+        let err =
+            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--mode", "sequencer"])).unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--mode"));
+    }
+
+    #[test]
+    fn rejects_rpc_sequencer_args() {
+        let err =
+            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--sequencer.stopped"])).unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--sequencer.stopped"));
+    }
+
+    #[test]
+    fn rejects_rpc_conductor_args() {
+        let err = BaseCli::try_parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--conductor.rpc",
+            "http://localhost:9090",
+        ]))
+        .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--conductor.rpc"));
+    }
+
+    #[test]
+    fn rejects_rpc_builder_args() {
+        let err = BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--builder.max-tasks", "1"]))
+            .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--builder.max-tasks"));
+    }
+
+    #[test]
+    fn rejects_rpc_builder_disallow_arg() {
+        let err =
+            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--builder.disallow", "deny.json"]))
+                .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--builder.disallow"));
+    }
+
+    #[test]
+    fn rejects_rpc_rollup_sequencer_arg() {
+        let err = BaseCli::try_parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--rollup.sequencer",
+            "http://localhost:8545",
+        ]))
+        .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--rollup.sequencer"));
+    }
+
+    #[test]
+    fn rejects_rpc_metering_args() {
+        let err =
+            BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--enable-metering"])).unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--enable-metering"));
+    }
+
+    #[test]
+    fn rejects_rpc_tx_forwarding_args() {
+        let err = BaseCli::try_parse_from(rpc_args(&["base", "rpc", "--enable-tx-forwarding"]))
+            .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--enable-tx-forwarding"));
+    }
+
+    #[test]
+    fn rejects_rpc_p2p_signer_args() {
+        let err = BaseCli::try_parse_from(rpc_args(&[
+            "base",
+            "rpc",
+            "--p2p.sequencer.key",
+            "bcc617ea05150ff60490d3c6058630ba94ae9f12a02a87efd291349ca0e54e0a",
+        ]))
+        .unwrap_err();
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("--p2p.sequencer.key"));
     }
 }

@@ -11,8 +11,7 @@ use reth_node_builder::NodeBuilder;
 use reth_node_core::{
     args::{
         DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, EraArgs, MetricArgs,
-        NetworkArgs, PayloadBuilderArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs,
-        TxPoolArgs,
+        NetworkArgs, PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs, TxPoolArgs,
     },
     node_config::NodeConfig,
     version,
@@ -20,7 +19,7 @@ use reth_node_core::{
 use reth_rpc_server_types::{DefaultRpcModuleValidator, RpcModuleValidator};
 use tracing::info;
 
-use crate::StandardNodeArgs;
+use crate::{RpcStandardNodeArgs, StandardNodeArgs};
 
 /// Execution node arguments shared by binaries that provide chain selection themselves.
 #[derive(Debug, Clone, Args)]
@@ -62,10 +61,6 @@ pub struct ExecutionNodeArgs {
     #[command(flatten)]
     pub txpool: TxPoolArgs,
 
-    /// All payload builder related arguments.
-    #[command(flatten)]
-    pub builder: PayloadBuilderArgs,
-
     /// All debug related arguments with --debug prefix.
     #[command(flatten)]
     pub debug: DebugArgs,
@@ -100,7 +95,7 @@ pub struct ExecutionNodeArgs {
 
     /// Standard Base execution-node extension arguments.
     #[command(flatten)]
-    pub standard: StandardNodeArgs,
+    pub standard: RpcStandardNodeArgs,
 }
 
 impl ExecutionNodeArgs {
@@ -115,7 +110,6 @@ impl ExecutionNodeArgs {
             network,
             rpc,
             txpool,
-            builder,
             debug,
             db,
             dev,
@@ -136,7 +130,7 @@ impl ExecutionNodeArgs {
             network,
             rpc,
             txpool,
-            builder,
+            builder: Default::default(),
             debug,
             db,
             dev,
@@ -147,7 +141,7 @@ impl ExecutionNodeArgs {
             storage,
         };
 
-        ExecutionNodeLaunchConfig { node_config, standard, with_unused_ports }
+        ExecutionNodeLaunchConfig { node_config, standard: standard.into(), with_unused_ports }
     }
 }
 

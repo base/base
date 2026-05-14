@@ -50,4 +50,4 @@ pub mod signer;
 pub use signer::{SignerArgs, SignerArgsParseError};
 
 pub mod p2p;
-pub use p2p::{P2PArgs, P2PConfigError};
+pub use p2p::{EmbeddedP2PArgs, P2PArgs, P2PConfigError};
