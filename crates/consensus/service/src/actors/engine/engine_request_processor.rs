@@ -695,9 +695,14 @@ where
                             )
                             .await;
 
+                        let error =
+                            result.as_ref().err().map(|err| (err.severity(), format!("{err:?}")));
                         result_tx.send(result).await.map_err(|err| {
                             EngineTaskErrors::Seal(SealTaskError::MpscSend(Box::new(err)))
                         })?;
+                        if let Some((severity, error)) = error {
+                            self.handle_engine_task_error_severity(severity, error).await?;
+                        }
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(

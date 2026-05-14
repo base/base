@@ -93,7 +93,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             .await
         {
             Ok(payload_id) => {
-                self.state_sender.send_replace(self.state);
                 Metrics::engine_task_count(Metrics::BUILD_TASK_LABEL).increment(1);
                 Ok(payload_id)
             }
@@ -173,7 +172,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         )
         .await;
 
-        self.state_sender.send_replace(self.state);
         match result {
             Ok(envelope) => {
                 Metrics::engine_task_count(Metrics::GET_PAYLOAD_TASK_LABEL).increment(1);
