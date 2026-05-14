@@ -32,12 +32,7 @@ pub struct UnwindCommand<C: ChainSpecParser> {
     pub storage_path: PathBuf,
 
     /// The on-disk database backend for proofs history.
-    #[arg(
-        long = "proofs-history.db",
-        visible_aliases = ["proofs-history.db-backend", "proofs-db"],
-        value_name = "PROOFS_HISTORY_DB",
-        default_value = "rocksdb"
-    )]
+    #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "rocksdb")]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// The target block number to unwind to.
