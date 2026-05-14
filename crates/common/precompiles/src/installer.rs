@@ -30,7 +30,7 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
     }
 
     /// Installs Base-specific dynamic precompiles into an existing [`PrecompilesMap`].
-    pub fn install_into(self, _precompiles: &mut PrecompilesMap) {}
+    pub const fn install_into(self, _precompiles: &mut PrecompilesMap) {}
 }
 
 impl<S: BasePrecompileSpec> Default for BasePrecompileInstaller<S> {
