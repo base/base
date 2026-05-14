@@ -1100,6 +1100,8 @@ pub async fn run_conductor_poller(
 pub struct ValidatorNodeStatus {
     /// Human-readable name for this node.
     pub name: String,
+    /// Human-readable binary/process description shown in the TUI.
+    pub binary: Option<String>,
 
     // ── CL (consensus layer) ─────────────────────────────────────────────
     /// Unsafe L2 block number from `optimism_syncStatus`.
@@ -1136,7 +1138,7 @@ pub async fn run_validator_poller(
     const POLL_INTERVAL: Duration = Duration::from_millis(200);
     const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
-    let clients: Vec<(String, _, _)> = nodes
+    let clients: Vec<(String, Option<String>, _, _)> = nodes
         .into_iter()
         .filter_map(|node| {
             let cl_client = HttpClientBuilder::default()
@@ -1155,7 +1157,7 @@ pub async fn run_validator_poller(
                     })
                     .ok()
             });
-            Some((node.name, cl_client, el_client))
+            Some((node.name, node.binary, cl_client, el_client))
         })
         .collect();
 
@@ -1166,7 +1168,7 @@ pub async fn run_validator_poller(
         interval.tick().await;
 
         let statuses = futures::future::join_all(clients.iter().map(
-            |(name, cl_client, el_client)| async move {
+            |(name, binary, cl_client, el_client)| async move {
                 let (sync, cl_peer_stats, el_block_r, el_syncing_r, el_peers_r) = tokio::join!(
                     RollupNodeApiClient::sync_status(cl_client),
                     BaseP2PApiClient::opp2p_peer_stats(cl_client),
@@ -1202,6 +1204,7 @@ pub async fn run_validator_poller(
                 let sync = sync.ok();
                 ValidatorNodeStatus {
                     name: name.clone(),
+                    binary: binary.clone(),
                     unsafe_l2_block: sync.as_ref().map(|s| s.unsafe_l2.block_info.number),
                     unsafe_l2_hash: sync.as_ref().map(|s| s.unsafe_l2.block_info.hash),
                     safe_l2_block: sync.as_ref().map(|s| s.safe_l2.block_info.number),

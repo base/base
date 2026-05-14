@@ -1,9 +1,10 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use base_consensus_cli::{
     ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
 };
-use base_execution_cli::ExecutionNodeArgs;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use clap::{Args, Parser, Subcommand};
 use reth_cli_runner::CliRunner;
 use url::Url;
@@ -86,6 +87,10 @@ pub(crate) enum NodeSubcommand {
 /// Arguments for `base node rpc`.
 #[derive(Args, Clone, Debug)]
 pub(crate) struct RpcCommand {
+    /// Execution chain spec to use instead of the root chain selection.
+    #[arg(long = "execution-chain", value_parser = chain_value_parser)]
+    pub(crate) execution_chain: Option<Arc<BaseChainSpec>>,
+
     /// Execution node arguments.
     #[command(flatten)]
     pub(crate) execution: ExecutionNodeArgs,
@@ -98,7 +103,10 @@ pub(crate) struct RpcCommand {
 impl RpcCommand {
     /// Runs the `rpc` flavor.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        let execution_chain = resolved_chain.execution_chain_spec()?;
+        let execution_chain = match self.execution_chain {
+            Some(chain) => chain,
+            None => resolved_chain.execution_chain_spec()?,
+        };
         let consensus_chain = resolved_chain.consensus_chain_args();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, self.consensus.into());
         let rollup_config = consensus_args.load_rollup_config()?;
@@ -220,6 +228,8 @@ mod tests {
             "rpc",
             "--chain",
             "dev",
+            "--execution-chain",
+            "dev",
             "--datadir=/data",
             "--http",
             "--http.addr=0.0.0.0",
@@ -292,6 +302,7 @@ mod tests {
 
         assert_eq!(rpc.execution.rpc.auth_ipc_path, "/data/engine.ipc");
         assert_eq!(rpc.execution.network.port, 30303);
+        assert!(rpc.execution_chain.is_some());
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 8549);
         assert_eq!(rpc.consensus.p2p_flags.listen_tcp_port, 8003);
     }
