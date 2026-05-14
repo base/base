@@ -157,7 +157,7 @@ impl MdbxProofsStorage {
     /// # Parameters
     /// - `block_number`: Target block number for versioning entries
     /// - `items`: **Must be sorted** by key - iterator of entries to persist
-    /// - `append_mode`: `true` = MDBX_APPENDDUP fast path (caller must guarantee
+    /// - `append_mode`: `true` = `MDBX_APPENDDUP` fast path (caller must guarantee
     ///   subkey monotonicity, satisfied by single-block writes via the
     ///   `OutOfOrder` parent check). `false` = upsert; required for batched
     ///   cross-block writes where keys may not be lex-sorted across blocks.
@@ -633,7 +633,7 @@ impl MdbxProofsStorage {
     /// first block's parent must match the storage's current latest block hash.
     /// On any error, the entire transaction is aborted so no entries persist.
     ///
-    /// Uses upsert (not MDBX_APPENDDUP) because successive blocks within the same
+    /// Uses upsert (not `MDBX_APPENDDUP`) because successive blocks within the same
     /// transaction may write keys lexicographically smaller than keys written by
     /// earlier blocks, which would violate `MDBX_APPENDDUP`.
     ///

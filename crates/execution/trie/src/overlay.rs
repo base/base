@@ -67,12 +67,12 @@ impl ProofsBatchOverlay {
     }
 
     /// Returns true when no blocks have been appended.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.pending.is_empty()
     }
 
     /// Returns the number of blocks appended to this overlay.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.pending.len()
     }
 
@@ -82,12 +82,12 @@ impl ProofsBatchOverlay {
     }
 
     /// Returns the cumulative hashed post-state for prior blocks in this batch.
-    pub fn read_state(&self) -> &HashedPostState {
+    pub const fn read_state(&self) -> &HashedPostState {
         &self.read_state
     }
 
     /// Returns the cumulative trie node updates for prior blocks in this batch.
-    pub fn parent_trie(&self) -> &TrieUpdates {
+    pub const fn parent_trie(&self) -> &TrieUpdates {
         &self.parent_trie
     }
 
