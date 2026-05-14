@@ -860,13 +860,13 @@ mod tests {
             let fx = Fixture::new();
             fx.verifier.set_interval(42);
 
-            let v1 = fx.discovery.resolve_intermediate_block_interval(GAME_TYPE).await.unwrap();
+            let first = fx.discovery.resolve_intermediate_block_interval(GAME_TYPE).await.unwrap();
             // Mutate the underlying mock value: a cached read should still return the original.
             fx.verifier.set_interval(99);
-            let v2 = fx.discovery.resolve_intermediate_block_interval(GAME_TYPE).await.unwrap();
+            let second = fx.discovery.resolve_intermediate_block_interval(GAME_TYPE).await.unwrap();
 
-            assert_eq!(v1, 42);
-            assert_eq!(v2, 42);
+            assert_eq!(first, 42);
+            assert_eq!(second, 42);
         }
 
         #[tokio::test]

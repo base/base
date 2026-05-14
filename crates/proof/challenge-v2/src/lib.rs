@@ -11,11 +11,15 @@ pub use metrics::ChallengerMetrics;
 
 mod validate;
 pub use validate::{
-    AccountProofError, AccountProofVerifier, L2OutputValidator, OutputValidator, ValidatorError,
+    AccountProofError, AccountProofVerifier, L2OutputValidator, OutputValidator, ValidationError,
+    ValidatorError, Violation, ViolationSituation,
 };
 
 mod scanner;
 pub use scanner::{ClassifyError, GameDiscovery, GameInfo, GameSituation};
+
+mod submit;
+pub use submit::DisputeAction;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

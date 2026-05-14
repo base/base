@@ -19,6 +19,8 @@ use base_proof_contracts::{
 };
 use base_proof_rpc::{BaseBlock, L2Provider, RpcError, RpcResult};
 
+use crate::{OutputValidator, ValidatorError};
+
 /// Mock [`L2Provider`] backed by in-memory hashmaps.
 ///
 /// Configure by calling [`MockL2Provider::insert_block`] with a header and
@@ -147,6 +149,38 @@ pub fn build_message_passer_proof(
         storage_hash,
         B256::ZERO,
     )
+}
+
+/// Mock [`OutputValidator`] backed by an in-memory `block -> root` map.
+///
+/// Configure via [`MockOutputValidator::set`]. Calls for unconfigured
+/// blocks panic so tests fail loudly when assumptions are wrong.
+#[derive(Debug, Default)]
+pub struct MockOutputValidator {
+    /// Output roots keyed by block number.
+    pub roots: Mutex<HashMap<u64, B256>>,
+}
+
+impl MockOutputValidator {
+    /// Creates an empty mock.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Programs `block_number` to return `root`.
+    pub fn set(&self, block_number: u64, root: B256) {
+        self.roots.lock().expect("roots lock poisoned").insert(block_number, root);
+    }
+}
+
+#[async_trait]
+impl OutputValidator for MockOutputValidator {
+    async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError> {
+        match self.roots.lock().expect("roots lock poisoned").get(&block_number) {
+            Some(&root) => Ok(root),
+            None => panic!("MockOutputValidator: no root configured for block {block_number}"),
+        }
+    }
 }
 
 /// Per-game state read by [`MockAggregateVerifier`].
