@@ -14,13 +14,13 @@ The `base-consensus-engine` crate provides an engine client for interacting with
 - **[`EngineClient`](crate::EngineClient)** - HTTP client for Engine API communication with JWT authentication
 - **[`EngineState`](crate::EngineState)** - Tracks the current state of the execution layer
 - **Task Types** - Specialized tasks for remaining queued engine operations:
-  - [`ConsolidateTask`](crate::ConsolidateTask) - Consolidate unsafe payloads to advance the safe chain
+  - [`DelegatedForkchoiceTask`](crate::DelegatedForkchoiceTask) - Apply delegated safe and finalized labels
   - [`FinalizeTask`](crate::FinalizeTask) - Finalize safe payloads on L1 confirmation
   - [`SynchronizeTask`](crate::SynchronizeTask) - Internal task for execution layer forkchoice synchronization
 
 ## Architecture
 
-The engine owns state directly. Sequencer build, get-payload, and insert operations call `Engine` methods directly, while remaining derived-state operations are still queued and executed atomically:
+The engine owns state directly. Sequencer build, get-payload, insert, and safe-head consolidation operations call `Engine` methods directly, while the remaining delegated forkchoice and finalize operations are still queued and executed atomically:
 
 ```text
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐

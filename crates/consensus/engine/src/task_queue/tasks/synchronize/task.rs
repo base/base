@@ -21,7 +21,7 @@ use crate::{
 ///
 /// ## Usage Patterns
 ///
-/// - **Internal Synchronization**: Called by direct insert processing, [`ConsolidateTask`], and
+/// - **Internal Synchronization**: Called by direct insert/consolidate processing and
 ///   [`FinalizeTask`]
 /// - **Engine Reset**: Used during engine resets to establish initial forkchoice state
 /// - **Safe Head Updates**: Synchronizes safe and finalized head changes
@@ -32,7 +32,6 @@ use crate::{
 /// explicitly handled within direct build processing, eliminating the need for explicit
 /// forkchoice management in most user scenarios.
 ///
-/// [`ConsolidateTask`]: crate::ConsolidateTask  
 /// [`FinalizeTask`]: crate::FinalizeTask
 #[derive(Debug, Clone, Constructor)]
 pub struct SynchronizeTask<EngineClient_: EngineClient> {
@@ -105,7 +104,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         //
         // NOTE:
         // We shouldn't retry the synchronize task there. Since the `sync_state` is only updated
-        // inside the `SynchronizeTask` (except inside the ConsolidateTask, when the block is not
+        // inside the `SynchronizeTask` (except during consolidation, when the block is not
         // the last in the batch) - the engine will get stuck retrying the `SynchronizeTask`
         if state.sync_state != Default::default() && state.sync_state == new_sync_state {
             debug!(target: "engine", ?new_sync_state, "No forkchoice update needed");
