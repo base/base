@@ -8,6 +8,9 @@ extern crate alloc;
 mod provider;
 pub use provider::BasePrecompiles;
 
+mod installer;
+pub use installer::BasePrecompileInstaller;
+
 mod spec;
 pub use spec::BasePrecompileSpec;
 

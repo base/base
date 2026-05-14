@@ -3399,6 +3399,7 @@ dependencies = [
 name = "base-common-precompiles"
 version = "0.0.0"
 dependencies = [
+ "alloy-evm",
  "base-common-chains",
  "revm",
 ]

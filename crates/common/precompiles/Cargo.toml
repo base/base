@@ -13,6 +13,9 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+# alloy
+alloy-evm.workspace = true
+
 # base
 base-common-chains.workspace = true
 
@@ -21,7 +24,7 @@ revm.workspace = true
 
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
-std = [ "base-common-chains/std", "revm/std" ]
+std = [ "alloy-evm/std", "base-common-chains/std", "revm/std" ]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
 c-kzg = [ "revm/c-kzg" ]
