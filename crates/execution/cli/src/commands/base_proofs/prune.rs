@@ -32,12 +32,7 @@ pub struct PruneCommand<C: ChainSpecParser> {
     pub storage_path: PathBuf,
 
     /// The on-disk database backend for proofs history.
-    #[arg(
-        long = "proofs-history.db",
-        visible_aliases = ["proofs-history.db-backend", "proofs-db"],
-        value_name = "PROOFS_HISTORY_DB",
-        default_value = "rocksdb"
-    )]
+    #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "rocksdb")]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
@@ -60,7 +55,8 @@ pub struct PruneCommand<C: ChainSpecParser> {
     #[arg(
         long = "proofs-history.prune-batch-size",
         default_value_t = 1000,
-        value_name = "PROOFS_HISTORY_PRUNE_BATCH_SIZE"
+        value_name = "PROOFS_HISTORY_PRUNE_BATCH_SIZE",
+        value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub proofs_history_prune_batch_size: u64,
 }

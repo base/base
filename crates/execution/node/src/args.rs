@@ -107,12 +107,7 @@ pub struct RollupArgs {
     pub proofs_history_storage_path: Option<PathBuf>,
 
     /// The on-disk database backend for proofs history.
-    #[arg(
-        long = "proofs-history.db",
-        visible_aliases = ["proofs-history.db-backend", "proofs-db"],
-        value_name = "PROOFS_HISTORY_DB",
-        default_value = "rocksdb"
-    )]
+    #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "rocksdb")]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
@@ -331,15 +326,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_proofs_history_db_alias() {
-        let args = CommandParser::<RollupArgs>::parse_from([
-            "reth",
-            "--proofs-history",
-            "--proofs-db",
-            "mdbx",
-        ])
-        .args;
-        assert!(args.proofs_history);
+    fn test_parse_proofs_history_db_without_enabling_history() {
+        let args =
+            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.db", "mdbx"]).args;
+        assert!(!args.proofs_history);
         assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Mdbx);
     }
 
