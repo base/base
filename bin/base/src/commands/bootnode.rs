@@ -47,12 +47,16 @@ impl BootnodeCommand {
             tokio::select! {
                 result = &mut consensus_bootnode => {
                     warn!(layer = "consensus", "bootnode task exited");
-                    Self::stop_task("execution", execution_bootnode).await?;
+                    if let Err(error) = Self::stop_task("execution", execution_bootnode).await {
+                        warn!(error = %error, "failed to stop execution bootnode");
+                    }
                     Self::task_result("consensus", result)
                 }
                 result = &mut execution_bootnode => {
                     warn!(layer = "execution", "bootnode task exited");
-                    Self::stop_task("consensus", consensus_bootnode).await?;
+                    if let Err(error) = Self::stop_task("consensus", consensus_bootnode).await {
+                        warn!(error = %error, "failed to stop consensus bootnode");
+                    }
                     Self::task_result("execution", result)
                 }
             }
