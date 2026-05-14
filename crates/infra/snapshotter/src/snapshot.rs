@@ -505,3 +505,178 @@ fn collect_output_files(dir: &Path) -> Result<Vec<PathBuf>> {
     files.sort_unstable();
     Ok(files)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_headers_range_valid() {
+        assert_eq!(parse_headers_range("static_file_headers_0_499999"), Some((0, 499_999)));
+        assert_eq!(
+            parse_headers_range("static_file_headers_500000_999999"),
+            Some((500_000, 999_999))
+        );
+    }
+
+    #[test]
+    fn parse_headers_range_with_suffix() {
+        assert_eq!(
+            parse_headers_range("static_file_headers_500000_999999.jar"),
+            Some((500_000, 999_999))
+        );
+    }
+
+    #[test]
+    fn parse_headers_range_non_header_files() {
+        assert_eq!(parse_headers_range("static_file_transactions_0_499999"), None);
+        assert_eq!(parse_headers_range("mdbx.dat"), None);
+        assert_eq!(parse_headers_range(""), None);
+    }
+
+    #[test]
+    fn infer_block_from_headers_uses_max_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let sf = dir.path().join("static_files");
+        std::fs::create_dir_all(&sf).unwrap();
+        std::fs::write(sf.join("static_file_headers_0_499999"), []).unwrap();
+        std::fs::write(sf.join("static_file_headers_500000_999999"), []).unwrap();
+
+        assert_eq!(infer_block_from_headers(dir.path()).unwrap(), 999_999);
+    }
+
+    #[test]
+    fn infer_block_from_headers_fails_when_no_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("static_files")).unwrap();
+
+        assert!(infer_block_from_headers(dir.path()).is_err());
+    }
+
+    #[test]
+    fn compute_skip_ranges_skips_finalized_chunks() {
+        let mut remote = HashSet::new();
+        for &(key, _) in CHUNKED_COMPONENTS {
+            remote.insert(chunk_filename(key, 0, 499_999));
+            remote.insert(chunk_filename(key, 500_000, 999_999));
+            remote.insert(chunk_filename(key, 1_000_000, 1_499_999));
+            remote.insert(chunk_filename(key, 1_500_000, 1_999_999));
+        }
+
+        // block=2_000_000, blocks_per_file=500_000 → 4 chunks (indices 0-3)
+        // tip = chunk 3, buffer = 2 → keep chunks 1,2,3 → skip chunk 0
+        let skip = SnapshotGenerator::compute_skip_ranges(&remote, 2_000_000, 500_000);
+
+        assert!(skip.contains(&(0, 499_999)), "chunk 0 should be skipped");
+        assert!(!skip.contains(&(500_000, 999_999)), "chunk 1 should NOT be skipped (in buffer)");
+        assert!(
+            !skip.contains(&(1_000_000, 1_499_999)),
+            "chunk 2 should NOT be skipped (in buffer)"
+        );
+        assert!(!skip.contains(&(1_500_000, 1_999_999)), "chunk 3 (tip) should NOT be skipped");
+    }
+
+    #[test]
+    fn compute_skip_ranges_keeps_all_when_few_chunks() {
+        let mut remote = HashSet::new();
+        for &(key, _) in CHUNKED_COMPONENTS {
+            remote.insert(chunk_filename(key, 0, 499_999));
+            remote.insert(chunk_filename(key, 500_000, 999_999));
+        }
+
+        // block=1_000_000 → 2 chunks, tip + buffer(2) = 3 → keep all
+        let skip = SnapshotGenerator::compute_skip_ranges(&remote, 1_000_000, 500_000);
+        assert!(skip.is_empty(), "should keep all chunks when count <= tip + buffer");
+    }
+
+    #[test]
+    fn compute_skip_ranges_skips_nothing_when_remote_empty() {
+        let remote = HashSet::new();
+        let skip = SnapshotGenerator::compute_skip_ranges(&remote, 5_000_000, 500_000);
+        assert!(skip.is_empty(), "nothing to skip when remote is empty");
+    }
+
+    #[test]
+    fn compute_skip_ranges_requires_all_components_present() {
+        let mut remote = HashSet::new();
+        // Only add headers, not other components
+        remote.insert(chunk_filename("headers", 0, 499_999));
+
+        let skip = SnapshotGenerator::compute_skip_ranges(&remote, 5_000_000, 500_000);
+        assert!(
+            !skip.contains(&(0, 499_999)),
+            "should not skip range if not all components are present remotely"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_creates_state_archive() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
+
+        let skip = HashSet::new();
+        let files = SnapshotGenerator::generate_manifest(
+            source.path(),
+            output.path(),
+            8453,
+            Some(0),
+            Some(500_000),
+            &skip,
+        )
+        .unwrap();
+
+        assert!(
+            files.iter().any(|f| f.file_name().unwrap() == "state.tar.zst"),
+            "should produce state.tar.zst"
+        );
+        assert!(
+            files.iter().any(|f| f.file_name().unwrap() == "manifest.json"),
+            "should produce manifest.json"
+        );
+    }
+
+    #[test]
+    fn generate_manifest_skips_specified_ranges() {
+        let source = tempfile::tempdir().unwrap();
+        let output = tempfile::tempdir().unwrap();
+
+        let db_dir = source.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("mdbx.dat"), b"state").unwrap();
+
+        let sf = source.path().join("static_files");
+        std::fs::create_dir_all(&sf).unwrap();
+        std::fs::write(sf.join("static_file_headers_0_499999"), b"h0").unwrap();
+        std::fs::write(sf.join("static_file_headers_500000_999999"), b"h1").unwrap();
+
+        let mut skip = HashSet::new();
+        skip.insert((0u64, 499_999u64));
+
+        let files = SnapshotGenerator::generate_manifest(
+            source.path(),
+            output.path(),
+            8453,
+            Some(1_000_000),
+            Some(500_000),
+            &skip,
+        )
+        .unwrap();
+
+        let filenames: Vec<String> = files
+            .iter()
+            .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect();
+
+        assert!(
+            !filenames.contains(&"headers-0-499999.tar.zst".to_string()),
+            "skipped range should not produce an archive"
+        );
+        assert!(
+            filenames.contains(&"headers-500000-999999.tar.zst".to_string()),
+            "non-skipped range should produce an archive"
+        );
+    }
+}

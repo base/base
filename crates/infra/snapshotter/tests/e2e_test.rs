@@ -362,6 +362,94 @@ async fn diff_upload_skips_unchanged_static_file_chunks() -> Result<()> {
     Ok(())
 }
 
+/// E2E test: creates a real datadir with mdbx + static files, skips compression
+/// for a finalized chunk range, and verifies only the tip chunk is compressed.
+#[tokio::test]
+#[serial]
+async fn selective_compression_skips_finalized_chunks() -> Result<()> {
+    use std::collections::HashSet;
+
+    use base_snapshotter::SnapshotGenerator;
+
+    // Create a real datadir with mdbx + static files spanning 2 block ranges
+    let source = tempfile::tempdir()?;
+    let db_dir = source.path().join("db");
+    std::fs::create_dir_all(&db_dir)?;
+    std::fs::write(db_dir.join("mdbx.dat"), b"test-state-data")?;
+
+    let sf_dir = source.path().join("static_files");
+    std::fs::create_dir_all(&sf_dir)?;
+    for component in [
+        "headers",
+        "transactions",
+        "transaction-senders",
+        "receipts",
+        "account-change-sets",
+        "storage-change-sets",
+    ] {
+        std::fs::write(sf_dir.join(format!("static_file_{component}_0_499999")), b"finalized")?;
+        std::fs::write(sf_dir.join(format!("static_file_{component}_500000_999999")), b"tip")?;
+    }
+
+    // Skip range 0-499999 (simulates it already existing in remote storage)
+    let skip = HashSet::from([(0u64, 499_999u64)]);
+
+    let output = tempfile::tempdir()?;
+    let files = SnapshotGenerator::generate_manifest(
+        source.path(),
+        output.path(),
+        8453,
+        Some(1_000_000),
+        Some(500_000),
+        &skip,
+    )?;
+
+    let filenames: Vec<String> = files
+        .iter()
+        .filter_map(|f| f.file_name().map(|n| n.to_string_lossy().to_string()))
+        .collect();
+
+    // Skipped range: no archive produced
+    for component in [
+        "headers",
+        "transactions",
+        "transaction_senders",
+        "receipts",
+        "account_changesets",
+        "storage_changesets",
+    ] {
+        assert!(
+            !filenames.contains(&format!("{component}-0-499999.tar.zst")),
+            "{component} skipped range should not produce an archive"
+        );
+    }
+
+    // Tip range: archives produced
+    for component in [
+        "headers",
+        "transactions",
+        "transaction_senders",
+        "receipts",
+        "account_changesets",
+        "storage_changesets",
+    ] {
+        assert!(
+            filenames.contains(&format!("{component}-500000-999999.tar.zst")),
+            "{component} tip range should produce an archive"
+        );
+    }
+
+    // Always-upload: state + manifest
+    assert!(filenames.contains(&"state.tar.zst".to_string()), "state should always be produced");
+    assert!(filenames.contains(&"manifest.json".to_string()), "manifest should always be produced");
+
+    // Verify tip archive is a valid compressed file (not empty)
+    let tip_path = output.path().join("headers-500000-999999.tar.zst");
+    assert!(std::fs::metadata(&tip_path)?.len() > 0, "tip archive should not be empty");
+
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn always_upload_overwrites_existing_state_and_rocksdb() -> Result<()> {
