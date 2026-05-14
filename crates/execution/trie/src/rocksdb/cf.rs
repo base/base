@@ -85,7 +85,7 @@ pub fn encode_key_floor(key_bytes: &[u8]) -> Vec<u8> {
 }
 
 pub fn key_prefix_matches(composite: &[u8], prefix: &[u8]) -> bool {
-    composite.len() >= prefix.len() + BLOCK_NUMBER_LEN
+    composite.len() == prefix.len() + BLOCK_NUMBER_LEN
         && &composite[..prefix.len()] == prefix
 }
 

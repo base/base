@@ -42,24 +42,30 @@ fn latest_raw_value_for_prefix(
     let cf = db.cf_handle(cf_name).ok_or_else(|| cf_not_found_error(cf_name))?;
     let mut iter = db.raw_iterator_cf(&cf);
     let seek_target = encode_composite_key(key_prefix, max_block_number);
-    iter.seek_for_prev(seek_target);
+    iter.seek_for_prev(&seek_target);
 
-    if !iter.valid() {
-        return Ok(None);
+    while iter.valid() {
+        let Some(found_key) = iter.key() else {
+            return Ok(None);
+        };
+
+        if key_prefix_matches(found_key, key_prefix) {
+            let Some(found_value) = iter.value() else {
+                return Err(DatabaseError::Decode);
+            };
+            return Ok(Some(found_value.to_vec()));
+        }
+
+        if found_key.len() < key_prefix.len()
+            || &found_key[..key_prefix.len()] != key_prefix
+        {
+            return Ok(None);
+        }
+
+        iter.prev();
     }
 
-    let Some(found_key) = iter.key() else {
-        return Ok(None);
-    };
-    if !key_prefix_matches(found_key, key_prefix) {
-        return Ok(None);
-    }
-
-    let Some(found_value) = iter.value() else {
-        return Err(DatabaseError::Decode);
-    };
-
-    Ok(Some(found_value.to_vec()))
+    Ok(None)
 }
 
 fn first_prefix_at_or_after(

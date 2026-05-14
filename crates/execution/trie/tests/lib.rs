@@ -2104,3 +2104,1070 @@ fn test_updates_take_precedence_over_removals<S: BaseProofsStore + BaseProofsIni
 
     Ok(())
 }
+
+const B0: u64 = 0;
+
+fn block(parent: B256, number: u64, hash_byte: u8) -> BlockWithParent {
+    BlockWithParent::new(parent, NumHash::new(number, B256::repeat_byte(hash_byte)))
+}
+
+fn assert_account_at<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: &S,
+    at: u64,
+    key: B256,
+    expected: Account,
+) -> Result<(), BaseProofsStorageError> {
+    let mut c = storage.account_hashed_cursor(at)?;
+    let found = c.seek(key)?;
+    assert_eq!(found, Some((key, expected)));
+    Ok(())
+}
+
+fn assert_account_missing<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: &S,
+    at: u64,
+    key: B256,
+) -> Result<(), BaseProofsStorageError> {
+    let mut c = storage.account_hashed_cursor(at)?;
+    let found = c.seek(key)?;
+    assert!(found.is_none() || found.as_ref().is_some_and(|(k, _)| *k != key));
+    Ok(())
+}
+
+fn assert_storage_at<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: &S,
+    addr: B256,
+    at: u64,
+    slot: B256,
+    expected: U256,
+) -> Result<(), BaseProofsStorageError> {
+    let mut c = storage.storage_hashed_cursor(addr, at)?;
+    let found = c.seek(slot)?;
+    assert_eq!(found, Some((slot, expected)));
+    Ok(())
+}
+
+fn assert_storage_missing<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: &S,
+    addr: B256,
+    at: u64,
+    slot: B256,
+) -> Result<(), BaseProofsStorageError> {
+    let mut c = storage.storage_hashed_cursor(addr, at)?;
+    let found = c.seek(slot)?;
+    assert!(found.is_none() || found.as_ref().is_some_and(|(k, _)| *k != slot));
+    Ok(())
+}
+
+fn assert_account_branch_present<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: &S,
+    at: u64,
+    path: Nibbles,
+) -> Result<(), BaseProofsStorageError> {
+    let mut c = storage.account_trie_cursor(at)?;
+    let found = c.seek_exact(path)?.or_else(|| c.seek(path).ok().flatten());
+    assert!(found.is_some());
+    Ok(())
+}
+
+fn assert_account_branch_missing<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: &S,
+    at: u64,
+    path: Nibbles,
+) -> Result<(), BaseProofsStorageError> {
+    let mut c = storage.account_trie_cursor(at)?;
+    assert!(c.seek_exact(path)?.is_none());
+    Ok(())
+}
+
+fn assert_storage_branch_present<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: &S,
+    addr: B256,
+    at: u64,
+    path: Nibbles,
+) -> Result<(), BaseProofsStorageError> {
+    let mut c = storage.storage_trie_cursor(addr, at)?;
+    assert!(c.seek_exact(path)?.is_some());
+    Ok(())
+}
+
+fn assert_storage_branch_missing<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: &S,
+    addr: B256,
+    at: u64,
+    path: Nibbles,
+) -> Result<(), BaseProofsStorageError> {
+    let mut c = storage.storage_trie_cursor(addr, at)?;
+    assert!(c.seek_exact(path)?.is_none());
+    Ok(())
+}
+
+// MDBX migration: initial-state store tests (Pattern A)
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_hashed_accounts_writes_versioned_values<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let addr = B256::from([0xAA; 32]);
+    let account = Account::default();
+    storage.store_hashed_accounts(vec![(addr, Some(account))])?;
+    assert_account_at(&storage, B0, addr, account)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_hashed_accounts_multiple_items_unsorted<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let a1 = B256::from([0x01; 32]);
+    let a2 = B256::from([0x02; 32]);
+    let a3 = B256::from([0x03; 32]);
+    let acc1 = Account { nonce: 2, balance: U256::from(1000u64), ..Default::default() };
+    let acc3 = Account { nonce: 1, balance: U256::from(10000u64), ..Default::default() };
+    storage.store_hashed_accounts(vec![(a2, None), (a1, Some(acc1)), (a3, Some(acc3))])?;
+    assert_account_at(&storage, B0, a1, acc1)?;
+    assert_account_missing(&storage, B0, a2)?;
+    assert_account_at(&storage, B0, a3, acc3)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_hashed_accounts_multiple_calls<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let a1 = B256::from([0x01; 32]);
+    let a2 = B256::from([0x02; 32]);
+    let a3 = B256::from([0x03; 32]);
+    let a4 = B256::from([0x04; 32]);
+    let a5 = B256::from([0x05; 32]);
+    let acc1 = Account { nonce: 2, balance: U256::from(1000u64), ..Default::default() };
+    let acc3 = Account { nonce: 1, balance: U256::from(10000u64), ..Default::default() };
+    let acc4 = Account { nonce: 5, balance: U256::from(5000u64), ..Default::default() };
+    let acc5 = Account { nonce: 10, balance: U256::from(20000u64), ..Default::default() };
+    storage.store_hashed_accounts(vec![(a2, None), (a1, Some(acc1)), (a4, Some(acc4))])?;
+    storage.store_hashed_accounts(vec![(a5, Some(acc5)), (a3, Some(acc3))])?;
+    assert_account_at(&storage, B0, a1, acc1)?;
+    assert_account_missing(&storage, B0, a2)?;
+    assert_account_at(&storage, B0, a3, acc3)?;
+    assert_account_at(&storage, B0, a4, acc4)?;
+    assert_account_at(&storage, B0, a5, acc5)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_hashed_storages_writes_versioned_values<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let addr = B256::from([0x11; 32]);
+    let slot = B256::from([0x22; 32]);
+    let val = U256::from(0x1234u64);
+    storage.store_hashed_storages(addr, vec![(slot, val)])?;
+    assert_storage_at(&storage, addr, B0, slot, val)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_hashed_storages_multiple_slots_unsorted<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let addr = B256::from([0x11; 32]);
+    let s1 = B256::from([0x01; 32]);
+    let s2 = B256::from([0x02; 32]);
+    let s3 = B256::from([0x03; 32]);
+    let v1 = U256::from(1u64);
+    let v2 = U256::from(2u64);
+    let v3 = U256::from(3u64);
+    storage.store_hashed_storages(addr, vec![(s2, v2), (s1, v1), (s3, v3)])?;
+    assert_storage_at(&storage, addr, B0, s1, v1)?;
+    assert_storage_at(&storage, addr, B0, s2, v2)?;
+    assert_storage_at(&storage, addr, B0, s3, v3)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_hashed_storages_multiple_calls<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let addr = B256::from([0x11; 32]);
+    let s1 = B256::from([0x01; 32]);
+    let s2 = B256::from([0x02; 32]);
+    let s3 = B256::from([0x03; 32]);
+    let s4 = B256::from([0x04; 32]);
+    let s5 = B256::from([0x05; 32]);
+    let v1 = U256::from(1u64);
+    let v2 = U256::from(2u64);
+    let v3 = U256::from(3u64);
+    let v4 = U256::from(4u64);
+    let v5 = U256::from(5u64);
+    storage.store_hashed_storages(addr, vec![(s2, v2), (s1, v1), (s5, v5)])?;
+    storage.store_hashed_storages(addr, vec![(s4, v4), (s3, v3)])?;
+    assert_storage_at(&storage, addr, B0, s1, v1)?;
+    assert_storage_at(&storage, addr, B0, s2, v2)?;
+    assert_storage_at(&storage, addr, B0, s3, v3)?;
+    assert_storage_at(&storage, addr, B0, s4, v4)?;
+    assert_storage_at(&storage, addr, B0, s5, v5)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_account_branches_writes_versioned_values<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let nibble = Nibbles::from_nibbles_unchecked([0x12, 0x34]);
+    let branch_node = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(1)));
+    storage.store_account_branches(vec![(nibble, Some(branch_node))])?;
+    assert_account_branch_present(&storage, B0, nibble)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_account_branches_multiple_items_unsorted<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let n1 = Nibbles::from_nibbles_unchecked([0x01]);
+    let n2 = Nibbles::from_nibbles_unchecked([0x02]);
+    let n3 = Nibbles::from_nibbles_unchecked([0x03]);
+    let b1 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(2)));
+    let b3 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(3)));
+    storage.store_account_branches(vec![(n2, None), (n1, Some(b1)), (n3, Some(b3))])?;
+    assert_account_branch_present(&storage, B0, n1)?;
+    assert_account_branch_missing(&storage, B0, n2)?;
+    assert_account_branch_present(&storage, B0, n3)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_account_branches_multiple_calls<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let n1 = Nibbles::from_nibbles_unchecked([0x01]);
+    let n2 = Nibbles::from_nibbles_unchecked([0x02]);
+    let n3 = Nibbles::from_nibbles_unchecked([0x03]);
+    let n4 = Nibbles::from_nibbles_unchecked([0x04]);
+    let n5 = Nibbles::from_nibbles_unchecked([0x05]);
+    let b1 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(4)));
+    let b3 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(5)));
+    let b4 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(6)));
+    let b5 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(7)));
+    storage.store_account_branches(vec![(n2, None), (n1, Some(b1)), (n4, Some(b4))])?;
+    storage.store_account_branches(vec![(n5, Some(b5)), (n3, Some(b3))])?;
+    assert_account_branch_present(&storage, B0, n1)?;
+    assert_account_branch_missing(&storage, B0, n2)?;
+    assert_account_branch_present(&storage, B0, n3)?;
+    assert_account_branch_present(&storage, B0, n4)?;
+    assert_account_branch_present(&storage, B0, n5)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_storage_branches_writes_versioned_values<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let hashed_address = B256::repeat_byte(8);
+    let nibble = Nibbles::from_nibbles_unchecked([0x12, 0x34]);
+    let branch_node = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(9)));
+    storage.store_storage_branches(hashed_address, vec![(nibble, Some(branch_node))])?;
+    assert_storage_branch_present(&storage, hashed_address, B0, nibble)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_storage_branches_multiple_items_unsorted<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let addr = B256::repeat_byte(10);
+    let n1 = Nibbles::from_nibbles_unchecked([0x01]);
+    let n2 = Nibbles::from_nibbles_unchecked([0x02]);
+    let n3 = Nibbles::from_nibbles_unchecked([0x03]);
+    let b1 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(11)));
+    let b3 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(12)));
+    storage.store_storage_branches(addr, vec![(n2, None), (n1, Some(b1)), (n3, Some(b3))])?;
+    assert_storage_branch_present(&storage, addr, B0, n1)?;
+    assert_storage_branch_missing(&storage, addr, B0, n2)?;
+    assert_storage_branch_present(&storage, addr, B0, n3)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_storage_branches_multiple_calls<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(B0, B256::ZERO)?;
+    let addr = B256::repeat_byte(13);
+    let n1 = Nibbles::from_nibbles_unchecked([0x01]);
+    let n2 = Nibbles::from_nibbles_unchecked([0x02]);
+    let n3 = Nibbles::from_nibbles_unchecked([0x03]);
+    let n4 = Nibbles::from_nibbles_unchecked([0x04]);
+    let n5 = Nibbles::from_nibbles_unchecked([0x05]);
+    let b1 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(14)));
+    let b3 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(15)));
+    let b4 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(16)));
+    let b5 = BranchNodeCompact::new(0b1, 0, 0, vec![], Some(B256::repeat_byte(17)));
+    storage.store_storage_branches(addr, vec![(n2, None), (n1, Some(b1)), (n5, Some(b5))])?;
+    storage.store_storage_branches(addr, vec![(n4, Some(b4)), (n3, Some(b3))])?;
+    assert_storage_branch_present(&storage, addr, B0, n1)?;
+    assert_storage_branch_missing(&storage, addr, B0, n2)?;
+    assert_storage_branch_present(&storage, addr, B0, n3)?;
+    assert_storage_branch_present(&storage, addr, B0, n4)?;
+    assert_storage_branch_present(&storage, addr, B0, n5)
+}
+
+// MDBX migration: store_trie_updates/fetch/proof-window/prune/unwind/replace tests
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_trie_updates_out_of_order_rejects<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let b42 = block(B256::ZERO, 42, 0x42);
+    storage.store_trie_updates(b42, BlockStateDiff::default())?;
+    let bad = block(B256::repeat_byte(0xFF), 99, 0x99);
+    let err = storage.store_trie_updates(bad, BlockStateDiff::default()).unwrap_err();
+    assert!(matches!(err, BaseProofsStorageError::OutOfOrder { .. }));
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_trie_updates_multiple_blocks_append<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(0x21);
+    let b1 = block(B256::ZERO, 1, 0xA1);
+    let b2 = block(b1.block.hash, 2, 0xA2);
+    let mut p1 = HashedPostState::default();
+    p1.accounts.insert(addr, Some(Account::default()));
+    let mut p2 = HashedPostState::default();
+    p2.accounts.insert(addr, Some(Account { nonce: 5, ..Default::default() }));
+    storage.store_trie_updates(
+        b1,
+        BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p1.into_sorted() },
+    )?;
+    storage.store_trie_updates(
+        b2,
+        BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p2.into_sorted() },
+    )?;
+    let d1 = storage.fetch_trie_updates(1)?;
+    let d2 = storage.fetch_trie_updates(2)?;
+    assert_eq!(d1.sorted_post_state.accounts[0].0, addr);
+    assert_eq!(d2.sorted_post_state.accounts[0].0, addr);
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_trie_updates_deleted_account_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let path = Nibbles::from_nibbles_unchecked([0x0A, 0x0B, 0x0C]);
+    storage.store_account_branches(vec![(path, Some(BranchNodeCompact::default()))])?;
+    let b = block(B256::ZERO, 7, 0x07);
+    let mut t = TrieUpdates::default();
+    t.removed_nodes.insert(path);
+    storage.store_trie_updates(
+        b,
+        BlockStateDiff { sorted_trie_updates: t.into_sorted(), sorted_post_state: HashedPostStateSorted::default() },
+    )?;
+    assert_account_branch_missing(&storage, 9, path)?;
+    assert_account_branch_present(&storage, 0, path)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_trie_updates_deleted_storage_trie<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(0xAB);
+    let path = Nibbles::from_nibbles_unchecked([0x01, 0x02, 0x03]);
+    storage.store_storage_branches(addr, vec![(path, Some(BranchNodeCompact::default()))])?;
+    let mut t = TrieUpdates::default();
+    let mut st = reth_trie::updates::StorageTrieUpdates::default();
+    st.removed_nodes.insert(path);
+    t.storage_tries.insert(addr, st);
+    storage.store_trie_updates(
+        block(B256::ZERO, 8, 0x08),
+        BlockStateDiff { sorted_trie_updates: t.into_sorted(), sorted_post_state: HashedPostStateSorted::default() },
+    )?;
+    assert_storage_branch_missing(&storage, addr, 9, path)?;
+    assert_storage_branch_present(&storage, addr, 0, path)
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_trie_updates_wiped_storage_trie_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr_wiped = B256::repeat_byte(0x10);
+    let addr_live = B256::repeat_byte(0xF0);
+    let p1 = Nibbles::from_nibbles_unchecked([0x01, 0x02]);
+    let p2 = Nibbles::from_nibbles_unchecked([0x0A, 0x0B, 0x0C]);
+    let live_path = Nibbles::from_nibbles_unchecked([0xEE, 0xFF]);
+    storage.store_storage_branches(
+        addr_wiped,
+        vec![(p1, Some(BranchNodeCompact::default())), (p2, Some(BranchNodeCompact::default()))],
+    )?;
+    let mut t = TrieUpdates::default();
+    let mut wiped = reth_trie::updates::StorageTrieUpdates::default();
+    wiped.set_deleted(true);
+    t.storage_tries.insert(addr_wiped, wiped);
+    let mut live = reth_trie::updates::StorageTrieUpdates::default();
+    live.storage_nodes.insert(live_path, BranchNodeCompact::default());
+    t.storage_tries.insert(addr_live, live);
+    storage.store_trie_updates(
+        block(B256::ZERO, 123, 0x7B),
+        BlockStateDiff { sorted_trie_updates: t.into_sorted(), sorted_post_state: HashedPostStateSorted::default() },
+    )?;
+    assert_storage_branch_missing(&storage, addr_wiped, 123, p1)?;
+    assert_storage_branch_missing(&storage, addr_wiped, 123, p2)?;
+    assert_storage_branch_present(&storage, addr_live, 123, live_path)
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_trie_updates_wiped_storage_trie_with_new_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(0x77);
+    let dropped = Nibbles::from_nibbles_unchecked([0x01, 0x02]);
+    let overwritten = Nibbles::from_nibbles_unchecked([0x0A, 0x0B]);
+    let kept = Nibbles::from_nibbles_unchecked([0xCC, 0xDD]);
+    storage.store_storage_branches(
+        addr,
+        vec![(dropped, Some(BranchNodeCompact::default())), (overwritten, Some(BranchNodeCompact::default()))],
+    )?;
+    let mut t = TrieUpdates::default();
+    let mut wiped = reth_trie::updates::StorageTrieUpdates::default();
+    wiped.set_deleted(true);
+    wiped.storage_nodes.insert(kept, BranchNodeCompact::default());
+    wiped.storage_nodes.insert(overwritten, BranchNodeCompact::default());
+    t.storage_tries.insert(addr, wiped);
+    storage.store_trie_updates(
+        block(B256::ZERO, 123, 0x79),
+        BlockStateDiff { sorted_trie_updates: t.into_sorted(), sorted_post_state: HashedPostStateSorted::default() },
+    )?;
+    assert_storage_branch_missing(&storage, addr, 123, dropped)?;
+    assert_storage_branch_present(&storage, addr, 123, overwritten)?;
+    assert_storage_branch_present(&storage, addr, 123, kept)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_trie_updates_wiped_storage<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(0x55);
+    let s1 = B256::repeat_byte(0x01);
+    let s2 = B256::repeat_byte(0x02);
+    storage.store_hashed_storages(addr, vec![(s1, U256::from(111)), (s2, U256::from(222))])?;
+    let mut post = HashedPostState::default();
+    post.storages.insert(addr, HashedStorage::new(true));
+    storage.store_trie_updates(
+        block(B256::ZERO, 42, 0x42),
+        BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: post.into_sorted() },
+    )?;
+    assert_storage_missing(&storage, addr, 42, s1)?;
+    assert_storage_missing(&storage, addr, 42, s2)
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_store_trie_updates_wiped_and_non_wiped_mixed_order<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr_wiped = B256::repeat_byte(0x01);
+    let addr_live = B256::repeat_byte(0xF0);
+    let ws1 = B256::repeat_byte(0xA1);
+    let ws2 = B256::repeat_byte(0xA2);
+    let ls1 = B256::repeat_byte(0xB1);
+    storage.store_hashed_storages(addr_wiped, vec![(ws1, U256::from(111)), (ws2, U256::from(222))])?;
+    storage.store_hashed_storages(addr_live, vec![(ls1, U256::from(333))])?;
+    let mut post = HashedPostState::default();
+    post.storages.insert(addr_wiped, HashedStorage::new(true));
+    let mut live = HashedStorage::default();
+    live.storage.insert(ls1, U256::from(999));
+    post.storages.insert(addr_live, live);
+    storage.store_trie_updates(
+        block(B256::ZERO, 77, 0x77),
+        BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: post.into_sorted() },
+    )?;
+    assert_storage_missing(&storage, addr_wiped, 77, ws1)?;
+    assert_storage_missing(&storage, addr_wiped, 77, ws2)?;
+    assert_storage_at(&storage, addr_live, 77, ls1, U256::from(999))
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_fetch_trie_updates_empty_changeset<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.store_trie_updates(block(B256::ZERO, 1, 0x01), BlockStateDiff::default())?;
+    let got = storage.fetch_trie_updates(1)?;
+    assert!(got.sorted_trie_updates.account_nodes_ref().is_empty());
+    assert!(got.sorted_trie_updates.storage_tries_ref().is_empty());
+    assert!(got.sorted_post_state.accounts.is_empty());
+    assert!(got.sorted_post_state.storages.is_empty());
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_fetch_trie_updates_basic<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let block_ref = block(B256::ZERO, 1, 0x11);
+    let addr1 = B256::repeat_byte(0x11);
+    let addr2 = B256::repeat_byte(0x22);
+    let slot1 = B256::repeat_byte(0xA1);
+    let slot2 = B256::repeat_byte(0xA2);
+    let acc1 = Account { nonce: 1, balance: U256::from(100), ..Default::default() };
+    let mut trie = TrieUpdates::default();
+    trie.account_nodes.insert(nibbles_from(vec![0, 1, 2, 3]), BranchNodeCompact::default());
+    let mut st = reth_trie::updates::StorageTrieUpdates::default();
+    st.storage_nodes.insert(nibbles_from(vec![1, 2, 3, 4]), BranchNodeCompact::default());
+    trie.storage_tries.insert(addr1, st);
+    let mut post = HashedPostState::default();
+    post.accounts.insert(addr1, Some(acc1));
+    post.accounts.insert(addr2, None);
+    let mut hs1 = HashedStorage::default();
+    hs1.storage.insert(slot1, U256::from(1234));
+    let mut hs2 = HashedStorage::default();
+    hs2.storage.insert(slot2, U256::from(5678));
+    post.storages.insert(addr1, hs1);
+    post.storages.insert(addr2, hs2);
+    let expected = BlockStateDiff { sorted_trie_updates: trie.into_sorted(), sorted_post_state: post.into_sorted() };
+    storage.store_trie_updates(block_ref, expected.clone())?;
+    let got = storage.fetch_trie_updates(1)?;
+    assert_eq!(got.sorted_trie_updates.account_nodes_ref(), expected.sorted_trie_updates.account_nodes_ref());
+    assert_eq!(got.sorted_trie_updates.storage_tries_ref(), expected.sorted_trie_updates.storage_tries_ref());
+    assert_eq!(got.sorted_post_state.accounts, expected.sorted_post_state.accounts);
+    assert_eq!(got.sorted_post_state.storages, expected.sorted_post_state.storages);
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_fetch_trie_updates_missing_changeset_returns_error<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let res = storage.fetch_trie_updates(99);
+    assert!(matches!(res, Err(BaseProofsStorageError::NoChangeSetForBlock(99))));
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_single_entry<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(1);
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let mut post = HashedPostState::default();
+    post.accounts.insert(addr, Some(Account::default()));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: post.into_sorted() })?;
+    storage.prune_earliest_state(b2)?;
+    assert_eq!(storage.get_earliest_block_number()?, Some((2, b2.block.hash)));
+    assert_account_at(&storage, 2, addr, Account::default())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_multiple_entries_same_block<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let a1 = B256::repeat_byte(1);
+    let a2 = B256::repeat_byte(2);
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let mut post = HashedPostState::default();
+    post.accounts.insert(a1, Some(Account::default()));
+    post.accounts.insert(a2, Some(Account::default()));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: post.into_sorted() })?;
+    storage.prune_earliest_state(b2)?;
+    assert_eq!(storage.get_earliest_block_number()?, Some((2, b2.block.hash)));
+    assert_account_at(&storage, 2, a1, Account::default())?;
+    assert_account_at(&storage, 2, a2, Account::default())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_multiple_blocks<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let a1 = B256::repeat_byte(1);
+    let a2 = B256::repeat_byte(2);
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    let mut p1 = HashedPostState::default();
+    p1.accounts.insert(a1, Some(Account::default()));
+    let mut p2 = HashedPostState::default();
+    p2.accounts.insert(a2, Some(Account::default()));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p1.into_sorted() })?;
+    storage.store_trie_updates(b2, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p2.into_sorted() })?;
+    storage.prune_earliest_state(b3)?;
+    assert_eq!(storage.get_earliest_block_number()?, Some((3, b3.block.hash)));
+    assert_account_at(&storage, 3, a1, Account::default())?;
+    assert_account_at(&storage, 3, a2, Account::default())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_no_op<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    let h = B256::repeat_byte(1);
+    storage.set_earliest_block_number(1, h)?;
+    storage.prune_earliest_state(block(B256::ZERO, 1, 1))?;
+    storage.prune_earliest_state(block(B256::ZERO, 0, 0))?;
+    assert_eq!(storage.get_earliest_block_number()?, Some((1, h)));
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_no_entries_to_prune<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(1, B256::repeat_byte(1))?;
+    let target = block(B256::ZERO, 10, 0x10);
+    storage.prune_earliest_state(target)?;
+    assert_eq!(storage.get_earliest_block_number()?, Some((10, target.block.hash)));
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_with_diff_insertion<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr1 = B256::repeat_byte(1);
+    let addr2 = B256::repeat_byte(2);
+    let acc1 = Account { nonce: 1, balance: U256::from(100), ..Default::default() };
+    let acc2 = Account { nonce: 2, balance: U256::from(200), ..Default::default() };
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    let mut p1 = HashedPostState::default();
+    p1.accounts.insert(addr1, Some(acc1));
+    let mut p2 = HashedPostState::default();
+    p2.accounts.insert(addr2, Some(acc2));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p1.into_sorted() })?;
+    storage.store_trie_updates(b2, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p2.into_sorted() })?;
+    storage.prune_earliest_state(b3)?;
+    assert_account_at(&storage, 3, addr1, acc1)?;
+    assert_account_at(&storage, 3, addr2, acc2)
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_overlapping_keys<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(9);
+    let acc1 = Account { nonce: 1, balance: U256::from(100), ..Default::default() };
+    let acc2 = Account { nonce: 2, balance: U256::from(200), ..Default::default() };
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    let mut p1 = HashedPostState::default();
+    p1.accounts.insert(addr, Some(acc1));
+    let mut p2 = HashedPostState::default();
+    p2.accounts.insert(addr, Some(acc2));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p1.into_sorted() })?;
+    storage.store_trie_updates(b2, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p2.into_sorted() })?;
+    storage.prune_earliest_state(b3)?;
+    assert_account_at(&storage, 3, addr, acc2)
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(1);
+    let slot = B256::repeat_byte(2);
+    let path = Nibbles::from_nibbles_unchecked([0x01]);
+    let st_path = Nibbles::from_nibbles_unchecked([0x03]);
+    let acc1 = Account { nonce: 1, balance: U256::from(100), ..Default::default() };
+    let acc2 = Account { nonce: 2, balance: U256::from(200), ..Default::default() };
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    let mut t1 = TrieUpdates::default();
+    t1.account_nodes.insert(path, BranchNodeCompact::default());
+    let mut st_updates = reth_trie::updates::StorageTrieUpdates::default();
+    st_updates.storage_nodes.insert(st_path, BranchNodeCompact::default());
+    t1.storage_tries.insert(addr, st_updates);
+    let mut p1 = HashedPostState::default();
+    p1.accounts.insert(addr, Some(acc1));
+    let mut hs = HashedStorage::default();
+    hs.storage.insert(slot, U256::from(1234));
+    p1.storages.insert(addr, hs);
+    let mut p2 = HashedPostState::default();
+    p2.accounts.insert(addr, Some(acc2));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: t1.into_sorted(), sorted_post_state: p1.into_sorted() })?;
+    storage.store_trie_updates(b2, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p2.into_sorted() })?;
+    storage.prune_earliest_state(b3)?;
+    assert_account_at(&storage, 3, addr, acc2)?;
+    assert_storage_at(&storage, addr, 3, slot, U256::from(1234))?;
+    assert_account_branch_present(&storage, 3, path)?;
+    assert_storage_branch_present(&storage, addr, 3, st_path)
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_churn_create_delete_recreate<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(3);
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    let mut p1 = HashedPostState::default();
+    p1.accounts.insert(addr, Some(Account { nonce: 1, ..Default::default() }));
+    let mut p2 = HashedPostState::default();
+    p2.accounts.insert(addr, None);
+    let acc3 = Account { nonce: 3, ..Default::default() };
+    let mut p3 = HashedPostState::default();
+    p3.accounts.insert(addr, Some(acc3));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p1.into_sorted() })?;
+    storage.store_trie_updates(b2, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p2.into_sorted() })?;
+    storage.store_trie_updates(b3, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p3.into_sorted() })?;
+    storage.prune_earliest_state(b3)?;
+    assert_account_at(&storage, 3, addr, acc3)
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_returns_correct_counts<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let addr = B256::repeat_byte(4);
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let mut p1 = HashedPostState::default();
+    p1.accounts.insert(addr, Some(Account { nonce: 1, ..Default::default() }));
+    let mut p2 = HashedPostState::default();
+    p2.accounts.insert(addr, Some(Account { nonce: 2, ..Default::default() }));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p1.into_sorted() })?;
+    storage.store_trie_updates(b2, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p2.into_sorted() })?;
+    let counts = storage.prune_earliest_state(b2)?;
+    assert_eq!(counts.hashed_accounts_written_total, 1);
+    assert_eq!(counts.account_trie_updates_written_total, 0);
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_empty_window_updates_pointer<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::ZERO)?;
+    let target = block(B256::repeat_byte(5), 5, 0x05);
+    storage.prune_earliest_state(target)?;
+    assert_eq!(storage.get_earliest_block_number()?, Some((5, target.block.hash)));
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_prune_earliest_state_uninitialized_guard<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    let target = block(B256::repeat_byte(5), 5, 0x05);
+    let counts = storage.prune_earliest_state(target)?;
+    assert_eq!(counts, Default::default());
+    assert_eq!(storage.get_earliest_block_number()?, None);
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_replace_updates_prunes_and_adds_new_chain<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let addr = B256::repeat_byte(0xAB);
+    let make_diff = |nonce: u64| {
+        let mut post = HashedPostState::default();
+        post.accounts.insert(addr, Some(Account { nonce, ..Default::default() }));
+        BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: post.into_sorted() }
+    };
+    let b1 = block(B256::ZERO, 1, 0x01);
+    let b2 = block(b1.block.hash, 2, 0x02);
+    let b3 = block(b2.block.hash, 3, 0x03);
+    storage.store_trie_updates(b1, make_diff(10))?;
+    storage.store_trie_updates(b2, make_diff(20))?;
+    storage.store_trie_updates(b3, make_diff(30))?;
+    let b3p = block(b2.block.hash, 3, 0x13);
+    let b4p = block(b3p.block.hash, 4, 0x14);
+    storage.replace_updates(
+        BlockNumHash::new(2, b2.block.hash),
+        vec![(b3p, make_diff(300)), (b4p, make_diff(400))],
+    )?;
+    let d1 = storage.fetch_trie_updates(1)?;
+    let d2 = storage.fetch_trie_updates(2)?;
+    let d3 = storage.fetch_trie_updates(3)?;
+    let d4 = storage.fetch_trie_updates(4)?;
+    assert_eq!(d1.sorted_post_state.accounts[0].1.as_ref().expect("acc").nonce, 10);
+    assert_eq!(d2.sorted_post_state.accounts[0].1.as_ref().expect("acc").nonce, 20);
+    assert_eq!(d3.sorted_post_state.accounts[0].1.as_ref().expect("acc").nonce, 300);
+    assert_eq!(d4.sorted_post_state.accounts[0].1.as_ref().expect("acc").nonce, 400);
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_unwind_history_basic<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::repeat_byte(0))?;
+    let addr = B256::repeat_byte(1);
+    let make = |n| {
+        let mut p = HashedPostState::default();
+        p.accounts.insert(addr, Some(Account { nonce: n, ..Default::default() }));
+        BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p.into_sorted() }
+    };
+    let b1 = block(B256::repeat_byte(0), 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    let b4 = block(b3.block.hash, 4, 4);
+    storage.store_trie_updates(b1, make(10))?;
+    storage.store_trie_updates(b2, make(20))?;
+    storage.store_trie_updates(b3, make(30))?;
+    storage.store_trie_updates(b4, make(40))?;
+    storage.unwind_history(b2)?;
+    assert!(storage.fetch_trie_updates(1).is_ok());
+    assert!(storage.fetch_trie_updates(2).is_err());
+    assert!(storage.fetch_trie_updates(3).is_err());
+    assert!(storage.fetch_trie_updates(4).is_err());
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_unwind_history_to_earliest<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    let b1 = block(B256::ZERO, 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    storage.set_earliest_block_number(1, b1.block.hash)?;
+    storage.store_trie_updates(b2, BlockStateDiff::default())?;
+    storage.store_trie_updates(b3, BlockStateDiff::default())?;
+    let err = storage.unwind_history(b1).unwrap_err();
+    assert!(matches!(err, BaseProofsStorageError::UnwindBeyondEarliest { .. }));
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_unwind_history_with_storage<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::repeat_byte(0))?;
+    let addr = B256::repeat_byte(1);
+    let slot = B256::repeat_byte(2);
+    let make = |nonce, val| {
+        let mut p = HashedPostState::default();
+        p.accounts.insert(addr, Some(Account { nonce, ..Default::default() }));
+        let mut hs = HashedStorage::default();
+        hs.storage.insert(slot, U256::from(val));
+        p.storages.insert(addr, hs);
+        BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p.into_sorted() }
+    };
+    let b1 = block(B256::repeat_byte(0), 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    storage.store_trie_updates(b1, make(10, 100))?;
+    storage.store_trie_updates(b2, make(20, 200))?;
+    storage.store_trie_updates(b3, make(30, 300))?;
+    storage.unwind_history(b2)?;
+    assert!(storage.fetch_trie_updates(1).is_ok());
+    assert!(storage.fetch_trie_updates(2).is_err());
+    assert!(storage.fetch_trie_updates(3).is_err());
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_unwind_history_with_trie_nodes<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::repeat_byte(0))?;
+    let p1 = Nibbles::from_nibbles_unchecked([0x01]);
+    let p2 = Nibbles::from_nibbles_unchecked([0x02]);
+    let make = |path| {
+        let mut t = TrieUpdates::default();
+        t.account_nodes.insert(path, BranchNodeCompact::default());
+        BlockStateDiff { sorted_trie_updates: t.into_sorted(), sorted_post_state: HashedPostStateSorted::default() }
+    };
+    let b1 = block(B256::repeat_byte(0), 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    storage.store_trie_updates(b1, make(p1))?;
+    storage.store_trie_updates(b2, make(p2))?;
+    storage.store_trie_updates(b3, make(p1))?;
+    storage.unwind_history(b2)?;
+    assert_account_branch_present(&storage, 10, p1)?;
+    assert_account_branch_missing(&storage, 10, p2)
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_unwind_history_comprehensive<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::repeat_byte(0))?;
+    let addr1 = B256::repeat_byte(1);
+    let addr2 = B256::repeat_byte(2);
+    let slot1 = B256::repeat_byte(3);
+    let slot2 = B256::repeat_byte(4);
+    let b1 = block(B256::repeat_byte(0), 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    let mut p1 = HashedPostState::default();
+    p1.accounts.insert(addr1, Some(Account::default()));
+    let mut hs1 = HashedStorage::default();
+    hs1.storage.insert(slot1, U256::from(1111));
+    p1.storages.insert(addr1, hs1);
+    let mut p2 = HashedPostState::default();
+    p2.accounts.insert(addr2, Some(Account::default()));
+    let mut hs2 = HashedStorage::default();
+    hs2.storage.insert(slot2, U256::from(2222));
+    p2.storages.insert(addr2, hs2);
+    let mut p3 = HashedPostState::default();
+    p3.accounts.insert(addr1, Some(Account { nonce: 9, ..Default::default() }));
+    storage.store_trie_updates(b1, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p1.into_sorted() })?;
+    storage.store_trie_updates(b2, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p2.into_sorted() })?;
+    storage.store_trie_updates(b3, BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p3.into_sorted() })?;
+    storage.unwind_history(b2)?;
+    assert!(storage.fetch_trie_updates(1).is_ok());
+    assert!(storage.fetch_trie_updates(2).is_err());
+    assert!(storage.fetch_trie_updates(3).is_err());
+    assert_eq!(storage.get_latest_block_number()?, Some((1, b1.block.hash)));
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_unwind_history_empty_chain<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.unwind_history(block(B256::ZERO, 0, 0))?;
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_unwind_history_idempotent<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::repeat_byte(0))?;
+    let addr = B256::repeat_byte(1);
+    let make = |n| {
+        let mut p = HashedPostState::default();
+        p.accounts.insert(addr, Some(Account { nonce: n, ..Default::default() }));
+        BlockStateDiff { sorted_trie_updates: TrieUpdatesSorted::default(), sorted_post_state: p.into_sorted() }
+    };
+    let b1 = block(B256::repeat_byte(0), 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    storage.store_trie_updates(b1, make(10))?;
+    storage.store_trie_updates(b2, make(20))?;
+    storage.store_trie_updates(b3, make(30))?;
+    storage.unwind_history(b2)?;
+    storage.unwind_history(b2)?;
+    assert!(storage.fetch_trie_updates(1).is_ok());
+    assert!(storage.fetch_trie_updates(2).is_err());
+    assert!(storage.fetch_trie_updates(3).is_err());
+    Ok(())
+}
+
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_unwind_history_beyond_latest<S: BaseProofsStore + BaseProofsInitialStateStore>(storage: S) -> Result<(), BaseProofsStorageError> {
+    storage.set_earliest_block_number(0, B256::repeat_byte(0))?;
+    let b1 = block(B256::repeat_byte(0), 1, 1);
+    let b2 = block(b1.block.hash, 2, 2);
+    let b3 = block(b2.block.hash, 3, 3);
+    storage.store_trie_updates(b1, BlockStateDiff::default())?;
+    storage.store_trie_updates(b2, BlockStateDiff::default())?;
+    storage.store_trie_updates(b3, BlockStateDiff::default())?;
+    storage.unwind_history(block(b3.block.hash, 5, 5))?;
+    assert!(storage.fetch_trie_updates(1).is_ok());
+    assert!(storage.fetch_trie_updates(2).is_ok());
+    assert!(storage.fetch_trie_updates(3).is_ok());
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[cfg_attr(feature = "rocksdb", test_case(create_rocksdb_proofs_storage(); "Rocksdb"))]
+#[serial]
+fn test_proof_window<S: BaseProofsStore + BaseProofsInitialStateStore>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    assert_eq!(storage.get_earliest_block_number()?, None);
+    let h1 = B256::repeat_byte(0x42);
+    storage.set_earliest_block_number(42, h1)?;
+    assert_eq!(storage.get_earliest_block_number()?, Some((42, h1)));
+    let h2 = B256::repeat_byte(0x64);
+    storage.set_earliest_block_number(100, h2)?;
+    assert_eq!(storage.get_earliest_block_number()?, Some((100, h2)));
+    assert_eq!(storage.get_latest_block_number()?, Some((100, h2)));
+    Ok(())
+}
