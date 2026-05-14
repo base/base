@@ -54,6 +54,9 @@ pub struct PruneCommand<C: ChainSpecParser> {
     pub proofs_history_window: u64,
 
     /// The batch size for pruning operations.
+    ///
+    /// Each batch materializes up to this many blocks of change-set keys before committing, so
+    /// reduce this value to bound memory usage when pruning a large range.
     #[arg(
         long = "proofs-history.prune-batch-size",
         default_value_t = 1000,

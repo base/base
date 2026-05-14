@@ -32,6 +32,7 @@ use rocksdb::{
     DBWithThreadMode, Direction, IteratorMode, MultiThreaded, Options, SnapshotWithThreadMode,
     WriteBatch, WriteOptions,
 };
+use tracing::trace;
 
 use super::{BlockNumberHash, ProofWindow, ProofWindowKey};
 use crate::{
@@ -98,6 +99,11 @@ struct RocksdbHistoryDeleteBatch {
 }
 
 /// Request-scoped read snapshot for [`RocksdbProofsStorage`].
+///
+/// This type is public because it is the [`BaseProofsStore::Tx`] associated type for the
+/// `RocksDB` backend. Callers that need several cursors to read the same database view should
+/// acquire one snapshot with [`BaseProofsStore::ro_tx`] and pass it to the `*_with_tx` cursor
+/// factories.
 pub struct RocksdbReadSnapshot {
     snapshot: SnapshotWithThreadMode<'static, RocksDb>,
     db: Arc<RocksDb>,
@@ -148,10 +154,14 @@ impl fmt::Debug for RocksdbProofsStorage {
 
 impl RocksdbReadSnapshot {
     fn new(db: Arc<RocksDb>) -> Self {
+        Self::assert_send_sync();
+
         let snapshot = db.snapshot();
         // SAFETY: `SnapshotWithThreadMode` stores a DB reference and a RocksDB snapshot pointer.
-        // This wrapper owns an `Arc` to that same DB and declares `snapshot` before `db`, so the
-        // snapshot is dropped and released before the last owned DB handle can be dropped.
+        // This wrapper owns an `Arc` to that same DB, so the raw DB pointer captured by the
+        // snapshot remains valid even if the parent `RocksdbProofsStorage` is dropped. The
+        // `snapshot` field is declared before `db`, so the snapshot is released before the owned DB
+        // handle can be dropped.
         let snapshot = unsafe {
             std::mem::transmute::<
                 SnapshotWithThreadMode<'_, RocksDb>,
@@ -159,6 +169,12 @@ impl RocksdbReadSnapshot {
             >(snapshot)
         };
         Self { snapshot, db }
+    }
+
+    fn assert_send_sync()
+    where
+        Self: Send + Sync,
+    {
     }
 
     fn cf(&self, name: &'static str) -> Result<Arc<BoundColumnFamily<'_>>, DatabaseError> {
@@ -309,6 +325,8 @@ impl RocksdbProofsStorage {
             .map_err(|e| DatabaseError::Other(format!("failed to open RocksDB database: {e}")))?;
 
         let mut write_options = WriteOptions::default();
+        // Proof history is expensive to reconstruct after a crash, so writes are synced before
+        // returning even though the data is derivable from the canonical chain.
         write_options.set_sync(true);
 
         Ok(Self { db: Arc::new(db), write_options, write_lock: Mutex::new(()) })
@@ -316,7 +334,8 @@ impl RocksdbProofsStorage {
 
     fn cf_options() -> Options {
         let mut options = Options::default();
-        options.set_compression_type(DBCompressionType::None);
+        // Snappy keeps compression CPU overhead low while reducing trie-history write amplification.
+        options.set_compression_type(DBCompressionType::Snappy);
         options.set_level_compaction_dynamic_level_bytes(true);
         options.set_max_write_buffer_number(6);
         options.set_target_file_size_base(256 * 1024 * 1024);
@@ -1082,6 +1101,13 @@ impl RocksdbProofsStorage {
         let expected_earliest =
             Some((prepared.expected_earliest_block, prepared.expected_earliest_hash));
         if current_earliest != expected_earliest {
+            trace!(
+                target: "trie::pruner",
+                current_earliest = ?current_earliest,
+                expected_earliest = ?expected_earliest,
+                target_block = prepared.target_block,
+                "skipping stale prune plan"
+            );
             return Ok(WriteCounts::default());
         }
 
@@ -1168,6 +1194,8 @@ impl BaseProofsStore for RocksdbProofsStorage {
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
+        // Standalone cursor factories intentionally create independent snapshots. Use `ro_tx` and
+        // the `*_with_tx` factories when multiple cursors need one consistent view.
         Ok(RocksdbTrieCursor::new(Arc::clone(&self.db), max_block_number, Some(hashed_address)))
     }
 
@@ -1261,13 +1289,15 @@ impl BaseProofsStore for RocksdbProofsStorage {
     }
 
     fn fetch_trie_updates(&self, block_number: u64) -> BaseProofsStorageResult<BlockStateDiff> {
+        let snapshot = self.db.snapshot();
         let change_set = self
-            .get_table::<BlockChangeSet>(block_number)?
+            .get_table_from_snapshot::<BlockChangeSet>(&snapshot, block_number)?
             .ok_or(BaseProofsStorageError::NoChangeSetForBlock(block_number))?;
 
         let mut trie_updates = TrieUpdates::default();
         for key in change_set.account_trie_keys {
             let entry = match get_history_exact::<AccountTrieHistory, _>(
+                &snapshot,
                 &self.db,
                 key.clone(),
                 block_number,
@@ -1290,6 +1320,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
 
         for key in change_set.storage_trie_keys {
             let entry = match get_history_exact::<StorageTrieHistory, _>(
+                &snapshot,
                 &self.db,
                 key.clone(),
                 block_number,
@@ -1317,21 +1348,26 @@ impl BaseProofsStore for RocksdbProofsStorage {
 
         let mut post_state = HashedPostState::with_capacity(change_set.hashed_account_keys.len());
         for key in change_set.hashed_account_keys {
-            let entry =
-                match get_history_exact::<HashedAccountHistory, _>(&self.db, key, block_number)? {
-                    Some(value) if value.block_number == block_number => value.value.0,
-                    _ => {
-                        return Err(BaseProofsStorageError::MissingHashedAccountHistory(
-                            key,
-                            block_number,
-                        ));
-                    }
-                };
+            let entry = match get_history_exact::<HashedAccountHistory, _>(
+                &snapshot,
+                &self.db,
+                key,
+                block_number,
+            )? {
+                Some(value) if value.block_number == block_number => value.value.0,
+                _ => {
+                    return Err(BaseProofsStorageError::MissingHashedAccountHistory(
+                        key,
+                        block_number,
+                    ));
+                }
+            };
             post_state.accounts.insert(key, entry);
         }
 
         for key in change_set.hashed_storage_keys {
             let entry = match get_history_exact::<HashedStorageHistory, _>(
+                &snapshot,
                 &self.db,
                 key.clone(),
                 block_number,
@@ -1423,7 +1459,12 @@ impl BaseProofsStore for RocksdbProofsStorage {
         }
 
         let _guard = self.write_lock.lock();
-        let history_to_delete = self.collect_history_ranged(latest_common_block.number + 1..)?;
+        let history_to_delete = if let Some(start_block) = latest_common_block.number.checked_add(1)
+        {
+            self.collect_history_ranged(start_block..)?
+        } else {
+            RocksdbHistoryDeleteBatch::default()
+        };
         let mut batch = WriteBatch::default();
         self.delete_history_ranged(&mut batch, history_to_delete)?;
         self.put_proof_window(
@@ -2051,6 +2092,9 @@ where
     T::Key: Clone,
 {
     let table_key = encode_table_key::<T>(key.clone());
+    // Byte-stuffing is larger than length-prefixing, but it preserves the encoded table key's
+    // lexicographic order while making the variable-length key prefix-free before the block suffix.
+    // Cursor seeks and range scans rely on that ordering matching the underlying table keys.
     let mut encoded = Vec::with_capacity(table_key.len() * 2 + 1);
     for byte in table_key {
         encoded.push(1);
@@ -2105,6 +2149,7 @@ where
 }
 
 fn get_history_exact<T, V>(
+    snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
     db: &Arc<RocksDb>,
     key: T::Key,
     block_number: u64,
@@ -2117,7 +2162,8 @@ where
     let cf = db.cf_handle(T::NAME).ok_or_else(|| {
         DatabaseError::Other(format!("missing RocksDB column family {}", T::NAME))
     })?;
-    db.get_cf(&cf, encode_history_key::<T>(&key, block_number))
+    snapshot
+        .get_cf(&cf, encode_history_key::<T>(&key, block_number))
         .map_err(rocksdb_error)?
         .map(|value| T::Value::decompress(&value).map_err(Into::into))
         .transpose()
