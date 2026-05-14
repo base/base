@@ -31,13 +31,10 @@ use tracing::{debug, error, info};
 const MAX_PRUNE_BLOCKS_STARTUP: u64 = 1000;
 
 /// How many blocks to process in a single batch before yielding. Default is 50 blocks.
+///
+/// Also bounds the MDBX write transaction size when batching consecutive
+/// cache-hit blocks: at most this many blocks share a single commit/fsync.
 const SYNC_BLOCKS_BATCH_SIZE: usize = 50;
-
-/// Maximum number of consecutive cache-hit blocks to coalesce into a single
-/// proofs-storage write transaction. Larger values amortize commit/fsync over
-/// more blocks (the primary throughput win) but hold the MDBX writer lock
-/// longer, increasing pruner contention. Must be `<= SYNC_BLOCKS_BATCH_SIZE`.
-const STORE_BLOCKS_BATCH_SIZE: usize = 32;
 
 /// Default proofs history window: 1 month of blocks at 2s block time
 const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 1_296_000;
@@ -456,7 +453,7 @@ where
             );
 
             let mut pending: Vec<(BlockWithParent, BlockStateDiff)> =
-                Vec::with_capacity(STORE_BLOCKS_BATCH_SIZE);
+                Vec::with_capacity(SYNC_BLOCKS_BATCH_SIZE);
 
             for block_num in (latest + 1)..=end {
                 let should_verify = verification_interval > 0
@@ -474,12 +471,6 @@ where
                             sorted_post_state: (*sorted.hashed_state).clone(),
                         },
                     ));
-                    if pending.len() >= STORE_BLOCKS_BATCH_SIZE
-                        && let Err(e) = Self::flush_pending_batch(&mut pending, collector)
-                    {
-                        error!(target: "base::exex", error = ?e, "Batched block writes failed");
-                        return;
-                    }
                     continue;
                 }
 

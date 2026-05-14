@@ -2131,9 +2131,7 @@ fn test_store_trie_updates_batch_persists_each_block<
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[serial]
-fn test_store_trie_updates_batch_empty_is_noop<
-    S: BaseProofsStore + BaseProofsInitialStateStore,
->(
+fn test_store_trie_updates_batch_empty_is_noop<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
 ) -> Result<(), BaseProofsStorageError> {
     storage.set_earliest_block_number(0, B256::ZERO)?;
@@ -2158,8 +2156,7 @@ fn test_store_trie_updates_batch_rejects_bad_first_parent_mdbx<
     let bad_parent = B256::repeat_byte(0xEE);
     let block_71 = batch_block(71, bad_parent);
 
-    let res = storage
-        .store_trie_updates_batch(vec![(block_71, BlockStateDiff::default())]);
+    let res = storage.store_trie_updates_batch(vec![(block_71, BlockStateDiff::default())]);
     assert!(matches!(res, Err(BaseProofsStorageError::OutOfOrder { .. })));
 
     assert_eq!(storage.get_latest_block_number()?, Some((70, earliest_hash)));
@@ -2178,10 +2175,8 @@ fn test_store_trie_updates_batch_atomic_on_chain_break_mdbx<
     storage.set_earliest_block_number(200, earliest_hash)?;
 
     let block_201 = batch_block(201, earliest_hash);
-    let block_202_bad_parent = BlockWithParent::new(
-        B256::repeat_byte(0xEE),
-        NumHash::new(202, B256::repeat_byte(202)),
-    );
+    let block_202_bad_parent =
+        BlockWithParent::new(B256::repeat_byte(0xEE), NumHash::new(202, B256::repeat_byte(202)));
     let block_203 = batch_block(203, block_202_bad_parent.block.hash);
 
     let res = storage.store_trie_updates_batch(vec![
