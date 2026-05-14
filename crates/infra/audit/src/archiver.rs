@@ -18,7 +18,7 @@ use crate::{
     storage::EventWriter,
 };
 
-/// Archives audit events from a generic [`EventReader`] (Kafka, RPC, etc.) to
+/// Archives audit events from a generic [`EventReader`] to
 /// an [`EventWriter`] (typically S3) via a worker pool.
 pub struct AuditArchiver<R, W>
 where
@@ -119,7 +119,7 @@ where
             let read_start = Instant::now();
             match self.reader.read_event().await {
                 Ok(event) => {
-                    Metrics::kafka_read_duration().record(read_start.elapsed().as_secs_f64());
+                    Metrics::read_duration().record(read_start.elapsed().as_secs_f64());
 
                     let now_ms = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -138,7 +138,7 @@ where
                     if let Err(e) = self.reader.commit().await {
                         error!(error = %e, "Failed to commit message");
                     }
-                    Metrics::kafka_commit_duration().record(commit_start.elapsed().as_secs_f64());
+                    Metrics::commit_duration().record(commit_start.elapsed().as_secs_f64());
                 }
                 Err(e) => {
                     error!(error = %e, "Error reading events");

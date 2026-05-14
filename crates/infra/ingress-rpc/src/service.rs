@@ -22,11 +22,7 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
-use crate::{
-    Config, TxSubmissionMethod,
-    metrics::Metrics,
-    queue::{BundleQueuePublisher, MessageQueue},
-};
+use crate::{Config, metrics::Metrics};
 
 /// RPC providers for different endpoints.
 #[derive(Debug)]
@@ -47,12 +43,10 @@ pub trait IngressApi {
 }
 
 /// Core ingress RPC service that handles transaction submission.
-pub struct IngressService<Q: MessageQueue> {
+pub struct IngressService {
     mempool_provider: Arc<RootProvider<Base>>,
     simulation_provider: Arc<RootProvider<Base>>,
     raw_tx_forward_provider: Option<Arc<RootProvider<Base>>>,
-    tx_submission_method: TxSubmissionMethod,
-    bundle_queue_publisher: BundleQueuePublisher<Q>,
     audit_channel: mpsc::Sender<BundleEvent>,
     send_transaction_default_lifetime_seconds: u64,
     block_time_milliseconds: u64,
@@ -62,17 +56,16 @@ pub struct IngressService<Q: MessageQueue> {
     send_to_builder: bool,
 }
 
-impl<Q: MessageQueue> std::fmt::Debug for IngressService<Q> {
+impl std::fmt::Debug for IngressService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IngressService").finish_non_exhaustive()
     }
 }
 
-impl<Q: MessageQueue> IngressService<Q> {
+impl IngressService {
     /// Creates a new ingress service with the given providers and configuration.
     pub fn new(
         providers: Providers,
-        queue: Q,
         audit_channel: mpsc::Sender<BundleEvent>,
         builder_tx: broadcast::Sender<MeterBundleResponse>,
         config: Config,
@@ -80,7 +73,6 @@ impl<Q: MessageQueue> IngressService<Q> {
         let mempool_provider = Arc::new(providers.mempool);
         let simulation_provider = Arc::new(providers.simulation);
         let raw_tx_forward_provider = providers.raw_tx_forward.map(Arc::new);
-        let queue_connection = Arc::new(queue);
 
         // A TTL cache to deduplicate bundles with the same Bundle ID
         let bundle_cache =
@@ -89,11 +81,6 @@ impl<Q: MessageQueue> IngressService<Q> {
             mempool_provider,
             simulation_provider,
             raw_tx_forward_provider,
-            tx_submission_method: config.tx_submission_method,
-            bundle_queue_publisher: BundleQueuePublisher::new(
-                queue_connection,
-                config.ingress_topic,
-            ),
             audit_channel,
             send_transaction_default_lifetime_seconds: config
                 .send_transaction_default_lifetime_seconds,
@@ -107,21 +94,12 @@ impl<Q: MessageQueue> IngressService<Q> {
 }
 
 #[async_trait]
-impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
+impl IngressApiServer for IngressService {
     async fn send_raw_transaction(&self, data: Bytes) -> RpcResult<B256> {
         let start = Instant::now();
         let transaction = self.get_tx(&data).await?;
 
         Metrics::transactions_received().increment(1);
-
-        let send_to_kafka = matches!(
-            self.tx_submission_method,
-            TxSubmissionMethod::Kafka | TxSubmissionMethod::MempoolAndKafka
-        );
-        let send_to_mempool = matches!(
-            self.tx_submission_method,
-            TxSubmissionMethod::Mempool | TxSubmissionMethod::MempoolAndKafka
-        );
 
         // Forward before metering
         if let Some(forward_provider) = self.raw_tx_forward_provider.clone() {
@@ -159,7 +137,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
 
         if self.bundle_cache.get(bundle_hash).await.is_some() {
             debug!(
-                message = "Duplicate bundle detected, skipping Kafka publish",
+                message = "Duplicate bundle detected, skipping",
                 bundle_hash = %bundle_hash,
                 transaction_hash = %transaction.tx_hash(),
             );
@@ -210,28 +188,14 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
             let accepted_bundle =
                 AcceptedBundle::new(parsed_bundle, meter_bundle_response.unwrap_or_default());
 
-            if send_to_kafka {
-                if let Err(e) =
-                    self.bundle_queue_publisher.publish(&accepted_bundle, bundle_hash).await
-                {
-                    warn!(message = "Failed to publish Queue::enqueue_bundle", bundle_hash = %bundle_hash, error = %e);
+            let response = self.mempool_provider.send_raw_transaction(data.iter().as_slice()).await;
+            match response {
+                Ok(_) => {
+                    Metrics::sent_to_mempool().increment(1);
+                    debug!(message = "sent transaction to the mempool", hash=%transaction.tx_hash());
                 }
-
-                Metrics::sent_to_kafka().increment(1);
-                info!(message="queued singleton bundle", txn_hash=%transaction.tx_hash());
-            }
-
-            if send_to_mempool {
-                let response =
-                    self.mempool_provider.send_raw_transaction(data.iter().as_slice()).await;
-                match response {
-                    Ok(_) => {
-                        Metrics::sent_to_mempool().increment(1);
-                        debug!(message = "sent transaction to the mempool", hash=%transaction.tx_hash());
-                    }
-                    Err(e) => {
-                        warn!(message = "Failed to send raw transaction to mempool", error = %e);
-                    }
+                Err(e) => {
+                    warn!(message = "Failed to send raw transaction to mempool", error = %e);
                 }
             }
 
@@ -250,7 +214,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
     }
 }
 
-impl<Q: MessageQueue> IngressService<Q> {
+impl IngressService {
     async fn get_tx(&self, data: &Bytes) -> RpcResult<Recovered<BaseTxEnvelope>> {
         if data.is_empty() {
             return Err(EthApiError::EmptyRawTransactionData.into_rpc_err());
@@ -342,34 +306,19 @@ mod tests {
     };
 
     use alloy_provider::RootProvider;
-    use anyhow::Result;
-    use async_trait::async_trait;
     use base_bundles::test_utils::create_test_meter_bundle_response;
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
     use super::*;
-    use crate::{Config, TxSubmissionMethod, queue::MessageQueue};
-    struct MockQueue;
-
-    #[async_trait]
-    impl MessageQueue for MockQueue {
-        async fn publish(&self, _topic: &str, _key: &str, _payload: &[u8]) -> Result<()> {
-            Ok(())
-        }
-    }
+    use crate::Config;
 
     fn create_test_config(mock_server: &MockServer) -> Config {
         Config {
             address: IpAddr::from([127, 0, 0, 1]),
             port: 8080,
             mempool_url: Url::parse("http://localhost:3000").unwrap(),
-            tx_submission_method: TxSubmissionMethod::Mempool,
-            ingress_kafka_properties: String::new(),
-            ingress_topic: String::new(),
-            audit_kafka_properties: Some(String::new()),
-            audit_topic: Some(String::new()),
             send_transaction_default_lifetime_seconds: 300,
             simulation_rpc: mock_server.uri().parse().unwrap(),
             block_time_milliseconds: 1000,
@@ -466,7 +415,7 @@ mod tests {
         let (audit_tx, _audit_rx) = mpsc::channel(512);
         let (builder_tx, _builder_rx) = broadcast::channel(1);
 
-        let service = IngressService::new(providers, MockQueue, audit_tx, builder_tx, config);
+        let service = IngressService::new(providers, audit_tx, builder_tx, config);
 
         let bundle = Bundle::default();
         let bundle_hash = B256::default();
@@ -508,8 +457,7 @@ mod tests {
             .mount(&forward_server)
             .await;
 
-        let mut config = create_test_config(&simulation_server);
-        config.tx_submission_method = TxSubmissionMethod::Kafka; // Skip mempool send
+        let config = create_test_config(&simulation_server);
 
         let providers = Providers {
             mempool: RootProvider::new_http(simulation_server.uri().parse().unwrap()),
@@ -520,7 +468,7 @@ mod tests {
         let (audit_tx, _audit_rx) = mpsc::channel(512);
         let (builder_tx, _builder_rx) = broadcast::channel(1);
 
-        let service = IngressService::new(providers, MockQueue, audit_tx, builder_tx, config);
+        let service = IngressService::new(providers, audit_tx, builder_tx, config);
 
         // Valid signed transaction bytes
         let tx_bytes = Bytes::from_str("0x02f86c0d010183072335825208940000000000000000000000000000000000000000872386f26fc1000080c001a0cdb9e4f2f1ba53f9429077e7055e078cf599786e29059cd80c5e0e923bb2c114a01c90e29201e031baf1da66296c3a5c15c200bcb5e6c34da2f05f7d1778f8be07").unwrap();

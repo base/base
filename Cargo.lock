@@ -1921,7 +1921,6 @@ dependencies = [
  "jsonrpsee-types",
  "metrics",
  "moka",
- "rdkafka",
  "serde",
  "serde_json",
  "testcontainers",
@@ -10758,7 +10757,6 @@ dependencies = [
  "dotenvy",
  "ingress-rpc-lib",
  "jsonrpsee",
- "rdkafka",
  "serde",
  "tokio",
  "tracing",
@@ -10778,7 +10776,6 @@ dependencies = [
  "async-trait",
  "audit-archiver-lib",
  "axum 0.8.9",
- "backon",
  "base-bundles",
  "base-common-consensus",
  "base-common-evm",
@@ -10789,7 +10786,6 @@ dependencies = [
  "jsonrpsee",
  "metrics",
  "moka",
- "rdkafka",
  "reth-rpc-eth-types",
  "serde",
  "serde_json",
@@ -15488,38 +15484,6 @@ dependencies = [
  "rustls-pki-types",
  "time",
  "yasna",
-]
-
-[[package]]
-name = "rdkafka"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7956f9ac12b5712e50372d9749a3102f4810a8d42481c5eae3748d36d585bcf"
-dependencies = [
- "futures-channel",
- "futures-util",
- "libc",
- "log",
- "rdkafka-sys",
- "serde",
- "serde_derive",
- "serde_json",
- "slab",
- "tokio",
-]
-
-[[package]]
-name = "rdkafka-sys"
-version = "4.10.0+2.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e234cf318915c1059d4921ef7f75616b5219b10b46e9f3a511a15eb4b56a3f77"
-dependencies = [
- "libc",
- "libz-sys",
- "num_enum 0.7.6",
- "openssl-sys",
- "pkg-config",
- "zstd-sys",
 ]
 
 [[package]]
@@ -25414,7 +25378,6 @@ version = "2.0.16+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
 dependencies = [
- "bindgen 0.72.1",
  "cc",
  "pkg-config",
 ]
