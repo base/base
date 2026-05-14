@@ -31,6 +31,20 @@ pub(crate) fn gen_handler_field_init(
     packing_mod: Option<&Ident>,
 ) -> proc_macro2::TokenStream {
     let field_name = field.name;
+    let handler = gen_handler_expr(field, field_idx, all_fields, packing_mod);
+
+    quote! {
+        #field_name: #handler
+    }
+}
+
+pub(crate) fn gen_handler_expr(
+    field: &LayoutField<'_>,
+    field_idx: usize,
+    all_fields: &[LayoutField<'_>],
+    packing_mod: Option<&Ident>,
+) -> proc_macro2::TokenStream {
+    let field_name = field.name;
     let consts = PackingConstants::new(field_name);
     let (loc_const, (slot_const, offset_const)) = (consts.location(), consts.into_tuple());
 
@@ -75,14 +89,14 @@ pub(crate) fn gen_handler_field_init(
             };
 
             quote! {
-                #field_name: <#ty as ::base_precompile_storage::StorableType>::handle(
+                <#ty as ::base_precompile_storage::StorableType>::handle(
                     #slot_expr, #layout_ctx, address
                 )
             }
         }
         FieldKind::Mapping { key, value } => {
             quote! {
-                #field_name: <::base_precompile_storage::Mapping<#key, #value> as ::base_precompile_storage::StorableType>::handle(
+                <::base_precompile_storage::Mapping<#key, #value> as ::base_precompile_storage::StorableType>::handle(
                     #slot_expr, ::base_precompile_storage::LayoutCtx::FULL, address
                 )
             }
@@ -93,15 +107,13 @@ pub(crate) fn gen_handler_field_init(
 pub(crate) fn gen_struct(
     name: &Ident,
     vis: &Visibility,
-    allocated_fields: &[LayoutField<'_>],
+    _allocated_fields: &[LayoutField<'_>],
 ) -> proc_macro2::TokenStream {
-    let handler_fields = allocated_fields.iter().map(gen_handler_field_decl);
     let doc_str = format!("Storage layout for the [`{name}`] precompile.");
 
     quote! {
         #[doc = #doc_str]
         #vis struct #name {
-            #(#handler_fields,)*
             address: ::alloy_primitives::Address,
             storage: ::base_precompile_storage::StorageCtx,
         }
@@ -113,18 +125,18 @@ pub(crate) fn gen_constructor(
     allocated_fields: &[LayoutField<'_>],
     address: Option<&Expr>,
 ) -> proc_macro2::TokenStream {
-    let field_inits = allocated_fields
+    let accessors = allocated_fields
         .iter()
         .enumerate()
-        .map(|(idx, field)| gen_handler_field_init(field, idx, allocated_fields, None));
+        .map(|(idx, field)| gen_accessor_method(field, idx, allocated_fields));
 
     let new_fn = address.map(|addr| {
         quote! {
             /// Creates an instance of the precompile.
             ///
-            /// Caution: This does not initialize the account, see [`Self::initialize`].
+            /// Caution: This does not initialize the account. See [`Self::initialize`].
             pub fn new() -> Self {
-                Self::__new(#addr)
+                Self::with_address(#addr)
             }
         }
     });
@@ -133,29 +145,34 @@ pub(crate) fn gen_constructor(
         impl #name {
             #new_fn
 
-            #[inline(always)]
-            fn __new(address: ::alloy_primitives::Address) -> Self {
+            /// Creates an instance of the precompile at the given address.
+            ///
+            /// Caution: This does not initialize the account. See [`Self::initialize`].
+            pub fn with_address(address: ::alloy_primitives::Address) -> Self {
                 #[cfg(debug_assertions)]
                 {
                     slots::__check_all_collisions();
                 }
 
                 Self {
-                    #(#field_inits,)*
                     address,
                     storage: ::base_precompile_storage::StorageCtx::default(),
                 }
             }
 
+            #(#accessors)*
+
+            /// Initializes the precompile account by installing marker bytecode.
             #[inline(always)]
-            fn __initialize(&mut self) -> ::base_precompile_storage::Result<()> {
+            pub fn initialize(&mut self) -> ::base_precompile_storage::Result<()> {
                 let bytecode = ::revm::state::Bytecode::new_legacy(::alloy_primitives::Bytes::from_static(&[0xef]));
                 self.storage.set_code(self.address, bytecode)?;
                 Ok(())
             }
 
+            /// Emits an event from this precompile address.
             #[inline(always)]
-            fn emit_event(&mut self, event: impl ::alloy_primitives::IntoLogData) -> ::base_precompile_storage::Result<()> {
+            pub fn emit_event(&mut self, event: impl ::alloy_primitives::IntoLogData) -> ::base_precompile_storage::Result<()> {
                 self.storage.emit_event(self.address, event.into_log_data())
             }
 
@@ -180,6 +197,33 @@ pub(crate) fn gen_constructor(
                     assert_eq!(emitted[i], event.into_log_data());
                 }
             }
+        }
+    }
+}
+
+fn gen_accessor_method(
+    field: &LayoutField<'_>,
+    field_idx: usize,
+    all_fields: &[LayoutField<'_>],
+) -> proc_macro2::TokenStream {
+    let field_name = field.name;
+    let doc_str = format!("Returns a storage handler for the `{field_name}` field.");
+    let handler_type = match &field.kind {
+        FieldKind::Direct(ty) => {
+            quote! { <#ty as ::base_precompile_storage::StorableType>::Handler }
+        }
+        FieldKind::Mapping { key, value } => {
+            quote! { <::base_precompile_storage::Mapping<#key, #value> as ::base_precompile_storage::StorableType>::Handler }
+        }
+    };
+    let handler = gen_handler_expr(field, field_idx, all_fields, None);
+
+    quote! {
+        #[doc = #doc_str]
+        #[inline(always)]
+        pub fn #field_name(&self) -> #handler_type {
+            let address = self.address;
+            #handler
         }
     }
 }

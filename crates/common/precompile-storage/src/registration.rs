@@ -15,9 +15,9 @@ use crate::provider::PrecompileStorageProvider;
 ///
 /// ```ignore
 /// use base_precompile_storage::registration::NativePrecompile;
-/// use base_precompile_macros::contract;
+/// use base_precompile_macros::precompile_storage;
 ///
-/// #[contract(addr = MY_PRECOMPILE_ADDRESS)]
+/// #[precompile_storage(addr = MY_PRECOMPILE_ADDRESS)]
 /// pub struct MyPrecompile { ... }
 ///
 /// impl NativePrecompile for MyPrecompile {

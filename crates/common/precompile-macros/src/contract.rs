@@ -1,31 +1,62 @@
-//! Implementation of the `#[contract]` attribute macro.
+//! Implementation of the storage layout attribute macros.
 
 use alloy_primitives::U256;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Expr, Fields, Ident, Token, Type, Visibility, parse::ParseStream};
+use syn::{
+    Data, DeriveInput, Expr, Fields, Ident, Lit, Token, Type, Visibility, parse::ParseStream,
+};
 
-use crate::{layout, packing, utils::extract_attributes};
+use crate::{
+    layout, packing,
+    utils::{extract_attributes, parse_slot_value},
+};
 
 pub(crate) struct ContractConfig {
     pub(crate) address: Option<Expr>,
+    pub(crate) base_slot: U256,
 }
 
 impl syn::parse::Parse for ContractConfig {
     fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut address = None;
+        let mut base_slot = U256::ZERO;
+        let mut has_base_slot = false;
+
         if input.is_empty() {
-            return Ok(Self { address: None });
+            return Ok(Self { address, base_slot });
         }
 
-        let ident: Ident = input.parse()?;
-        if ident != "addr" && ident != "address" {
-            return Err(syn::Error::new(ident.span(), "only `addr` attribute is supported"));
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+
+            if ident == "addr" || ident == "address" {
+                if address.is_some() {
+                    return Err(syn::Error::new(ident.span(), "duplicate address attribute"));
+                }
+                address = Some(input.parse()?);
+            } else if ident == "base_slot" {
+                if has_base_slot {
+                    return Err(syn::Error::new(ident.span(), "duplicate `base_slot` attribute"));
+                }
+                let value: Lit = input.parse()?;
+                base_slot = parse_slot_value(&value)?;
+                has_base_slot = true;
+            } else {
+                return Err(syn::Error::new(
+                    ident.span(),
+                    "supported attributes are `addr`, `address`, and `base_slot`",
+                ));
+            }
+
+            if input.is_empty() {
+                break;
+            }
+            input.parse::<Token![,]>()?;
         }
 
-        input.parse::<Token![=]>()?;
-        let address: Expr = input.parse()?;
-
-        Ok(Self { address: Some(address) })
+        Ok(Self { address, base_slot })
     }
 }
 
@@ -45,18 +76,18 @@ pub(crate) enum FieldKind<'a> {
     Mapping { key: &'a Type, value: &'a Type },
 }
 
-pub(crate) fn generate(input: DeriveInput, address: Option<&Expr>) -> proc_macro::TokenStream {
-    match gen_output(input, address) {
+pub(crate) fn generate(input: DeriveInput, config: &ContractConfig) -> proc_macro::TokenStream {
+    match gen_output(input, config) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
 }
 
-fn gen_output(input: DeriveInput, address: Option<&Expr>) -> syn::Result<TokenStream> {
+fn gen_output(input: DeriveInput, config: &ContractConfig) -> syn::Result<TokenStream> {
     let (ident, vis) = (input.ident.clone(), input.vis.clone());
     let fields = parse_fields(input)?;
 
-    let storage_output = gen_storage(&ident, &vis, &fields, address)?;
+    let storage_output = gen_storage(&ident, &vis, &fields, config)?;
     Ok(quote! { #storage_output })
 }
 
@@ -104,14 +135,14 @@ fn gen_storage(
     ident: &Ident,
     vis: &Visibility,
     fields: &[FieldInfo],
-    address: Option<&Expr>,
+    config: &ContractConfig,
 ) -> syn::Result<TokenStream> {
-    let allocated_fields = packing::allocate_slots(fields)?;
+    let allocated_fields = packing::allocate_slots(fields, config.base_slot)?;
     let transformed_struct = layout::gen_struct(ident, vis, &allocated_fields);
     let storage_trait = layout::gen_contract_storage_impl(ident);
-    let constructor = layout::gen_constructor(ident, &allocated_fields, address);
+    let constructor = layout::gen_constructor(ident, &allocated_fields, config.address.as_ref());
     let slots_module = layout::gen_slots_module(&allocated_fields);
-    let default_impl = if address.is_some() {
+    let default_impl = if config.address.is_some() {
         layout::gen_default_impl(ident)
     } else {
         proc_macro2::TokenStream::new()

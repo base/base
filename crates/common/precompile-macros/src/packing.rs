@@ -1,7 +1,7 @@
 //! Shared code generation utilities for storage slot packing.
 //!
 //! This module provides common logic for computing slot and offset assignments
-//! used by both the `#[derive(Storable)]` and `#[contract]` macros.
+//! used by both the `#[derive(Storable)]` and storage layout macros.
 
 use alloy_primitives::U256;
 use proc_macro2::TokenStream;
@@ -65,9 +65,12 @@ pub(crate) struct LayoutField<'a> {
 }
 
 /// Build layout IR from field information.
-pub(crate) fn allocate_slots(fields: &[FieldInfo]) -> syn::Result<Vec<LayoutField<'_>>> {
+pub(crate) fn allocate_slots(
+    fields: &[FieldInfo],
+    initial_base_slot: U256,
+) -> syn::Result<Vec<LayoutField<'_>>> {
     let mut result = Vec::with_capacity(fields.len());
-    let mut current_base_slot = U256::ZERO;
+    let mut current_base_slot = initial_base_slot;
 
     for field in fields {
         let kind = classify_field_type(&field.ty)?;

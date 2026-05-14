@@ -21,7 +21,18 @@ use syn::{DeriveInput, parse_macro_input};
 pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let config = parse_macro_input!(attr as contract::ContractConfig);
     let input = parse_macro_input!(item as DeriveInput);
-    contract::generate(input, config.address.as_ref())
+    contract::generate(input, &config)
+}
+
+/// Transforms a struct that represents a native precompile storage layout into accessor methods.
+///
+/// Prefer this macro for new native precompile storage. `#[contract]` remains as a compatibility
+/// alias for older code.
+#[proc_macro_attribute]
+pub fn precompile_storage(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let config = parse_macro_input!(attr as contract::ContractConfig);
+    let input = parse_macro_input!(item as DeriveInput);
+    contract::generate(input, &config)
 }
 
 /// Derives the `Storable` trait for structs with named fields and `#[repr(u8)]` unit enums.

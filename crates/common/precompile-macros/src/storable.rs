@@ -1,5 +1,6 @@
 //! Implementation of the `#[derive(Storable)]` macro.
 
+use alloy_primitives::U256;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Attribute, Data, DataEnum, DataStruct, DeriveInput, Fields, Ident, Type};
@@ -62,7 +63,7 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
         })
         .collect();
 
-    let layout_fields = packing::allocate_slots(&field_infos)?;
+    let layout_fields = packing::allocate_slots(&field_infos, U256::ZERO)?;
 
     let mod_ident = format_ident!("__packing_{}", to_snake_case(&strukt.to_string()));
     let packing_module = gen_packing_module_from_ir(&layout_fields, &mod_ident);

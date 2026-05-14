@@ -11,7 +11,7 @@ type ExtractedAttributes = (Option<U256>, Option<U256>);
 /// Supports:
 /// - Integer literals: decimal (`42`) or hexadecimal (`0x2a`)
 /// - String literals: computes keccak256 hash of the string
-fn parse_slot_value(value: &Lit) -> syn::Result<U256> {
+pub(crate) fn parse_slot_value(value: &Lit) -> syn::Result<U256> {
     match value {
         Lit::Int(int) => {
             let lit_str = int.to_string();

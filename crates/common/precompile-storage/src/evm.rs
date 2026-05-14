@@ -3,7 +3,7 @@
 //! [`EvmPrecompileStorageProvider`] wraps an alloy-evm [`PrecompileInput`] and implements
 //! [`PrecompileStorageProvider`] by delegating to the live [`EvmInternals`] journal.
 //! It is constructed inside each native precompile's `run()` function and passed to
-//! [`StorageCtx::enter`] so that `#[contract]`-generated storage types read/write real EVM state.
+//! [`StorageCtx::enter`] so that `#[precompile_storage]`-generated storage types read/write real EVM state.
 
 use alloy_evm::precompiles::PrecompileInput;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
@@ -22,7 +22,7 @@ use crate::{
 /// Production [`PrecompileStorageProvider`] backed by a live EVM journal.
 ///
 /// Constructed from a [`PrecompileInput`] inside each native precompile's `run()` function.
-/// Pass `&mut self` to [`StorageCtx::enter`] to give `#[contract]` storage types access to
+/// Pass `&mut self` to [`StorageCtx::enter`] to give `#[precompile_storage]` storage types access to
 /// the real EVM journal.
 #[derive(Debug)]
 pub struct EvmPrecompileStorageProvider<'a> {
