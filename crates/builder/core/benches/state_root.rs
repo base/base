@@ -41,7 +41,7 @@ const FLASHBLOCKS: usize = 10;
 /// Storage slots per account.
 const SLOTS_PER_ACCOUNT: usize = 5;
 
-/// Number of pre-existing accounts in the RocksDB base state.
+/// Number of pre-existing accounts in the `RocksDB` base state.
 ///
 /// This simulates a realistic chain state where the trie already contains
 /// existing accounts before any flashblock deltas are applied.

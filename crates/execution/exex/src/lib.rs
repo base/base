@@ -8,7 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod sync_target;
-use std::{cmp, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
@@ -39,9 +39,6 @@ const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 1_296_000;
 /// Default interval between proof-storage prune runs. Default is 15 seconds.
 const DEFAULT_PRUNE_INTERVAL: Duration = Duration::from_secs(15);
 
-/// Default automatic prune finality margin: 12 hours of blocks at 2s block time.
-const DEFAULT_PRUNE_FINALITY_MARGIN_BLOCKS: u64 = 21_600;
-
 /// Default verification interval: disabled
 const DEFAULT_VERIFICATION_INTERVAL: u64 = 0; // disabled
 
@@ -55,7 +52,6 @@ where
     storage: BaseProofsStorage<Storage>,
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
-    proofs_history_prune_finality_margin_blocks: u64,
     verification_interval: u64,
 }
 
@@ -70,7 +66,6 @@ where
             storage,
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW,
             proofs_history_prune_interval: DEFAULT_PRUNE_INTERVAL,
-            proofs_history_prune_finality_margin_blocks: DEFAULT_PRUNE_FINALITY_MARGIN_BLOCKS,
             verification_interval: DEFAULT_VERIFICATION_INTERVAL,
         }
     }
@@ -87,12 +82,6 @@ where
         self
     }
 
-    /// Sets the finality margin for automatic proof-storage pruning.
-    pub const fn with_proofs_history_prune_finality_margin_blocks(mut self, blocks: u64) -> Self {
-        self.proofs_history_prune_finality_margin_blocks = blocks;
-        self
-    }
-
     /// Sets the verification interval.
     pub const fn with_verification_interval(mut self, interval: u64) -> Self {
         self.verification_interval = interval;
@@ -106,8 +95,6 @@ where
             storage: self.storage,
             proofs_history_window: self.proofs_history_window,
             proofs_history_prune_interval: self.proofs_history_prune_interval,
-            proofs_history_prune_finality_margin_blocks: self
-                .proofs_history_prune_finality_margin_blocks,
             verification_interval: self.verification_interval,
         }
     }
@@ -193,8 +180,6 @@ where
     proofs_history_window: u64,
     /// Interval between proof-storage prune runs
     proofs_history_prune_interval: Duration,
-    /// Minimum distance from latest that automatic pruning may touch.
-    proofs_history_prune_finality_margin_blocks: u64,
     /// Verification interval: perform full block execution every N blocks for data integrity.
     /// If 0, verification is disabled (always use fast path when available).
     /// If 1, verification is always enabled (always execute blocks).
@@ -248,7 +233,6 @@ where
             self.storage.clone(),
             self.ctx.provider().clone(),
             self.proofs_history_window,
-            self.proofs_history_prune_finality_margin_blocks,
             self.proofs_history_prune_interval,
         );
         self.ctx
@@ -288,7 +272,7 @@ where
         // Check if we have accumulated too much history for the configured window.
         // If the gap between what we have and what we want to keep is too large, the auto-pruner
         // will stall the node.
-        let target_earliest = self.prune_target_earliest_block(latest_block_number);
+        let target_earliest = latest_block_number.saturating_sub(self.proofs_history_window);
         if target_earliest > earliest_block_number {
             let blocks_to_prune = target_earliest - earliest_block_number;
             if blocks_to_prune > MAX_PRUNE_BLOCKS_STARTUP {
@@ -307,13 +291,6 @@ where
         BlockMetrics::earliest_number().set(earliest_block_number as f64);
 
         Ok(())
-    }
-
-    fn prune_target_earliest_block(&self, latest_block_number: u64) -> u64 {
-        let retention_target = latest_block_number.saturating_sub(self.proofs_history_window);
-        let stable_target =
-            latest_block_number.saturating_sub(self.proofs_history_prune_finality_margin_blocks);
-        cmp::min(retention_target, stable_target)
     }
 
     /// Spawn the background sync task and return the shared [`SyncTarget`].
@@ -815,7 +792,6 @@ mod tests {
         BaseProofsExEx::builder(ctx, storage)
             .with_proofs_history_window(20)
             .with_proofs_history_prune_interval(Duration::from_secs(3600))
-            .with_proofs_history_prune_finality_margin_blocks(0)
             .with_verification_interval(1000)
             .build()
     }

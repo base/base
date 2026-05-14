@@ -1,4 +1,4 @@
-//! Node luncher with proof history support.
+//! Node launcher with proof history support.
 
 use std::{sync::Arc, time::Duration};
 
@@ -8,20 +8,34 @@ use base_execution_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt, EthApiOverrideServer},
 };
-use base_execution_trie::{BaseProofsStorage, MdbxProofsStorage, RocksdbProofsStorage};
+use base_execution_trie::{
+    BaseProofsStorage, BaseProofsStore, MdbxProofsStorage, RocksdbProofsStorage,
+};
 use eyre::ErrReport;
 use futures::FutureExt;
 use reth_db::DatabaseEnv;
 use reth_db_api::database_metrics::DatabaseMetrics;
-use reth_node_builder::{FullNodeComponents, NodeBuilder, WithLaunchContext};
+use reth_node_builder::{
+    FullNodeComponents, Node as RethNode, NodeBuilder, NodeBuilderWithComponents, RethFullAdapter,
+    WithLaunchContext,
+};
 use reth_tasks::TaskExecutor;
 use tokio::time::sleep;
 use tracing::info;
 
 use crate::{
-    BaseNode,
+    BaseNode, BaseNodeComponentBuilder,
     args::{ProofsHistoryDbBackend, RollupArgs},
 };
+
+type ProofHistoryNodeTypes = RethFullAdapter<Arc<DatabaseEnv>, BaseNode>;
+type ProofHistoryNodeBuilder = WithLaunchContext<
+    NodeBuilderWithComponents<
+        ProofHistoryNodeTypes,
+        BaseNodeComponentBuilder<ProofHistoryNodeTypes>,
+        <BaseNode as RethNode<ProofHistoryNodeTypes>>::AddOns,
+    >,
+>;
 
 /// - no proofs history (plain node),
 /// - in-mem proofs storage,
@@ -35,7 +49,6 @@ pub async fn launch_node_with_proof_history(
         proofs_history_db,
         proofs_history_window,
         proofs_history_prune_interval,
-        proofs_history_prune_finality_margin_blocks,
         proofs_history_verification_interval,
         ..
     } = args;
@@ -56,89 +69,26 @@ pub async fn launch_node_with_proof_history(
                     RocksdbProofsStorage::new(&path)
                         .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
                 );
-                let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-                    Arc::clone(&rocksdb).into();
-                let storage_exec = storage.clone();
-
-                node_builder = node_builder
-                    .on_node_started(move |node| {
-                        spawn_proofs_db_metrics(
-                            node.task_executor,
-                            rocksdb,
-                            node.config.metrics.push_gateway_interval,
-                        );
-                        Ok(())
-                    })
-                    .install_exex("proofs-history", async move |exex_context| {
-                        Ok(BaseProofsExEx::builder(exex_context, storage_exec)
-                            .with_proofs_history_window(proofs_history_window)
-                            .with_proofs_history_prune_interval(proofs_history_prune_interval)
-                            .with_proofs_history_prune_finality_margin_blocks(
-                                proofs_history_prune_finality_margin_blocks,
-                            )
-                            .with_verification_interval(proofs_history_verification_interval)
-                            .build()
-                            .run()
-                            .boxed())
-                    })
-                    .extend_rpc_modules(move |ctx| {
-                        let api_ext =
-                            EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
-                        let debug_ext = DebugApiExt::new(
-                            ctx.node().provider().clone(),
-                            ctx.registry.eth_api().clone(),
-                            storage,
-                            Box::new(ctx.node().task_executor().clone()),
-                            ctx.node().evm_config().clone(),
-                        );
-                        ctx.modules.replace_configured(api_ext.into_rpc())?;
-                        ctx.modules.replace_configured(debug_ext.into_rpc())?;
-                        Ok(())
-                    });
+                node_builder = install_proofs_history(
+                    node_builder,
+                    rocksdb,
+                    proofs_history_window,
+                    proofs_history_prune_interval,
+                    proofs_history_verification_interval,
+                );
             }
             ProofsHistoryDbBackend::Mdbx => {
                 let mdbx = Arc::new(
                     MdbxProofsStorage::new(&path)
                         .map_err(|e| eyre::eyre!("Failed to create MdbxProofsStorage: {e}"))?,
                 );
-                let storage: BaseProofsStorage<Arc<MdbxProofsStorage>> = Arc::clone(&mdbx).into();
-                let storage_exec = storage.clone();
-
-                node_builder = node_builder
-                    .on_node_started(move |node| {
-                        spawn_proofs_db_metrics(
-                            node.task_executor,
-                            mdbx,
-                            node.config.metrics.push_gateway_interval,
-                        );
-                        Ok(())
-                    })
-                    .install_exex("proofs-history", async move |exex_context| {
-                        Ok(BaseProofsExEx::builder(exex_context, storage_exec)
-                            .with_proofs_history_window(proofs_history_window)
-                            .with_proofs_history_prune_interval(proofs_history_prune_interval)
-                            .with_proofs_history_prune_finality_margin_blocks(
-                                proofs_history_prune_finality_margin_blocks,
-                            )
-                            .with_verification_interval(proofs_history_verification_interval)
-                            .build()
-                            .run()
-                            .boxed())
-                    })
-                    .extend_rpc_modules(move |ctx| {
-                        let api_ext =
-                            EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
-                        let debug_ext = DebugApiExt::new(
-                            ctx.node().provider().clone(),
-                            ctx.registry.eth_api().clone(),
-                            storage,
-                            Box::new(ctx.node().task_executor().clone()),
-                            ctx.node().evm_config().clone(),
-                        );
-                        ctx.modules.replace_configured(api_ext.into_rpc())?;
-                        ctx.modules.replace_configured(debug_ext.into_rpc())?;
-                        Ok(())
-                    });
+                node_builder = install_proofs_history(
+                    node_builder,
+                    mdbx,
+                    proofs_history_window,
+                    proofs_history_prune_interval,
+                    proofs_history_verification_interval,
+                );
             }
         }
     }
@@ -147,6 +97,53 @@ pub async fn launch_node_with_proof_history(
     let handle = node_builder.launch_with_debug_capabilities().await?;
     handle.node_exit_future.await
 }
+
+fn install_proofs_history<S>(
+    node_builder: ProofHistoryNodeBuilder,
+    storage_backend: Arc<S>,
+    proofs_history_window: u64,
+    proofs_history_prune_interval: Duration,
+    proofs_history_verification_interval: u64,
+) -> ProofHistoryNodeBuilder
+where
+    S: BaseProofsStore + DatabaseMetrics + Send + Sync + 'static,
+{
+    let storage: BaseProofsStorage<Arc<S>> = Arc::clone(&storage_backend).into();
+    let storage_exec = storage.clone();
+
+    node_builder
+        .on_node_started(move |node| {
+            spawn_proofs_db_metrics(
+                node.task_executor,
+                storage_backend,
+                node.config.metrics.push_gateway_interval,
+            );
+            Ok(())
+        })
+        .install_exex("proofs-history", async move |exex_context| {
+            Ok(BaseProofsExEx::builder(exex_context, storage_exec)
+                .with_proofs_history_window(proofs_history_window)
+                .with_proofs_history_prune_interval(proofs_history_prune_interval)
+                .with_verification_interval(proofs_history_verification_interval)
+                .build()
+                .run()
+                .boxed())
+        })
+        .extend_rpc_modules(move |ctx| {
+            let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
+            let debug_ext = DebugApiExt::new(
+                ctx.node().provider().clone(),
+                ctx.registry.eth_api().clone(),
+                storage,
+                Box::new(ctx.node().task_executor().clone()),
+                ctx.node().evm_config().clone(),
+            );
+            ctx.modules.replace_configured(api_ext.into_rpc())?;
+            ctx.modules.replace_configured(debug_ext.into_rpc())?;
+            Ok(())
+        })
+}
+
 /// Spawns a task that periodically reports metrics for the proofs DB.
 fn spawn_proofs_db_metrics<S>(
     executor: TaskExecutor,
