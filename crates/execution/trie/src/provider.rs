@@ -13,10 +13,9 @@ use reth_revm::{
     db::BundleState,
     primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
-use reth_trie::hashed_cursor::HashedPostStateCursorFactory;
 use reth_trie::{
     StateRoot, StorageRoot,
-    hashed_cursor::HashedCursor,
+    hashed_cursor::{HashedCursor, HashedPostStateCursorFactory},
     proof::{self, Proof},
     trie_cursor::InMemoryTrieCursorFactory,
     witness::TrieWitness,
