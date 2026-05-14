@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 /// End-to-end test: exercises the `#[contract]` macro with `HashMapStorageProvider`.
 ///
 /// Validates that the macro generates correct storage layout,
@@ -9,6 +10,15 @@ use base_precompile_storage::{
     hashmap::{HashMapStorageProvider, setup_storage},
     provider::{Handler, StorageKey},
 };
+=======
+//! End-to-end test: exercises the `#[contract]` macro with `HashMapStorageProvider`.
+//!
+//! Validates that the macro generates correct storage layout,
+//! typed getter/setter fields work round-trip, and collision detection fires.
+use alloy_primitives::{Address, U256, address};
+use base_precompile_macros::contract;
+use base_precompile_storage::{Handler, Mapping, StorageCtx, StorageKey, setup_storage};
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
 const TEST_ADDR: Address = address!("0000000000000000000000000000000000001234");
 

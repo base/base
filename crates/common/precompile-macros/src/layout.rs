@@ -1,13 +1,26 @@
+<<<<<<< HEAD
+=======
+use quote::{format_ident, quote};
+use syn::{Expr, Ident, Visibility};
+
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 use crate::{
     FieldKind,
     packing::{self, LayoutField, PackingConstants, SlotAssignment},
 };
+<<<<<<< HEAD
 use quote::{format_ident, quote};
 use syn::{Expr, Ident, Visibility};
 
 pub(crate) fn gen_handler_field_decl(field: &LayoutField<'_>) -> proc_macro2::TokenStream {
     let field_name = field.name;
     let doc_str = format!("Storage handler for the `{}` slot.", field_name);
+=======
+
+pub(crate) fn gen_handler_field_decl(field: &LayoutField<'_>) -> proc_macro2::TokenStream {
+    let field_name = field.name;
+    let doc_str = format!("Storage handler for the `{field_name}` slot.");
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     let handler_type = match &field.kind {
         FieldKind::Direct(ty) => {
             quote! { <#ty as ::base_precompile_storage::StorableType>::Handler }
@@ -159,16 +172,28 @@ pub(crate) fn gen_constructor(
             }
 
             #[cfg(any(test, feature = "test-utils"))]
+<<<<<<< HEAD
+=======
+            /// Returns all events emitted by this contract (test-utils only).
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
             pub fn emitted_events(&self) -> &Vec<::alloy_primitives::LogData> {
                 self.storage.get_events(self.address)
             }
 
             #[cfg(any(test, feature = "test-utils"))]
+<<<<<<< HEAD
+=======
+            /// Clears all events emitted by this contract (test-utils only).
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
             pub fn clear_emitted_events(&mut self) {
                 self.storage.clear_events(self.address);
             }
 
             #[cfg(any(test, feature = "test-utils"))]
+<<<<<<< HEAD
+=======
+            /// Asserts that emitted events match the expected list (test-utils only).
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
             pub fn assert_emitted_events(&self, expected: Vec<impl ::alloy_primitives::IntoLogData>) {
                 let emitted = self.storage.get_events(self.address);
                 assert_eq!(emitted.len(), expected.len());

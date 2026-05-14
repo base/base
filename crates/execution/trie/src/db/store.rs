@@ -657,6 +657,11 @@ impl BaseProofsStore for MdbxProofsStorage {
         = MdbxAccountCursor<Dup<'tx, HashedAccountHistory>>
     where
         Self: 'tx;
+    type Tx = <DatabaseEnv as Database>::TX;
+
+    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
+        Ok(self.env.tx()?)
+    }
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         self.env.view(|tx| self.inner_get_block_number_hash(tx, ProofWindowKey::EarliestBlock))?
@@ -703,6 +708,60 @@ impl BaseProofsStore for MdbxProofsStorage {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         let tx = self.env.tx()?;
+        let cursor = tx.cursor_dup_read::<HashedAccountHistory>()?;
+
+        Ok(MdbxAccountCursor::new(cursor, max_block_number))
+    }
+
+    fn storage_trie_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        let cursor = tx.cursor_dup_read::<StorageTrieHistory>()?;
+
+        Ok(MdbxTrieCursor::new(cursor, max_block_number, Some(hashed_address)))
+    }
+
+    fn account_trie_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        let cursor = tx.cursor_dup_read::<AccountTrieHistory>()?;
+
+        Ok(MdbxTrieCursor::new(cursor, max_block_number, None))
+    }
+
+    fn storage_hashed_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        let cursor = tx.cursor_dup_read::<HashedStorageHistory>()?;
+
+        Ok(MdbxStorageCursor::new(cursor, max_block_number, hashed_address))
+    }
+
+    fn account_hashed_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
+    where
+        Self: 'tx,
+    {
         let cursor = tx.cursor_dup_read::<HashedAccountHistory>()?;
 
         Ok(MdbxAccountCursor::new(cursor, max_block_number))

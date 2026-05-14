@@ -3,7 +3,8 @@
 use std::{
     fs,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
-    num::ParseIntError,
+    num::{NonZeroUsize, ParseIntError},
+    ops::{Deref, DerefMut},
     path::PathBuf,
     str::FromStr,
 };
@@ -14,7 +15,9 @@ use alloy_signer_local::PrivateKeySigner;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::ChainProvider;
 use base_consensus_disc::LocalNode;
-use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig};
+use base_consensus_gossip::{
+    ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS, GaterConfig,
+};
 use base_consensus_node::NetworkConfig;
 use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_providers::AlloyChainProvider;
@@ -54,9 +57,14 @@ fn resolve_host(host: &str) -> Result<IpAddr, String> {
     }
 }
 
+fn parse_nonzero_usize(arg: &str) -> Result<NonZeroUsize, String> {
+    let value = arg.parse::<usize>().map_err(|err| err.to_string())?;
+    NonZeroUsize::new(value).ok_or_else(|| "value must be greater than 0".to_string())
+}
+
 /// P2P CLI Flags
 #[derive(Parser, Clone, Debug, PartialEq, Eq)]
-pub struct P2PArgs {
+pub struct P2PNetworkArgs {
     /// Disable Discv5 (node discovery).
     #[arg(long = "p2p.no-discovery", default_value = "false", env = "BASE_NODE_P2P_NO_DISCOVERY")]
     pub no_discovery: bool,
@@ -106,6 +114,14 @@ pub struct P2PArgs {
     /// number.
     #[arg(long = "p2p.peers.hi", default_value = "30", env = "BASE_NODE_P2P_PEERS_HI")]
     pub peers_hi: u32,
+    /// Maximum number of peers to retain identify metadata for.
+    #[arg(
+        long = "p2p.identify.peerstore.size",
+        default_value_t = DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
+        env = "BASE_NODE_P2P_IDENTIFY_PEERSTORE_SIZE",
+        value_parser = parse_nonzero_usize
+    )]
+    pub identify_peerstore_size: NonZeroUsize,
     /// Grace period to keep a newly connected peer around, if it is not misbehaving.
     #[arg(
         long = "p2p.peers.grace",
@@ -176,6 +192,7 @@ pub struct P2PArgs {
     /// The interval in seconds to find peers using the discovery service.
     /// Defaults to 5 seconds.
     #[arg(
+        id = "consensus_p2p_discovery_interval",
         long = "p2p.discovery.interval",
         default_value = "5",
         env = "BASE_NODE_P2P_DISCOVERY_INTERVAL"
@@ -200,13 +217,22 @@ pub struct P2PArgs {
     pub redial_period: u64,
 
     /// An optional list of bootnode ENRs or node records to start the node with.
-    #[arg(long = "p2p.bootnodes", value_delimiter = ',', env = "BASE_NODE_P2P_BOOTNODES")]
+    #[arg(
+        id = "consensus_p2p_bootnodes",
+        long = "p2p.bootnodes",
+        value_delimiter = ',',
+        env = "BASE_NODE_P2P_BOOTNODES"
+    )]
     pub bootnodes: Vec<String>,
 
     /// Path to a file containing bootnode ENRs or node records.
     ///
     /// Entries may be separated by newlines or commas.
-    #[arg(long = "p2p.bootnodes-file", env = "BASE_NODE_P2P_BOOTNODES_FILE")]
+    #[arg(
+        id = "consensus_p2p_bootnodes_file",
+        long = "p2p.bootnodes-file",
+        env = "BASE_NODE_P2P_BOOTNODES_FILE"
+    )]
     pub bootnodes_file: Option<PathBuf>,
 
     /// Optionally enable topic scoring.
@@ -241,6 +267,22 @@ pub struct P2PArgs {
     /// This is useful for discovering a wider set of peers.
     #[arg(long = "p2p.discovery.randomize", env = "BASE_NODE_P2P_DISCOVERY_RANDOMIZE")]
     pub discovery_randomize: Option<u64>,
+}
+
+impl Default for P2PNetworkArgs {
+    fn default() -> Self {
+        // Construct default values using the clap parser.
+        // This works since none of the cli flags are required.
+        Self::parse_from::<[_; 0], &str>([])
+    }
+}
+
+/// P2P CLI flags for a node that may sign unsafe block gossip.
+#[derive(Parser, Clone, Debug, PartialEq, Eq)]
+pub struct P2PArgs {
+    /// P2P network configuration.
+    #[command(flatten)]
+    pub network: P2PNetworkArgs,
 
     /// Specify optional remote signer configuration. Note that this argument is mutually exclusive
     /// with `p2p.sequencer.key` that specifies a local sequencer signer.
@@ -253,6 +295,42 @@ impl Default for P2PArgs {
         // Construct default values using the clap parser.
         // This works since none of the cli flags are required.
         Self::parse_from::<[_; 0], &str>([])
+    }
+}
+
+impl Deref for P2PArgs {
+    type Target = P2PNetworkArgs;
+
+    fn deref(&self) -> &Self::Target {
+        &self.network
+    }
+}
+
+impl DerefMut for P2PArgs {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.network
+    }
+}
+
+/// P2P CLI flags for an embedded validator-only node.
+#[derive(Parser, Clone, Debug, PartialEq, Eq)]
+pub struct EmbeddedP2PArgs {
+    /// P2P network configuration.
+    #[command(flatten)]
+    pub network: P2PNetworkArgs,
+}
+
+impl Default for EmbeddedP2PArgs {
+    fn default() -> Self {
+        // Construct default values using the clap parser.
+        // This works since none of the cli flags are required.
+        Self::parse_from::<[_; 0], &str>([])
+    }
+}
+
+impl From<EmbeddedP2PArgs> for P2PArgs {
+    fn from(args: EmbeddedP2PArgs) -> Self {
+        Self { network: args.network, signer: SignerArgs::default() }
     }
 }
 
@@ -500,7 +578,7 @@ impl P2PArgs {
             if self.disable_bootstore {
                 None
             } else {
-                Some(self.bootstore.map_or(
+                Some(self.bootstore.clone().map_or(
                     BootStoreFile::Default { chain_id: l2_chain_id },
                     BootStoreFile::Custom,
                 ))
@@ -525,6 +603,7 @@ impl P2PArgs {
                 dial_period: Duration::from_secs(60 * self.redial_period),
             },
             connection_limits_config: ConnectionLimitsConfig::new(self.peers_hi),
+            max_identify_peerstore_peers: self.identify_peerstore_size,
             bootnodes,
             rollup_config: config.clone(),
             gossip_signer: self.signer.config(l2_chain_id)?,
@@ -868,6 +947,28 @@ mod tests {
         assert_eq!(config.connection_limits_config.max_established_incoming, 42);
         assert_eq!(config.connection_limits_config.max_established_outgoing, 42);
         assert_eq!(config.connection_limits_config.max_established, 42);
+    }
+
+    #[tokio::test]
+    async fn test_p2p_config_wires_identify_peerstore_size() {
+        let args = MockCommand::parse_from(["test", "--p2p.identify.peerstore.size", "2048"]);
+
+        let config = args
+            .p2p
+            .config(&RollupConfig::default(), 8453, None, Some(Address::ZERO))
+            .await
+            .unwrap();
+
+        assert_eq!(config.max_identify_peerstore_peers.get(), 2048);
+    }
+
+    #[test]
+    fn test_p2p_args_reject_zero_identify_peerstore_size() {
+        let err = MockCommand::try_parse_from(["test", "--p2p.identify.peerstore.size", "0"])
+            .expect_err("zero identify peerstore size should fail")
+            .to_string();
+
+        assert!(err.contains("value must be greater than 0"));
     }
 
     #[test]

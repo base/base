@@ -53,11 +53,77 @@ pub struct RpcArgs {
     pub max_concurrent_requests: NonZeroUsize,
 }
 
+/// RPC CLI arguments for embedded consensus nodes.
+#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddedRpcArgs {
+    /// Whether to disable the rpc server.
+    #[arg(long = "rpc.disabled", default_value = "false", env = "BASE_NODE_RPC_DISABLED")]
+    pub rpc_disabled: bool,
+    /// Prevent the RPC server from attempting to restart.
+    #[arg(long = "rpc.no-restart", default_value = "false", env = "BASE_NODE_RPC_NO_RESTART")]
+    pub no_restart: bool,
+    /// RPC listening address.
+    #[arg(long = "rpc.addr", default_value = "0.0.0.0", env = "BASE_NODE_RPC_ADDR")]
+    pub listen_addr: IpAddr,
+    /// RPC listening port.
+    #[arg(long = "rpc.port", default_value = "9545", env = "BASE_NODE_RPC_PORT")]
+    pub listen_port: u16,
+    /// Enable the admin API.
+    #[arg(long = "rpc.enable-admin", env = "BASE_NODE_RPC_ENABLE_ADMIN")]
+    pub enable_admin: bool,
+    /// File path used to persist state changes made via the admin API so they persist across
+    /// restarts. Disabled if not set.
+    #[arg(long = "rpc.admin-state", env = "BASE_NODE_RPC_ADMIN_STATE")]
+    pub admin_persistence: Option<PathBuf>,
+    /// Enables websocket rpc server to track block production
+    #[arg(long = "rpc.ws-enabled", default_value = "false", env = "BASE_NODE_RPC_WS_ENABLED")]
+    pub ws_enabled: bool,
+    /// Enables development RPC endpoints for engine state introspection
+    #[arg(long = "rpc.dev-enabled", default_value = "false", env = "BASE_NODE_RPC_DEV_ENABLED")]
+    pub dev_enabled: bool,
+    /// HTTP request timeout in seconds for the RPC server.
+    #[arg(long = "rpc.timeout", default_value = "60", env = "BASE_NODE_RPC_TIMEOUT")]
+    pub http_timeout_secs: u64,
+    /// Maximum number of concurrent in-flight RPC requests.
+    #[arg(
+        long = "rpc.max-concurrent",
+        default_value = "1024",
+        env = "BASE_NODE_RPC_MAX_CONCURRENT",
+        value_parser = clap::value_parser!(NonZeroUsize),
+    )]
+    pub max_concurrent_requests: NonZeroUsize,
+}
+
 impl Default for RpcArgs {
     fn default() -> Self {
         // Construct default values using the clap parser.
         // This works since none of the cli flags are required.
         Self::parse_from::<[_; 0], &str>([])
+    }
+}
+
+impl Default for EmbeddedRpcArgs {
+    fn default() -> Self {
+        // Construct default values using the clap parser.
+        // This works since none of the cli flags are required.
+        Self::parse_from::<[_; 0], &str>([])
+    }
+}
+
+impl From<EmbeddedRpcArgs> for RpcArgs {
+    fn from(args: EmbeddedRpcArgs) -> Self {
+        Self {
+            rpc_disabled: args.rpc_disabled,
+            no_restart: args.no_restart,
+            listen_addr: args.listen_addr,
+            listen_port: args.listen_port,
+            enable_admin: args.enable_admin,
+            admin_persistence: args.admin_persistence,
+            ws_enabled: args.ws_enabled,
+            dev_enabled: args.dev_enabled,
+            http_timeout_secs: args.http_timeout_secs,
+            max_concurrent_requests: args.max_concurrent_requests,
+        }
     }
 }
 
@@ -90,16 +156,42 @@ mod tests {
     #[rstest]
     #[case::disable_rpc(&["--rpc.disabled"], |args: &mut RpcArgs| { args.rpc_disabled = true; })]
     #[case::no_restart(&["--rpc.no-restart"], |args: &mut RpcArgs| { args.no_restart = true; })]
-    #[case::disable_rpc(&["--rpc.addr", "1.1.1.1"], |args: &mut RpcArgs| { args.listen_addr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)); })]
-    #[case::disable_rpc(&["--port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
-    #[case::disable_rpc_alias(&["--rpc.port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
-    #[case::disable_rpc(&["--rpc.enable-admin"], |args: &mut RpcArgs| { args.enable_admin = true; })]
-    #[case::disable_rpc(&["--rpc.admin-state", "/"], |args: &mut RpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
+    #[case::set_addr(&["--rpc.addr", "1.1.1.1"], |args: &mut RpcArgs| { args.listen_addr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)); })]
+    #[case::set_port(&["--port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
+    #[case::set_port_alias(&["--rpc.port", "8743"], |args: &mut RpcArgs| { args.listen_port = 8743; })]
+    #[case::enable_admin(&["--rpc.enable-admin"], |args: &mut RpcArgs| { args.enable_admin = true; })]
+    #[case::admin_state(&["--rpc.admin-state", "/"], |args: &mut RpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
     fn test_parse_rpc_args(#[case] args: &[&str], #[case] mutate: impl Fn(&mut RpcArgs)) {
         let args = [&["base-consensus"], args].concat();
         let cli = RpcArgs::parse_from(args);
         let mut expected = RpcArgs::default();
         mutate(&mut expected);
         assert_eq!(cli, expected);
+    }
+
+    #[rstest]
+    #[case::disable_rpc(&["--rpc.disabled"], |args: &mut EmbeddedRpcArgs| { args.rpc_disabled = true; })]
+    #[case::no_restart(&["--rpc.no-restart"], |args: &mut EmbeddedRpcArgs| { args.no_restart = true; })]
+    #[case::set_addr(&["--rpc.addr", "1.1.1.1"], |args: &mut EmbeddedRpcArgs| { args.listen_addr = IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)); })]
+    #[case::set_port(&["--rpc.port", "8743"], |args: &mut EmbeddedRpcArgs| { args.listen_port = 8743; })]
+    #[case::enable_admin(&["--rpc.enable-admin"], |args: &mut EmbeddedRpcArgs| { args.enable_admin = true; })]
+    #[case::admin_state(&["--rpc.admin-state", "/"], |args: &mut EmbeddedRpcArgs| { args.admin_persistence = Some(PathBuf::from("/")); })]
+    fn test_parse_embedded_rpc_args(
+        #[case] args: &[&str],
+        #[case] mutate: impl Fn(&mut EmbeddedRpcArgs),
+    ) {
+        let args = [&["base-consensus"], args].concat();
+        let cli = EmbeddedRpcArgs::parse_from(args);
+        let mut expected = EmbeddedRpcArgs::default();
+        mutate(&mut expected);
+        assert_eq!(cli, expected);
+    }
+
+    #[test]
+    fn embedded_rpc_args_do_not_accept_bare_port() {
+        let err = EmbeddedRpcArgs::try_parse_from(["base-consensus", "--port", "8743"])
+            .expect_err("embedded consensus RPC args should reserve bare --port for execution");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 }

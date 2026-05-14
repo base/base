@@ -6,9 +6,16 @@
 //! - **Base slot**: Stores the array length
 //! - **Data slots**: Start at `keccak256(len_slot)`; elements packed where possible.
 
+<<<<<<< HEAD
 use alloy_primitives::{Address, U256, keccak256};
 use std::ops::{Index, IndexMut};
 
+=======
+use std::ops::{Index, IndexMut};
+
+use alloy_primitives::{Address, U256, keccak256};
+
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 use crate::{
     error::{BasePrecompileError, Result},
     packing::{PackedSlot, calc_element_loc, calc_packed_slot_count},
@@ -105,6 +112,7 @@ where
     T: Storable,
 {
     #[inline]
+<<<<<<< HEAD
     fn read(&self) -> Result<Vec<T>> { self.as_slot().read() }
     #[inline]
     fn write(&mut self, value: Vec<T>) -> Result<()> { self.as_slot().write(value) }
@@ -116,6 +124,31 @@ where
     fn t_write(&mut self, value: Vec<T>) -> Result<()> { self.as_slot().t_write(value) }
     #[inline]
     fn t_delete(&mut self) -> Result<()> { self.as_slot().t_delete() }
+=======
+    fn read(&self) -> Result<Vec<T>> {
+        self.as_slot().read()
+    }
+    #[inline]
+    fn write(&mut self, value: Vec<T>) -> Result<()> {
+        self.as_slot().write(value)
+    }
+    #[inline]
+    fn delete(&mut self) -> Result<()> {
+        self.as_slot().delete()
+    }
+    #[inline]
+    fn t_read(&self) -> Result<Vec<T>> {
+        self.as_slot().t_read()
+    }
+    #[inline]
+    fn t_write(&mut self, value: Vec<T>) -> Result<()> {
+        self.as_slot().t_write(value)
+    }
+    #[inline]
+    fn t_delete(&mut self) -> Result<()> {
+        self.as_slot().t_delete()
+    }
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 }
 
 impl<T> VecHandler<T>
@@ -134,6 +167,7 @@ where
 
     /// Returns the slot that stores the vector length.
     #[inline]
+<<<<<<< HEAD
     pub const fn len_slot(&self) -> U256 { self.len_slot }
 
     /// Returns the slot where element data begins (`keccak256(len_slot)`).
@@ -142,6 +176,22 @@ where
 
     #[inline]
     const fn as_slot(&self) -> Slot<Vec<T>> { Slot::new(self.len_slot, self.address) }
+=======
+    pub const fn len_slot(&self) -> U256 {
+        self.len_slot
+    }
+
+    /// Returns the slot where element data begins (`keccak256(len_slot)`).
+    #[inline]
+    pub fn data_slot(&self) -> U256 {
+        calc_data_slot(self.len_slot)
+    }
+
+    #[inline]
+    const fn as_slot(&self) -> Slot<Vec<T>> {
+        Slot::new(self.len_slot, self.address)
+    }
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     /// Returns the number of elements in the vector.
     #[inline]
@@ -152,13 +202,26 @@ where
 
     /// Returns whether the vector is empty.
     #[inline]
+<<<<<<< HEAD
     pub fn is_empty(&self) -> Result<bool> { Ok(self.len()? == 0) }
+=======
+    pub fn is_empty(&self) -> Result<bool> {
+        Ok(self.len()? == 0)
+    }
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     #[inline]
     fn compute_handler(data_start: U256, address: Address, index: usize) -> T::Handler {
         let (slot, layout_ctx) = if T::BYTES <= 16 {
             let location = calc_element_loc(index, T::BYTES);
+<<<<<<< HEAD
             (data_start + U256::from(location.offset_slots), LayoutCtx::packed(location.offset_bytes))
+=======
+            (
+                data_start + U256::from(location.offset_slots),
+                LayoutCtx::packed(location.offset_bytes),
+            )
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         } else {
             (data_start + U256::from(index * T::SLOTS), LayoutCtx::FULL)
         };
@@ -171,7 +234,13 @@ where
             return Ok(None);
         }
         let (data_start, address) = (self.data_slot(), self.address);
+<<<<<<< HEAD
         Ok(Some(self.cache.get_or_insert(&index, || Self::compute_handler(data_start, address, index))))
+=======
+        Ok(Some(
+            self.cache.get_or_insert(&index, || Self::compute_handler(data_start, address, index)),
+        ))
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     /// Pushes a new element to the end of the vector.
@@ -199,7 +268,13 @@ where
         T::Handler: Handler<T>,
     {
         let length = self.len()?;
+<<<<<<< HEAD
         if length == 0 { return Ok(None); }
+=======
+        if length == 0 {
+            return Ok(None);
+        }
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         let last_index = length - 1;
         let mut elem_slot = Self::compute_handler(self.data_slot(), self.address, last_index);
         let element = elem_slot.read()?;
@@ -275,7 +350,13 @@ where
             let elem = T::load(&slot_packed, slot_addr, LayoutCtx::packed(current_offset))?;
             result.push(elem);
             current_offset += byte_count;
+<<<<<<< HEAD
             if current_offset >= 32 { current_offset = 0; }
+=======
+            if current_offset >= 32 {
+                current_offset = 0;
+            }
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         }
 
         current_offset = 0;
@@ -412,7 +493,13 @@ mod tests {
             let handler = VecHandler::<U256>::new(len_slot, address);
 
             let vals: Vec<U256> = (0..5).map(U256::from).collect();
+<<<<<<< HEAD
             for &v in &vals { handler.push(v).unwrap(); }
+=======
+            for &v in &vals {
+                handler.push(v).unwrap();
+            }
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
             assert_eq!(handler.len().unwrap(), 5);
 
             for &v in vals.iter().rev() {

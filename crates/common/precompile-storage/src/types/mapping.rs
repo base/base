@@ -1,13 +1,25 @@
 //! Type-safe wrapper for EVM storage mappings (hash-based key-value storage).
 
+<<<<<<< HEAD
 use alloy_primitives::{Address, U256};
+=======
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 use std::{
     hash::Hash,
     ops::{Index, IndexMut},
 };
 
+<<<<<<< HEAD
 use crate::provider::{Layout, LayoutCtx, StorableType, StorageKey};
 use crate::types::HandlerCache;
+=======
+use alloy_primitives::{Address, U256};
+
+use crate::{
+    provider::{Layout, LayoutCtx, StorableType, StorageKey},
+    types::HandlerCache,
+};
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
 /// Type-safe access wrapper for EVM storage mappings.
 #[derive(Debug, Clone)]
@@ -36,9 +48,14 @@ impl<K, V: StorableType> Mapping<K, V> {
         K: StorageKey + Hash + Eq + Clone,
     {
         let (base_slot, address) = (self.base_slot, self.address);
+<<<<<<< HEAD
         self.cache.get_or_insert(key, || {
             V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address)
         })
+=======
+        self.cache
+            .get_or_insert(key, || V::handle(key.mapping_slot(base_slot), LayoutCtx::FULL, address))
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     /// Returns a mutable handler for the given key (mutable access, cached).
@@ -99,9 +116,16 @@ where
 
 #[cfg(test)]
 mod tests {
+<<<<<<< HEAD
     use super::*;
     use alloy_primitives::{Address, B256, U256, keccak256};
 
+=======
+    use alloy_primitives::{Address, B256, U256, keccak256};
+
+    use super::*;
+
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     fn old_mapping_slot<K: AsRef<[u8]>>(key: K, slot: U256) -> U256 {
         let key = key.as_ref();
         let mut buf = [0u8; 64];

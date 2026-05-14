@@ -1,6 +1,6 @@
 //! A builder for the [`GossipDriver`].
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
@@ -13,7 +13,8 @@ use tokio::sync::watch::{self};
 
 use crate::{
     Behaviour, BlockHandler, ConnectionLimitsConfig, DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
-    GaterConfig, GossipDriver, GossipDriverBuilderError, Handler,
+    DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS, GaterConfig, GossipDriver, GossipDriverBuilderError,
+    GossipDriverConfig, Handler,
 };
 
 /// A builder for the [`GossipDriver`].
@@ -40,6 +41,8 @@ pub struct GossipDriverBuilder {
     gater_config: Option<GaterConfig>,
     /// The connection limits enforced by the libp2p swarm.
     connection_limits_config: ConnectionLimitsConfig,
+    /// Maximum number of peers to retain identify metadata for.
+    max_identify_peerstore_peers: NonZeroUsize,
     /// Topic scoring. Disabled by default.
     topic_scoring: bool,
 }
@@ -64,6 +67,7 @@ impl GossipDriverBuilder {
             connection_limits_config: ConnectionLimitsConfig::new(
                 DEFAULT_MAX_ESTABLISHED_CONNECTIONS,
             ),
+            max_identify_peerstore_peers: DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
             rollup_config,
             topic_scoring: false,
         }
@@ -78,6 +82,12 @@ impl GossipDriverBuilder {
     /// Sets the connection limits enforced by the libp2p swarm.
     pub const fn with_connection_limits_config(mut self, config: ConnectionLimitsConfig) -> Self {
         self.connection_limits_config = config;
+        self
+    }
+
+    /// Sets the maximum number of peers to retain identify metadata for.
+    pub const fn with_max_identify_peerstore_peers(mut self, max_peers: NonZeroUsize) -> Self {
+        self.max_identify_peerstore_peers = max_peers;
         self
     }
 
@@ -178,6 +188,7 @@ impl GossipDriverBuilder {
             config.max_transmit_size()
         );
         let connection_limits_config = self.connection_limits_config;
+        let max_identify_peerstore_peers = self.max_identify_peerstore_peers;
         info!(
             target: "gossip",
             max_pending_incoming = connection_limits_config.max_pending_incoming,
@@ -187,6 +198,10 @@ impl GossipDriverBuilder {
             max_established = connection_limits_config.max_established,
             max_established_per_peer = connection_limits_config.max_established_per_peer,
             "Configured libp2p connection limits"
+        );
+        info!(
+            target: "gossip",
+            max_identify_peerstore_peers, "Configured identify peerstore limit"
         );
         let mut behaviour = Behaviour::new_with_connection_limits(
             keypair.public(),
@@ -254,7 +269,10 @@ impl GossipDriverBuilder {
                 sync_handler,
                 sync_protocol,
                 gate,
-                self.peer_monitoring,
+                GossipDriverConfig {
+                    max_identify_peerstore_peers,
+                    peer_monitoring: self.peer_monitoring,
+                },
             ),
             signer_tx,
         ))

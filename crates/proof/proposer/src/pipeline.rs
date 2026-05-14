@@ -42,7 +42,7 @@ use base_proof_contracts::{
 use base_proof_primitives::{ProofJournal, ProofRequest, ProofResult, ProverClient};
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider, RpcError};
 use eyre::Result;
-use futures::{StreamExt, TryStreamExt, stream};
+use futures::{StreamExt, stream};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, warn};
@@ -108,6 +108,12 @@ struct PipelineState {
     retry_counts: BTreeMap<u64, u32>,
     /// Cached result from the last successful recovery scan.
     cached_recovery: Option<CachedRecovery>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProofPlan {
+    start_block: u64,
+    target_block: u64,
 }
 
 impl PipelineState {
@@ -345,13 +351,12 @@ where
         })?;
 
         let mut start_block = recovered.l2_block_number;
-        let mut start_output = recovered.output_root;
+        let mut plans = Vec::new();
+        let mut output_blocks = BTreeSet::new();
 
-        while cursor <= safe_head && state.inflight.len() < self.config.max_parallel_proofs {
-            // Skip blocks already being handled (in-flight, proved, or
-            // submitting).  Track the last skipped block so we can fetch
-            // its output root once — only when we actually find a block
-            // to dispatch.
+        while cursor <= safe_head
+            && state.inflight.len() + plans.len() < self.config.max_parallel_proofs
+        {
             let mut last_skipped = None;
             while cursor <= safe_head
                 && (state.inflight.contains(&cursor)
@@ -361,82 +366,76 @@ where
                 last_skipped = Some(cursor);
                 cursor = match cursor.checked_add(self.config.driver.block_interval) {
                     Some(c) => c,
-                    // Overflow means there are no further blocks to dispatch.
                     None => return Ok(()),
                 };
             }
 
-            // Nothing left to dispatch after skipping.
             if cursor > safe_head {
                 break;
             }
 
-            // Still at max capacity after skipping.
-            if state.inflight.len() >= self.config.max_parallel_proofs {
+            if state.inflight.len() + plans.len() >= self.config.max_parallel_proofs {
                 break;
             }
 
-            // Fetch the output root for the last skipped block so the
-            // proof request chains correctly.
             if let Some(skipped) = last_skipped {
-                match self.rollup_client.output_at_block(skipped).await {
-                    Ok(output) => {
-                        start_block = skipped;
-                        start_output = output.output_root;
-                    }
-                    Err(e) => {
-                        warn!(
-                            error = %e,
-                            block = skipped,
-                            "Failed to fetch output root while skipping, stopping dispatch"
-                        );
-                        break;
-                    }
-                }
+                start_block = skipped;
+                output_blocks.insert(skipped);
             }
 
-            match self.build_proof_request_for(start_block, start_output, cursor).await {
-                Ok(request) => {
-                    let claimed_output = request.claimed_l2_output_root;
-                    let prover = Arc::clone(&self.prover);
-                    let target = cursor;
-                    let cancel = self.cancel.child_token();
+            plans.push(ProofPlan { start_block, target_block: cursor });
+            output_blocks.insert(cursor);
+            start_block = cursor;
 
-                    info!(
-                        from_block = start_block,
-                        to_block = target,
-                        blocks = target.saturating_sub(start_block),
-                        "Dispatching proof task"
-                    );
-                    state.inflight.insert(target);
-                    state.prove_tasks.spawn(async move {
-                        let mut proof_timer =
-                            base_metrics::timed!(Metrics::proof_duration_seconds());
-                        tokio::select! {
-                            () = cancel.cancelled() => {
-                                proof_timer.disarm();
-                                (target, Err(ProposerError::Internal("cancelled".into())))
-                            }
-                            result = prover.prove(request) => {
-                                drop(proof_timer);
-                                (target, result.map_err(|e| ProposerError::Prover(e.to_string())))
-                            }
-                        }
-                    });
-
-                    start_block = cursor;
-                    start_output = claimed_output;
-                }
-                Err(e) => {
-                    warn!(error = %e, target_block = cursor, "Failed to build proof request");
-                    break;
-                }
-            }
             cursor = match cursor.checked_add(self.config.driver.block_interval) {
                 Some(c) => c,
                 None => break,
             };
         }
+
+        if plans.is_empty() {
+            state.record_gauges();
+            return Ok(());
+        }
+
+        let requests = match self
+            .build_proof_requests_for(recovered, &plans, output_blocks.into_iter().collect())
+            .await
+        {
+            Ok(requests) => requests,
+            Err(e) => {
+                warn!(error = %e, "Failed to build proof request batch");
+                state.record_gauges();
+                return Ok(());
+            }
+        };
+
+        for (plan, request) in requests {
+            let prover = Arc::clone(&self.prover);
+            let cancel = self.cancel.child_token();
+
+            info!(
+                from_block = plan.start_block,
+                to_block = plan.target_block,
+                blocks = plan.target_block.saturating_sub(plan.start_block),
+                "Dispatching proof task"
+            );
+            state.inflight.insert(plan.target_block);
+            state.prove_tasks.spawn(async move {
+                let mut proof_timer = base_metrics::timed!(Metrics::proof_duration_seconds());
+                tokio::select! {
+                    () = cancel.cancelled() => {
+                        proof_timer.disarm();
+                        (plan.target_block, Err(ProposerError::Internal("cancelled".into())))
+                    }
+                    result = prover.prove(request) => {
+                        drop(proof_timer);
+                        (plan.target_block, result.map_err(|e| ProposerError::Prover(e.to_string())))
+                    }
+                }
+            });
+        }
+
         state.record_gauges();
         Ok(())
     }
@@ -664,6 +663,49 @@ where
         &self,
         cache: &mut Option<CachedRecovery>,
     ) -> Option<(RecoveredState, u64)> {
+        if let Some(cached) = cache.as_ref() {
+            let safe_head = match self.latest_safe_block_number().await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(error = %e, "Failed to fetch safe head, retrying next tick");
+                    return None;
+                }
+            };
+
+            let next_proposal_block =
+                match cached.state.l2_block_number.checked_add(self.config.driver.block_interval) {
+                    Some(block) => block,
+                    None => {
+                        warn!(
+                            cached_block = cached.state.l2_block_number,
+                            block_interval = self.config.driver.block_interval,
+                            "Cannot compute next proposal block, retrying next tick"
+                        );
+                        return None;
+                    }
+                };
+
+            if safe_head < next_proposal_block {
+                debug!(
+                    safe_head,
+                    cached_block = cached.state.l2_block_number,
+                    next_proposal_block,
+                    "Safe head below next proposal target, skipping recovery"
+                );
+                return Some((cached.state, safe_head));
+            }
+
+            let state = match self.recover_latest_state(cache).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, "Failed to recover on-chain state, retrying next tick");
+                    return None;
+                }
+            };
+
+            return Some((state, safe_head));
+        }
+
         let (state_result, safe_head_result) =
             tokio::join!(self.recover_latest_state(cache), self.latest_safe_block_number(),);
 
@@ -692,7 +734,7 @@ where
     /// # Strategy
     ///
     /// 1. Read `game_count` from the factory and anchor root from the registry
-    ///    (2 RPC calls per tick — always needed for cache validation).
+    ///    once the safe head is high enough to need recovery.
     /// 2. **Cache check — fast path.** If both `game_count` and `anchor_root`
     ///    match the cache, return the cached state immediately (zero RPCs).
     /// 3. **Forward walk.** Walk from the anchor block, stepping by
@@ -972,8 +1014,20 @@ where
         blocks: Vec<u64>,
         bypass_cache: bool,
     ) -> Result<HashMap<u64, B256>, ProposerError> {
+        self.fetch_canonical_root_results_with(blocks, bypass_cache)
+            .await
+            .into_iter()
+            .map(|(block_number, result)| result.map(|root| (block_number, root)))
+            .collect()
+    }
+
+    async fn fetch_canonical_root_results_with(
+        &self,
+        blocks: Vec<u64>,
+        bypass_cache: bool,
+    ) -> HashMap<u64, Result<B256, ProposerError>> {
         if blocks.is_empty() {
-            return Ok(HashMap::new());
+            return HashMap::new();
         }
         stream::iter(blocks)
             .map(|block_number| {
@@ -984,48 +1038,139 @@ where
                     } else {
                         rollup.output_at_block(block_number).await
                     };
-                    output.map(|out| (block_number, out.output_root)).map_err(ProposerError::Rpc)
+                    (block_number, output.map(|out| out.output_root).map_err(ProposerError::Rpc))
                 }
             })
             .buffered(self.config.recovery_scan_concurrency)
-            .try_collect()
+            .collect()
             .await
     }
 
-    async fn build_proof_request_for(
+    async fn build_proof_requests_for(
         &self,
-        starting_block_number: u64,
-        agreed_output_root: B256,
-        target_block: u64,
-    ) -> Result<ProofRequest, ProposerError> {
-        let (agreed_l2_head, claimed_output, l1_head) = tokio::try_join!(
-            async {
-                self.l2_client
-                    .header_by_number(Some(starting_block_number))
-                    .await
-                    .map_err(ProposerError::Rpc)
-            },
-            async {
-                self.rollup_client.output_at_block(target_block).await.map_err(ProposerError::Rpc)
-            },
+        recovered: &RecoveredState,
+        plans: &[ProofPlan],
+        output_blocks: Vec<u64>,
+    ) -> Result<Vec<(ProofPlan, ProofRequest)>, ProposerError> {
+        let start_blocks: Vec<u64> = plans
+            .iter()
+            .map(|plan| plan.start_block)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        let (l1_head_result, output_roots, l2_heads) = tokio::join!(
             async { self.l1_client.header_by_number(None).await.map_err(ProposerError::Rpc) },
-        )?;
+            self.fetch_canonical_root_results_with(output_blocks, false),
+            async {
+                stream::iter(start_blocks)
+                    .map(|block_number| {
+                        let l2 = &self.l2_client;
+                        async move {
+                            let result = l2
+                                .header_by_number(Some(block_number))
+                                .await
+                                .map_err(ProposerError::Rpc);
+                            (block_number, result)
+                        }
+                    })
+                    .buffered(self.config.recovery_scan_concurrency)
+                    .collect::<HashMap<_, _>>()
+                    .await
+            },
+        );
+        let l1_head = l1_head_result?;
 
-        let request = ProofRequest {
-            l1_head: l1_head.hash,
-            agreed_l2_head_hash: agreed_l2_head.hash,
-            agreed_l2_output_root: agreed_output_root,
-            claimed_l2_output_root: claimed_output.output_root,
-            claimed_l2_block_number: target_block,
-            proposer: self.config.driver.proposer_address,
-            intermediate_block_interval: self.config.driver.intermediate_block_interval,
-            l1_head_number: l1_head.number,
-            image_hash: self.config.driver.tee_image_hash,
-        };
+        let mut requests = Vec::with_capacity(plans.len());
+        for plan in plans {
+            let agreed_l2_head = match l2_heads.get(&plan.start_block) {
+                Some(Ok(header)) => header,
+                Some(Err(e)) => {
+                    warn!(
+                        error = %e,
+                        start_block = plan.start_block,
+                        target_block = plan.target_block,
+                        "Stopping proof request batch after L2 header fetch failed"
+                    );
+                    break;
+                }
+                None => {
+                    warn!(
+                        start_block = plan.start_block,
+                        target_block = plan.target_block,
+                        "Stopping proof request batch because L2 header is missing"
+                    );
+                    break;
+                }
+            };
 
-        info!(request = ?request, "Built proof request for parallel proving");
+            let agreed_output_root = if plan.start_block == recovered.l2_block_number {
+                recovered.output_root
+            } else {
+                match output_roots.get(&plan.start_block) {
+                    Some(Ok(root)) => *root,
+                    Some(Err(e)) => {
+                        warn!(
+                            error = %e,
+                            start_block = plan.start_block,
+                            target_block = plan.target_block,
+                            "Stopping proof request batch after start output fetch failed"
+                        );
+                        break;
+                    }
+                    None => {
+                        warn!(
+                            start_block = plan.start_block,
+                            target_block = plan.target_block,
+                            "Stopping proof request batch because start output is missing"
+                        );
+                        break;
+                    }
+                }
+            };
 
-        Ok(request)
+            let claimed_l2_output_root = match output_roots.get(&plan.target_block) {
+                Some(Ok(root)) => *root,
+                Some(Err(e)) => {
+                    warn!(
+                        error = %e,
+                        target_block = plan.target_block,
+                        "Stopping proof request batch after target output fetch failed"
+                    );
+                    break;
+                }
+                None => {
+                    warn!(
+                        target_block = plan.target_block,
+                        "Stopping proof request batch because target output is missing"
+                    );
+                    break;
+                }
+            };
+
+            let request = ProofRequest {
+                l1_head: l1_head.hash,
+                agreed_l2_head_hash: agreed_l2_head.hash,
+                agreed_l2_output_root: agreed_output_root,
+                claimed_l2_output_root,
+                claimed_l2_block_number: plan.target_block,
+                proposer: self.config.driver.proposer_address,
+                intermediate_block_interval: self.config.driver.intermediate_block_interval,
+                l1_head_number: l1_head.number,
+                image_hash: self.config.driver.tee_image_hash,
+            };
+
+            info!(
+                from_block = plan.start_block,
+                to_block = plan.target_block,
+                l1_head_number = l1_head.number,
+                "Built proof request for parallel proving"
+            );
+
+            requests.push((*plan, request));
+        }
+
+        Ok(requests)
     }
 
     /// Recovers the TEE signer from the aggregate proposal and checks
@@ -1233,6 +1378,15 @@ where
                         "Proof L1 origin is too old, discarding proof to re-prove"
                     );
                     Err(SubmitAction::Discard(e))
+                } else if e.is_invalid_signer() {
+                    propose_timer.disarm();
+                    warn!(
+                        error = %e,
+                        target_block,
+                        "Proof signer is invalid on-chain, discarding proof to re-prove"
+                    );
+                    Metrics::tee_signer_invalid_total().increment(1);
+                    Err(SubmitAction::Discard(e))
                 } else {
                     propose_timer.disarm();
                     Err(SubmitAction::Failed(e))
@@ -1337,7 +1491,14 @@ enum SubmitOutcome {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
@@ -1432,6 +1593,7 @@ mod tests {
             game_count_override: Some(n as u64),
             uuid_games,
             games_should_fail: false,
+            game_count_calls: None,
         };
 
         (factory, output_roots)
@@ -1927,6 +2089,31 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_tick_skips_recovery_when_safe_head_below_cached_next_target() {
+        let game_count_calls = Arc::new(AtomicUsize::new(0));
+        let mut factory = MockDisputeGameFactory::with_games(vec![]);
+        factory.game_count_calls = Some(Arc::clone(&game_count_calls));
+        let pipeline = recovery_pipeline(factory, HashMap::new());
+
+        let cached = CachedRecovery {
+            game_count: 0,
+            state: RecoveredState {
+                parent_address: Address::ZERO,
+                output_root: B256::ZERO,
+                l2_block_number: TEST_ANCHOR_BLOCK,
+            },
+        };
+        let mut state = PipelineState::new();
+        state.cached_recovery = Some(cached);
+
+        pipeline.tick(&mut state).await.unwrap();
+
+        assert_eq!(game_count_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(state.cached_recovery, Some(cached));
+        assert!(state.inflight.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_recovery_cache_incremental_on_count_increase() {
         // Seed cache with game_count=1, state at game 0. Factory now has 2
         // games. Anchor is still at block 0 (behind the cached tip at
@@ -2184,6 +2371,65 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_dispatch_keeps_successful_plans_when_later_output_fetch_fails() {
+        let cancel = CancellationToken::new();
+        let safe_head = TEST_BLOCK_INTERVAL * 2;
+
+        let l1 = Arc::new(MockL1 { latest_block_number: TEST_L1_BLOCK_NUMBER });
+        let l2 = Arc::new(MockL2 { block_not_found: true, canonical_hash: None });
+        let prover: Arc<dyn ProverClient> = Arc::new(MockProver {
+            delay: Duration::from_secs(3600),
+            block_interval: TEST_BLOCK_INTERVAL,
+        });
+        let rollup = Arc::new(MockRollupClient {
+            sync_status: test_sync_status(safe_head, B256::ZERO),
+            output_roots: HashMap::new(),
+            max_safe_block: Some(TEST_BLOCK_INTERVAL),
+        });
+        let anchor_registry = Arc::new(MockAnchorStateRegistry {
+            anchor_root: test_anchor_root(TEST_ANCHOR_BLOCK),
+            anchor_game: Address::ZERO,
+        });
+        let factory = Arc::new(MockDisputeGameFactory::with_games(vec![]));
+
+        let pipeline = ProvingPipeline::new(
+            PipelineConfig {
+                max_parallel_proofs: 2,
+                max_retries: 3,
+                recovery_scan_concurrency: 8,
+                tee_prover_registry_address: None,
+                driver: DriverConfig {
+                    block_interval: TEST_BLOCK_INTERVAL,
+                    intermediate_block_interval: TEST_BLOCK_INTERVAL,
+                    ..Default::default()
+                },
+            },
+            prover,
+            l1,
+            l2,
+            rollup,
+            anchor_registry,
+            factory,
+            Arc::new(MockAggregateVerifier::default()),
+            Arc::new(MockOutputProposer),
+            cancel,
+        );
+
+        let recovered = RecoveredState {
+            parent_address: Address::ZERO,
+            output_root: B256::ZERO,
+            l2_block_number: TEST_ANCHOR_BLOCK,
+        };
+        let mut state = PipelineState::new();
+
+        pipeline.dispatch_proofs(&recovered, safe_head, &mut state).await.unwrap();
+
+        assert!(state.inflight.contains(&TEST_BLOCK_INTERVAL));
+        assert!(!state.inflight.contains(&(TEST_BLOCK_INTERVAL * 2)));
+        assert_eq!(state.inflight.len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_dispatch_skips_submitting_block() {
         let cancel = CancellationToken::new();
         let safe_head = TEST_BLOCK_INTERVAL * 4;
@@ -2431,6 +2677,21 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct InvalidSignerOutputProposer;
+
+    #[async_trait]
+    impl OutputProposer for InvalidSignerOutputProposer {
+        async fn propose_output(
+            &self,
+            _proposal: &Proposal,
+            _parent_address: Address,
+            _intermediate_roots: &[B256],
+        ) -> Result<(), ProposerError> {
+            Err(ProposerError::InvalidSigner)
+        }
+    }
+
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_validate_and_submit_intermediate_roots_match() {
         // MockRollupClient returns B256::repeat_byte(n) for blocks without
@@ -2484,6 +2745,27 @@ mod tests {
         assert!(
             matches!(result, Err(SubmitAction::Discard(ProposerError::L1OriginTooOld))),
             "stale L1 origin should discard the proof, got {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_validate_and_submit_discards_invalid_signer() {
+        let pipeline = recovery_pipeline_full_with_output_proposer(
+            MockDisputeGameFactory::with_games(vec![]),
+            HashMap::new(),
+            TEST_ANCHOR_BLOCK,
+            SUBMIT_BLOCK_INTERVAL,
+            SUBMIT_INTERMEDIATE_INTERVAL,
+            Arc::new(InvalidSignerOutputProposer),
+        );
+        let proof_result = submit_proof_result(SUBMIT_BLOCK_INTERVAL);
+
+        let result =
+            pipeline.validate_and_submit(&proof_result, SUBMIT_BLOCK_INTERVAL, Address::ZERO).await;
+
+        assert!(
+            matches!(result, Err(SubmitAction::Discard(ProposerError::InvalidSigner))),
+            "invalid signer should discard the proof, got {result:?}"
         );
     }
 

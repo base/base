@@ -2726,13 +2726,20 @@ dependencies = [
 name = "base"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
  "base-cli-utils",
  "base-common-chains",
+ "base-consensus-cli",
+ "base-execution-chainspec",
+ "base-execution-cli",
  "clap",
  "eyre",
  "figment",
+ "reth-cli-runner",
  "serde",
- "tracing",
+ "tokio",
+ "tokio-util",
+ "url",
 ]
 
 [[package]]
@@ -3495,32 +3502,9 @@ dependencies = [
 name = "base-consensus"
 version = "0.0.0"
 dependencies = [
- "alloy-chains",
- "alloy-primitives",
- "alloy-provider",
  "base-cli-utils",
- "base-common-chains",
- "base-common-genesis",
- "base-common-network",
  "base-consensus-cli",
- "base-consensus-disc",
- "base-consensus-node",
- "base-consensus-peers",
- "base-consensus-providers",
  "clap",
- "dirs 6.0.0",
- "discv5",
- "eyre",
- "libp2p",
- "metrics",
- "rstest",
- "serde",
- "serde_json",
- "strum",
- "tempfile",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -3534,8 +3518,10 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-signer",
  "alloy-signer-local",
+ "base-cli-utils",
  "base-common-chains",
  "base-common-genesis",
+ "base-common-network",
  "base-consensus-derive",
  "base-consensus-disc",
  "base-consensus-gossip",
@@ -3546,15 +3532,20 @@ dependencies = [
  "base-consensus-sources",
  "base-jwt",
  "clap",
+ "dirs 6.0.0",
  "discv5",
  "eyre",
  "libp2p",
+ "metrics",
  "reqwest 0.13.2",
  "rstest",
+ "serde",
  "serde_json",
+ "strum",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
@@ -3678,6 +3669,7 @@ dependencies = [
  "libp2p",
  "libp2p-identity",
  "libp2p-stream",
+ "lru 0.16.4",
  "metrics",
  "multihash",
  "openssl",
@@ -3973,13 +3965,23 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "backon",
+ "base-bundle-extension",
+ "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
  "base-execution-chainspec",
  "base-execution-consensus",
  "base-execution-evm",
  "base-execution-trie",
+ "base-flashblocks",
+ "base-flashblocks-node",
+ "base-metering",
  "base-node-core",
+ "base-node-runner",
+ "base-proofs-extension",
+ "base-tx-forwarding",
+ "base-txpool-rpc",
+ "base-txpool-tracing",
  "clap",
  "eyre",
  "futures",
@@ -4008,6 +4010,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4248,6 +4251,8 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "async-trait",
  "base-common-chains",
  "base-common-consensus",
@@ -4677,6 +4682,7 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "base-precompile-counter"
 version = "0.0.0"
 dependencies = [
@@ -4688,6 +4694,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 name = "base-precompile-macros"
 version = "0.0.0"
 dependencies = [
@@ -4873,6 +4881,7 @@ dependencies = [
  "base-proof-preimage",
  "base-proof-primitives",
  "base-protocol",
+ "futures",
  "metrics",
  "proptest",
  "revm",
@@ -5582,22 +5591,11 @@ dependencies = [
 name = "base-reth-node"
 version = "0.0.0"
 dependencies = [
- "base-bundle-extension",
  "base-cli-utils",
  "base-execution-cli",
- "base-flashblocks",
- "base-flashblocks-node",
- "base-metering",
- "base-node-core",
- "base-node-runner",
- "base-proofs-extension",
  "base-reth-cli",
- "base-tx-forwarding",
- "base-txpool-rpc",
- "base-txpool-tracing",
  "clap",
  "reth-cli-util",
- "url",
 ]
 
 [[package]]

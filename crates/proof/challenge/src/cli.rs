@@ -56,6 +56,10 @@ pub struct ChallengerArgs {
     #[arg(long = "dispute-game-factory-addr", env = cli_env!("DISPUTE_GAME_FACTORY_ADDR"))]
     pub dispute_game_factory_addr: Address,
 
+    /// Address of the `AnchorStateRegistry` contract on L1.
+    #[arg(long = "anchor-state-registry-addr", env = cli_env!("ANCHOR_STATE_REGISTRY_ADDR"))]
+    pub anchor_state_registry_addr: Address,
+
     /// Polling interval for new dispute games (e.g., "12s", "1m").
     #[arg(
         long = "poll-interval",
@@ -120,9 +124,13 @@ pub struct ChallengerArgs {
     #[command(flatten)]
     pub tx_manager: TxManagerCli,
 
-    /// Number of past games to scan on startup.
-    #[arg(long = "lookback-games", env = cli_env!("LOOKBACK_GAMES"), default_value = "1000")]
-    pub lookback_games: u64,
+    /// Number of recent factory games scanned by bond discovery.
+    #[arg(
+        long = "bond-discovery-lookback-games",
+        env = cli_env!("BOND_DISCOVERY_LOOKBACK_GAMES"),
+        default_value = "1000"
+    )]
+    pub bond_discovery_lookback_games: u64,
 
     /// How often a full rescan of the bond lookback window is performed to
     /// catch state transitions (games challenged or resolved by other actors).

@@ -153,12 +153,20 @@ fn gen_complete_impl_set(config: &TypeConfig) -> TokenStream {
 
     let full_word_storable_impl = if config.byte_count < 32 {
         quote! {
+<<<<<<< HEAD
             impl ::base_precompile_storage::provider::sealed::OnlyPrimitives for #type_path {}
+=======
+            impl ::base_precompile_storage::sealed::OnlyPrimitives for #type_path {}
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
             impl ::base_precompile_storage::Packable for #type_path {}
         }
     } else {
         quote! {
+<<<<<<< HEAD
             impl ::base_precompile_storage::provider::sealed::OnlyPrimitives for #type_path {}
+=======
+            impl ::base_precompile_storage::sealed::OnlyPrimitives for #type_path {}
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
             impl ::base_precompile_storage::Storable for #type_path {
                 #[inline]
                 fn load<S: ::base_precompile_storage::StorageOps>(
@@ -246,6 +254,7 @@ fn gen_alloy_integers() -> Vec<TokenStream> {
 }
 
 fn gen_fixed_bytes(sizes: &[usize]) -> Vec<TokenStream> {
+<<<<<<< HEAD
     sizes.iter().map(|&size| {
         let config = TypeConfig {
             type_path: quote! { ::alloy_primitives::FixedBytes<#size> },
@@ -255,6 +264,20 @@ fn gen_fixed_bytes(sizes: &[usize]) -> Vec<TokenStream> {
         };
         gen_complete_impl_set(&config)
     }).collect()
+=======
+    sizes
+        .iter()
+        .map(|&size| {
+            let config = TypeConfig {
+                type_path: quote! { ::alloy_primitives::FixedBytes<#size> },
+                byte_count: size,
+                storable_strategy: StorableConversionStrategy::FixedBytes(size),
+                storage_key_strategy: StorageKeyStrategy::AsSlice,
+            };
+            gen_complete_impl_set(&config)
+        })
+        .collect()
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 }
 
 pub(crate) fn gen_storable_alloy_bytes() -> TokenStream {
@@ -286,7 +309,11 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
     let ArrayConfig { elem_type, array_size, elem_byte_count, elem_is_packable } = config;
 
     let slot_count_expr = if *elem_is_packable {
+<<<<<<< HEAD
         quote! { ::base_precompile_storage::packing::calc_packed_slot_count(#array_size, #elem_byte_count) }
+=======
+        quote! { ::base_precompile_storage::calc_packed_slot_count(#array_size, #elem_byte_count) }
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     } else {
         quote! { #array_size }
     };
@@ -318,7 +345,11 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
             #[inline]
             fn load<S: ::base_precompile_storage::StorageOps>(storage: &S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<Self> {
                 debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays can only be loaded with LayoutCtx::FULL");
+<<<<<<< HEAD
                 use ::base_precompile_storage::packing::{calc_element_slot, calc_element_offset, extract_from_word};
+=======
+                use ::base_precompile_storage::{calc_element_slot, calc_element_offset, extract_from_word};
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                 let base_slot = slot;
                 #load_impl
             }
@@ -326,7 +357,11 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
             #[inline]
             fn store<S: ::base_precompile_storage::StorageOps>(&self, storage: &mut S, slot: ::alloy_primitives::U256, ctx: ::base_precompile_storage::LayoutCtx) -> ::base_precompile_storage::Result<()> {
                 debug_assert_eq!(ctx, ::base_precompile_storage::LayoutCtx::FULL, "Arrays can only be stored with LayoutCtx::FULL");
+<<<<<<< HEAD
                 use ::base_precompile_storage::packing::{calc_element_slot, calc_element_offset, insert_into_word};
+=======
+                use ::base_precompile_storage::{calc_element_slot, calc_element_offset, insert_into_word};
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                 let base_slot = slot;
                 #store_impl
             }
@@ -350,7 +385,11 @@ fn gen_packed_array_load(array_size: &usize, elem_byte_count: &usize) -> TokenSt
 
 fn gen_packed_array_store(array_size: &usize, elem_byte_count: &usize) -> TokenStream {
     quote! {
+<<<<<<< HEAD
         let slot_count = ::base_precompile_storage::packing::calc_packed_slot_count(#array_size, #elem_byte_count);
+=======
+        let slot_count = ::base_precompile_storage::calc_packed_slot_count(#array_size, #elem_byte_count);
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         for slot_idx in 0..slot_count {
             let slot_addr = base_slot + ::alloy_primitives::U256::from(slot_idx);
             let mut slot_value = ::alloy_primitives::U256::ZERO;
@@ -388,6 +427,7 @@ fn gen_unpacked_array_store() -> TokenStream {
     }
 }
 
+<<<<<<< HEAD
 fn gen_arrays_for_type(elem_type: TokenStream, elem_byte_count: usize, sizes: &[usize]) -> Vec<TokenStream> {
     let elem_is_packable = is_packable(elem_byte_count);
     sizes.iter().map(|&size| {
@@ -399,6 +439,26 @@ fn gen_arrays_for_type(elem_type: TokenStream, elem_byte_count: usize, sizes: &[
         };
         gen_array_impl(&config)
     }).collect()
+=======
+fn gen_arrays_for_type(
+    elem_type: TokenStream,
+    elem_byte_count: usize,
+    sizes: &[usize],
+) -> Vec<TokenStream> {
+    let elem_is_packable = is_packable(elem_byte_count);
+    sizes
+        .iter()
+        .map(|&size| {
+            let config = ArrayConfig {
+                elem_type: elem_type.clone(),
+                array_size: size,
+                elem_byte_count,
+                elem_is_packable,
+            };
+            gen_array_impl(&config)
+        })
+        .collect()
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 }
 
 pub(crate) fn gen_storable_arrays() -> TokenStream {
@@ -415,6 +475,7 @@ pub(crate) fn gen_storable_arrays() -> TokenStream {
     }
     for &bit_size in ALLOY_INT_SIZES {
         let type_ident = quote::format_ident!("U{}", bit_size);
+<<<<<<< HEAD
         all_impls.extend(gen_arrays_for_type(quote! { ::alloy_primitives::aliases::#type_ident }, bit_size / 8, &sizes));
     }
     for &bit_size in ALLOY_INT_SIZES {
@@ -424,6 +485,29 @@ pub(crate) fn gen_storable_arrays() -> TokenStream {
     all_impls.extend(gen_arrays_for_type(quote! { ::alloy_primitives::Address }, 20, &sizes));
     for &byte_size in &[20usize, 32] {
         all_impls.extend(gen_arrays_for_type(quote! { ::alloy_primitives::FixedBytes<#byte_size> }, byte_size, &sizes));
+=======
+        all_impls.extend(gen_arrays_for_type(
+            quote! { ::alloy_primitives::aliases::#type_ident },
+            bit_size / 8,
+            &sizes,
+        ));
+    }
+    for &bit_size in ALLOY_INT_SIZES {
+        let type_ident = quote::format_ident!("I{}", bit_size);
+        all_impls.extend(gen_arrays_for_type(
+            quote! { ::alloy_primitives::aliases::#type_ident },
+            bit_size / 8,
+            &sizes,
+        ));
+    }
+    all_impls.extend(gen_arrays_for_type(quote! { ::alloy_primitives::Address }, 20, &sizes));
+    for &byte_size in &[20usize, 32] {
+        all_impls.extend(gen_arrays_for_type(
+            quote! { ::alloy_primitives::FixedBytes<#byte_size> },
+            byte_size,
+            &sizes,
+        ));
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     quote! { #(#all_impls)* }
@@ -436,14 +520,30 @@ pub(crate) fn gen_nested_arrays() -> TokenStream {
         let inner_slots = inner.div_ceil(32);
         let max_outer = 32 / inner_slots.max(1);
         for outer in 1..=max_outer.min(32) {
+<<<<<<< HEAD
             all_impls.extend(gen_arrays_for_type(quote! { [u8; #inner] }, inner_slots * 32, &[outer]));
+=======
+            all_impls.extend(gen_arrays_for_type(
+                quote! { [u8; #inner] },
+                inner_slots * 32,
+                &[outer],
+            ));
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         }
     }
     for inner in &[2usize, 4, 8] {
         let inner_slots = (inner * 2).div_ceil(32);
         let max_outer = 32 / inner_slots.max(1);
         for outer in 1..=max_outer.min(16) {
+<<<<<<< HEAD
             all_impls.extend(gen_arrays_for_type(quote! { [u16; #inner] }, inner_slots * 32, &[outer]));
+=======
+            all_impls.extend(gen_arrays_for_type(
+                quote! { [u16; #inner] },
+                inner_slots * 32,
+                &[outer],
+            ));
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         }
     }
 
@@ -453,14 +553,24 @@ pub(crate) fn gen_nested_arrays() -> TokenStream {
 // -- STRUCT ARRAY IMPLEMENTATIONS ---------------------------------------------
 
 pub(crate) fn gen_struct_arrays(struct_type: TokenStream, array_sizes: &[usize]) -> TokenStream {
+<<<<<<< HEAD
     let impls: Vec<_> = array_sizes.iter().map(|&size| gen_struct_array_impl(&struct_type, size)).collect();
+=======
+    let impls: Vec<_> =
+        array_sizes.iter().map(|&size| gen_struct_array_impl(&struct_type, size)).collect();
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     quote! { #(#impls)* }
 }
 
 fn gen_struct_array_impl(struct_type: &TokenStream, array_size: usize) -> TokenStream {
+<<<<<<< HEAD
     let struct_type_str = struct_type.to_string()
         .replace("::", "_")
         .replace(['<', '>', ' ', '[', ']', ';'], "_");
+=======
+    let struct_type_str =
+        struct_type.to_string().replace("::", "_").replace(['<', '>', ' ', '[', ']', ';'], "_");
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     let mod_ident = quote::format_ident!("__array_{}_{}", struct_type_str, array_size);
 
     let load_impl = gen_struct_array_load(struct_type, array_size);

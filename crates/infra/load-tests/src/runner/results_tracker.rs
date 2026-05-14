@@ -47,6 +47,8 @@ pub struct BlockReceipt {
     pub gas_used: u64,
     /// Effective gas price in wei.
     pub effective_gas_price: u128,
+    /// Whether the transaction executed successfully (`false` = reverted).
+    pub success: bool,
 }
 
 /// Transaction data observed from the builder flashblocks broadcast stream.
@@ -89,6 +91,7 @@ struct BlockReceiptInclusion {
     block_number: u64,
     gas_used: u64,
     effective_gas_price: u128,
+    success: bool,
 }
 
 impl ResultsTracker {
@@ -159,6 +162,7 @@ impl ResultsTracker {
                 block_number: receipt.block_number,
                 gas_used: receipt.gas_used,
                 effective_gas_price: receipt.effective_gas_price,
+                success: receipt.success,
             };
 
             if let Entry::Vacant(e) = inner.block_receipts.entry(receipt.tx_hash) {
@@ -250,6 +254,7 @@ impl ResultsTrackerInner {
         );
         metrics.block_receipt_delay = block_receipt_delay;
         metrics.confirmed_at = Some(receipt.observed_at);
+        metrics.reverted = !receipt.success;
 
         self.block_receipts.remove(&tx_hash);
         self.decrement_in_flight(&pending.from);
@@ -311,6 +316,7 @@ mod tests {
                 block_number: 7,
                 gas_used: 21_000,
                 effective_gas_price: 1_000_000_000,
+                success: true,
             }],
         );
 
@@ -319,7 +325,39 @@ mod tests {
         assert_eq!(metrics[0].tx_hash, tx_hash);
         assert_eq!(metrics[0].block_number, Some(7));
         assert_eq!(metrics[0].gas_used, 21_000);
+        assert!(!metrics[0].reverted);
         assert_eq!(metrics[0].block_receipt_delay, Some(Duration::from_millis(250)));
+        assert_eq!(tracker.total_in_flight(), 0);
+    }
+
+    #[test]
+    fn marks_reverted_transaction() {
+        let from = address!("0000000000000000000000000000000000000001");
+        let tx_hash = TxHash::repeat_byte(3);
+        let tracker = ResultsTracker::new(&[from]);
+
+        tracker.sent_transactions(vec![SentTransaction { tx_hash, from }]);
+        let block_time = Instant::now() + Duration::from_millis(50);
+        tracker.on_new_block(
+            BlockObservation {
+                number: 9,
+                block_time: Some(block_time),
+                observed_at: block_time + Duration::from_millis(100),
+            },
+            vec![BlockReceipt {
+                tx_hash,
+                block_number: 9,
+                gas_used: 45_000,
+                effective_gas_price: 1_000_000_000,
+                success: false,
+            }],
+        );
+
+        let metrics = tracker.drain_confirmed_metrics();
+        assert_eq!(metrics.len(), 1, "reverted tx should still produce metrics");
+        assert_eq!(metrics[0].tx_hash, tx_hash);
+        assert!(metrics[0].reverted, "reverted flag should be set");
+        assert_eq!(metrics[0].gas_used, 45_000);
         assert_eq!(tracker.total_in_flight(), 0);
     }
 
@@ -343,6 +381,7 @@ mod tests {
                 block_number: 8,
                 gas_used: 21_000,
                 effective_gas_price: 1_000_000_000,
+                success: true,
             }],
         );
 

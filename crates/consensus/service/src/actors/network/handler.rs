@@ -83,7 +83,7 @@ impl NetworkHandler {
                                 .record(start_time.elapsed().as_secs_f64());
                         }
 
-                if let Some(info) = self.gossip.peerstore.remove(&peer_to_remove) {
+                if let Some(info) = self.gossip.peerstore.pop(&peer_to_remove) {
                     self.gossip.connection_gate.remove_dial(&peer_to_remove);
                     let _score = self.gossip.swarm.behaviour().gossipsub.peer_score(&peer_to_remove).unwrap_or_default();
                     Metrics::banned_peers().increment(1.0);

@@ -200,10 +200,11 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
             println!("Error: {err}");
         }
         println!(
-            "Submitted: {} | Confirmed: {} | Failed: {}",
+            "Submitted: {} | Confirmed: {} | Failed: {} | Reverted: {}",
             summary.throughput.total_submitted,
             summary.throughput.total_confirmed,
-            summary.throughput.total_failed
+            summary.throughput.total_failed,
+            summary.throughput.total_reverted
         );
         println!(
             "TPS: {:.2} | GPS: {:.0} | Success: {:.1}%",

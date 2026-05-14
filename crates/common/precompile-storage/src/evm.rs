@@ -81,10 +81,23 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+<<<<<<< HEAD
         self.internals.set_code(address, code).map_err(|e| BasePrecompileError::Fatal(e.to_string()))
     }
 
     fn with_account_info(&mut self, address: Address, f: &mut dyn FnMut(&AccountInfo)) -> Result<()> {
+=======
+        self.internals
+            .set_code(address, code)
+            .map_err(|e| BasePrecompileError::Fatal(e.to_string()))
+    }
+
+    fn with_account_info(
+        &mut self,
+        address: Address,
+        f: &mut dyn FnMut(&AccountInfo),
+    ) -> Result<()> {
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         let state_load = self
             .internals
             .load_account(address)
@@ -94,10 +107,14 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
+<<<<<<< HEAD
         self.internals
             .sload(address, key)
             .map(|s| s.data)
             .map_err(Into::into)
+=======
+        self.internals.sload(address, key).map(|s| s.data).map_err(Into::into)
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
@@ -105,10 +122,14 @@ impl PrecompileStorageProvider for EvmPrecompileStorageProvider<'_> {
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+<<<<<<< HEAD
         self.internals
             .sstore(address, key, value)
             .map(|_| ())
             .map_err(Into::into)
+=======
+        self.internals.sstore(address, key, value).map(|_| ()).map_err(Into::into)
+>>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {

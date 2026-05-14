@@ -180,6 +180,7 @@ mod tests {
     };
 
     #[tokio::test]
+    #[ignore = "requires the public QuickNode demo RPC endpoint"]
     async fn test_online_list_walker_receipts() {
         let (root, preimages, envelopes) = get_live_derivable_receipts_list().await.unwrap();
         let fetcher = TrieNodeProvider::new(preimages);
@@ -194,6 +195,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires the public QuickNode demo RPC endpoint"]
     async fn test_online_list_walker_transactions() {
         let (root, preimages, envelopes) = get_live_derivable_transactions_list().await.unwrap();
         let fetcher = TrieNodeProvider::new(preimages);
