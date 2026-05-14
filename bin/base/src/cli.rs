@@ -1,16 +1,18 @@
 use std::{path::Path, sync::Arc};
 
+use base_cli_utils::{LogConfig, MetricsConfig};
 use base_consensus_cli::{
     ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
 };
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use clap::{Args, Parser, Subcommand};
+use eyre::WrapErr;
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::config::{ChainArg, ResolvedChainConfig};
+use crate::config::{ChainArg, ChainResolver, ResolvedChainConfig};
 
 base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
@@ -40,6 +42,26 @@ pub(crate) struct BaseCli {
     /// The command to run.
     #[command(subcommand)]
     pub(crate) command: BaseCommand,
+}
+
+impl BaseCli {
+    /// Runs the selected command with shared process initialization.
+    pub(crate) fn run(self) -> eyre::Result<()> {
+        let Self { chain, logging, metrics, command } = self;
+
+        LogConfig::from(logging)
+            .init_tracing_subscriber()
+            .wrap_err("failed to initialize tracing")?;
+
+        MetricsConfig::from(metrics)
+            .init_with(|| {
+                base_cli_utils::register_version_metrics!();
+            })
+            .wrap_err("failed to install Prometheus recorder")?;
+
+        let resolved_chain = ChainResolver::new(chain).resolve()?;
+        command.run(resolved_chain)
+    }
 }
 
 /// Top-level commands for `base`.
