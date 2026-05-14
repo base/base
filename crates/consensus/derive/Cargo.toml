@@ -58,6 +58,10 @@ name = "batch_queue"
 harness = false
 required-features = ["test-utils"]
 
+[[bench]]
+name = "derivation_pipeline"
+harness = false
+
 [features]
 default = []
 metrics = [ "base-metrics/metrics", "dep:metrics" ]

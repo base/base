@@ -41,6 +41,8 @@ where
     pub channels: HashMap<ChannelId, Channel>,
     /// Channels in FIFO order.
     pub channel_queue: VecDeque<ChannelId>,
+    /// Cached sum of all channel sizes.
+    pub total_size: usize,
     /// The previous stage of the derivation pipeline.
     pub prev: P,
 }
@@ -51,29 +53,34 @@ where
 {
     /// Create a new [`ChannelBank`] stage.
     pub fn new(cfg: Arc<RollupConfig>, prev: P) -> Self {
-        Self { cfg, channels: HashMap::default(), channel_queue: VecDeque::new(), prev }
+        Self {
+            cfg,
+            channels: HashMap::default(),
+            channel_queue: VecDeque::new(),
+            total_size: 0,
+            prev,
+        }
     }
 
-    /// Returns the size of the channel bank by accumulating over all channels.
-    pub fn size(&self) -> usize {
-        self.channels.iter().fold(0, |acc, (_, c)| acc + c.size())
+    /// Returns the cached size of the channel bank.
+    pub const fn size(&self) -> usize {
+        self.total_size
     }
 
     /// Prunes the Channel bank, until it is below the max channel bank size.
     /// Prunes from the high-priority channel since it failed to be read.
     pub fn prune(&mut self) -> PipelineResult<()> {
-        let mut total_size = self.size();
         let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
         let max_channel_bank_size = if self.cfg.is_fjord_active(origin.timestamp) {
             FJORD_MAX_CHANNEL_BANK_SIZE
         } else {
             MAX_CHANNEL_BANK_SIZE
         };
-        while total_size > max_channel_bank_size {
+        while self.total_size > max_channel_bank_size {
             let id =
                 self.channel_queue.pop_front().ok_or(PipelineError::ChannelProviderEmpty.crit())?;
             let channel = self.channels.remove(&id).ok_or(PipelineError::ChannelNotFound.crit())?;
-            total_size -= channel.size();
+            self.total_size = self.total_size.saturating_sub(channel.size());
         }
         Ok(())
     }
@@ -99,16 +106,24 @@ where
         {
             warn!(
                 target: "channel_bank",
-                "Channel (ID: {}) timed out", hex::encode(frame.id)
+                channel_id = %hex::encode(frame.id),
+                "channel timed out"
             );
             return Ok(());
         }
 
         // Ingest the frame. If it fails, ignore the frame.
         let frame_id = frame.id;
+        let size_before = current_channel.size();
         if current_channel.add_frame(frame, origin).is_err() {
             warn!(target: "channel_bank", frame_id = ?frame_id, "Failed to add frame to channel");
             return Ok(());
+        }
+        let size_after = current_channel.size();
+        if size_after >= size_before {
+            self.total_size = self.total_size.saturating_add(size_after - size_before);
+        } else {
+            self.total_size = self.total_size.saturating_sub(size_before - size_after);
         }
 
         self.prune()
@@ -134,9 +149,12 @@ where
         {
             warn!(
                 target: "channel_bank",
-                "Channel (ID: {}) timed out", hex::encode(first)
+                channel_id = %hex::encode(first),
+                "channel timed out"
             );
-            self.channels.remove(&first);
+            if let Some(channel) = self.channels.remove(&first) {
+                self.total_size = self.total_size.saturating_sub(channel.size());
+            }
             self.channel_queue.pop_front();
             return Ok(None);
         }
@@ -151,9 +169,19 @@ where
             return self.try_read_channel_at_index(0).map(Some);
         }
 
-        let channel_data =
-            (0..self.channel_queue.len()).find_map(|i| self.try_read_channel_at_index(i).ok());
-        channel_data.map_or_else(|| Err(PipelineError::Eof.temp()), |data| Ok(Some(data)))
+        let channel_timeout = self.cfg.channel_timeout(origin.timestamp);
+        let ready_index = self.channel_queue.iter().position(|id| {
+            self.channels.get(id).is_some_and(|channel| {
+                let timed_out = channel.open_block_number() + channel_timeout < origin.number;
+                !timed_out && channel.is_ready()
+            })
+        });
+
+        let Some(index) = ready_index else {
+            return Err(PipelineError::Eof.temp());
+        };
+
+        self.read_channel_at_index(index).map(Some)
     }
 
     /// Attempts to read the channel at the specified index. If the channel is not ready or timed
@@ -171,8 +199,18 @@ where
             return Err(PipelineError::Eof.temp());
         }
 
+        self.read_channel_at_index(index)
+    }
+
+    /// Reads and removes the channel at the specified index.
+    fn read_channel_at_index(&mut self, index: usize) -> PipelineResult<Bytes> {
+        let channel_id = self.channel_queue[index];
+        let channel =
+            self.channels.get(&channel_id).ok_or(PipelineError::ChannelProviderEmpty.crit())?;
+        let channel_size = channel.size();
         let frame_data = channel.frame_data();
         self.channels.remove(&channel_id);
+        self.total_size = self.total_size.saturating_sub(channel_size);
         self.channel_queue.remove(index);
 
         frame_data.ok_or(PipelineError::ChannelProviderEmpty.crit())
@@ -241,6 +279,7 @@ where
         self.prev.reset(l1_origin, system_config).await?;
         self.channels.clear();
         self.channel_queue = VecDeque::with_capacity(10);
+        self.total_size = 0;
         Ok(())
     }
 
@@ -248,6 +287,7 @@ where
         self.prev.activate().await?;
         self.channels.clear();
         self.channel_queue = VecDeque::with_capacity(10);
+        self.total_size = 0;
         Ok(())
     }
 
@@ -255,6 +295,7 @@ where
         self.prev.flush_channel().await?;
         self.channels.clear();
         self.channel_queue = VecDeque::with_capacity(10);
+        self.total_size = 0;
         Ok(())
     }
 }
@@ -332,12 +373,14 @@ mod tests {
             )
             .unwrap();
         assert!(channel.is_ready());
+        channel_bank.total_size = channel.size();
         channel_bank.channels.insert([0xFF; 16], channel);
         let frame_data = channel_bank.try_read_channel_at_index(0).unwrap();
         assert_eq!(
             frame_data,
             alloy_primitives::bytes!("736576656e5f5f736576656e5f5f736576656e5f5f")
         );
+        assert_eq!(channel_bank.size(), 0);
     }
 
     #[test]
@@ -367,12 +410,14 @@ mod tests {
             )
             .unwrap();
         assert!(channel.is_ready());
+        channel_bank.total_size = channel.size();
         channel_bank.channels.insert([0xFF; 16], channel);
         let frame_data = channel_bank.read().unwrap();
         assert_eq!(
             frame_data,
             Some(alloy_primitives::bytes!("736576656e5f5f736576656e5f5f736576656e5f5f"))
         );
+        assert_eq!(channel_bank.size(), 0);
     }
 
     #[test]
@@ -405,12 +450,14 @@ mod tests {
             )
             .unwrap();
         assert!(channel.is_ready());
+        channel_bank.total_size = channel.size();
         channel_bank.channels.insert([0xFF; 16], channel);
         let frame_data = channel_bank.read().unwrap();
         assert_eq!(
             frame_data,
             Some(alloy_primitives::bytes!("736576656e5f5f736576656e5f5f736576656e5f5f"))
         );
+        assert_eq!(channel_bank.size(), 0);
     }
 
     #[test]
@@ -431,10 +478,12 @@ mod tests {
         let mut channel_bank = ChannelBank::new(cfg, mock);
         channel_bank.channels.insert([0xFF; 16], Channel::default());
         channel_bank.channel_queue.push_back([0xFF; 16]);
+        channel_bank.total_size = 1;
         assert!(!channel_bank.prev.reset);
         channel_bank.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
         assert_eq!(channel_bank.channels.len(), 0);
         assert_eq!(channel_bank.channel_queue.len(), 0);
+        assert_eq!(channel_bank.size(), 0);
         assert!(channel_bank.prev.reset);
     }
 
@@ -447,10 +496,12 @@ mod tests {
         let mut channel_bank = ChannelBank::new(cfg, mock);
         channel_bank.channels.insert([0xFF; 16], Channel::default());
         channel_bank.channel_queue.push_back([0xFF; 16]);
+        channel_bank.total_size = 1;
         assert!(!channel_bank.prev.reset);
         channel_bank.activate().await.unwrap();
         assert_eq!(channel_bank.channels.len(), 0, "Activation must clear channels");
         assert_eq!(channel_bank.channel_queue.len(), 0, "Activation must clear channel queue");
+        assert_eq!(channel_bank.size(), 0, "Activation must clear cached channel size");
         assert!(channel_bank.prev.reset, "Activation must propagate to prev stage");
     }
 
@@ -463,10 +514,12 @@ mod tests {
         let mut channel_bank = ChannelBank::new(cfg, mock);
         channel_bank.channels.insert([0xFF; 16], Channel::default());
         channel_bank.channel_queue.push_back([0xFF; 16]);
+        channel_bank.total_size = 1;
         assert!(!channel_bank.prev.reset);
         channel_bank.flush_channel().await.unwrap();
         assert_eq!(channel_bank.channels.len(), 0, "FlushChannel must clear channels");
         assert_eq!(channel_bank.channel_queue.len(), 0, "FlushChannel must clear channel queue");
+        assert_eq!(channel_bank.size(), 0, "FlushChannel must clear cached channel size");
         assert!(channel_bank.prev.reset, "FlushChannel must propagate to prev stage");
     }
 
