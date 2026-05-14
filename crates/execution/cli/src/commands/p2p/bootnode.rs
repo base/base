@@ -18,7 +18,7 @@ use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
 /// Start a discovery-only bootnode.
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug)]
 pub struct Command {
     /// Listen address for the bootnode for discv4
     #[arg(long, default_value = "0.0.0.0:30301")]

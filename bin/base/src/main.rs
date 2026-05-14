@@ -6,14 +6,13 @@
 use clap::Parser;
 
 mod cli;
+mod commands;
 mod config;
-
-use cli::BaseCli;
 
 fn main() {
     base_cli_utils::init_common!();
 
-    if let Err(err) = BaseCli::parse().run() {
+    if let Err(err) = cli::BaseCli::parse().run() {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
