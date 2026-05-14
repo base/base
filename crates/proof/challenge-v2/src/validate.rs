@@ -194,9 +194,9 @@ impl<L2: L2Provider> OutputValidator for L2OutputValidator<L2> {
 
 /// A detected dispute-game violation.
 ///
-/// Output of `validate()`, input of `prove()`. Carries everything needed
-/// to produce a proof and submit a `DisputeAction` without re-fetching
-/// on-chain state.
+/// Output of [`Violation::detect`], input of [`Violation::dispute_request`].
+/// Carries everything needed to produce a proof and submit a
+/// `DisputeAction` without re-fetching on-chain state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
     /// Dispute game proxy address.
@@ -207,8 +207,10 @@ pub struct Violation {
     pub intermediate_block_interval: u64,
     /// Intermediate root index where the violation was found.
     pub invalid_index: u64,
-    /// L2-truth root at `invalid_index`.
-    pub correct_root: B256,
+    /// Root we computed for `invalid_index` from our L2 RPC.
+    /// Treated as the value to assert on-chain; only as good as our
+    /// L2 RPC view (no independent consensus check).
+    pub computed_root: B256,
     /// Predecessor root at `invalid_index - 1`, or the game's
     /// `startingOutputRoot` when `invalid_index == 0`.
     pub starting_root: B256,
@@ -227,9 +229,10 @@ impl Violation {
     const SCAN_CONCURRENCY: usize = 32;
 
     /// Re-fetches live on-chain state and compares the game's
-    /// intermediate roots against L2 truth. Returns `Some` when an
-    /// actionable violation is found, `None` otherwise (game OK,
-    /// terminal, or non-actionable state).
+    /// intermediate roots against what we compute from our L2 RPC.
+    /// Returns `Some` when an actionable violation is found, `None`
+    /// otherwise (game consistent with our view, terminal, or
+    /// non-actionable state).
     pub async fn detect(
         game: &GameInfo,
         validator: &dyn OutputValidator,
@@ -269,8 +272,9 @@ impl Violation {
                 Self::scan_intermediate_roots(game, validator, ViolationSituation::ZkWrong).await
             }
             // Check the challenged checkpoint: if the on-chain TEE root
-            // there matches L2 truth, the ZK challenge is fraudulent and
-            // must be countered; otherwise the challenger is legitimate.
+            // there matches what we compute, the ZK challenge looks
+            // fraudulent and must be countered; otherwise the challenger
+            // is legitimate from our vantage.
             GameSituation::UnderChallenge { challenged_index } => {
                 Self::check_challenged_index(game, validator, challenged_index).await
             }
@@ -279,9 +283,10 @@ impl Violation {
         }
     }
 
-    /// Looks for any intermediate root that disagrees with L2 truth.
-    /// On a hit, returns a `Violation` for the lowest such index,
-    /// tagged with `situation`. Returns `None` when every root matches.
+    /// Looks for any intermediate root that disagrees with what we
+    /// compute. On a hit, returns a `Violation` for the lowest such
+    /// index, tagged with `situation`. Returns `None` when every
+    /// root matches our view.
     async fn scan_intermediate_roots(
         game: &GameInfo,
         validator: &dyn OutputValidator,
@@ -289,7 +294,7 @@ impl Violation {
     ) -> Result<Option<Self>, ValidationError> {
         let interval = game.intermediate_block_interval;
 
-        // Compute L2 truth for every checkpoint in parallel and pair
+        // Compute our view for every checkpoint in parallel and pair
         // each with its claimed root, then take the lowest-index
         // disagreement (deterministic regardless of completion order).
         let mismatch = stream::iter(game.intermediate_roots.iter().zip(0u64..))
@@ -304,13 +309,14 @@ impl Violation {
             .filter(|(_, claimed, computed)| claimed != computed)
             .min_by_key(|(i, _, _)| *i);
 
-        // Every root matches L2 truth: the game is honest, nothing to do.
-        let Some((invalid_index, _, correct_root)) = mismatch else {
+        // Every root matches what we compute: nothing actionable
+        // from our vantage.
+        let Some((invalid_index, _, computed_root)) = mismatch else {
             return Ok(None);
         };
 
         let starting_root = Self::fetch_starting_root(game, validator, invalid_index).await?;
-        let violation = Self::build(game, invalid_index, correct_root, starting_root, situation);
+        let violation = Self::build(game, invalid_index, computed_root, starting_root, situation);
         info!(
             game = %game.address,
             invalid_index,
@@ -320,11 +326,12 @@ impl Violation {
         Ok(Some(violation))
     }
 
-    /// Compares only the contested checkpoint to L2 truth (the ZK
-    /// challenge targets exactly this index, others are out of scope).
-    /// Returns a `FraudulentZkChallenge` violation when the on-chain
-    /// TEE root at this index matches L2 truth, `None` when it does
-    /// not (the ZK challenger is legitimate and will win on its own).
+    /// Compares only the contested checkpoint to what we compute (the
+    /// ZK challenge targets exactly this index, others are out of
+    /// scope). Returns a `FraudulentZkChallenge` violation when the
+    /// on-chain TEE root at this index matches our view, `None` when
+    /// it does not (the ZK challenger is legitimate from our vantage
+    /// and will win on its own).
     async fn check_challenged_index(
         game: &GameInfo,
         validator: &dyn OutputValidator,
@@ -334,23 +341,25 @@ impl Violation {
         let idx = usize::try_from(challenged_index).expect("challenged_index fits in usize");
         let on_chain_tee_root = game.intermediate_roots[idx];
 
-        // L2 truth at the contested checkpoint.
+        // Our computed view at the contested checkpoint.
         let end_block =
             Self::checkpoint_block(game.starting_l2_block, challenged_index + 1, interval);
-        let correct_root = validator.compute_output_root(end_block).await?;
+        let computed_root = validator.compute_output_root(end_block).await?;
 
-        // TEE was actually wrong: the ZK challenger is legitimate, let
-        // it resolve in their favor on its own.
-        if on_chain_tee_root != correct_root {
+        // On-chain TEE root diverges from what we compute: the ZK
+        // challenger reached the same conclusion as us, let them
+        // resolve in their favor on their own.
+        if on_chain_tee_root != computed_root {
             return Ok(None);
         }
 
-        // TEE matches L2 truth: the ZK challenge is fraudulent.
+        // On-chain TEE matches our computed view: the ZK challenge
+        // looks fraudulent from our vantage.
         let starting_root = Self::fetch_starting_root(game, validator, challenged_index).await?;
         let violation = Self::build(
             game,
             challenged_index,
-            correct_root,
+            computed_root,
             starting_root,
             ViolationSituation::FraudulentZkChallenge { on_chain_tee_root },
         );
@@ -363,7 +372,7 @@ impl Violation {
     }
 
     /// Returns the predecessor root for `invalid_index`. For index 0
-    /// the predecessor is the L2 truth at the game's starting block.
+    /// the predecessor is what we compute at the game's starting block.
     async fn fetch_starting_root(
         game: &GameInfo,
         validator: &dyn OutputValidator,
@@ -381,7 +390,7 @@ impl Violation {
     const fn build(
         game: &GameInfo,
         invalid_index: u64,
-        correct_root: B256,
+        computed_root: B256,
         starting_root: B256,
         situation: ViolationSituation,
     ) -> Self {
@@ -391,7 +400,7 @@ impl Violation {
             l1_head: game.l1_head,
             intermediate_block_interval: interval,
             invalid_index,
-            correct_root,
+            computed_root,
             starting_root,
             start_block: Self::checkpoint_block(game.starting_l2_block, invalid_index, interval),
             end_block: Self::checkpoint_block(game.starting_l2_block, invalid_index + 1, interval),
@@ -421,15 +430,18 @@ pub enum ValidationError {
 /// Kind of violation detected on a dispute game.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViolationSituation {
-    /// On-chain TEE root at `invalid_index` does not match L2 truth.
-    /// `prove()` tries `NullifyTee`, falls back to `Challenge`.
+    /// On-chain TEE root at `invalid_index` disagrees with our
+    /// computed view. Resolved via the TEE-first dispute path,
+    /// with ZK as fallback (see [`Violation::dispute_request`]).
     TeeWrong,
-    /// On-chain ZK root at `invalid_index` does not match L2 truth.
-    /// `prove()` emits `NullifyZk` with `root_to_prove == correct_root`.
+    /// On-chain ZK root at `invalid_index` disagrees with our
+    /// computed view. Resolved by re-asserting our computed root
+    /// via ZK (see [`Violation::dispute_request`]).
     ZkWrong,
-    /// On-chain ZK challenge is fraudulent: the on-chain TEE root at
-    /// `invalid_index` matches L2 truth. `prove()` emits `NullifyZk`
-    /// with `root_to_prove == on_chain_tee_root`.
+    /// On-chain ZK challenge looks fraudulent from our vantage:
+    /// the on-chain TEE root at `invalid_index` matches our
+    /// computed view. Resolved by re-asserting the on-chain TEE
+    /// root via ZK (see [`Violation::dispute_request`]).
     FraudulentZkChallenge {
         /// On-chain TEE root we will assert via the SNARK.
         on_chain_tee_root: B256,
@@ -709,16 +721,16 @@ mod tests {
         }
 
         /// Builds a `(GameInfo, validator, verifier)` triple where the
-        /// validator returns `truth_at[i]` for block `STARTING_BLOCK +
+        /// validator returns `expected_at[i]` for block `STARTING_BLOCK +
         /// (i+1)*INTERVAL` and the verifier reflects `situation`.
         fn fixture(
             intermediate_roots: Vec<B256>,
-            truth_at: &[B256],
+            expected_at: &[B256],
             situation: GameSituation,
         ) -> (GameInfo, MockOutputValidator, MockAggregateVerifier) {
             let game = build_game(intermediate_roots, situation);
             let validator = MockOutputValidator::new();
-            for (i, r) in truth_at.iter().enumerate() {
+            for (i, r) in expected_at.iter().enumerate() {
                 let block = STARTING_BLOCK + (i as u64 + 1) * INTERVAL;
                 validator.set(block, *r);
             }
@@ -741,14 +753,14 @@ mod tests {
             let r0 = root(10);
             let r1 = root(11);
             let r2 = root(12);
-            let correct_r2 = root(99);
+            let expected_r2 = root(99);
             let (game, v, c) =
-                fixture(vec![r0, r1, r2], &[r0, r1, correct_r2], GameSituation::TeeOnly);
+                fixture(vec![r0, r1, r2], &[r0, r1, expected_r2], GameSituation::TeeOnly);
 
             let violation = Violation::detect(&game, &v, &c).await.unwrap().unwrap();
             assert_eq!(violation.situation, ViolationSituation::TeeWrong);
             assert_eq!(violation.invalid_index, 2);
-            assert_eq!(violation.correct_root, correct_r2);
+            assert_eq!(violation.computed_root, expected_r2);
             assert_eq!(violation.starting_root, r1);
             assert_eq!(violation.start_block, STARTING_BLOCK + 2 * INTERVAL);
             assert_eq!(violation.end_block, STARTING_BLOCK + 3 * INTERVAL);
@@ -758,20 +770,20 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn zk_only_index_0_wrong_uses_l2_truth_as_starting_root() {
+        async fn zk_only_index_0_wrong_uses_computed_starting_root() {
             let r0 = root(10);
-            let correct_r0 = root(99);
-            let starting_truth = root(50);
-            let (game, v, c) = fixture(vec![r0], &[correct_r0], GameSituation::ZkOnly);
-            // For invalid_index == 0, validate fetches the L2 truth at
-            // starting_l2_block as the predecessor root.
-            v.set(STARTING_BLOCK, starting_truth);
+            let expected_r0 = root(99);
+            let starting_expected = root(50);
+            let (game, v, c) = fixture(vec![r0], &[expected_r0], GameSituation::ZkOnly);
+            // For invalid_index == 0, detect fetches the validator's
+            // output at starting_l2_block as the predecessor root.
+            v.set(STARTING_BLOCK, starting_expected);
 
             let violation = Violation::detect(&game, &v, &c).await.unwrap().unwrap();
             assert_eq!(violation.situation, ViolationSituation::ZkWrong);
             assert_eq!(violation.invalid_index, 0);
-            assert_eq!(violation.correct_root, correct_r0);
-            assert_eq!(violation.starting_root, starting_truth);
+            assert_eq!(violation.computed_root, expected_r0);
+            assert_eq!(violation.starting_root, starting_expected);
             assert_eq!(violation.start_block, STARTING_BLOCK);
             assert_eq!(violation.end_block, STARTING_BLOCK + INTERVAL);
         }
@@ -788,14 +800,14 @@ mod tests {
         async fn both_proven_index_1_wrong_returns_tee_wrong() {
             let r0 = root(10);
             let r1 = root(11);
-            let correct_r1 = root(99);
-            let (game, v, c) = fixture(vec![r0, r1], &[r0, correct_r1], GameSituation::BothProven);
+            let expected_r1 = root(99);
+            let (game, v, c) = fixture(vec![r0, r1], &[r0, expected_r1], GameSituation::BothProven);
 
             let violation = Violation::detect(&game, &v, &c).await.unwrap().unwrap();
             // BothProven nullifies TEE first; ZK gets caught on a later scan.
             assert_eq!(violation.situation, ViolationSituation::TeeWrong);
             assert_eq!(violation.invalid_index, 1);
-            assert_eq!(violation.correct_root, correct_r1);
+            assert_eq!(violation.computed_root, expected_r1);
         }
 
         #[tokio::test]
@@ -824,22 +836,23 @@ mod tests {
                 other => panic!("expected FraudulentZkChallenge, got {other:?}"),
             }
             assert_eq!(violation.invalid_index, 1);
-            assert_eq!(violation.correct_root, r1);
+            assert_eq!(violation.computed_root, r1);
             assert_eq!(violation.starting_root, r0);
         }
 
         #[tokio::test]
-        async fn under_challenge_with_wrong_tee_returns_none() {
+        async fn under_challenge_with_diverging_tee_returns_none() {
             let r0 = root(10);
-            let wrong_r1 = root(11);
-            let correct_r1 = root(99);
+            let on_chain_r1 = root(11);
+            let expected_r1 = root(99);
             let challenged_index = 1;
             let (game, v, c) = fixture(
-                vec![r0, wrong_r1],
-                &[r0, correct_r1],
+                vec![r0, on_chain_r1],
+                &[r0, expected_r1],
                 GameSituation::UnderChallenge { challenged_index },
             );
-            // TEE was actually wrong, so the ZK challenger is legitimate.
+            // On-chain TEE diverges from our view, so the ZK challenger
+            // reached the same conclusion: skip.
             assert!(Violation::detect(&game, &v, &c).await.unwrap().is_none());
         }
 

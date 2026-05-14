@@ -3,7 +3,10 @@
 //! Gated behind the `test-utils` feature so the heavier deps (`alloy-consensus`,
 //! `serde_json`, etc.) are only pulled in for tests and downstream test crates.
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Mutex,
+};
 
 use alloy_consensus::Header as ConsensusHeader;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
@@ -18,8 +21,12 @@ use base_proof_contracts::{
     GameInfo as VerifierGameInfo, GameStatus,
 };
 use base_proof_rpc::{BaseBlock, L2Provider, RpcError, RpcResult};
+use base_zk_client::{
+    GetProofRequest, GetProofResponse, ProofJobStatus, ProveBlockRequest, ProveBlockResponse,
+    ZkProofError, ZkProofProvider,
+};
 
-use crate::{OutputValidator, ValidatorError};
+use crate::{OutputValidator, TeeProofError, TeeProofProvider, TeeProofResult, ValidatorError};
 
 /// Mock [`L2Provider`] backed by in-memory hashmaps.
 ///
@@ -525,5 +532,172 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         _address: Address,
     ) -> Result<AnchorPreflight, ContractError> {
         unimplemented!("anchor_preflight not used by scanner tests")
+    }
+}
+
+/// Mock [`ZkProofProvider`] backed by FIFO response queues.
+///
+/// Tests enqueue responses with the `push_*` helpers; each `prove_block`
+/// or `get_proof` call pops the next response. Calls are recorded so
+/// tests can assert on session id stability across retries.
+#[derive(Debug, Default)]
+pub struct MockZkProofProvider {
+    prove_responses: Mutex<VecDeque<Result<ProveBlockResponse, ZkProofError>>>,
+    get_responses: Mutex<VecDeque<Result<GetProofResponse, ZkProofError>>>,
+    prove_calls: Mutex<Vec<ProveBlockRequest>>,
+    get_calls: Mutex<Vec<GetProofRequest>>,
+}
+
+impl MockZkProofProvider {
+    /// Returns a new provider with empty queues.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enqueues a successful `prove_block` response. The returned
+    /// session id echoes back whatever the caller already supplied.
+    pub fn push_prove_ok(&self) {
+        self.prove_responses
+            .lock()
+            .expect("prove_responses lock poisoned")
+            .push_back(Ok(ProveBlockResponse { session_id: String::new() }));
+    }
+
+    /// Enqueues a `get_proof` response with status `Succeeded` and
+    /// the given receipt bytes.
+    pub fn push_get_succeeded(&self, receipt: Vec<u8>) {
+        self.get_responses.lock().expect("get_responses lock poisoned").push_back(Ok(
+            GetProofResponse {
+                status: ProofJobStatus::Succeeded as i32,
+                receipt,
+                error_message: None,
+            },
+        ));
+    }
+
+    /// Enqueues a `get_proof` response with status `Failed` and the
+    /// given error message.
+    pub fn push_get_failed(&self, error_message: Option<String>) {
+        self.get_responses.lock().expect("get_responses lock poisoned").push_back(Ok(
+            GetProofResponse {
+                status: ProofJobStatus::Failed as i32,
+                receipt: Vec::new(),
+                error_message,
+            },
+        ));
+    }
+
+    /// Enqueues a `get_proof` response with status `Pending` so the
+    /// caller's poll loop keeps spinning.
+    pub fn push_get_pending(&self) {
+        self.get_responses.lock().expect("get_responses lock poisoned").push_back(Ok(
+            GetProofResponse {
+                status: ProofJobStatus::Pending as i32,
+                receipt: Vec::new(),
+                error_message: None,
+            },
+        ));
+    }
+
+    /// Snapshot of every `prove_block` request observed so far.
+    pub fn prove_calls(&self) -> Vec<ProveBlockRequest> {
+        self.prove_calls.lock().expect("prove_calls lock poisoned").clone()
+    }
+
+    /// Snapshot of every `get_proof` request observed so far.
+    pub fn get_calls(&self) -> Vec<GetProofRequest> {
+        self.get_calls.lock().expect("get_calls lock poisoned").clone()
+    }
+}
+
+#[async_trait]
+impl ZkProofProvider for MockZkProofProvider {
+    async fn prove_block(
+        &self,
+        request: ProveBlockRequest,
+    ) -> Result<ProveBlockResponse, ZkProofError> {
+        self.prove_calls.lock().expect("prove_calls lock poisoned").push(request);
+        self.prove_responses
+            .lock()
+            .expect("prove_responses lock poisoned")
+            .pop_front()
+            .expect("MockZkProofProvider: prove_block called without an enqueued response")
+    }
+
+    async fn get_proof(&self, request: GetProofRequest) -> Result<GetProofResponse, ZkProofError> {
+        self.get_calls.lock().expect("get_calls lock poisoned").push(request);
+        self.get_responses
+            .lock()
+            .expect("get_responses lock poisoned")
+            .pop_front()
+            .expect("MockZkProofProvider: get_proof called without an enqueued response")
+    }
+}
+
+/// Recorded `prove_range` call for inspection by tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeeProveRangeCall {
+    /// L2 block at the start of the proven range.
+    pub start_block: u64,
+    /// L2 block at the end of the proven range.
+    pub end_block: u64,
+    /// L1 head hash provided to the TEE.
+    pub l1_head: B256,
+    /// Checkpoint interval forwarded to the TEE.
+    pub intermediate_block_interval: u64,
+}
+
+/// Mock [`TeeProofProvider`] backed by a FIFO response queue.
+#[derive(Debug, Default)]
+pub struct MockTeeProofProvider {
+    responses: Mutex<VecDeque<Result<TeeProofResult, TeeProofError>>>,
+    calls: Mutex<Vec<TeeProveRangeCall>>,
+}
+
+impl MockTeeProofProvider {
+    /// Returns a new provider with an empty queue.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enqueues a successful response with the given root and signature bytes.
+    pub fn push_ok(&self, signed_root: B256, signature_bytes: Bytes) {
+        self.responses
+            .lock()
+            .expect("responses lock poisoned")
+            .push_back(Ok(TeeProofResult { signed_root, signature_bytes }));
+    }
+
+    /// Enqueues a failure response.
+    pub fn push_err(&self, err: TeeProofError) {
+        self.responses.lock().expect("responses lock poisoned").push_back(Err(err));
+    }
+
+    /// Snapshot of every `prove_range` call observed so far.
+    pub fn calls(&self) -> Vec<TeeProveRangeCall> {
+        self.calls.lock().expect("calls lock poisoned").clone()
+    }
+}
+
+#[async_trait]
+impl TeeProofProvider for MockTeeProofProvider {
+    async fn prove_range(
+        &self,
+        start_block: u64,
+        end_block: u64,
+        l1_head: B256,
+        intermediate_block_interval: u64,
+    ) -> Result<TeeProofResult, TeeProofError> {
+        self.calls.lock().expect("calls lock poisoned").push(TeeProveRangeCall {
+            start_block,
+            end_block,
+            l1_head,
+            intermediate_block_interval,
+        });
+        self.responses
+            .lock()
+            .expect("responses lock poisoned")
+            .pop_front()
+            .expect("MockTeeProofProvider: prove_range called without an enqueued response")
     }
 }

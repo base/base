@@ -19,7 +19,13 @@ mod scanner;
 pub use scanner::{ClassifyError, GameDiscovery, GameInfo, GameSituation};
 
 mod submit;
-pub use submit::DisputeAction;
+pub use submit::{DisputeAction, DisputeRequest};
+
+mod prove;
+pub use prove::{ProofError, TeeProofError, TeeProofProvider, TeeProofResult};
+
+mod worker;
+pub use worker::{WorkerConfig, WorkerDeps};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
