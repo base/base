@@ -2,41 +2,6 @@
 // Allow macro-generated code inside this crate to use `::base_precompile_storage::` paths.
 extern crate self as base_precompile_storage;
 
-<<<<<<< HEAD
-/// Error types for native precompile operations.
-pub mod error;
-/// Bit-level packing utilities for EVM storage slots.
-pub mod packing;
-/// Core storage provider traits and type system.
-pub mod provider;
-/// Precompile registration trait.
-pub mod registration;
-/// Thread-local storage context.
-pub mod storage_ctx;
-/// Storage types: `Slot`, `Mapping`, `Vec`, `Set`, primitives.
-pub mod types;
-
-/// In-memory storage backend for tests.
-pub mod hashmap;
-/// Production EVM-backed storage provider.
-pub mod evm;
-
-pub use evm::EvmPrecompileStorageProvider;
-
-pub use error::{BasePrecompileError, IntoPrecompileResult, Result};
-pub use packing::FieldLocation;
-pub use provider::{
-    ContractStorage, FromWord, Handler, Layout, LayoutCtx, Packable, PrecompileStorageProvider,
-    Storable, StorableType, StorageKey, StorageOps,
-};
-pub use registration::NativePrecompile;
-pub use storage_ctx::{CheckpointGuard, StorageCtx};
-pub use types::{
-    Mapping, Set, SetHandler, Slot,
-    array::ArrayHandler,
-    vec::VecHandler,
-};
-=======
 mod error;
 pub use error::{BasePrecompileError, IntoPrecompileResult, Result};
 
@@ -73,4 +38,3 @@ pub use hashmap::HashMapStorageProvider;
 pub use hashmap::setup_storage;
 #[cfg(any(test, feature = "test-utils"))]
 pub use packing::gen_word_from;
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5

@@ -4,16 +4,10 @@
 //! - **Base slot**: Arrays start directly at `base_slot` (not at keccak256)
 //! - Small elements (`T::BYTES` ≤ 16) are packed; larger elements use full slots.
 
-<<<<<<< HEAD
-use alloy_primitives::{Address, U256};
-use std::ops::{Index, IndexMut};
-
-=======
 use std::ops::{Index, IndexMut};
 
 use alloy_primitives::{Address, U256};
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 use crate::{
     error::Result,
     packing,
@@ -95,12 +89,7 @@ impl<T: StorableType, const N: usize> Index<usize> for ArrayHandler<T, N> {
     fn index(&self, index: usize) -> &Self::Output {
         assert!(index < N, "index out of bounds: {index} >= {N}");
         let (base_slot, address) = (self.base_slot, self.address);
-<<<<<<< HEAD
-        self.cache
-            .get_or_insert(&index, || Self::compute_handler(base_slot, address, index))
-=======
         self.cache.get_or_insert(&index, || Self::compute_handler(base_slot, address, index))
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 }
 
@@ -108,12 +97,7 @@ impl<T: StorableType, const N: usize> IndexMut<usize> for ArrayHandler<T, N> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         assert!(index < N, "index out of bounds: {index} >= {N}");
         let (base_slot, address) = (self.base_slot, self.address);
-<<<<<<< HEAD
-        self.cache
-            .get_or_insert_mut(&index, || Self::compute_handler(base_slot, address, index))
-=======
         self.cache.get_or_insert_mut(&index, || Self::compute_handler(base_slot, address, index))
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 }
 

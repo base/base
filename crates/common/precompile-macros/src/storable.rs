@@ -12,8 +12,6 @@ use crate::{
     utils::{extract_mapping_types, extract_storable_array_sizes, to_snake_case},
 };
 
-<<<<<<< HEAD
-=======
 /// Entry point called from `lib.rs` — parses input and converts errors to compile errors.
 pub(crate) fn derive(input: DeriveInput) -> proc_macro::TokenStream {
     match derive_impl(input) {
@@ -22,7 +20,6 @@ pub(crate) fn derive(input: DeriveInput) -> proc_macro::TokenStream {
     }
 }
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 pub(crate) fn derive_impl(input: DeriveInput) -> syn::Result<TokenStream> {
     match &input.data {
         Data::Struct(data_struct) => derive_struct_impl(&input, data_struct),
@@ -49,17 +46,6 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
     };
 
     if fields.is_empty() {
-<<<<<<< HEAD
-        return Err(syn::Error::new_spanned(&input.ident, "`Storable` cannot be derived for empty structs"));
-    }
-
-    let field_infos: Vec<_> = fields.iter().map(|f| FieldInfo {
-        name: f.ident.as_ref().unwrap().clone(),
-        ty: f.ty.clone(),
-        slot: None,
-        base_slot: None,
-    }).collect();
-=======
         return Err(syn::Error::new_spanned(
             &input.ident,
             "`Storable` cannot be derived for empty structs",
@@ -75,7 +61,6 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
             base_slot: None,
         })
         .collect();
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     let layout_fields = packing::allocate_slots(&field_infos)?;
 
@@ -185,17 +170,6 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
 
 fn derive_unit_enum_impl(input: &DeriveInput, data_enum: &DataEnum) -> syn::Result<TokenStream> {
     if extract_storable_array_sizes(&input.attrs)?.is_some() {
-<<<<<<< HEAD
-        return Err(syn::Error::new_spanned(&input.ident, "`storable_arrays` is only supported for structs"));
-    }
-
-    if !has_repr_u8(&input.attrs)? {
-        return Err(syn::Error::new_spanned(&input.ident, "`Storable` unit enums must be annotated with `#[repr(u8)]`"));
-    }
-
-    if data_enum.variants.is_empty() {
-        return Err(syn::Error::new_spanned(&input.ident, "`Storable` cannot be derived for empty enums"));
-=======
         return Err(syn::Error::new_spanned(
             &input.ident,
             "`storable_arrays` is only supported for structs",
@@ -214,19 +188,14 @@ fn derive_unit_enum_impl(input: &DeriveInput, data_enum: &DataEnum) -> syn::Resu
             &input.ident,
             "`Storable` cannot be derived for empty enums",
         ));
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     for variant in &data_enum.variants {
         if !matches!(variant.fields, Fields::Unit) {
-<<<<<<< HEAD
-            return Err(syn::Error::new_spanned(variant, "`Storable` enums must use unit variants only"));
-=======
             return Err(syn::Error::new_spanned(
                 variant,
                 "`Storable` enums must use unit variants only",
             ));
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         }
     }
 
@@ -279,11 +248,6 @@ fn derive_unit_enum_impl(input: &DeriveInput, data_enum: &DataEnum) -> syn::Resu
 fn has_repr_u8(attrs: &[Attribute]) -> syn::Result<bool> {
     let mut repr_u8 = false;
     for attr in attrs {
-<<<<<<< HEAD
-        if !attr.path().is_ident("repr") { continue; }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("u8") { repr_u8 = true; }
-=======
         if !attr.path().is_ident("repr") {
             continue;
         }
@@ -291,7 +255,6 @@ fn has_repr_u8(attrs: &[Attribute]) -> syn::Result<bool> {
             if meta.path.is_ident("u8") {
                 repr_u8 = true;
             }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
             Ok(())
         })?;
     }
@@ -300,14 +263,10 @@ fn has_repr_u8(attrs: &[Attribute]) -> syn::Result<bool> {
 
 fn validate_sequential_discriminants(data_enum: &DataEnum) -> syn::Result<()> {
     if data_enum.variants.len() > usize::from(u8::MAX) + 1 {
-<<<<<<< HEAD
-        return Err(syn::Error::new_spanned(&data_enum.variants, "`Storable` unit enums must have at most 256 variants"));
-=======
         return Err(syn::Error::new_spanned(
             &data_enum.variants,
             "`Storable` unit enums must have at most 256 variants",
         ));
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
     for variant in &data_enum.variants {
         if variant.discriminant.is_some() {
@@ -346,13 +305,9 @@ fn gen_handler_struct(
 ) -> TokenStream {
     let handler_name = format_ident!("{}Handler", struct_name);
     let handler_fields = fields.iter().map(gen_handler_field_decl);
-<<<<<<< HEAD
-    let field_inits = fields.iter().enumerate()
-=======
     let field_inits = fields
         .iter()
         .enumerate()
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         .map(|(idx, field)| gen_handler_field_init(field, idx, fields, Some(mod_ident)));
 
     quote! {
@@ -415,13 +370,9 @@ fn gen_handler_struct(
 }
 
 fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
-<<<<<<< HEAD
-    if fields.is_empty() { return quote! {}; }
-=======
     if fields.is_empty() {
         return quote! {};
     }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     let field_loads = fields.iter().enumerate().map(|(idx, (name, ty))| {
         let loc_const = PackingConstants::new(name).location();
@@ -436,11 +387,7 @@ fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
             || quote! {
                 let #name = if <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE {
                     cached_slot = storage.load(#slot_addr)?;
-<<<<<<< HEAD
-                    let packed = ::base_precompile_storage::packing::PackedSlot(cached_slot);
-=======
                     let packed = ::base_precompile_storage::PackedSlot(cached_slot);
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                     <#ty as ::base_precompile_storage::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
                 } else {
                     <#ty as ::base_precompile_storage::Storable>::load(storage, #slot_addr, ::base_precompile_storage::LayoutCtx::FULL)?
@@ -452,19 +399,11 @@ fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
                     let prev_offset = #prev_slot_ref;
 
                     if <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE && curr_offset == prev_offset {
-<<<<<<< HEAD
-                        let packed = ::base_precompile_storage::packing::PackedSlot(cached_slot);
-                        <#ty as ::base_precompile_storage::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
-                    } else if <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE {
-                        cached_slot = storage.load(#slot_addr)?;
-                        let packed = ::base_precompile_storage::packing::PackedSlot(cached_slot);
-=======
                         let packed = ::base_precompile_storage::PackedSlot(cached_slot);
                         <#ty as ::base_precompile_storage::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
                     } else if <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE {
                         cached_slot = storage.load(#slot_addr)?;
                         let packed = ::base_precompile_storage::PackedSlot(cached_slot);
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                         <#ty as ::base_precompile_storage::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
                     } else {
                         <#ty as ::base_precompile_storage::Storable>::load(storage, #slot_addr, ::base_precompile_storage::LayoutCtx::FULL)?
@@ -481,13 +420,9 @@ fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
 }
 
 fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
-<<<<<<< HEAD
-    if fields.is_empty() { return quote! {}; }
-=======
     if fields.is_empty() {
         return quote! {};
     }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     let field_stores = fields.iter().enumerate().map(|(idx, (name, ty))| {
         let loc_const = PackingConstants::new(name).location();
@@ -515,11 +450,7 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
                     // Always SLOAD first (Category 3: is_t4() optimization removed — correct but slightly less efficient)
                     pending_val = storage.load(#slot_addr)?;
                     pending_offset = Some(#packing::#loc_const.offset_slots);
-<<<<<<< HEAD
-                    let mut packed = ::base_precompile_storage::packing::PackedSlot(pending_val);
-=======
                     let mut packed = ::base_precompile_storage::PackedSlot(pending_val);
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                     <#ty as ::base_precompile_storage::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
                     pending_val = packed.0;
 
@@ -536,11 +467,7 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
                 let prev_offset = #prev_slot_ref;
 
                 if <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE && curr_offset == prev_offset {
-<<<<<<< HEAD
-                    let mut packed = ::base_precompile_storage::packing::PackedSlot(pending_val);
-=======
                     let mut packed = ::base_precompile_storage::PackedSlot(pending_val);
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                     <#ty as ::base_precompile_storage::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
                     pending_val = packed.0;
                 } else if <#ty as ::base_precompile_storage::StorableType>::IS_PACKABLE {
@@ -550,11 +477,7 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
                     // Always SLOAD first (Category 3: is_t4() optimization removed — correct but slightly less efficient)
                     pending_val = storage.load(#slot_addr)?;
                     pending_offset = Some(curr_offset);
-<<<<<<< HEAD
-                    let mut packed = ::base_precompile_storage::packing::PackedSlot(pending_val);
-=======
                     let mut packed = ::base_precompile_storage::PackedSlot(pending_val);
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                     <#ty as ::base_precompile_storage::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
                     pending_val = packed.0;
                 } else {
@@ -619,16 +542,10 @@ fn gen_delete_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
-    use super::*;
-    use syn::parse_quote;
-
-=======
     use syn::parse_quote;
 
     use super::*;
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     fn parse_enum(input: DeriveInput) -> DataEnum {
         match input.data {
             Data::Enum(data_enum) => data_enum,

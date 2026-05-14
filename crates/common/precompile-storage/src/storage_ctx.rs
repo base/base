@@ -4,11 +4,8 @@
 //! thread-local [`PrecompileStorageProvider`]. All storage operations within
 //! a precompile call must happen inside a [`StorageCtx::enter`] closure.
 
-<<<<<<< HEAD
-=======
 use std::cell::RefCell;
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 use alloy_primitives::{Address, B256, Bytes, LogData, U256};
 use alloy_sol_types::SolInterface;
 use revm::{
@@ -17,10 +14,6 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 use scoped_tls::scoped_thread_local;
-<<<<<<< HEAD
-use std::cell::RefCell;
-=======
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
 use crate::{
     error::{BasePrecompileError, Result},
@@ -86,27 +79,14 @@ impl StorageCtx {
     ) -> Result<T> {
         let mut result: Option<Result<T>> = None;
         Self::try_with_storage(|s| {
-<<<<<<< HEAD
-            s.with_account_info(address, &mut |info| { result = Some(f(info)); })
-=======
             s.with_account_info(address, &mut |info| {
                 result = Some(f(info));
             })
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         })?;
         result.unwrap()
     }
 
     /// Returns the current chain ID.
-<<<<<<< HEAD
-    pub fn chain_id(&self) -> u64 { Self::with_storage(|s| s.chain_id()) }
-    /// Returns the current block timestamp.
-    pub fn timestamp(&self) -> U256 { Self::with_storage(|s| s.timestamp()) }
-    /// Returns the block beneficiary (coinbase).
-    pub fn beneficiary(&self) -> Address { Self::with_storage(|s| s.beneficiary()) }
-    /// Returns the current block number.
-    pub fn block_number(&self) -> u64 { Self::with_storage(|s| s.block_number()) }
-=======
     pub fn chain_id(&self) -> u64 {
         Self::with_storage(|s| s.chain_id())
     }
@@ -122,7 +102,6 @@ impl StorageCtx {
     pub fn block_number(&self) -> u64 {
         Self::with_storage(|s| s.block_number())
     }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     /// Sets the bytecode at the given address.
     pub fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
@@ -155,19 +134,6 @@ impl StorageCtx {
     }
 
     /// Adds gas to the refund counter.
-<<<<<<< HEAD
-    pub fn refund_gas(&mut self, gas: i64) { Self::with_storage(|s| s.refund_gas(gas)) }
-    /// Returns the gas limit for this precompile call.
-    pub fn gas_limit(&self) -> u64 { Self::with_storage(|s| s.gas_limit()) }
-    /// Returns the gas used so far.
-    pub fn gas_used(&self) -> u64 { Self::with_storage(|s| s.gas_used()) }
-    /// Returns the gas refunded so far.
-    pub fn gas_refunded(&self) -> i64 { Self::with_storage(|s| s.gas_refunded()) }
-    /// Returns whether the current call context is static.
-    pub fn is_static(&self) -> bool { Self::with_storage(|s| s.is_static()) }
-    /// Returns the address that called this precompile.
-    pub fn caller(&self) -> Address { Self::with_storage(|s| s.caller()) }
-=======
     pub fn refund_gas(&mut self, gas: i64) {
         Self::with_storage(|s| s.refund_gas(gas))
     }
@@ -191,7 +157,6 @@ impl StorageCtx {
     pub fn caller(&self) -> Address {
         Self::with_storage(|s| s.caller())
     }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     /// Deducts gas from the remaining gas, returning `OutOfGas` if insufficient.
     pub fn deduct_gas(&mut self, gas: u64) -> Result<()> {
@@ -310,17 +275,6 @@ impl StorageCtx {
     }
 
     /// Clears all transient storage (test-utils only).
-<<<<<<< HEAD
-    pub fn clear_transient(&mut self) { self.as_hashmap().clear_transient() }
-    /// Clears emitted events for the given address (test-utils only).
-    pub fn clear_events(&mut self, address: Address) { self.as_hashmap().clear_events(address); }
-    /// Returns the SLOAD counter (test-utils only).
-    pub fn counter_sload(&self) -> u64 { self.as_hashmap().counter_sload() }
-    /// Returns the SSTORE counter (test-utils only).
-    pub fn counter_sstore(&self) -> u64 { self.as_hashmap().counter_sstore() }
-    /// Resets the SLOAD/SSTORE counters (test-utils only).
-    pub fn reset_counters(&mut self) { self.as_hashmap().reset_counters() }
-=======
     pub fn clear_transient(&mut self) {
         self.as_hashmap().clear_transient()
     }
@@ -340,7 +294,6 @@ impl StorageCtx {
     pub fn reset_counters(&mut self) {
         self.as_hashmap().reset_counters()
     }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     /// Returns true if the contract at the given address has non-empty bytecode (test-utils only).
     pub fn has_bytecode(&self, address: Address) -> Result<bool> {
@@ -357,26 +310,16 @@ unsafe fn extend_lifetime_mut<'b, T: ?Sized>(r: &mut T) -> &'b mut T {
 
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
-    use super::*;
-    use alloy_primitives::U256;
-
-=======
     use alloy_primitives::U256;
 
     use super::*;
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     #[test]
     #[should_panic(expected = "already borrowed")]
     fn test_reentrant_with_storage_panics() {
         let mut storage = crate::hashmap::HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, || {
-<<<<<<< HEAD
-            StorageCtx::with_storage(|_| { StorageCtx::with_storage(|_| ()) })
-=======
             StorageCtx::with_storage(|_| StorageCtx::with_storage(|_| ()))
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         });
     }
 

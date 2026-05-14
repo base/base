@@ -74,13 +74,8 @@ pub trait PrecompileStorageProvider {
 
     /// Computes keccak256 and charges the appropriate gas.
     fn keccak256(&mut self, data: &[u8]) -> Result<B256> {
-<<<<<<< HEAD
-        let num_words = u64::try_from(data.len().div_ceil(32))
-            .map_err(|_| BasePrecompileError::OutOfGas)?;
-=======
         let num_words =
             u64::try_from(data.len().div_ceil(32)).map_err(|_| BasePrecompileError::OutOfGas)?;
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         let price = KECCAK256WORD
             .checked_mul(num_words)
             .and_then(|w| w.checked_add(KECCAK256))
@@ -113,12 +108,7 @@ pub trait ContractStorage {
 
     /// Returns true if the contract has bytecode deployed at its address.
     fn is_initialized(&self) -> Result<bool> {
-<<<<<<< HEAD
-        self.storage()
-            .with_account_info(self.address(), |info| Ok(!info.is_empty_code_hash()))
-=======
         self.storage().with_account_info(self.address(), |info| Ok(!info.is_empty_code_hash()))
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 }
 
@@ -241,12 +231,7 @@ pub trait Storable: StorableType + Sized {
             Some(offset) => {
                 let bytes = Self::BYTES;
                 let current = storage.load(slot)?;
-<<<<<<< HEAD
-                let cleared =
-                    crate::packing::delete_from_word(current, offset, bytes)?;
-=======
                 let cleared = crate::packing::delete_from_word(current, offset, bytes)?;
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                 storage.store(slot, cleared)
             }
         }
@@ -293,12 +278,7 @@ impl<T: Packable> Storable for T {
             None => storage.store(slot, self.to_word()),
             Some(offset) => {
                 let current = storage.load(slot)?;
-<<<<<<< HEAD
-                let updated =
-                    crate::packing::insert_into_word(current, self, offset, Self::BYTES)?;
-=======
                 let updated = crate::packing::insert_into_word(current, self, offset, Self::BYTES)?;
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                 storage.store(slot, updated)
             }
         }

@@ -4682,7 +4682,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
 name = "base-precompile-counter"
 version = "0.0.0"
 dependencies = [
@@ -4694,8 +4693,6 @@ dependencies = [
 ]
 
 [[package]]
-=======
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 name = "base-precompile-macros"
 version = "0.0.0"
 dependencies = [

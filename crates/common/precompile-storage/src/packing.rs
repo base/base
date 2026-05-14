@@ -55,15 +55,7 @@ impl FieldLocation {
     /// Create a new field location
     #[inline]
     pub const fn new(offset_slots: usize, offset_bytes: usize, size: usize) -> Self {
-<<<<<<< HEAD
-        Self {
-            offset_slots,
-            offset_bytes,
-            size,
-        }
-=======
         Self { offset_slots, offset_bytes, size }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 }
 
@@ -73,15 +65,7 @@ impl FieldLocation {
 /// For 32-byte values, returns `U256::MAX`.
 #[inline]
 pub fn create_element_mask(byte_count: usize) -> U256 {
-<<<<<<< HEAD
-    if byte_count >= 32 {
-        U256::MAX
-    } else {
-        (U256::ONE << (byte_count * 8)) - U256::ONE
-    }
-=======
     if byte_count >= 32 { U256::MAX } else { (U256::ONE << (byte_count * 8)) - U256::ONE }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 }
 
 /// Extract a packed value from a storage slot at a given byte offset.
@@ -201,14 +185,7 @@ pub fn gen_word_from(values: &[&str]) -> U256 {
     for value in values {
         let hex_str = value.strip_prefix("0x").unwrap_or(value);
 
-<<<<<<< HEAD
-        assert!(
-            hex_str.len() % 2 == 0,
-            "Hex string '{value}' has odd length"
-        );
-=======
         assert!(hex_str.len() % 2 == 0, "Hex string '{value}' has odd length");
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
         for i in (0..hex_str.len()).step_by(2) {
             let byte_str = &hex_str[i..i + 2];
@@ -218,15 +195,7 @@ pub fn gen_word_from(values: &[&str]) -> U256 {
         }
     }
 
-<<<<<<< HEAD
-    assert!(
-        bytes.len() <= 32,
-        "Total bytes ({}) exceed 32-byte slot limit",
-        bytes.len()
-    );
-=======
     assert!(bytes.len() <= 32, "Total bytes ({}) exceed 32-byte slot limit", bytes.len());
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     let mut slot_bytes = [0u8; 32];
     let start_idx = 32 - bytes.len();
@@ -237,21 +206,14 @@ pub fn gen_word_from(values: &[&str]) -> U256 {
 
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
-=======
     use alloy_primitives::Address;
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     use super::*;
     use crate::{
         provider::{Handler, LayoutCtx},
         storage_ctx::StorageCtx,
         types::Slot,
     };
-<<<<<<< HEAD
-    use alloy_primitives::Address;
-=======
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
     // -- HELPER FUNCTION TESTS ----------------------------------------------------
 
@@ -513,16 +475,8 @@ mod tests {
         let addr = Address::from([0x11; 20]);
         let number: u8 = 0x2a;
 
-<<<<<<< HEAD
-        let expected = gen_word_from(&[
-            "0x2a",
-            "0x1111111111111111111111111111111111111111",
-            "0x01",
-        ]);
-=======
         let expected =
             gen_word_from(&["0x2a", "0x1111111111111111111111111111111111111111", "0x01"]);
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
         let mut slot = U256::ZERO;
         slot = insert_into_word(slot, &true, 0, 1).unwrap();

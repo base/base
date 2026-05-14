@@ -4,20 +4,12 @@
 
 use alloy_primitives::{Address, U256};
 
-<<<<<<< HEAD
-use crate::provider::{
-    FromWord, Layout, LayoutCtx, Packable, StorableType, StorageKey,
-    sealed::OnlyPrimitives,
-};
-use crate::types::Slot;
-=======
 use crate::{
     provider::{
         FromWord, Layout, LayoutCtx, Packable, StorableType, StorageKey, sealed::OnlyPrimitives,
     },
     types::Slot,
 };
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
 // Rust integers: (u)int8, (u)int16, (u)int32, (u)int64, (u)int128
 base_precompile_macros::storable_rust_ints!();
@@ -101,30 +93,18 @@ impl StorageKey for Address {
 
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
-=======
     use proptest::prelude::*;
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     use super::*;
     use crate::{
         hashmap::setup_storage,
         provider::{Handler, LayoutCtx},
         storage_ctx::StorageCtx,
     };
-<<<<<<< HEAD
-    use proptest::prelude::*;
-
-    fn arb_safe_slot() -> impl Strategy<Value = U256> {
-        any::<[u64; 4]>().prop_map(|limbs| {
-            U256::from_limbs(limbs) % (U256::MAX - U256::from(10000u64))
-        })
-=======
 
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>()
             .prop_map(|limbs| U256::from_limbs(limbs) % (U256::MAX - U256::from(10000u64)))
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     fn arb_address() -> impl Strategy<Value = Address> {

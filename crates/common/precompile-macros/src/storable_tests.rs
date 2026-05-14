@@ -6,13 +6,8 @@ use quote::quote;
 use crate::storable_primitives::{ALLOY_INT_SIZES, RUST_INT_SIZES};
 
 const FIXED_BYTES_SIZES: &[usize] = &[
-<<<<<<< HEAD
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-=======
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
     27, 28, 29, 30, 31, 32,
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 ];
 
 pub(crate) fn gen_storable_tests() -> TokenStream {
@@ -43,21 +38,6 @@ pub(crate) fn gen_storable_tests() -> TokenStream {
     }
 }
 
-<<<<<<< HEAD
-fn gen_rust_unsigned_arbitrary() -> TokenStream { quote! {} }
-fn gen_rust_signed_arbitrary() -> TokenStream { quote! {} }
-
-fn gen_alloy_unsigned_arbitrary() -> TokenStream {
-    let funcs: Vec<_> = ALLOY_INT_SIZES.iter().map(|&size| {
-        let type_name = quote::format_ident!("U{size}");
-        let fn_name = quote::format_ident!("arb_u{size}_alloy");
-        quote! {
-            fn #fn_name() -> impl Strategy<Value = ::alloy_primitives::aliases::#type_name> {
-                Just(()).prop_perturb(|_, _| ::alloy_primitives::aliases::#type_name::random())
-            }
-        }
-    }).collect();
-=======
 fn gen_rust_unsigned_arbitrary() -> TokenStream {
     quote! {}
 }
@@ -78,7 +58,6 @@ fn gen_alloy_unsigned_arbitrary() -> TokenStream {
             }
         })
         .collect();
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     quote! { #(#funcs)* }
 }
 
@@ -117,16 +96,6 @@ fn gen_alloy_signed_arbitrary() -> TokenStream {
 }
 
 fn gen_fixed_bytes_arbitrary() -> TokenStream {
-<<<<<<< HEAD
-    let funcs: Vec<_> = FIXED_BYTES_SIZES.iter().map(|&size| {
-        let fn_name = quote::format_ident!("arb_fixed_bytes_{size}");
-        quote! {
-            fn #fn_name() -> impl Strategy<Value = ::alloy_primitives::FixedBytes<#size>> {
-                Just(()).prop_perturb(|_, _| ::alloy_primitives::FixedBytes::<#size>::random())
-            }
-        }
-    }).collect();
-=======
     let funcs: Vec<_> = FIXED_BYTES_SIZES
         .iter()
         .map(|&size| {
@@ -138,7 +107,6 @@ fn gen_fixed_bytes_arbitrary() -> TokenStream {
             }
         })
         .collect();
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     quote! { #(#funcs)* }
 }
 

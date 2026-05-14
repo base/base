@@ -314,13 +314,9 @@ pub(crate) fn gen_collision_check_fn(
     let mut checks = TokenStream::new();
 
     for (other_idx, other_field) in all_fields.iter().enumerate() {
-<<<<<<< HEAD
-        if other_idx == idx { continue; }
-=======
         if other_idx == idx {
             continue;
         }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
         let other_consts = PackingConstants::new(other_field.name);
         let (other_slot_const, other_offset_const) = other_consts.into_tuple();

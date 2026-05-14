@@ -67,13 +67,9 @@ pub(crate) fn to_camel_case(s: &str) -> String {
     let mut first_word = true;
 
     for word in s.split('_') {
-<<<<<<< HEAD
-        if word.is_empty() { continue; }
-=======
         if word.is_empty() {
             continue;
         }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
         if first_word {
             result.push_str(word);
@@ -137,23 +133,6 @@ pub(crate) fn extract_storable_array_sizes(attrs: &[Attribute]) -> syn::Result<O
             for lit in parsed {
                 if let Lit::Int(int) = lit {
                     let size = int.base10_parse::<usize>().map_err(|_| {
-<<<<<<< HEAD
-                        syn::Error::new_spanned(&int, "Invalid array size: must be a positive integer")
-                    })?;
-
-                    if size == 0 {
-                        return Err(syn::Error::new_spanned(&int, "Array size must be greater than 0"));
-                    }
-                    if size > 256 {
-                        return Err(syn::Error::new_spanned(&int, "Array size must not exceed 256"));
-                    }
-                    if sizes.contains(&size) {
-                        return Err(syn::Error::new_spanned(&int, format!("Duplicate array size: {size}")));
-                    }
-                    sizes.push(size);
-                } else {
-                    return Err(syn::Error::new_spanned(lit, "Array sizes must be integer literals"));
-=======
                         syn::Error::new_spanned(
                             &int,
                             "Invalid array size: must be a positive integer",
@@ -184,19 +163,14 @@ pub(crate) fn extract_storable_array_sizes(attrs: &[Attribute]) -> syn::Result<O
                         lit,
                         "Array sizes must be integer literals",
                     ));
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
                 }
             }
 
             if sizes.is_empty() {
-<<<<<<< HEAD
-                return Err(syn::Error::new_spanned(attr, "storable_arrays attribute requires at least one size"));
-=======
                 return Err(syn::Error::new_spanned(
                     attr,
                     "storable_arrays attribute requires at least one size",
                 ));
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
             }
 
             return Ok(Some(sizes));
@@ -218,10 +192,6 @@ pub(crate) fn extract_mapping_types(ty: &Type) -> Option<(&Type, &Type)> {
         if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
             let mut iter = args.args.iter();
 
-<<<<<<< HEAD
-            let key_type = if let Some(syn::GenericArgument::Type(ty)) = iter.next() { ty } else { return None; };
-            let value_type = if let Some(syn::GenericArgument::Type(ty)) = iter.next() { ty } else { return None; };
-=======
             let key_type = if let Some(syn::GenericArgument::Type(ty)) = iter.next() {
                 ty
             } else {
@@ -232,7 +202,6 @@ pub(crate) fn extract_mapping_types(ty: &Type) -> Option<(&Type, &Type)> {
             } else {
                 return None;
             };
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
             return Some((key_type, value_type));
         }
@@ -242,16 +211,10 @@ pub(crate) fn extract_mapping_types(ty: &Type) -> Option<(&Type, &Type)> {
 
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
-    use super::*;
-    use syn::parse_quote;
-
-=======
     use syn::parse_quote;
 
     use super::*;
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     #[test]
     fn test_to_snake_case() {
         assert_eq!(to_snake_case("balanceOf"), "balance_of");

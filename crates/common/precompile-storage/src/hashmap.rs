@@ -1,17 +1,10 @@
-<<<<<<< HEAD
-=======
 use std::collections::HashMap;
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 use alloy_primitives::{Address, LogData, U256};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     state::{AccountInfo, Bytecode},
 };
-<<<<<<< HEAD
-use std::collections::HashMap;
-=======
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
 use crate::{error::BasePrecompileError, provider::PrecompileStorageProvider};
 
@@ -126,15 +119,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
-<<<<<<< HEAD
-    fn emit_event(
-        &mut self,
-        address: Address,
-        event: LogData,
-    ) -> Result<(), BasePrecompileError> {
-=======
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<(), BasePrecompileError> {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.events.entry(address).or_default().push(event);
         Ok(())
     }
@@ -179,15 +164,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn checkpoint(&mut self) -> JournalCheckpoint {
         let idx = self.snapshots.len();
-<<<<<<< HEAD
-        self.snapshots.push(Snapshot {
-            internals: self.internals.clone(),
-            events: self.events.clone(),
-        });
-=======
         self.snapshots
             .push(Snapshot { internals: self.internals.clone(), events: self.events.clone() });
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         JournalCheckpoint { log_i: 0, journal_i: idx }
     }
 
@@ -216,11 +194,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 #[cfg(any(test, feature = "test-utils"))]
 impl HashMapStorageProvider {
     /// Injects an SLOAD failure at the given address and slot (test-utils only).
-<<<<<<< HEAD
-    pub fn fail_next_sload_at(&mut self, address: Address, slot: U256) {
-=======
     pub const fn fail_next_sload_at(&mut self, address: Address, slot: U256) {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.fail_on_sload = Some((address, slot));
     }
 
@@ -242,38 +216,22 @@ impl HashMapStorageProvider {
     }
 
     /// Overrides the block timestamp (test-utils only).
-<<<<<<< HEAD
-    pub fn set_timestamp(&mut self, timestamp: U256) {
-=======
     pub const fn set_timestamp(&mut self, timestamp: U256) {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.timestamp = timestamp;
     }
 
     /// Overrides the block beneficiary (test-utils only).
-<<<<<<< HEAD
-    pub fn set_beneficiary(&mut self, beneficiary: Address) {
-=======
     pub const fn set_beneficiary(&mut self, beneficiary: Address) {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.beneficiary = beneficiary;
     }
 
     /// Overrides the block number (test-utils only).
-<<<<<<< HEAD
-    pub fn set_block_number(&mut self, block_number: u64) {
-=======
     pub const fn set_block_number(&mut self, block_number: u64) {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.block_number = block_number;
     }
 
     /// Sets the caller address (test-utils only).
-<<<<<<< HEAD
-    pub fn set_caller(&mut self, caller: Address) {
-=======
     pub const fn set_caller(&mut self, caller: Address) {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.caller = caller;
     }
 
@@ -288,42 +246,24 @@ impl HashMapStorageProvider {
     }
 
     /// Returns the SLOAD counter (test-utils only).
-<<<<<<< HEAD
-    pub fn counter_sload(&self) -> u64 {
-=======
     pub const fn counter_sload(&self) -> u64 {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.counter_sload
     }
 
     /// Returns the SSTORE counter (test-utils only).
-<<<<<<< HEAD
-    pub fn counter_sstore(&self) -> u64 {
-=======
     pub const fn counter_sstore(&self) -> u64 {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.counter_sstore
     }
 
     /// Resets the SLOAD/SSTORE counters (test-utils only).
-<<<<<<< HEAD
-    pub fn reset_counters(&mut self) {
-=======
     pub const fn reset_counters(&mut self) {
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
         self.counter_sload = 0;
         self.counter_sstore = 0;
     }
 
     /// Returns an iterator over all stored (address, slot, value) triples (test-utils only).
     pub fn into_storage(self) -> impl Iterator<Item = (Address, U256, U256)> {
-<<<<<<< HEAD
-        self.internals
-            .into_iter()
-            .map(|((addr, slot), value)| (addr, slot, value))
-=======
         self.internals.into_iter().map(|((addr, slot), value)| (addr, slot, value))
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     /// Reads a storage slot directly without journal overhead (test-utils only).

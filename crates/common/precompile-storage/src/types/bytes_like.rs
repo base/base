@@ -10,16 +10,10 @@
 //! - Base slot: stores `length * 2 + 1` (bit 0 = 1 indicates long string)
 //! - Data slots: stored at `keccak256(main_slot) + i` for each 32-byte chunk
 
-<<<<<<< HEAD
-use alloy_primitives::{Address, Bytes, U256, keccak256};
-use std::marker::PhantomData;
-
-=======
 use std::marker::PhantomData;
 
 use alloy_primitives::{Address, Bytes, U256, keccak256};
 
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 use crate::{
     error::{BasePrecompileError, Result},
     provider::{Handler, Layout, LayoutCtx, Storable, StorableType, StorageOps},
@@ -81,19 +75,6 @@ impl<T: Storable> BytesLikeHandler<T> {
 
 impl<T: Storable> Handler<T> for BytesLikeHandler<T> {
     #[inline]
-<<<<<<< HEAD
-    fn read(&self) -> Result<T> { self.as_slot().read() }
-    #[inline]
-    fn write(&mut self, value: T) -> Result<()> { self.as_slot().write(value) }
-    #[inline]
-    fn delete(&mut self) -> Result<()> { self.as_slot().delete() }
-    #[inline]
-    fn t_read(&self) -> Result<T> { self.as_slot().t_read() }
-    #[inline]
-    fn t_write(&mut self, value: T) -> Result<()> { self.as_slot().t_write(value) }
-    #[inline]
-    fn t_delete(&mut self) -> Result<()> { self.as_slot().t_delete() }
-=======
     fn read(&self) -> Result<T> {
         self.as_slot().read()
     }
@@ -117,7 +98,6 @@ impl<T: Storable> Handler<T> for BytesLikeHandler<T> {
     fn t_delete(&mut self) -> Result<()> {
         self.as_slot().t_delete()
     }
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 }
 
 impl Storable for Bytes {
@@ -288,16 +268,6 @@ fn encode_long_string_length(byte_length: usize) -> U256 {
 
 #[cfg(test)]
 mod tests {
-<<<<<<< HEAD
-    use super::*;
-    use crate::{hashmap::setup_storage, provider::Handler, storage_ctx::StorageCtx};
-    use proptest::prelude::*;
-
-    fn arb_safe_slot() -> impl Strategy<Value = U256> {
-        any::<[u64; 4]>().prop_map(|limbs| {
-            U256::from_limbs(limbs) % (U256::MAX - U256::from(10000u64))
-        })
-=======
     use proptest::prelude::*;
 
     use super::*;
@@ -306,7 +276,6 @@ mod tests {
     fn arb_safe_slot() -> impl Strategy<Value = U256> {
         any::<[u64; 4]>()
             .prop_map(|limbs| U256::from_limbs(limbs) % (U256::MAX - U256::from(10000u64)))
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     fn arb_short_string() -> impl Strategy<Value = String> {
@@ -322,14 +291,7 @@ mod tests {
     }
 
     fn arb_long_string() -> impl Strategy<Value = String> {
-<<<<<<< HEAD
-        prop_oneof![
-            "[a-zA-Z0-9]{33,100}",
-            "[\u{0041}-\u{005A}\u{4E00}-\u{4E19}]{11,30}",
-        ]
-=======
         prop_oneof!["[a-zA-Z0-9]{33,100}", "[\u{0041}-\u{005A}\u{4E00}-\u{4E19}]{11,30}",]
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
     }
 
     fn arb_short_bytes() -> impl Strategy<Value = Bytes> {
@@ -383,14 +345,7 @@ mod tests {
         assert_eq!(calc_string_length(at_max, true), Ok(u32::MAX as usize));
 
         let above_max = U256::from((u32::MAX as u64 + 1) * 2 + 1);
-<<<<<<< HEAD
-        assert_eq!(
-            calc_string_length(above_max, true),
-            Err(BasePrecompileError::under_overflow())
-        );
-=======
         assert_eq!(calc_string_length(above_max, true), Err(BasePrecompileError::under_overflow()));
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 
         let malicious_short = U256::from(0xFEu64);
         assert!(!is_long_string(malicious_short));

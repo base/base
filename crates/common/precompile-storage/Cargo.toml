@@ -38,14 +38,6 @@ name = "contract"
 required-features = ["test-utils"]
 
 [features]
-<<<<<<< HEAD
-default = ["std"]
-std = [
-    "alloy-primitives/std",
-    "alloy-sol-types/std",
-    "revm/std",
-    "thiserror/std",
-=======
 default = [ "std" ]
 std = [
 	"alloy-evm/std",
@@ -54,6 +46,5 @@ std = [
 	"derive_more/std",
 	"revm/std",
 	"thiserror/std",
->>>>>>> d46df9d45d1cea16baddff35c768ecceea2e02d5
 ]
 test-utils = []
