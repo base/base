@@ -30,7 +30,7 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     let game_exists_selector = game_already_exists_selector();
     let l1_origin_selector = l1_origin_too_old_selector();
     let invalid_parent_selector = invalid_parent_game_selector();
-    let invalid_signer_selector = invalid_signer_selector();
+    let invalid_signer = invalid_signer_selector();
 
     if let TxManagerError::ExecutionReverted { ref reason, ref data } = err {
         if reason.as_deref().is_some_and(|r| r.contains(GAME_ALREADY_EXISTS)) {
@@ -54,7 +54,7 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
         if reason.as_deref().is_some_and(|r| r.contains(INVALID_SIGNER)) {
             return ProposerError::InvalidSigner;
         }
-        if data.as_ref().is_some_and(|d| d.starts_with(&invalid_signer_selector)) {
+        if data.as_ref().is_some_and(|d| d.starts_with(&invalid_signer)) {
             return ProposerError::InvalidSigner;
         }
         return ProposerError::TxManager(err);
@@ -76,7 +76,7 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     {
         return ProposerError::InvalidParentGame;
     }
-    if msg.contains(&alloy_primitives::hex::encode(invalid_signer_selector))
+    if msg.contains(&alloy_primitives::hex::encode(invalid_signer))
         || msg.contains(INVALID_SIGNER)
     {
         return ProposerError::InvalidSigner;
