@@ -14,7 +14,7 @@ use jsonrpsee_types::error::{ErrorCode, ErrorObject};
 use reth_provider::StateProofProvider;
 use reth_rpc_api::eth::helpers::FullEthApi;
 use reth_rpc_server_types::result::internal_rpc_err;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use crate::{metrics::EthApiExtMetrics, state::BaseStateProviderFactory};
 
@@ -62,19 +62,16 @@ pub struct EthApiExt<Eth, P> {
 
 /// Holds one `eth_getProof` concurrency permit and records available permits on release.
 #[derive(Debug)]
-pub struct GetProofPermit {
-    semaphore: Arc<Semaphore>,
-    permit: Option<OwnedSemaphorePermit>,
+pub struct GetProofPermit<'a> {
+    semaphore: &'a Semaphore,
+    permit: Option<SemaphorePermit<'a>>,
 }
 
-impl GetProofPermit {
+impl<'a> GetProofPermit<'a> {
     /// Acquires one `eth_getProof` concurrency permit and records wait/availability metrics.
-    pub async fn acquire(semaphore: Arc<Semaphore>) -> RpcResult<Self> {
+    pub async fn acquire(semaphore: &'a Semaphore) -> RpcResult<Self> {
         let semaphore_wait_start = Instant::now();
-        let permit = Arc::clone(&semaphore)
-            .acquire_owned()
-            .await
-            .map_err(|err| internal_rpc_err(err.to_string()))?;
+        let permit = semaphore.acquire().await.map_err(|err| internal_rpc_err(err.to_string()))?;
 
         EthApiExtMetrics::get_proof_semaphore_wait_duration()
             .record(semaphore_wait_start.elapsed().as_secs_f64());
@@ -85,7 +82,7 @@ impl GetProofPermit {
     }
 }
 
-impl Drop for GetProofPermit {
+impl Drop for GetProofPermit<'_> {
     fn drop(&mut self) {
         drop(self.permit.take());
         EthApiExtMetrics::get_proof_semaphore_available_permits()
@@ -136,7 +133,7 @@ where
         EthApiExtMetrics::get_proof_requests().increment(1);
 
         let result = async {
-            let _permit = GetProofPermit::acquire(Arc::clone(&self.get_proof_semaphore)).await?;
+            let _permit = GetProofPermit::acquire(&self.get_proof_semaphore).await?;
             let storage_keys = keys.iter().map(|key| key.as_b256()).collect::<Vec<_>>();
             let proof = self
                 .state_provider_factory
