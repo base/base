@@ -80,10 +80,6 @@ tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"
 # misc
 serial_test.workspace = true
 
-[[bench]]
-name = "proofs_storage_write"
-harness = false
-
 [features]
 serde-bincode-compat = [
 	"alloy-consensus/serde-bincode-compat",
