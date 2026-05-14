@@ -2176,6 +2176,7 @@ fn test_store_trie_updates_batch_keeps_block_diffs_local<
     Ok(())
 }
 
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[serial]
 fn test_store_trie_updates_batch_wipe_sees_prior_batch_writes<
