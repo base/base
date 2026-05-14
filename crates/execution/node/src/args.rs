@@ -6,6 +6,12 @@ use std::{path::PathBuf, time::Duration};
 
 use clap::{ValueEnum, builder::ArgPredicate};
 
+/// Default proofs history window: 1 month of blocks at 2s block time.
+pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 1_296_000;
+
+/// Twelve hours of blocks at 2s block time.
+pub const TWELVE_HOURS_IN_BLOCKS: u64 = 21_600;
+
 /// Transaction ordering strategy for the mempool.
 ///
 /// Determines how transactions are prioritized when building blocks.
@@ -30,9 +36,9 @@ pub enum TxpoolOrdering {
 #[value(rename_all = "kebab-case")]
 pub enum ProofsHistoryDbBackend {
     /// Store proofs history in `RocksDB`.
+    #[default]
     Rocksdb,
     /// Store proofs history in `MDBX`.
-    #[default]
     Mdbx,
 }
 
@@ -105,17 +111,20 @@ pub struct RollupArgs {
         long = "proofs-history.db",
         visible_aliases = ["proofs-history.db-backend", "proofs-db"],
         value_name = "PROOFS_HISTORY_DB",
-        default_value = "mdbx"
+        default_value = "rocksdb"
     )]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
     /// Default is 1 month of blocks based on 2 seconds block time.
     /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
+    ///
+    /// Must be greater than 12 hours of blocks based on 2 seconds block time.
     #[arg(
         long = "proofs-history.window",
-        default_value_t = 1_296_000,
-        value_name = "PROOFS_HISTORY_WINDOW"
+        default_value_t = DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
+        value_name = "PROOFS_HISTORY_WINDOW",
+        value_parser = clap::value_parser!(u64).range((TWELVE_HOURS_IN_BLOCKS + 1)..)
     )]
     pub proofs_history_window: u64,
 
@@ -138,17 +147,6 @@ pub struct RollupArgs {
         value_parser = humantime::parse_duration
     )]
     pub proofs_history_prune_interval: Duration,
-
-    /// Minimum distance from the current latest block that automatic pruning may touch.
-    ///
-    /// Defaults to 12 hours of blocks based on 2 seconds block time.
-    /// 12 * 60 * 60 / 2 = `21_600`
-    #[arg(
-        long = "proofs-history.prune-finality-margin-blocks",
-        value_name = "PROOFS_HISTORY_PRUNE_FINALITY_MARGIN_BLOCKS",
-        default_value_t = 21_600
-    )]
-    pub proofs_history_prune_finality_margin_blocks: u64,
 
     /// Verification interval: perform full block execution every N blocks for data integrity.
     /// - 0: Disabled (Default) (always use fast path with pre-computed data from notifications)
@@ -188,9 +186,8 @@ impl Default for RollupArgs {
             proofs_history: false,
             proofs_history_storage_path: None,
             proofs_history_db: ProofsHistoryDbBackend::default(),
-            proofs_history_window: 1_296_000,
+            proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
             proofs_history_prune_interval: Duration::from_secs(15),
-            proofs_history_prune_finality_margin_blocks: 21_600,
             proofs_history_verification_interval: 0,
             base_protocol: true,
         }
@@ -317,7 +314,7 @@ mod tests {
     #[test]
     fn test_parse_proofs_history_db_default() {
         let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Mdbx);
+        assert_eq!(args.proofs_history_db, ProofsHistoryDbBackend::Rocksdb);
     }
 
     #[test]
@@ -347,14 +344,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_proofs_history_prune_finality_margin_blocks() {
-        let args = CommandParser::<RollupArgs>::parse_from([
+    fn test_parse_proofs_history_window() {
+        let args =
+            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs-history.window", "21601"])
+                .args;
+        assert_eq!(args.proofs_history_window, 21_601);
+    }
+
+    #[test]
+    fn test_parse_proofs_history_window_rejects_twelve_hours_or_less() {
+        let result = CommandParser::<RollupArgs>::try_parse_from([
             "reth",
-            "--proofs-history.prune-finality-margin-blocks",
-            "64",
-        ])
-        .args;
-        assert_eq!(args.proofs_history_prune_finality_margin_blocks, 64);
+            "--proofs-history.window",
+            "21600",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
