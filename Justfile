@@ -32,7 +32,7 @@ alias ldc := load-test-continuous
 default:
     @just --list
 
-# Load test devnet in continuous mode (Ctrl-C to stop)
+# Load test a network in continuous mode (Ctrl-C to stop)
 load-test-continuous network='devnet':
     just load-test continuous {{network}}
 
