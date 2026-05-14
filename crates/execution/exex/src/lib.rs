@@ -13,7 +13,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip1898::BlockWithParent;
 use base_execution_trie::{
-    BaseProofStoragePrunerTask, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
+    BaseProofStoragePrunerTask, BaseProofsStorage, BaseProofsStore, ProofsBatchOverlay,
     live::LiveTrieCollector, metrics::BlockMetrics,
 };
 use futures::TryStreamExt;
@@ -452,128 +452,82 @@ where
                 "Processing proofs storage sync batch"
             );
 
-            let mut pending: Vec<(BlockWithParent, BlockStateDiff)> =
-                Vec::with_capacity(SYNC_BLOCKS_BATCH_SIZE);
+            let mut overlay = ProofsBatchOverlay::new();
 
             for block_num in (latest + 1)..=end {
-                let should_verify = verification_interval > 0
-                    && block_num.is_multiple_of(verification_interval);
+                let should_verify =
+                    verification_interval > 0 && block_num.is_multiple_of(verification_interval);
                 let cached = sync_target.take(block_num);
 
-                if !should_verify
-                    && let Some(cached) = cached.as_ref()
-                {
+                if !should_verify && let Some(cached) = cached.as_ref() {
                     let sorted = cached.trie_data.get();
-                    pending.push((
+                    overlay.append_cached(
                         cached.block_with_parent,
-                        BlockStateDiff {
-                            sorted_trie_updates: (*sorted.trie_updates).clone(),
-                            sorted_post_state: (*sorted.hashed_state).clone(),
-                        },
-                    ));
+                        &sorted.hashed_state,
+                        &sorted.trie_updates,
+                    );
                     continue;
                 }
 
-                if !pending.is_empty()
-                    && let Err(e) = Self::flush_pending_batch(&mut pending, collector)
-                {
-                    error!(target: "base::exex", error = ?e, "Batched block writes failed");
-                    return;
+                if cached.is_some() {
+                    info!(
+                        target: "base::exex",
+                        block_number = block_num,
+                        verification_interval,
+                        "Periodic verification: performing full block execution despite cached data"
+                    );
+                } else {
+                    debug!(
+                        target: "base::exex",
+                        block_number = block_num,
+                        "No cached trie data, falling back to full execution"
+                    );
                 }
 
-                if let Err(e) = Self::process_block(
-                    block_num,
-                    cached,
-                    collector,
-                    provider,
-                    verification_interval,
-                ) {
-                    error!(target: "base::exex", block_number = block_num, error = ?e, "Block processing failed");
-                    return;
-                }
+                debug!(
+                    target: "base::exex",
+                    block_number = block_num,
+                    "Fetching block from provider for execution",
+                );
+
+                let block = match provider
+                    .recovered_block(block_num.into(), TransactionVariant::NoHash)
+                {
+                    Ok(Some(block)) => block,
+                    Ok(None) => {
+                        error!(target: "base::exex", block_number = block_num, "Missing block in provider");
+                        return;
+                    }
+                    Err(e) => {
+                        error!(target: "base::exex", block_number = block_num, error = ?e, "Failed to fetch block from provider");
+                        return;
+                    }
+                };
+
+                let (hashed_state, trie_updates) = match collector
+                    .execute_block_with_overlay(&block, &overlay)
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        error!(target: "base::exex", block_number = block_num, error = ?e, "Block processing failed");
+                        return;
+                    }
+                };
+
+                overlay.append_executed(block.block_with_parent(), hashed_state, trie_updates);
             }
 
-            if !pending.is_empty()
-                && let Err(e) = Self::flush_pending_batch(&mut pending, collector)
+            if !overlay.is_empty()
+                && let Err(e) = collector.store_block_updates_batch(overlay.into_pending())
             {
                 error!(target: "base::exex", error = ?e, "Batched block writes failed");
                 return;
             }
 
-            info!(target: "base::exex", latest_stored = latest, target, "Batch processed, yielding");
+            info!(target: "base::exex", latest_stored = end, target, "Batch processed, yielding");
             task::yield_now().await;
         }
     }
-
-    /// Persist any queued cache-hit blocks as a single proofs-storage transaction
-    /// and clear the queue. No-op when `pending` is empty.
-    fn flush_pending_batch(
-        pending: &mut Vec<(BlockWithParent, BlockStateDiff)>,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
-    ) -> eyre::Result<()> {
-        if pending.is_empty() {
-            return Ok(());
-        }
-        collector.store_block_updates_batch(std::mem::take(pending))?;
-        Ok(())
-    }
-
-    fn process_block(
-        block_number: u64,
-        cached: Option<CachedBlockTrieData>,
-        collector: &LiveTrieCollector<'_, Node::Evm, Node::Provider, Storage>,
-        provider: &Node::Provider,
-        verification_interval: u64,
-    ) -> eyre::Result<()> {
-        let should_verify =
-            verification_interval > 0 && block_number.is_multiple_of(verification_interval);
-
-        if let Some(cached) = cached {
-            let sorted = cached.trie_data.get();
-            if !should_verify {
-                debug!(
-                    target: "base::exex",
-                    block_number,
-                    "Using pre-computed state from notification"
-                );
-
-                collector.store_block_updates(
-                    cached.block_with_parent,
-                    (*sorted.trie_updates).clone(),
-                    (*sorted.hashed_state).clone(),
-                )?;
-
-                return Ok(());
-            }
-
-            info!(
-                target: "base::exex",
-                block_number,
-                verification_interval,
-                "Periodic verification: performing full block execution despite cached data"
-            );
-        } else {
-            debug!(
-                target: "base::exex",
-                block_number,
-                "No cached trie data, falling back to full execution"
-            );
-        }
-
-        debug!(
-            target: "base::exex",
-            block_number,
-            "Fetching block from provider for execution",
-        );
-
-        let block = provider
-            .recovered_block(block_number.into(), TransactionVariant::NoHash)?
-            .ok_or_else(|| eyre::eyre!("Missing block {} in provider", block_number))?;
-
-        collector.execute_and_store_block_updates(&block)?;
-        Ok(())
-    }
-
     fn handle_notification(
         &self,
         notification: ExExNotification<Primitives>,
