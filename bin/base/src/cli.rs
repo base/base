@@ -1,9 +1,10 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use base_consensus_cli::{
     ConsensusNodeArgs, ConsensusNodeOverrides, EmbeddedConsensusNodeConfigArgs,
 };
-use base_execution_cli::ExecutionNodeArgs;
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use clap::{Args, Parser, Subcommand};
 use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
@@ -67,6 +68,10 @@ impl BaseCommand {
     mut_arg("sequencer_headers", |arg| arg.hide(true).long("__rollup-sequencer-headers-disabled"))
 )]
 pub(crate) struct RpcCommand {
+    /// Execution chain spec to use instead of the root chain selection.
+    #[arg(long = "execution-chain", value_parser = chain_value_parser)]
+    pub(crate) execution_chain: Option<Arc<BaseChainSpec>>,
+
     /// Execution node arguments.
     #[command(flatten)]
     pub(crate) execution: ExecutionNodeArgs,
@@ -79,7 +84,10 @@ pub(crate) struct RpcCommand {
 impl RpcCommand {
     /// Runs the `rpc` flavor.
     pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        let execution_chain = resolved_chain.execution_chain_spec()?;
+        let execution_chain = match self.execution_chain {
+            Some(chain) => chain,
+            None => resolved_chain.execution_chain_spec()?,
+        };
         let consensus_chain = resolved_chain.consensus_chain_args();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, self.consensus.into());
         let rollup_config = consensus_args.load_rollup_config()?;
@@ -206,6 +214,84 @@ mod tests {
 
         assert_eq!(rpc.execution.network.port, 30333);
         assert_eq!(rpc.consensus.rpc_flags.listen_port, 9546);
+    }
+
+    #[test]
+    fn parses_devnet_unified_client_args() {
+        let cli = BaseCli::parse_from([
+            "base",
+            "rpc",
+            "--chain",
+            "dev",
+            "--execution-chain",
+            "dev",
+            "--datadir=/data",
+            "--http",
+            "--http.addr=0.0.0.0",
+            "--http.port=8545",
+            "--ws",
+            "--ws.addr=0.0.0.0",
+            "--ws.port=8546",
+            "--authrpc.port=8551",
+            "--authrpc.addr=0.0.0.0",
+            "--authrpc.jwtsecret=/genesis/jwt.hex",
+            "--auth-ipc.path=/data/engine.ipc",
+            "--port=30303",
+            "--discovery.port=30303",
+            "--metrics=0.0.0.0:8090",
+            "--txpool.nolocals",
+            "--rollup.txpool-max-inflight-delegated-slots=32768",
+            "--txpool.pending-max-count=200000",
+            "--txpool.pending-max-size=512",
+            "--txpool.basefee-max-count=200000",
+            "--txpool.basefee-max-size=512",
+            "--txpool.queued-max-count=200000",
+            "--txpool.queued-max-size=512",
+            "--txpool.max-account-slots=256",
+            "--txpool.max-batch-size=1024",
+            "--rpc.txfeecap=0",
+            "--rpc.gascap=600000000",
+            "--rpc.eth-proof-window=1209600",
+            "--flashblocks-url=ws://base-builder:7111",
+            "--bootnodes=enode://4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa385b6b1b8ead809ca67454d9683fcf2ba03456d6fe2c4abe2b07f0fbdbb2f1c1@172.30.0.10:9303",
+            "--rollup.discovery.v4",
+            "--l1-eth-rpc",
+            "http://l1-el:8545",
+            "--l1-beacon",
+            "http://l1-cl:5052",
+            "--l2-config-file",
+            "/genesis/l2/rollup.json",
+            "--l1-config-file",
+            "/genesis/el/chain-config.json",
+            "--l1-slot-duration-override",
+            "4",
+            "--rpc.addr",
+            "0.0.0.0",
+            "--rpc.port",
+            "8549",
+            "--p2p.listen.tcp",
+            "8003",
+            "--p2p.listen.udp",
+            "8003",
+            "--p2p.advertise.ip",
+            "127.0.0.1",
+            "--p2p.bootnodes-file",
+            "/bootnodes/enr.txt",
+            "--p2p.scoring",
+            "Off",
+            "--l1.verifier-confs",
+            "15",
+            "-vvv",
+        ]);
+
+        assert!(matches!(cli.chain, ChainArg::File(_)));
+        let BaseCommand::Rpc(rpc) = cli.command;
+
+        assert_eq!(rpc.execution.rpc.auth_ipc_path, "/data/engine.ipc");
+        assert_eq!(rpc.execution.network.port, 30303);
+        assert!(rpc.execution_chain.is_some());
+        assert_eq!(rpc.consensus.rpc_flags.listen_port, 8549);
+        assert_eq!(rpc.consensus.p2p_flags.network.listen_tcp_port, 8003);
     }
 
     #[test]

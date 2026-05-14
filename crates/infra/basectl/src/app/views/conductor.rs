@@ -648,6 +648,20 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
         .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
         .height(1);
 
+    // ── Binary row ────────────────────────────────────────────────────────
+    let mut binary_cells = vec![
+        Cell::from("  Binary")
+            .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+    for node in nodes {
+        let (label, style) = node.binary.as_ref().map_or_else(
+            || ("   ?".to_string(), Style::default().fg(Color::DarkGray)),
+            |binary| (format!("   {binary}"), Style::default().fg(Color::Cyan)),
+        );
+        binary_cells.push(Cell::from(label).style(style));
+    }
+    let binary_row = Row::new(binary_cells).height(1);
+
     // ── CL section header ──────────────────────────────────────────────────
     let cl_section = section_row("CL", node_count);
 
@@ -809,6 +823,7 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let spacer = Row::new(vec![Cell::from("")]).height(1);
 
     let rows = vec![
+        binary_row,
         // ── CL ───────────────────────────────────────────────────────────
         spacer.clone(),
         cl_section,
