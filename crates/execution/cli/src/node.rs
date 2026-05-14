@@ -164,13 +164,13 @@ pub struct ExecutionNodeLaunchConfig {
 
 impl ExecutionNodeLaunchConfig {
     /// Enables authenticated Engine API over IPC.
-    pub fn with_auth_ipc(mut self) -> Self {
+    pub const fn with_auth_ipc(mut self) -> Self {
         self.node_config.rpc.auth_ipc = true;
         self
     }
 
     /// Returns the configured authenticated Engine API IPC path.
-    pub fn auth_ipc_path(&self) -> &str {
+    pub const fn auth_ipc_path(&self) -> &str {
         self.node_config.rpc.auth_ipc_path.as_str()
     }
 
