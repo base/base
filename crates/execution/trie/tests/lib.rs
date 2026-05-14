@@ -2131,6 +2131,54 @@ fn test_store_trie_updates_batch_persists_each_block<
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[serial]
+fn test_store_trie_updates_batch_single_item_matches_single_block_flow<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let earliest_hash = B256::repeat_byte(60);
+    storage.set_earliest_block_number(60, earliest_hash)?;
+
+    let block_61 = batch_block(61, earliest_hash);
+    storage.store_trie_updates_batch(vec![(block_61, diff_with_account(0x61, 61))])?;
+
+    let (latest_block, _) = storage.get_latest_block_number()?.expect("latest block tracked");
+    assert_eq!(latest_block, 61);
+    let mut cursor = storage.account_hashed_cursor(61)?;
+    let entry = cursor.seek(B256::repeat_byte(0x61))?.expect("account present");
+    assert_eq!(entry.1.nonce, 61);
+
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_batch_keeps_block_diffs_local<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let earliest_hash = B256::repeat_byte(80);
+    storage.set_earliest_block_number(80, earliest_hash)?;
+
+    let block_81 = batch_block(81, earliest_hash);
+    let block_82 = batch_block(82, block_81.block.hash);
+    storage.store_trie_updates_batch(vec![
+        (block_81, diff_with_account(0x81, 81)),
+        (block_82, diff_with_account(0x82, 82)),
+    ])?;
+
+    let block_82_diff = storage.fetch_trie_updates(82)?;
+    assert_eq!(block_82_diff.sorted_post_state.accounts.len(), 1);
+    assert_eq!(block_82_diff.sorted_post_state.accounts[0].0, B256::repeat_byte(0x82));
+
+    Ok(())
+}
+
+#[test_case(InMemoryProofsStorage::new(); "InMemory")]
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
 fn test_store_trie_updates_batch_empty_is_noop<S: BaseProofsStore + BaseProofsInitialStateStore>(
     storage: S,
 ) -> Result<(), BaseProofsStorageError> {
