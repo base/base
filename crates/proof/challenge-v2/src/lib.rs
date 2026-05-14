@@ -9,23 +9,32 @@
 mod metrics;
 pub use metrics::ChallengerMetrics;
 
-mod validate;
-pub use validate::{
-    AccountProofError, AccountProofVerifier, L2OutputValidator, OutputValidator, ValidationError,
-    ValidatorError, Violation, ViolationSituation,
-};
+mod game_discovery;
+pub use game_discovery::{ClassifyError, GameDiscovery, GameInfo, GameSituation};
 
-mod scanner;
-pub use scanner::{ClassifyError, GameDiscovery, GameInfo, GameSituation};
+mod account_proof;
+pub use account_proof::{AccountProofError, AccountProofVerifier};
 
-mod submit;
-pub use submit::{DisputeAction, DisputeRequest, SubmissionTask};
+mod output_validator;
+pub use output_validator::{L2OutputValidator, OutputValidator, ValidatorError};
+
+mod violation;
+pub use violation::{ValidationError, Violation, ViolationSituation};
+
+mod tee_provider;
+pub use tee_provider::{TeeProofError, TeeProofProvider, TeeProofResult};
 
 mod prove;
-pub use prove::{ProofError, TeeProofError, TeeProofProvider, TeeProofResult};
+pub use prove::ProofError;
 
-mod worker;
-pub use worker::{WorkerConfig, WorkerDeps};
+mod dispute_action;
+pub use dispute_action::{DisputeAction, DisputeRequest};
+
+mod submission;
+pub use submission::SubmissionTask;
+
+mod game_worker;
+pub use game_worker::{WorkerConfig, WorkerDeps};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

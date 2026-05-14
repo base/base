@@ -1,4 +1,4 @@
-//! ZK and TEE proving for dispute violations.
+//! Proof orchestration for dispute violations.
 //!
 //! Entry point: [`Violation::dispute_request`], which produces a
 //! [`DisputeRequest`] ready for the submission task. Decision policy:
@@ -15,7 +15,6 @@
 //!   favor without flipping the global TEE killswitch.
 
 use alloy_primitives::{B256, Bytes};
-use async_trait::async_trait;
 use base_proof_primitives::{PROOF_TYPE_ZK, ProofEncoder};
 use base_zk_client::{
     GetProofRequest, ProofJobStatus, ProofType, ProveBlockRequest, ReceiptType, ZkProofError,
@@ -25,45 +24,10 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::{DisputeAction, DisputeRequest, Violation, ViolationSituation, WorkerDeps};
-
-/// Output of a TEE proving call: the root the TEE attested to plus
-/// the raw 65-byte ECDSA signature over it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TeeProofResult {
-    /// Output root the TEE attested to.
-    pub signed_root: B256,
-    /// Raw 65-byte ECDSA signature over `signed_root` (`r || s || v`).
-    /// The encoder normalizes `v` to 27/28 before submission.
-    pub signature_bytes: Bytes,
-}
-
-/// Errors returned by [`TeeProofProvider::prove_range`].
-#[derive(Debug, Error)]
-pub enum TeeProofError {
-    /// TEE backend produced an error (transport, signing, attestation, ...).
-    #[error("TEE backend error: {0}")]
-    Backend(String),
-}
-
-/// TEE proving service abstraction.
-///
-/// Implementations sign an attestation over a range of L2 blocks
-/// and return the signed root plus signature bytes. Cheap (seconds,
-/// not hours) compared to ZK proving.
-#[async_trait]
-pub trait TeeProofProvider: Send + Sync + std::fmt::Debug {
-    /// Asks the TEE to sign an attestation over the L2 block range
-    /// `[start_block, end_block]` rooted at `l1_head`, sampling
-    /// intermediate roots at the given checkpoint interval.
-    async fn prove_range(
-        &self,
-        start_block: u64,
-        end_block: u64,
-        l1_head: B256,
-        intermediate_block_interval: u64,
-    ) -> Result<TeeProofResult, TeeProofError>;
-}
+use crate::{
+    DisputeAction, DisputeRequest, Violation, ViolationSituation, WorkerDeps,
+    tee_provider::TeeProofProvider,
+};
 
 /// Errors that can prevent [`Violation::dispute_request`] from emitting a [`DisputeRequest`].
 #[derive(Debug, Error)]
@@ -364,7 +328,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        WorkerConfig,
+        TeeProofError, WorkerConfig,
         test_utils::{MockTeeProofProvider, MockZkProofProvider},
     };
 
