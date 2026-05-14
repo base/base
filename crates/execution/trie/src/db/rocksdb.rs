@@ -16,7 +16,7 @@ use metrics::Label;
 use parking_lot::Mutex;
 use reth_db::{
     DatabaseError,
-    table::{Compress, Decode, Decompress, DupSort, Encode, Table},
+    table::{Compress, Decompress, DupSort, Encode, Table},
 };
 use reth_primitives_traits::Account;
 use reth_trie::{
@@ -48,8 +48,23 @@ use crate::{
 };
 
 type RocksDb = DBWithThreadMode<MultiThreaded>;
-type RocksdbLatestVersionResult<T> =
+type RocksDbLatestVersionResult<T> =
     Result<Option<(<T as Table>::Key, <T as Table>::Value)>, DatabaseError>;
+
+const HASH_KEY_LEN: usize = 32;
+const PACKED_NIBBLES_KEY_LEN: usize = 33;
+const BLOCK_NUMBER_KEY_LEN: usize = 8;
+
+trait RocksDbHistoryTable: Table + DupSort<SubKey = u64> {
+    /// Fixed encoded table-key length before the block-number suffix.
+    const KEY_LEN: usize;
+
+    /// Encodes the table key prefix used before the block-number suffix.
+    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8>;
+
+    /// Decodes the table key prefix used before the block-number suffix.
+    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError>;
+}
 
 /// `RocksDB` implementation of [`BaseProofsStore`].
 pub struct RocksdbProofsStorage {
@@ -325,9 +340,9 @@ impl RocksdbProofsStorage {
             .map_err(|e| DatabaseError::Other(format!("failed to open RocksDB database: {e}")))?;
 
         let mut write_options = WriteOptions::default();
-        // Proof history is expensive to reconstruct after a crash, so writes are synced before
-        // returning even though the data is derivable from the canonical chain.
-        write_options.set_sync(true);
+        // Proof history is derivable from the canonical chain, so use async WAL writes for
+        // throughput. RocksDB write batches still keep committed updates internally consistent.
+        write_options.set_sync(false);
 
         Ok(Self { db: Arc::new(db), write_options, write_lock: Mutex::new(()) })
     }
@@ -403,6 +418,7 @@ impl RocksdbProofsStorage {
     ) -> BaseProofsStorageResult<Vec<T::Key>>
     where
         T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
+        T: RocksDbHistoryTable,
         T::Key: Clone,
         I: IntoIterator,
         I::Item: IntoKV<T>,
@@ -449,6 +465,7 @@ impl RocksdbProofsStorage {
     ) -> BaseProofsStorageResult<()>
     where
         T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
+        T: RocksDbHistoryTable,
         T::Key: Clone,
         I: IntoIterator<Item = (T::Key, u64)>,
     {
@@ -466,6 +483,7 @@ impl RocksdbProofsStorage {
     ) -> BaseProofsStorageResult<Vec<Vec<u8>>>
     where
         T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
+        T: RocksDbHistoryTable,
         T::Key: Clone + Ord,
         T::Value: Decompress,
     {
@@ -529,6 +547,7 @@ impl RocksdbProofsStorage {
     ) -> BaseProofsStorageResult<Vec<T::Key>>
     where
         T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
+        T: RocksDbHistoryTable,
         Next: FnMut() -> BaseProofsStorageResult<Option<(K, VV)>>,
         I: IntoIterator<Item = (K, Option<V>)>,
         (B256, K, Option<V>): IntoKV<T>,
@@ -659,6 +678,8 @@ impl RocksdbProofsStorage {
         block_state_diff: BlockStateDiff,
     ) -> BaseProofsStorageResult<WriteCounts> {
         let block_number = block_ref.block.number;
+        // This DB read intentionally assumes `batch` has no pending `LatestBlock` update. RocksDB
+        // reads do not observe uncommitted `WriteBatch` entries.
         let latest_block_hash =
             self.get_latest_block_number_hash()?.map_or(B256::ZERO, |(_, hash)| hash);
 
@@ -1146,7 +1167,7 @@ impl RocksdbProofsStorage {
 
     fn get_latest_history_key<T>(&self) -> BaseProofsStorageResult<Option<T::Key>>
     where
-        T: Table + DupSort<SubKey = u64>,
+        T: RocksDbHistoryTable,
     {
         let cf = self.cf(T::NAME)?;
         let mut iter = self.db.iterator_cf(&cf, IteratorMode::End);
@@ -1196,14 +1217,22 @@ impl BaseProofsStore for RocksdbProofsStorage {
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
         // Standalone cursor factories intentionally create independent snapshots. Use `ro_tx` and
         // the `*_with_tx` factories when multiple cursors need one consistent view.
-        Ok(RocksdbTrieCursor::new(Arc::clone(&self.db), max_block_number, Some(hashed_address)))
+        Ok(RocksdbTrieCursor::<StorageTrieHistory>::new(
+            Arc::clone(&self.db),
+            max_block_number,
+            Some(hashed_address),
+        ))
     }
 
     fn account_trie_cursor<'tx>(
         &self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
-        Ok(RocksdbTrieCursor::new(Arc::clone(&self.db), max_block_number, None))
+        Ok(RocksdbTrieCursor::<AccountTrieHistory>::new(
+            Arc::clone(&self.db),
+            max_block_number,
+            None,
+        ))
     }
 
     fn storage_hashed_cursor<'tx>(
@@ -1230,7 +1259,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
     where
         Self: 'tx,
     {
-        Ok(RocksdbTrieCursor::new_with_snapshot(
+        Ok(RocksdbTrieCursor::<StorageTrieHistory>::new_with_snapshot(
             Arc::clone(tx),
             max_block_number,
             Some(hashed_address),
@@ -1245,7 +1274,11 @@ impl BaseProofsStore for RocksdbProofsStorage {
     where
         Self: 'tx,
     {
-        Ok(RocksdbTrieCursor::new_with_snapshot(Arc::clone(tx), max_block_number, None))
+        Ok(RocksdbTrieCursor::<AccountTrieHistory>::new_with_snapshot(
+            Arc::clone(tx),
+            max_block_number,
+            None,
+        ))
     }
 
     fn storage_hashed_cursor_with_tx<'tx>(
@@ -1720,6 +1753,7 @@ impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
 impl<T, V> RocksdbVersionedCursor<T>
 where
     T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
+    T: RocksDbHistoryTable,
     T::Key: Default,
     T::Value: Decompress,
 {
@@ -1737,7 +1771,7 @@ where
         self.snapshot.cf(T::NAME)
     }
 
-    fn latest_version_for_key(&self, key: T::Key) -> RocksdbLatestVersionResult<T> {
+    fn latest_version_for_key(&self, key: T::Key) -> RocksDbLatestVersionResult<T> {
         let cf = self.cf()?;
         let prefix = encode_history_key_prefix::<T>(&key);
         let target = encode_history_key::<T>(&key, self.max_block_number);
@@ -1840,12 +1874,25 @@ where
     }
 }
 
-impl<V, T> RocksdbTrieCursor<T>
-where
-    T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
-    T::Key: Default,
-    T::Value: Decompress,
-{
+impl RocksdbTrieCursor<AccountTrieHistory> {
+    /// Creates a `RocksDB` trie cursor.
+    pub fn new(db: Arc<RocksDb>, max_block_number: u64, hashed_address: Option<B256>) -> Self {
+        Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
+    }
+
+    const fn new_with_snapshot(
+        snapshot: Arc<RocksdbReadSnapshot>,
+        max_block_number: u64,
+        hashed_address: Option<B256>,
+    ) -> Self {
+        Self {
+            inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number),
+            hashed_address,
+        }
+    }
+}
+
+impl RocksdbTrieCursor<StorageTrieHistory> {
     /// Creates a `RocksDB` trie cursor.
     pub fn new(db: Arc<RocksDb>, max_block_number: u64, hashed_address: Option<B256>) -> Self {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
@@ -2078,8 +2125,7 @@ fn encode_table_value<T: Table>(value: &T::Value) -> Vec<u8> {
 
 fn encode_history_key<T>(key: &T::Key, block_number: u64) -> Vec<u8>
 where
-    T: Table + DupSort<SubKey = u64>,
-    T::Key: Clone,
+    T: RocksDbHistoryTable,
 {
     let mut encoded = encode_history_key_prefix::<T>(key);
     encoded.extend_from_slice(&block_number.to_be_bytes());
@@ -2088,58 +2134,30 @@ where
 
 fn encode_history_key_prefix<T>(key: &T::Key) -> Vec<u8>
 where
-    T: Table + DupSort<SubKey = u64>,
-    T::Key: Clone,
+    T: RocksDbHistoryTable,
 {
-    let table_key = encode_table_key::<T>(key.clone());
-    // Byte-stuffing is larger than length-prefixing, but it preserves the encoded table key's
-    // lexicographic order while making the variable-length key prefix-free before the block suffix.
-    // Cursor seeks and range scans rely on that ordering matching the underlying table keys.
-    let mut encoded = Vec::with_capacity(table_key.len() * 2 + 1);
-    for byte in table_key {
-        encoded.push(1);
-        encoded.push(byte);
-    }
-    encoded.push(0);
-    encoded
+    T::encode_history_key_prefix(key)
 }
 
 fn decode_history_key<T>(raw_key: &[u8]) -> Result<(T::Key, u64), DatabaseError>
 where
-    T: Table + DupSort<SubKey = u64>,
+    T: RocksDbHistoryTable,
 {
-    if raw_key.len() < 9 {
+    if raw_key.len() != T::KEY_LEN + BLOCK_NUMBER_KEY_LEN {
         return Err(DatabaseError::Decode);
     }
-    let split = raw_key.len() - 8;
-    let encoded_key = decode_history_key_prefix(&raw_key[..split])?;
-    let key = T::Key::decode(&encoded_key)?;
+    let split = T::KEY_LEN;
+    let key = T::decode_history_key_prefix(&raw_key[..split])?;
     let block_number =
         u64::from_be_bytes(raw_key[split..].try_into().map_err(|_| DatabaseError::Decode)?);
     Ok((key, block_number))
-}
-
-fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Vec<u8>, DatabaseError> {
-    let mut decoded = Vec::with_capacity(raw_key.len() / 2);
-    let mut index = 0;
-    while index < raw_key.len() {
-        match raw_key[index] {
-            0 if index + 1 == raw_key.len() => return Ok(decoded),
-            1 if index + 1 < raw_key.len() => {
-                decoded.push(raw_key[index + 1]);
-                index += 2;
-            }
-            _ => return Err(DatabaseError::Decode),
-        }
-    }
-    Err(DatabaseError::Decode)
 }
 
 fn decode_next_history_key<T>(
     iter: &mut DBIteratorWithThreadMode<'_, RocksDb>,
 ) -> Result<Option<T::Key>, DatabaseError>
 where
-    T: Table + DupSort<SubKey = u64>,
+    T: RocksDbHistoryTable,
 {
     let Some(item) = iter.next() else {
         return Ok(None);
@@ -2158,6 +2176,7 @@ where
     T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
     T::Key: Clone,
     T::Value: Decompress,
+    T: RocksDbHistoryTable,
 {
     let cf = db.cf_handle(T::NAME).ok_or_else(|| {
         DatabaseError::Other(format!("missing RocksDB column family {}", T::NAME))
@@ -2167,6 +2186,110 @@ where
         .map_err(rocksdb_error)?
         .map(|value| T::Value::decompress(&value).map_err(Into::into))
         .transpose()
+}
+
+impl RocksDbHistoryTable for AccountTrieHistory {
+    const KEY_LEN: usize = PACKED_NIBBLES_KEY_LEN;
+
+    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8> {
+        encode_packed_nibbles(&key.0).to_vec()
+    }
+
+    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
+        decode_packed_nibbles(raw_key).map(StoredNibbles)
+    }
+}
+
+impl RocksDbHistoryTable for StorageTrieHistory {
+    const KEY_LEN: usize = HASH_KEY_LEN + PACKED_NIBBLES_KEY_LEN;
+
+    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(Self::KEY_LEN);
+        encoded.extend_from_slice(key.hashed_address.as_slice());
+        encoded.extend_from_slice(&encode_packed_nibbles(&key.path.0));
+        encoded
+    }
+
+    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
+        if raw_key.len() != Self::KEY_LEN {
+            return Err(DatabaseError::Decode);
+        }
+        let hashed_address = B256::from_slice(&raw_key[..HASH_KEY_LEN]);
+        let path = StoredNibbles(decode_packed_nibbles(&raw_key[HASH_KEY_LEN..])?);
+        Ok(StorageTrieKey::new(hashed_address, path))
+    }
+}
+
+impl RocksDbHistoryTable for HashedAccountHistory {
+    const KEY_LEN: usize = HASH_KEY_LEN;
+
+    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8> {
+        key.as_slice().to_vec()
+    }
+
+    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
+        if raw_key.len() != Self::KEY_LEN {
+            return Err(DatabaseError::Decode);
+        }
+        Ok(B256::from_slice(raw_key))
+    }
+}
+
+impl RocksDbHistoryTable for HashedStorageHistory {
+    const KEY_LEN: usize = HASH_KEY_LEN * 2;
+
+    fn encode_history_key_prefix(key: &Self::Key) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(Self::KEY_LEN);
+        encoded.extend_from_slice(key.hashed_address.as_slice());
+        encoded.extend_from_slice(key.hashed_storage_key.as_slice());
+        encoded
+    }
+
+    fn decode_history_key_prefix(raw_key: &[u8]) -> Result<Self::Key, DatabaseError> {
+        if raw_key.len() != Self::KEY_LEN {
+            return Err(DatabaseError::Decode);
+        }
+        Ok(HashedStorageKey::new(
+            B256::from_slice(&raw_key[..HASH_KEY_LEN]),
+            B256::from_slice(&raw_key[HASH_KEY_LEN..]),
+        ))
+    }
+}
+
+fn encode_packed_nibbles(nibbles: &Nibbles) -> [u8; PACKED_NIBBLES_KEY_LEN] {
+    assert!(nibbles.len() <= 64, "trie paths must fit within 64 nibbles");
+
+    let mut encoded = [0; PACKED_NIBBLES_KEY_LEN];
+    nibbles.pack_to(&mut encoded[..HASH_KEY_LEN]);
+    encoded[HASH_KEY_LEN] = nibbles.len() as u8;
+    encoded
+}
+
+fn decode_packed_nibbles(raw_key: &[u8]) -> Result<Nibbles, DatabaseError> {
+    if raw_key.len() != PACKED_NIBBLES_KEY_LEN {
+        return Err(DatabaseError::Decode);
+    }
+
+    let nibble_count = raw_key[HASH_KEY_LEN] as usize;
+    if nibble_count > 64 {
+        return Err(DatabaseError::Decode);
+    }
+
+    let packed_len = nibble_count.div_ceil(2);
+    if nibble_count % 2 == 1 && raw_key[packed_len - 1] & 0x0f != 0 {
+        return Err(DatabaseError::Decode);
+    }
+    if raw_key[packed_len..HASH_KEY_LEN].iter().any(|byte| *byte != 0) {
+        return Err(DatabaseError::Decode);
+    }
+
+    let mut nibbles = Vec::with_capacity(nibble_count);
+    for index in 0..nibble_count {
+        let byte = raw_key[index / 2];
+        let nibble = if index % 2 == 0 { byte >> 4 } else { byte & 0x0f };
+        nibbles.push(nibble);
+    }
+    Ok(Nibbles::from_nibbles_unchecked(nibbles))
 }
 
 const fn encode_block_number(block_number: u64) -> [u8; 8] {
@@ -2192,4 +2315,71 @@ fn flatten_and_sort<K: Ord>(map: HashMap<K, u64>) -> Vec<(K, u64)> {
     let mut values: Vec<_> = map.into_iter().collect();
     values.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     values
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn packed_nibbles_round_trip() {
+        let nibbles = Nibbles::from_nibbles_unchecked([0, 1, 0, 2, 15, 0, 3]);
+        let encoded = encode_packed_nibbles(&nibbles);
+
+        assert_eq!(encoded[HASH_KEY_LEN], 7);
+        assert_eq!(decode_packed_nibbles(&encoded).unwrap(), nibbles);
+    }
+
+    #[test]
+    fn packed_nibbles_preserve_lexicographic_order() {
+        let keys = [
+            vec![],
+            vec![0],
+            vec![0, 0],
+            vec![0, 1],
+            vec![1],
+            vec![1, 0],
+            vec![1, 1],
+            vec![2],
+            vec![15],
+            vec![15, 15],
+        ];
+
+        for left in &keys {
+            for right in &keys {
+                let left = Nibbles::from_nibbles_unchecked(left);
+                let right = Nibbles::from_nibbles_unchecked(right);
+                assert_eq!(
+                    left.cmp(&right),
+                    encode_packed_nibbles(&left).cmp(&encode_packed_nibbles(&right))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hashed_history_keys_preserve_full_byte_ordering() {
+        let keys = [B256::ZERO, B256::repeat_byte(2), B256::repeat_byte(255)];
+
+        for left in keys {
+            for right in keys {
+                assert_eq!(
+                    left.cmp(&right),
+                    encode_history_key_prefix::<HashedAccountHistory>(&left)
+                        .cmp(&encode_history_key_prefix::<HashedAccountHistory>(&right))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn packed_nibbles_reject_invalid_padding() {
+        let mut encoded = encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1, 2, 3]));
+        encoded[HASH_KEY_LEN - 1] = 1;
+        assert!(decode_packed_nibbles(&encoded).is_err());
+
+        let mut encoded = encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1]));
+        encoded[0] |= 1;
+        assert!(decode_packed_nibbles(&encoded).is_err());
+    }
 }

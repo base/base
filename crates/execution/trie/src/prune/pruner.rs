@@ -34,6 +34,7 @@ impl<P, H> BaseProofStoragePruner<P, H> {
         retention_blocks: u64,
         prune_batch_size: u64,
     ) -> Self {
+        assert!(prune_batch_size > 0, "prune batch size must be greater than zero");
         Self { provider, block_hash_reader, retention_blocks, prune_batch_size }
     }
 
@@ -89,7 +90,7 @@ where
         while current_earliest_block < target_earliest_block {
             // Calculate the end of this batch
             let batch_end_block = cmp::min(
-                current_earliest_block.saturating_add(self.prune_batch_size.max(1)),
+                current_earliest_block.saturating_add(self.prune_batch_size),
                 target_earliest_block,
             );
 
