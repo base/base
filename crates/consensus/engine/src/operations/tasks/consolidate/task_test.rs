@@ -14,7 +14,7 @@ use base_protocol::L1BlockInfoBedrock;
 
 use crate::{
     AttributesMatch, AttributesMismatch, Engine,
-    task_queue::tasks::consolidate::task::ConsolidateInput,
+    operations::tasks::consolidate::task::ConsolidateInput,
     test_utils::{TestAttributesBuilder, TestEngineStateBuilder, test_engine_client_builder},
 };
 
@@ -43,14 +43,14 @@ fn rpc_transaction(tx: BaseTxEnvelope, block_number: u64) -> BaseTransaction {
 /// Verifies that consolidation does NOT fatally error when safe head is behind
 /// the unsafe head and the derived attributes don't match the existing block.
 ///
-/// Previously, `SealTask` compared `state.sync_state.unsafe_head()` (the chain
+/// Previously, the seal path compared `state.sync_state.unsafe_head()` (the chain
 /// tip, e.g. block 76) against `attributes.parent` (the safe head, e.g. block 34)
 /// and returned `UnsafeHeadChangedSinceBuild` with Critical severity, crashing the
 /// engine. Op-node has no such check; the build step already FCU'd the EL to the
 /// correct parent, so the comparison is invalid.
 ///
-/// After the fix the reconcile path proceeds to `seal_and_canonicalize_block`
-/// directly, matching the reference node's behaviour.
+/// After the fix the reconcile path proceeds to sealing and importing directly,
+/// matching the reference node's behaviour.
 ///
 /// This test FAILS on unfixed main and PASSES after the fix lands.
 #[tokio::test]
@@ -104,7 +104,7 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
     .await;
 
     // Execute consolidation — previously this returned Critical UnsafeHeadChangedSinceBuild.
-    // Now it proceeds to seal_and_canonicalize_block (which will fail for other
+    // Now it proceeds to seal the started payload (which will fail for other
     // reasons in a mock environment, but crucially NOT with the stale-unsafe-head
     // check that caused the crash loop).
     // The task may still error (e.g. GetPayload fails in the mock) but it must

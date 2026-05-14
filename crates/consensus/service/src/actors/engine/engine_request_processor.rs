@@ -1742,10 +1742,9 @@ mod tests {
     /// Regression test: when a `Build` request fails with an `InvalidPayload` (the EL rejects
     /// the derived attributes), the processor must dispatch exactly one
     /// [`Signal::FlushChannel`] to the derivation actor and resume servicing requests rather
-    /// than retrying the poisoned task in place. Without the
-    /// [`EngineTaskErrorSeverity::Flush`] mapping plus the head-pop in
-    /// [`base_consensus_engine::Engine::drain`], the processor would either spin on the same
-    /// FCU forever or starve every later request behind the poisoned head.
+    /// than retrying the poisoned operation in place. Without the
+    /// [`EngineTaskErrorSeverity::Flush`] mapping, the processor would either spin on the same
+    /// FCU forever or starve every later request behind the poisoned operation.
     #[tokio::test]
     async fn build_invalid_payload_dispatches_flush_signal_exactly_once() {
         let parent_block = test_block_info(0);

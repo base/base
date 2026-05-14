@@ -1,4 +1,4 @@
-//! Contains error types for the [`crate::SynchronizeTask`].
+//! Contains errors for sealing a started payload.
 
 use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::{EngineTaskError, EngineTaskErrorSeverity, InsertTaskError, SynchronizeTaskError};
 
-/// An error that occurs when running the [`crate::SealTask`].
+/// An error that occurs when sealing a started payload.
 #[derive(Debug, Error)]
 pub enum SealTaskError {
     /// Impossible to insert the payload into the engine.

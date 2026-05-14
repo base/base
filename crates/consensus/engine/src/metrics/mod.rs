@@ -20,7 +20,6 @@ base_metrics::define_metrics! {
             "delegated-forkchoice",
             "build",
             "finalize",
-            "seal",
             "get-payload"
         ]
     )]
@@ -34,7 +33,6 @@ base_metrics::define_metrics! {
             "delegated-forkchoice",
             "build",
             "finalize",
-            "seal",
             "get-payload"
         ]
     )]
@@ -60,7 +58,6 @@ base_metrics::define_metrics! {
             "delegated-forkchoice",
             "build",
             "finalize",
-            "seal",
             "get-payload"
         ]
     )]
@@ -69,8 +66,6 @@ base_metrics::define_metrics! {
         "Wall-clock duration of one EngineProcessor loop iteration: publish updates + recv wait + request handling. Upper bound on per-request wait time in the EngineActor->EngineProcessor mpsc channel — a request arriving anywhere in the previous iteration waits at most this long before recv picks it up."
     )]
     engine_processor_iteration_duration: histogram,
-    #[describe("Wall-clock duration of EngineProcessor task queue draining before receiving a new request")]
-    engine_processor_drain_duration_seconds: histogram,
     #[describe("Wall-clock duration the EngineProcessor waits for a new processing request")]
     engine_processor_recv_wait_duration_seconds: histogram,
 }
@@ -95,8 +90,6 @@ impl Metrics {
     pub const FORKCHOICE_TASK_LABEL: &str = "forkchoice-update";
     /// Build task label.
     pub const BUILD_TASK_LABEL: &str = "build";
-    /// Seal task label.
-    pub const SEAL_TASK_LABEL: &str = "seal";
     /// Get-payload task label.
     pub const GET_PAYLOAD_TASK_LABEL: &str = "get-payload";
     /// Finalize task label.

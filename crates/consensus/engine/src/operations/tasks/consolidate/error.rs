@@ -4,7 +4,6 @@ use thiserror::Error;
 
 use crate::{
     BuildTaskError, EngineTaskError, EngineTaskErrorSeverity, SealTaskError, SynchronizeTaskError,
-    task_queue::tasks::BuildAndSealError,
 };
 
 /// An error that occurs when consolidating the engine state.
@@ -25,15 +24,6 @@ pub enum ConsolidateTaskError {
     /// The consolidation forkchoice update call to the engine api failed.
     #[error(transparent)]
     ForkchoiceUpdateFailed(#[from] SynchronizeTaskError),
-}
-
-impl From<BuildAndSealError> for ConsolidateTaskError {
-    fn from(err: BuildAndSealError) -> Self {
-        match err {
-            BuildAndSealError::Build(e) => Self::BuildTaskFailed(e),
-            BuildAndSealError::Seal(e) => Self::SealTaskFailed(e),
-        }
-    }
 }
 
 impl EngineTaskError for ConsolidateTaskError {

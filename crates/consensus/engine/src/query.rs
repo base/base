@@ -40,9 +40,9 @@ pub enum EngineQueries {
     },
     /// Subscribe to engine state updates via a watch channel receiver.
     StateReceiver(Sender<tokio::sync::watch::Receiver<EngineState>>),
-    /// Development API: Subscribe to legacy task queue length updates.
+    /// Development API: Subscribe to the removed queue length shim.
     QueueLengthReceiver(Sender<tokio::sync::watch::Receiver<usize>>),
-    /// Development API: Get the current number of pending tasks in the legacy queue.
+    /// Development API: Get the removed queue length shim, which always returns `0`.
     TaskQueueLength(Sender<usize>),
 }
 

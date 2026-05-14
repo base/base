@@ -16,7 +16,6 @@ use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo}
 use thiserror::Error;
 use tokio::{sync::watch::Sender, task::yield_now};
 
-use super::build_and_seal;
 use crate::{
     BuildTaskError, ConsolidateInput, ConsolidateTaskError, DelegatedForkchoiceTaskError,
     DelegatedForkchoiceUpdate, EngineBuildError, EngineClient, EngineForkchoiceVersion,
@@ -538,14 +537,25 @@ impl Engine {
     }
 
     /// Rebuilds and seals attributes when consolidation cannot use the current unsafe block.
-    pub async fn build_and_seal_safe_payload<EngineClient_: EngineClient>(
+    pub async fn rebuild_safe_payload<EngineClient_: EngineClient>(
         state: &mut EngineState,
         client: Arc<EngineClient_>,
         config: Arc<RollupConfig>,
         attributes: &AttributesWithParent,
     ) -> Result<(), ConsolidateTaskError> {
-        build_and_seal(state, client, config, attributes.clone(), InsertPayloadSafety::Safe)
-            .await?;
+        let payload_id =
+            Self::build_with_state(state, client.as_ref(), config.as_ref(), attributes.clone())
+                .await?;
+
+        Self::seal_started_payload_with_state(
+            state,
+            client,
+            config,
+            payload_id,
+            attributes.clone(),
+            InsertPayloadSafety::Safe,
+        )
+        .await?;
 
         Ok(())
     }
@@ -608,7 +618,7 @@ impl Engine {
     ) -> Result<(), ConsolidateTaskError> {
         match input {
             ConsolidateInput::Attributes(attributes) => {
-                Self::build_and_seal_safe_payload(state, client, config, attributes).await
+                Self::rebuild_safe_payload(state, client, config, attributes).await
             }
             ConsolidateInput::BlockInfo(safe_l2) => {
                 Self::reconcile_to_safe_head(state, client, config, safe_l2).await
@@ -1026,6 +1036,147 @@ impl Engine {
         Ok(payload_envelope)
     }
 
+    /// Fetches a started payload from the execution layer and imports it into forkchoice.
+    pub async fn seal_started_payload_with_state<EngineClient_: EngineClient>(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        payload_id: PayloadId,
+        attributes: AttributesWithParent,
+        payload_safety: InsertPayloadSafety,
+    ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
+        debug!(
+            target: "engine",
+            txs = attributes.attributes().transactions.as_ref().map_or(0, |txs| txs.len()),
+            is_deposits = attributes.is_deposits_only(),
+            "Starting payload seal"
+        );
+
+        let block_import_start_time = Instant::now();
+        let payload =
+            Self::fetch_payload(config.as_ref(), client.as_ref(), payload_id, &attributes).await?;
+
+        let new_block_ref = L2BlockInfo::from_payload_and_genesis(
+            payload.execution_payload.clone(),
+            attributes.attributes().payload_attributes.parent_beacon_block_root,
+            &config.genesis,
+        )
+        .map_err(SealTaskError::FromBlock)?;
+
+        Self::insert_sealed_payload_with_state(
+            state,
+            Arc::clone(&client),
+            Arc::clone(&config),
+            payload.clone(),
+            &attributes,
+            payload_safety,
+        )
+        .await?;
+
+        let block_import_duration = block_import_start_time.elapsed();
+
+        info!(
+            target: "engine",
+            l2_number = new_block_ref.block_info.number,
+            l2_time = new_block_ref.block_info.timestamp,
+            payload_safety = payload_safety.as_label(),
+            block_import_duration = ?block_import_duration,
+            "Built and imported new block",
+        );
+
+        Ok(payload)
+    }
+
+    /// Imports a sealed payload and applies the Holocene deposits-only fallback when needed.
+    pub async fn insert_sealed_payload_with_state<EngineClient_: EngineClient>(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        payload: BaseExecutionPayloadEnvelope,
+        attributes: &AttributesWithParent,
+        payload_safety: InsertPayloadSafety,
+    ) -> Result<(), SealTaskError> {
+        match Self::insert_payload_with_state(
+            state,
+            Arc::clone(&client),
+            Arc::clone(&config),
+            payload,
+            payload_safety,
+            false,
+        )
+        .await
+        {
+            Err(InsertTaskError::UnexpectedPayloadStatus(err)) if attributes.is_deposits_only() => {
+                error!(
+                    target: "engine",
+                    error = ?err,
+                    "Critical: Deposit-only payload import failed"
+                );
+                Err(SealTaskError::DepositOnlyPayloadFailed)
+            }
+            Err(InsertTaskError::UnexpectedPayloadStatus(err))
+                if config
+                    .is_holocene_active(attributes.attributes().payload_attributes.timestamp) =>
+            {
+                warn!(
+                    target: "engine",
+                    error = ?err,
+                    "Re-attempting payload import with deposits only"
+                );
+
+                let deposits_only_attributes = attributes.as_deposits_only();
+                let payload_id = match Self::build_with_state(
+                    state,
+                    client.as_ref(),
+                    config.as_ref(),
+                    deposits_only_attributes.clone(),
+                )
+                .await
+                {
+                    Ok(payload_id) => payload_id,
+                    Err(_) => return Err(SealTaskError::DepositOnlyPayloadReattemptFailed),
+                };
+
+                match Box::pin(Self::seal_started_payload_with_state(
+                    state,
+                    client,
+                    config,
+                    payload_id,
+                    deposits_only_attributes,
+                    payload_safety,
+                ))
+                .await
+                {
+                    Ok(_) => {
+                        info!(
+                            target: "engine",
+                            "Successfully imported deposits-only payload"
+                        );
+                        Err(SealTaskError::HoloceneInvalidFlush)
+                    }
+                    Err(_) => Err(SealTaskError::DepositOnlyPayloadReattemptFailed),
+                }
+            }
+            Err(err) => {
+                error!(
+                    target: "engine",
+                    error = %err,
+                    payload_safety = payload_safety.as_label(),
+                    "Payload import failed"
+                );
+                Err(Box::new(err).into())
+            }
+            Ok(_) => {
+                info!(
+                    target: "engine",
+                    payload_safety = payload_safety.as_label(),
+                    "Successfully imported payload"
+                );
+                Ok(())
+            }
+        }
+    }
+
     /// Resets the engine by finding a plausible sync starting point via
     /// [`find_starting_forkchoice`]. The state will be updated to the starting point, and a
     /// forkchoice update will be sent directly in order to reorg the execution layer.
@@ -1064,7 +1215,7 @@ impl Engine {
         }
 
         // Broadcast the updated state so watch-channel subscribers (e.g. sync-status RPC)
-        // see the new forkchoice immediately, without waiting for a task to pass through drain().
+        // see the new forkchoice immediately.
         self.state_sender.send_replace(self.state);
 
         Metrics::engine_reset_count().increment(1);

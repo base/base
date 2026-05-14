@@ -41,7 +41,7 @@ First, a root `CancellationToken` is created. If a safe-head database path was p
 
 Second, the core channels are created. There is one `mpsc` channel of capacity 1024 for `DerivationActorRequest`, one of capacity 1024 for `EngineActorRequest`, and one `watch` channel for the unsafe L2 head (`L2BlockInfo`).
 
-Third, the engine actor is constructed. It wraps a `BaseEngineClient` together with an `Engine` task queue, an `EngineProcessor` that holds the bootstrap logic and main processing loop, and an `EngineRpcProcessor` that handles concurrent RPC queries behind a semaphore of size 16. The engine actor receives on its `mpsc::Receiver<EngineActorRequest>` and routes each request either to the processing task or to the RPC task based on the request variant.
+Third, the engine actor is constructed. It wraps a `BaseEngineClient` together with an `Engine` state owner, an `EngineProcessor` that holds the bootstrap logic and main processing loop, and an `EngineRpcProcessor` that handles concurrent RPC queries behind a semaphore of size 16. The engine actor receives on its `mpsc::Receiver<EngineActorRequest>` and routes each request either to the processing task or to the RPC task based on the request variant.
 
 Fourth, the derivation actor is created. In normal mode this is a `DerivationActor` wrapping an `OnlinePipeline` from `base-consensus-derive`. In delegation mode this is a `DelegateDerivationActor` that polls an external sync-status RPC endpoint instead of running the pipeline. Both communicate to the engine through a `QueuedDerivationEngineClient` that wraps `mpsc::Sender<EngineActorRequest>`.
 
@@ -57,13 +57,11 @@ Finally, `spawn_and_wait!` spawns all constructed actors onto the `JoinSet` and 
 
 ## Engine Actor
 
-The engine actor is the hub of the service. All other actors that need to affect the L2 execution layer send requests to it. It owns the `Engine` struct from `base-consensus-engine`, which maintains the task queue and the `EngineState` watch channel. The actor's main loop receives `EngineActorRequest` variants and routes them:
+The engine actor is the hub of the service. All other actors that need to affect the L2 execution layer send requests to it. It owns the `Engine` struct from `base-consensus-engine`, which maintains the current `EngineState` and publishes state changes through a watch channel. The actor's main loop receives `EngineActorRequest` variants and routes them:
 
 `BuildRequest` carries a `PayloadId` response channel and is forwarded to the processing task, which calls `engine_api::forkchoice_updated` with the payload attributes to begin block building and returns the resulting `PayloadId`.
 
 `GetPayloadRequest` carries attributes and a result channel; the processing task calls `engine_api::get_payload` and returns the sealed `BaseExecutionPayloadEnvelope`.
-
-`SealRequest` is similar to `GetPayloadRequest` but used in the sequencer path where the result will be gossiped and then inserted.
 
 `ProcessUnsafeL2BlockRequest` is fire-and-forget. It takes a `BaseExecutionPayloadEnvelope` received from the P2P network or follow-node delegation, calls `engine_api::new_payload`, then calls `engine_api::forkchoice_updated` to make the block the new unsafe head.
 
@@ -73,11 +71,11 @@ The engine actor is the hub of the service. All other actors that need to affect
 
 `ResetRequest` triggers a full engine reset: the processing task calls the reset procedure on the `Engine`, clears in-flight state, and sends a `ResetSignal` to the derivation actor so the pipeline rewinds to the last safe head.
 
-Engine RPC queries are handled by a separate `EngineRpcProcessor` task on a dedicated bounded channel. It handles `EngineQueries` variants — `Config`, `State`, `OutputAtBlock`, `TaskQueueLength`, `QueueLengthReceiver`, `StateReceiver` — all of which read from the engine's watch channels or perform point-in-time queries without affecting processing state.
+Engine RPC queries are handled by a separate `EngineRpcProcessor` task on a dedicated bounded channel. It handles `EngineQueries` variants — `Config`, `State`, `OutputAtBlock`, `TaskQueueLength`, `QueueLengthReceiver`, `StateReceiver` — all of which read from the engine's watch channels, return compatibility shims, or perform point-in-time queries without affecting processing state.
 
 At startup, the engine processor determines its bootstrap role. If the node is a validator it calls `bootstrap_validator()`, which seeds `unsafe_head`, `safe_head`, and `finalized_head` from the execution layer's current state without sending any forkchoice update, leaving `el_sync_complete` as false until the derivation actor signals completion. If the node is an active sequencer it calls `bootstrap_active_sequencer()`, which resets the engine at genesis or probes it with real safe/finalized heads to establish the initial forkchoice state. If the conductor-follower role is resolved it calls `bootstrap_conductor_follower()`, which probes with zeroed safe/finalized heads.
 
-After bootstrap, the processing loop drains the engine task queue on every iteration before waiting for the next request. Drain errors are classified by severity: `Critical` errors halt the actor, `Reset` errors trigger a pipeline reset, `Flush` errors flush invalid payloads from the queue, and `Temporary` errors are logged and retried.
+After bootstrap, the processing loop publishes any state changes, updates the unsafe-head watch channel, waits for the next request, and executes the requested engine operation serially. Operation errors are classified by severity: `Critical` errors halt the actor, `Reset` errors trigger a pipeline reset, `Flush` errors flush invalid payloads from derivation, and `Temporary` errors are retried by the direct engine operation when applicable.
 
 ## Derivation Actor
 

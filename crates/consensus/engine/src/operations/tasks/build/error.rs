@@ -63,10 +63,8 @@ impl EngineTaskError for BuildTaskError {
             //
             // Per the derivation spec, the attributes must be dropped and the forkchoice
             // state must be left unchanged. Surfacing this as `Flush` causes the engine
-            // processor to signal `FlushChannel` to the derivation pipeline (clearing the
-            // poisoned batch + upstream channel state) while `Engine::drain` removes this
-            // task from the head of the queue. Without this, the build task is retried
-            // in-place forever, starving every later engine request behind it.
+            // processor to signal `FlushChannel` to the derivation pipeline, clearing the
+            // poisoned batch and upstream channel state before later engine requests proceed.
             Self::EngineBuildError(EngineBuildError::InvalidPayload(_)) => {
                 EngineTaskErrorSeverity::Flush
             }
@@ -87,10 +85,9 @@ impl EngineTaskError for BuildTaskError {
 mod tests {
     use super::*;
 
-    /// `InvalidPayload` must surface `Flush` (so the engine processor flushes
-    /// the derivation channel and the poisoned task is popped from the head
-    /// of the queue) AND carry the EL's `validation_error` so operators can
-    /// identify which batch poisoned the pipeline.
+    /// `InvalidPayload` must surface `Flush` so the engine processor flushes
+    /// the derivation channel and carries the EL's `validation_error` so operators
+    /// can identify which batch poisoned the pipeline.
     #[test]
     fn invalid_payload_is_flush_and_preserves_validation_error() {
         let err = BuildTaskError::EngineBuildError(EngineBuildError::InvalidPayload(

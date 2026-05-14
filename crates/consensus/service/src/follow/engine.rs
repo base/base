@@ -5,7 +5,7 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_engine::{
     Engine, EngineClient, EngineState, EngineSyncStateUpdate, EngineTaskError,
-    EngineTaskErrorSeverity, EngineTaskExt, InsertPayloadSafety, SynchronizeTask,
+    EngineTaskErrorSeverity, InsertPayloadSafety, SynchronizeTask,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{sync::Mutex, task::yield_now};
