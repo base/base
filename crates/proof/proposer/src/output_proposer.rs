@@ -76,8 +76,7 @@ fn classify_tx_manager_error(err: TxManagerError) -> ProposerError {
     {
         return ProposerError::InvalidParentGame;
     }
-    if msg.contains(&alloy_primitives::hex::encode(invalid_signer))
-        || msg.contains(INVALID_SIGNER)
+    if msg.contains(&alloy_primitives::hex::encode(invalid_signer)) || msg.contains(INVALID_SIGNER)
     {
         return ProposerError::InvalidSigner;
     }
