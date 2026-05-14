@@ -1,8 +1,4 @@
-//! Base precompile provider integration and native precompile wiring.
-//!
-//! [`BasePrecompiles`] is a type alias for the spec-aware precompile provider.
-//! Each sub-module exposes a `*Precompile` struct with a `precompile() -> DynPrecompile` method.
-//! Registration happens in [`crate::factory::BaseEvmFactory::precompiles`], gated by fork.
+//! Native precompile wiring for the Base EVM.
 
 use crate::BaseSpecId;
 

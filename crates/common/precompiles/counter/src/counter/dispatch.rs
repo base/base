@@ -7,7 +7,6 @@ use crate::abi::ICounter;
 
 use super::Counter;
 
-/// Dispatches ABI-encoded `calldata` to the correct counter handler.
 pub fn dispatch(counter: &mut Counter, calldata: &[u8]) -> PrecompileResult {
     let ctx = StorageCtx;
     inner(counter, calldata).into_precompile_result(ctx.gas_used(), |b| b)

@@ -24,7 +24,7 @@ base-common-flz.workspace = true
 base-common-chains.workspace = true
 base-common-precompiles.workspace = true
 base-common-consensus = { workspace = true, features = ["evm"] }
-base-precompile-counter = { path = "../precompile-counter" }
+base-precompile-counter = { path = "../precompiles/counter" }
 base-precompile-storage = { path = "../precompile-storage" }
 
 # revm

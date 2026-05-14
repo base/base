@@ -1,6 +1,6 @@
 [package]
 name = "base-precompile-counter"
-description = "Counter precompile for the Base native EVM"
+description = "Counter native precompile domain for Base"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -21,8 +21,8 @@ alloy-sol-types = { workspace = true, features = ["std"] }
 revm.workspace = true
 
 # base
-base-precompile-macros  = { path = "../precompile-macros" }
-base-precompile-storage = { path = "../precompile-storage" }
+base-precompile-macros  = { path = "../../precompile-macros" }
+base-precompile-storage = { path = "../../precompile-storage" }
 
 [features]
 test-utils = []

@@ -1,8 +1,4 @@
 //! EVM entry point for the Counter native precompile.
-//!
-//! [`CounterPrecompile`] bridges the domain logic in `base-precompile-counter` to the live EVM
-//! via [`EvmPrecompileStorageProvider`] and [`StorageCtx::enter`]. It is registered fork-gated
-//! in [`crate::factory::BaseEvmFactory::precompiles`] at [`BaseUpgrade::Beryl`].
 
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, Bytes, address};
@@ -16,12 +12,8 @@ use revm::{
 /// Canonical address of the Counter precompile.
 pub const ADDRESS: Address = address!("0000000000000000000000000000000000000900");
 
-/// EF bytecode sentinel that marks a precompile address as non-empty.
-///
-/// Without deployed code, the account at `ADDRESS` is an EIP-161 empty account and
-/// Ethereum clears it (including any storage) at end-of-transaction. Setting this
-/// single-byte sentinel prevents that cleanup, exactly as `#[contract]`'s generated
-/// `__initialize()` does.
+// EIP-161 purges empty accounts (no code, balance, nonce) at end-of-transaction, which would
+// wipe precompile storage. This sentinel byte prevents that cleanup.
 const SENTINEL: &[u8] = &[0xef];
 
 /// EVM entry point for the Counter precompile.
@@ -29,7 +21,7 @@ const SENTINEL: &[u8] = &[0xef];
 pub struct CounterPrecompile;
 
 impl CounterPrecompile {
-    /// Returns a [`DynPrecompile`] that can be registered with [`PrecompilesMap`].
+    /// Returns a [`DynPrecompile`] registerable with [`PrecompilesMap`].
     pub fn precompile() -> DynPrecompile {
         DynPrecompile::new_stateful(PrecompileId::Custom("Counter".into()), Self::run)
     }
