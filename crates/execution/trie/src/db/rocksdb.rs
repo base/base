@@ -171,7 +171,7 @@ impl RocksdbReadSnapshot {
         Self { snapshot, db }
     }
 
-    fn assert_send_sync()
+    const fn assert_send_sync()
     where
         Self: Send + Sync,
     {
