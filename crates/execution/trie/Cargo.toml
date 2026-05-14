@@ -50,9 +50,9 @@ thiserror.workspace = true
 auto_impl.workspace = true
 parking_lot.workspace = true
 derive_more.workspace = true
-rocksdb.workspace = true
 eyre = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
+rocksdb = { workspace = true, features = ["snappy"] }
 
 [dev-dependencies]
 eyre.workspace = true
