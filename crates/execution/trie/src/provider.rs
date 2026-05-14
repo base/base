@@ -387,9 +387,7 @@ impl<'a, Storage: BaseProofsStore + Clone> StorageRootProvider
     for OverlayedBaseProofsStateProviderRef<'a, Storage>
 {
     fn storage_root(&self, _address: Address, _storage: HashedStorage) -> ProviderResult<B256> {
-        unreachable!(
-            "OverlayedBaseProofsStateProviderRef is sync-forward only and does not support StorageRootProvider"
-        )
+        Err(ProviderError::UnsupportedProvider)
     }
 
     fn storage_proof(
@@ -398,9 +396,7 @@ impl<'a, Storage: BaseProofsStore + Clone> StorageRootProvider
         _slot: B256,
         _storage: HashedStorage,
     ) -> ProviderResult<StorageProof> {
-        unreachable!(
-            "OverlayedBaseProofsStateProviderRef is sync-forward only and does not support StorageRootProvider"
-        )
+        Err(ProviderError::UnsupportedProvider)
     }
 
     fn storage_multiproof(
@@ -409,9 +405,7 @@ impl<'a, Storage: BaseProofsStore + Clone> StorageRootProvider
         _slots: &[B256],
         _storage: HashedStorage,
     ) -> ProviderResult<StorageMultiProof> {
-        unreachable!(
-            "OverlayedBaseProofsStateProviderRef is sync-forward only and does not support StorageRootProvider"
-        )
+        Err(ProviderError::UnsupportedProvider)
     }
 }
 
@@ -424,9 +418,7 @@ impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
         _address: Address,
         _slots: &[B256],
     ) -> ProviderResult<AccountProof> {
-        unreachable!(
-            "OverlayedBaseProofsStateProviderRef is sync-forward only and does not support StateProofProvider"
-        )
+        Err(ProviderError::UnsupportedProvider)
     }
 
     fn multiproof(
@@ -434,15 +426,11 @@ impl<'a, Storage: BaseProofsStore + Clone> StateProofProvider
         _input: TrieInput,
         _targets: MultiProofTargets,
     ) -> ProviderResult<MultiProof> {
-        unreachable!(
-            "OverlayedBaseProofsStateProviderRef is sync-forward only and does not support StateProofProvider"
-        )
+        Err(ProviderError::UnsupportedProvider)
     }
 
     fn witness(&self, _input: TrieInput, _target: HashedPostState) -> ProviderResult<Vec<Bytes>> {
-        unreachable!(
-            "OverlayedBaseProofsStateProviderRef is sync-forward only and does not support StateProofProvider"
-        )
+        Err(ProviderError::UnsupportedProvider)
     }
 }
 

@@ -144,7 +144,26 @@ where
         block: &RecoveredBlock<BlockTy<Evm::Primitives>>,
         overlay: &ProofsBatchOverlay,
     ) -> Result<(HashedPostState, TrieUpdates), BaseProofsStorageError> {
-        let parent_block_number = block.number() - 1;
+        let parent_block_number =
+            block.number().checked_sub(1).ok_or(BaseProofsStorageError::UnknownParent)?;
+        let (Some((earliest, _)), Some((latest, _))) =
+            (self.storage.get_earliest_block_number()?, self.storage.get_latest_block_number()?)
+        else {
+            return Err(BaseProofsStorageError::NoBlocksFound);
+        };
+
+        if parent_block_number < earliest {
+            return Err(BaseProofsStorageError::UnknownParent);
+        }
+
+        if overlay.is_empty() && parent_block_number > latest {
+            return Err(BaseProofsStorageError::MissingParentBlock {
+                block_number: block.number(),
+                parent_block_number,
+                latest_block_number: latest,
+            });
+        }
+
         let state_provider = OverlayedBaseProofsStateProviderRef::new(
             self.provider.state_by_block_hash(block.parent_hash())?,
             self.storage,

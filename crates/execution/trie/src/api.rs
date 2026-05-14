@@ -182,7 +182,7 @@ pub trait BaseProofsStore: Send + Sync + Debug {
     ///
     /// All blocks must form a chain (`block[i+1].parent == block[i].hash`) and the
     /// first block's parent must match the storage's current latest block hash.
-    /// On any error, no entries from the batch are persisted.
+    /// Transactional backends should ensure that no entries from the batch are persisted on error.
     ///
     /// Backends with transactional storage (e.g. MDBX) should override this to
     /// use a single transaction so the entire batch shares one commit/fsync.

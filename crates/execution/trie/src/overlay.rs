@@ -93,8 +93,8 @@ impl ProofsBatchOverlay {
 
     fn assert_next_block(&self, block: BlockWithParent) {
         if let Some(last_block) = self.last_block {
-            debug_assert_eq!(last_block.hash, block.parent);
-            debug_assert_eq!(last_block.number + 1, block.block.number);
+            assert_eq!(last_block.hash, block.parent);
+            assert_eq!(last_block.number + 1, block.block.number);
         }
     }
 }

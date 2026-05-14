@@ -524,10 +524,16 @@ where
                 return;
             }
 
-            info!(target: "base::exex", latest_stored = end, target, "Batch processed, yielding");
+            let latest_stored = storage
+                .get_latest_block_number()
+                .ok()
+                .flatten()
+                .map_or(end, |(block_number, _)| block_number);
+            info!(target: "base::exex", latest_stored, target, "Batch processed, yielding");
             task::yield_now().await;
         }
     }
+
     fn handle_notification(
         &self,
         notification: ExExNotification<Primitives>,

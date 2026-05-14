@@ -2176,6 +2176,50 @@ fn test_store_trie_updates_batch_keeps_block_diffs_local<
     Ok(())
 }
 
+#[test_case(create_mdbx_proofs_storage(); "Mdbx")]
+#[serial]
+fn test_store_trie_updates_batch_wipe_sees_prior_batch_writes<
+    S: BaseProofsStore + BaseProofsInitialStateStore,
+>(
+    storage: S,
+) -> Result<(), BaseProofsStorageError> {
+    let earliest_hash = B256::repeat_byte(90);
+    storage.set_earliest_block_number(90, earliest_hash)?;
+
+    let hashed_address = B256::repeat_byte(0x90);
+    let hashed_slot = B256::repeat_byte(0x91);
+    let mut write_state = HashedPostState::default();
+    write_state
+        .storages
+        .insert(hashed_address, HashedStorage::from_iter(false, [(hashed_slot, U256::from(91))]));
+    let mut wipe_state = HashedPostState::default();
+    wipe_state.storages.insert(hashed_address, HashedStorage::new(true));
+
+    let block_91 = batch_block(91, earliest_hash);
+    let block_92 = batch_block(92, block_91.block.hash);
+    storage.store_trie_updates_batch(vec![
+        (
+            block_91,
+            BlockStateDiff {
+                sorted_trie_updates: TrieUpdatesSorted::default(),
+                sorted_post_state: write_state.into_sorted(),
+            },
+        ),
+        (
+            block_92,
+            BlockStateDiff {
+                sorted_trie_updates: TrieUpdatesSorted::default(),
+                sorted_post_state: wipe_state.into_sorted(),
+            },
+        ),
+    ])?;
+
+    let mut cursor = storage.storage_hashed_cursor(hashed_address, 92)?;
+    assert!(cursor.seek(hashed_slot)?.is_none());
+
+    Ok(())
+}
+
 #[test_case(InMemoryProofsStorage::new(); "InMemory")]
 #[test_case(create_mdbx_proofs_storage(); "Mdbx")]
 #[serial]
