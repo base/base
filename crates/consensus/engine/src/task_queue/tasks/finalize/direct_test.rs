@@ -66,12 +66,12 @@ enum ExpectedFinalizeError {
 impl ExpectedFinalizeError {
     fn matches(&self, result: &Result<(), FinalizeTaskError>) -> bool {
         match (self, result) {
-            (Self::BlockNotSafe, Err(FinalizeTaskError::BlockNotSafe)) => true,
             (Self::BlockNotFound(expected), Err(FinalizeTaskError::BlockNotFound(actual))) => {
                 expected == actual
             }
-            (Self::FromBlock, Err(FinalizeTaskError::FromBlock(_))) => true,
-            (Self::ForkchoiceUpdateFailed, Err(FinalizeTaskError::ForkchoiceUpdateFailed(_))) => {
+            (Self::BlockNotSafe, Err(FinalizeTaskError::BlockNotSafe))
+            | (Self::FromBlock, Err(FinalizeTaskError::FromBlock(_)))
+            | (Self::ForkchoiceUpdateFailed, Err(FinalizeTaskError::ForkchoiceUpdateFailed(_))) => {
                 true
             }
             _ => false,

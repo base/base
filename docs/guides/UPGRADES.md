@@ -299,7 +299,7 @@ AZUL,
 
 ### 10. Route precompiles
 
-**File:** [`crates/common/evm/src/precompiles/provider.rs`](https://github.com/base/base/blob/main/crates/common/evm/src/precompiles/provider.rs)
+**File:** [`crates/common/evm/src/precompiles/provider.rs`](../../crates/common/evm/src/precompiles/provider.rs)
 
 If the upgrade introduces new precompiles, add a new `pub fn azul()` method on `BasePrecompiles`. If it reuses the previous set, extend the existing arm in `new_with_spec`:
 
