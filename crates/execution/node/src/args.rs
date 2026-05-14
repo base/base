@@ -199,6 +199,7 @@ impl Default for RollupArgs {
 #[cfg(test)]
 mod tests {
     use clap::{Args, Parser};
+    use rstest::rstest;
 
     use super::*;
 
@@ -330,46 +331,30 @@ mod tests {
         assert!(!args.base_protocol);
     }
 
-    #[test]
-    fn test_parse_proofs_get_proof_permits_default() {
-        let args = CommandParser::<RollupArgs>::parse_from(["reth"]).args;
-        assert_eq!(args.proofs_get_proof_permits, DEFAULT_PROOFS_GET_PROOF_PERMITS);
+    #[rstest]
+    #[case::default(vec!["reth"], DEFAULT_PROOFS_GET_PROOF_PERMITS)]
+    #[case::explicit(
+        vec!["reth", "--proofs.get-proof-permits", "64"],
+        NonZeroUsize::new(64).expect("non-zero")
+    )]
+    fn test_parse_proofs_get_proof_permits(
+        #[case] args: Vec<&str>,
+        #[case] expected_permits: NonZeroUsize,
+    ) {
+        let args = CommandParser::<RollupArgs>::parse_from(args).args;
+        assert_eq!(args.proofs_get_proof_permits, expected_permits);
     }
 
-    #[test]
-    fn test_parse_proofs_get_proof_permits() {
-        let expected_args = RollupArgs {
-            proofs_get_proof_permits: NonZeroUsize::new(64).expect("non-zero"),
-            ..Default::default()
-        };
-        let args =
-            CommandParser::<RollupArgs>::parse_from(["reth", "--proofs.get-proof-permits", "64"])
-                .args;
-        assert_eq!(args, expected_args);
-    }
-
-    #[test]
-    fn test_parse_proofs_get_proof_permits_rejects_zero() {
+    #[rstest]
+    #[case::zero("0".to_string())]
+    #[case::too_large((Semaphore::MAX_PERMITS + 1).to_string())]
+    fn test_parse_proofs_get_proof_permits_rejects_invalid(#[case] permits: String) {
         let err = match CommandParser::<RollupArgs>::try_parse_from([
             "reth",
             "--proofs.get-proof-permits",
-            "0",
+            permits.as_str(),
         ]) {
-            Ok(_) => panic!("zero permits should be rejected"),
-            Err(err) => err,
-        };
-        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
-    }
-
-    #[test]
-    fn test_parse_proofs_get_proof_permits_rejects_too_large() {
-        let oversized = (Semaphore::MAX_PERMITS + 1).to_string();
-        let err = match CommandParser::<RollupArgs>::try_parse_from([
-            "reth",
-            "--proofs.get-proof-permits",
-            oversized.as_str(),
-        ]) {
-            Ok(_) => panic!("oversized permits should be rejected"),
+            Ok(_) => panic!("invalid permits should be rejected"),
             Err(err) => err,
         };
         assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
