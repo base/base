@@ -6,6 +6,8 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use base_protocol::FromBlockError;
 use thiserror::Error;
 
+use super::checkpoint::ForkchoiceCheckpointError;
+
 /// An error that can occur during the sync start process.
 #[derive(Error, Debug)]
 pub enum SyncStartError {
@@ -17,6 +19,9 @@ pub enum SyncStartError {
     /// [`L2BlockInfo`]: base_protocol::L2BlockInfo
     #[error(transparent)]
     FromBlock(#[from] FromBlockError),
+    /// An error occurred while reading a forkchoice checkpoint.
+    #[error(transparent)]
+    ForkchoiceCheckpoint(#[from] ForkchoiceCheckpointError),
     /// A block could not be found.
     #[error("Block not found: {0}")]
     BlockNotFound(BlockId),
