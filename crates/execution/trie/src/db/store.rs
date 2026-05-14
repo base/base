@@ -157,7 +157,7 @@ impl MdbxProofsStorage {
     /// # Parameters
     /// - `block_number`: Target block number for versioning entries
     /// - `items`: **Must be sorted** by key - iterator of entries to persist
-    /// - `append_only`: `true` = MDBX_APPENDDUP fast path (caller must guarantee
+    /// - `append_mode`: `true` = MDBX_APPENDDUP fast path (caller must guarantee
     ///   subkey monotonicity, satisfied by single-block writes via the
     ///   `OutOfOrder` parent check). `false` = upsert; required for batched
     ///   cross-block writes where keys may not be lex-sorted across blocks.
@@ -166,7 +166,7 @@ impl MdbxProofsStorage {
         tx: &(impl DbTxMut + DbTx),
         block_number: T::SubKey,
         items: I,
-        append_only: bool,
+        append_mode: bool,
     ) -> BaseProofsStorageResult<Vec<T::Key>>
     where
         T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
@@ -178,7 +178,7 @@ impl MdbxProofsStorage {
         let mut keys = Vec::<T::Key>::new();
         for it in items {
             let (k, vv) = it.into_kv(block_number);
-            if append_only {
+            if append_mode {
                 cur.append_dup(k.clone(), vv)?;
             } else {
                 cur.upsert(k.clone(), &vv)?;
@@ -358,7 +358,7 @@ impl MdbxProofsStorage {
         hashed_address: B256,
         mut next: Next,
         new_entries: I,
-        append_only: bool,
+        append_mode: bool,
     ) -> BaseProofsStorageResult<Vec<T::Key>>
     where
         T: Table<Value = VersionedValue<V>> + DupSort,
@@ -381,7 +381,7 @@ impl MdbxProofsStorage {
         for (k, value) in merged {
             let key: T::Key = (hashed_address, k, Option::<V>::None).into_key();
             let vv: T::Value = VersionedValue { block_number, value: MaybeDeleted(value) };
-            if append_only {
+            if append_mode {
                 cur.append_dup(key.clone(), vv)?;
             } else {
                 cur.upsert(key.clone(), &vv)?;
@@ -455,13 +455,13 @@ impl MdbxProofsStorage {
     }
 
     /// Write trie/state history for `block_number` from `block_state_diff`. See
-    /// [`Self::persist_history_batch`] for the meaning of `append_only`.
+    /// [`Self::persist_history_batch`] for the meaning of `append_mode`.
     fn store_trie_updates_for_block(
         &self,
         tx: &<DatabaseEnv as Database>::TXMut,
         block_number: u64,
         block_state_diff: BlockStateDiff,
-        append_only: bool,
+        append_mode: bool,
     ) -> BaseProofsStorageResult<ChangeSet> {
         let BlockStateDiff { sorted_trie_updates, sorted_post_state } = block_state_diff;
 
@@ -472,13 +472,13 @@ impl MdbxProofsStorage {
             tx,
             block_number,
             sorted_trie_updates.account_nodes_ref().iter().cloned(),
-            append_only,
+            append_mode,
         )?;
         let hashed_account_keys = self.persist_history_batch(
             tx,
             block_number,
             sorted_post_state.accounts.iter().copied(),
-            append_only,
+            append_mode,
         )?;
 
         let mut storage_trie_keys = Vec::<StorageTrieKey>::with_capacity(storage_trie_len);
@@ -491,7 +491,7 @@ impl MdbxProofsStorage {
                     *hashed_address,
                     || Ok(ro.next()?),
                     nodes.storage_nodes_ref().iter().cloned(),
-                    append_only,
+                    append_mode,
                 )?;
                 storage_trie_keys.extend(keys);
                 continue;
@@ -505,7 +505,7 @@ impl MdbxProofsStorage {
                     .iter()
                     .cloned()
                     .map(|(path, node)| (*hashed_address, path, node)),
-                append_only,
+                append_mode,
             )?;
             storage_trie_keys.extend(keys);
         }
@@ -523,7 +523,7 @@ impl MdbxProofsStorage {
                         .storage_slots_ref()
                         .iter()
                         .map(|(slot, val)| (*slot, Some(StorageValue(*val)))),
-                    append_only,
+                    append_mode,
                 )?;
                 hashed_storage_keys.extend(keys);
                 continue;
@@ -535,7 +535,7 @@ impl MdbxProofsStorage {
                     .storage_slots_ref()
                     .iter()
                     .map(|(key, val)| (hashed_address, *key, Some(StorageValue(*val)))),
-                append_only,
+                append_mode,
             )?;
             hashed_storage_keys.extend(keys);
         }
@@ -599,7 +599,7 @@ impl MdbxProofsStorage {
         block_ref: BlockWithParent,
         block_state_diff: BlockStateDiff,
         expected_parent_hash: B256,
-        append_only: bool,
+        append_mode: bool,
     ) -> BaseProofsStorageResult<WriteCounts> {
         let block_number = block_ref.block.number;
 
@@ -612,7 +612,7 @@ impl MdbxProofsStorage {
         }
 
         let change_set = &self
-            .store_trie_updates_for_block(tx, block_number, block_state_diff, append_only)?;
+            .store_trie_updates_for_block(tx, block_number, block_state_diff, append_mode)?;
 
         let mut change_set_cursor = tx.new_cursor::<BlockChangeSet>()?;
         change_set_cursor.append(block_number, change_set)?;
