@@ -53,7 +53,7 @@ members = [
   "crates/builder/*",
   "crates/infra/*",
   "crates/common/*",
-  "crates/common/precompiles/*",
+  "crates/common/precompiles/counter",
   "crates/execution/*",
   "etc/tools/*",
   "devnet",

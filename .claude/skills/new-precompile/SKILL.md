@@ -16,7 +16,7 @@ A **domain** is a crate containing one or more precompiles that belong together.
 | Completely orthogonal — no shared storage, no factory coupling | New domain |
 | Unsure | New domain — merging later is cheaper than untangling coupling |
 
-**Existing domains** — check `crates/common/` for `precompile-*` crates that are not `precompile-macros` or `precompile-storage` (those are infrastructure, not domains).
+**Existing domains** — check `crates/common/precompiles/` for sub-crates that are not `base-common-precompiles` (the static EVM precompile table). Each sub-directory with a `Cargo.toml` is a domain.
 
 ---
 
@@ -41,9 +41,10 @@ Re-export from `abi/mod.rs` and `lib.rs`. If logic is shared with other precompi
 ## Step 2b — Creating a new domain
 
 ```
-crates/common/precompile/
+crates/common/precompiles/<domain>/
   Cargo.toml
-  <domain>/
+  README.md
+  src/
     lib.rs
     abi/
       mod.rs            ← re-exports all sol! types in this domain
@@ -73,11 +74,16 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
+# alloy
 alloy-primitives.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
+
+# revm
 revm.workspace = true
-base-precompile-macros  = { path = "../precompile-macros" }
-base-precompile-storage = { path = "../precompile-storage" }
+
+# base
+base-precompile-macros  = { path = "../../precompile-macros" }
+base-precompile-storage = { path = "../../precompile-storage" }
 
 [features]
 test-utils = []   # required: #[contract] uses #[cfg(feature = "test-utils")] internally
@@ -106,7 +112,7 @@ use base_precompile_macros::contract;
 
 pub const <NAME>_ADDRESS: Address = address!("0x...");
 
-// Slots are append-only — never reorder across hardforks
+// Slots are append-only — never reorder or reuse across hardforks.
 #[contract(addr = <NAME>_ADDRESS)]
 pub struct <Name> {
     // pub field: Type,   // slot 0
@@ -144,7 +150,6 @@ fn inner(pc: &mut <Name>, calldata: &[u8]) -> base_precompile_storage::Result<By
 
     match I<Name>::I<Name>Calls::abi_decode(calldata) {
         Ok(I<Name>::I<Name>Calls::myVoidFn(_)) => {
-            // no return value
             Ok(Bytes::new())
         }
         Ok(I<Name>::I<Name>Calls::myGetterFn(_)) => {
@@ -164,6 +169,8 @@ fn inner(pc: &mut <Name>, calldata: &[u8]) -> base_precompile_storage::Result<By
 > wired into `PrecompileStorageProvider`.
 
 ```rust
+//! <Name> precompile: storage layout, ABI dispatch, and NativePrecompile impl.
+
 use alloy_primitives::Address;
 use base_precompile_storage::{NativePrecompile, PrecompileStorageProvider};
 use revm::precompile::PrecompileResult;
@@ -200,8 +207,7 @@ pub use <name>::{<Name>, <NAME>_ADDRESS, dispatch};
 ## Registration
 
 Wiring a domain precompile into the live EVM requires **four concrete edits** across two crates.
-The domain crate (`base-precompile-<domain>`) never imports from `base-common-evm`; the dependency
-only flows the other way.
+The domain crate never imports from `base-common-evm`; the dependency only flows the other way.
 
 ---
 
@@ -216,10 +222,17 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, Bytes, address};
 use base_precompile_<domain>::{<Name>, dispatch};
 use base_precompile_storage::{EvmPrecompileStorageProvider, StorageCtx};
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use revm::{
+    precompile::{PrecompileId, PrecompileOutput, PrecompileResult},
+    state::Bytecode,
+};
 
 /// Canonical address of the <Name> precompile.
 pub const ADDRESS: Address = address!("<20-byte-hex>");
+
+// EIP-161 purges empty accounts (no code, balance, nonce) at end-of-transaction, which would
+// wipe precompile storage. This sentinel byte prevents that cleanup.
+const SENTINEL: &[u8] = &[0xef];
 
 /// EVM entry point for the <Name> precompile.
 #[derive(Debug, Default, Clone, Copy)]
@@ -239,6 +252,8 @@ impl <Name>Precompile {
         let calldata: Bytes = input.data.to_vec().into();
         let mut provider = EvmPrecompileStorageProvider::new(input);
         StorageCtx::enter(&mut provider, || {
+            let mut ctx = StorageCtx;
+            let _ = ctx.set_code(ADDRESS, Bytecode::new_legacy(Bytes::from_static(SENTINEL)));
             let mut pc = <Name>::new();
             dispatch(&mut pc, &calldata)
         })
@@ -249,8 +264,8 @@ impl <Name>Precompile {
 Key points:
 - `is_direct_call()` guard rejects DELEGATECALL/CALLCODE — always include it.
 - Calldata is cloned **before** `input` is consumed by `EvmPrecompileStorageProvider::new`.
-- `StorageCtx::enter` works here because `EvmPrecompileStorageProvider` is `Sized`; it sets the
-  thread-local that `#[contract]`-generated storage types read from.
+- `StorageCtx::enter` works because `EvmPrecompileStorageProvider` is `Sized`; it sets the thread-local that `#[contract]`-generated storage types read from.
+- The `SENTINEL` `set_code` call is idempotent and must come before dispatching to prevent EIP-161 from purging the precompile's storage account.
 
 ---
 
@@ -303,7 +318,13 @@ if spec.is_enabled_in(BaseUpgrade::<Fork>) {
 **File:** `crates/common/evm/Cargo.toml`
 
 ```toml
-base-precompile-<domain> = { path = "../precompile-<domain>" }
+base-precompile-<domain> = { path = "../precompiles/<domain>" }
+```
+
+Also add the domain crate explicitly to the workspace `members` in the root `Cargo.toml` (the `crates/common/*` glob is one level deep and won't pick up sub-crates):
+
+```toml
+"crates/common/precompiles/<domain>",
 ```
 
 ---
@@ -311,10 +332,12 @@ base-precompile-<domain> = { path = "../precompile-<domain>" }
 ### Checklist
 
 ```
-[ ] crates/common/evm/src/precompiles/<name>/mod.rs   created
+[ ] crates/common/precompiles/<domain>/           domain crate created
+[ ] crates/common/evm/src/precompiles/<name>/mod.rs   EVM entry point created
 [ ] crates/common/evm/src/precompiles/mod.rs          pub mod <name>; added
 [ ] crates/common/evm/src/factory.rs                  address in fork guard + import
 [ ] crates/common/evm/Cargo.toml                      domain crate dep added
+[ ] Cargo.toml                                        crates/common/precompiles/<domain> in members
 [ ] cargo check -p base-common-evm                    compiles clean
 [ ] cargo test  -p base-common-evm                    all tests pass
 ```
