@@ -588,8 +588,12 @@ impl MdbxProofsStorage {
             });
         }
 
-        let change_set =
-            &self.store_trie_updates_for_block(tx, block_number, block_state_diff, WriteMode::Append)?;
+        let change_set = &self.store_trie_updates_for_block(
+            tx,
+            block_number,
+            block_state_diff,
+            WriteMode::Append,
+        )?;
 
         let mut change_set_cursor = tx.new_cursor::<BlockChangeSet>()?;
         change_set_cursor.append(block_number, change_set)?;
