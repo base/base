@@ -29,9 +29,9 @@ pub enum TxpoolOrdering {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum ProofsHistoryDbBackend {
-    /// Store proofs history in RocksDB.
+    /// Store proofs history in `RocksDB`.
     Rocksdb,
-    /// Store proofs history in MDBX.
+    /// Store proofs history in `MDBX`.
     #[default]
     Mdbx,
 }

@@ -25,7 +25,7 @@ pub use in_memory::{
 pub mod db;
 pub use db::{
     MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor, RocksdbAccountCursor,
-    RocksdbProofsStorage, RocksdbStorageCursor, RocksdbTrieCursor,
+    RocksdbProofsStorage, RocksdbReadSnapshot, RocksdbStorageCursor, RocksdbTrieCursor,
 };
 
 /// Default on-disk proofs storage backend.
