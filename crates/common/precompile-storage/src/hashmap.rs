@@ -174,7 +174,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         let idx = self.snapshots.len();
         self.snapshots
             .push(Snapshot { internals: self.internals.clone(), events: self.events.clone() });
-        JournalCheckpoint { log_i: 0, journal_i: idx }
+        JournalCheckpoint { log_i: 0, journal_i: idx, selfdestructed_i: 0 }
     }
 
     fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) {

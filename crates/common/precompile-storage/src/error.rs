@@ -10,7 +10,7 @@ sol! {
 }
 use revm::{
     context::journaled_state::JournalLoadError,
-    precompile::{PrecompileError, PrecompileOutput, PrecompileResult},
+    precompile::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult},
 };
 
 /// Top-level error type for all Base native precompile operations.
@@ -108,8 +108,7 @@ impl BasePrecompileError {
             Self::Revert(bytes) => bytes,
             Self::Panic(kind) => Panic { code: U256::from(kind as u32) }.abi_encode().into(),
             Self::OutOfGas => {
-                // revm 32.x: OutOfGas is returned as Err, not Ok-Halt
-                return Err(PrecompileError::OutOfGas);
+                return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0));
             }
             Self::SlotOverflow => {
                 return Err(PrecompileError::Fatal("slot overflow".into()));
@@ -125,8 +124,7 @@ impl BasePrecompileError {
                 bytes.into()
             }
         };
-        // revm 32.x: revert is Ok with reverted=true
-        Ok(PrecompileOutput::new_reverted(gas, bytes))
+        Ok(PrecompileOutput::revert(gas, bytes, 0))
     }
 }
 
@@ -147,7 +145,7 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult {
         match self {
-            Ok(res) => Ok(PrecompileOutput::new(gas, encode_ok(res))),
+            Ok(res) => Ok(PrecompileOutput::new(gas, encode_ok(res), 0)),
             Err(err) => err.into_precompile_result(gas),
         }
     }
