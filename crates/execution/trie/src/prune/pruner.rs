@@ -226,6 +226,20 @@ mod tests {
         keccak256(n.to_be_bytes())
     }
 
+    #[cfg(not(feature = "metrics"))]
+    fn clone_storage(
+        storage: &BaseProofsStorage<Arc<RocksdbProofsStorage>>,
+    ) -> BaseProofsStorage<Arc<RocksdbProofsStorage>> {
+        Arc::clone(storage)
+    }
+
+    #[cfg(feature = "metrics")]
+    fn clone_storage(
+        storage: &BaseProofsStorage<Arc<RocksdbProofsStorage>>,
+    ) -> BaseProofsStorage<Arc<RocksdbProofsStorage>> {
+        storage.clone()
+    }
+
     /// Build a block-with-parent for number `n` with deterministic hash.
     fn block(n: u64, parent: B256) -> BlockWithParent {
         BlockWithParent::new(parent, NumHash::new(n, b256(n)))
@@ -434,7 +448,8 @@ mod tests {
             .withf(move |block_num| *block_num == 3)
             .returning(move |_| Ok(Some(b256(3))));
 
-        let pruner = BaseProofStoragePruner::new(store.clone(), block_hash_reader, 1, 0, 1000);
+        let pruner =
+            BaseProofStoragePruner::new(clone_storage(&store), block_hash_reader, 1, 0, 1000);
         let out = pruner.run_inner().expect("pruner ok");
         assert_eq!(out.start_block, 0);
         assert_eq!(out.end_block, 4, "pruned up to 4 (inclusive); new earliest is 4");
@@ -613,7 +628,8 @@ mod tests {
             .withf(move |block_num| *block_num == 4)
             .returning(move |_| Ok(Some(b256(4))));
 
-        let pruner = BaseProofStoragePruner::new(store.clone(), block_hash_reader, 1, 5, 1000);
+        let pruner =
+            BaseProofStoragePruner::new(clone_storage(&store), block_hash_reader, 1, 5, 1000);
         let out = pruner.run_inner().expect("ok");
         assert_eq!(out.end_block, 5);
 

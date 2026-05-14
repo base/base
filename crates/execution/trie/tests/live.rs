@@ -1,6 +1,6 @@
 //! End-to-end test of the live trie collector.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use alloy_consensus::{BlockHeader, Header, SignableTransaction, TxEip2930, constants::ETH_TO_WEI};
 use alloy_genesis::{Genesis, GenesisAccount};
@@ -27,6 +27,30 @@ use reth_provider::{
 use reth_revm::database::StateProviderDatabase;
 use secp256k1::{Keypair, Secp256k1};
 use tempfile::TempDir;
+
+#[cfg(not(feature = "metrics"))]
+fn rocksdb_storage(path: &Path) -> BaseProofsStorage<Arc<RocksdbProofsStorage>> {
+    Arc::new(RocksdbProofsStorage::new(path).expect("env"))
+}
+
+#[cfg(feature = "metrics")]
+fn rocksdb_storage(path: &Path) -> BaseProofsStorage<Arc<RocksdbProofsStorage>> {
+    Arc::new(RocksdbProofsStorage::new(path).expect("env")).into()
+}
+
+#[cfg(not(feature = "metrics"))]
+fn clone_storage(
+    storage: &BaseProofsStorage<Arc<RocksdbProofsStorage>>,
+) -> BaseProofsStorage<Arc<RocksdbProofsStorage>> {
+    Arc::clone(storage)
+}
+
+#[cfg(feature = "metrics")]
+fn clone_storage(
+    storage: &BaseProofsStorage<Arc<RocksdbProofsStorage>>,
+) -> BaseProofsStorage<Arc<RocksdbProofsStorage>> {
+    storage.clone()
+}
 
 /// Converts a secp256k1 public key to an Ethereum address.
 fn public_key_to_address(pubkey: secp256k1::PublicKey) -> Address {
@@ -252,7 +276,7 @@ where
     {
         let provider = provider_factory.db_ref();
         let tx = provider.tx()?;
-        let initialization_job = InitializationJob::new(storage.clone(), tx);
+        let initialization_job = InitializationJob::new(clone_storage(&storage), tx);
         initialization_job.run(last_block_number, last_block_hash)?;
     }
 
@@ -297,8 +321,7 @@ where
 #[test]
 fn test_execute_and_store_block_updates() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = rocksdb_storage(dir.path());
 
     // Create a keypair for signing transactions
     let secp = Secp256k1::new();
@@ -330,8 +353,7 @@ fn test_execute_and_store_block_updates() {
 #[test]
 fn test_execute_and_store_block_updates_missing_parent_block() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = rocksdb_storage(dir.path());
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -350,7 +372,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        storage.clone(),
+        clone_storage(&storage),
     )
     .unwrap();
 
@@ -384,8 +406,7 @@ fn test_execute_and_store_block_updates_missing_parent_block() {
 #[test]
 fn test_execute_and_store_block_updates_state_root_mismatch() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = rocksdb_storage(dir.path());
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -407,7 +428,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
         provider_factory.clone(),
         Arc::clone(&chain_spec),
         key_pair,
-        storage.clone(),
+        clone_storage(&storage),
     )
     .unwrap();
 
@@ -449,8 +470,7 @@ fn test_execute_and_store_block_updates_state_root_mismatch() {
 #[test]
 fn test_multiple_blocks_before_and_after_initialization() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = rocksdb_storage(dir.path());
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());
@@ -487,8 +507,7 @@ fn test_multiple_blocks_before_and_after_initialization() {
 #[test]
 fn test_blocks_with_multiple_transactions() {
     let dir = TempDir::new().unwrap();
-    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> =
-        Arc::new(RocksdbProofsStorage::new(dir.path()).expect("env")).into();
+    let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = rocksdb_storage(dir.path());
 
     let secp = Secp256k1::new();
     let key_pair = Keypair::new(&secp, &mut rand_08::thread_rng());

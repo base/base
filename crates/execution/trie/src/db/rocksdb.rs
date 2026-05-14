@@ -94,14 +94,15 @@ struct RocksdbHistoryDeleteBatch {
     hashed_storage: Vec<(<HashedStorageHistory as Table>::Key, u64)>,
 }
 
-struct RocksdbReadSnapshot {
+/// Request-scoped read snapshot for [`RocksdbProofsStorage`].
+pub struct RocksdbReadSnapshot {
     snapshot: SnapshotWithThreadMode<'static, RocksDb>,
     db: Arc<RocksDb>,
 }
 
 /// Cursor over `RocksDB` versioned history rows.
 pub struct RocksdbVersionedCursor<T: Table + DupSort> {
-    snapshot: RocksdbReadSnapshot,
+    snapshot: Arc<RocksdbReadSnapshot>,
     max_block_number: u64,
     current_key: Option<T::Key>,
     _table: PhantomData<T>,
@@ -164,6 +165,12 @@ impl RocksdbReadSnapshot {
     }
 }
 
+impl fmt::Debug for RocksdbReadSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RocksdbReadSnapshot").finish_non_exhaustive()
+    }
+}
+
 impl<T> fmt::Debug for RocksdbVersionedCursor<T>
 where
     T: Table + DupSort,
@@ -219,7 +226,7 @@ impl RocksdbReplacementState {
                 continue;
             }
 
-            let path = key.path.0.clone();
+            let path = key.path.0;
             if value.is_some() {
                 entries.insert(path, None);
             } else {
@@ -1135,6 +1142,11 @@ impl BaseProofsStore for RocksdbProofsStorage {
         = RocksdbAccountCursor
     where
         Self: 'tx;
+    type Tx = Arc<RocksdbReadSnapshot>;
+
+    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
+        Ok(Arc::new(RocksdbReadSnapshot::new(Arc::clone(&self.db))))
+    }
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
         self.get_block_number_hash(ProofWindowKey::EarliestBlock)
@@ -1172,6 +1184,60 @@ impl BaseProofsStore for RocksdbProofsStorage {
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
         Ok(RocksdbAccountCursor::new(Arc::clone(&self.db), max_block_number))
+    }
+
+    fn storage_trie_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        Ok(RocksdbTrieCursor::new_with_snapshot(
+            Arc::clone(tx),
+            max_block_number,
+            Some(hashed_address),
+        ))
+    }
+
+    fn account_trie_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        Ok(RocksdbTrieCursor::new_with_snapshot(Arc::clone(tx), max_block_number, None))
+    }
+
+    fn storage_hashed_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        hashed_address: B256,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        Ok(RocksdbStorageCursor::new_with_snapshot(
+            Arc::clone(tx),
+            max_block_number,
+            hashed_address,
+        ))
+    }
+
+    fn account_hashed_cursor_with_tx<'tx>(
+        &self,
+        tx: &'tx Self::Tx,
+        max_block_number: u64,
+    ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
+    where
+        Self: 'tx,
+    {
+        Ok(RocksdbAccountCursor::new_with_snapshot(Arc::clone(tx), max_block_number))
     }
 
     fn store_trie_updates(
@@ -1536,7 +1602,11 @@ where
 {
     /// Creates a cursor over a `RocksDB` history column family.
     pub fn new(db: Arc<RocksDb>, max_block_number: u64) -> Self {
-        let snapshot = RocksdbReadSnapshot::new(db);
+        let snapshot = Arc::new(RocksdbReadSnapshot::new(db));
+        Self::new_with_snapshot(snapshot, max_block_number)
+    }
+
+    const fn new_with_snapshot(snapshot: Arc<RocksdbReadSnapshot>, max_block_number: u64) -> Self {
         Self { snapshot, max_block_number, current_key: None, _table: PhantomData }
     }
 
@@ -1657,6 +1727,17 @@ where
     pub fn new(db: Arc<RocksDb>, max_block_number: u64, hashed_address: Option<B256>) -> Self {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
+
+    const fn new_with_snapshot(
+        snapshot: Arc<RocksdbReadSnapshot>,
+        max_block_number: u64,
+        hashed_address: Option<B256>,
+    ) -> Self {
+        Self {
+            inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number),
+            hashed_address,
+        }
+    }
 }
 
 impl TrieCursor for RocksdbTrieCursor<AccountTrieHistory> {
@@ -1763,6 +1844,17 @@ impl RocksdbStorageCursor {
     pub fn new(db: Arc<RocksDb>, max_block_number: u64, hashed_address: B256) -> Self {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
+
+    const fn new_with_snapshot(
+        snapshot: Arc<RocksdbReadSnapshot>,
+        max_block_number: u64,
+        hashed_address: B256,
+    ) -> Self {
+        Self {
+            inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number),
+            hashed_address,
+        }
+    }
 }
 
 impl HashedCursor for RocksdbStorageCursor {
@@ -1824,6 +1916,10 @@ impl RocksdbAccountCursor {
     /// Creates a `RocksDB` account cursor.
     pub fn new(db: Arc<RocksDb>, max_block_number: u64) -> Self {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number) }
+    }
+
+    const fn new_with_snapshot(snapshot: Arc<RocksdbReadSnapshot>, max_block_number: u64) -> Self {
+        Self { inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number) }
     }
 }
 
