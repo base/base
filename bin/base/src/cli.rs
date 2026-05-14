@@ -2,8 +2,10 @@ use base_cli_utils::{LogConfig, MetricsConfig};
 use clap::Parser;
 use eyre::WrapErr;
 
-use crate::commands::BaseCommand;
-use crate::config::{ChainArg, ChainResolver};
+use crate::{
+    commands::BaseCommand,
+    config::{ChainArg, ChainResolver},
+};
 
 base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
