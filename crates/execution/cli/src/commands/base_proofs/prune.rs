@@ -8,7 +8,9 @@ use base_execution_trie::{
     BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
     RocksdbProofsStorage,
 };
-use base_node_core::args::ProofsHistoryDbBackend;
+use base_node_core::{
+    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, TWELVE_HOURS_IN_BLOCKS,
+};
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
@@ -34,30 +36,22 @@ pub struct PruneCommand<C: ChainSpecParser> {
         long = "proofs-history.db",
         visible_aliases = ["proofs-history.db-backend", "proofs-db"],
         value_name = "PROOFS_HISTORY_DB",
-        default_value = "mdbx"
+        default_value = "rocksdb"
     )]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
     /// Default is 1 month of blocks based on 2 seconds block time.
     /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
+    ///
+    /// Must be greater than 12 hours of blocks based on 2 seconds block time.
     #[arg(
         long = "proofs-history.window",
-        default_value_t = 1_296_000,
-        value_name = "PROOFS_HISTORY_WINDOW"
+        default_value_t = DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
+        value_name = "PROOFS_HISTORY_WINDOW",
+        value_parser = clap::value_parser!(u64).range((TWELVE_HOURS_IN_BLOCKS + 1)..)
     )]
     pub proofs_history_window: u64,
-
-    /// Minimum distance from the current latest block that pruning may touch.
-    ///
-    /// Defaults to 12 hours of blocks based on 2 seconds block time.
-    /// 12 * 60 * 60 / 2 = `21_600`
-    #[arg(
-        long = "proofs-history.prune-finality-margin-blocks",
-        value_name = "PROOFS_HISTORY_PRUNE_FINALITY_MARGIN_BLOCKS",
-        default_value_t = 21_600
-    )]
-    pub proofs_history_prune_finality_margin_blocks: u64,
 
     /// The batch size for pruning operations.
     #[arg(
@@ -74,12 +68,11 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         self,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {
-        let PruneCommand {
+        let Self {
             env,
             storage_path,
             proofs_history_db,
             proofs_history_window,
-            proofs_history_prune_finality_margin_blocks,
             proofs_history_prune_batch_size,
         } = self;
 
@@ -105,7 +98,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
                     storage,
                     provider_factory,
                     proofs_history_window,
-                    proofs_history_prune_finality_margin_blocks,
                     proofs_history_prune_batch_size,
                 )?;
             }
@@ -119,7 +111,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
                     storage,
                     provider_factory,
                     proofs_history_window,
-                    proofs_history_prune_finality_margin_blocks,
                     proofs_history_prune_batch_size,
                 )?;
             }
@@ -131,7 +122,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         storage: BaseProofsStorage<Arc<S>>,
         hash_reader: H,
         proofs_history_window: u64,
-        proofs_history_prune_finality_margin_blocks: u64,
         proofs_history_prune_batch_size: u64,
     ) -> eyre::Result<()>
     where
@@ -151,7 +141,6 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
             storage,
             hash_reader,
             proofs_history_window,
-            proofs_history_prune_finality_margin_blocks,
             proofs_history_prune_batch_size,
         );
         pruner.run();
