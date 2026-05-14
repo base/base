@@ -1,4 +1,4 @@
-//! Contains error types for the [`crate::ConsolidateTask`].
+//! Contains error types for direct engine consolidation.
 
 use thiserror::Error;
 
@@ -7,7 +7,7 @@ use crate::{
     task_queue::tasks::{BuildAndSealError, task::EngineTaskErrorSeverity},
 };
 
-/// An error that occurs when running the [`crate::ConsolidateTask`].
+/// An error that occurs when consolidating the engine state.
 #[derive(Debug, Error)]
 pub enum ConsolidateTaskError {
     /// The unsafe L2 block is missing.

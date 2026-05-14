@@ -9,11 +9,10 @@ use derive_more::Display;
 use thiserror::Error;
 use tokio::task::yield_now;
 
-use super::{ConsolidateTask, DelegatedForkchoiceTask, FinalizeTask};
+use super::{DelegatedForkchoiceTask, FinalizeTask, SealTaskError};
 use crate::{
     BuildTaskError, ConsolidateTaskError, DelegatedForkchoiceTaskError, EngineClient, EngineState,
     FinalizeTaskError, InsertTaskError, Metrics,
-    task_queue::{SealTask, SealTaskError},
 };
 
 /// The severity of an engine task error.
@@ -110,12 +109,6 @@ impl EngineTaskError for EngineTaskErrors {
 /// [`Engine`]: crate::Engine
 #[derive(Debug, Clone)]
 pub enum EngineTask<EngineClient_: EngineClient> {
-    /// Seals the block with the given payload ID and attributes, inserting it into the execution
-    /// engine.
-    Seal(Box<SealTask<EngineClient_>>),
-    /// Performs consolidation on the engine state, reverting to payload attribute processing
-    /// via the direct build-and-seal fallback if consolidation fails.
-    Consolidate(Box<ConsolidateTask<EngineClient_>>),
     /// Applies delegated safe and finalized labels for follow mode.
     DelegatedForkchoice(Box<DelegatedForkchoiceTask<EngineClient_>>),
     /// Finalizes an L2 block
@@ -126,8 +119,6 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
     /// Executes the task without consuming it.
     async fn execute_inner(&self, state: &mut EngineState) -> Result<(), EngineTaskErrors> {
         match self {
-            Self::Seal(task) => task.execute(state).await?,
-            Self::Consolidate(task) => task.execute(state).await?,
             Self::DelegatedForkchoice(task) => task.execute(state).await?,
             Self::Finalize(task) => task.execute(state).await?,
         };
@@ -137,9 +128,7 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
 
     const fn task_metrics_label(&self) -> &'static str {
         match self {
-            Self::Consolidate(_) => Metrics::CONSOLIDATE_TASK_LABEL,
             Self::DelegatedForkchoice(_) => Metrics::DELEGATED_FORKCHOICE_TASK_LABEL,
-            Self::Seal(_) => Metrics::SEAL_TASK_LABEL,
             Self::Finalize(_) => Metrics::FINALIZE_TASK_LABEL,
         }
     }
@@ -149,9 +138,7 @@ impl<EngineClient_: EngineClient> PartialEq for EngineTask<EngineClient_> {
     fn eq(&self, other: &Self) -> bool {
         matches!(
             (self, other),
-            (Self::Seal(_), Self::Seal(_))
-                | (Self::Consolidate(_), Self::Consolidate(_))
-                | (Self::DelegatedForkchoice(_), Self::DelegatedForkchoice(_))
+            (Self::DelegatedForkchoice(_), Self::DelegatedForkchoice(_))
                 | (Self::Finalize(_), Self::Finalize(_))
         )
     }
@@ -167,35 +154,19 @@ impl<EngineClient_: EngineClient> PartialOrd for EngineTask<EngineClient_> {
 
 impl<EngineClient_: EngineClient> Ord for EngineTask<EngineClient_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Order (descending): Seal -> Consolidate -> Finalize
+        // Order (descending): Delegated forkchoice -> Finalize
         //
         // https://specs.base.org/protocol/consensus/derivation#forkchoice-synchronization
         //
-        // - Seal tasks are prioritized above all queued tasks to give priority to the sequencer.
-        // - Consolidate tasks are prioritized over Finalize tasks, as they advance the safe chain
-        //   via derivation.
+        // - Delegated forkchoice tasks are prioritized over Finalize tasks, as they advance the
+        //   safe chain via derivation.
         // - Finalize tasks have the lowest priority, as they only update finalized status.
         match (self, other) {
             // Same variant cases
-            (Self::Consolidate(_), Self::Consolidate(_))
-            | (Self::DelegatedForkchoice(_), Self::DelegatedForkchoice(_))
-            | (Self::Seal(_), Self::Seal(_))
+            (Self::DelegatedForkchoice(_), Self::DelegatedForkchoice(_))
             | (Self::Finalize(_), Self::Finalize(_)) => Ordering::Equal,
-
-            // Seal tasks are prioritized over all other queued tasks.
-            (Self::Seal(_), _) => Ordering::Greater,
-            (_, Self::Seal(_)) => Ordering::Less,
-
-            // Consolidate-style tasks are prioritized over Finalize tasks.
-            (Self::Consolidate(_) | Self::DelegatedForkchoice(_), Self::Finalize(_)) => {
-                Ordering::Greater
-            }
-            (Self::Finalize(_), Self::Consolidate(_) | Self::DelegatedForkchoice(_)) => {
-                Ordering::Less
-            }
-
-            // Consolidate and delegated forkchoice share equal priority.
-            (Self::Consolidate(_) | Self::DelegatedForkchoice(_), _) => Ordering::Equal,
+            (Self::DelegatedForkchoice(_), Self::Finalize(_)) => Ordering::Greater,
+            (Self::Finalize(_), Self::DelegatedForkchoice(_)) => Ordering::Less,
         }
     }
 }

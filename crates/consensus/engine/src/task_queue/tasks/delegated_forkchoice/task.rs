@@ -8,7 +8,7 @@ use base_protocol::L2BlockInfo;
 use derive_more::Constructor;
 
 use crate::{
-    ConsolidateInput, ConsolidateTask, DelegatedForkchoiceTaskError, EngineClient, EngineState,
+    ConsolidateInput, DelegatedForkchoiceTaskError, Engine, EngineClient, EngineState,
     EngineTaskExt, FinalizeTask,
 };
 
@@ -38,12 +38,12 @@ impl<EngineClient_: EngineClient> EngineTaskExt for DelegatedForkchoiceTask<Engi
     type Error = DelegatedForkchoiceTaskError;
 
     async fn execute(&self, state: &mut EngineState) -> Result<(), Self::Error> {
-        ConsolidateTask::new(
+        Engine::<EngineClient_>::consolidate_with_state(
+            state,
             Arc::clone(&self.client),
             Arc::clone(&self.cfg),
             ConsolidateInput::BlockInfo(self.update.safe_l2),
         )
-        .execute(state)
         .await?;
 
         let actual_safe = state.sync_state.safe_head().block_info.number;

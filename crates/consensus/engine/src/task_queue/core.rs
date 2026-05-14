@@ -16,13 +16,13 @@ use base_protocol::{AttributesWithParent, BaseBlockConversionError, L2BlockInfo}
 use thiserror::Error;
 use tokio::{sync::watch::Sender, task::yield_now};
 
-use super::EngineTaskExt;
+use super::{EngineTaskExt, build_and_seal};
 use crate::{
-    BuildTaskError, EngineBuildError, EngineClient, EngineForkchoiceVersion,
-    EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-    EngineTaskErrorSeverity, InsertPayloadSafety, InsertTaskError, InsertTaskResult, Metrics,
-    SealTaskError, SyncStartError, SynchronizeTask, SynchronizeTaskError, find_starting_forkchoice,
-    task_queue::EngineTaskErrors,
+    BuildTaskError, ConsolidateInput, ConsolidateTaskError, EngineBuildError, EngineClient,
+    EngineForkchoiceVersion, EngineGetPayloadVersion, EngineState, EngineSyncStateUpdate,
+    EngineTask, EngineTaskError, EngineTaskErrorSeverity, InsertPayloadSafety, InsertTaskError,
+    InsertTaskResult, Metrics, SealTaskError, SyncStartError, SynchronizeTask,
+    SynchronizeTaskError, find_starting_forkchoice, task_queue::EngineTaskErrors,
 };
 
 /// The [`Engine`] task queue.
@@ -418,6 +418,276 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     /// Checks the response of the `engine_newPayload` call.
     pub const fn check_new_payload_status(status: &PayloadStatusEnum) -> bool {
         matches!(status, PayloadStatusEnum::Valid | PayloadStatusEnum::Syncing)
+    }
+
+    /// Consolidates the safe head directly against the execution layer.
+    pub async fn consolidate(
+        &mut self,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        input: ConsolidateInput,
+    ) -> Result<(), ConsolidateTaskError> {
+        let _task_timer =
+            base_metrics::timed!(Metrics::engine_task_duration(Metrics::CONSOLIDATE_TASK_LABEL));
+
+        loop {
+            match Self::consolidate_with_state(
+                &mut self.state,
+                Arc::clone(&client),
+                Arc::clone(&config),
+                input.clone(),
+            )
+            .await
+            {
+                Ok(()) => {
+                    self.state_sender.send_replace(self.state);
+                    Metrics::engine_task_count(Metrics::CONSOLIDATE_TASK_LABEL).increment(1);
+                    return Ok(());
+                }
+                Err(err) => {
+                    let severity = err.severity();
+                    Metrics::engine_task_failure(
+                        Metrics::CONSOLIDATE_TASK_LABEL,
+                        severity.as_label(),
+                    )
+                    .increment(1);
+
+                    match severity {
+                        EngineTaskErrorSeverity::Temporary => {
+                            trace!(target: "engine", error = %err, "Temporary engine error");
+                            yield_now().await;
+                        }
+                        EngineTaskErrorSeverity::Critical => {
+                            error!(target: "engine", error = %err, "Critical engine error");
+                            return Err(err);
+                        }
+                        EngineTaskErrorSeverity::Reset => {
+                            warn!(target: "engine", "Engine requested derivation reset");
+                            return Err(err);
+                        }
+                        EngineTaskErrorSeverity::Flush => {
+                            warn!(target: "engine", "Engine requested derivation flush");
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Consolidates the safe head using the provided engine state.
+    pub async fn consolidate_with_state(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        input: ConsolidateInput,
+    ) -> Result<(), ConsolidateTaskError> {
+        // Behavior depends on how the safe head is provided:
+        //
+        // - `Attributes`: The safe head is advanced through the normal derivation flow, where the
+        //   DerivationActor and EngineActor coordinate both safe and unsafe heads. In this case, we
+        //   consolidate as long as the unsafe head has not fallen behind.
+        //
+        // - `BlockInfo`: The safe head is injected externally by the DerivationActor while
+        //   delegating derivation, and is not coordinated with the EngineActor's safe/unsafe heads.
+        //   If the injected safe head is ahead of the EngineActor's unsafe head, we reconcile the
+        //   unsafe chain up to the safe head instead of consolidating.
+        let safe_head_number = match &input {
+            ConsolidateInput::Attributes { .. } => state.sync_state.safe_head().block_info.number,
+            ConsolidateInput::BlockInfo(safe_block_info) => safe_block_info.block_info.number,
+        };
+        if safe_head_number < state.sync_state.unsafe_head().block_info.number {
+            Self::consolidate_safe_head(state, client, config, input).await
+        } else {
+            Self::reconcile_unsafe_to_safe(state, client, config, &input).await
+        }
+    }
+
+    /// Rebuilds and seals attributes when consolidation cannot use the current unsafe block.
+    pub async fn build_and_seal_safe_payload(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        attributes: &AttributesWithParent,
+    ) -> Result<(), ConsolidateTaskError> {
+        build_and_seal(state, client, config, attributes.clone(), InsertPayloadSafety::Safe)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Reconciles the engine unsafe, local safe, and safe heads to an externally supplied safe head.
+    pub async fn reconcile_to_safe_head(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        safe_l2: &L2BlockInfo,
+    ) -> Result<(), ConsolidateTaskError> {
+        warn!(
+            target: "engine",
+            safe_l2 = %safe_l2,
+            "Apply safe head"
+        );
+
+        let fcu_start = Instant::now();
+
+        // We intentionally set unsafe_head to safe_l2 to ensure the engine observes a
+        // self-consistent head state. This is required to correctly handle reorgs (where unsafe
+        // may be ahead on a non-canonical fork) and to trigger EL sync when the local unsafe head
+        // lags behind the safe head.
+        SynchronizeTask::new(
+            client,
+            config,
+            EngineSyncStateUpdate {
+                unsafe_head: Some(*safe_l2),
+                local_safe_head: Some(*safe_l2),
+                safe_head: Some(*safe_l2),
+                ..Default::default()
+            },
+        )
+        .execute(state)
+        .await
+        .map_err(|e| {
+            warn!(target: "engine", error = ?e, "Apply safe head failed");
+            e
+        })?;
+
+        let fcu_duration = fcu_start.elapsed();
+
+        info!(
+            target: "engine",
+            hash = %safe_l2.block_info.hash,
+            number = safe_l2.block_info.number,
+            fcu_duration = ?fcu_duration,
+            "Updated safe head via follow safe"
+        );
+
+        Ok(())
+    }
+
+    /// Reconciles the unsafe chain to the safe input when direct consolidation cannot be used.
+    pub async fn reconcile_unsafe_to_safe(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        input: &ConsolidateInput,
+    ) -> Result<(), ConsolidateTaskError> {
+        match input {
+            ConsolidateInput::Attributes(attributes) => {
+                Self::build_and_seal_safe_payload(state, client, config, attributes).await
+            }
+            ConsolidateInput::BlockInfo(safe_l2) => {
+                Self::reconcile_to_safe_head(state, client, config, safe_l2).await
+            }
+        }
+    }
+
+    /// Consolidates the safe head by checking the current unsafe block against the input.
+    pub async fn consolidate_safe_head(
+        state: &mut EngineState,
+        client: Arc<EngineClient_>,
+        config: Arc<RollupConfig>,
+        input: ConsolidateInput,
+    ) -> Result<(), ConsolidateTaskError> {
+        let global_start = Instant::now();
+
+        let block_num = input.l2_block_number();
+        let fetch_start = Instant::now();
+        let block = match client.l2_block_by_label(block_num.into()).await {
+            Ok(Some(block)) => block,
+            Ok(None) => {
+                warn!(target: "engine", block_num, "Received `None` block");
+                return Err(ConsolidateTaskError::MissingUnsafeL2Block(block_num));
+            }
+            Err(_) => {
+                warn!(target: "engine", "Failed to fetch unsafe l2 block for consolidation");
+                return Err(ConsolidateTaskError::FailedToFetchUnsafeL2Block);
+            }
+        };
+        let block_fetch_duration = fetch_start.elapsed();
+        let block_hash = block.header.hash;
+
+        if input.is_consistent_with_block(&config, &block) {
+            trace!(
+                target: "engine",
+                input = ?input,
+                block_hash = %block_hash,
+                "Consolidating engine state",
+            );
+            match L2BlockInfo::from_block_and_genesis(
+                &block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
+                &config.genesis,
+            ) {
+                // Only issue a forkchoice update if the attributes are the last in the span
+                // batch. This is an optimization to avoid sending a FCU call for every block in
+                // the span batch.
+                Ok(block_info) if !input.is_attributes_last_in_span() => {
+                    let total_duration = global_start.elapsed();
+
+                    state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
+                        local_safe_head: Some(block_info),
+                        safe_head: Some(block_info),
+                        ..Default::default()
+                    });
+
+                    info!(
+                        target: "engine",
+                        hash = %block_info.block_info.hash,
+                        number = block_info.block_info.number,
+                        ?total_duration,
+                        ?block_fetch_duration,
+                        "Updated safe head via L1 consolidation"
+                    );
+
+                    return Ok(());
+                }
+                Ok(block_info) => {
+                    let fcu_start = Instant::now();
+
+                    SynchronizeTask::new(
+                        Arc::clone(&client),
+                        Arc::clone(&config),
+                        EngineSyncStateUpdate {
+                            local_safe_head: Some(block_info),
+                            safe_head: Some(block_info),
+                            ..Default::default()
+                        },
+                    )
+                    .execute(state)
+                    .await
+                    .map_err(|e| {
+                        warn!(target: "engine", error = ?e, "Consolidation failed");
+                        e
+                    })?;
+
+                    let fcu_duration = fcu_start.elapsed();
+                    let total_duration = global_start.elapsed();
+
+                    info!(
+                        target: "engine",
+                        hash = %block_info.block_info.hash,
+                        number = block_info.block_info.number,
+                        ?total_duration,
+                        ?block_fetch_duration,
+                        fcu_duration = ?fcu_duration,
+                        "Updated safe head via L1 consolidation"
+                    );
+
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(target: "engine", error = ?e, "Failed to construct L2BlockInfo, proceeding to build task");
+                }
+            }
+        }
+
+        debug!(
+            target: "engine",
+            input = ?input,
+            block_hash = %block_hash,
+            "ConsolidateInput mismatch! Initiating reorg",
+        );
+        Self::reconcile_unsafe_to_safe(state, client, config, &input).await
     }
 
     /// Validates a forkchoice update status returned while starting a build.

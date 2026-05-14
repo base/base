@@ -18,7 +18,7 @@ mod seal;
 pub use seal::{SealTask, SealTaskError};
 
 mod consolidate;
-pub use consolidate::{ConsolidateInput, ConsolidateTask, ConsolidateTaskError};
+pub use consolidate::{ConsolidateInput, ConsolidateTaskError};
 
 mod delegated_forkchoice;
 pub use delegated_forkchoice::{

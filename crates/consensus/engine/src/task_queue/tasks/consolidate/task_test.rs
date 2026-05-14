@@ -1,4 +1,4 @@
-//! Tests for `ConsolidateTask::execute`
+//! Tests for direct engine consolidation.
 
 use std::sync::Arc;
 
@@ -13,7 +13,7 @@ use base_common_rpc_types::Transaction as BaseTransaction;
 use base_protocol::L1BlockInfoBedrock;
 
 use crate::{
-    AttributesMatch, AttributesMismatch, ConsolidateTask, EngineTaskExt,
+    AttributesMatch, AttributesMismatch, Engine,
     task_queue::tasks::consolidate::task::ConsolidateInput,
     test_utils::{TestAttributesBuilder, TestEngineStateBuilder, test_engine_client_builder},
 };
@@ -94,18 +94,18 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
             .build(),
     );
 
-    let task = ConsolidateTask::new(
+    let result = Engine::consolidate_with_state(
+        &mut state,
         client,
         Arc::new(RollupConfig::default()),
         ConsolidateInput::from(attributes),
-    );
+    )
+    .await;
 
-    // Execute — previously this returned Critical UnsafeHeadChangedSinceBuild.
+    // Execute consolidation — previously this returned Critical UnsafeHeadChangedSinceBuild.
     // Now it proceeds to seal_and_canonicalize_block (which will fail for other
     // reasons in a mock environment, but crucially NOT with the stale-unsafe-head
     // check that caused the crash loop).
-    let result = task.execute(&mut state).await;
-
     // The task may still error (e.g. GetPayload fails in the mock) but it must
     // NOT be the stale-unsafe-head error that caused the crash loop.
     // The Display string for SealTaskError::UnsafeHeadChangedSinceBuild is
@@ -160,9 +160,13 @@ async fn consolidate_rejects_attribute_transaction_with_trailing_bytes() {
             .with_l2_block_by_label(BlockNumberOrTag::Number(block_number), unsafe_block)
             .build(),
     );
-    let task = ConsolidateTask::new(client, Arc::new(cfg), ConsolidateInput::from(attributes));
-
-    let result = task.execute(&mut state).await;
+    let result = Engine::consolidate_with_state(
+        &mut state,
+        client,
+        Arc::new(cfg),
+        ConsolidateInput::from(attributes),
+    )
+    .await;
 
     assert!(result.is_err());
     assert_eq!(state.sync_state.safe_head(), original_safe_head);

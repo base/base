@@ -5,8 +5,8 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    ConsolidateTask, DelegatedForkchoiceTask, Engine, EngineClient, EngineSyncStateUpdate,
-    EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask,
+    DelegatedForkchoiceTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
+    EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask,
     Metrics as EngineMetrics, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
@@ -690,12 +690,18 @@ where
                         })?;
                     }
                     EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
-                        let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            safe_signal,
-                        )));
-                        self.engine.enqueue(task);
+                        if let Err(err) = self
+                            .engine
+                            .consolidate(
+                                Arc::clone(&self.client),
+                                Arc::clone(&self.rollup),
+                                safe_signal,
+                            )
+                            .await
+                        {
+                            self.handle_engine_task_error(EngineTaskErrors::Consolidate(err))
+                                .await?;
+                        }
                     }
                     EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(update) => {
                         let task = EngineTask::DelegatedForkchoice(Box::new(
