@@ -1,0 +1,57 @@
+[package]
+name = "base-action-fixtures"
+description = "Typed real-chain fixtures and capture tooling for Base action tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "base-action-fixture-capture"
+path = "bin/capture.rs"
+
+[dependencies]
+# alloy
+alloy-rlp = { workspace = true, features = ["std"] }
+alloy-eips = { workspace = true, features = ["serde", "std"] }
+alloy-consensus = { workspace = true, features = ["serde", "std"] }
+alloy-primitives = { workspace = true, features = ["serde", "std"] }
+alloy-rpc-types-eth = { workspace = true, features = ["serde", "std"] }
+
+# base
+base-action-harness.workspace = true
+base-common-chains = { workspace = true, features = ["std"] }
+base-common-consensus = { workspace = true, features = ["std"] }
+base-common-rpc-types = { workspace = true, features = ["std"] }
+base-common-genesis = { workspace = true, features = ["serde", "std"] }
+base-consensus-derive.workspace = true
+base-protocol = { workspace = true, features = ["serde", "std"] }
+
+# chain config
+alloy-genesis = { workspace = true, features = ["std"] }
+
+# serde
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
+
+# cli
+clap = { workspace = true, features = ["derive", "env", "std"] }
+
+# rpc
+reqwest = { workspace = true, features = ["json"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+# misc
+toml = { workspace = true, features = ["display", "parse", "serde"] }
+tracing = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+dotenvy.workspace = true
+futures = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true

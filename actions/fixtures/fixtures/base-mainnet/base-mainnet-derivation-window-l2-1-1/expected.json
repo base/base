@@ -1,0 +1,19 @@
+{
+  "safeHead": {
+    "number": 1,
+    "hash": "0x07eee59d552f482e0f350933b8e96f824aa0bfa28267de53dcb0ddbe868a4bf9"
+  },
+  "derivedPayloads": [
+    {
+      "number": 1,
+      "blockHash": "0x07eee59d552f482e0f350933b8e96f824aa0bfa28267de53dcb0ddbe868a4bf9",
+      "stateRoot": "0xe3e10cb3963f6b88b7ba14cc76c34de65308fc0524dca48410ee53df2a43700b"
+    }
+  ],
+  "stateRoots": [
+    {
+      "number": 1,
+      "stateRoot": "0xe3e10cb3963f6b88b7ba14cc76c34de65308fc0524dca48410ee53df2a43700b"
+    }
+  ]
+}

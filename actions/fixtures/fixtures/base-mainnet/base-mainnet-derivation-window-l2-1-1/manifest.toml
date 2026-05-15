@@ -1,0 +1,21 @@
+schema-version = 1
+name = "base-mainnet-derivation-window"
+network = "base-mainnet"
+kind = "derivation"
+source = "rpc-capture"
+
+[l1-start]
+number = 17481768
+hash = "0x5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"
+
+[l1-end]
+number = 17485369
+hash = "0x00df05eb32b9452b8bf71ab0be484a7a00e6d1b565b2b66c9919acb14d7e0086"
+
+[l2-start]
+number = 1
+hash = "0x07eee59d552f482e0f350933b8e96f824aa0bfa28267de53dcb0ddbe868a4bf9"
+
+[l2-end]
+number = 1
+hash = "0x07eee59d552f482e0f350933b8e96f824aa0bfa28267de53dcb0ddbe868a4bf9"

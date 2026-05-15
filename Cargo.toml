@@ -259,6 +259,7 @@ base-proof-succinct-ethereum-host-utils = { path = "crates/proof/succinct/utils/
 base-proof-succinct-ethereum-client-utils = { path = "crates/proof/succinct/utils/ethereum/client" }
 
 # Actions
+base-action-fixtures = { path = "actions/fixtures" }
 base-action-harness = { path = "actions/harness" }
 
 # Batcher

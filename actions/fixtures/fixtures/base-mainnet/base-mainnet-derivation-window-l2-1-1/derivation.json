@@ -1,0 +1,28 @@
+{
+  "safeHead": {
+    "hash": "0xf712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd",
+    "number": 0,
+    "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "timestamp": 1686789347,
+    "l1origin": {
+      "number": 17481768,
+      "hash": "0x5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"
+    },
+    "sequenceNumber": 0
+  },
+  "systemConfig": {
+    "batcherAddr": "0x5050f69a9786f081509234f1a7f4684b5e5b76c9",
+    "overhead": "0x00000000000000000000000000000000000000000000000000000000000000bc",
+    "scalar": "0x00000000000000000000000000000000000000000000000000000000000a6fe0",
+    "gasLimit": 30000000,
+    "baseFeeScalar": null,
+    "blobBaseFeeScalar": null,
+    "eip1559Denominator": null,
+    "eip1559Elasticity": null,
+    "operatorFeeScalar": null,
+    "operatorFeeConstant": null,
+    "minBaseFee": null,
+    "daFootprintGasScalar": null
+  },
+  "l2History": []
+}

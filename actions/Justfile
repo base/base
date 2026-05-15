@@ -8,24 +8,32 @@ default:
 
 # Run all action tests
 test:
-    cargo nextest run -p base-action-harness
+    cargo nextest run -p base-action-harness -p base-action-fixtures
 
 # Run all action tests with the CI profile
 test-ci:
-    cargo nextest run -P ci --locked -p base-action-harness --cargo-profile ci
+    cargo nextest run -P ci --locked -p base-action-harness -p base-action-fixtures --cargo-profile ci
 
 # Run action tests with output shown (useful when debugging a failing test)
 test-verbose:
-    cargo nextest run -p base-action-harness --no-capture
+    cargo nextest run -p base-action-harness -p base-action-fixtures --no-capture
 
-# Check the action harness crate without running tests
+# Run the fixture capture command.
+#
+# Defaults are read from actions/fixtures/.env when present. Extra CLI args are
+# forwarded to the capture binary, for example:
+#   just actions fixtures --l2-start 1 --l2-end 1
+fixtures *args:
+    cargo run -p base-action-fixtures --bin base-action-fixture-capture -- {{args}}
+
+# Check the action crates without running tests
 check:
-    cargo check -p base-action-harness
+    cargo check -p base-action-harness -p base-action-fixtures
 
-# Clippy the action harness crate
+# Clippy the action crates
 lint:
-    cargo clippy -p base-action-harness --all-targets -- -D warnings
+    cargo clippy -p base-action-harness -p base-action-fixtures --all-targets -- -D warnings
 
-# Clippy the action harness crate with the CI profile
+# Clippy the action crates with the CI profile
 lint-ci:
-    cargo clippy --locked -p base-action-harness --all-targets --profile ci -- -D warnings
+    cargo clippy --locked -p base-action-harness -p base-action-fixtures --all-targets --profile ci -- -D warnings

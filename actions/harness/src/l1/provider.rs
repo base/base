@@ -27,17 +27,17 @@ impl SharedL1Chain {
         self.0.lock().expect("chain lock poisoned").push(block);
     }
 
-    /// Truncate the chain to retain only blocks `0..=number`.
+    /// Truncate the chain to retain only blocks with numbers up to `number`.
     ///
     /// Use this after an L1 reorg to remove orphaned blocks from the shared
     /// view before pushing replacement blocks mined on the new fork.
     pub fn truncate_to(&self, number: u64) {
-        self.0.lock().expect("chain lock poisoned").truncate((number + 1) as usize);
+        self.0.lock().expect("chain lock poisoned").retain(|block| block.number() <= number);
     }
 
     /// Look up a block by number, returning a clone if it exists.
     pub fn get_block(&self, number: u64) -> Option<L1Block> {
-        self.0.lock().expect("chain lock poisoned").get(number as usize).cloned()
+        self.0.lock().expect("chain lock poisoned").iter().find(|b| b.number() == number).cloned()
     }
 
     /// Return the tip (latest) block, or `None` if the chain is empty.
@@ -123,7 +123,8 @@ impl ChainProvider for ActionL1ChainProvider {
     async fn block_info_by_number(&mut self, number: u64) -> Result<BlockInfo, Self::Error> {
         self.chain.with(|blocks| {
             blocks
-                .get(number as usize)
+                .iter()
+                .find(|b| b.number() == number)
                 .map(block_info_from)
                 .ok_or(L1ProviderError::BlockNotFound(number))
         })

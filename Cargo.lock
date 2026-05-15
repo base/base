@@ -2761,6 +2761,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-action-fixtures"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-eth",
+ "base-action-harness",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-genesis",
+ "base-common-rpc-types",
+ "base-consensus-derive",
+ "base-protocol",
+ "clap",
+ "dotenvy",
+ "futures",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 1.1.2+spec-1.1.0",
+ "tracing",
+]
+
+[[package]]
 name = "base-action-harness"
 version = "0.0.0"
 dependencies = [
@@ -22760,6 +22790,7 @@ dependencies = [
  "serde_spanned 1.1.1",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.2",
 ]
 
