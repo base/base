@@ -3322,6 +3322,7 @@ dependencies = [
  "base-common-consensus",
  "base-common-flz",
  "base-common-precompiles",
+ "base-precompile-storage",
  "reth-evm",
  "revm",
  "rstest",
@@ -3400,7 +3401,11 @@ name = "base-common-precompiles"
 version = "0.0.0"
 dependencies = [
  "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
  "base-common-chains",
+ "base-precompile-macros",
+ "base-precompile-storage",
  "revm",
 ]
 

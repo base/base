@@ -2,6 +2,9 @@
 
 use crate::BaseSpecId;
 
+mod default_token;
+pub use default_token::{ADDRESS as DEFAULT_TOKEN_PRECOMPILE_ADDRESS, DefaultTokenPrecompile};
+
 /// Base precompile installer for the Base EVM spec.
 pub type BasePrecompileInstaller = base_common_precompiles::BasePrecompileInstaller<BaseSpecId>;
 

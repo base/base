@@ -7,7 +7,7 @@ description: "Guide for adding a new native precompile. Use when creating a new 
 
 ## Step 1 — Do you need a new domain or add to an existing one?
 
-A **domain** is a crate containing one or more precompiles that belong together.
+A **domain** is a folder inside `crates/common/precompiles/src/` containing one or more precompiles that belong together.
 
 | Signal | Decision |
 |---|---|
@@ -16,74 +16,67 @@ A **domain** is a crate containing one or more precompiles that belong together.
 | Completely orthogonal — no shared storage, no factory coupling | New domain |
 | Unsure | New domain — merging later is cheaper than untangling coupling |
 
-**Existing domains** — check `crates/common/` for `precompile-*` crates that are not `precompile-macros` or `precompile-storage` (those are infrastructure, not domains).
+**Existing domains** — check `crates/common/precompiles/src/` for domain folders (exclude infrastructure crates `precompile-macros` and `precompile-storage`).
 
 ---
 
 ## Step 2a — Adding a precompile to an existing domain
 
-Inside the domain crate, add:
+Inside the domain folder (`crates/common/precompiles/src/<domain>/`), add:
 
 ```
-src/
+<domain>/
   abi/
     <name>.rs           ← sol! interface for the new precompile
   <name>/
     mod.rs
     storage.rs          ← #[contract] struct (storage layout)
     dispatch.rs         ← ABI dispatch
+    evm.rs              ← EVM entry point struct
 ```
 
-Re-export from `abi/mod.rs` and `lib.rs`. If logic is shared with other precompiles in the domain, put it in `shared/`.
+Re-export from `<domain>/abi/mod.rs` and `<domain>/mod.rs`. If logic is shared with other precompiles in the domain, put it in `<domain>/shared/`.
 
 ---
 
 ## Step 2b — Creating a new domain
 
 ```
-crates/common/precompile-<domain>/
-  Cargo.toml
-  src/
-    lib.rs
-    abi/
-      mod.rs            ← re-exports all sol! types in this domain
-      <name>.rs         ← sol! interface per precompile
-    shared/             ← logic shared across precompiles in this domain (add when needed)
-    <name>/
-      mod.rs
-      storage.rs        ← #[contract] struct
-      dispatch.rs
+crates/common/precompiles/src/<domain>/
+  mod.rs
+  abi/
+    mod.rs              ← re-exports all sol! types in this domain
+    <name>.rs           ← sol! interface per precompile
+  shared/               ← logic shared across precompiles in this domain (add when needed)
+  <name>/
+    mod.rs
+    storage.rs          ← #[contract] struct
+    dispatch.rs
+    evm.rs              ← EVM entry point struct
 ```
 
-### `Cargo.toml`
+### Register the new domain module
+
+In `crates/common/precompiles/src/lib.rs`, declare the new module:
+
+```rust
+mod <domain>;
+```
+
+### Update `crates/common/precompiles/Cargo.toml`
+
+If this is the first domain using the storage/ABI infrastructure, add the missing dependencies:
 
 ```toml
-[package]
-name = "base-precompile-<domain>"
-description = "<Description>"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-homepage.workspace = true
-repository.workspace = true
-exclude.workspace = true
-
-[lints]
-workspace = true
-
 [dependencies]
-alloy-primitives.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
-revm.workspace = true
 base-precompile-macros  = { path = "../precompile-macros" }
 base-precompile-storage = { path = "../precompile-storage" }
-
-[features]
-test-utils = []   # required: #[contract] uses #[cfg(feature = "test-utils")] internally
 ```
 
-### `src/abi/<name>.rs`
+---
+
+### `<domain>/abi/<name>.rs`
 
 ```rust
 use alloy_sol_types::sol;
@@ -98,7 +91,7 @@ sol! {
 }
 ```
 
-### `src/<name>/storage.rs`
+### `<domain>/<name>/storage.rs`
 
 ```rust
 use alloy_primitives::{Address, address};
@@ -113,7 +106,7 @@ pub struct <Name> {
 }
 ```
 
-### `src/<name>/dispatch.rs`
+### `<domain>/<name>/dispatch.rs`
 
 `sol! { interface I<Name> { ... } }` generates a **module** named `I<Name>`, not an enum.
 The dispatch enum is `I<Name>::I<Name>Calls`. Three traits must be in scope:
@@ -128,7 +121,7 @@ use alloy_sol_types::{SolCall, SolInterface};
 use base_precompile_storage::{BasePrecompileError, Handler, IntoPrecompileResult, StorageCtx};
 use revm::precompile::PrecompileResult;
 
-use crate::abi::I<Name>;
+use super::super::abi::I<Name>;
 use super::<Name>;
 
 pub fn dispatch(pc: &mut <Name>, calldata: &[u8]) -> PrecompileResult {
@@ -157,66 +150,21 @@ fn inner(pc: &mut <Name>, calldata: &[u8]) -> base_precompile_storage::Result<By
 }
 ```
 
-### `src/<name>/mod.rs`
+### `<domain>/<name>/evm.rs`
+
+The EVM entry point struct lives in the same domain folder so that all wiring stays inside `base-common-precompiles`.
 
 > **Note:** `StorageCtx::enter` requires `S: Sized` and cannot be called directly with
-> `&mut dyn PrecompileStorageProvider`. Leave `execute` as `todo!()` until calldata is
-> wired into `PrecompileStorageProvider`.
+> `&mut dyn PrecompileStorageProvider`. The `EvmPrecompileStorageProvider` is `Sized`, so
+> it is created here before passing into the closure.
 
 ```rust
-use alloy_primitives::Address;
-use base_precompile_storage::{NativePrecompile, PrecompileStorageProvider};
-use revm::precompile::PrecompileResult;
-
-pub use dispatch::dispatch;
-pub use storage::{<Name>, <NAME>_ADDRESS};
-
-mod dispatch;
-mod storage;
-
-impl NativePrecompile for <Name> {
-    const ADDRESS: Address = <NAME>_ADDRESS;
-
-    fn execute(_storage: &mut dyn PrecompileStorageProvider) -> PrecompileResult {
-        // TODO: wire calldata once PrecompileStorageProvider exposes it
-        todo!()
-    }
-}
-```
-
-### `src/lib.rs`
-
-Re-export all public types including `dispatch` so nothing is `unreachable_pub`:
-
-```rust
-#![doc = include_str!("../README.md")]
-
-pub mod abi;
-pub mod <name>;
-
-pub use <name>::{<Name>, <NAME>_ADDRESS, dispatch};
-```
-
-## Registration
-
-Wiring a domain precompile into the live EVM requires **four concrete edits** across two crates.
-The domain crate (`base-precompile-<domain>`) never imports from `base-common-evm`; the dependency
-only flows the other way.
-
----
-
-### Step R1 — Create the EVM entry point
-
-**New file:** `crates/common/evm/src/precompiles/<name>/mod.rs`
-
-```rust
-//! EVM entry point for the <Name> native precompile.
-
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, Bytes, address};
-use base_precompile_<domain>::{<Name>, dispatch};
 use base_precompile_storage::{EvmPrecompileStorageProvider, StorageCtx};
 use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+
+use super::{<Name>, dispatch};
 
 /// Canonical address of the <Name> precompile.
 pub const ADDRESS: Address = address!("<20-byte-hex>");
@@ -249,75 +197,99 @@ impl <Name>Precompile {
 Key points:
 - `is_direct_call()` guard rejects DELEGATECALL/CALLCODE — always include it.
 - Calldata is cloned **before** `input` is consumed by `EvmPrecompileStorageProvider::new`.
-- `StorageCtx::enter` works here because `EvmPrecompileStorageProvider` is `Sized`; it sets the
-  thread-local that `#[contract]`-generated storage types read from.
+- `StorageCtx::enter` sets the thread-local that `#[contract]`-generated storage types read from.
 
----
-
-### Step R2 — Expose the sub-module
-
-**File:** `crates/common/evm/src/precompiles/mod.rs`
-
-Add one line:
+### `<domain>/<name>/mod.rs`
 
 ```rust
-pub mod <name>;
-```
+use alloy_primitives::Address;
+use base_precompile_storage::{NativePrecompile, PrecompileStorageProvider};
+use revm::precompile::PrecompileResult;
 
----
+pub use dispatch::dispatch;
+pub use evm::{ADDRESS, <Name>Precompile};
+pub use storage::{<Name>, <NAME>_ADDRESS};
 
-### Step R3 — Register it fork-gated in the factory
+mod dispatch;
+mod evm;
+mod storage;
 
-**File:** `crates/common/evm/src/factory.rs`
+impl NativePrecompile for <Name> {
+    const ADDRESS: Address = <NAME>_ADDRESS;
 
-Import the entry point at the top:
-
-```rust
-use crate::precompiles::<name>::<Name>Precompile;
-```
-
-Inside `BaseEvmFactory::precompiles`, add the address inside the correct fork guard.
-If the fork already has a `set_precompile_lookup` block, add an `else if` branch to it.
-If this is the first precompile at a new fork, add a new `if` block:
-
-```rust
-if spec.is_enabled_in(BaseUpgrade::<Fork>) {
-    precompiles.set_precompile_lookup(|address: &alloy_primitives::Address| {
-        if *address == crate::precompiles::<name>::ADDRESS {
-            Some(<Name>Precompile::precompile())
-        } else {
-            None
-        }
-    });
+    fn execute(_storage: &mut dyn PrecompileStorageProvider) -> PrecompileResult {
+        // TODO: wire calldata once PrecompileStorageProvider exposes it
+        todo!()
+    }
 }
 ```
 
-> Multiple precompiles at the **same fork** share one `set_precompile_lookup` call — use
-> chained `if / else if` inside a single block. Each fork gets its own `if spec.is_enabled_in`
-> block.
+### `<domain>/mod.rs`
+
+Re-export all public types including `dispatch` so nothing is `unreachable_pub`:
+
+```rust
+pub mod abi;
+pub mod <name>;
+
+pub use <name>::{ADDRESS, <Name>, <Name>Precompile, <NAME>_ADDRESS, dispatch};
+```
 
 ---
 
-### Step R4 — Add the domain crate as a dependency of `base-common-evm`
+## Registration
 
-**File:** `crates/common/evm/Cargo.toml`
+Wiring a new domain precompile into the live EVM requires **two concrete edits**, both inside `crates/common/precompiles/`. The `base-common-evm` crate needs no changes — it already calls `BasePrecompileInstaller::install()` which delegates to `install_into`.
 
-```toml
-base-precompile-<domain> = { path = "../precompile-<domain>" }
+---
+
+### Step R1 — Export the domain from `lib.rs`
+
+**File:** `crates/common/precompiles/src/lib.rs`
+
+Change `mod <domain>;` to `pub mod <domain>;` so callers of the crate can reach the entry point:
+
+```rust
+pub mod <domain>;
 ```
+
+---
+
+### Step R2 — Register the precompile in the installer
+
+**File:** `crates/common/precompiles/src/installer.rs`
+
+Remove the `const` qualifier (dynamic insertion requires `&mut`) and add the fork-gated registration inside `install_into`:
+
+```rust
+pub fn install_into(self, precompiles: &mut PrecompilesMap) {
+    if self.spec.upgrade() >= BaseUpgrade::<Fork> {
+        precompiles.insert(
+            crate::<domain>::ADDRESS,
+            crate::<domain>::<Name>Precompile::precompile(),
+        );
+    }
+}
+```
+
+> Multiple precompiles at the **same fork** — add additional `insert` calls inside the same `if` block.
+> Each fork gets its own `if self.spec.upgrade() >= BaseUpgrade::<Fork>` guard.
 
 ---
 
 ### Checklist
 
 ```
-[ ] crates/common/evm/src/precompiles/<name>/mod.rs   created
-[ ] crates/common/evm/src/precompiles/mod.rs          pub mod <name>; added
-[ ] crates/common/evm/src/factory.rs                  address in fork guard + import
-[ ] crates/common/evm/Cargo.toml                      domain crate dep added
-[ ] cargo check -p base-common-evm                    compiles clean
-[ ] cargo test  -p base-common-evm                    all tests pass
+[ ] crates/common/precompiles/Cargo.toml          storage/macros deps added (first domain only)
+[ ] crates/common/precompiles/src/<domain>/        folder created with all files
+[ ] crates/common/precompiles/src/lib.rs           pub mod <domain>; added
+[ ] crates/common/precompiles/src/installer.rs     install_into wired with fork guard
+[ ] cargo check -p base-common-precompiles         compiles clean
+[ ] cargo test  -p base-common-precompiles         all tests pass
+[ ] cargo check -p base-common-evm                 still compiles (smoke check)
 ```
+
+---
 
 ## Slot rules (brief)
 

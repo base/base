@@ -17,3 +17,6 @@ pub use spec::BasePrecompileSpec;
 mod bn254_pair;
 
 mod bls12_381;
+
+pub mod token;
+pub use token::{DefaultToken, DEFAULT_TOKEN_ADDRESS, dispatch};
