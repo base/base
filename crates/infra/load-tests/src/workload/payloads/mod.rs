@@ -33,7 +33,7 @@ mod osaka;
 pub use osaka::OsakaPayload;
 
 mod simulator;
-pub use simulator::SimulatorPayload;
+pub use simulator::{SimulatorPayload, SimulatorWorkloadParams};
 
 /// A transaction payload generator.
 pub trait Payload: Send + Sync + std::fmt::Debug {
