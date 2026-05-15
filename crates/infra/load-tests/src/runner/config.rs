@@ -98,7 +98,7 @@ pub enum TxType {
     },
     /// Simulator contract call reproducing synthetic EVM workloads.
     Simulator {
-        /// Deployed `Simulator` contract address. `None` means deploy via CREATE2 on first run.
+        /// Deployed `Simulator` contract address. `None` means deploy via CREATE on first run.
         contract: Option<Address>,
         /// Storage slots to SLOAD per call.
         load_storage: u64,

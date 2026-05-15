@@ -18,7 +18,7 @@ use crate::{
     rpc::create_wallet_provider,
     runner::TxType,
     utils::{BaselineError, Result},
-    workload::{SimulatorPayload, SIMULATOR_ACCOUNT_CHUNK_SIZE, SIMULATOR_STORAGE_CHUNK_SIZE},
+    workload::{SIMULATOR_ACCOUNT_CHUNK_SIZE, SIMULATOR_STORAGE_CHUNK_SIZE, SimulatorPayload},
 };
 
 type EthProvider = RootProvider<Ethereum>;
@@ -44,8 +44,11 @@ pub async fn deploy_and_init_simulator(
             contract,
             load_storage,
             update_storage,
+            delete_storage,
+            create_storage,
             load_accounts,
             update_accounts,
+            create_accounts,
             ..
         } = tx
         else {
@@ -54,8 +57,15 @@ pub async fn deploy_and_init_simulator(
 
         if contract.is_none() {
             has_missing_contract = true;
-            required_storage_slots = required_storage_slots.max(load_storage.saturating_add(*update_storage));
-            required_account_slots = required_account_slots.max(load_accounts.saturating_add(*update_accounts));
+            required_storage_slots = required_storage_slots.max(
+                load_storage
+                    .saturating_add(*update_storage)
+                    .saturating_add(*delete_storage)
+                    .saturating_add(*create_storage),
+            );
+            required_account_slots = required_account_slots.max(
+                load_accounts.saturating_add(*update_accounts).saturating_add(*create_accounts),
+            );
         }
     }
 
@@ -72,10 +82,7 @@ pub async fn deploy_and_init_simulator(
     let nonce = query.get_transaction_count(funder_address).await.rpc("get funder nonce")?;
     let simulator_address = compute_create_address(funder_address, nonce);
 
-    let existing_code = query
-        .get_code_at(simulator_address)
-        .await
-        .rpc("get simulator code")?;
+    let existing_code = query.get_code_at(simulator_address).await.rpc("get simulator code")?;
 
     if existing_code.is_empty() {
         info!(address = %simulator_address, nonce, "deploying simulator contract");
@@ -287,9 +294,8 @@ async fn read_u256_counter(
         .await
         .rpc(context)?;
 
-    SimulatorPayload::decode_u256_return(&output).ok_or_else(|| {
-        BaselineError::Rpc(format!("{context}: failed to decode uint return value"))
-    })
+    SimulatorPayload::decode_u256_return(&output)
+        .ok_or_else(|| BaselineError::Rpc(format!("{context}: failed to decode uint return value")))
 }
 
 fn required_chunks(

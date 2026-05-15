@@ -37,9 +37,6 @@ sol! {
     }
 }
 
-pub(crate) const SIMULATOR_STORAGE_CHUNK_SIZE: u64 = 100;
-pub(crate) const SIMULATOR_ACCOUNT_CHUNK_SIZE: u64 = 100;
-
 const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 
 /// Generates transactions that call the `Simulator.run()` contract, exercising

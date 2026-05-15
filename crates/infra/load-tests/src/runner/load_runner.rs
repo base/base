@@ -350,7 +350,26 @@ impl LoadRunner {
                     OsakaTarget::P256verifyOsaka | OsakaTarget::ModexpOsaka => 30_000,
                 },
                 TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 250_000,
-                TxType::Simulator { gas_limit, .. } => gas_limit.unwrap_or(30_000_000),
+                TxType::Simulator {
+                    load_storage,
+                    update_storage,
+                    delete_storage,
+                    create_storage,
+                    load_accounts,
+                    update_accounts,
+                    create_accounts,
+                    precompile_calls,
+                    ..
+                } => {
+                    let storage_gas = (load_storage * 2_100
+                        + update_storage * 5_000
+                        + delete_storage * 5_000
+                        + create_storage * 20_000)
+                        + 21_000;
+                    let account_gas = (load_accounts + update_accounts + create_accounts) * 2_500;
+                    let precompile_gas: u64 = precompile_calls.iter().map(|(_, n)| n * 3_000).sum();
+                    storage_gas + account_gas + precompile_gas
+                }
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }
@@ -688,26 +707,32 @@ impl LoadRunner {
 
     /// Returns true if any simulator transaction types need contract deployment.
     pub fn needs_simulator_setup(&self) -> bool {
-        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::Simulator { contract: None, .. }))
+        self.config
+            .transactions
+            .iter()
+            .any(|t| matches!(t.tx_type, TxType::Simulator { contract: None, .. }))
     }
 
     /// Deploys the Simulator contract (if needed) and initializes its storage slots,
     /// then patches the deployed address into all simulator transaction configs and
     /// rebuilds the workload generator.
     pub async fn setup_simulator_contracts(&mut self, funding_key: PrivateKeySigner) -> Result<()> {
-        let tx_types: Vec<TxType> = self.config.transactions.iter().map(|t| t.tx_type.clone()).collect();
-        let mut tx_types_mut = tx_types;
-        let setup_url = self.config.setup_rpc.clone()
+        let mut tx_types: Vec<TxType> =
+            self.config.transactions.iter().map(|t| t.tx_type.clone()).collect();
+        let setup_url = self
+            .config
+            .setup_rpc
+            .clone()
             .unwrap_or_else(|| self.config.primary_submission_rpc().clone());
         crate::runner::deploy_and_init_simulator(
-            &mut tx_types_mut,
+            &mut tx_types,
             funding_key,
             setup_url,
             self.config.chain_id,
         )
         .await?;
 
-        for (cfg, new_type) in self.config.transactions.iter_mut().zip(tx_types_mut.into_iter()) {
+        for (cfg, new_type) in self.config.transactions.iter_mut().zip(tx_types.into_iter()) {
             cfg.tx_type = new_type;
         }
 
