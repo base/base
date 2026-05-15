@@ -1069,10 +1069,19 @@ pub async fn unpause_sequencer_node(
             for enode in &peers.el_enodes {
                 let r: Result<bool, _> =
                     ClientT::request(&el_client, "admin_addPeer", rpc_params![enode]).await;
-                if r.is_ok() {
+                if matches!(r, Ok(true)) {
                     el_ok += 1;
                 }
             }
+        }
+
+        if cl_ok != peers.cl_addrs.len() || el_ok != peers.el_enodes.len() {
+            anyhow::bail!(
+                "unpaused {} — reconnected {cl_ok}/{} CL peer(s), {el_ok}/{} EL peer(s); saved peers kept for retry",
+                node.name,
+                peers.cl_addrs.len(),
+                peers.el_enodes.len()
+            );
         }
 
         Ok(format!(
@@ -1140,7 +1149,7 @@ pub async fn run_conductor_poller(
         let statuses = futures::future::join_all(clients.iter().map(
             |(name, conductor_client, cl_client, el_client)| async move {
                 // Fire all RPCs concurrently so a single timed-out node does not
-                // stall the poll for the full sum of all call timeouts (7 × 500 ms).
+                // stall the poll for the full sum of all call timeouts (11 × 500 ms).
                 let (
                     is_leader,
                     conductor_active,

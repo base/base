@@ -95,8 +95,10 @@ impl ActionMenuItem {
             Self::TransferLeaderHere => node.is_leader == Some(false),
             Self::ConductorPause => node.conductor_paused == Some(false),
             Self::ConductorResume => node.conductor_paused == Some(true),
-            Self::StartSequencer => node.sequencer_active != Some(true),
-            Self::StopSequencer => node.sequencer_active == Some(true),
+            Self::StartSequencer => {
+                node.is_leader == Some(true) && node.sequencer_active == Some(false)
+            }
+            Self::StopSequencer => node.sequencer_active.is_some(),
             Self::TransferLeaderAny | Self::P2PToggle | Self::RestartContainers => true,
         }
     }
@@ -899,7 +901,7 @@ fn render_hash_input(
         .split(inner);
 
     let prompt = Paragraph::new(Line::from(vec![Span::styled(
-        "Unsafe head hash (64 hex chars, with or without 0x)",
+        "Unsafe head hash (64 hex chars; 0x shown automatically)",
         Style::default().fg(Color::White),
     )]));
     f.render_widget(prompt, layout[0]);
