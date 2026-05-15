@@ -1,10 +1,9 @@
 use alloy_consensus::{BlockBody, TxEnvelope};
 use alloy_eips::eip2718::Decodable2718;
+use base_action_harness::{L1Block, SharedL1Chain};
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::ChainGenesis;
 use base_protocol::L2BlockInfo;
-
-use base_action_harness::{L1Block, SharedL1Chain};
 
 use crate::{ActionFixture, FixtureL1Block, FixtureL2Block};
 
