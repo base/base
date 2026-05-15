@@ -17,7 +17,7 @@ date.
 
 | Network   | Activation timestamp                   |
 | --------- | -------------------------------------- |
-| `mainnet` | `1779386400` (2026-05-21 18:00:00 UTC) |
+| `mainnet` | TBD                                    |
 | `sepolia` | `1776708000` (2026-04-20 18:00:00 UTC) |
 
 ## Execution Layer
