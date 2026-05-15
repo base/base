@@ -4223,6 +4223,7 @@ dependencies = [
  "reth-tasks",
  "reth-trie",
  "reth-trie-common",
+ "rocksdb",
  "secp256k1 0.30.0",
  "serde",
  "serial_test",

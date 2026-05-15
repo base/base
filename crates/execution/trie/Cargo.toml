@@ -52,11 +52,12 @@ parking_lot.workspace = true
 derive_more.workspace = true
 eyre = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
+rocksdb = { workspace = true, features = ["lz4", "zstd"] }
 
 [dev-dependencies]
 eyre.workspace = true
-rand_08.workspace = true
 mockall.workspace = true
+rand_08.workspace = true
 tempfile.workspace = true
 test-case.workspace = true
 reth-node-api.workspace = true

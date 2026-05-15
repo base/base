@@ -23,7 +23,10 @@ pub use in_memory::{
 };
 
 pub mod db;
-pub use db::{MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor};
+pub use db::{
+    MdbxAccountCursor, MdbxProofsStorage, MdbxStorageCursor, MdbxTrieCursor, RocksdbAccountCursor,
+    RocksdbProofsStorage, RocksdbReadSnapshot, RocksdbStorageCursor, RocksdbTrieCursor,
+};
 
 pub mod metrics;
 #[cfg(feature = "metrics")]

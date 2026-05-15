@@ -25,13 +25,14 @@ use crate::{
 };
 
 /// Build the trie + hashed cursor factories sharing one read transaction at the given block.
-const fn from_tx<'tx, S>(
-    storage: &'tx BaseProofsStorage<S>,
-    tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx,
+const fn from_tx<'tx, 'db, S>(
+    storage: &'db BaseProofsStorage<S>,
+    tx: &'tx <BaseProofsStorage<S> as BaseProofsStore>::Tx<'db>,
     block_number: u64,
-) -> (BaseProofsTrieCursorFactory<'tx, S>, BaseProofsHashedAccountCursorFactory<'tx, S>)
+) -> (BaseProofsTrieCursorFactory<'tx, 'db, S>, BaseProofsHashedAccountCursorFactory<'tx, 'db, S>)
 where
-    S: BaseProofsStore + 'tx,
+    S: BaseProofsStore + 'db,
+    'db: 'tx,
 {
     (
         BaseProofsTrieCursorFactory::new(storage, tx, block_number),
@@ -60,7 +61,10 @@ pub trait DatabaseProof<'tx, S: BaseProofsStore + 'tx> {
 }
 
 impl<'tx, S> DatabaseProof<'tx, S>
-    for Proof<BaseProofsTrieCursorFactory<'tx, S>, BaseProofsHashedAccountCursorFactory<'tx, S>>
+    for Proof<
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
+    >
 where
     S: BaseProofsStore + 'tx + Clone,
 {
@@ -130,8 +134,8 @@ pub trait DatabaseStorageProof<'tx, S: BaseProofsStore + 'tx> {
 impl<'tx, S> DatabaseStorageProof<'tx, S>
     for proof::StorageProof<
         'static,
-        BaseProofsTrieCursorFactory<'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,
@@ -226,7 +230,10 @@ pub trait DatabaseStateRoot<'tx, S: BaseProofsStore + 'tx + Clone>: Sized {
 }
 
 impl<'tx, S> DatabaseStateRoot<'tx, S>
-    for StateRoot<BaseProofsTrieCursorFactory<'tx, S>, BaseProofsHashedAccountCursorFactory<'tx, S>>
+    for StateRoot<
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
+    >
 where
     S: BaseProofsStore + 'tx + Clone,
 {
@@ -312,8 +319,8 @@ pub trait DatabaseStorageRoot<'tx, S: BaseProofsStore + 'tx + Clone> {
 
 impl<'tx, S> DatabaseStorageRoot<'tx, S>
     for StorageRoot<
-        BaseProofsTrieCursorFactory<'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,
@@ -353,8 +360,8 @@ pub trait DatabaseTrieWitness<'tx, S: BaseProofsStore + 'tx + Clone> {
 
 impl<'tx, S> DatabaseTrieWitness<'tx, S>
     for TrieWitness<
-        BaseProofsTrieCursorFactory<'tx, S>,
-        BaseProofsHashedAccountCursorFactory<'tx, S>,
+        BaseProofsTrieCursorFactory<'tx, 'tx, S>,
+        BaseProofsHashedAccountCursorFactory<'tx, 'tx, S>,
     >
 where
     S: BaseProofsStore + 'tx + Clone,
