@@ -36,5 +36,8 @@ pub use game_worker::{WorkerConfig, WorkerDeps, run_game_worker};
 mod game_pool;
 pub use game_pool::GamePool;
 
+mod bond_discovery;
+pub use bond_discovery::{BondCandidate, BondDiscovery};
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

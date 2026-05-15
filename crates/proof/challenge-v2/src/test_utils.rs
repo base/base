@@ -216,6 +216,8 @@ pub struct MockGameState {
     pub l1_head: B256,
     /// `intermediateOutputRoots()`.
     pub intermediate_output_roots: Vec<B256>,
+    /// Address returned by `bondRecipient()`.
+    pub bond_recipient: Address,
 }
 
 impl MockGameState {
@@ -236,6 +238,7 @@ impl MockGameState {
             starting_block_number: 0,
             l1_head: B256::ZERO,
             intermediate_output_roots: Vec::new(),
+            bond_recipient: Address::ZERO,
         }
     }
 }
@@ -489,8 +492,8 @@ impl AggregateVerifierClient for MockAggregateVerifier {
         unimplemented!("resolved_at not used by scanner tests")
     }
 
-    async fn bond_recipient(&self, _address: Address) -> Result<Address, ContractError> {
-        unimplemented!("bond_recipient not used by scanner tests")
+    async fn bond_recipient(&self, address: Address) -> Result<Address, ContractError> {
+        self.get(address, |s| s.bond_recipient)
     }
 
     async fn bond_unlocked(&self, _address: Address) -> Result<bool, ContractError> {
