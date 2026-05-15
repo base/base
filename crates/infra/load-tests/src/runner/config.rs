@@ -96,6 +96,29 @@ pub enum TxType {
         /// Maximum amount when swapping `token_out` to `token_in`.
         reverse_max_amount: U256,
     },
+    /// Simulator contract call reproducing synthetic EVM workloads.
+    Simulator {
+        /// Deployed `Simulator` contract address. `None` means deploy via CREATE2 on first run.
+        contract: Option<Address>,
+        /// Storage slots to SLOAD per call.
+        load_storage: u64,
+        /// Existing storage slots to SSTORE (update) per call.
+        update_storage: u64,
+        /// Storage slots to SSTORE to zero (delete) per call.
+        delete_storage: u64,
+        /// New storage slots to SSTORE (create) per call.
+        create_storage: u64,
+        /// Existing accounts to BALANCE-load per call.
+        load_accounts: u64,
+        /// Existing accounts to SEND to (update) per call.
+        update_accounts: u64,
+        /// New accounts to create (send to fresh address) per call.
+        create_accounts: u64,
+        /// Precompile addresses and call counts per transaction.
+        precompile_calls: Vec<(Address, u64)>,
+        /// Gas limit override per transaction.
+        gas_limit: Option<u64>,
+    },
 }
 
 /// Real-token setup executed before measured swap workloads.
@@ -198,6 +221,8 @@ pub struct LoadConfig {
     pub query_rpc: Url,
     /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
     pub txpool_nodes: Vec<Url>,
+    /// Direct node RPC URL for setup transactions that must bypass the proxy mempool.
+    pub setup_rpc: Option<Url>,
     /// Chain ID.
     pub chain_id: u64,
     /// Number of test accounts to create.
@@ -235,6 +260,7 @@ impl LoadConfig {
             ],
             query_rpc: "http://localhost:8545".parse().expect("valid default query_rpc"),
             txpool_nodes: Vec::new(),
+            setup_rpc: None,
             chain_id: 1337,
             account_count: 10,
             seed: 42,
