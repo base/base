@@ -3,348 +3,33 @@ use std::{
     time::Duration,
 };
 
-use alloy_eips::{eip2718::Encodable2718, eip7685::EMPTY_REQUESTS_HASH};
 use alloy_genesis::ChainConfig;
-use alloy_primitives::{Address, B256, Bytes, Signature, U256};
-use alloy_rpc_types_engine::{CancunPayloadFields, PayloadId, PraguePayloadFields};
-use alloy_signer::SignerSync;
+use alloy_primitives::{Address, B256, U256};
 use alloy_signer_local::PrivateKeySigner;
-use async_trait::async_trait;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::{
-    BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
-    BasePayloadAttributes, NetworkPayloadEnvelope, PayloadHash,
-};
-use base_consensus_derive::{
-    AttributesBuilder, PipelineError, PipelineResult, StatefulAttributesBuilder,
-};
+use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_node::{
-    Conductor, ConductorError, L1OriginSelector, NodeActor, OriginSelector, PayloadBuilder,
-    RecoveryModeGuard, SequencerActor, SequencerActorError, SequencerAdminQuery,
-    SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
+    SequencerActorError, SequencerAdminQuery,
 };
 use base_consensus_rpc::SequencerAdminAPIError;
-use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use base_protocol::{BlockInfo, L2BlockInfo};
 use tokio::{
     sync::{mpsc, oneshot},
-    task::JoinHandle,
+    task::{JoinError, JoinHandle},
 };
 use tokio_util::sync::CancellationToken;
 
+use super::{
+    ActionConductor, ActionOriginSelector, ActionSequencerAttributesBuilder,
+    ActionSequencerEngineClient, ActionUnsafePayloadGossipClient, ExecutionPayloadConverter,
+    L2SequencerError,
+};
 use crate::{
     ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider, SharedBlockHashRegistry,
     SharedL1Chain, SupervisedP2P, TEST_ACCOUNT_KEY, TestAccount,
 };
-
-/// Error type returned by [`L2Sequencer`].
-#[derive(Debug, thiserror::Error)]
-pub enum L2SequencerError {
-    /// The L1 block required for the current epoch is missing from the chain.
-    #[error("L1 block {0} not found in shared chain")]
-    MissingL1Block(u64),
-    /// Failed to build the L1 info deposit transaction.
-    #[error("failed to build L1 info deposit: {0}")]
-    L1Info(#[from] base_protocol::BlockInfoError),
-    /// Transaction signing failed.
-    #[error("signing failed: {0}")]
-    Signing(#[from] alloy_signer::Error),
-    /// EVM execution failed.
-    #[error("EVM execution failed: {0}")]
-    Evm(String),
-    /// Origin selection failed.
-    #[error("origin selection failed: {0}")]
-    OriginSelection(String),
-    /// Attributes construction failed.
-    #[error("attributes construction failed: {0}")]
-    Attributes(String),
-    /// Engine client error.
-    #[error("engine client error: {0}")]
-    Engine(String),
-    /// Payload conversion error.
-    #[error("payload conversion error: {0}")]
-    PayloadConversion(String),
-    /// Conductor rejected the block (e.g. not leader, RPC error).
-    #[error("conductor error: {0}")]
-    Conductor(#[from] ConductorError),
-    /// This sequencer is not the conductor leader and cannot build blocks.
-    #[error("sequencer is not the conductor leader")]
-    NotLeader,
-    /// The production sequencer actor failed.
-    #[error("sequencer actor error: {0}")]
-    Actor(String),
-    /// The production sequencer actor did not insert a block before the timeout.
-    #[error("sequencer actor timed out waiting for inserted block")]
-    Timeout,
-    /// The inserted-block notification channel closed before a block was produced.
-    #[error("sequencer actor exited before inserting a block")]
-    InsertChannelClosed,
-    /// The sequencer actor admin API failed.
-    #[error("sequencer actor admin error: {0}")]
-    Admin(String),
-}
-
-/// Converts between execution payload envelopes and action-harness block/gossip types.
-#[derive(Debug)]
-pub struct ExecutionPayloadConverter;
-
-impl ExecutionPayloadConverter {
-    /// Convert a sealed execution payload envelope into a [`BaseBlock`].
-    pub fn block_from_envelope(
-        envelope: &BaseExecutionPayloadEnvelope,
-    ) -> Result<BaseBlock, L2SequencerError> {
-        let pbbr = envelope.parent_beacon_block_root;
-        let sidecar = match &envelope.execution_payload {
-            BaseExecutionPayload::V4(_) => BaseExecutionPayloadSidecar::v4(
-                CancunPayloadFields {
-                    parent_beacon_block_root: pbbr.unwrap_or_default(),
-                    versioned_hashes: vec![],
-                },
-                PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
-            ),
-            _ => pbbr.map_or_else(BaseExecutionPayloadSidecar::default, |pbbr| {
-                BaseExecutionPayloadSidecar::v3(CancunPayloadFields {
-                    parent_beacon_block_root: pbbr,
-                    versioned_hashes: vec![],
-                })
-            }),
-        };
-        envelope
-            .execution_payload
-            .clone()
-            .try_into_block_with_sidecar(&sidecar)
-            .map_err(|e| L2SequencerError::PayloadConversion(format!("{e}")))
-    }
-
-    /// Convert a [`BaseBlock`] into a gossip network envelope, signing when a key is supplied.
-    pub fn network_envelope(
-        block: &BaseBlock,
-        signer: Option<&PrivateKeySigner>,
-        chain_id: u64,
-    ) -> NetworkPayloadEnvelope {
-        let block_hash = block.header.hash_slow();
-        let (execution_payload, _) = BaseExecutionPayload::from_block_unchecked(block_hash, block);
-        let parent_beacon_block_root = block.header.parent_beacon_block_root;
-
-        let (signature, payload_hash) = signer.map_or_else(
-            || (Signature::new(U256::ZERO, U256::ZERO, false), PayloadHash(B256::ZERO)),
-            |signer| {
-                let envelope = BaseExecutionPayloadEnvelope {
-                    execution_payload: execution_payload.clone(),
-                    parent_beacon_block_root,
-                };
-                let ph = envelope.payload_hash();
-                let msg = ph.signature_message(chain_id);
-                let sig = signer.sign_hash_sync(&msg).expect("unsafe block signing must not fail");
-                (sig, ph)
-            },
-        );
-
-        NetworkPayloadEnvelope {
-            payload: execution_payload,
-            signature,
-            payload_hash,
-            parent_beacon_block_root,
-        }
-    }
-}
-
-/// Attributes builder adapter that injects one test-controlled transaction batch.
-#[derive(Debug)]
-pub struct ActionSequencerAttributesBuilder {
-    inner: StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
-    user_txs: Arc<Mutex<Option<Vec<BaseTxEnvelope>>>>,
-}
-
-impl ActionSequencerAttributesBuilder {
-    /// Create a new attributes adapter.
-    pub const fn new(
-        inner: StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
-        user_txs: Arc<Mutex<Option<Vec<BaseTxEnvelope>>>>,
-    ) -> Self {
-        Self { inner, user_txs }
-    }
-}
-
-#[async_trait]
-impl AttributesBuilder for ActionSequencerAttributesBuilder {
-    async fn prepare_payload_attributes(
-        &mut self,
-        l2_parent: L2BlockInfo,
-        epoch: alloy_eips::BlockNumHash,
-    ) -> PipelineResult<BasePayloadAttributes> {
-        let mut attrs = self.inner.prepare_payload_attributes(l2_parent, epoch).await?;
-        let user_txs = self
-            .user_txs
-            .lock()
-            .expect("sequencer user tx queue lock poisoned")
-            .take()
-            .ok_or_else(|| PipelineError::NotEnoughData.temp())?;
-        let encoded_user_txs: Vec<Bytes> = user_txs
-            .into_iter()
-            .map(|tx| {
-                let mut buf = Vec::new();
-                tx.encode_2718(&mut buf);
-                Bytes::from(buf)
-            })
-            .collect();
-        if !encoded_user_txs.is_empty() {
-            attrs.transactions.get_or_insert_with(Vec::new).extend(encoded_user_txs);
-        }
-        attrs.no_tx_pool = Some(true);
-        Ok(attrs)
-    }
-}
-
-/// L1 origin selector adapter that supports test-controlled origin pinning.
-#[derive(Debug)]
-pub struct ActionOriginSelector {
-    inner: L1OriginSelector<SharedL1Chain>,
-    pin: Arc<Mutex<Option<BlockInfo>>>,
-}
-
-impl ActionOriginSelector {
-    /// Create a new origin selector adapter.
-    pub const fn new(
-        inner: L1OriginSelector<SharedL1Chain>,
-        pin: Arc<Mutex<Option<BlockInfo>>>,
-    ) -> Self {
-        Self { inner, pin }
-    }
-}
-
-#[async_trait]
-impl OriginSelector for ActionOriginSelector {
-    async fn next_l1_origin(
-        &mut self,
-        unsafe_head: L2BlockInfo,
-        is_recovery_mode: bool,
-    ) -> Result<BlockInfo, base_consensus_node::L1OriginSelectorError> {
-        if let Some(pin) = *self.pin.lock().expect("L1 origin pin lock poisoned") {
-            return Ok(pin);
-        }
-        self.inner.next_l1_origin(unsafe_head, is_recovery_mode).await
-    }
-}
-
-/// Conductor adapter that allows the actor to own a cloneable conductor handle.
-#[derive(Debug, Clone)]
-pub struct ActionConductor {
-    inner: Arc<Mutex<Option<Arc<dyn Conductor>>>>,
-}
-
-impl ActionConductor {
-    /// Create a new conductor adapter.
-    pub fn new(inner: Arc<Mutex<Option<Arc<dyn Conductor>>>>) -> Self {
-        Self { inner }
-    }
-}
-
-#[async_trait]
-impl Conductor for ActionConductor {
-    async fn leader(&self) -> Result<bool, ConductorError> {
-        let conductor = self.inner.lock().expect("conductor lock poisoned").clone();
-        match conductor {
-            Some(conductor) => conductor.leader().await,
-            None => Ok(true),
-        }
-    }
-
-    async fn active(&self) -> Result<bool, ConductorError> {
-        let conductor = self.inner.lock().expect("conductor lock poisoned").clone();
-        match conductor {
-            Some(conductor) => conductor.active().await,
-            None => Ok(true),
-        }
-    }
-
-    async fn commit_unsafe_payload(
-        &self,
-        payload: &BaseExecutionPayloadEnvelope,
-    ) -> Result<(), ConductorError> {
-        let conductor = self.inner.lock().expect("conductor lock poisoned").clone();
-        match conductor {
-            Some(conductor) => conductor.commit_unsafe_payload(payload).await,
-            None => Ok(()),
-        }
-    }
-
-    async fn override_leader(&self) -> Result<(), ConductorError> {
-        let conductor = self.inner.lock().expect("conductor lock poisoned").clone();
-        match conductor {
-            Some(conductor) => conductor.override_leader().await,
-            None => Ok(()),
-        }
-    }
-}
-
-/// Sequencer engine client adapter that reports inserted blocks back to the harness driver.
-#[derive(Debug, Clone)]
-pub struct ActionSequencerEngineClient {
-    inner: Arc<ActionEngineClient>,
-    inserted_tx: mpsc::Sender<(BaseBlock, L2BlockInfo)>,
-}
-
-impl ActionSequencerEngineClient {
-    /// Create a new engine client adapter.
-    pub const fn new(
-        inner: Arc<ActionEngineClient>,
-        inserted_tx: mpsc::Sender<(BaseBlock, L2BlockInfo)>,
-    ) -> Self {
-        Self { inner, inserted_tx }
-    }
-}
-
-#[async_trait]
-impl SequencerEngineClient for ActionSequencerEngineClient {
-    async fn reset_engine_forkchoice(&self) -> Result<(), base_consensus_node::EngineClientError> {
-        self.inner.reset_engine_forkchoice().await
-    }
-
-    async fn start_build_block(
-        &self,
-        attributes: AttributesWithParent,
-    ) -> Result<PayloadId, base_consensus_node::EngineClientError> {
-        self.inner.start_build_block(attributes).await
-    }
-
-    async fn get_sealed_payload(
-        &self,
-        payload_id: PayloadId,
-        attributes: AttributesWithParent,
-    ) -> Result<BaseExecutionPayloadEnvelope, base_consensus_node::EngineClientError> {
-        self.inner.get_sealed_payload(payload_id, attributes).await
-    }
-
-    async fn insert_unsafe_payload(
-        &self,
-        payload: BaseExecutionPayloadEnvelope,
-    ) -> Result<L2BlockInfo, base_consensus_node::EngineClientError> {
-        let block = ExecutionPayloadConverter::block_from_envelope(&payload)
-            .map_err(|e| base_consensus_node::EngineClientError::ResponseError(e.to_string()))?;
-        let inserted_head = self.inner.insert_unsafe_payload(payload).await?;
-        let _ = self.inserted_tx.send((block, inserted_head)).await;
-        Ok(inserted_head)
-    }
-
-    async fn get_unsafe_head(&self) -> Result<L2BlockInfo, base_consensus_node::EngineClientError> {
-        self.inner.get_unsafe_head().await
-    }
-}
-
-/// No-op gossip adapter used by the actor; tests still inject gossip explicitly.
-#[derive(Debug, Clone, Default)]
-pub struct ActionUnsafePayloadGossipClient;
-
-#[async_trait]
-impl UnsafePayloadGossipClient for ActionUnsafePayloadGossipClient {
-    async fn schedule_execution_payload_gossip(
-        &self,
-        _payload: BaseExecutionPayloadEnvelope,
-    ) -> Result<(), UnsafePayloadGossipClientError> {
-        Ok(())
-    }
-}
 
 /// Builds real [`BaseBlock`]s for use in action tests using the production sequencer actor.
 #[derive(Debug)]
@@ -423,16 +108,12 @@ impl L2Sequencer {
     }
 
     /// Read a storage value from the latest committed state via the engine client.
-    pub fn storage_at(
-        &self,
-        address: alloy_primitives::Address,
-        slot: alloy_primitives::U256,
-    ) -> alloy_primitives::U256 {
+    pub fn storage_at(&self, address: Address, slot: U256) -> U256 {
         self.engine_client.storage_at(address, slot)
     }
 
     /// Check whether an account has non-empty code deployed via the engine client.
-    pub fn has_code(&self, address: alloy_primitives::Address) -> bool {
+    pub fn has_code(&self, address: Address) -> bool {
         self.engine_client.has_code(address)
     }
 
@@ -466,7 +147,7 @@ impl L2Sequencer {
         *self.conductor.lock().expect("conductor lock poisoned") = Some(conductor);
     }
 
-    /// Broadcast `block` as a [`NetworkPayloadEnvelope`] to the wired [`SupervisedP2P`] handle.
+    /// Broadcast `block` as a [`base_common_rpc_types_engine::NetworkPayloadEnvelope`] to the wired [`SupervisedP2P`] handle.
     pub fn broadcast_unsafe_block(&self, block: &BaseBlock) {
         let Some(p2p) = &self.supervised_p2p else { return };
         p2p.send(ExecutionPayloadConverter::network_envelope(
@@ -710,7 +391,7 @@ impl L2Sequencer {
 
     /// Convert an actor task join result into [`L2SequencerError`].
     pub fn actor_join_error(
-        joined: Result<Result<(), SequencerActorError>, tokio::task::JoinError>,
+        joined: Result<Result<(), SequencerActorError>, JoinError>,
     ) -> L2SequencerError {
         match joined {
             Ok(Ok(())) => L2SequencerError::InsertChannelClosed,
