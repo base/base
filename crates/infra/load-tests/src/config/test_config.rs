@@ -311,7 +311,7 @@ pub enum TxTypeConfig {
     /// number of storage, account, and precompile operations.
     Simulator {
         /// Deployed `Simulator` contract address. When absent, a contract is automatically
-        /// deployed via CREATE2 before the test starts and the address is derived deterministically.
+        /// deployed via CREATE before the test starts using the funder's current nonce.
         #[serde(default)]
         contract: Option<String>,
         /// Storage slots to SLOAD per call.
@@ -708,13 +708,13 @@ impl TestConfig {
                 let precompile_calls = precompiles
                     .iter()
                     .map(|(name, &count)| {
-                        simulator_precompile_address(name)
-                            .map(|addr| (addr, count))
-                            .ok_or_else(|| {
+                        simulator_precompile_address(name).map(|addr| (addr, count)).ok_or_else(
+                            || {
                                 BaselineError::Config(format!(
                                     "unknown simulator precompile name '{name}'"
                                 ))
-                            })
+                            },
+                        )
                     })
                     .collect::<Result<Vec<_>>>()?;
                 TxType::Simulator {

@@ -32,7 +32,7 @@ pub use aerodrome::AerodromeClPayload;
 mod osaka;
 pub use osaka::OsakaPayload;
 
-pub(crate) mod simulator;
+mod simulator;
 pub use simulator::SimulatorPayload;
 
 /// A transaction payload generator.
