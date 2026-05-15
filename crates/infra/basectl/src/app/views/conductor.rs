@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use alloy_primitives::B256;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -230,6 +230,10 @@ pub struct ConductorView {
     pause_rx: PauseRx,
     /// In-flight result channel for the soft P2P-reconnect operation.
     unpause_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// Name of the node currently being reconnected, if any. Used to remove the saved
+    /// peer list from `paused_node_peers` only after a successful reconnect, so a
+    /// failed RPC leaves the saved peers intact for retry.
+    reconnecting_node: Option<String>,
     /// Saved peer lists for each soft-isolated node, keyed by node name.
     /// Presence in this map means the node is currently P2P-isolated.
     paused_node_peers: HashMap<String, PausedPeers>,
@@ -334,10 +338,11 @@ impl ConductorView {
             }
             PendingAction::P2PReconnect(name) => {
                 let node = nodes_cfg.iter().find(|n| n.name == name).cloned();
-                let peers = self.paused_node_peers.remove(&name);
+                let peers = self.paused_node_peers.get(&name).cloned();
                 if let (Some(node), Some(peers)) = (node, peers) {
                     let (tx, rx) = mpsc::channel(1);
                     self.unpause_rx = Some(rx);
+                    self.reconnecting_node = Some(name);
                     tokio::spawn(unpause_sequencer_node(node, peers, tx));
                 } else {
                     self.op_pending = false;
@@ -397,7 +402,10 @@ impl View for ConductorView {
     }
 
     fn captures_char_input(&self) -> bool {
-        matches!(self.overlay, Overlay::HashInput { .. })
+        // Any open overlay handles its own keys (including Confirm's y/n shortcuts and
+        // ActionMenu's j/k navigation), so the framework should not intercept Char keys
+        // for its own bindings while an overlay is open.
+        self.is_overlay_open()
     }
 
     fn tick(&mut self, resources: &mut Resources) -> Action {
@@ -431,8 +439,14 @@ impl View for ConductorView {
         {
             self.op_pending = false;
             self.unpause_rx = None;
+            let node_name = self.reconnecting_node.take();
             match result {
-                Ok(msg) => resources.toasts.push(Toast::info(msg)),
+                Ok(msg) => {
+                    if let Some(name) = node_name {
+                        self.paused_node_peers.remove(&name);
+                    }
+                    resources.toasts.push(Toast::info(msg));
+                }
                 Err(msg) => resources.toasts.push(Toast::warning(msg)),
             }
         }
@@ -441,8 +455,7 @@ impl View for ConductorView {
     }
 
     fn handle_key(&mut self, key: KeyEvent, resources: &mut Resources) -> Action {
-        let nodes = resources.conductor.nodes.clone();
-        let node_count = nodes.len();
+        let node_count = resources.conductor.nodes.len();
 
         match &mut self.overlay {
             Overlay::HashInput { node: target, input, cursor, prefilled } => {
@@ -468,8 +481,12 @@ impl View for ConductorView {
                     KeyCode::Home => *cursor = 0,
                     KeyCode::End => *cursor = input.len(),
                     KeyCode::F(5) => {
-                        if let Some(hash) =
-                            nodes.iter().find(|n| n.name == *target).and_then(|n| n.unsafe_l2_hash)
+                        if let Some(hash) = resources
+                            .conductor
+                            .nodes
+                            .iter()
+                            .find(|n| n.name == *target)
+                            .and_then(|n| n.unsafe_l2_hash)
                         {
                             *input = format!("{hash:x}");
                             *cursor = input.len();
@@ -544,7 +561,8 @@ impl View for ConductorView {
                     }
                     KeyCode::Enter => {
                         let cursor_idx = *cursor;
-                        if let Some(node) = self.selected_node(&nodes).cloned() {
+                        if let Some(node) = self.selected_node(&resources.conductor.nodes).cloned()
+                        {
                             let item = MENU_ITEMS[cursor_idx];
                             let is_p2p_isolated = self.paused_node_peers.contains_key(&node.name);
                             self.select_menu_item(item, &node, is_p2p_isolated);
@@ -649,19 +667,8 @@ impl View for ConductorView {
 }
 
 /// Parses a hex-encoded 32-byte hash, accepting both `0x`-prefixed and bare forms.
-///
-/// Returns `None` if the input (after stripping `0x`/`0X`) is not exactly 64
-/// hex characters.
 fn parse_hex_hash(input: &str) -> Option<B256> {
-    let trimmed = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")).unwrap_or(input);
-    if trimmed.len() != 64 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut buf = [0u8; 32];
-    for i in 0..32 {
-        buf[i] = u8::from_str_radix(&trimmed[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(B256::from(buf))
+    B256::from_str(input).ok()
 }
 
 fn render_unconfigured(f: &mut Frame<'_>, area: Rect) {
@@ -777,9 +784,7 @@ fn render_action_menu(
             (true, true) => Style::default()
                 .fg(COLOR_BASE_BLUE)
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-            (true, false) => {
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::REVERSED)
-            }
+            (true, false) => Style::default().fg(Color::DarkGray).add_modifier(Modifier::REVERSED),
             (false, true) => Style::default().fg(Color::White),
             (false, false) => Style::default().fg(Color::DarkGray),
         };
@@ -912,7 +917,10 @@ fn render_hash_input(
         layout[2],
     );
 
-    let cursor_col = inner.x + 2 + cursor as u16;
+    // `cursor` is bounded by the input length, which the key handler caps at 64
+    // hex chars, so the conversion never truncates in practice; the saturating
+    // cast guards against future changes to that invariant.
+    let cursor_col = inner.x + 2 + u16::try_from(cursor).unwrap_or(u16::MAX);
     let cursor_col = cursor_col.min(inner.x + inner.width.saturating_sub(1));
     f.set_cursor_position((cursor_col, layout[2].y));
 
@@ -959,9 +967,10 @@ fn render_cluster_table(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    debug_assert!(!nodes.is_empty(), "render_cluster_table requires at least one node");
     let node_count = nodes.len();
     let label_pct = 15u16;
-    let node_pct = (100u16 - label_pct) / node_count as u16;
+    let node_pct = (100u16 - label_pct) / node_count.max(1) as u16;
 
     let mut constraints = vec![Constraint::Percentage(label_pct)];
     for _ in 0..node_count {
@@ -1338,9 +1347,10 @@ fn render_validator_table(f: &mut Frame<'_>, area: Rect, nodes: &[ValidatorNodeS
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    debug_assert!(!nodes.is_empty(), "render_validator_table requires at least one node");
     let node_count = nodes.len();
     let label_pct = 15u16;
-    let node_pct = (100u16 - label_pct) / node_count as u16;
+    let node_pct = (100u16 - label_pct) / node_count.max(1) as u16;
 
     let mut constraints = vec![Constraint::Percentage(label_pct)];
     for _ in 0..node_count {
@@ -1567,4 +1577,36 @@ fn section_row(label: &str, node_count: usize) -> Row<'static> {
         cells.push(Cell::from("──────────────").style(sep_style));
     }
     Row::new(cells).height(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_HEX: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn parses_bare_hex_hash() {
+        let parsed = parse_hex_hash(SAMPLE_HEX).expect("bare 64-char hex parses");
+        assert_eq!(parsed, B256::from_str(SAMPLE_HEX).unwrap());
+    }
+
+    #[test]
+    fn parses_0x_prefixed_hex_hash() {
+        let prefixed = format!("0x{SAMPLE_HEX}");
+        let parsed = parse_hex_hash(&prefixed).expect("0x-prefixed 64-char hex parses");
+        assert_eq!(parsed, B256::from_str(SAMPLE_HEX).unwrap());
+    }
+
+    #[test]
+    fn rejects_wrong_length() {
+        assert!(parse_hex_hash("dead").is_none());
+        assert!(parse_hex_hash(&format!("0x{SAMPLE_HEX}ff")).is_none());
+    }
+
+    #[test]
+    fn rejects_non_hex() {
+        let bad = "g".repeat(64);
+        assert!(parse_hex_hash(&bad).is_none());
+    }
 }
