@@ -29,7 +29,7 @@ pub use transaction::{
 };
 
 mod extra;
-pub use extra::{EIP1559ParamError, HoloceneExtraData, JovianExtraData};
+pub use extra::{EIP1559ParamEncoder, EIP1559ParamError, HoloceneExtraData, JovianExtraData};
 
 mod source;
 pub use source::{
