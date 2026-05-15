@@ -47,8 +47,12 @@ impl DefaultToken {
             C::isPaused(c) => self.base.is_paused(c.vector)?.abi_encode().into(),
             C::isPausable(_) => self.base.is_pausable()?.abi_encode().into(),
             C::isCapMutable(_) => self.base.is_cap_mutable()?.abi_encode().into(),
-            C::DOMAIN_SEPARATOR(_) => self.base.domain_separator()?.abi_encode().into(),
-            C::eip712Domain(_) => self.base.eip712_domain()?.abi_encode().into(),
+            C::DOMAIN_SEPARATOR(_) => {
+                self.base.domain_separator(StorageCtx.chain_id())?.abi_encode().into()
+            }
+            C::eip712Domain(_) => {
+                self.base.eip712_domain(StorageCtx.chain_id())?.abi_encode().into()
+            }
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {
@@ -152,7 +156,17 @@ impl DefaultToken {
 
             // --- Permit ---
             C::permit(c) => {
-                self.base.permit(c.owner, c.spender, c.value, c.deadline, c.v, c.r, c.s)?;
+                self.base.permit(
+                    StorageCtx.chain_id(),
+                    StorageCtx.timestamp(),
+                    c.owner,
+                    c.spender,
+                    c.value,
+                    c.deadline,
+                    c.v,
+                    c.r,
+                    c.s,
+                )?;
                 Bytes::new()
             }
         };

@@ -1,6 +1,6 @@
 //! `ITokenCoreAccounting` — the driven port all token storage adapters implement.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, LogData, U256};
 use base_precompile_storage::Result;
 
 /// Outbound port: all data reads and writes the core business logic requires.
@@ -79,4 +79,9 @@ pub trait ITokenCoreAccounting {
 
     /// Returns the immutable capability bitfield assigned at creation.
     fn capabilities(&self) -> Result<U256>;
+
+    // --- Event emission ---
+
+    /// Publishes a pre-encoded EVM event log from this token's address.
+    fn emit_event(&mut self, log: LogData) -> Result<()>;
 }

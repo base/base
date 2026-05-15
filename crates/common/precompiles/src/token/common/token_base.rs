@@ -6,7 +6,7 @@
 
 use alloy_primitives::{Address, B256, FixedBytes, U256, keccak256};
 use alloy_sol_types::{SolEvent, SolValue};
-use base_precompile_storage::{BasePrecompileError, Result, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::token::IDefaultToken;
 
@@ -63,23 +63,23 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
     ///
     /// Domain: `(chainId, verifyingContract)` only — `name` and `version`
     /// are intentionally empty per the `IDefaultToken` spec.
-    pub fn domain_separator(&self) -> Result<B256> {
+    pub fn domain_separator(&self, chain_id: u64) -> Result<B256> {
         let domain_type = b"EIP712Domain(uint256 chainId,address verifyingContract)";
         let type_hash: B256 = keccak256(domain_type);
-        let chain_id = U256::from(StorageCtx.chain_id());
-        let encoded = (type_hash, chain_id, self.address).abi_encode();
+        let encoded = (type_hash, U256::from(chain_id), self.address).abi_encode();
         Ok(keccak256(&encoded))
     }
 
     /// Returns the ERC-5267 `eip712Domain()` tuple for this token.
     pub fn eip712_domain(
         &self,
+        chain_id: u64,
     ) -> Result<(FixedBytes<1>, String, String, U256, Address, B256, Vec<U256>)> {
         Ok((
             FixedBytes::<1>::from([0x0c]), // bits 2+3: chainId + verifyingContract
             String::new(),
             String::new(),
-            U256::from(StorageCtx.chain_id()),
+            U256::from(chain_id),
             self.address,
             B256::ZERO,
             vec![],
@@ -112,7 +112,7 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         }
         self.accounting.set_balance(from, balance - amount)?;
         self.accounting.set_balance(to, self.accounting.balance_of(to)? + amount)?;
-        self.emit_transfer(from, to, amount)
+        self.accounting.emit_event(IDefaultToken::Transfer { from, to, amount }.encode_log_data())
     }
 
     /// Moves `amount` tokens from `from` to `to` using `spender`'s allowance.
@@ -152,9 +152,7 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
             return Err(BasePrecompileError::revert(IDefaultToken::InvalidSpender { spender }));
         }
         self.accounting.set_allowance(owner, spender, amount)?;
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::Approval { owner, spender, amount }.encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(IDefaultToken::Approval { owner, spender, amount }.encode_log_data())
     }
 
     // -------------------------------------------------------------------------
@@ -170,7 +168,7 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         memo: B256,
     ) -> Result<()> {
         self.transfer(from, to, amount)?;
-        self.emit_memo(memo)
+        self.accounting.emit_event(IDefaultToken::Memo { memo }.encode_log_data())
     }
 
     /// `transfer_from` + emits `Memo(memo)` immediately after `Transfer`.
@@ -183,19 +181,19 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         memo: B256,
     ) -> Result<()> {
         self.transfer_from(spender, from, to, amount)?;
-        self.emit_memo(memo)
+        self.accounting.emit_event(IDefaultToken::Memo { memo }.encode_log_data())
     }
 
     /// `mint` + emits `Memo(memo)` immediately after `Transfer`.
     pub fn mint_with_memo(&mut self, to: Address, amount: U256, memo: B256) -> Result<()> {
         self.mint(to, amount)?;
-        self.emit_memo(memo)
+        self.accounting.emit_event(IDefaultToken::Memo { memo }.encode_log_data())
     }
 
     /// `burn` + emits `Memo(memo)` immediately after `Transfer`.
     pub fn burn_with_memo(&mut self, from: Address, amount: U256, memo: B256) -> Result<()> {
         self.burn(from, amount)?;
-        self.emit_memo(memo)
+        self.accounting.emit_event(IDefaultToken::Memo { memo }.encode_log_data())
     }
 
     // -------------------------------------------------------------------------
@@ -221,7 +219,7 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         }
         self.accounting.set_total_supply(new_supply)?;
         self.accounting.set_balance(to, self.accounting.balance_of(to)? + amount)?;
-        self.emit_transfer(Address::ZERO, to, amount)
+        self.accounting.emit_event(IDefaultToken::Transfer { from: Address::ZERO, to, amount }.encode_log_data())
     }
 
     /// Destroys `amount` tokens from `from`. Emits `Transfer(from, 0x0, amount)`.
@@ -236,7 +234,7 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         }
         self.accounting.set_balance(from, balance - amount)?;
         self.accounting.set_total_supply(self.accounting.total_supply()? - amount)?;
-        self.emit_transfer(from, Address::ZERO, amount)
+        self.accounting.emit_event(IDefaultToken::Transfer { from, to: Address::ZERO, amount }.encode_log_data())
     }
 
     // -------------------------------------------------------------------------
@@ -254,29 +252,27 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
             }));
         }
         self.burn(caller, amount)?;
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::Redeemed { holder: caller, amount }.encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(IDefaultToken::Redeemed { holder: caller, amount }.encode_log_data())
     }
 
     /// `redeem` + emits `Memo(memo)` immediately after `Redeemed`.
     pub fn redeem_with_memo(&mut self, caller: Address, amount: U256, memo: B256) -> Result<()> {
         self.redeem(caller, amount)?;
-        self.emit_memo(memo)
+        self.accounting.emit_event(IDefaultToken::Memo { memo }.encode_log_data())
     }
 
     /// Sets the minimum redeemable amount. Emits `MinimumRedeemableUpdated`.
     pub fn set_minimum_redeemable(&mut self, caller: Address, minimum: U256) -> Result<()> {
         let old = self.accounting.minimum_redeemable()?;
         self.accounting.set_minimum_redeemable(minimum)?;
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::MinimumRedeemableUpdated {
-            updater: caller,
-            oldMinimum: old,
-            newMinimum: minimum,
-        }
-        .encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(
+            IDefaultToken::MinimumRedeemableUpdated {
+                updater: caller,
+                oldMinimum: old,
+                newMinimum: minimum,
+            }
+            .encode_log_data(),
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -296,9 +292,7 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         }
         let current = self.accounting.paused()?;
         self.accounting.set_paused(current | vectors)?;
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::Paused { updater: caller, vectors }.encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(IDefaultToken::Paused { updater: caller, vectors }.encode_log_data())
     }
 
     /// Clears all paused vectors. Requires `PAUSABLE` capability.
@@ -310,9 +304,7 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
             }));
         }
         self.accounting.set_paused(U256::ZERO)?;
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::Unpaused { updater: caller }.encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(IDefaultToken::Unpaused { updater: caller }.encode_log_data())
     }
 
     // -------------------------------------------------------------------------
@@ -336,39 +328,32 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         }
         let old = self.accounting.supply_cap()?;
         self.accounting.set_supply_cap(new_cap)?;
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::SupplyCapUpdated {
-            updater: caller,
-            oldSupplyCap: old,
-            newSupplyCap: new_cap,
-        }
-        .encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(
+            IDefaultToken::SupplyCapUpdated {
+                updater: caller,
+                oldSupplyCap: old,
+                newSupplyCap: new_cap,
+            }
+            .encode_log_data(),
+        )
     }
 
     /// Updates the token name. Emits `NameUpdated`.
     pub fn set_name(&mut self, caller: Address, name: String) -> Result<()> {
         self.accounting.set_name(name.clone())?;
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::NameUpdated { updater: caller, newName: name }.encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(IDefaultToken::NameUpdated { updater: caller, newName: name }.encode_log_data())
     }
 
     /// Updates the token symbol. Emits `SymbolUpdated`.
     pub fn set_symbol(&mut self, caller: Address, symbol: String) -> Result<()> {
         self.accounting.set_symbol(symbol.clone())?;
-        let mut ctx = StorageCtx;
-        let log =
-            IDefaultToken::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(IDefaultToken::SymbolUpdated { updater: caller, newSymbol: symbol }.encode_log_data())
     }
 
     /// Updates the contract URI. Emits `ContractURIUpdated`.
     pub fn set_contract_uri(&mut self, _caller: Address, uri: String) -> Result<()> {
         self.accounting.set_contract_uri(uri)?;
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::ContractURIUpdated {}.encode_log_data();
-        ctx.emit_event(self.address, log)
+        self.accounting.emit_event(IDefaultToken::ContractURIUpdated {}.encode_log_data())
     }
 
     // -------------------------------------------------------------------------
@@ -379,6 +364,8 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
     /// Domain: `(chainId, verifyingContract)`; `name` and `version` are empty.
     pub fn permit(
         &mut self,
+        chain_id: u64,
+        now: U256,
         owner: Address,
         spender: Address,
         value: U256,
@@ -387,12 +374,11 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         r: B256,
         s: B256,
     ) -> Result<()> {
-        let now = StorageCtx.timestamp();
         if now > deadline {
             return Err(BasePrecompileError::revert(IDefaultToken::ExpiredSignature { deadline }));
         }
 
-        let domain_sep = self.domain_separator()?;
+        let domain_sep = self.domain_separator(chain_id)?;
         let nonce = self.accounting.nonce(owner)?;
 
         let struct_hash = keccak256(
@@ -427,21 +413,4 @@ impl<S: ITokenCoreAccounting> TokenBase<S> {
         self.approve(owner, spender, value)
     }
 
-    // -------------------------------------------------------------------------
-    // Event emission helpers
-    // -------------------------------------------------------------------------
-
-    /// Emits a `Transfer(from, to, amount)` event from this token's address.
-    pub fn emit_transfer(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::Transfer { from, to, amount }.encode_log_data();
-        ctx.emit_event(self.address, log)
-    }
-
-    /// Emits a `Memo(memo)` event from this token's address.
-    pub fn emit_memo(&mut self, memo: B256) -> Result<()> {
-        let mut ctx = StorageCtx;
-        let log = IDefaultToken::Memo { memo }.encode_log_data();
-        ctx.emit_event(self.address, log)
-    }
 }

@@ -1,6 +1,6 @@
-use alloy_primitives::{Address, U256, address};
+use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{Handler, Mapping, Result};
+use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
 use crate::token::common::ITokenCoreAccounting;
 
@@ -111,5 +111,10 @@ impl ITokenCoreAccounting for DefaultTokenStorage {
 
     fn capabilities(&self) -> Result<U256> {
         self.capabilities.read()
+    }
+
+    fn emit_event(&mut self, log: LogData) -> Result<()> {
+        let mut ctx = StorageCtx;
+        ctx.emit_event(DEFAULT_TOKEN_ADDRESS, log)
     }
 }
