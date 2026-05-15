@@ -26,8 +26,8 @@ pub use metrics::{
 mod workload;
 pub use workload::{
     AccountPool, AerodromeClPayload, CalldataPayload, Erc20Payload, FundedAccount, OsakaPayload,
-    Payload, PrecompileLooper, PrecompilePayload, SeededRng, StoragePayload, TransferPayload,
-    UniswapV3Payload, WorkloadGenerator, parse_precompile_id,
+    Payload, PrecompileLooper, PrecompilePayload, SeededRng, SimulatorPayload, StoragePayload,
+    TransferPayload, UniswapV3Payload, WorkloadGenerator, parse_precompile_id,
 };
 
 mod runner;
@@ -38,5 +38,5 @@ pub use runner::{
     PreparedBatch, PreparedTransaction, QueuedSubmitFailures, RateLimiter, ResultsTracker,
     SENDER_WORKERS_PER_RPC, SIGNER_WORKERS_PER_RPC, SUBMIT_BATCH_QUEUE_BUFFER, SUBMIT_MAX_ATTEMPTS,
     SenderContext, SentTransaction, SignedBatch, SignedTransaction, SignerContext,
-    SubmissionPipeline, SubmitEvent, TxConfig, TxType,
+    SubmissionPipeline, SubmitEvent, TxConfig, TxType, deploy_and_init_simulator,
 };

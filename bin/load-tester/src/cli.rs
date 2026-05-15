@@ -308,6 +308,12 @@ async fn run_test_phases(
         runner.setup_swap_tokens(funding_key.clone(), swap_token_amount).await?;
         println!("Swap tokens distributed.");
     }
+
+    if runner.needs_simulator_setup() {
+        println!("Deploying and initializing Simulator contract...");
+        runner.setup_simulator_contracts(funding_key.clone()).await?;
+        println!("Simulator contract ready.");
+    }
     println!();
 
     println!("Running load test...");
