@@ -31,5 +31,8 @@ pub use submission::{
 mod status;
 pub use status::{DisplaySnapshot, LoadTestDisplay};
 
+mod simulator_setup;
+pub use simulator_setup::deploy_and_init_simulator;
+
 mod load_runner;
 pub use load_runner::LoadRunner;
