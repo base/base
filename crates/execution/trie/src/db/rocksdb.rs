@@ -119,34 +119,34 @@ struct RocksdbHistoryDeleteBatch {
 /// `RocksDB` backend. Callers that need several cursors to read the same database view should
 /// acquire one snapshot with [`BaseProofsStore::ro_tx`] and pass it to the `*_with_tx` cursor
 /// factories.
-pub struct RocksdbReadSnapshot {
-    snapshot: SnapshotWithThreadMode<'static, RocksDb>,
-    db: Arc<RocksDb>,
+pub struct RocksdbReadSnapshot<'db> {
+    db: &'db RocksDb,
+    snapshot: SnapshotWithThreadMode<'db, RocksDb>,
 }
 
 /// Cursor over `RocksDB` versioned history rows.
-struct RocksdbVersionedCursor<T: Table + DupSort> {
-    snapshot: Arc<RocksdbReadSnapshot>,
+struct RocksdbVersionedCursor<'db, T: Table + DupSort> {
+    snapshot: Arc<RocksdbReadSnapshot<'db>>,
     max_block_number: u64,
     current_key: Option<T::Key>,
     _table: PhantomData<T>,
 }
 
 /// `RocksDB` implementation of [`TrieCursor`].
-pub struct RocksdbTrieCursor<T: Table + DupSort> {
-    inner: RocksdbVersionedCursor<T>,
+pub struct RocksdbTrieCursor<'db, T: Table + DupSort> {
+    inner: RocksdbVersionedCursor<'db, T>,
     hashed_address: Option<B256>,
 }
 
 /// `RocksDB` implementation of [`HashedCursor`] for storage state.
-pub struct RocksdbStorageCursor {
-    inner: RocksdbVersionedCursor<HashedStorageHistory>,
+pub struct RocksdbStorageCursor<'db> {
+    inner: RocksdbVersionedCursor<'db, HashedStorageHistory>,
     hashed_address: B256,
 }
 
 /// `RocksDB` implementation of [`HashedCursor`] for account state.
-pub struct RocksdbAccountCursor {
-    inner: RocksdbVersionedCursor<HashedAccountHistory>,
+pub struct RocksdbAccountCursor<'db> {
+    inner: RocksdbVersionedCursor<'db, HashedAccountHistory>,
 }
 
 #[derive(Debug, Default)]
@@ -167,23 +167,12 @@ impl fmt::Debug for RocksdbProofsStorage {
     }
 }
 
-impl RocksdbReadSnapshot {
-    fn new(db: Arc<RocksDb>) -> Self {
+impl<'db> RocksdbReadSnapshot<'db> {
+    fn new(db: &'db RocksDb) -> Self {
         Self::assert_send_sync();
 
         let snapshot = db.snapshot();
-        // SAFETY: `SnapshotWithThreadMode` stores a DB reference and a RocksDB snapshot pointer.
-        // This wrapper owns an `Arc` to that same DB, so the raw DB pointer captured by the
-        // snapshot remains valid even if the parent `RocksdbProofsStorage` is dropped. The
-        // `snapshot` field is declared before `db`, so the snapshot is released before the owned DB
-        // handle can be dropped.
-        let snapshot = unsafe {
-            std::mem::transmute::<
-                SnapshotWithThreadMode<'_, RocksDb>,
-                SnapshotWithThreadMode<'static, RocksDb>,
-            >(snapshot)
-        };
-        Self { snapshot, db }
+        Self { db, snapshot }
     }
 
     const fn assert_send_sync()
@@ -199,13 +188,13 @@ impl RocksdbReadSnapshot {
     }
 }
 
-impl fmt::Debug for RocksdbReadSnapshot {
+impl fmt::Debug for RocksdbReadSnapshot<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RocksdbReadSnapshot").finish_non_exhaustive()
     }
 }
 
-impl<T> fmt::Debug for RocksdbVersionedCursor<T>
+impl<T> fmt::Debug for RocksdbVersionedCursor<'_, T>
 where
     T: Table + DupSort,
 {
@@ -216,7 +205,7 @@ where
     }
 }
 
-impl<T> fmt::Debug for RocksdbTrieCursor<T>
+impl<T> fmt::Debug for RocksdbTrieCursor<'_, T>
 where
     T: Table + DupSort,
 {
@@ -227,7 +216,7 @@ where
     }
 }
 
-impl fmt::Debug for RocksdbStorageCursor {
+impl fmt::Debug for RocksdbStorageCursor<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RocksdbStorageCursor")
             .field("hashed_address", &self.hashed_address)
@@ -235,7 +224,7 @@ impl fmt::Debug for RocksdbStorageCursor {
     }
 }
 
-impl fmt::Debug for RocksdbAccountCursor {
+impl fmt::Debug for RocksdbAccountCursor<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RocksdbAccountCursor").finish_non_exhaustive()
     }
@@ -1181,25 +1170,28 @@ impl RocksdbProofsStorage {
 
 impl BaseProofsStore for RocksdbProofsStorage {
     type StorageTrieCursor<'tx>
-        = RocksdbTrieCursor<StorageTrieHistory>
+        = RocksdbTrieCursor<'tx, StorageTrieHistory>
     where
         Self: 'tx;
     type AccountTrieCursor<'tx>
-        = RocksdbTrieCursor<AccountTrieHistory>
+        = RocksdbTrieCursor<'tx, AccountTrieHistory>
     where
         Self: 'tx;
     type StorageCursor<'tx>
-        = RocksdbStorageCursor
+        = RocksdbStorageCursor<'tx>
     where
         Self: 'tx;
     type AccountHashedCursor<'tx>
-        = RocksdbAccountCursor
+        = RocksdbAccountCursor<'tx>
     where
         Self: 'tx;
-    type Tx = Arc<RocksdbReadSnapshot>;
+    type Tx<'tx>
+        = Arc<RocksdbReadSnapshot<'tx>>
+    where
+        Self: 'tx;
 
-    fn ro_tx(&self) -> BaseProofsStorageResult<Self::Tx> {
-        Ok(Arc::new(RocksdbReadSnapshot::new(Arc::clone(&self.db))))
+    fn ro_tx<'tx>(&'tx self) -> BaseProofsStorageResult<Self::Tx<'tx>> {
+        Ok(Arc::new(RocksdbReadSnapshot::new(self.db.as_ref())))
     }
 
     fn get_earliest_block_number(&self) -> BaseProofsStorageResult<Option<(u64, B256)>> {
@@ -1211,53 +1203,50 @@ impl BaseProofsStore for RocksdbProofsStorage {
     }
 
     fn storage_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>> {
         // Standalone cursor factories intentionally create independent snapshots. Use `ro_tx` and
         // the `*_with_tx` factories when multiple cursors need one consistent view.
         Ok(RocksdbTrieCursor::<StorageTrieHistory>::new(
-            Arc::clone(&self.db),
+            self.db.as_ref(),
             max_block_number,
             Some(hashed_address),
         ))
     }
 
     fn account_trie_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>> {
-        Ok(RocksdbTrieCursor::<AccountTrieHistory>::new(
-            Arc::clone(&self.db),
-            max_block_number,
-            None,
-        ))
+        Ok(RocksdbTrieCursor::<AccountTrieHistory>::new(self.db.as_ref(), max_block_number, None))
     }
 
     fn storage_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>> {
-        Ok(RocksdbStorageCursor::new(Arc::clone(&self.db), max_block_number, hashed_address))
+        Ok(RocksdbStorageCursor::new(self.db.as_ref(), max_block_number, hashed_address))
     }
 
     fn account_hashed_cursor<'tx>(
-        &self,
+        &'tx self,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>> {
-        Ok(RocksdbAccountCursor::new(Arc::clone(&self.db), max_block_number))
+        Ok(RocksdbAccountCursor::new(self.db.as_ref(), max_block_number))
     }
 
-    fn storage_trie_cursor_with_tx<'tx>(
+    fn storage_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageTrieCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         Ok(RocksdbTrieCursor::<StorageTrieHistory>::new_with_snapshot(
             Arc::clone(tx),
@@ -1266,13 +1255,14 @@ impl BaseProofsStore for RocksdbProofsStorage {
         ))
     }
 
-    fn account_trie_cursor_with_tx<'tx>(
+    fn account_trie_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountTrieCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         Ok(RocksdbTrieCursor::<AccountTrieHistory>::new_with_snapshot(
             Arc::clone(tx),
@@ -1281,14 +1271,15 @@ impl BaseProofsStore for RocksdbProofsStorage {
         ))
     }
 
-    fn storage_hashed_cursor_with_tx<'tx>(
+    fn storage_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         hashed_address: B256,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::StorageCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         Ok(RocksdbStorageCursor::new_with_snapshot(
             Arc::clone(tx),
@@ -1297,13 +1288,14 @@ impl BaseProofsStore for RocksdbProofsStorage {
         ))
     }
 
-    fn account_hashed_cursor_with_tx<'tx>(
+    fn account_hashed_cursor_with_tx<'tx, 'db>(
         &self,
-        tx: &'tx Self::Tx,
+        tx: &'tx Self::Tx<'db>,
         max_block_number: u64,
     ) -> BaseProofsStorageResult<Self::AccountHashedCursor<'tx>>
     where
-        Self: 'tx,
+        Self: 'db,
+        'db: 'tx,
     {
         Ok(RocksdbAccountCursor::new_with_snapshot(Arc::clone(tx), max_block_number))
     }
@@ -1458,6 +1450,8 @@ impl BaseProofsStore for RocksdbProofsStorage {
             });
         }
 
+        // Keep collection and deletion under the same write lock so another RocksDB writer cannot
+        // change the proof window or history rows between choosing keys and committing the batch.
         let history_to_delete = self.collect_history_ranged(to.block.number..)?;
         let mut batch = WriteBatch::default();
         self.delete_history_ranged(&mut batch, history_to_delete)?;
@@ -1750,7 +1744,7 @@ impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {
 #[cfg(not(feature = "metrics"))]
 impl reth_db::database_metrics::DatabaseMetrics for RocksdbProofsStorage {}
 
-impl<T, V> RocksdbVersionedCursor<T>
+impl<'db, T, V> RocksdbVersionedCursor<'db, T>
 where
     T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
     T: RocksDbHistoryTable,
@@ -1758,12 +1752,15 @@ where
     T::Value: Decompress,
 {
     /// Creates a cursor over a `RocksDB` history column family.
-    fn new(db: Arc<RocksDb>, max_block_number: u64) -> Self {
+    fn new(db: &'db RocksDb, max_block_number: u64) -> Self {
         let snapshot = Arc::new(RocksdbReadSnapshot::new(db));
         Self::new_with_snapshot(snapshot, max_block_number)
     }
 
-    const fn new_with_snapshot(snapshot: Arc<RocksdbReadSnapshot>, max_block_number: u64) -> Self {
+    const fn new_with_snapshot(
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
+        max_block_number: u64,
+    ) -> Self {
         Self { snapshot, max_block_number, current_key: None, _table: PhantomData }
     }
 
@@ -1874,14 +1871,14 @@ where
     }
 }
 
-impl RocksdbTrieCursor<AccountTrieHistory> {
+impl<'db> RocksdbTrieCursor<'db, AccountTrieHistory> {
     /// Creates a `RocksDB` trie cursor.
-    pub fn new(db: Arc<RocksDb>, max_block_number: u64, hashed_address: Option<B256>) -> Self {
+    pub fn new(db: &'db RocksDb, max_block_number: u64, hashed_address: Option<B256>) -> Self {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
     const fn new_with_snapshot(
-        snapshot: Arc<RocksdbReadSnapshot>,
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
         hashed_address: Option<B256>,
     ) -> Self {
@@ -1892,14 +1889,14 @@ impl RocksdbTrieCursor<AccountTrieHistory> {
     }
 }
 
-impl RocksdbTrieCursor<StorageTrieHistory> {
+impl<'db> RocksdbTrieCursor<'db, StorageTrieHistory> {
     /// Creates a `RocksDB` trie cursor.
-    pub fn new(db: Arc<RocksDb>, max_block_number: u64, hashed_address: Option<B256>) -> Self {
+    pub fn new(db: &'db RocksDb, max_block_number: u64, hashed_address: Option<B256>) -> Self {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
     const fn new_with_snapshot(
-        snapshot: Arc<RocksdbReadSnapshot>,
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
         hashed_address: Option<B256>,
     ) -> Self {
@@ -1910,7 +1907,7 @@ impl RocksdbTrieCursor<StorageTrieHistory> {
     }
 }
 
-impl TrieCursor for RocksdbTrieCursor<AccountTrieHistory> {
+impl TrieCursor for RocksdbTrieCursor<'_, AccountTrieHistory> {
     fn seek_exact(
         &mut self,
         path: Nibbles,
@@ -1944,7 +1941,7 @@ impl TrieCursor for RocksdbTrieCursor<AccountTrieHistory> {
     }
 }
 
-impl TrieCursor for RocksdbTrieCursor<StorageTrieHistory> {
+impl TrieCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
     fn seek_exact(
         &mut self,
         path: Nibbles,
@@ -2002,21 +1999,21 @@ impl TrieCursor for RocksdbTrieCursor<StorageTrieHistory> {
     }
 }
 
-impl TrieStorageCursor for RocksdbTrieCursor<StorageTrieHistory> {
+impl TrieStorageCursor for RocksdbTrieCursor<'_, StorageTrieHistory> {
     fn set_hashed_address(&mut self, hashed_address: B256) {
         self.hashed_address = Some(hashed_address);
         self.inner.current_key = None;
     }
 }
 
-impl RocksdbStorageCursor {
+impl<'db> RocksdbStorageCursor<'db> {
     /// Creates a `RocksDB` storage cursor.
-    pub fn new(db: Arc<RocksDb>, max_block_number: u64, hashed_address: B256) -> Self {
+    pub fn new(db: &'db RocksDb, max_block_number: u64, hashed_address: B256) -> Self {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number), hashed_address }
     }
 
     const fn new_with_snapshot(
-        snapshot: Arc<RocksdbReadSnapshot>,
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
         max_block_number: u64,
         hashed_address: B256,
     ) -> Self {
@@ -2027,7 +2024,7 @@ impl RocksdbStorageCursor {
     }
 }
 
-impl HashedCursor for RocksdbStorageCursor {
+impl HashedCursor for RocksdbStorageCursor<'_> {
     type Value = U256;
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
@@ -2071,7 +2068,7 @@ impl HashedCursor for RocksdbStorageCursor {
     }
 }
 
-impl HashedStorageCursor for RocksdbStorageCursor {
+impl HashedStorageCursor for RocksdbStorageCursor<'_> {
     fn is_storage_empty(&mut self) -> Result<bool, DatabaseError> {
         Ok(self.seek(B256::ZERO)?.is_none())
     }
@@ -2082,18 +2079,21 @@ impl HashedStorageCursor for RocksdbStorageCursor {
     }
 }
 
-impl RocksdbAccountCursor {
+impl<'db> RocksdbAccountCursor<'db> {
     /// Creates a `RocksDB` account cursor.
-    pub fn new(db: Arc<RocksDb>, max_block_number: u64) -> Self {
+    pub fn new(db: &'db RocksDb, max_block_number: u64) -> Self {
         Self { inner: RocksdbVersionedCursor::new(db, max_block_number) }
     }
 
-    const fn new_with_snapshot(snapshot: Arc<RocksdbReadSnapshot>, max_block_number: u64) -> Self {
+    const fn new_with_snapshot(
+        snapshot: Arc<RocksdbReadSnapshot<'db>>,
+        max_block_number: u64,
+    ) -> Self {
         Self { inner: RocksdbVersionedCursor::new_with_snapshot(snapshot, max_block_number) }
     }
 }
 
-impl HashedCursor for RocksdbAccountCursor {
+impl HashedCursor for RocksdbAccountCursor<'_> {
     type Value = Account;
 
     fn seek(&mut self, key: B256) -> Result<Option<(B256, Self::Value)>, DatabaseError> {
