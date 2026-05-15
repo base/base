@@ -106,7 +106,7 @@ async fn cluster_proof_blocking(
     stdin: SP1Stdin,
     label: &str,
 ) -> Result<SP1ProofWithPublicValues> {
-    tracing::info!("Generating {label} proof via cluster");
+    tracing::info!(label = %label, "Generating proof via cluster");
     let timeout_hours = timeout_secs.div_ceil(3600).max(1);
     let cluster_elf = ClusterElf::NewElf(elf.to_vec());
     let ProofRequestResults { proof, .. } = tokio::time::timeout(
