@@ -52,7 +52,7 @@ parking_lot.workspace = true
 derive_more.workspace = true
 eyre = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
-rocksdb.workspace = true
+rocksdb = { workspace = true, features = ["lz4", "zstd"] }
 
 [dev-dependencies]
 eyre.workspace = true
