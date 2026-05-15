@@ -65,6 +65,15 @@ where
         let earliest_block = earliest_block_opt.unwrap().0;
 
         let target_earliest_block = self.target_earliest_block(latest_block);
+        info!(
+            target: "trie::pruner",
+            earliest_block,
+            latest_block,
+            target_earliest_block,
+            retention_blocks = self.retention_blocks,
+            prune_batch_size = self.prune_batch_size,
+            "Calculated proof storage pruning target",
+        );
         if earliest_block >= target_earliest_block {
             trace!(target: "trie::pruner", "Nothing to prune");
             return Ok(PrunerOutput::default());
@@ -93,6 +102,14 @@ where
                 current_earliest_block.saturating_add(self.prune_batch_size),
                 target_earliest_block,
             );
+            info!(
+                target: "trie::pruner",
+                start_block = current_earliest_block,
+                end_block = batch_end_block,
+                target_earliest_block,
+                batch_size = batch_end_block.saturating_sub(current_earliest_block),
+                "Starting proof storage prune batch",
+            );
 
             let batch_output = self.prune_batch(current_earliest_block, batch_end_block)?;
 
@@ -108,6 +125,12 @@ where
     /// Prunes a single batch of blocks.
     fn prune_batch(&self, start_block: u64, end_block: u64) -> Result<PrunerOutput, PrunerError> {
         let batch_start_time = Instant::now();
+        info!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            "Resolving proof storage prune batch block hashes",
+        );
         if end_block == 0 {
             trace!(
                 target: "trie::pruner",
@@ -158,7 +181,22 @@ where
             block: BlockNumHash { number: end_block, hash: new_earliest_block_hash },
         };
 
-        // Commit this batch
+        info!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            block_hash = ?new_earliest_block_hash,
+            parent_block = parent_block_num,
+            parent_hash = ?parent_block_hash,
+            "Resolved proof storage prune batch block hashes",
+        );
+
+        info!(
+            target: "trie::pruner",
+            start_block,
+            end_block,
+            "Applying proof storage prune batch",
+        );
         let write_counts = self.provider.prune_earliest_state(block_with_parent)?;
 
         let duration = batch_start_time.elapsed();
