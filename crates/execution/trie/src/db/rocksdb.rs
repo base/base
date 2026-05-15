@@ -338,8 +338,7 @@ impl RocksdbProofsStorage {
 
     fn cf_options() -> Options {
         let mut options = Options::default();
-        // Snappy keeps compression CPU overhead low while reducing trie-history write amplification.
-        options.set_compression_type(DBCompressionType::Snappy);
+        options.set_compression_type(DBCompressionType::None);
         options.set_level_compaction_dynamic_level_bytes(true);
         options.set_max_write_buffer_number(6);
         options.set_target_file_size_base(256 * 1024 * 1024);
