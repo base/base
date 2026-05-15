@@ -30,8 +30,8 @@ use reth_trie_common::{
 };
 use rocksdb::{
     BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, CompactionPri,
-    DBCompressionType, DBIteratorWithThreadMode, DBWithThreadMode, Direction, IteratorMode,
-    MultiThreaded, Options, SnapshotWithThreadMode, WriteBatch, WriteOptions,
+    DBCompressionType, DBWithThreadMode, Direction, IteratorMode, MultiThreaded, Options,
+    ReadOptions, SnapshotWithThreadMode, WriteBatch, WriteOptions,
 };
 use tracing::info;
 
@@ -100,7 +100,7 @@ struct RocksdbPrunePlan {
 }
 
 impl RocksdbPrunePlan {
-    fn total_survivors(&self) -> usize {
+    const fn total_survivors(&self) -> usize {
         self.acc_survivors.len()
             + self.storage_survivors.len()
             + self.hashed_acc_survivors.len()
@@ -129,7 +129,7 @@ struct RocksdbPreparedHistoryDeletes {
 }
 
 impl RocksdbPreparedHistoryDeletes {
-    fn total(&self) -> usize {
+    const fn total(&self) -> usize {
         self.account_trie.len()
             + self.storage_trie.len()
             + self.hashed_account.len()
@@ -219,6 +219,10 @@ impl<'db> RocksdbReadSnapshot<'db> {
         self.db
             .cf_handle(name)
             .ok_or_else(|| DatabaseError::Other(format!("missing RocksDB column family {name}")))
+    }
+
+    const fn snapshot(&self) -> &SnapshotWithThreadMode<'db, RocksDb> {
+        &self.snapshot
     }
 }
 
@@ -587,8 +591,15 @@ impl RocksdbProofsStorage {
         for (key, survivor_block) in cutoff_items {
             let prefix = encode_history_key_prefix::<T>(&key);
             let start_key = encode_history_key::<T>(&key, 0);
-            let iter =
-                snapshot.iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
+            let mut read_options = ReadOptions::default();
+            if let Some(upper_bound) = prefix_upper_bound(&prefix) {
+                read_options.set_iterate_upper_bound(upper_bound);
+            }
+            let iter = snapshot.iterator_cf_opt(
+                &cf,
+                read_options,
+                IteratorMode::From(&start_key, Direction::Forward),
+            );
 
             for item in iter {
                 let (raw_key, raw_value) = item.map_err(rocksdb_error)?;
@@ -1346,6 +1357,19 @@ impl RocksdbProofsStorage {
             "Committing RocksDB proof storage prune",
         );
         let expected_earliest = Some((expected_earliest_block, expected_earliest_hash));
+        let current_earliest = self.get_block_number_hash(ProofWindowKey::EarliestBlock)?;
+        if current_earliest != expected_earliest {
+            info!(
+                target: "trie::pruner",
+                current_earliest = ?current_earliest,
+                expected_earliest = ?expected_earliest,
+                target_block,
+                elapsed = ?started.elapsed(),
+                "skipping stale prune plan"
+            );
+            return Ok(WriteCounts::default());
+        }
+
         let mut batch = WriteBatch::default();
 
         self.delete_raw_history_keys::<AccountTrieHistory>(&mut batch, deletes.account_trie)?;
@@ -1368,19 +1392,6 @@ impl RocksdbProofsStorage {
             target_block,
             target_hash,
         )?;
-
-        let current_earliest = self.get_block_number_hash(ProofWindowKey::EarliestBlock)?;
-        if current_earliest != expected_earliest {
-            info!(
-                target: "trie::pruner",
-                current_earliest = ?current_earliest,
-                expected_earliest = ?expected_earliest,
-                target_block,
-                elapsed = ?started.elapsed(),
-                "skipping stale prune plan"
-            );
-            return Ok(WriteCounts::default());
-        }
 
         info!(
             target: "trie::pruner",
@@ -2035,7 +2046,7 @@ impl<'db, T, V> RocksdbVersionedCursor<'db, T>
 where
     T: Table<Value = VersionedValue<V>> + DupSort<SubKey = u64>,
     T: RocksDbHistoryTable,
-    T::Key: Default,
+    T::Key: Clone + Default + Ord,
     T::Value: Decompress,
 {
     /// Creates a cursor over a `RocksDB` history column family.
@@ -2061,7 +2072,7 @@ where
         let target = encode_history_key::<T>(&key, self.max_block_number);
         let mut iter = self
             .snapshot
-            .snapshot
+            .snapshot()
             .iterator_cf(&cf, IteratorMode::From(&target, Direction::Reverse));
 
         let Some(item) = iter.next() else {
@@ -2088,68 +2099,67 @@ where
     }
 
     fn seek(&mut self, start_key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        let Some(first_key) = self.first_key_ge(start_key)? else {
-            self.current_key = None;
-            return Ok(None);
-        };
-        self.next_live_from(first_key)
+        self.next_live_from(start_key)
     }
 
     fn next(&mut self) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        let next_key = if let Some(key) = self.current_key.clone() {
-            self.first_key_gt(key)?
+        if let Some(key) = self.current_key.clone() {
+            self.next_live_after(key)
         } else {
-            self.first_key_ge(T::Key::default())?
-        };
-
-        let Some(next_key) = next_key else {
-            self.current_key = None;
-            return Ok(None);
-        };
-        self.next_live_from(next_key)
+            self.next_live_from(T::Key::default())
+        }
     }
 
-    fn next_live_from(&mut self, mut key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
-        loop {
+    fn next_live_from(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        self.next_live_candidate(key, false)
+    }
+
+    fn next_live_after(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        self.next_live_candidate(key, true)
+    }
+
+    fn next_live_candidate(
+        &mut self,
+        key: T::Key,
+        exclusive: bool,
+    ) -> Result<Option<(T::Key, V)>, DatabaseError> {
+        let found = {
+            let cf = self.cf()?;
+            let start_block = if exclusive { u64::MAX } else { 0 };
+            let start_key = encode_history_key::<T>(&key, start_block);
+            let iter = self
+                .snapshot
+                .snapshot()
+                .iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
+            let mut last_candidate = None;
+            let mut found = None;
+
+            for item in iter {
+                let (raw_key, _) = item.map_err(rocksdb_error)?;
+                let (candidate, _) = decode_history_key::<T>(&raw_key)?;
+                let before_start = if exclusive { candidate <= key } else { candidate < key };
+                if before_start || last_candidate.as_ref() == Some(&candidate) {
+                    continue;
+                }
+
+                last_candidate = Some(candidate.clone());
+                if let Some((live_key, latest_value)) = self.latest_version_for_key(candidate)?
+                    && let MaybeDeleted(Some(value)) = latest_value.value
+                {
+                    found = Some((live_key, value));
+                    break;
+                }
+            }
+
+            found
+        };
+
+        if let Some((key, value)) = found {
             self.current_key = Some(key.clone());
-            if let Some((live_key, value)) = self.seek_exact(key.clone())? {
-                return Ok(Some((live_key, value)));
-            }
-
-            let Some(next_key) = self.first_key_gt(key)? else {
-                self.current_key = None;
-                return Ok(None);
-            };
-            key = next_key;
-        }
-    }
-
-    fn first_key_ge(&self, key: T::Key) -> Result<Option<T::Key>, DatabaseError> {
-        let cf = self.cf()?;
-        let start_key = encode_history_key::<T>(&key, 0);
-        let mut iter = self
-            .snapshot
-            .snapshot
-            .iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
-        decode_next_history_key::<T>(&mut iter)
-    }
-
-    fn first_key_gt(&self, key: T::Key) -> Result<Option<T::Key>, DatabaseError> {
-        let cf = self.cf()?;
-        let start_key = encode_history_key::<T>(&key, u64::MAX);
-        let iter = self
-            .snapshot
-            .snapshot
-            .iterator_cf(&cf, IteratorMode::From(&start_key, Direction::Forward));
-
-        for item in iter {
-            let (raw_key, _) = item.map_err(rocksdb_error)?;
-            let (next_key, _) = decode_history_key::<T>(&raw_key)?;
-            if next_key > key {
-                return Ok(Some(next_key));
-            }
+            return Ok(Some((key, value)));
         }
 
+        self.current_key = None;
         Ok(None)
     }
 
@@ -2440,19 +2450,6 @@ where
     Ok((key, block_number))
 }
 
-fn decode_next_history_key<T>(
-    iter: &mut DBIteratorWithThreadMode<'_, RocksDb>,
-) -> Result<Option<T::Key>, DatabaseError>
-where
-    T: RocksDbHistoryTable,
-{
-    let Some(item) = iter.next() else {
-        return Ok(None);
-    };
-    let (raw_key, _) = item.map_err(rocksdb_error)?;
-    decode_history_key::<T>(&raw_key).map(|(key, _)| Some(key))
-}
-
 fn get_history_exact<T, V>(
     snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
     db: &Arc<RocksDb>,
@@ -2602,6 +2599,19 @@ fn flatten_and_sort<K: Ord>(map: HashMap<K, u64>) -> Vec<(K, u64)> {
     let mut values: Vec<_> = map.into_iter().collect();
     values.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     values
+}
+
+fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
+    let mut upper_bound = prefix.to_vec();
+    for index in (0..upper_bound.len()).rev() {
+        if upper_bound[index] != u8::MAX {
+            upper_bound[index] += 1;
+            upper_bound.truncate(index + 1);
+            return Some(upper_bound);
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
