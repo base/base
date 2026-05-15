@@ -43,3 +43,11 @@ Use contract view functions rather than off-chain keccak reconstruction for the 
 
 **Never reorder or reuse storage slots across hardforks.** Adding new fields is safe as long as
 they append after existing ones. Changing slot assignments for existing fields corrupts state.
+
+## Attribution
+
+This crate includes code adapted from Tempo's `precompiles` crate, including its storage
+abstractions, in the
+[`tempoxyz/tempo`](https://github.com/tempoxyz/tempo/tree/main/crates/precompiles)
+repository. The upstream license notices are retained in `LICENSE-MIT` and
+`LICENSE-APACHE`.
