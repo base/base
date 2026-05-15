@@ -28,9 +28,9 @@ use reth_trie_common::{
     updates::{StorageTrieUpdates, TrieUpdates},
 };
 use rocksdb::{
-    BoundColumnFamily, ColumnFamilyDescriptor, DBCompressionType, DBIteratorWithThreadMode,
-    DBWithThreadMode, Direction, IteratorMode, MultiThreaded, Options, SnapshotWithThreadMode,
-    WriteBatch, WriteOptions,
+    BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor, CompactionPri,
+    DBCompressionType, DBIteratorWithThreadMode, DBWithThreadMode, Direction, IteratorMode,
+    MultiThreaded, Options, SnapshotWithThreadMode, WriteBatch, WriteOptions,
 };
 use tracing::trace;
 
@@ -54,6 +54,14 @@ type RocksDbLatestVersionResult<T> =
 const HASH_KEY_LEN: usize = 32;
 const PACKED_NIBBLES_KEY_LEN: usize = 33;
 const BLOCK_NUMBER_KEY_LEN: usize = 8;
+const DEFAULT_BLOCK_CACHE_SIZE: usize = 128 << 20;
+const DEFAULT_BLOCK_SIZE: usize = 16 * 1024;
+const DEFAULT_BYTES_PER_SYNC: u64 = 1_048_576;
+const DEFAULT_MAX_OPEN_FILES: i32 = 512;
+const DEFAULT_MAX_BACKGROUND_JOBS: i32 = 8;
+const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 6;
+const DEFAULT_TARGET_FILE_SIZE_BASE: u64 = 256 * 1024 * 1024;
+const DEFAULT_WRITE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
 
 trait RocksDbHistoryTable: Table + DupSort<SubKey = u64> {
     /// Fixed encoded table-key length before the block-number suffix.
@@ -316,15 +324,11 @@ impl RocksdbReplacementState {
 impl RocksdbProofsStorage {
     /// Creates a new [`RocksdbProofsStorage`] instance with the given path.
     pub fn new(path: &Path) -> Result<Self, BaseProofsStorageError> {
-        let mut db_options = Options::default();
-        db_options.create_if_missing(true);
-        db_options.create_missing_column_families(true);
-        db_options.set_max_background_jobs(8);
-
-        let cf_options = Self::cf_options();
+        let block_cache = Cache::new_lru_cache(DEFAULT_BLOCK_CACHE_SIZE);
+        let db_options = Self::db_options(&block_cache);
         let descriptors = Self::column_families()
             .into_iter()
-            .map(|name| ColumnFamilyDescriptor::new(name, cf_options.clone()));
+            .map(|name| ColumnFamilyDescriptor::new(name, Self::cf_options(name, &block_cache)));
         let db = RocksDb::open_cf_descriptors(&db_options, path, descriptors)
             .map_err(|e| DatabaseError::Other(format!("failed to open RocksDB database: {e}")))?;
 
@@ -336,13 +340,46 @@ impl RocksdbProofsStorage {
         Ok(Self { db: Arc::new(db), write_options, write_lock: Mutex::new(()) })
     }
 
-    fn cf_options() -> Options {
+    fn db_options(block_cache: &Cache) -> Options {
+        let table_options = Self::table_options(block_cache);
         let mut options = Options::default();
-        options.set_compression_type(DBCompressionType::None);
+        options.set_block_based_table_factory(&table_options);
+        options.create_if_missing(true);
+        options.create_missing_column_families(true);
+        options.set_max_background_jobs(DEFAULT_MAX_BACKGROUND_JOBS);
+        options.set_bytes_per_sync(DEFAULT_BYTES_PER_SYNC);
+        options.set_compaction_pri(CompactionPri::MinOverlappingRatio);
+        options.set_max_open_files(DEFAULT_MAX_OPEN_FILES);
+        options.set_wal_ttl_seconds(0);
+        options.set_wal_size_limit_mb(0);
+        options
+    }
+
+    fn table_options(block_cache: &Cache) -> BlockBasedOptions {
+        let mut table_options = BlockBasedOptions::default();
+        table_options.set_block_size(DEFAULT_BLOCK_SIZE);
+        table_options.set_cache_index_and_filter_blocks(true);
+        table_options.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        table_options.set_block_cache(block_cache);
+        table_options
+    }
+
+    fn cf_options(name: &'static str, block_cache: &Cache) -> Options {
+        let table_options = Self::table_options(block_cache);
+        let mut options = Options::default();
+        options.set_block_based_table_factory(&table_options);
         options.set_level_compaction_dynamic_level_bytes(true);
-        options.set_max_write_buffer_number(6);
-        options.set_target_file_size_base(256 * 1024 * 1024);
-        options.set_write_buffer_size(256 * 1024 * 1024);
+        options.set_max_write_buffer_number(DEFAULT_MAX_WRITE_BUFFER_NUMBER);
+        options.set_target_file_size_base(DEFAULT_TARGET_FILE_SIZE_BASE);
+        options.set_write_buffer_size(DEFAULT_WRITE_BUFFER_SIZE);
+        if name == <ProofWindow as Table>::NAME {
+            options.set_compression_type(DBCompressionType::None);
+            options.set_bottommost_compression_type(DBCompressionType::None);
+        } else {
+            options.set_compression_type(DBCompressionType::Lz4);
+            options.set_bottommost_compression_type(DBCompressionType::Zstd);
+            options.set_bottommost_zstd_max_train_bytes(0, true);
+        }
         options
     }
 
