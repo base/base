@@ -32,6 +32,9 @@ pub use aerodrome::AerodromeClPayload;
 mod osaka;
 pub use osaka::OsakaPayload;
 
+pub(crate) mod simulator;
+pub use simulator::SimulatorPayload;
+
 /// A transaction payload generator.
 pub trait Payload: Send + Sync + std::fmt::Debug {
     /// Returns the name of this payload type.

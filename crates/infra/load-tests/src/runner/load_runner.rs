@@ -45,7 +45,7 @@ use crate::{
     },
     workload::{
         AccountPool, AerodromeClPayload, CalldataPayload, Erc20Payload, OsakaPayload,
-        PrecompilePayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
+        PrecompilePayload, SimulatorPayload, TransferPayload, UniswapV3Payload, WorkloadGenerator,
     },
 };
 
@@ -249,6 +249,34 @@ impl LoadRunner {
                         weight_pct,
                     );
                 }
+                TxType::Simulator {
+                    contract,
+                    load_storage,
+                    update_storage,
+                    delete_storage,
+                    create_storage,
+                    load_accounts,
+                    update_accounts,
+                    create_accounts,
+                    precompile_calls,
+                    gas_limit,
+                } => {
+                    generator = generator.with_payload(
+                        SimulatorPayload::new(
+                            *contract,
+                            *load_storage,
+                            *update_storage,
+                            *delete_storage,
+                            *create_storage,
+                            *load_accounts,
+                            *update_accounts,
+                            *create_accounts,
+                            precompile_calls.clone(),
+                            *gas_limit,
+                        ),
+                        weight_pct,
+                    );
+                }
             }
         }
 
@@ -295,6 +323,7 @@ impl LoadRunner {
                     OsakaTarget::P256verifyOsaka | OsakaTarget::ModexpOsaka => 30_000,
                 },
                 TxType::UniswapV3 { .. } | TxType::AerodromeCl { .. } => 250_000,
+                TxType::Simulator { gas_limit, .. } => gas_limit.unwrap_or(30_000_000),
             };
             weighted_gas += gas_estimate * tx_config.weight as u64;
         }
@@ -630,6 +659,36 @@ impl LoadRunner {
         Ok(())
     }
 
+    /// Returns true if any simulator transaction types need contract deployment.
+    pub fn needs_simulator_setup(&self) -> bool {
+        self.config.transactions.iter().any(|t| matches!(t.tx_type, TxType::Simulator { contract: None, .. }))
+    }
+
+    /// Deploys the Simulator contract (if needed) and initializes its storage slots,
+    /// then patches the deployed address into all simulator transaction configs and
+    /// rebuilds the workload generator.
+    pub async fn setup_simulator_contracts(&mut self, funding_key: PrivateKeySigner) -> Result<()> {
+        let tx_types: Vec<TxType> = self.config.transactions.iter().map(|t| t.tx_type.clone()).collect();
+        let mut tx_types_mut = tx_types;
+        let setup_url = self.config.setup_rpc.clone()
+            .unwrap_or_else(|| self.config.primary_submission_rpc().clone());
+        crate::runner::deploy_and_init_simulator(
+            &mut tx_types_mut,
+            funding_key,
+            setup_url,
+            self.config.chain_id,
+        )
+        .await?;
+
+        for (cfg, new_type) in self.config.transactions.iter_mut().zip(tx_types_mut.into_iter()) {
+            cfg.tx_type = new_type;
+        }
+
+        let workload_config = WorkloadConfig::new("load-test").with_seed(self.config.seed);
+        self.generator = Self::create_generator(workload_config, &self.config)?;
+        Ok(())
+    }
+
     /// Collects unique token addresses from configured swap transaction types.
     pub fn collect_swap_tokens(&self) -> Vec<Address> {
         let mut tokens = std::collections::HashSet::new();
@@ -644,7 +703,8 @@ impl LoadRunner {
                 | TxType::Calldata { .. }
                 | TxType::Erc20 { .. }
                 | TxType::Precompile { .. }
-                | TxType::Osaka { .. } => {}
+                | TxType::Osaka { .. }
+                | TxType::Simulator { .. } => {}
             }
         }
         tokens.into_iter().collect()
