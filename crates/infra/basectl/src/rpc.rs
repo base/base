@@ -1160,7 +1160,13 @@ fn build_conductor_clients(
                     })
                     .ok()
             });
-            Some((node.name.clone(), node.server_id.clone(), conductor_client, cl_client, el_client))
+            Some((
+                node.name.clone(),
+                node.server_id.clone(),
+                conductor_client,
+                cl_client,
+                el_client,
+            ))
         })
         .collect()
 }
@@ -1177,10 +1183,7 @@ fn build_conductor_clients(
 /// (round-robin) and, when the membership version advances, emits a `Membership`
 /// update. For `Discover` sources, the synthesised peer list is rebuilt from the
 /// new membership and the per-node clients are recreated in place.
-pub async fn run_conductor_poller(
-    source: ConductorSource,
-    tx: mpsc::Sender<ConductorPollUpdate>,
-) {
+pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<ConductorPollUpdate>) {
     const POLL_INTERVAL: Duration = Duration::from_millis(200);
     const RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -1301,19 +1304,20 @@ pub async fn run_conductor_poller(
         let (statuses, new_membership) = tokio::join!(statuses_fut, membership_fut);
 
         if let Some(membership) = new_membership {
-            let changed = last_membership
-                .as_ref()
-                .is_none_or(|prev| prev.version != membership.version);
+            let changed =
+                last_membership.as_ref().is_none_or(|prev| prev.version != membership.version);
             if changed {
                 last_membership = Some(membership.clone());
                 if tx.send(ConductorPollUpdate::Membership(membership.clone())).await.is_err() {
                     break;
                 }
                 if let ConductorSource::Discover { bootstrap, ports } = &source {
-                    let synthesized = crate::config::synthesize_nodes(bootstrap, ports, &membership);
-                    let server_ids_changed = synthesized.iter().map(|n| &n.server_id).ne(
-                        current_nodes.iter().map(|n| &n.server_id),
-                    );
+                    let synthesized =
+                        crate::config::synthesize_nodes(bootstrap, ports, &membership);
+                    let server_ids_changed = synthesized
+                        .iter()
+                        .map(|n| &n.server_id)
+                        .ne(current_nodes.iter().map(|n| &n.server_id));
                     if server_ids_changed && !synthesized.is_empty() {
                         current_nodes = synthesized.clone();
                         clients = build_conductor_clients(&current_nodes, RPC_TIMEOUT);

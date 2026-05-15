@@ -362,7 +362,10 @@ impl MonitoringConfig {
             batcher_address: Some("0x5050F69a9786F081509234F1a7F4684b5E5b76C9".parse().unwrap()),
             l1_blob_target: 14,
             conductors: None,
-            discovery: Some(DiscoveryConfig { bootstrap_rpc: None, ports: DiscoveryPorts::default() }),
+            discovery: Some(DiscoveryConfig {
+                bootstrap_rpc: None,
+                ports: DiscoveryPorts::default(),
+            }),
             validators: None,
             proofs: None,
         }
@@ -381,7 +384,10 @@ impl MonitoringConfig {
             batcher_address: Some("0xfc56E7272EEBBBA5bC6c544e159483C4a38f8bA3".parse().unwrap()),
             l1_blob_target: 14,
             conductors: None,
-            discovery: Some(DiscoveryConfig { bootstrap_rpc: None, ports: DiscoveryPorts::default() }),
+            discovery: Some(DiscoveryConfig {
+                bootstrap_rpc: None,
+                ports: DiscoveryPorts::default(),
+            }),
             validators: None,
             proofs: None,
         }

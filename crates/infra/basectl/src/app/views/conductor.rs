@@ -1002,11 +1002,7 @@ fn render_cluster_table(
             mods |= Modifier::UNDERLINED;
         }
         let style = Style::default().fg(role_color).add_modifier(mods);
-        let label = if node.discovered {
-            format!("{} (d)", node.name)
-        } else {
-            node.name.clone()
-        };
+        let label = if node.discovered { format!("{} (d)", node.name) } else { node.name.clone() };
         header_cells.push(Cell::from(label).style(style));
     }
     let header = Row::new(header_cells)
