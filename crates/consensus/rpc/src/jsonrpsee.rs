@@ -367,8 +367,8 @@ mod tests {
     use rstest::rstest;
 
     use super::{
-        AdminApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer, DevEngineApiServer,
-        HealthzApiServer, RollupNodeApiServer, ServerSuffrage, WsServer,
+        AdminApiServer, BaseP2PApiServer, ClusterMembership, ConductorApiServer,
+        DevEngineApiServer, HealthzApiServer, RollupNodeApiServer, ServerSuffrage, WsServer,
     };
     use crate::{OutputResponse, health::HealthzResponse};
 
