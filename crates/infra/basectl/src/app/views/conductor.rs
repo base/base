@@ -98,7 +98,7 @@ impl ActionMenuItem {
             Self::StartSequencer => {
                 node.is_leader == Some(true) && node.sequencer_active == Some(false)
             }
-            Self::StopSequencer => node.sequencer_active.is_some(),
+            Self::StopSequencer => node.sequencer_active == Some(true),
             Self::TransferLeaderAny | Self::P2PToggle | Self::RestartContainers => true,
         }
     }
