@@ -122,8 +122,10 @@ impl Violation {
         // Compute our view for every checkpoint in parallel and pair
         // each with its claimed root, then take the lowest-index
         // disagreement (deterministic regardless of completion order).
-        let mismatch = stream::iter(game.intermediate_roots.iter().zip(0u64..))
-            .map(|(&claimed, i)| async move {
+        // `iter().copied()` so the closure has no input lifetime
+        // (required when this future is `tokio::spawn`'d).
+        let mismatch = stream::iter(game.intermediate_roots.iter().copied().zip(0u64..))
+            .map(|(claimed, i)| async move {
                 let block = Self::checkpoint_block(game.starting_l2_block, i + 1, interval);
                 validator.compute_output_root(block).await.map(|computed| (i, claimed, computed))
             })

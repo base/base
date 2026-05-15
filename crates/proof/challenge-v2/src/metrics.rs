@@ -19,6 +19,16 @@ base_metrics::define_metrics! {
     #[describe("Per-submit transaction duration in seconds, labeled by action.")]
     #[label(name = "action", default = ["challenge", "nullify_tee", "nullify_zk"])]
     submit_duration_seconds: histogram,
+
+    #[describe("Total game-worker pipeline outcomes, labeled by terminal stage.")]
+    #[label(name = "outcome", default = [
+        "no_violation",
+        "dispatched",
+        "validation_error",
+        "proof_error",
+        "send_dropped",
+    ])]
+    game_worker_outcome_total: counter,
 }
 
 impl ChallengerMetrics {
@@ -36,4 +46,15 @@ impl ChallengerMetrics {
     /// Label value for submit status `error` (any pre-mining failure: contract
     /// revert at gas estimation, nonce conflict, RPC failure, signing error).
     pub const SUBMIT_STATUS_ERROR: &str = "error";
+
+    /// Worker outcome: validator confirmed every intermediate root.
+    pub const GAME_WORKER_OUTCOME_NO_VIOLATION: &str = "no_violation";
+    /// Worker outcome: a dispute request reached the submission task.
+    pub const GAME_WORKER_OUTCOME_DISPATCHED: &str = "dispatched";
+    /// Worker outcome: validation failed (RPC, on-chain read, output check).
+    pub const GAME_WORKER_OUTCOME_VALIDATION_ERROR: &str = "validation_error";
+    /// Worker outcome: proof generation failed (ZK retries exhausted, etc.).
+    pub const GAME_WORKER_OUTCOME_PROOF_ERROR: &str = "proof_error";
+    /// Worker outcome: submission channel closed before the worker could send.
+    pub const GAME_WORKER_OUTCOME_SEND_DROPPED: &str = "send_dropped";
 }

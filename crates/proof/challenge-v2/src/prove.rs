@@ -329,7 +329,9 @@ mod tests {
     use super::*;
     use crate::{
         TeeProofError, WorkerConfig,
-        test_utils::{MockTeeProofProvider, MockZkProofProvider},
+        test_utils::{
+            MockAggregateVerifier, MockOutputValidator, MockTeeProofProvider, MockZkProofProvider,
+        },
     };
 
     const GAME: Address = address!("00000000000000000000000000000000000000a1");
@@ -373,7 +375,13 @@ mod tests {
     }
 
     fn deps(zk: Arc<MockZkProofProvider>, tee: Arc<MockTeeProofProvider>) -> WorkerDeps {
-        WorkerDeps::new(zk, tee, config())
+        WorkerDeps::new(
+            Arc::new(MockOutputValidator::new()),
+            Arc::new(MockAggregateVerifier::new()),
+            zk,
+            tee,
+            config(),
+        )
     }
 
     /// Convenience for tests that exercise only the ZK path. The TEE
@@ -479,6 +487,8 @@ mod tests {
             let mut cfg = config();
             cfg.max_proof_duration = Duration::ZERO;
             let deps = WorkerDeps::new(
+                Arc::new(MockOutputValidator::new()),
+                Arc::new(MockAggregateVerifier::new()),
                 Arc::<MockZkProofProvider>::clone(&zk),
                 Arc::new(MockTeeProofProvider::new()),
                 cfg,
@@ -508,6 +518,8 @@ mod tests {
             let mut cfg = config();
             cfg.max_proof_duration = Duration::ZERO;
             let deps = WorkerDeps::new(
+                Arc::new(MockOutputValidator::new()),
+                Arc::new(MockAggregateVerifier::new()),
                 Arc::<MockZkProofProvider>::clone(&zk),
                 Arc::new(MockTeeProofProvider::new()),
                 cfg,

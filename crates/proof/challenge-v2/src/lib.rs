@@ -34,7 +34,10 @@ mod submission;
 pub use submission::SubmissionTask;
 
 mod game_worker;
-pub use game_worker::{WorkerConfig, WorkerDeps};
+pub use game_worker::{WorkerConfig, WorkerDeps, run_game_worker};
+
+mod game_pool;
+pub use game_pool::GamePool;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
