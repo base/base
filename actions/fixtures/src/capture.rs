@@ -20,8 +20,8 @@ use tracing::info;
 
 use crate::{
     ActionFixture, DerivationFixture, ExpectedOutcome, ExpectedPayload, FixtureKind,
-    FixtureKindParseError, FixtureL1Block, FixtureL2Block, FixtureLoader, FixtureLoaderError,
-    FixtureManifest, FixturePaths, StateRoot,
+    FixtureKindParseError, FixtureL1Block, FixtureL1DiskCodec, FixtureL2Block, FixtureLoader,
+    FixtureLoaderError, FixtureManifest, FixturePaths, StateRoot,
 };
 
 /// Concurrent L1 requests used while scanning derivation windows.
@@ -838,7 +838,10 @@ impl RpcFixtureCapture {
         fs::create_dir_all(path)
             .map_err(|source| CaptureError::CreateOutput { path: path.to_path_buf(), source })?;
         Self::write_toml(&path.join(FixturePaths::MANIFEST), &fixture.manifest)?;
-        Self::write_json(&path.join(FixturePaths::L1), &fixture.l1_blocks)?;
+        let l1_blocks = FixtureL1DiskCodec::encode_blocks(&fixture.l1_blocks);
+        Self::write_snappy_bincode(&path.join(FixturePaths::L1), &l1_blocks)?;
+        Self::remove_legacy_file(&path.join(FixturePaths::L1_JSON_SNAP))?;
+        Self::remove_legacy_file(&path.join(FixturePaths::L1_JSON))?;
         Self::write_json(&path.join(FixturePaths::L2), &fixture.l2_blocks)?;
         Self::write_json(&path.join(FixturePaths::EXPECTED), &fixture.expected)?;
         if let Some(derivation) = &fixture.derivation {
@@ -852,12 +855,23 @@ impl RpcFixtureCapture {
         [
             FixturePaths::MANIFEST,
             FixturePaths::L1,
+            FixturePaths::L1_JSON_SNAP,
+            FixturePaths::L1_JSON,
             FixturePaths::L2,
             FixturePaths::EXPECTED,
             FixturePaths::DERIVATION,
         ]
         .iter()
         .any(|file| path.join(file).exists())
+    }
+
+    /// Remove an obsolete fixture file if it is present.
+    pub fn remove_legacy_file(path: &Path) -> Result<(), CaptureError> {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(CaptureError::Write { path: path.to_path_buf(), source }),
+        }
     }
 
     /// Write one JSON file.
@@ -867,6 +881,34 @@ impl RpcFixtureCapture {
     {
         let data = serde_json::to_vec_pretty(value)
             .map_err(|source| CaptureError::JsonSerialize { path: path.to_path_buf(), source })?;
+        fs::write(path, data)
+            .map_err(|source| CaptureError::Write { path: path.to_path_buf(), source })
+    }
+
+    /// Write one Snappy-compressed compact JSON file.
+    pub fn write_snappy_json<T>(path: &Path, value: &T) -> Result<(), CaptureError>
+    where
+        T: Serialize,
+    {
+        let data = serde_json::to_vec(value)
+            .map_err(|source| CaptureError::JsonSerialize { path: path.to_path_buf(), source })?;
+        let data = snap::raw::Encoder::new()
+            .compress_vec(&data)
+            .map_err(|source| CaptureError::Snap { path: path.to_path_buf(), source })?;
+        fs::write(path, data)
+            .map_err(|source| CaptureError::Write { path: path.to_path_buf(), source })
+    }
+
+    /// Write one Snappy-compressed bincode file.
+    pub fn write_snappy_bincode<T>(path: &Path, value: &T) -> Result<(), CaptureError>
+    where
+        T: Serialize,
+    {
+        let data = bincode::serde::encode_to_vec(value, bincode::config::standard())
+            .map_err(|source| CaptureError::BincodeEncode { path: path.to_path_buf(), source })?;
+        let data = snap::raw::Encoder::new()
+            .compress_vec(&data)
+            .map_err(|source| CaptureError::Snap { path: path.to_path_buf(), source })?;
         fs::write(path, data)
             .map_err(|source| CaptureError::Write { path: path.to_path_buf(), source })
     }
@@ -1062,6 +1104,22 @@ pub enum CaptureError {
         path: PathBuf,
         /// Underlying JSON error.
         source: serde_json::Error,
+    },
+    /// Failed to compress Snappy data.
+    #[error("failed to compress fixture file {path:?}: {source}")]
+    Snap {
+        /// Output path.
+        path: PathBuf,
+        /// Underlying Snappy error.
+        source: snap::Error,
+    },
+    /// Failed to encode bincode.
+    #[error("failed to serialize fixture bincode {path:?}: {source}")]
+    BincodeEncode {
+        /// Output path.
+        path: PathBuf,
+        /// Underlying bincode error.
+        source: bincode::error::EncodeError,
     },
     /// Failed to serialize TOML.
     #[error("failed to serialize fixture TOML {path:?}: {source}")]

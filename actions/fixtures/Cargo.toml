@@ -52,6 +52,8 @@ tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 dotenvy.workspace = true
 futures = { workspace = true }
+snap.workspace = true
+bincode = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 tempfile.workspace = true

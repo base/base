@@ -3,6 +3,7 @@ use std::{fmt, str::FromStr};
 use alloy_consensus::{Header, Receipt};
 use alloy_eips::eip4844::Blob;
 use alloy_primitives::{B256, Bytes};
+use alloy_rlp::{Decodable, Encodable};
 use base_common_genesis::SystemConfig;
 use base_protocol::L2BlockInfo;
 use serde::{Deserialize, Serialize};
@@ -140,6 +141,78 @@ impl FixtureL1Block {
     }
 }
 
+/// Compact on-disk L1 block data for compressed fixture files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FixtureL1DiskBlock {
+    /// RLP-encoded consensus header.
+    pub header: Vec<u8>,
+    /// EIP-2718 encoded L1 transaction bytes, in block order.
+    pub transactions: Vec<Vec<u8>>,
+    /// Consensus receipts, in transaction order.
+    #[serde(default)]
+    pub receipts: Vec<Receipt>,
+    /// Blob sidecars needed by the block's blob transactions.
+    #[serde(default)]
+    pub blobs: Vec<FixtureBlob>,
+}
+
+/// L1 disk block codec.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FixtureL1DiskCodec;
+
+impl FixtureL1DiskCodec {
+    /// Encode typed L1 blocks into compact disk blocks.
+    pub fn encode_blocks(blocks: &[FixtureL1Block]) -> Vec<FixtureL1DiskBlock> {
+        blocks.iter().map(Self::encode_block).collect()
+    }
+
+    /// Decode compact disk blocks into typed L1 blocks.
+    pub fn decode_blocks(
+        blocks: Vec<FixtureL1DiskBlock>,
+    ) -> Result<Vec<FixtureL1Block>, FixtureL1DiskBlockError> {
+        blocks.into_iter().map(Self::decode_block).collect()
+    }
+
+    /// Encode one typed L1 block into a compact disk block.
+    pub fn encode_block(block: &FixtureL1Block) -> FixtureL1DiskBlock {
+        let mut header = Vec::new();
+        block.header.encode(&mut header);
+        FixtureL1DiskBlock {
+            header,
+            transactions: block.transactions.iter().map(|tx| tx.to_vec()).collect(),
+            receipts: block.receipts.clone(),
+            blobs: block.blobs.clone(),
+        }
+    }
+
+    /// Decode one compact disk block into a typed L1 block.
+    pub fn decode_block(
+        block: FixtureL1DiskBlock,
+    ) -> Result<FixtureL1Block, FixtureL1DiskBlockError> {
+        let mut header = block.header.as_slice();
+        let header = Header::decode(&mut header)
+            .map_err(|source| FixtureL1DiskBlockError::Header { error: source.to_string() })?;
+        Ok(FixtureL1Block {
+            header,
+            transactions: block.transactions.into_iter().map(Bytes::from).collect(),
+            receipts: block.receipts,
+            blobs: block.blobs,
+        })
+    }
+}
+
+/// L1 disk block codec failure.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FixtureL1DiskBlockError {
+    /// Header RLP could not be decoded.
+    #[error("failed to decode L1 header RLP: {error}")]
+    Header {
+        /// Decode error text.
+        error: String,
+    },
+}
+
 /// Captured L2 block data used for expected outcomes and execution fixtures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -259,8 +332,12 @@ pub struct FixturePaths;
 impl FixturePaths {
     /// Manifest file name.
     pub const MANIFEST: &'static str = "manifest.toml";
-    /// L1 blocks JSON file name.
-    pub const L1: &'static str = "l1.json";
+    /// L1 blocks compressed binary file name.
+    pub const L1: &'static str = "l1.bin.snap";
+    /// Legacy compressed L1 blocks JSON file name.
+    pub const L1_JSON_SNAP: &'static str = "l1.json.snap";
+    /// Legacy uncompressed L1 blocks JSON file name.
+    pub const L1_JSON: &'static str = "l1.json";
     /// L2 blocks JSON file name.
     pub const L2: &'static str = "l2.json";
     /// Expected outcome JSON file name.

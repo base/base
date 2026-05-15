@@ -11,15 +11,16 @@ The expected fixture directory layout is:
 fixtures/<network>/<fixture-name>/
 ├── manifest.toml
 ├── derivation.json
-├── l1.json
+├── l1.bin.snap
 ├── l2.json
 └── expected.json
 ```
 
 `manifest.toml` carries provenance and block-range anchors. The JSON files
-carry derivation replay anchors, typed L1 blocks, typed L2 blocks, and expected
-outcomes. Normal tests should load fixtures from the catalog or from a fixture
-directory and then feed the decoded data through the adapter into the existing
+carry derivation replay anchors, typed L2 blocks, and expected outcomes.
+`l1.bin.snap` carries Snappy-compressed bincode for typed L1 blocks.
+Normal tests should load fixtures from the catalog or from a fixture directory
+and then feed the decoded data through the adapter into the existing
 action-harness provider boundaries.
 
 The localized capture binary lives at `actions/fixtures/bin/capture.rs` and is

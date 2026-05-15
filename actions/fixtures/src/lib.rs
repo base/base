@@ -10,7 +10,8 @@ mod fixture;
 pub use fixture::{
     ActionFixture, BlockId, CURRENT_SCHEMA_VERSION, DerivationFixture, ExpectedOutcome,
     ExpectedPayload, FixtureBlob, FixtureKind, FixtureKindParseError, FixtureL1Block,
-    FixtureL2Block, FixtureManifest, FixturePaths, StateRoot,
+    FixtureL1DiskBlock, FixtureL1DiskBlockError, FixtureL1DiskCodec, FixtureL2Block,
+    FixtureManifest, FixturePaths, StateRoot,
 };
 
 mod validation;

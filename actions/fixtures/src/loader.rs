@@ -6,8 +6,9 @@ use std::{
 use serde::de::DeserializeOwned;
 
 use crate::{
-    ActionFixture, DerivationFixture, ExpectedOutcome, FixtureL1Block, FixtureL2Block,
-    FixtureManifest, FixturePaths, FixtureValidationError, FixtureValidator,
+    ActionFixture, DerivationFixture, ExpectedOutcome, FixtureL1Block, FixtureL1DiskBlock,
+    FixtureL1DiskBlockError, FixtureL1DiskCodec, FixtureL2Block, FixtureManifest, FixturePaths,
+    FixtureValidationError, FixtureValidator,
 };
 
 /// Loads fixtures from either a single JSON file or a fixture directory.
@@ -28,11 +29,10 @@ impl FixtureLoader {
         Self::read_json(path)
     }
 
-    /// Load a fixture directory with `manifest.toml`, `l1.json`, `l2.json`, and `expected.json`.
+    /// Load a fixture directory with `manifest.toml`, L1 data, `l2.json`, and `expected.json`.
     pub fn load_dir(path: &Path) -> Result<ActionFixture, FixtureLoaderError> {
         let manifest = Self::read_toml::<FixtureManifest>(&path.join(FixturePaths::MANIFEST))?;
-        let l1_blocks =
-            Self::read_json_or_default::<Vec<FixtureL1Block>>(&path.join(FixturePaths::L1))?;
+        let l1_blocks = Self::read_l1_blocks(path)?;
         let l2_blocks =
             Self::read_json_or_default::<Vec<FixtureL2Block>>(&path.join(FixturePaths::L2))?;
         let expected =
@@ -42,6 +42,21 @@ impl FixtureLoader {
         let mut fixture = ActionFixture::new(manifest, l1_blocks, l2_blocks, expected);
         fixture.derivation = derivation;
         Ok(fixture)
+    }
+
+    /// Read L1 blocks from the canonical compressed file, falling back to legacy JSON.
+    pub fn read_l1_blocks(path: &Path) -> Result<Vec<FixtureL1Block>, FixtureLoaderError> {
+        let compressed = path.join(FixturePaths::L1);
+        if compressed.exists() {
+            let blocks = Self::read_snappy_bincode::<Vec<FixtureL1DiskBlock>>(&compressed)?;
+            return FixtureL1DiskCodec::decode_blocks(blocks).map_err(FixtureLoaderError::L1Disk);
+        }
+
+        let compressed_json = path.join(FixturePaths::L1_JSON_SNAP);
+        if compressed_json.exists() {
+            return Self::read_snappy_json(&compressed_json);
+        }
+        Self::read_json_or_default::<Vec<FixtureL1Block>>(&path.join(FixturePaths::L1_JSON))
     }
 
     /// Read JSON from a file.
@@ -74,6 +89,31 @@ impl FixtureLoader {
         Self::read_json(path).map(Some)
     }
 
+    /// Read Snappy-compressed JSON from a file.
+    pub fn read_snappy_json<T: DeserializeOwned>(path: &Path) -> Result<T, FixtureLoaderError> {
+        let data = fs::read(path)
+            .map_err(|source| FixtureLoaderError::Read { path: path.to_path_buf(), source })?;
+        let json = snap::raw::Decoder::new()
+            .decompress_vec(&data)
+            .map_err(|source| FixtureLoaderError::Snap { path: path.to_path_buf(), source })?;
+        serde_json::from_slice(&json)
+            .map_err(|source| FixtureLoaderError::Json { path: path.to_path_buf(), source })
+    }
+
+    /// Read Snappy-compressed bincode from a file.
+    pub fn read_snappy_bincode<T: DeserializeOwned>(path: &Path) -> Result<T, FixtureLoaderError> {
+        let data = fs::read(path)
+            .map_err(|source| FixtureLoaderError::Read { path: path.to_path_buf(), source })?;
+        let bytes = snap::raw::Decoder::new()
+            .decompress_vec(&data)
+            .map_err(|source| FixtureLoaderError::Snap { path: path.to_path_buf(), source })?;
+        let (value, _) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).map_err(
+                |source| FixtureLoaderError::BincodeDecode { path: path.to_path_buf(), source },
+            )?;
+        Ok(value)
+    }
+
     /// Read TOML from a file.
     pub fn read_toml<T: DeserializeOwned>(path: &Path) -> Result<T, FixtureLoaderError> {
         let data = fs::read_to_string(path)
@@ -102,6 +142,22 @@ pub enum FixtureLoaderError {
         /// Underlying JSON error.
         source: serde_json::Error,
     },
+    /// Failed to decompress Snappy data.
+    #[error("failed to decompress fixture file {path:?}: {source}")]
+    Snap {
+        /// Path that failed to decompress.
+        path: PathBuf,
+        /// Underlying Snappy error.
+        source: snap::Error,
+    },
+    /// Failed to parse bincode.
+    #[error("failed to parse fixture bincode {path:?}: {source}")]
+    BincodeDecode {
+        /// Path that failed to parse.
+        path: PathBuf,
+        /// Underlying bincode error.
+        source: bincode::error::DecodeError,
+    },
     /// Failed to parse TOML.
     #[error("failed to parse fixture TOML {path:?}: {source}")]
     Toml {
@@ -113,13 +169,16 @@ pub enum FixtureLoaderError {
     /// Fixture validation failed.
     #[error(transparent)]
     Validation(#[from] FixtureValidationError),
+    /// L1 disk block decoding failed.
+    #[error(transparent)]
+    L1Disk(#[from] FixtureL1DiskBlockError),
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
 
-    use crate::{ExpectedOutcome, FixtureKind, FixtureLoader, FixtureManifest};
+    use crate::{ExpectedOutcome, FixtureKind, FixtureLoader, FixtureManifest, RpcFixtureCapture};
 
     #[test]
     fn loads_directory_fixture() {
@@ -145,5 +204,35 @@ source = "manual"
         .unwrap();
         let fixture = FixtureLoader::load(dir.path()).unwrap();
         assert_eq!(fixture.manifest.name, "window");
+    }
+
+    #[test]
+    fn loads_compressed_l1_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let _manifest = FixtureManifest::new("window", "base-mainnet", FixtureKind::Derivation);
+        fs::write(
+            dir.path().join("manifest.toml"),
+            r#"
+schema-version = 1
+name = "window"
+network = "base-mainnet"
+kind = "derivation"
+source = "manual"
+"#,
+        )
+        .unwrap();
+        RpcFixtureCapture::write_snappy_bincode(
+            &dir.path().join("l1.bin.snap"),
+            &Vec::<crate::FixtureL1Block>::new(),
+        )
+        .unwrap();
+        fs::write(dir.path().join("l2.json"), "[]").unwrap();
+        fs::write(
+            dir.path().join("expected.json"),
+            serde_json::to_string(&ExpectedOutcome::default()).unwrap(),
+        )
+        .unwrap();
+        let fixture = FixtureLoader::load(dir.path()).unwrap();
+        assert_eq!(fixture.l1_blocks.len(), 0);
     }
 }
