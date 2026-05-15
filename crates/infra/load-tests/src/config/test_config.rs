@@ -1,4 +1,4 @@
-use std::{fmt, path::Path, time::Duration};
+use std::{collections::HashMap, fmt, path::Path, time::Duration};
 
 use alloy_primitives::Address;
 use alloy_signer_local::PrivateKeySigner;
@@ -34,6 +34,14 @@ pub struct TestConfig {
     /// Optional HTTP JSON-RPC endpoints whose txpools should be cleared before a test.
     #[serde(default)]
     pub txpool_nodes: Vec<Url>,
+    /// Direct node RPC URL for setup transactions (deploy, init) that bypass the proxy.
+    ///
+    /// When set (typically by the benchmark runner), setup transactions such as Simulator
+    /// contract deployment and storage initialization are sent here instead of
+    /// `transaction_submission_rpcs`, ensuring they are mined immediately rather than
+    /// queued in the proxy mempool.
+    #[serde(default)]
+    pub setup_rpc: Option<Url>,
     /// Builder flashblocks broadcast WebSocket endpoint.
     #[serde(default)]
     pub flashblocks_ws: Option<Url>,
@@ -107,6 +115,7 @@ impl Default for TestConfig {
             ],
             query_rpc: None,
             txpool_nodes: Vec::new(),
+            setup_rpc: None,
             flashblocks_ws: None,
             mnemonic: None,
             funding_amount: "10000000000000000".to_string(),
@@ -134,6 +143,7 @@ impl fmt::Debug for TestConfig {
             .field("transaction_submission_rpcs", &self.transaction_submission_rpcs)
             .field("query_rpc", &self.query_rpc)
             .field("txpool_nodes", &self.txpool_nodes)
+            .field("setup_rpc", &self.setup_rpc)
             .field("flashblocks_ws", &self.flashblocks_ws)
             .field("mnemonic", &self.mnemonic.as_ref().map(|_| "[REDACTED]"))
             .field("funding_amount", &self.funding_amount)
@@ -271,6 +281,45 @@ pub enum TxTypeConfig {
         #[serde(default)]
         reverse_max_amount: Option<String>,
     },
+    /// Simulator contract call reproducing synthetic EVM workloads.
+    ///
+    /// Mirrors the `simulator` payload type used in `base/benchmark` configs. Each transaction
+    /// calls `Simulator.run(SimulatorConfig)` on the deployed contract, executing the requested
+    /// number of storage, account, and precompile operations.
+    Simulator {
+        /// Deployed `Simulator` contract address. When absent, a contract is automatically
+        /// deployed via CREATE2 before the test starts and the address is derived deterministically.
+        #[serde(default)]
+        contract: Option<String>,
+        /// Storage slots to SLOAD per call.
+        #[serde(default)]
+        load_storage: u64,
+        /// Existing storage slots to SSTORE (update) per call.
+        #[serde(default)]
+        update_storage: u64,
+        /// Storage slots to SSTORE to zero (delete) per call.
+        #[serde(default)]
+        delete_storage: u64,
+        /// New storage slots to SSTORE (create) per call.
+        #[serde(default)]
+        create_storage: u64,
+        /// Existing accounts to BALANCE-load per call.
+        #[serde(default)]
+        load_accounts: u64,
+        /// Existing accounts to SEND to (update) per call.
+        #[serde(default)]
+        update_accounts: u64,
+        /// New accounts to create (send to fresh address) per call.
+        #[serde(default)]
+        create_accounts: u64,
+        /// Precompile call counts keyed by name. Names match those used in base-benchmarking
+        /// configs (e.g. `"ecrecover"`, `"sha256hash"`, `"bls12381MapG2"`).
+        #[serde(default)]
+        precompiles: HashMap<String, u64>,
+        /// Gas limit override per transaction. When absent a conservative default is used.
+        #[serde(default)]
+        gas_limit: Option<u64>,
+    },
 }
 
 const fn default_calldata_size() -> usize {
@@ -344,6 +393,9 @@ impl TestConfig {
 
         if let Some(url) = &self.query_rpc {
             Self::validate_http_url(url, "query_rpc")?;
+        }
+        if let Some(url) = &self.setup_rpc {
+            Self::validate_http_url(url, "setup_rpc")?;
         }
         for url in &self.txpool_nodes {
             Self::validate_http_url(url, "txpool_nodes")?;
@@ -540,6 +592,7 @@ impl TestConfig {
             transaction_submission_rpcs,
             query_rpc,
             txpool_nodes: self.txpool_nodes.clone(),
+            setup_rpc: self.setup_rpc.clone(),
             chain_id: resolved_chain_id,
             account_count: self.sender_count as usize,
             seed: self.seed,
@@ -701,6 +754,47 @@ impl TestConfig {
                     reverse_max_amount,
                 }
             }
+            TxTypeConfig::Simulator {
+                contract,
+                load_storage,
+                update_storage,
+                delete_storage,
+                create_storage,
+                load_accounts,
+                update_accounts,
+                create_accounts,
+                precompiles,
+                gas_limit,
+            } => {
+                let contract = contract
+                    .as_deref()
+                    .map(|s| parse_address(s, "simulator contract"))
+                    .transpose()?;
+                let precompile_calls = precompiles
+                    .iter()
+                    .map(|(name, &count)| {
+                        simulator_precompile_address(name)
+                            .map(|addr| (addr, count))
+                            .ok_or_else(|| {
+                                BaselineError::Config(format!(
+                                    "unknown simulator precompile name '{name}'"
+                                ))
+                            })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                TxType::Simulator {
+                    contract,
+                    load_storage: *load_storage,
+                    update_storage: *update_storage,
+                    delete_storage: *delete_storage,
+                    create_storage: *create_storage,
+                    load_accounts: *load_accounts,
+                    update_accounts: *update_accounts,
+                    create_accounts: *create_accounts,
+                    precompile_calls,
+                    gas_limit: *gas_limit,
+                }
+            }
         };
         Ok(TxConfig { weight: weighted.weight, tx_type })
     }
@@ -737,6 +831,7 @@ where
 {
     Url::parse(url).map_err(|e| E::custom(format!("invalid URL '{url}': {e}")))
 }
+
 
 #[cfg(test)]
 mod tests {
