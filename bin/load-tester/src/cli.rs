@@ -400,6 +400,11 @@ async fn run_test_phases(
         runner.setup_b20_tokens(funding_key.clone(), amounts.b20_mint).await?;
         println!("B-20 tokens ready.");
     }
+    if runner.needs_simulator_setup() {
+        println!("Deploying and initializing Simulator contract...");
+        runner.setup_simulator_contracts(funding_key.clone()).await?;
+        println!("Simulator contract ready.");
+    }
     println!();
 
     println!("Running load test...");
