@@ -50,8 +50,8 @@ use crate::{
     },
     workload::{
         AccountPool, AerodromeClPayload, B20TransferPayload, CalldataPayload, Erc20Payload,
-        OsakaPayload, PrecompilePayload, SimulatorPayload, TransferPayload, UniswapV3Payload,
-        WorkloadGenerator,
+        OsakaPayload, PrecompilePayload, SimulatorPayload, SimulatorWorkloadParams,
+        TransferPayload, UniswapV3Payload, WorkloadGenerator,
     },
 };
 
@@ -290,15 +290,17 @@ impl LoadRunner {
                     generator = generator.with_payload(
                         SimulatorPayload::new(
                             *contract,
-                            *load_storage,
-                            *update_storage,
-                            *delete_storage,
-                            *create_storage,
-                            *load_accounts,
-                            *update_accounts,
-                            *create_accounts,
-                            precompile_calls.clone(),
-                            *gas_limit,
+                            SimulatorWorkloadParams {
+                                load_storage: *load_storage,
+                                update_storage: *update_storage,
+                                delete_storage: *delete_storage,
+                                create_storage: *create_storage,
+                                load_accounts: *load_accounts,
+                                update_accounts: *update_accounts,
+                                create_accounts: *create_accounts,
+                                precompile_calls: precompile_calls.clone(),
+                                gas_limit: *gas_limit,
+                            },
                         ),
                         weight_pct,
                     );

@@ -39,71 +39,65 @@ sol! {
 
 const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 
+/// Workload parameters for a single `Simulator.run()` call.
+#[derive(Debug, Clone, Default)]
+pub struct SimulatorWorkloadParams {
+    /// Storage slots to SLOAD per call.
+    pub load_storage: u64,
+    /// Existing storage slots to SSTORE (update) per call.
+    pub update_storage: u64,
+    /// Storage slots to SSTORE to zero (delete) per call.
+    pub delete_storage: u64,
+    /// New storage slots to SSTORE (create) per call.
+    pub create_storage: u64,
+    /// Existing accounts to BALANCE-load per call.
+    pub load_accounts: u64,
+    /// Existing accounts to SEND to (update) per call.
+    pub update_accounts: u64,
+    /// New accounts to create (send to fresh address) per call.
+    pub create_accounts: u64,
+    /// Precompile addresses and call counts per transaction.
+    pub precompile_calls: Vec<(Address, u64)>,
+    /// Gas limit override per transaction.
+    pub gas_limit: Option<u64>,
+}
+
 /// Generates transactions that call the `Simulator.run()` contract, exercising
 /// synthetic EVM workloads (storage reads/writes, account operations, precompile calls).
 #[derive(Debug, Clone)]
 pub struct SimulatorPayload {
     contract: Option<Address>,
-    load_storage: u64,
-    update_storage: u64,
-    delete_storage: u64,
-    create_storage: u64,
-    load_accounts: u64,
-    update_accounts: u64,
-    create_accounts: u64,
-    precompile_calls: Vec<(Address, u64)>,
-    gas_limit: u64,
+    params: SimulatorWorkloadParams,
 }
 
 impl SimulatorPayload {
     /// Creates a new simulator payload targeting the given deployed contract.
-    pub fn new(
-        contract: Option<Address>,
-        load_storage: u64,
-        update_storage: u64,
-        delete_storage: u64,
-        create_storage: u64,
-        load_accounts: u64,
-        update_accounts: u64,
-        create_accounts: u64,
-        precompile_calls: Vec<(Address, u64)>,
-        gas_limit: Option<u64>,
-    ) -> Self {
-        Self {
-            contract,
-            load_storage,
-            update_storage,
-            delete_storage,
-            create_storage,
-            load_accounts,
-            update_accounts,
-            create_accounts,
-            precompile_calls,
-            gas_limit: gas_limit.unwrap_or(DEFAULT_GAS_LIMIT),
-        }
+    pub const fn new(contract: Option<Address>, params: SimulatorWorkloadParams) -> Self {
+        Self { contract, params }
     }
 
     /// Returns the contract address, if set.
-    pub fn contract(&self) -> Option<Address> {
+    pub const fn contract(&self) -> Option<Address> {
         self.contract
     }
 
-    /// Sets the contract address after CREATE2 deployment.
-    pub fn set_contract(&mut self, addr: Address) {
+    /// Sets the contract address after CREATE deployment.
+    pub const fn set_contract(&mut self, addr: Address) {
         self.contract = Some(addr);
     }
 
     /// Returns the per-call simulator parameters as a `SimulatorConfig`.
     pub fn simulator_config(&self) -> SimulatorConfig {
         SimulatorConfig {
-            load_accounts: alloy_primitives::U160::from(self.load_accounts),
-            update_accounts: alloy_primitives::U160::from(self.update_accounts),
-            create_accounts: alloy_primitives::U160::from(self.create_accounts),
-            load_storage: U256::from(self.load_storage),
-            update_storage: U256::from(self.update_storage),
-            delete_storage: U256::from(self.delete_storage),
-            create_storage: U256::from(self.create_storage),
+            load_accounts: alloy_primitives::U160::from(self.params.load_accounts),
+            update_accounts: alloy_primitives::U160::from(self.params.update_accounts),
+            create_accounts: alloy_primitives::U160::from(self.params.create_accounts),
+            load_storage: U256::from(self.params.load_storage),
+            update_storage: U256::from(self.params.update_storage),
+            delete_storage: U256::from(self.params.delete_storage),
+            create_storage: U256::from(self.params.create_storage),
             precompiles: self
+                .params
                 .precompile_calls
                 .iter()
                 .map(|(addr, count)| PrecompileConfig {
@@ -161,9 +155,10 @@ impl Payload for SimulatorPayload {
 
     fn generate(&self, _rng: &mut SeededRng, _from: Address, _to: Address) -> TransactionRequest {
         let contract = self.contract.unwrap_or(Address::ZERO);
+        let gas_limit = self.params.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT);
         TransactionRequest::default()
             .with_to(contract)
             .with_input(self.encode_run_calldata())
-            .with_gas_limit(self.gas_limit)
+            .with_gas_limit(gas_limit)
     }
 }

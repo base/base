@@ -18,8 +18,11 @@ use crate::{
     rpc::create_wallet_provider,
     runner::TxType,
     utils::{BaselineError, Result},
-    workload::{SIMULATOR_ACCOUNT_CHUNK_SIZE, SIMULATOR_STORAGE_CHUNK_SIZE, SimulatorPayload},
+    workload::SimulatorPayload,
 };
+
+const SIMULATOR_STORAGE_CHUNK_SIZE: u64 = 100;
+const SIMULATOR_ACCOUNT_CHUNK_SIZE: u64 = 100;
 
 type EthProvider = RootProvider<Ethereum>;
 
@@ -290,7 +293,7 @@ async fn read_u256_counter(
     context: &'static str,
 ) -> Result<U256> {
     let output = query
-        .call(TransactionRequest::default().with_to(simulator_address).with_input(calldata).into())
+        .call(TransactionRequest::default().with_to(simulator_address).with_input(calldata))
         .await
         .rpc(context)?;
 
