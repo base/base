@@ -8,10 +8,6 @@ cache_exclude_status = [429]
 accept = [200, 403, 429, 502, 503] # 403 is often returned by private repos instead of 404; 429 is rate limiting; 502/503 is transient GitHub unavailability
 exclude_path = [
     "crates/utilities/test-utils/contracts/",
-    # Runtime HTML and Askama templates contain root-relative routes and
-    # template variables that lychee cannot resolve as static local files.
-    "crates/vibenet/ui/public/.*\\.html",
-    "crates/vibenet/explorer/templates/",
     "docs/specs/",
     "README\\.md",
 ]

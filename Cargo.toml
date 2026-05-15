@@ -9,7 +9,7 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-exclude = ["bin/prover", "crates/proof/succinct/programs", "crates/vibenet/ui"]
+exclude = ["bin/prover", "crates/proof/succinct/programs"]
 members = [
   "bin/*",
   "bin/prover/nitro-host",
@@ -54,7 +54,6 @@ members = [
   "crates/infra/*",
   "crates/common/*",
   "crates/execution/*",
-  "crates/vibenet/*",
   "etc/tools/*",
   "devnet",
   "actions/*",
@@ -266,10 +265,6 @@ base-batcher-encoder = { path = "crates/batcher/encoder" }
 base-batcher-service = { path = "crates/batcher/service" }
 base-comp = { path = "crates/batcher/comp", default-features = false }
 
-# Vibenet
-base-vibenet-faucet = { path = "crates/vibenet/faucet" }
-base-vibenet-explorer = { path = "crates/vibenet/explorer" }
-
 # Utilities
 base-jwt = { path = "crates/utilities/jwt" }
 base-health = { path = "crates/utilities/health" }
@@ -476,7 +471,6 @@ hyper-util = "0.1.11"
 http-body-util = "0.1.3"
 axum = { version = "0.8.3", default-features = false }
 tower-http = { version = "0.6", features = ["limit", "timeout"] }
-askama = { version = "0.14", default-features = false, features = ["std", "derive", "alloc"] }
 
 # p2p
 discv5 = "0.10"
