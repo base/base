@@ -1,0 +1,15 @@
+//! Shared business logic for all Base-native token variants.
+
+mod repository;
+mod token_base;
+
+pub use repository::ITokenCoreAccounting;
+pub use token_base::TokenBase;
+
+use alloy_primitives::U256;
+
+/// Capability bit: `pause` / `unpause` are enabled on this token.
+pub const CAPABILITY_PAUSABLE: U256 = U256::from_limbs([1, 0, 0, 0]);
+
+/// Capability bit: `setSupplyCap` is enabled on this token.
+pub const CAPABILITY_CAP_MUTABLE: U256 = U256::from_limbs([2, 0, 0, 0]);

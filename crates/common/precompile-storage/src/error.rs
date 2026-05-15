@@ -26,6 +26,11 @@ pub enum BasePrecompileError {
     #[error("Slot overflow")]
     SlotOverflow,
 
+    /// ABI-encoded revert from a contract-defined error (e.g. `InvalidSender`).
+    #[error("Revert")]
+    #[from(skip)]
+    Revert(Bytes),
+
     /// Unrecoverable internal error (e.g. database failure).
     #[error("Fatal precompile error: {0:?}")]
     #[from(skip)]
@@ -50,6 +55,11 @@ impl BasePrecompileError {
         matches!(self, Self::OutOfGas | Self::Fatal(_) | Self::Panic(_) | Self::SlotOverflow)
     }
 
+    /// ABI-encodes a contract-defined error and wraps it as a [`Revert`](Self::Revert).
+    pub fn revert(error: impl SolError) -> Self {
+        Self::Revert(error.abi_encode().into())
+    }
+
     /// Creates an arithmetic under/overflow panic error.
     pub const fn under_overflow() -> Self {
         Self::Panic(PanicKind::UnderOverflow)
@@ -68,6 +78,7 @@ impl BasePrecompileError {
     /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
     pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
         let bytes: Bytes = match self {
+            Self::Revert(bytes) => bytes,
             Self::Panic(kind) => Panic { code: U256::from(kind as u32) }.abi_encode().into(),
             Self::OutOfGas => {
                 // revm 32.x: OutOfGas is returned as Err, not Ok-Halt

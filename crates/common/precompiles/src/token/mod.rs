@@ -1,5 +1,12 @@
 //! Native precompiles for Base-native tokens (B-20).
 
-pub mod abi;
-pub mod default_token;
-pub use default_token::{DefaultToken, DEFAULT_TOKEN_ADDRESS, dispatch};
+mod abi;
+pub use abi::IDefaultToken;
+
+mod common;
+pub use common::{
+    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, ITokenCoreAccounting, TokenBase,
+};
+
+mod default_token;
+pub use default_token::{DEFAULT_TOKEN_ADDRESS, DefaultToken, DefaultTokenStorage};

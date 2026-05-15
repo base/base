@@ -19,4 +19,7 @@ mod bn254_pair;
 mod bls12_381;
 
 pub mod token;
-pub use token::{DefaultToken, DEFAULT_TOKEN_ADDRESS, dispatch};
+pub use token::{
+    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, DEFAULT_TOKEN_ADDRESS, DefaultToken,
+    DefaultTokenStorage, IDefaultToken, ITokenCoreAccounting, TokenBase,
+};
