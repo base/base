@@ -7,6 +7,7 @@ use std::{
     ops::{Bound, RangeBounds},
     path::Path,
     sync::Arc,
+    time::Instant,
 };
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
@@ -32,7 +33,7 @@ use rocksdb::{
     DBCompressionType, DBIteratorWithThreadMode, DBWithThreadMode, Direction, IteratorMode,
     MultiThreaded, Options, SnapshotWithThreadMode, WriteBatch, WriteOptions,
 };
-use tracing::trace;
+use tracing::info;
 
 use super::{BlockNumberHash, ProofWindow, ProofWindowKey};
 use crate::{
@@ -98,6 +99,15 @@ struct RocksdbPrunePlan {
     hashed_storage_survivors: Vec<(HashedStorageKey, u64)>,
 }
 
+impl RocksdbPrunePlan {
+    fn total_survivors(&self) -> usize {
+        self.acc_survivors.len()
+            + self.storage_survivors.len()
+            + self.hashed_acc_survivors.len()
+            + self.hashed_storage_survivors.len()
+    }
+}
+
 /// Preprocessed delete work for a prune commit.
 #[derive(Debug, Clone)]
 struct RocksdbPreparedPrune {
@@ -116,6 +126,15 @@ struct RocksdbPreparedHistoryDeletes {
     storage_trie: Vec<Vec<u8>>,
     hashed_account: Vec<Vec<u8>>,
     hashed_storage: Vec<Vec<u8>>,
+}
+
+impl RocksdbPreparedHistoryDeletes {
+    fn total(&self) -> usize {
+        self.account_trie.len()
+            + self.storage_trie.len()
+            + self.hashed_account.len()
+            + self.hashed_storage.len()
+    }
 }
 
 /// Preprocessed delete work for a prune range.
@@ -542,7 +561,23 @@ impl RocksdbProofsStorage {
         T::Key: Clone + Ord,
         T::Value: Decompress,
     {
+        let started = Instant::now();
+        let cutoff_items_len = cutoff_items.len();
+        info!(
+            target: "trie::pruner",
+            table = T::NAME,
+            cutoff_items = cutoff_items_len,
+            "Collecting RocksDB proof storage prune deletes",
+        );
         if cutoff_items.is_empty() {
+            info!(
+                target: "trie::pruner",
+                table = T::NAME,
+                cutoff_items = cutoff_items_len,
+                deletes = 0usize,
+                elapsed = ?started.elapsed(),
+                "Collected RocksDB proof storage prune deletes",
+            );
             return Ok(Vec::new());
         }
 
@@ -573,6 +608,15 @@ impl RocksdbProofsStorage {
                 deletes.push(raw_key.to_vec());
             }
         }
+
+        info!(
+            target: "trie::pruner",
+            table = T::NAME,
+            cutoff_items = cutoff_items_len,
+            deletes = deletes.len(),
+            elapsed = ?started.elapsed(),
+            "Collected RocksDB proof storage prune deletes",
+        );
 
         Ok(deletes)
     }
@@ -966,13 +1010,32 @@ impl RocksdbProofsStorage {
         snapshot: &SnapshotWithThreadMode<'_, RocksDb>,
         target_block: u64,
     ) -> BaseProofsStorageResult<Option<RocksdbPrunePlan>> {
+        let started = Instant::now();
+        info!(
+            target: "trie::pruner",
+            target_block,
+            "Calculating RocksDB proof storage prune plan",
+        );
         let Some((earliest, earliest_hash)) =
             self.get_block_number_hash_from_snapshot(snapshot, ProofWindowKey::EarliestBlock)?
         else {
+            info!(
+                target: "trie::pruner",
+                target_block,
+                elapsed = ?started.elapsed(),
+                "Skipped RocksDB proof storage prune plan because earliest block is missing",
+            );
             return Ok(None);
         };
 
         if earliest >= target_block {
+            info!(
+                target: "trie::pruner",
+                earliest_block = earliest,
+                target_block,
+                elapsed = ?started.elapsed(),
+                "Skipped RocksDB proof storage prune plan because target is not newer",
+            );
             return Ok(None);
         }
 
@@ -1010,14 +1073,29 @@ impl RocksdbProofsStorage {
             }
         }
 
-        Ok(Some(RocksdbPrunePlan {
+        let plan = RocksdbPrunePlan {
             earliest_block: earliest,
             earliest_hash,
             acc_survivors: flatten_and_sort(acc_candidates),
             storage_survivors: flatten_and_sort(storage_candidates),
             hashed_acc_survivors: flatten_and_sort(hashed_acc_candidates),
             hashed_storage_survivors: flatten_and_sort(hashed_storage_candidates),
-        }))
+        };
+
+        info!(
+            target: "trie::pruner",
+            earliest_block = plan.earliest_block,
+            target_block,
+            account_trie_survivors = plan.acc_survivors.len(),
+            storage_trie_survivors = plan.storage_survivors.len(),
+            hashed_account_survivors = plan.hashed_acc_survivors.len(),
+            hashed_storage_survivors = plan.hashed_storage_survivors.len(),
+            total_survivors = plan.total_survivors(),
+            elapsed = ?started.elapsed(),
+            "Calculated RocksDB proof storage prune plan",
+        );
+
+        Ok(Some(plan))
     }
 
     fn collect_history_ranged(
@@ -1131,10 +1209,23 @@ impl RocksdbProofsStorage {
         &self,
         new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<Option<RocksdbPreparedPrune>> {
+        let started = Instant::now();
+        let requested_target = new_earliest_block_ref.block.number;
+        info!(
+            target: "trie::pruner",
+            requested_target,
+            "Preparing RocksDB proof storage prune",
+        );
         let snapshot = self.db.snapshot();
         let Some((earliest_block, earliest_hash)) =
             self.get_block_number_hash_from_snapshot(&snapshot, ProofWindowKey::EarliestBlock)?
         else {
+            info!(
+                target: "trie::pruner",
+                requested_target,
+                elapsed = ?started.elapsed(),
+                "Skipped RocksDB proof storage prune because earliest block is missing",
+            );
             return Ok(None);
         };
 
@@ -1142,7 +1233,6 @@ impl RocksdbProofsStorage {
             .get_block_number_hash_from_snapshot(&snapshot, ProofWindowKey::LatestBlock)?
             .unwrap_or((earliest_block, earliest_hash));
 
-        let requested_target = new_earliest_block_ref.block.number;
         // Bound the prune to rows visible in this snapshot. Appends may commit while pruning, but
         // they must always land above this effective target.
         let (target_block, target_hash) = if requested_target > latest_block {
@@ -1151,7 +1241,24 @@ impl RocksdbProofsStorage {
             (requested_target, new_earliest_block_ref.block.hash)
         };
 
+        info!(
+            target: "trie::pruner",
+            earliest_block,
+            latest_block,
+            requested_target,
+            target_block,
+            clamped_to_latest = requested_target > latest_block,
+            "Calculated RocksDB proof storage prune target",
+        );
+
         if earliest_block >= target_block {
+            info!(
+                target: "trie::pruner",
+                earliest_block,
+                target_block,
+                elapsed = ?started.elapsed(),
+                "Skipped RocksDB proof storage prune because target is not newer",
+            );
             return Ok(None);
         }
 
@@ -1183,6 +1290,22 @@ impl RocksdbProofsStorage {
             hashed_storages_written_total: hashed_storage.len() as u64,
         };
 
+        info!(
+            target: "trie::pruner",
+            expected_earliest_block = plan.earliest_block,
+            target_block,
+            account_trie_deletes = account_trie.len(),
+            storage_trie_deletes = storage_trie.len(),
+            hashed_account_deletes = hashed_account.len(),
+            hashed_storage_deletes = hashed_storage.len(),
+            total_deletes = counts.account_trie_updates_written_total
+                + counts.storage_trie_updates_written_total
+                + counts.hashed_accounts_written_total
+                + counts.hashed_storages_written_total,
+            elapsed = ?started.elapsed(),
+            "Prepared RocksDB proof storage prune",
+        );
+
         Ok(Some(RocksdbPreparedPrune {
             expected_earliest_block: plan.earliest_block,
             expected_earliest_hash: plan.earliest_hash,
@@ -1202,6 +1325,7 @@ impl RocksdbProofsStorage {
         &self,
         prepared: RocksdbPreparedPrune,
     ) -> BaseProofsStorageResult<WriteCounts> {
+        let started = Instant::now();
         let RocksdbPreparedPrune {
             expected_earliest_block,
             expected_earliest_hash,
@@ -1210,6 +1334,17 @@ impl RocksdbProofsStorage {
             deletes,
             counts,
         } = prepared;
+        info!(
+            target: "trie::pruner",
+            expected_earliest_block,
+            target_block,
+            account_trie_deletes = deletes.account_trie.len(),
+            storage_trie_deletes = deletes.storage_trie.len(),
+            hashed_account_deletes = deletes.hashed_account.len(),
+            hashed_storage_deletes = deletes.hashed_storage.len(),
+            total_deletes = deletes.total(),
+            "Committing RocksDB proof storage prune",
+        );
         let expected_earliest = Some((expected_earliest_block, expected_earliest_hash));
         let mut batch = WriteBatch::default();
 
@@ -1236,17 +1371,40 @@ impl RocksdbProofsStorage {
 
         let current_earliest = self.get_block_number_hash(ProofWindowKey::EarliestBlock)?;
         if current_earliest != expected_earliest {
-            trace!(
+            info!(
                 target: "trie::pruner",
                 current_earliest = ?current_earliest,
                 expected_earliest = ?expected_earliest,
                 target_block,
+                elapsed = ?started.elapsed(),
                 "skipping stale prune plan"
             );
             return Ok(WriteCounts::default());
         }
 
+        info!(
+            target: "trie::pruner",
+            expected_earliest_block,
+            target_block,
+            elapsed = ?started.elapsed(),
+            "Writing RocksDB proof storage prune batch",
+        );
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
+        info!(
+            target: "trie::pruner",
+            expected_earliest_block,
+            target_block,
+            account_trie_deletes = counts.account_trie_updates_written_total,
+            storage_trie_deletes = counts.storage_trie_updates_written_total,
+            hashed_account_deletes = counts.hashed_accounts_written_total,
+            hashed_storage_deletes = counts.hashed_storages_written_total,
+            total_deletes = counts.account_trie_updates_written_total
+                + counts.storage_trie_updates_written_total
+                + counts.hashed_accounts_written_total
+                + counts.hashed_storages_written_total,
+            elapsed = ?started.elapsed(),
+            "Committed RocksDB proof storage prune",
+        );
         Ok(counts)
     }
 
@@ -1526,13 +1684,38 @@ impl BaseProofsStore for RocksdbProofsStorage {
         &self,
         new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<WriteCounts> {
+        let started = Instant::now();
+        info!(
+            target: "trie::pruner",
+            target_block = new_earliest_block_ref.block.number,
+            "Acquiring RocksDB proof storage prune locks",
+        );
         let _prune_guard = self.prune_lock.lock();
         let _history_guard = self.history_gate.read();
+        info!(
+            target: "trie::pruner",
+            target_block = new_earliest_block_ref.block.number,
+            elapsed = ?started.elapsed(),
+            "Acquired RocksDB proof storage prune locks",
+        );
         let Some(prepared) = self.prepare_prune(new_earliest_block_ref)? else {
+            info!(
+                target: "trie::pruner",
+                target_block = new_earliest_block_ref.block.number,
+                elapsed = ?started.elapsed(),
+                "No RocksDB proof storage prune work prepared",
+            );
             return Ok(WriteCounts::default());
         };
 
-        self.commit_prepared_prune(prepared)
+        let counts = self.commit_prepared_prune(prepared)?;
+        info!(
+            target: "trie::pruner",
+            target_block = new_earliest_block_ref.block.number,
+            elapsed = ?started.elapsed(),
+            "Finished RocksDB proof storage prune request",
+        );
+        Ok(counts)
     }
 
     fn unwind_history(&self, to: BlockWithParent) -> BaseProofsStorageResult<()> {
