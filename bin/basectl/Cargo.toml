@@ -12,8 +12,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+url = { workspace = true }
 anyhow = { workspace = true }
 basectl-cli = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
-clap = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

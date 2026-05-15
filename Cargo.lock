@@ -5892,6 +5892,7 @@ dependencies = [
  "clap",
  "rustls 0.23.39",
  "tokio",
+ "url",
 ]
 
 [[package]]

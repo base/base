@@ -8,6 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 use tokio::sync::oneshot;
+use url::Url;
 
 use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
 use crate::{
@@ -47,6 +48,9 @@ pub struct App {
     network_picker: Option<NetworkPicker>,
     /// Pending async network-load result. `Some` while a switch is in flight.
     pending_network: Option<oneshot::Receiver<anyhow::Result<MonitoringConfig>>>,
+    /// Bootstrap conductor RPC URL from `--conductor-rpc`. Forwarded to background
+    /// services on every network switch so discovery survives the rebuild.
+    conductor_rpc: Option<Url>,
 }
 
 impl fmt::Debug for App {
@@ -64,7 +68,7 @@ impl fmt::Debug for App {
 
 impl App {
     /// Creates a new application with the given resources and initial view.
-    pub fn new(resources: Resources, initial_view: ViewId) -> Self {
+    pub fn new(resources: Resources, initial_view: ViewId, conductor_rpc: Option<Url>) -> Self {
         Self {
             router: Router::new(initial_view),
             resources,
@@ -72,6 +76,7 @@ impl App {
             view_cache: HashMap::new(),
             network_picker: None,
             pending_network: None,
+            conductor_rpc,
         }
     }
 
@@ -293,7 +298,7 @@ impl App {
         // Replace resources entirely — dropping old receivers causes background
         // tasks from the previous network to exit naturally on their next send.
         self.resources = Resources::new(new_config.clone());
-        start_background_services(&new_config, &mut self.resources);
+        start_background_services(&new_config, &mut self.resources, self.conductor_rpc.clone());
         // Discard all cached view state so views re-initialise for the new network.
         self.view_cache.clear();
         self.router = Router::new(ViewId::Home);

@@ -99,7 +99,8 @@ impl ActionMenuItem {
                 node.is_leader == Some(true) && node.sequencer_active == Some(false)
             }
             Self::StopSequencer => node.sequencer_active == Some(true),
-            Self::TransferLeaderAny | Self::P2PToggle | Self::RestartContainers => true,
+            Self::RestartContainers => !node.discovered,
+            Self::TransferLeaderAny | Self::P2PToggle => true,
         }
     }
 }
@@ -1001,7 +1002,12 @@ fn render_cluster_table(
             mods |= Modifier::UNDERLINED;
         }
         let style = Style::default().fg(role_color).add_modifier(mods);
-        header_cells.push(Cell::from(node.name.as_str()).style(style));
+        let label = if node.discovered {
+            format!("{} (d)", node.name)
+        } else {
+            node.name.clone()
+        };
+        header_cells.push(Cell::from(label).style(style));
     }
     let header = Row::new(header_cells)
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
