@@ -5,7 +5,9 @@ use base_precompile_storage::{NativePrecompile, PrecompileStorageProvider};
 use revm::precompile::PrecompileResult;
 
 mod dispatch;
+mod evm;
 mod storage;
+pub use evm::DefaultTokenEvm;
 pub use storage::{DEFAULT_TOKEN_ADDRESS, DefaultTokenStorage};
 
 use crate::token::common::TokenBase;

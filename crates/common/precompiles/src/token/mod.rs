@@ -9,4 +9,4 @@ pub use common::{
 };
 
 mod default_token;
-pub use default_token::{DEFAULT_TOKEN_ADDRESS, DefaultToken, DefaultTokenStorage};
+pub use default_token::{DEFAULT_TOKEN_ADDRESS, DefaultToken, DefaultTokenEvm, DefaultTokenStorage};

@@ -30,15 +30,14 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
     }
 
     /// Installs Base-specific dynamic precompiles into an existing [`PrecompilesMap`].
-    pub const fn install_into(self, _precompiles: &mut PrecompilesMap) {}
-}
-
-impl<S: BasePrecompileSpec> Default for BasePrecompileInstaller<S> {
-    fn default() -> Self {
-        Self::new(S::default_precompile_spec())
+    pub fn install_into(self, precompiles: &mut PrecompilesMap) {
+        if self.spec.upgrade() >= BaseUpgrade::Beryl {
+            precompiles.apply_precompile(&crate::token::DEFAULT_TOKEN_ADDRESS, |_| {
+                Some(crate::token::DefaultTokenEvm::precompile())
+            });
+        }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use revm::precompile::{bn254, secp256r1};
