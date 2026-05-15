@@ -2791,6 +2791,7 @@ dependencies = [
  "base-consensus-engine",
  "base-consensus-gossip",
  "base-consensus-node",
+ "base-consensus-rpc",
  "base-consensus-safedb",
  "base-execution-chainspec",
  "base-execution-evm",

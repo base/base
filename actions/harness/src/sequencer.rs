@@ -16,14 +16,20 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
     BasePayloadAttributes, NetworkPayloadEnvelope, PayloadHash,
 };
-use base_consensus_derive::{AttributesBuilder, PipelineResult, StatefulAttributesBuilder};
+use base_consensus_derive::{
+    AttributesBuilder, PipelineError, PipelineResult, StatefulAttributesBuilder,
+};
 use base_consensus_node::{
     Conductor, ConductorError, L1OriginSelector, NodeActor, OriginSelector, PayloadBuilder,
-    RecoveryModeGuard, SequencerActor, SequencerActorError, SequencerEngineClient,
-    UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    RecoveryModeGuard, SequencerActor, SequencerActorError, SequencerAdminQuery,
+    SequencerEngineClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
+use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
-use tokio::sync::mpsc;
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -73,6 +79,9 @@ pub enum L2SequencerError {
     /// The inserted-block notification channel closed before a block was produced.
     #[error("sequencer actor exited before inserting a block")]
     InsertChannelClosed,
+    /// The sequencer actor admin API failed.
+    #[error("sequencer actor admin error: {0}")]
+    Admin(String),
 }
 
 /// Converts between execution payload envelopes and action-harness block/gossip types.
@@ -144,14 +153,14 @@ impl ExecutionPayloadConverter {
 #[derive(Debug)]
 pub struct ActionSequencerAttributesBuilder {
     inner: StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
-    user_txs: Vec<BaseTxEnvelope>,
+    user_txs: Arc<Mutex<Option<Vec<BaseTxEnvelope>>>>,
 }
 
 impl ActionSequencerAttributesBuilder {
     /// Create a new attributes adapter.
     pub const fn new(
         inner: StatefulAttributesBuilder<ActionL1ChainProvider, ActionL2ChainProvider>,
-        user_txs: Vec<BaseTxEnvelope>,
+        user_txs: Arc<Mutex<Option<Vec<BaseTxEnvelope>>>>,
     ) -> Self {
         Self { inner, user_txs }
     }
@@ -165,7 +174,13 @@ impl AttributesBuilder for ActionSequencerAttributesBuilder {
         epoch: alloy_eips::BlockNumHash,
     ) -> PipelineResult<BasePayloadAttributes> {
         let mut attrs = self.inner.prepare_payload_attributes(l2_parent, epoch).await?;
-        let encoded_user_txs: Vec<Bytes> = std::mem::take(&mut self.user_txs)
+        let user_txs = self
+            .user_txs
+            .lock()
+            .expect("sequencer user tx queue lock poisoned")
+            .take()
+            .ok_or_else(|| PipelineError::NotEnoughData.temp())?;
+        let encoded_user_txs: Vec<Bytes> = user_txs
             .into_iter()
             .map(|tx| {
                 let mut buf = Vec::new();
@@ -185,12 +200,15 @@ impl AttributesBuilder for ActionSequencerAttributesBuilder {
 #[derive(Debug)]
 pub struct ActionOriginSelector {
     inner: L1OriginSelector<SharedL1Chain>,
-    pin: Option<BlockInfo>,
+    pin: Arc<Mutex<Option<BlockInfo>>>,
 }
 
 impl ActionOriginSelector {
     /// Create a new origin selector adapter.
-    pub const fn new(inner: L1OriginSelector<SharedL1Chain>, pin: Option<BlockInfo>) -> Self {
+    pub const fn new(
+        inner: L1OriginSelector<SharedL1Chain>,
+        pin: Arc<Mutex<Option<BlockInfo>>>,
+    ) -> Self {
         Self { inner, pin }
     }
 }
@@ -202,7 +220,7 @@ impl OriginSelector for ActionOriginSelector {
         unsafe_head: L2BlockInfo,
         is_recovery_mode: bool,
     ) -> Result<BlockInfo, base_consensus_node::L1OriginSelectorError> {
-        if let Some(pin) = self.pin {
+        if let Some(pin) = *self.pin.lock().expect("L1 origin pin lock poisoned") {
             return Ok(pin);
         }
         self.inner.next_l1_origin(unsafe_head, is_recovery_mode).await
@@ -212,12 +230,12 @@ impl OriginSelector for ActionOriginSelector {
 /// Conductor adapter that allows the actor to own a cloneable conductor handle.
 #[derive(Debug, Clone)]
 pub struct ActionConductor {
-    inner: Arc<dyn Conductor>,
+    inner: Arc<Mutex<Option<Arc<dyn Conductor>>>>,
 }
 
 impl ActionConductor {
     /// Create a new conductor adapter.
-    pub fn new(inner: Arc<dyn Conductor>) -> Self {
+    pub fn new(inner: Arc<Mutex<Option<Arc<dyn Conductor>>>>) -> Self {
         Self { inner }
     }
 }
@@ -225,22 +243,38 @@ impl ActionConductor {
 #[async_trait]
 impl Conductor for ActionConductor {
     async fn leader(&self) -> Result<bool, ConductorError> {
-        self.inner.leader().await
+        let conductor = self.inner.lock().expect("conductor lock poisoned").clone();
+        match conductor {
+            Some(conductor) => conductor.leader().await,
+            None => Ok(true),
+        }
     }
 
     async fn active(&self) -> Result<bool, ConductorError> {
-        self.inner.active().await
+        let conductor = self.inner.lock().expect("conductor lock poisoned").clone();
+        match conductor {
+            Some(conductor) => conductor.active().await,
+            None => Ok(true),
+        }
     }
 
     async fn commit_unsafe_payload(
         &self,
         payload: &BaseExecutionPayloadEnvelope,
     ) -> Result<(), ConductorError> {
-        self.inner.commit_unsafe_payload(payload).await
+        let conductor = self.inner.lock().expect("conductor lock poisoned").clone();
+        match conductor {
+            Some(conductor) => conductor.commit_unsafe_payload(payload).await,
+            None => Ok(()),
+        }
     }
 
     async fn override_leader(&self) -> Result<(), ConductorError> {
-        self.inner.override_leader().await
+        let conductor = self.inner.lock().expect("conductor lock poisoned").clone();
+        match conductor {
+            Some(conductor) => conductor.override_leader().await,
+            None => Ok(()),
+        }
     }
 }
 
@@ -324,9 +358,14 @@ pub struct L2Sequencer {
     test_account: Arc<Mutex<TestAccount>>,
     block_hashes: SharedBlockHashRegistry,
     supervised_p2p: Option<SupervisedP2P>,
-    l1_origin_pin: Option<BlockInfo>,
-    conductor: Option<Arc<dyn Conductor>>,
+    l1_origin_pin: Arc<Mutex<Option<BlockInfo>>>,
+    conductor: Arc<Mutex<Option<Arc<dyn Conductor>>>>,
     unsafe_block_signer: Option<PrivateKeySigner>,
+    user_txs: Arc<Mutex<Option<Vec<BaseTxEnvelope>>>>,
+    admin_api_tx: Option<mpsc::Sender<SequencerAdminQuery>>,
+    inserted_rx: Option<mpsc::Receiver<(BaseBlock, L2BlockInfo)>>,
+    cancellation_token: Option<CancellationToken>,
+    actor_task: Option<JoinHandle<Result<(), SequencerActorError>>>,
 }
 
 impl L2Sequencer {
@@ -352,9 +391,14 @@ impl L2Sequencer {
             test_account,
             block_hashes,
             supervised_p2p: None,
-            l1_origin_pin: None,
-            conductor: None,
+            l1_origin_pin: Arc::new(Mutex::new(None)),
+            conductor: Arc::new(Mutex::new(None)),
             unsafe_block_signer: None,
+            user_txs: Arc::new(Mutex::new(None)),
+            admin_api_tx: None,
+            inserted_rx: None,
+            cancellation_token: None,
+            actor_task: None,
         }
     }
 
@@ -393,13 +437,13 @@ impl L2Sequencer {
     }
 
     /// Pin the L1 origin to the given block, bypassing automatic epoch advance.
-    pub const fn pin_l1_origin(&mut self, origin: BlockInfo) {
-        self.l1_origin_pin = Some(origin);
+    pub fn pin_l1_origin(&mut self, origin: BlockInfo) {
+        *self.l1_origin_pin.lock().expect("L1 origin pin lock poisoned") = Some(origin);
     }
 
     /// Clear the pinned L1 origin, restoring automatic epoch selection.
-    pub const fn clear_l1_origin_pin(&mut self) {
-        self.l1_origin_pin = None;
+    pub fn clear_l1_origin_pin(&mut self) {
+        *self.l1_origin_pin.lock().expect("L1 origin pin lock poisoned") = None;
     }
 
     /// Wire a [`SupervisedP2P`] handle to this sequencer for explicit gossip injection.
@@ -419,7 +463,7 @@ impl L2Sequencer {
 
     /// Attach a conductor to this sequencer.
     pub fn set_conductor(&mut self, conductor: Arc<dyn Conductor>) {
-        self.conductor = Some(conductor);
+        *self.conductor.lock().expect("conductor lock poisoned") = Some(conductor);
     }
 
     /// Broadcast `block` as a [`NetworkPayloadEnvelope`] to the wired [`SupervisedP2P`] handle.
@@ -473,11 +517,42 @@ impl L2Sequencer {
         &mut self,
         user_txs: Vec<BaseTxEnvelope>,
     ) -> Result<BaseBlock, L2SequencerError> {
-        let conductor = self.conductor.as_ref().map(|c| ActionConductor::new(Arc::clone(c)));
-        if let Some(conductor) = &conductor
-            && !conductor.leader().await?
-        {
+        if !self.conductor_leader().await? {
             return Err(L2SequencerError::NotLeader);
+        }
+
+        self.ensure_actor_started().await?;
+        self.queue_user_txs(user_txs)?;
+        if let Err(err) = self.start_sequencer().await {
+            self.clear_queued_user_txs();
+            return Err(err);
+        }
+
+        let (block, inserted_head) = match self.wait_for_inserted_block().await {
+            Ok(inserted) => inserted,
+            Err(err) => {
+                self.clear_queued_user_txs();
+                let _ = self.stop_sequencer(self.head.block_info.hash).await;
+                return Err(err);
+            }
+        };
+
+        self.head = inserted_head;
+        self.l2_provider.insert_block(inserted_head);
+        self.l2_provider.insert_base_block(inserted_head.block_info.number, block.clone());
+        self.stop_sequencer(inserted_head.block_info.hash).await?;
+
+        Ok(block)
+    }
+
+    /// Start the production actor task if it has not been started yet.
+    pub async fn ensure_actor_started(&mut self) -> Result<(), L2SequencerError> {
+        if let Some(actor_task) = &self.actor_task {
+            if actor_task.is_finished() {
+                let actor_task = self.actor_task.take().expect("actor task checked above");
+                return Err(Self::actor_join_error(actor_task.await));
+            }
+            return Ok(());
         }
 
         let attrs_builder = StatefulAttributesBuilder::new(
@@ -486,24 +561,14 @@ impl L2Sequencer {
             self.l2_provider.clone(),
             ActionL1ChainProvider::new(self.l1_chain.clone()),
         );
-        let attrs_builder = ActionSequencerAttributesBuilder::new(attrs_builder, user_txs);
+        let attrs_builder =
+            ActionSequencerAttributesBuilder::new(attrs_builder, Arc::clone(&self.user_txs));
         let origin_selector =
             L1OriginSelector::new(Arc::clone(&self.rollup_config), self.l1_chain.clone());
-        let origin_selector = ActionOriginSelector::new(origin_selector, self.l1_origin_pin);
+        let origin_selector =
+            ActionOriginSelector::new(origin_selector, Arc::clone(&self.l1_origin_pin));
 
-        // The production ticker cannot be constructed with a zero period, but
-        // some action tests intentionally use `RollupConfig::default()`. Keep
-        // the real config for attributes/origin selection and clamp only the
-        // actor scheduler's private copy.
-        let actor_rollup_config = if self.rollup_config.block_time == 0 {
-            let mut config = (*self.rollup_config).clone();
-            config.block_time = 1;
-            Arc::new(config)
-        } else {
-            Arc::clone(&self.rollup_config)
-        };
-
-        let (inserted_tx, mut inserted_rx) = mpsc::channel(1);
+        let (inserted_tx, inserted_rx) = mpsc::channel(8);
         let engine_client = Arc::new(ActionSequencerEngineClient::new(
             Arc::clone(&self.engine_client),
             inserted_tx,
@@ -516,45 +581,131 @@ impl L2Sequencer {
             rollup_config: Arc::clone(&self.rollup_config),
         };
 
-        let (_admin_api_tx, admin_api_rx) = mpsc::channel(1);
+        let (admin_api_tx, admin_api_rx) = mpsc::channel(8);
         let cancellation_token = CancellationToken::new();
         let actor = SequencerActor {
             admin_api_rx,
             builder,
             cancellation_token: cancellation_token.clone(),
-            conductor,
+            conductor: Some(ActionConductor::new(Arc::clone(&self.conductor))),
             engine_client,
-            is_active: true,
+            is_active: false,
             recovery_mode: RecoveryModeGuard::new(false),
-            rollup_config: actor_rollup_config,
+            rollup_config: self.actor_rollup_config(),
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,
         };
 
-        let mut actor_task = tokio::spawn(async move { actor.start(()).await });
+        self.admin_api_tx = Some(admin_api_tx);
+        self.inserted_rx = Some(inserted_rx);
+        self.cancellation_token = Some(cancellation_token);
+        self.actor_task = Some(tokio::spawn(async move { actor.start(()).await }));
+        Ok(())
+    }
+
+    /// Return a rollup config suitable for the actor scheduler.
+    pub fn actor_rollup_config(&self) -> Arc<RollupConfig> {
+        // Action tests explicitly ask the actor for one block at a time. Keep
+        // the real config for attributes/origin selection and use a short
+        // cadence only for the actor scheduler's private copy, so tests with
+        // large L2 block times do not wait for wall-clock production slots.
+        if self.rollup_config.block_time != 1 {
+            let mut config = (*self.rollup_config).clone();
+            config.block_time = 1;
+            Arc::new(config)
+        } else {
+            Arc::clone(&self.rollup_config)
+        }
+    }
+
+    /// Return true when this sequencer can act as conductor leader.
+    pub async fn conductor_leader(&self) -> Result<bool, L2SequencerError> {
+        let conductor = self.conductor.lock().expect("conductor lock poisoned").clone();
+        match conductor {
+            Some(conductor) => Ok(conductor.leader().await?),
+            None => Ok(true),
+        }
+    }
+
+    /// Queue the next harness-controlled transaction batch for the actor.
+    pub fn queue_user_txs(&self, user_txs: Vec<BaseTxEnvelope>) -> Result<(), L2SequencerError> {
+        let mut queued = self.user_txs.lock().expect("sequencer user tx queue lock poisoned");
+        if queued.is_some() {
+            return Err(L2SequencerError::Admin(
+                "sequencer already has a queued transaction batch".to_string(),
+            ));
+        }
+        *queued = Some(user_txs);
+        Ok(())
+    }
+
+    /// Clear any queued transaction batch.
+    pub fn clear_queued_user_txs(&self) {
+        *self.user_txs.lock().expect("sequencer user tx queue lock poisoned") = None;
+    }
+
+    /// Ask the production actor to start sequencing from the current head.
+    pub async fn start_sequencer(&self) -> Result<(), L2SequencerError> {
+        let (tx, rx) = oneshot::channel();
+        self.admin_api_tx()?
+            .send(SequencerAdminQuery::StartSequencer(self.head.block_info.hash, tx))
+            .await
+            .map_err(|_| L2SequencerError::Admin("sequencer admin channel closed".to_string()))?;
+        match rx.await.map_err(|_| {
+            L2SequencerError::Admin("sequencer start response channel closed".to_string())
+        })? {
+            Ok(()) => Ok(()),
+            Err(SequencerAdminAPIError::NotLeader) => Err(L2SequencerError::NotLeader),
+            Err(err) => Err(L2SequencerError::Admin(err.to_string())),
+        }
+    }
+
+    /// Ask the production actor to stop sequencing after the requested block is inserted.
+    pub async fn stop_sequencer(&self, expected_head: B256) -> Result<(), L2SequencerError> {
+        let (tx, rx) = oneshot::channel();
+        self.admin_api_tx()?
+            .send(SequencerAdminQuery::StopSequencer(tx))
+            .await
+            .map_err(|_| L2SequencerError::Admin("sequencer admin channel closed".to_string()))?;
+        let stopped_head = rx
+            .await
+            .map_err(|_| {
+                L2SequencerError::Admin("sequencer stop response channel closed".to_string())
+            })?
+            .map_err(|err| L2SequencerError::Admin(err.to_string()))?;
+        if stopped_head != expected_head {
+            return Err(L2SequencerError::Admin(format!(
+                "sequencer stopped at {stopped_head}, expected {expected_head}",
+            )));
+        }
+        Ok(())
+    }
+
+    /// Wait for the actor to insert one block.
+    pub async fn wait_for_inserted_block(
+        &mut self,
+    ) -> Result<(BaseBlock, L2BlockInfo), L2SequencerError> {
+        let inserted_rx = self.inserted_rx.as_mut().ok_or_else(|| {
+            L2SequencerError::Admin("sequencer inserted-block channel not initialized".to_string())
+        })?;
         let sleep = tokio::time::sleep(Duration::from_secs(10));
         tokio::pin!(sleep);
 
-        let (block, inserted_head) = tokio::select! {
+        tokio::select! {
             biased;
             inserted = inserted_rx.recv() => {
-                inserted.ok_or(L2SequencerError::InsertChannelClosed)?
+                inserted.ok_or(L2SequencerError::InsertChannelClosed)
             }
-            joined = &mut actor_task => {
-                return Err(Self::actor_join_error(joined));
-            }
-            _ = &mut sleep => return Err(L2SequencerError::Timeout),
-        };
+            _ = &mut sleep => Err(L2SequencerError::Timeout),
+        }
+    }
 
-        cancellation_token.cancel();
-        let _ = actor_task.await;
-
-        self.head = inserted_head;
-        self.l2_provider.insert_block(inserted_head);
-        self.l2_provider.insert_base_block(inserted_head.block_info.number, block.clone());
-
-        Ok(block)
+    /// Return the actor admin channel.
+    pub fn admin_api_tx(&self) -> Result<&mpsc::Sender<SequencerAdminQuery>, L2SequencerError> {
+        self.admin_api_tx.as_ref().ok_or_else(|| {
+            L2SequencerError::Admin("sequencer admin channel not initialized".to_string())
+        })
     }
 
     /// Convert an actor task join result into [`L2SequencerError`].
@@ -565,6 +716,17 @@ impl L2Sequencer {
             Ok(Ok(())) => L2SequencerError::InsertChannelClosed,
             Ok(Err(err)) => L2SequencerError::Actor(err.to_string()),
             Err(err) => L2SequencerError::Actor(err.to_string()),
+        }
+    }
+}
+
+impl Drop for L2Sequencer {
+    fn drop(&mut self) {
+        if let Some(cancellation_token) = &self.cancellation_token {
+            cancellation_token.cancel();
+        }
+        if let Some(actor_task) = &self.actor_task {
+            actor_task.abort();
         }
     }
 }
