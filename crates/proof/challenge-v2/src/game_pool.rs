@@ -7,7 +7,7 @@ use alloy_primitives::Address;
 use derive_more::Debug;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{DisputeRequest, GameInfo, WorkerDeps, run_game_worker};
 
@@ -53,8 +53,7 @@ impl GamePool {
     fn maybe_spawn(&mut self, game: GameInfo) {
         let address = game.address;
 
-        // Live worker already covers this address: skip the duplicate
-        // emit (scanner re-publishes every active game per tick).
+        // A worker is already running for this address.
         if let Some(handle) = self.workers.get(&address)
             && !handle.is_finished()
         {
@@ -68,9 +67,13 @@ impl GamePool {
             tokio::spawn(run_game_worker(game, Arc::clone(&self.deps), self.submit_tx.clone()));
         self.workers.insert(address, handle);
 
-        // GC finished workers to keep the map bounded.
+        // GC finished workers to keep the map bounded. Logged so the
+        // legitimate "many live workers" case (a real backlog) can be
+        // told apart from a leak of finished handles.
         if self.workers.len() > Self::GC_THRESHOLD {
+            let before = self.workers.len();
             self.workers.retain(|_, h| !h.is_finished());
+            info!(swept = before - self.workers.len(), kept = self.workers.len(), "gc sweep");
         }
     }
 }
@@ -84,11 +87,11 @@ mod tests {
 
     use alloy_primitives::B256;
     use async_trait::async_trait;
-    use tokio::sync::Notify;
+    use tokio::sync::{Notify, Semaphore};
 
     use super::*;
     use crate::{
-        GameSituation, OutputValidator, ValidatorError, WorkerConfig,
+        OutputRootError, OutputValidator, ProvingState, WorkerConfig,
         test_utils::{
             MockAggregateVerifier, MockGameState, MockOutputValidator, MockTeeProofProvider,
             MockZkProofProvider, addr,
@@ -126,7 +129,7 @@ mod tests {
             starting_l2_block: STARTING_BLOCK,
             intermediate_roots: intermediate_roots.into_boxed_slice(),
             intermediate_block_interval: INTERVAL,
-            situation: GameSituation::ZkOnly,
+            proving_state: ProvingState::ZkOnly,
         }
     }
 
@@ -145,7 +148,7 @@ mod tests {
 
     #[async_trait]
     impl OutputValidator for CountingValidator {
-        async fn compute_output_root(&self, _block: u64) -> Result<B256, ValidatorError> {
+        async fn compute_output_root(&self, _block: u64) -> Result<B256, OutputRootError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(self.root)
         }
@@ -162,7 +165,7 @@ mod tests {
 
     #[async_trait]
     impl OutputValidator for BlockingValidator {
-        async fn compute_output_root(&self, _block: u64) -> Result<B256, ValidatorError> {
+        async fn compute_output_root(&self, _block: u64) -> Result<B256, OutputRootError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.started.notify_one();
             self.release.notified().await;
@@ -193,6 +196,7 @@ mod tests {
                 Arc::<MockAggregateVerifier>::clone(&self.verifier),
                 Arc::<MockZkProofProvider>::clone(&self.zk),
                 Arc::<MockTeeProofProvider>::clone(&self.tee),
+                Arc::new(Semaphore::new(8)),
                 config(),
             ))
         }
@@ -208,15 +212,11 @@ mod tests {
         mocks.zk.push_get_succeeded(vec![0xAA]);
     }
 
-    /// Programs `mocks` so the worker exits via the `no_violation`
-    /// branch (every claimed root matches).
-    fn arrange_no_violation(mocks: &Mocks, address: Address, situation: GameSituation) {
-        let state = match situation {
-            GameSituation::ZkOnly => MockGameState::in_progress(Address::ZERO, addr(2), 0),
-            GameSituation::TeeOnly => MockGameState::in_progress(addr(1), Address::ZERO, 0),
-            other => panic!("arrange_no_violation: unsupported situation {other:?}"),
-        };
-        mocks.verifier.set_game(address, state);
+    /// Programs the verifier so the worker classifies as `ZkOnly`
+    /// and exits via the no-violation branch (every claimed root
+    /// matches what the validator returns).
+    fn arrange_no_violation(mocks: &Mocks, address: Address) {
+        mocks.verifier.set_game(address, MockGameState::in_progress(Address::ZERO, addr(2), 0));
     }
 
     #[tokio::test]
@@ -289,9 +289,7 @@ mod tests {
         });
         let mocks = Mocks::new();
         let address = addr(0xA1);
-        // Verifier resolves; validator returns r0 == on-chain root, so
-        // the worker exits via the `no_violation` branch once released.
-        arrange_no_violation(&mocks, address, GameSituation::ZkOnly);
+        mocks.verifier.set_game(address, MockGameState::in_progress(Address::ZERO, addr(2), 0));
 
         let (game_tx, game_rx) = mpsc::channel(4);
         let (submit_tx, _submit_rx) = mpsc::channel(4);
@@ -328,7 +326,7 @@ mod tests {
         let mocks = Mocks::new();
         let validator = Arc::new(CountingValidator::new(root(10)));
         let address = addr(0xA1);
-        arrange_no_violation(&mocks, address, GameSituation::ZkOnly);
+        arrange_no_violation(&mocks, address);
 
         let (game_tx, game_rx) = mpsc::channel(4);
         let (submit_tx, _submit_rx) = mpsc::channel(4);

@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::{ChallengerMetrics, DisputeAction, DisputeRequest};
+use crate::DisputeRequest;
 
 /// Long-running task that drains [`DisputeRequest`]s, encodes the
 /// calldata, and submits the transaction through a single
@@ -51,11 +51,9 @@ impl<Tx: TxManager> SubmissionTask<Tx> {
         }
     }
 
-    /// Encodes the request's calldata, submits it, and records the
-    /// outcome via metrics.
+    /// Encodes the request's calldata and submits the transaction.
     async fn handle(&self, request: DisputeRequest) {
         let game = request.game_address;
-        let action_label = action_metric_label(&request.action);
 
         let candidate = TxCandidate {
             tx_data: request.action.to_calldata(request.proof_bytes),
@@ -63,55 +61,26 @@ impl<Tx: TxManager> SubmissionTask<Tx> {
             ..TxCandidate::default()
         };
 
-        let started = std::time::Instant::now();
-        let outcome = self.tx_manager.send(candidate).await;
-        ChallengerMetrics::submit_duration_seconds(action_label)
-            .record(started.elapsed().as_secs_f64());
-
-        let status_label = match outcome {
-            Ok(receipt) if receipt.status() => {
-                info!(
-                    %game,
-                    action = %request.action,
-                    tx_hash = %receipt.transaction_hash,
-                    "submission confirmed on L1"
-                );
-                ChallengerMetrics::SUBMIT_STATUS_SUCCESS
-            }
-            Ok(receipt) => {
-                // Tx mined but EVM reverted; see receipt and log
-                // for the cause.
-                warn!(
-                    %game,
-                    action = %request.action,
-                    tx_hash = %receipt.transaction_hash,
-                    "submission reverted at inclusion"
-                );
-                ChallengerMetrics::SUBMIT_STATUS_REVERTED
-            }
-            Err(e) => {
-                // TxManager failed somewhere in the send pipeline.
-                warn!(
-                    %game,
-                    action = %request.action,
-                    error = %e,
-                    "submission failed before confirmation"
-                );
-                ChallengerMetrics::SUBMIT_STATUS_ERROR
-            }
-        };
-        ChallengerMetrics::submit_outcome_total(action_label, status_label).increment(1);
-    }
-}
-
-/// Snake-case label used as the `action` value on challenger metrics.
-/// Distinct from `Display`, which renders the human-readable variant
-/// name used in tracing fields.
-const fn action_metric_label(action: &DisputeAction) -> &'static str {
-    match action {
-        DisputeAction::Challenge { .. } => ChallengerMetrics::ACTION_CHALLENGE,
-        DisputeAction::NullifyTee { .. } => ChallengerMetrics::ACTION_NULLIFY_TEE,
-        DisputeAction::NullifyZk { .. } => ChallengerMetrics::ACTION_NULLIFY_ZK,
+        match self.tx_manager.send(candidate).await {
+            Ok(receipt) if receipt.status() => info!(
+                %game,
+                action = %request.action,
+                tx_hash = %receipt.transaction_hash,
+                "submission confirmed on L1"
+            ),
+            Ok(receipt) => warn!(
+                %game,
+                action = %request.action,
+                tx_hash = %receipt.transaction_hash,
+                "submission reverted at inclusion"
+            ),
+            Err(e) => warn!(
+                %game,
+                action = %request.action,
+                error = %e,
+                "submission failed before confirmation"
+            ),
+        }
     }
 }
 
@@ -121,7 +90,7 @@ mod tests {
     use base_tx_manager::TxManagerError;
 
     use super::*;
-    use crate::test_utils::MockTxManager;
+    use crate::{DisputeAction, test_utils::MockTxManager};
 
     const GAME: Address = address!("00000000000000000000000000000000000000a1");
     const SENDER: Address = address!("00000000000000000000000000000000000000b2");

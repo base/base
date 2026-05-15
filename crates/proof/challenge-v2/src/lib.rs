@@ -6,20 +6,17 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-mod metrics;
-pub use metrics::ChallengerMetrics;
-
 mod game_discovery;
-pub use game_discovery::{ClassifyError, GameDiscovery, GameInfo, GameSituation};
+pub use game_discovery::{ClassifyError, GameDiscovery, GameInfo, ProvingState};
 
 mod account_proof;
 pub use account_proof::{AccountProofError, AccountProofVerifier};
 
 mod output_validator;
-pub use output_validator::{L2OutputValidator, OutputValidator, ValidatorError};
+pub use output_validator::{L2OutputValidator, OutputRootError, OutputValidator};
 
 mod violation;
-pub use violation::{ValidationError, Violation, ViolationSituation};
+pub use violation::{ValidationError, Violation, ViolationKind};
 
 mod tee_provider;
 pub use tee_provider::{TeeProofError, TeeProofProvider, TeeProofResult};

@@ -1,5 +1,6 @@
-//! Per-game worker pipeline: [`run_game_worker`] and the shared
-//! [`WorkerDeps`] it consumes.
+//! Per-game worker: [`run_game_worker`] runs one detect / dispute /
+//! submit pass per spawn. Re-spawn between scan ticks is the pool's
+//! job (driven by [`crate::GameDiscovery`] re-emitting the game).
 
 use std::{sync::Arc, time::Duration};
 
@@ -7,12 +8,10 @@ use alloy_primitives::Address;
 use base_proof_contracts::AggregateVerifierClient;
 use base_zk_client::ZkProofProvider;
 use derive_more::Debug;
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info, warn};
 
-use crate::{
-    ChallengerMetrics, DisputeRequest, GameInfo, OutputValidator, TeeProofProvider, Violation,
-};
+use crate::{DisputeRequest, GameInfo, OutputValidator, TeeProofProvider, Violation};
 
 /// Read-only handles and config shared across every game-worker task.
 ///
@@ -36,6 +35,10 @@ pub struct WorkerDeps {
     /// settled by a TEE signature, with ZK as the fallback.
     #[debug(skip)]
     pub tee_prover: Arc<dyn TeeProofProvider>,
+    /// Caps concurrent [`Violation::detect`] runs so a burst of
+    /// workers cannot saturate the L1/L2 RPC pool.
+    #[debug(skip)]
+    pub detect_semaphore: Arc<Semaphore>,
     /// Static worker config.
     pub config: WorkerConfig,
 }
@@ -48,9 +51,10 @@ impl WorkerDeps {
         verifier: Arc<dyn AggregateVerifierClient>,
         zk_prover: Arc<dyn ZkProofProvider>,
         tee_prover: Arc<dyn TeeProofProvider>,
+        detect_semaphore: Arc<Semaphore>,
         config: WorkerConfig,
     ) -> Self {
-        Self { validator, verifier, zk_prover, tee_prover, config }
+        Self { validator, verifier, zk_prover, tee_prover, detect_semaphore, config }
     }
 }
 
@@ -73,63 +77,50 @@ pub struct WorkerConfig {
     pub max_proof_duration: Duration,
 }
 
-/// Drives a single game through validate / prove / submit and exits.
-/// Each terminal branch is recorded on
-/// [`ChallengerMetrics::game_worker_outcome_total`].
+/// Runs one detect / dispute / submit pass for `game` and exits.
+/// Each branch logs its outcome; the next iteration is driven by the
+/// scanner re-emitting the game.
 pub async fn run_game_worker(
     game: GameInfo,
     deps: Arc<WorkerDeps>,
     submit_tx: mpsc::Sender<DisputeRequest>,
 ) {
-    let game_address = game.address;
+    let address = game.address;
 
-    // Validate: re-fetch live state and compare to claimed roots.
-    let violation = match Violation::detect(&game, &*deps.validator, &*deps.verifier).await {
-        Ok(Some(v)) => v,
-        Ok(None) => {
-            debug!(game = %game_address, "no violation detected");
-            ChallengerMetrics::game_worker_outcome_total(
-                ChallengerMetrics::GAME_WORKER_OUTCOME_NO_VIOLATION,
-            )
-            .increment(1);
-            return;
-        }
-        Err(e) => {
-            warn!(game = %game_address, error = %e, "validation failed");
-            ChallengerMetrics::game_worker_outcome_total(
-                ChallengerMetrics::GAME_WORKER_OUTCOME_VALIDATION_ERROR,
-            )
-            .increment(1);
-            return;
+    // Acquire a permit for the detect phase only: detect is RPC-heavy
+    // (status + prover tuple + per-checkpoint output roots), and the
+    // pool can spawn many workers at once.
+    let violation = {
+        let _permit =
+            deps.detect_semaphore.acquire().await.expect("detect_semaphore is never closed");
+
+        match Violation::detect(&game, &*deps.validator, &*deps.verifier).await {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                debug!(game = %address, "no violation");
+                return;
+            }
+            Err(e) => {
+                warn!(game = %address, error = %e, "validation failed");
+                return;
+            }
         }
     };
 
-    // Prove: produce the proof bytes that back the dispute action.
-    let request = match violation.dispute_request(&deps).await {
+    let request = match violation.build_dispute_request(&deps).await {
         Ok(r) => r,
         Err(e) => {
-            warn!(game = %game_address, error = %e, "dispute proof generation failed");
-            ChallengerMetrics::game_worker_outcome_total(
-                ChallengerMetrics::GAME_WORKER_OUTCOME_PROOF_ERROR,
-            )
-            .increment(1);
+            warn!(game = %address, error = %e, "dispute proof failed");
             return;
         }
     };
 
-    // Submit: hand off to the SubmissionTask.
     if submit_tx.send(request).await.is_err() {
-        warn!(game = %game_address, "submission channel closed; dropping request");
-        ChallengerMetrics::game_worker_outcome_total(
-            ChallengerMetrics::GAME_WORKER_OUTCOME_SEND_DROPPED,
-        )
-        .increment(1);
+        warn!(game = %address, "submission channel closed");
         return;
     }
 
-    info!(game = %game_address, "dispute request dispatched");
-    ChallengerMetrics::game_worker_outcome_total(ChallengerMetrics::GAME_WORKER_OUTCOME_DISPATCHED)
-        .increment(1);
+    info!(game = %address, "dispute request dispatched");
 }
 
 #[cfg(test)]
@@ -138,7 +129,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        DisputeAction, GameSituation,
+        DisputeAction, ProvingState,
         test_utils::{
             MockAggregateVerifier, MockGameState, MockOutputValidator, MockTeeProofProvider,
             MockZkProofProvider, addr,
@@ -165,9 +156,7 @@ mod tests {
         }
     }
 
-    /// Builds a [`GameInfo`] in the requested situation. Roots are the
-    /// values claimed on-chain at each checkpoint.
-    fn game_info(intermediate_roots: Vec<B256>, situation: GameSituation) -> GameInfo {
+    fn game_info(intermediate_roots: Vec<B256>, proving_state: ProvingState) -> GameInfo {
         let len = intermediate_roots.len() as u64;
         GameInfo {
             address: addr(42),
@@ -178,23 +167,8 @@ mod tests {
             starting_l2_block: STARTING_BLOCK,
             intermediate_roots: intermediate_roots.into_boxed_slice(),
             intermediate_block_interval: INTERVAL,
-            situation,
+            proving_state,
         }
-    }
-
-    /// Mock state for `(tee, zk, countered)` matching `situation`.
-    fn game_state(situation: GameSituation) -> MockGameState {
-        let (tee, zk, c) = match situation {
-            GameSituation::TeeOnly => (addr(1), Address::ZERO, 0),
-            GameSituation::ZkOnly => (Address::ZERO, addr(2), 0),
-            GameSituation::BothProven => (addr(1), addr(2), 0),
-            GameSituation::UnderChallenge { challenged_index } => {
-                (addr(1), addr(2), challenged_index + 1)
-            }
-            GameSituation::TeeNullifiedDuringChallenge => (Address::ZERO, addr(2), 1),
-            GameSituation::Terminal => (Address::ZERO, Address::ZERO, 0),
-        };
-        MockGameState::in_progress(tee, zk, c)
     }
 
     /// Bundles the four mocks needed by [`WorkerDeps`].
@@ -221,26 +195,40 @@ mod tests {
                 Arc::<MockAggregateVerifier>::clone(&self.verifier),
                 Arc::<MockZkProofProvider>::clone(&self.zk),
                 Arc::<MockTeeProofProvider>::clone(&self.tee),
+                Arc::new(Semaphore::new(8)),
                 config(),
             ))
         }
     }
 
-    /// Programs `mocks` so that `Violation::detect` returns `None` for
-    /// `game`: classifier sees `situation`, every checkpoint matches
-    /// the on-chain claim.
-    fn arrange_no_violation(mocks: &Mocks, game: &GameInfo, situation: GameSituation) {
-        mocks.verifier.set_game(game.address, game_state(situation));
-        for (i, root) in game.intermediate_roots.iter().enumerate() {
-            mocks.validator.set(checkpoint_block(i as u64), *root);
+    /// Programs the verifier so the game classifies as `ZkOnly` with
+    /// every checkpoint matching the on-chain claim (no violation).
+    fn arrange_no_violation(mocks: &Mocks, game: &GameInfo) {
+        mocks
+            .verifier
+            .set_game(game.address, MockGameState::in_progress(Address::ZERO, addr(2), 0));
+        for (i, r) in game.intermediate_roots.iter().enumerate() {
+            mocks.validator.set(checkpoint_block(i as u64), *r);
         }
+    }
+
+    /// Programs the verifier + validator so detect returns a `ZkWrong`
+    /// violation at index 0 and the ZK prover succeeds.
+    fn arrange_zk_only_violation(mocks: &Mocks, game: &GameInfo) {
+        mocks
+            .verifier
+            .set_game(game.address, MockGameState::in_progress(Address::ZERO, addr(2), 0));
+        mocks.validator.set(checkpoint_block(0), root(99));
+        mocks.validator.set(STARTING_BLOCK, root(50));
+        mocks.zk.push_prove_ok();
+        mocks.zk.push_get_succeeded(vec![0xAA, 0xBB]);
     }
 
     #[tokio::test]
     async fn no_violation_does_not_send() {
         let mocks = Mocks::new();
-        let game = game_info(vec![root(10), root(11)], GameSituation::ZkOnly);
-        arrange_no_violation(&mocks, &game, GameSituation::ZkOnly);
+        let game = game_info(vec![root(10), root(11)], ProvingState::ZkOnly);
+        arrange_no_violation(&mocks, &game);
         let (tx, mut rx) = mpsc::channel(4);
 
         run_game_worker(game, mocks.deps(), tx).await;
@@ -251,18 +239,8 @@ mod tests {
     #[tokio::test]
     async fn violation_with_successful_proof_sends_request() {
         let mocks = Mocks::new();
-        // ZkOnly with index-0 mismatch routes through the ZK-only proving
-        // path: prove() submits one job and returns the receipt bytes.
-        let on_chain = root(10);
-        let computed = root(99);
-        let game = game_info(vec![on_chain], GameSituation::ZkOnly);
-        mocks.verifier.set_game(game.address, game_state(GameSituation::ZkOnly));
-        mocks.validator.set(checkpoint_block(0), computed);
-        // index 0: detect also fetches the predecessor root from the
-        // game's starting block.
-        mocks.validator.set(STARTING_BLOCK, root(50));
-        mocks.zk.push_prove_ok();
-        mocks.zk.push_get_succeeded(vec![0xAA, 0xBB]);
+        let game = game_info(vec![root(10)], ProvingState::ZkOnly);
+        arrange_zk_only_violation(&mocks, &game);
         let (tx, mut rx) = mpsc::channel(4);
 
         run_game_worker(game.clone(), mocks.deps(), tx).await;
@@ -275,9 +253,9 @@ mod tests {
     #[tokio::test]
     async fn validation_error_does_not_send() {
         let mocks = Mocks::new();
-        // Verifier has no entry for this game: tee_prover() returns a
-        // ContractError, which surfaces as ValidationError::Contract.
-        let game = game_info(vec![root(10)], GameSituation::ZkOnly);
+        // Verifier has no entry for this game: its reads return
+        // ContractError, surfaced as ValidationError::Contract.
+        let game = game_info(vec![root(10)], ProvingState::ZkOnly);
         let (tx, mut rx) = mpsc::channel(4);
 
         run_game_worker(game, mocks.deps(), tx).await;
@@ -288,14 +266,13 @@ mod tests {
     #[tokio::test]
     async fn proof_error_does_not_send() {
         let mocks = Mocks::new();
-        let on_chain = root(10);
-        let computed = root(99);
-        let game = game_info(vec![on_chain], GameSituation::ZkOnly);
-        mocks.verifier.set_game(game.address, game_state(GameSituation::ZkOnly));
-        mocks.validator.set(checkpoint_block(0), computed);
+        let game = game_info(vec![root(10)], ProvingState::ZkOnly);
+        mocks
+            .verifier
+            .set_game(game.address, MockGameState::in_progress(Address::ZERO, addr(2), 0));
+        mocks.validator.set(checkpoint_block(0), root(99));
         mocks.validator.set(STARTING_BLOCK, root(50));
-        // ZK prover returns a permanent failure: with max_proof_retries=0
-        // the first failure is also the last.
+        // ZK prover returns a permanent failure.
         mocks.zk.push_prove_ok();
         mocks.zk.push_get_failed(Some("simulated".into()));
         let (tx, mut rx) = mpsc::channel(4);
@@ -308,18 +285,12 @@ mod tests {
     #[tokio::test]
     async fn dropped_receiver_does_not_panic() {
         let mocks = Mocks::new();
-        let on_chain = root(10);
-        let computed = root(99);
-        let game = game_info(vec![on_chain], GameSituation::ZkOnly);
-        mocks.verifier.set_game(game.address, game_state(GameSituation::ZkOnly));
-        mocks.validator.set(checkpoint_block(0), computed);
-        mocks.validator.set(STARTING_BLOCK, root(50));
-        mocks.zk.push_prove_ok();
-        mocks.zk.push_get_succeeded(vec![0x42]);
+        let game = game_info(vec![root(10)], ProvingState::ZkOnly);
+        arrange_zk_only_violation(&mocks, &game);
         let (tx, rx) = mpsc::channel(4);
         drop(rx);
 
-        // Worker logs and returns; no panic, no hang.
+        // No panic, returns cleanly after logging the channel-closed warn.
         run_game_worker(game, mocks.deps(), tx).await;
     }
 }

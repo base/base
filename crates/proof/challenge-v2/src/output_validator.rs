@@ -19,7 +19,7 @@ use crate::account_proof::{AccountProofError, AccountProofVerifier};
 
 /// Errors returned by [`OutputValidator::compute_output_root`].
 #[derive(Debug, Error)]
-pub enum ValidatorError {
+pub enum OutputRootError {
     /// The requested L2 block has not been produced yet.
     #[error("L2 block {block_number} is not yet available")]
     BlockNotAvailable {
@@ -68,7 +68,7 @@ pub enum ValidatorError {
 pub trait OutputValidator: Send + Sync {
     /// Returns the output root that should appear at `block_number`
     /// according to the underlying L2 state.
-    async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError>;
+    async fn compute_output_root(&self, block_number: u64) -> Result<B256, OutputRootError>;
 }
 
 /// Concrete [`OutputValidator`] backed by a real L2 RPC client.
@@ -86,20 +86,20 @@ impl<L2: L2Provider> L2OutputValidator<L2> {
 
 #[async_trait]
 impl<L2: L2Provider> OutputValidator for L2OutputValidator<L2> {
-    async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError> {
+    async fn compute_output_root(&self, block_number: u64) -> Result<B256, OutputRootError> {
         let rpc_header =
             self.l2.header_by_number(Some(block_number)).await.map_err(|e| match e {
                 e @ (RpcError::HeaderNotFound(_) | RpcError::BlockNotFound(_)) => {
-                    ValidatorError::BlockNotAvailable { block_number, source: e }
+                    OutputRootError::BlockNotAvailable { block_number, source: e }
                 }
-                e => ValidatorError::Rpc(e),
+                e => OutputRootError::Rpc(e),
             })?;
 
         let rpc_hash = rpc_header.hash;
         let consensus = rpc_header.inner;
         let computed_hash = consensus.hash_slow();
         if rpc_hash != computed_hash {
-            return Err(ValidatorError::HeaderHashMismatch {
+            return Err(OutputRootError::HeaderHashMismatch {
                 block_number,
                 rpc_hash,
                 computed_hash,
@@ -113,7 +113,7 @@ impl<L2: L2Provider> OutputValidator for L2OutputValidator<L2> {
             consensus.state_root,
             Predeploys::L2_TO_L1_MESSAGE_PASSER,
         )
-        .map_err(|source| ValidatorError::AccountProofFailed { block_number, source })?;
+        .map_err(|source| OutputRootError::AccountProofFailed { block_number, source })?;
 
         Ok(OutputRoot::from_parts(consensus.state_root, proof.storage_hash, computed_hash).hash())
     }
@@ -153,7 +153,7 @@ mod tests {
         let err = validator.compute_output_root(999).await.expect_err("must fail");
 
         assert!(
-            matches!(err, ValidatorError::BlockNotAvailable { block_number: 999, .. }),
+            matches!(err, OutputRootError::BlockNotAvailable { block_number: 999, .. }),
             "expected BlockNotAvailable, got {err:?}"
         );
     }
@@ -166,7 +166,7 @@ mod tests {
         let err = validator.compute_output_root(42).await.expect_err("must fail");
 
         assert!(
-            matches!(err, ValidatorError::BlockNotAvailable { block_number: 42, .. }),
+            matches!(err, OutputRootError::BlockNotAvailable { block_number: 42, .. }),
             "expected BlockNotAvailable, got {err:?}"
         );
     }
@@ -188,7 +188,7 @@ mod tests {
         let err = validator.compute_output_root(100).await.expect_err("must fail");
 
         match err {
-            ValidatorError::HeaderHashMismatch { block_number, rpc_hash, computed_hash: c } => {
+            OutputRootError::HeaderHashMismatch { block_number, rpc_hash, computed_hash: c } => {
                 assert_eq!(block_number, 100);
                 assert_eq!(rpc_hash, tampered_hash);
                 assert_eq!(c, computed_hash);
@@ -211,7 +211,7 @@ mod tests {
         let err = validator.compute_output_root(100).await.expect_err("must fail");
 
         assert!(
-            matches!(err, ValidatorError::AccountProofFailed { block_number: 100, .. }),
+            matches!(err, OutputRootError::AccountProofFailed { block_number: 100, .. }),
             "expected AccountProofFailed, got {err:?}"
         );
     }
@@ -230,6 +230,6 @@ mod tests {
         let validator = L2OutputValidator::new(Arc::new(provider));
         let err = validator.compute_output_root(100).await.expect_err("must fail");
 
-        assert!(matches!(err, ValidatorError::Rpc(_)), "expected Rpc error, got {err:?}");
+        assert!(matches!(err, OutputRootError::Rpc(_)), "expected Rpc error, got {err:?}");
     }
 }

@@ -29,7 +29,7 @@ use base_zk_client::{
     ZkProofError, ZkProofProvider,
 };
 
-use crate::{OutputValidator, TeeProofError, TeeProofProvider, TeeProofResult, ValidatorError};
+use crate::{OutputRootError, OutputValidator, TeeProofError, TeeProofProvider, TeeProofResult};
 
 /// Mock [`L2Provider`] backed by in-memory hashmaps.
 ///
@@ -185,7 +185,7 @@ impl MockOutputValidator {
 
 #[async_trait]
 impl OutputValidator for MockOutputValidator {
-    async fn compute_output_root(&self, block_number: u64) -> Result<B256, ValidatorError> {
+    async fn compute_output_root(&self, block_number: u64) -> Result<B256, OutputRootError> {
         match self.roots.lock().expect("roots lock poisoned").get(&block_number) {
             Some(&root) => Ok(root),
             None => panic!("MockOutputValidator: no root configured for block {block_number}"),

@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-/// Snapshot of a dispute game. All fields except `situation` are
+/// Snapshot of a dispute game. All fields except `proving_state` are
 /// CWIA-immutable; workers must re-classify against fresh state before
 /// acting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,47 +38,54 @@ pub struct GameInfo {
     pub intermediate_roots: Box<[B256]>,
     /// Block interval between intermediate root checkpoints.
     pub intermediate_block_interval: u64,
-    /// Classification at scan time. Re-verify before acting.
-    pub situation: GameSituation,
+    /// Snapshot at scan time; may be stale by the time a worker
+    /// acts. [`crate::Violation::detect`] re-reads it from the
+    /// verifier on every call.
+    pub proving_state: ProvingState,
 }
 
 /// On-chain `(teeProver, zkProver, countered)` classification. Only
 /// reachable tuples are represented; unreachable ones come back as
 /// [`ClassifyError::Unreachable`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GameSituation {
-    /// `(non-zero, 0, 0)`
+pub enum ProvingState {
+    /// `(tee, 0, 0)`. Only a TEE proof is attached.
     TeeOnly,
-    /// `(0, non-zero, 0)`
+    /// `(0, zk, 0)`. Only a ZK proof is attached.
     ZkOnly,
-    /// `(non-zero, non-zero, 0)`
+    /// `(tee, zk, 0)`. Both proofs attached, no challenge.
     BothProven,
-    /// `(non-zero, non-zero, > 0)`
+    /// `(tee, zk, >0)`. The TEE has been challenged by a ZK proof at
+    /// `challenged_index`.
     UnderChallenge {
         /// 0-based index of the challenged intermediate root.
         challenged_index: u64,
     },
-    /// `(0, non-zero, > 0)`
-    TeeNullifiedDuringChallenge,
-    /// `(0, 0, 0)`
-    Terminal,
+    /// `(0, zk, >0)`. The TEE has been removed while a ZK challenge
+    /// at `challenged_index` is still pending.
+    TeeNullifiedDuringChallenge {
+        /// 0-based index targeted by the pending ZK challenge.
+        challenged_index: u64,
+    },
+    /// `(0, 0, 0)`. No proof currently attached.
+    AllNullified,
 }
 
-impl std::fmt::Display for GameSituation {
+impl std::fmt::Display for ProvingState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Self::TeeOnly => "TeeOnly",
             Self::ZkOnly => "ZkOnly",
             Self::BothProven => "BothProven",
             Self::UnderChallenge { .. } => "UnderChallenge",
-            Self::TeeNullifiedDuringChallenge => "TeeNullifiedDuringChallenge",
-            Self::Terminal => "Terminal",
+            Self::TeeNullifiedDuringChallenge { .. } => "TeeNullifiedDuringChallenge",
+            Self::AllNullified => "AllNullified",
         };
         f.write_str(s)
     }
 }
 
-impl GameSituation {
+impl ProvingState {
     /// Classifies an on-chain `(teeProver, zkProver, countered)` triple.
     /// `countered` is the raw 1-based `counteredByIntermediateRootIndexPlusOne`.
     pub fn classify(
@@ -92,9 +99,9 @@ impl GameSituation {
             (true, false, 0) => Ok(Self::TeeOnly),
             (false, true, 0) => Ok(Self::ZkOnly),
             (true, true, 0) => Ok(Self::BothProven),
-            (true, true, c) if c > 0 => Ok(Self::UnderChallenge { challenged_index: c - 1 }),
-            (false, true, c) if c > 0 => Ok(Self::TeeNullifiedDuringChallenge),
-            (false, false, 0) => Ok(Self::Terminal),
+            (true, true, c) => Ok(Self::UnderChallenge { challenged_index: c - 1 }),
+            (false, true, c) => Ok(Self::TeeNullifiedDuringChallenge { challenged_index: c - 1 }),
+            (false, false, 0) => Ok(Self::AllNullified),
             _ => Err(ClassifyError::Unreachable { tee_prover, zk_prover, countered }),
         }
     }
@@ -127,11 +134,14 @@ enum ReadGameError {
     Classification(#[from] ClassifyError),
 }
 
-/// Periodic scanner that locates actionable dispute games on the
-/// `DisputeGameFactory` and streams them to a downstream consumer.
+/// Periodic scanner that streams the dispute games the challenger
+/// should process to a downstream consumer.
 pub struct GameDiscovery {
+    /// Source of the factory game count and per-index lookups.
     factory: Arc<dyn DisputeGameFactoryClient>,
+    /// Reads per-game state (status, prover tuple, intermediate roots).
     verifier: Arc<dyn AggregateVerifierClient>,
+    /// Resolves the anchor game so the scan can skip already-finalized indices.
     anchor_registry: Arc<dyn AnchorStateRegistryClient>,
     /// `GameType` of every game this challenger acts on. Used to filter
     /// `findLatestGames` during the anchor lookup.
@@ -176,8 +186,8 @@ impl GameDiscovery {
         }
     }
 
-    /// Periodic scan loop. Sleeps `poll_interval` between ticks, sends each
-    /// actionable game on `tx`, and exits when `cancel` fires or the
+    /// Periodic scan loop. Sleeps `poll_interval` between ticks, sends
+    /// each found game on `tx`, and exits when `cancel` fires or the
     /// receiver is dropped. Per-tick errors are logged and the loop
     /// continues.
     pub async fn run(
@@ -206,8 +216,8 @@ impl GameDiscovery {
         }
     }
 
-    /// One scan tick. Returns actionable games sorted by ascending
-    /// factory index. Per-game errors are logged and skipped.
+    /// One scan tick. Returns the games to process, sorted by
+    /// ascending factory index. Per-game errors are logged and skipped.
     async fn scan(&self) -> Result<Vec<GameInfo>, ContractError> {
         let game_count = self.factory.game_count().await?;
         if game_count == 0 {
@@ -217,25 +227,25 @@ impl GameDiscovery {
 
         let scan_start = self.scan_start_index(game_count).await?;
 
-        let results = stream::iter(scan_start..game_count)
-            .map(|i| async move { (i, self.read_actionable_game(i).await) })
+        let mut games = stream::iter(scan_start..game_count)
+            .map(|i| async move { (i, self.read_game(i).await) })
             .buffer_unordered(Self::SCAN_CONCURRENCY)
+            .filter_map(|(i, result)| async move {
+                match result {
+                    Ok(Some(info)) => Some(info),
+                    Ok(None) => None,
+                    Err(ReadGameError::Classification(e)) => {
+                        error!(factory_index = i, error = %e, "classification failed; skipping");
+                        None
+                    }
+                    Err(ReadGameError::Contract(e)) => {
+                        warn!(factory_index = i, error = %e, "game read failed; skipping");
+                        None
+                    }
+                }
+            })
             .collect::<Vec<_>>()
             .await;
-
-        let mut games = Vec::new();
-        for (i, result) in results {
-            match result {
-                Ok(Some(info)) => games.push(info),
-                Ok(None) => {}
-                Err(ReadGameError::Classification(e)) => {
-                    error!(factory_index = i, error = %e, "unreachable on-chain state; skipping");
-                }
-                Err(ReadGameError::Contract(e)) => {
-                    warn!(factory_index = i, error = %e, "game read failed; skipping");
-                }
-            }
-        }
 
         games.sort_unstable_by_key(|g| g.factory_index);
         Ok(games)
@@ -347,11 +357,10 @@ impl GameDiscovery {
         }
     }
 
-    /// Reads a game and returns `Some(GameInfo)` only when it is
-    /// actionable. Non-actionable cases (`status != IN_PROGRESS`,
-    /// [`GameSituation::Terminal`], [`GameSituation::TeeNullifiedDuringChallenge`])
-    /// resolve to `None` without fetching the heavier fields.
-    async fn read_actionable_game(&self, index: u64) -> Result<Option<GameInfo>, ReadGameError> {
+    /// Returns `Some(GameInfo)` for games the challenger should
+    /// check, `None` for resolved games or games with no proving
+    /// state to verify.
+    async fn read_game(&self, index: u64) -> Result<Option<GameInfo>, ReadGameError> {
         let factory_entry = self.factory.game_at_index(index).await?;
         let proxy = factory_entry.proxy;
 
@@ -367,15 +376,16 @@ impl GameDiscovery {
             self.verifier.countered_index(proxy),
         )?;
 
-        let situation = GameSituation::classify(tee_prover, zk_prover, countered)?;
+        let proving_state = ProvingState::classify(tee_prover, zk_prover, countered)?;
 
-        match situation {
-            GameSituation::TeeOnly
-            | GameSituation::ZkOnly
-            | GameSituation::BothProven
-            | GameSituation::UnderChallenge { .. } => {}
-            GameSituation::TeeNullifiedDuringChallenge | GameSituation::Terminal => {
-                debug!(game = %proxy, factory_index = index, %situation, "game not actionable");
+        match proving_state {
+            ProvingState::TeeOnly
+            | ProvingState::ZkOnly
+            | ProvingState::BothProven
+            | ProvingState::UnderChallenge { .. }
+            | ProvingState::TeeNullifiedDuringChallenge { .. } => {}
+            ProvingState::AllNullified => {
+                debug!(game = %proxy, factory_index = index, "all proofs nullified, skipping");
                 return Ok(None);
             }
         }
@@ -401,7 +411,7 @@ impl GameDiscovery {
             starting_l2_block: starting_block_number,
             intermediate_roots: intermediate_roots.into_boxed_slice(),
             intermediate_block_interval: interval,
-            situation,
+            proving_state,
         }))
     }
 
@@ -454,52 +464,60 @@ mod tests {
 
     #[test]
     fn classify_tee_only() {
-        assert_eq!(GameSituation::classify(TEE, ZERO, 0), Ok(GameSituation::TeeOnly));
+        assert_eq!(ProvingState::classify(TEE, ZERO, 0), Ok(ProvingState::TeeOnly));
     }
 
     #[test]
     fn classify_zk_only() {
-        assert_eq!(GameSituation::classify(ZERO, ZK, 0), Ok(GameSituation::ZkOnly));
+        assert_eq!(ProvingState::classify(ZERO, ZK, 0), Ok(ProvingState::ZkOnly));
     }
 
     #[test]
     fn classify_under_challenge_index_zero() {
         assert_eq!(
-            GameSituation::classify(TEE, ZK, 1),
-            Ok(GameSituation::UnderChallenge { challenged_index: 0 }),
+            ProvingState::classify(TEE, ZK, 1),
+            Ok(ProvingState::UnderChallenge { challenged_index: 0 }),
         );
     }
 
     #[test]
     fn classify_under_challenge_higher_index() {
         assert_eq!(
-            GameSituation::classify(TEE, ZK, 7),
-            Ok(GameSituation::UnderChallenge { challenged_index: 6 }),
+            ProvingState::classify(TEE, ZK, 7),
+            Ok(ProvingState::UnderChallenge { challenged_index: 6 }),
         );
     }
 
     #[test]
     fn classify_both_proven() {
-        assert_eq!(GameSituation::classify(TEE, ZK, 0), Ok(GameSituation::BothProven));
+        assert_eq!(ProvingState::classify(TEE, ZK, 0), Ok(ProvingState::BothProven));
     }
 
     #[test]
-    fn classify_tee_nullified_during_challenge() {
+    fn classify_tee_nullified_during_challenge_index_zero() {
         assert_eq!(
-            GameSituation::classify(ZERO, ZK, 1),
-            Ok(GameSituation::TeeNullifiedDuringChallenge),
+            ProvingState::classify(ZERO, ZK, 1),
+            Ok(ProvingState::TeeNullifiedDuringChallenge { challenged_index: 0 }),
         );
     }
 
     #[test]
-    fn classify_terminal() {
-        assert_eq!(GameSituation::classify(ZERO, ZERO, 0), Ok(GameSituation::Terminal));
+    fn classify_tee_nullified_during_challenge_higher_index() {
+        assert_eq!(
+            ProvingState::classify(ZERO, ZK, 7),
+            Ok(ProvingState::TeeNullifiedDuringChallenge { challenged_index: 6 }),
+        );
+    }
+
+    #[test]
+    fn classify_all_nullified() {
+        assert_eq!(ProvingState::classify(ZERO, ZERO, 0), Ok(ProvingState::AllNullified));
     }
 
     #[test]
     fn classify_unreachable_tee_with_challenge_no_zk() {
         assert_eq!(
-            GameSituation::classify(TEE, ZERO, 1),
+            ProvingState::classify(TEE, ZERO, 1),
             Err(ClassifyError::Unreachable { tee_prover: TEE, zk_prover: ZERO, countered: 1 }),
         );
     }
@@ -507,25 +525,25 @@ mod tests {
     #[test]
     fn classify_unreachable_no_provers_with_challenge() {
         assert_eq!(
-            GameSituation::classify(ZERO, ZERO, 5),
+            ProvingState::classify(ZERO, ZERO, 5),
             Err(ClassifyError::Unreachable { tee_prover: ZERO, zk_prover: ZERO, countered: 5 }),
         );
     }
 
     #[test]
     fn display_returns_variant_name() {
-        assert_eq!(format!("{}", GameSituation::TeeOnly), "TeeOnly");
-        assert_eq!(format!("{}", GameSituation::ZkOnly), "ZkOnly");
-        assert_eq!(format!("{}", GameSituation::BothProven), "BothProven");
+        assert_eq!(format!("{}", ProvingState::TeeOnly), "TeeOnly");
+        assert_eq!(format!("{}", ProvingState::ZkOnly), "ZkOnly");
+        assert_eq!(format!("{}", ProvingState::BothProven), "BothProven");
         assert_eq!(
-            format!("{}", GameSituation::UnderChallenge { challenged_index: 5 }),
+            format!("{}", ProvingState::UnderChallenge { challenged_index: 5 }),
             "UnderChallenge",
         );
         assert_eq!(
-            format!("{}", GameSituation::TeeNullifiedDuringChallenge),
+            format!("{}", ProvingState::TeeNullifiedDuringChallenge { challenged_index: 3 }),
             "TeeNullifiedDuringChallenge",
         );
-        assert_eq!(format!("{}", GameSituation::Terminal), "Terminal");
+        assert_eq!(format!("{}", ProvingState::AllNullified), "AllNullified");
     }
 
     mod discovery {
@@ -561,7 +579,7 @@ mod tests {
             }
 
             fn push_game(&self, index: u64, state: MockGameState) -> Address {
-                // Pad gaps with Terminal placeholders so factory indices line up.
+                // Pad gaps with AllNullified placeholders so factory indices line up.
                 let current = self.factory.games.lock().expect("games lock poisoned").len() as u64;
                 for i in current..index {
                     let placeholder = factory_game(i, GAME_TYPE);
@@ -579,79 +597,79 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn read_actionable_returns_none_when_not_in_progress() {
+        async fn read_game_returns_none_when_not_in_progress() {
             let fx = Fixture::new();
             let mut state = MockGameState::in_progress(TEE, ZERO, 0);
             state.status = GameStatus::DefenderWins;
             fx.push_game(0, state);
 
-            assert_eq!(fx.discovery.read_actionable_game(0).await.unwrap(), None);
+            assert_eq!(fx.discovery.read_game(0).await.unwrap(), None);
         }
 
         #[tokio::test]
-        async fn read_actionable_returns_none_for_terminal() {
+        async fn read_game_returns_none_for_all_nullified() {
             let fx = Fixture::new();
             fx.push_game(0, MockGameState::in_progress(ZERO, ZERO, 0));
 
-            assert_eq!(fx.discovery.read_actionable_game(0).await.unwrap(), None);
+            assert_eq!(fx.discovery.read_game(0).await.unwrap(), None);
         }
 
         #[tokio::test]
-        async fn read_actionable_returns_none_for_tee_nullified_during_challenge() {
+        async fn read_game_returns_some_for_tee_nullified_during_challenge() {
             let fx = Fixture::new();
-            fx.push_game(0, MockGameState::in_progress(ZERO, ZK, 1));
+            fx.push_game(0, MockGameState::in_progress(ZERO, ZK, 4));
 
-            assert_eq!(fx.discovery.read_actionable_game(0).await.unwrap(), None);
+            let info = fx.discovery.read_game(0).await.unwrap().expect("expected a game");
+            assert_eq!(
+                info.proving_state,
+                ProvingState::TeeNullifiedDuringChallenge { challenged_index: 3 },
+            );
         }
 
         #[tokio::test]
-        async fn read_actionable_returns_some_for_tee_only() {
+        async fn read_game_returns_some_for_tee_only() {
             let fx = Fixture::new();
             let proxy = fx.push_game(3, MockGameState::in_progress(TEE, ZERO, 0));
 
-            let info =
-                fx.discovery.read_actionable_game(3).await.unwrap().expect("expected actionable");
+            let info = fx.discovery.read_game(3).await.unwrap().expect("expected a game");
             assert_eq!(info.address, proxy);
             assert_eq!(info.factory_index, 3);
-            assert_eq!(info.situation, GameSituation::TeeOnly);
+            assert_eq!(info.proving_state, ProvingState::TeeOnly);
         }
 
         #[tokio::test]
-        async fn read_actionable_returns_some_for_zk_only() {
+        async fn read_game_returns_some_for_zk_only() {
             let fx = Fixture::new();
             fx.push_game(0, MockGameState::in_progress(ZERO, ZK, 0));
 
-            let info =
-                fx.discovery.read_actionable_game(0).await.unwrap().expect("expected actionable");
-            assert_eq!(info.situation, GameSituation::ZkOnly);
+            let info = fx.discovery.read_game(0).await.unwrap().expect("expected a game");
+            assert_eq!(info.proving_state, ProvingState::ZkOnly);
         }
 
         #[tokio::test]
-        async fn read_actionable_returns_some_for_both_proven() {
+        async fn read_game_returns_some_for_both_proven() {
             let fx = Fixture::new();
             fx.push_game(0, MockGameState::in_progress(TEE, ZK, 0));
 
-            let info =
-                fx.discovery.read_actionable_game(0).await.unwrap().expect("expected actionable");
-            assert_eq!(info.situation, GameSituation::BothProven);
+            let info = fx.discovery.read_game(0).await.unwrap().expect("expected a game");
+            assert_eq!(info.proving_state, ProvingState::BothProven);
         }
 
         #[tokio::test]
-        async fn read_actionable_returns_some_for_under_challenge_with_index() {
+        async fn read_game_returns_some_for_under_challenge_with_index() {
             let fx = Fixture::new();
             fx.push_game(0, MockGameState::in_progress(TEE, ZK, 4));
 
-            let info =
-                fx.discovery.read_actionable_game(0).await.unwrap().expect("expected actionable");
-            assert_eq!(info.situation, GameSituation::UnderChallenge { challenged_index: 3 });
+            let info = fx.discovery.read_game(0).await.unwrap().expect("expected a game");
+            assert_eq!(info.proving_state, ProvingState::UnderChallenge { challenged_index: 3 });
         }
 
         #[tokio::test]
-        async fn read_actionable_returns_classification_error_for_unreachable() {
+        async fn read_game_returns_classification_error_for_unreachable() {
             let fx = Fixture::new();
             fx.push_game(0, MockGameState::in_progress(TEE, ZERO, 1));
 
-            let err = fx.discovery.read_actionable_game(0).await.unwrap_err();
+            let err = fx.discovery.read_game(0).await.unwrap_err();
             assert!(matches!(
                 err,
                 ReadGameError::Classification(ClassifyError::Unreachable { .. })
@@ -659,15 +677,15 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn read_actionable_propagates_contract_error() {
+        async fn read_game_propagates_contract_error() {
             let fx = Fixture::new();
             // Index 0 is empty, so game_at_index returns Validation error.
-            let err = fx.discovery.read_actionable_game(0).await.unwrap_err();
+            let err = fx.discovery.read_game(0).await.unwrap_err();
             assert!(matches!(err, ReadGameError::Contract(_)));
         }
 
         #[tokio::test]
-        async fn read_actionable_populates_all_fields() {
+        async fn read_game_populates_all_fields() {
             let fx = Fixture::new();
             let roots = vec![B256::repeat_byte(0xAA), B256::repeat_byte(0xBB)];
             let mut state = MockGameState::in_progress(TEE, ZERO, 0);
@@ -679,8 +697,7 @@ mod tests {
             fx.verifier.set_interval(50);
             let proxy = fx.push_game(7, state);
 
-            let info =
-                fx.discovery.read_actionable_game(7).await.unwrap().expect("expected actionable");
+            let info = fx.discovery.read_game(7).await.unwrap().expect("expected a game");
             assert_eq!(info.address, proxy);
             assert_eq!(info.factory_index, 7);
             assert_eq!(info.root_claim, roots[1]);
@@ -689,7 +706,7 @@ mod tests {
             assert_eq!(info.starting_l2_block, 100);
             assert_eq!(info.intermediate_roots.as_ref(), roots.as_slice());
             assert_eq!(info.intermediate_block_interval, 50);
-            assert_eq!(info.situation, GameSituation::TeeOnly);
+            assert_eq!(info.proving_state, ProvingState::TeeOnly);
         }
 
         #[tokio::test]
@@ -799,19 +816,27 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn scan_returns_only_actionable_games() {
+        async fn scan_skips_resolved_and_all_nullified() {
             let fx = Fixture::new();
-            fx.push_game(0, MockGameState::in_progress(TEE, ZERO, 0)); // TeeOnly: actionable
-            fx.push_game(1, MockGameState::in_progress(ZERO, ZERO, 0)); // Terminal: skip
-            fx.push_game(2, MockGameState::in_progress(ZERO, ZK, 1)); // TeeNullifiedDuringChallenge: skip
-            fx.push_game(3, MockGameState::in_progress(TEE, ZK, 2)); // UnderChallenge: actionable
+            fx.push_game(0, MockGameState::in_progress(TEE, ZERO, 0)); // TeeOnly: kept
+            fx.push_game(1, MockGameState::in_progress(ZERO, ZERO, 0)); // AllNullified: skipped
+            fx.push_game(2, MockGameState::in_progress(ZERO, ZK, 1)); // TeeNullifiedDuringChallenge: kept
+            fx.push_game(3, MockGameState::in_progress(TEE, ZK, 2)); // UnderChallenge: kept
 
             let games = fx.discovery.scan().await.unwrap();
-            assert_eq!(games.len(), 2);
+            assert_eq!(games.len(), 3);
             assert_eq!(games[0].factory_index, 0);
-            assert_eq!(games[0].situation, GameSituation::TeeOnly);
-            assert_eq!(games[1].factory_index, 3);
-            assert_eq!(games[1].situation, GameSituation::UnderChallenge { challenged_index: 1 },);
+            assert_eq!(games[0].proving_state, ProvingState::TeeOnly);
+            assert_eq!(games[1].factory_index, 2);
+            assert_eq!(
+                games[1].proving_state,
+                ProvingState::TeeNullifiedDuringChallenge { challenged_index: 0 },
+            );
+            assert_eq!(games[2].factory_index, 3);
+            assert_eq!(
+                games[2].proving_state,
+                ProvingState::UnderChallenge { challenged_index: 1 }
+            );
         }
 
         #[tokio::test]
@@ -909,7 +934,7 @@ mod tests {
             Setup { factory, verifier, anchor, discovery }
         }
 
-        fn push_actionable(setup: &Setup, index: u64) {
+        fn push_tee_only_game(setup: &Setup, index: u64) {
             let game = factory_game(index, GAME_TYPE);
             setup.factory.push(game);
             setup.verifier.set_game(game.proxy, MockGameState::in_progress(TEE, ZERO, 0));
@@ -929,7 +954,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn run_sends_games_after_each_poll_interval() {
             let setup = setup();
-            push_actionable(&setup, 0);
+            push_tee_only_game(&setup, 0);
 
             let (tx, mut rx) = mpsc::channel(10);
             let cancel = CancellationToken::new();
@@ -952,7 +977,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn run_continues_after_scan_error() {
             let setup = setup();
-            push_actionable(&setup, 0);
+            push_tee_only_game(&setup, 0);
             setup.anchor.set_fail_snapshot(true);
 
             let (tx, mut rx) = mpsc::channel(10);
@@ -981,7 +1006,7 @@ mod tests {
         #[tokio::test(start_paused = true)]
         async fn run_exits_when_receiver_dropped() {
             let setup = setup();
-            push_actionable(&setup, 0);
+            push_tee_only_game(&setup, 0);
 
             let (tx, rx) = mpsc::channel(1);
             let cancel = CancellationToken::new();

@@ -3,7 +3,7 @@
 //! [`DisputeAction`] enumerates the on-chain calls the challenger can
 //! make against a dispute game. [`DisputeRequest`] bundles an action
 //! with the proof bytes that prove it. Produced by
-//! [`crate::Violation::dispute_request`] and consumed by
+//! [`crate::Violation::build_dispute_request`] and consumed by
 //! [`crate::SubmissionTask`].
 
 use std::fmt;
@@ -15,13 +15,13 @@ use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
 ///
 /// Carries the call parameters for the matching `AggregateVerifier`
 /// entrypoint. The proof bytes (TEE signature, ZK SNARK) are produced
-/// separately by [`crate::Violation::dispute_request`] and bundled
+/// separately by [`crate::Violation::build_dispute_request`] and bundled
 /// into [`DisputeRequest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisputeAction {
     /// Calls `challenge(index, our_root)`. Used as failover when
     /// [`Self::NullifyTee`] cannot be produced; see
-    /// [`crate::Violation::dispute_request`] for the exact fallback
+    /// [`crate::Violation::build_dispute_request`] for the exact fallback
     /// conditions.
     Challenge {
         /// Intermediate root index disputed by the challenger.
@@ -55,7 +55,7 @@ pub enum DisputeAction {
         /// Intermediate root index disputed by the challenger.
         index: u64,
         /// Root the SNARK is asserting (our computed L2 root for
-        /// `ZkWrong`, on-chain TEE root for `FraudulentZkChallenge`).
+        /// `ZkWrong`, proposed root for `FraudulentZkChallenge`).
         root_to_prove: B256,
         /// Predecessor root (anchor or previous intermediate root).
         starting_root: B256,
@@ -112,7 +112,7 @@ impl fmt::Display for DisputeAction {
 
 /// A `DisputeAction` bundled with the proof bytes that prove it.
 ///
-/// Produced by [`crate::Violation::dispute_request`] and consumed by
+/// Produced by [`crate::Violation::build_dispute_request`] and consumed by
 /// [`crate::SubmissionTask`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisputeRequest {

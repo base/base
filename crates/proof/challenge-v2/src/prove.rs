@@ -1,14 +1,14 @@
 //! Proof orchestration for dispute violations.
 //!
-//! Entry point: [`Violation::dispute_request`], which produces a
+//! Entry point: [`Violation::build_dispute_request`], which produces a
 //! [`DisputeRequest`] ready for the submission task. Decision policy:
 //!
-//! - For [`ViolationSituation::ZkWrong`], emit
+//! - For [`ViolationKind::ZkWrong`], emit
 //!   [`DisputeAction::NullifyZk`] asserting our computed root.
-//! - For [`ViolationSituation::FraudulentZkChallenge`], emit
-//!   [`DisputeAction::NullifyZk`] asserting the on-chain TEE root
+//! - For [`ViolationKind::FraudulentZkChallenge`], emit
+//!   [`DisputeAction::NullifyZk`] asserting the proposed root
 //!   (contract-enforced equality).
-//! - For [`ViolationSituation::TeeWrong`], try our TEE prover first;
+//! - For [`ViolationKind::TeeWrong`], try our TEE prover first;
 //!   if it signs our computed root, emit
 //!   [`DisputeAction::NullifyTee`]. Otherwise fall back to a ZK
 //!   [`DisputeAction::Challenge`] so the game still resolves in our
@@ -25,11 +25,11 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    DisputeAction, DisputeRequest, Violation, ViolationSituation, WorkerDeps,
+    DisputeAction, DisputeRequest, Violation, ViolationKind, WorkerDeps,
     tee_provider::TeeProofProvider,
 };
 
-/// Errors that can prevent [`Violation::dispute_request`] from emitting a [`DisputeRequest`].
+/// Errors that can prevent [`Violation::build_dispute_request`] from emitting a [`DisputeRequest`].
 #[derive(Debug, Error)]
 pub enum ProofError {
     /// Underlying gRPC or transport error from the ZK service.
@@ -55,7 +55,7 @@ impl Violation {
     /// Deterministic ZK session id derived from `(game_address, invalid_index)`.
     /// Stable across retries so the ZK service can deduplicate or
     /// requeue the existing job rather than starting from scratch.
-    pub fn session_id(&self) -> String {
+    pub fn zk_session_id(&self) -> String {
         let mut bytes = [0u8; 28];
         bytes[..20].copy_from_slice(self.game_address.as_slice());
         bytes[20..].copy_from_slice(&self.invalid_index.to_be_bytes());
@@ -66,20 +66,23 @@ impl Violation {
     /// matching [`DisputeAction`] into a [`DisputeRequest`].
     ///
     /// See the module docs for the full decision policy.
-    pub async fn dispute_request(self, deps: &WorkerDeps) -> Result<DisputeRequest, ProofError> {
-        match self.situation {
-            ViolationSituation::ZkWrong => self.nullify_zk_request(self.computed_root, deps).await,
-            ViolationSituation::FraudulentZkChallenge { on_chain_tee_root } => {
-                self.nullify_zk_request(on_chain_tee_root, deps).await
+    pub async fn build_dispute_request(
+        self,
+        deps: &WorkerDeps,
+    ) -> Result<DisputeRequest, ProofError> {
+        match self.kind {
+            ViolationKind::ZkWrong => self.build_nullify_zk_request(self.computed_root, deps).await,
+            ViolationKind::FraudulentZkChallenge { proposed_root } => {
+                self.build_nullify_zk_request(proposed_root, deps).await
             }
-            ViolationSituation::TeeWrong => {
+            ViolationKind::TeeWrong => {
                 // A TEE nullify flips the global TEE killswitch and is
                 // the right outcome when our TEE prover confirms the
                 // divergence. Fall back to a ZK challenge if it cannot
                 // (backend down or our TEE itself diverges).
-                match self.try_nullify_tee_request(&*deps.tee_prover).await {
+                match self.build_nullify_tee_request(&*deps.tee_prover).await {
                     Some(req) => Ok(req),
-                    None => self.challenge_request(deps).await,
+                    None => self.build_challenge_request(deps).await,
                 }
             }
         }
@@ -88,12 +91,12 @@ impl Violation {
     /// Generates a ZK proof and bundles it into a
     /// [`DisputeAction::NullifyZk`] request asserting `root_to_prove`
     /// at the violation's invalid index.
-    async fn nullify_zk_request(
+    async fn build_nullify_zk_request(
         &self,
         root_to_prove: B256,
         deps: &WorkerDeps,
     ) -> Result<DisputeRequest, ProofError> {
-        let proof_bytes = self.obtain_zk_proof(deps).await?;
+        let proof_bytes = self.request_zk_proof(deps).await?;
 
         Ok(DisputeRequest {
             game_address: self.game_address,
@@ -111,8 +114,11 @@ impl Violation {
     /// Generates a ZK proof and bundles it into a
     /// [`DisputeAction::Challenge`] request asserting the root we
     /// computed.
-    async fn challenge_request(&self, deps: &WorkerDeps) -> Result<DisputeRequest, ProofError> {
-        let proof_bytes = self.obtain_zk_proof(deps).await?;
+    async fn build_challenge_request(
+        &self,
+        deps: &WorkerDeps,
+    ) -> Result<DisputeRequest, ProofError> {
+        let proof_bytes = self.request_zk_proof(deps).await?;
 
         Ok(DisputeRequest {
             game_address: self.game_address,
@@ -132,7 +138,7 @@ impl Violation {
     /// Returns `None` on any outcome that prevents us from building
     /// a valid attestation (backend error, divergent root, malformed
     /// signature) so the caller can switch to a ZK challenge.
-    async fn try_nullify_tee_request(
+    async fn build_nullify_tee_request(
         &self,
         tee_prover: &dyn TeeProofProvider,
     ) -> Option<DisputeRequest> {
@@ -204,8 +210,8 @@ impl Violation {
     /// The session id is derived from `(game_address, invalid_index)`
     /// and reused across retries so the ZK service can requeue the
     /// existing job instead of starting from scratch.
-    async fn obtain_zk_proof(&self, deps: &WorkerDeps) -> Result<Bytes, ProofError> {
-        let session_id = self.session_id();
+    async fn request_zk_proof(&self, deps: &WorkerDeps) -> Result<Bytes, ProofError> {
+        let session_id = self.zk_session_id();
         let request = ProveBlockRequest {
             start_block_number: self.start_block,
             number_of_blocks_to_prove: self.intermediate_block_interval,
@@ -242,7 +248,7 @@ impl Violation {
                 continue;
             }
 
-            match Self::poll_until_done(&session_id, deps).await {
+            match Self::poll_zk_session(&session_id, deps).await {
                 Ok(receipt) => {
                     // Prepend the proof type discriminator that
                     // `nullify` and `challenge` calldata expect.
@@ -275,7 +281,7 @@ impl Violation {
     /// Polls the ZK service for `session_id` until a terminal status
     /// is reached or the per-attempt deadline elapses. Successful
     /// runs return the raw receipt bytes (no proof type prefix yet).
-    async fn poll_until_done(session_id: &str, deps: &WorkerDeps) -> Result<Vec<u8>, ProofError> {
+    async fn poll_zk_session(session_id: &str, deps: &WorkerDeps) -> Result<Vec<u8>, ProofError> {
         // Per-attempt deadline. Each retry of the outer loop gets a
         // fresh deadline by design: a retry after a service recovery
         // should have the full budget to complete.
@@ -325,6 +331,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes, address, b256};
+    use tokio::sync::Semaphore;
 
     use super::*;
     use crate::{
@@ -343,7 +350,7 @@ mod tests {
         b256!("3333333333333333333333333333333333333333333333333333333333333333");
     const INTERVAL: u64 = 5;
 
-    fn violation(situation: ViolationSituation) -> Violation {
+    fn violation(kind: ViolationKind) -> Violation {
         Violation {
             game_address: GAME,
             l1_head: L1_HEAD,
@@ -353,7 +360,7 @@ mod tests {
             starting_root: STARTING_ROOT,
             start_block: 100,
             end_block: 100 + INTERVAL,
-            situation,
+            kind,
         }
     }
 
@@ -380,6 +387,7 @@ mod tests {
             Arc::new(MockAggregateVerifier::new()),
             zk,
             tee,
+            Arc::new(Semaphore::new(8)),
             config(),
         )
     }
@@ -390,35 +398,35 @@ mod tests {
         deps(zk, Arc::new(MockTeeProofProvider::new()))
     }
 
-    mod session_id {
+    mod zk_session_id {
         use super::*;
 
         #[test]
         fn deterministic_for_same_inputs() {
-            let v = violation(ViolationSituation::ZkWrong);
-            assert_eq!(v.session_id(), v.session_id());
+            let v = violation(ViolationKind::ZkWrong);
+            assert_eq!(v.zk_session_id(), v.zk_session_id());
         }
 
         #[test]
         fn changes_when_index_changes() {
-            let mut a = violation(ViolationSituation::ZkWrong);
-            let mut b = violation(ViolationSituation::ZkWrong);
+            let mut a = violation(ViolationKind::ZkWrong);
+            let mut b = violation(ViolationKind::ZkWrong);
             a.invalid_index = 1;
             b.invalid_index = 2;
-            assert_ne!(a.session_id(), b.session_id());
+            assert_ne!(a.zk_session_id(), b.zk_session_id());
         }
 
         #[test]
         fn changes_when_address_changes() {
-            let mut a = violation(ViolationSituation::ZkWrong);
-            let mut b = violation(ViolationSituation::ZkWrong);
+            let mut a = violation(ViolationKind::ZkWrong);
+            let mut b = violation(ViolationKind::ZkWrong);
             a.game_address = address!("00000000000000000000000000000000000000aa");
             b.game_address = address!("00000000000000000000000000000000000000bb");
-            assert_ne!(a.session_id(), b.session_id());
+            assert_ne!(a.zk_session_id(), b.zk_session_id());
         }
     }
 
-    mod obtain_zk_proof {
+    mod request_zk_proof {
         use super::*;
 
         #[tokio::test]
@@ -428,9 +436,9 @@ mod tests {
             zk.push_get_succeeded(vec![0xDE, 0xAD, 0xBE, 0xEF]);
 
             let deps = deps_zk_path(Arc::clone(&zk));
-            let v = violation(ViolationSituation::ZkWrong);
+            let v = violation(ViolationKind::ZkWrong);
 
-            let bytes = v.obtain_zk_proof(&deps).await.expect("must succeed");
+            let bytes = v.request_zk_proof(&deps).await.expect("must succeed");
             assert_eq!(bytes.as_ref(), &[PROOF_TYPE_ZK, 0xDE, 0xAD, 0xBE, 0xEF]);
             assert_eq!(zk.prove_calls().len(), 1);
             assert_eq!(zk.get_calls().len(), 1);
@@ -445,10 +453,10 @@ mod tests {
             zk.push_get_succeeded(vec![0x01]);
 
             let deps = deps_zk_path(Arc::clone(&zk));
-            let v = violation(ViolationSituation::ZkWrong);
-            let expected_session = v.session_id();
+            let v = violation(ViolationKind::ZkWrong);
+            let expected_session = v.zk_session_id();
 
-            let bytes = v.obtain_zk_proof(&deps).await.expect("must succeed on second attempt");
+            let bytes = v.request_zk_proof(&deps).await.expect("must succeed on second attempt");
             assert_eq!(bytes.as_ref(), &[PROOF_TYPE_ZK, 0x01]);
 
             let prove_calls = zk.prove_calls();
@@ -466,9 +474,9 @@ mod tests {
             }
 
             let deps = deps_zk_path(Arc::clone(&zk));
-            let v = violation(ViolationSituation::ZkWrong);
+            let v = violation(ViolationKind::ZkWrong);
 
-            let err = v.obtain_zk_proof(&deps).await.expect_err("must exhaust retries");
+            let err = v.request_zk_proof(&deps).await.expect_err("must exhaust retries");
             assert!(matches!(err, ProofError::ZkJobFailed { .. }), "got {err:?}");
             assert_eq!(zk.prove_calls().len(), 3);
         }
@@ -491,13 +499,14 @@ mod tests {
                 Arc::new(MockAggregateVerifier::new()),
                 Arc::<MockZkProofProvider>::clone(&zk),
                 Arc::new(MockTeeProofProvider::new()),
+                Arc::new(Semaphore::new(8)),
                 cfg,
             );
 
-            let v = violation(ViolationSituation::ZkWrong);
-            let expected_session = v.session_id();
+            let v = violation(ViolationKind::ZkWrong);
+            let expected_session = v.zk_session_id();
 
-            let bytes = v.obtain_zk_proof(&deps).await.expect("retry must succeed");
+            let bytes = v.request_zk_proof(&deps).await.expect("retry must succeed");
             assert_eq!(bytes.as_ref(), &[PROOF_TYPE_ZK, 0xFF]);
 
             let prove_calls = zk.prove_calls();
@@ -522,11 +531,12 @@ mod tests {
                 Arc::new(MockAggregateVerifier::new()),
                 Arc::<MockZkProofProvider>::clone(&zk),
                 Arc::new(MockTeeProofProvider::new()),
+                Arc::new(Semaphore::new(8)),
                 cfg,
             );
 
-            let v = violation(ViolationSituation::ZkWrong);
-            let err = v.obtain_zk_proof(&deps).await.expect_err("must exhaust retries");
+            let v = violation(ViolationKind::ZkWrong);
+            let err = v.request_zk_proof(&deps).await.expect_err("must exhaust retries");
             assert!(matches!(err, ProofError::ZkTimeout), "got {err:?}");
             assert_eq!(zk.prove_calls().len(), 3);
         }
@@ -538,12 +548,12 @@ mod tests {
             zk.push_get_succeeded(vec![]);
 
             let deps = deps_zk_path(Arc::clone(&zk));
-            let v = violation(ViolationSituation::ZkWrong);
-            let expected_session = v.session_id();
+            let v = violation(ViolationKind::ZkWrong);
+            let expected_session = v.zk_session_id();
             let expected_l1 = format!("{L1_HEAD:#x}");
             let expected_sender = format!("{SENDER:#x}");
 
-            v.obtain_zk_proof(&deps).await.expect("must succeed");
+            v.request_zk_proof(&deps).await.expect("must succeed");
 
             let req = zk.prove_calls().pop().expect("one prove_block call");
             assert_eq!(req.start_block_number, 100);
@@ -556,7 +566,7 @@ mod tests {
         }
     }
 
-    mod dispute_request {
+    mod build_dispute_request {
         use super::*;
 
         #[tokio::test]
@@ -566,8 +576,8 @@ mod tests {
             zk.push_get_succeeded(vec![0xCA, 0xFE]);
 
             let deps = deps_zk_path(Arc::clone(&zk));
-            let req = violation(ViolationSituation::ZkWrong)
-                .dispute_request(&deps)
+            let req = violation(ViolationKind::ZkWrong)
+                .build_dispute_request(&deps)
                 .await
                 .expect("must succeed");
 
@@ -583,24 +593,22 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn fraudulent_zk_challenge_emits_nullify_zk_with_on_chain_tee_root() {
-            let on_chain_tee =
+        async fn fraudulent_zk_challenge_emits_nullify_zk_with_proposed_root() {
+            let proposed =
                 b256!("4444444444444444444444444444444444444444444444444444444444444444");
             let zk = Arc::new(MockZkProofProvider::new());
             zk.push_prove_ok();
             zk.push_get_succeeded(vec![]);
 
             let deps = deps_zk_path(Arc::clone(&zk));
-            let req = violation(ViolationSituation::FraudulentZkChallenge {
-                on_chain_tee_root: on_chain_tee,
-            })
-            .dispute_request(&deps)
-            .await
-            .expect("must succeed");
+            let req = violation(ViolationKind::FraudulentZkChallenge { proposed_root: proposed })
+                .build_dispute_request(&deps)
+                .await
+                .expect("must succeed");
 
             match req.action {
                 DisputeAction::NullifyZk { root_to_prove, .. } => {
-                    assert_eq!(root_to_prove, on_chain_tee);
+                    assert_eq!(root_to_prove, proposed);
                 }
                 other => panic!("expected NullifyZk, got {other}"),
             }
@@ -613,8 +621,8 @@ mod tests {
             let zk = Arc::new(MockZkProofProvider::new());
 
             let deps = deps(Arc::clone(&zk), Arc::clone(&tee));
-            let req = violation(ViolationSituation::TeeWrong)
-                .dispute_request(&deps)
+            let req = violation(ViolationKind::TeeWrong)
+                .build_dispute_request(&deps)
                 .await
                 .expect("must succeed");
 
@@ -645,8 +653,8 @@ mod tests {
             zk.push_get_succeeded(vec![0x77]);
 
             let deps = deps(Arc::clone(&zk), Arc::clone(&tee));
-            let req = violation(ViolationSituation::TeeWrong)
-                .dispute_request(&deps)
+            let req = violation(ViolationKind::TeeWrong)
+                .build_dispute_request(&deps)
                 .await
                 .expect("must fall back to Challenge");
 
@@ -668,8 +676,8 @@ mod tests {
             zk.push_get_succeeded(vec![]);
 
             let deps = deps(Arc::clone(&zk), Arc::clone(&tee));
-            let req = violation(ViolationSituation::TeeWrong)
-                .dispute_request(&deps)
+            let req = violation(ViolationKind::TeeWrong)
+                .build_dispute_request(&deps)
                 .await
                 .expect("must fall back to Challenge");
 
