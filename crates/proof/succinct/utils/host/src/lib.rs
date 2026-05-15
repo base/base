@@ -1,4 +1,4 @@
-//! Host-side utilities for SP1 proof generation.
+#![doc = include_str!("../README.md")]
 
 /// L2 block range calculation and splitting.
 pub mod block_range;
