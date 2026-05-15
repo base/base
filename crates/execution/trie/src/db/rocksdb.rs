@@ -13,7 +13,7 @@ use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
 #[cfg(feature = "metrics")]
 use metrics::Label;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use reth_db::{
     DatabaseError,
     table::{Compress, Decompress, DupSort, Encode, Table},
@@ -57,11 +57,12 @@ const BLOCK_NUMBER_KEY_LEN: usize = 8;
 const DEFAULT_BLOCK_CACHE_SIZE: usize = 128 << 20;
 const DEFAULT_BLOCK_SIZE: usize = 16 * 1024;
 const DEFAULT_BYTES_PER_SYNC: u64 = 1_048_576;
-const DEFAULT_MAX_OPEN_FILES: i32 = 512;
-const DEFAULT_MAX_BACKGROUND_JOBS: i32 = 8;
+const DEFAULT_MAX_OPEN_FILES: i32 = -1;
+const DEFAULT_MIN_BACKGROUND_JOBS: i32 = 8;
+const DEFAULT_MAX_BACKGROUND_JOBS: i32 = 32;
 const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 6;
 const DEFAULT_TARGET_FILE_SIZE_BASE: u64 = 256 * 1024 * 1024;
-const DEFAULT_WRITE_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+const DEFAULT_WRITE_BUFFER_SIZE: usize = 128 * 1024 * 1024;
 
 trait RocksDbHistoryTable: Table + DupSort<SubKey = u64> {
     /// Fixed encoded table-key length before the block-number suffix.
@@ -78,7 +79,12 @@ trait RocksDbHistoryTable: Table + DupSort<SubKey = u64> {
 pub struct RocksdbProofsStorage {
     db: Arc<RocksDb>,
     write_options: WriteOptions,
-    write_lock: Mutex<()>,
+    // Serializes append-only writers that read LatestBlock before writing LatestBlock + 1.
+    append_lock: Mutex<()>,
+    // Serializes prune plans that assume a stable EarliestBlock across prepare and commit.
+    prune_lock: Mutex<()>,
+    // Append and prune share read access. History rewrites take write access.
+    history_gate: RwLock<()>,
 }
 
 /// Preprocessed prune plan for a target block number.
@@ -98,6 +104,7 @@ struct RocksdbPreparedPrune {
     expected_earliest_block: u64,
     expected_earliest_hash: B256,
     target_block: u64,
+    target_hash: B256,
     deletes: RocksdbPreparedHistoryDeletes,
     counts: WriteCounts,
 }
@@ -337,7 +344,13 @@ impl RocksdbProofsStorage {
         // throughput. RocksDB write batches still keep committed updates internally consistent.
         write_options.set_sync(false);
 
-        Ok(Self { db: Arc::new(db), write_options, write_lock: Mutex::new(()) })
+        Ok(Self {
+            db: Arc::new(db),
+            write_options,
+            append_lock: Mutex::new(()),
+            prune_lock: Mutex::new(()),
+            history_gate: RwLock::new(()),
+        })
     }
 
     fn db_options(block_cache: &Cache) -> Options {
@@ -346,13 +359,30 @@ impl RocksdbProofsStorage {
         options.set_block_based_table_factory(&table_options);
         options.create_if_missing(true);
         options.create_missing_column_families(true);
-        options.set_max_background_jobs(DEFAULT_MAX_BACKGROUND_JOBS);
+        options.set_max_background_jobs(Self::max_background_jobs());
         options.set_bytes_per_sync(DEFAULT_BYTES_PER_SYNC);
         options.set_compaction_pri(CompactionPri::MinOverlappingRatio);
         options.set_max_open_files(DEFAULT_MAX_OPEN_FILES);
+        options.set_max_total_wal_size(Self::max_total_wal_size());
         options.set_wal_ttl_seconds(0);
         options.set_wal_size_limit_mb(0);
         options
+    }
+
+    const fn max_total_wal_size() -> u64 {
+        Self::column_families().len() as u64
+            * DEFAULT_WRITE_BUFFER_SIZE as u64
+            * DEFAULT_MAX_WRITE_BUFFER_NUMBER as u64
+    }
+
+    fn max_background_jobs() -> i32 {
+        let available_parallelism = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(DEFAULT_MIN_BACKGROUND_JOBS as usize);
+
+        available_parallelism
+            .clamp(DEFAULT_MIN_BACKGROUND_JOBS as usize, DEFAULT_MAX_BACKGROUND_JOBS as usize)
+            as i32
     }
 
     fn table_options(block_cache: &Cache) -> BlockBasedOptions {
@@ -916,7 +946,15 @@ impl RocksdbProofsStorage {
         block_number: u64,
         hash: B256,
     ) -> BaseProofsStorageResult<()> {
-        let _guard = self.write_lock.lock();
+        let _guard = self.history_gate.write();
+        self.set_earliest_block_number_hash_unlocked(block_number, hash)
+    }
+
+    fn set_earliest_block_number_hash_unlocked(
+        &self,
+        block_number: u64,
+        hash: B256,
+    ) -> BaseProofsStorageResult<()> {
         let mut batch = WriteBatch::default();
         self.put_proof_window(&mut batch, ProofWindowKey::EarliestBlock, block_number, hash)?;
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
@@ -1091,9 +1129,32 @@ impl RocksdbProofsStorage {
 
     fn prepare_prune(
         &self,
-        target_block: u64,
+        new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<Option<RocksdbPreparedPrune>> {
         let snapshot = self.db.snapshot();
+        let Some((earliest_block, earliest_hash)) =
+            self.get_block_number_hash_from_snapshot(&snapshot, ProofWindowKey::EarliestBlock)?
+        else {
+            return Ok(None);
+        };
+
+        let (latest_block, latest_hash) = self
+            .get_block_number_hash_from_snapshot(&snapshot, ProofWindowKey::LatestBlock)?
+            .unwrap_or((earliest_block, earliest_hash));
+
+        let requested_target = new_earliest_block_ref.block.number;
+        // Bound the prune to rows visible in this snapshot. Appends may commit while pruning, but
+        // they must always land above this effective target.
+        let (target_block, target_hash) = if requested_target > latest_block {
+            (latest_block, latest_hash)
+        } else {
+            (requested_target, new_earliest_block_ref.block.hash)
+        };
+
+        if earliest_block >= target_block {
+            return Ok(None);
+        }
+
         let Some(plan) = self.calculate_prune_plan(&snapshot, target_block)? else {
             return Ok(None);
         };
@@ -1126,6 +1187,7 @@ impl RocksdbProofsStorage {
             expected_earliest_block: plan.earliest_block,
             expected_earliest_hash: plan.earliest_hash,
             target_block,
+            target_hash,
             deletes: RocksdbPreparedHistoryDeletes {
                 account_trie,
                 storage_trie,
@@ -1139,26 +1201,16 @@ impl RocksdbProofsStorage {
     fn commit_prepared_prune(
         &self,
         prepared: RocksdbPreparedPrune,
-        new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        let _guard = self.write_lock.lock();
-
-        let current_earliest = self.get_block_number_hash(ProofWindowKey::EarliestBlock)?;
-        let expected_earliest =
-            Some((prepared.expected_earliest_block, prepared.expected_earliest_hash));
-        if current_earliest != expected_earliest {
-            trace!(
-                target: "trie::pruner",
-                current_earliest = ?current_earliest,
-                expected_earliest = ?expected_earliest,
-                target_block = prepared.target_block,
-                "skipping stale prune plan"
-            );
-            return Ok(WriteCounts::default());
-        }
-
-        let RocksdbPreparedPrune { expected_earliest_block, target_block, deletes, counts, .. } =
-            prepared;
+        let RocksdbPreparedPrune {
+            expected_earliest_block,
+            expected_earliest_hash,
+            target_block,
+            target_hash,
+            deletes,
+            counts,
+        } = prepared;
+        let expected_earliest = Some((expected_earliest_block, expected_earliest_hash));
         let mut batch = WriteBatch::default();
 
         self.delete_raw_history_keys::<AccountTrieHistory>(&mut batch, deletes.account_trie)?;
@@ -1179,8 +1231,20 @@ impl RocksdbProofsStorage {
             &mut batch,
             ProofWindowKey::EarliestBlock,
             target_block,
-            new_earliest_block_ref.block.hash,
+            target_hash,
         )?;
+
+        let current_earliest = self.get_block_number_hash(ProofWindowKey::EarliestBlock)?;
+        if current_earliest != expected_earliest {
+            trace!(
+                target: "trie::pruner",
+                current_earliest = ?current_earliest,
+                expected_earliest = ?expected_earliest,
+                target_block,
+                "skipping stale prune plan"
+            );
+            return Ok(WriteCounts::default());
+        }
 
         self.db.write_opt(batch, &self.write_options).map_err(rocksdb_error)?;
         Ok(counts)
@@ -1341,7 +1405,8 @@ impl BaseProofsStore for RocksdbProofsStorage {
         block_ref: BlockWithParent,
         block_state_diff: BlockStateDiff,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        let _guard = self.write_lock.lock();
+        let _append_guard = self.append_lock.lock();
+        let _history_guard = self.history_gate.read();
         let mut batch = WriteBatch::default();
         let counts =
             self.store_trie_updates_append_only(&mut batch, block_ref, block_state_diff)?;
@@ -1461,16 +1526,17 @@ impl BaseProofsStore for RocksdbProofsStorage {
         &self,
         new_earliest_block_ref: BlockWithParent,
     ) -> BaseProofsStorageResult<WriteCounts> {
-        let target_block = new_earliest_block_ref.block.number;
-        let Some(prepared) = self.prepare_prune(target_block)? else {
+        let _prune_guard = self.prune_lock.lock();
+        let _history_guard = self.history_gate.read();
+        let Some(prepared) = self.prepare_prune(new_earliest_block_ref)? else {
             return Ok(WriteCounts::default());
         };
 
-        self.commit_prepared_prune(prepared, new_earliest_block_ref)
+        self.commit_prepared_prune(prepared)
     }
 
     fn unwind_history(&self, to: BlockWithParent) -> BaseProofsStorageResult<()> {
-        let _guard = self.write_lock.lock();
+        let _guard = self.history_gate.write();
         let Some(proof_window) = self.get_proof_window()? else {
             return Ok(());
         };
@@ -1486,8 +1552,9 @@ impl BaseProofsStore for RocksdbProofsStorage {
             });
         }
 
-        // Keep collection and deletion under the same write lock so another RocksDB writer cannot
-        // change the proof window or history rows between choosing keys and committing the batch.
+        // Keep collection and deletion under the same exclusive history gate so another history
+        // rewrite cannot change the proof window or history rows between choosing keys and
+        // committing the batch.
         let history_to_delete = self.collect_history_ranged(to.block.number..)?;
         let mut batch = WriteBatch::default();
         self.delete_history_ranged(&mut batch, history_to_delete)?;
@@ -1521,7 +1588,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
             latest_block_hash = block_with_parent.block.hash;
         }
 
-        let _guard = self.write_lock.lock();
+        let _guard = self.history_gate.write();
         let history_to_delete = if let Some(start_block) = latest_common_block.number.checked_add(1)
         {
             self.collect_history_ranged(start_block..)?
@@ -1584,7 +1651,7 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
     }
 
     fn set_initial_state_anchor(&self, anchor: BlockNumHash) -> BaseProofsStorageResult<()> {
-        let _guard = self.write_lock.lock();
+        let _guard = self.history_gate.write();
         if self.get_initial_state_anchor()?.is_some() {
             return Err(DatabaseError::Other("initial state anchor already set".to_owned()).into());
         }
@@ -1609,7 +1676,7 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         }
 
         account_nodes.sort_by_key(|(key, _)| *key);
-        let _guard = self.write_lock.lock();
+        let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
         self.persist_history_batch::<AccountTrieHistory, _, _>(
             &mut batch,
@@ -1632,7 +1699,7 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         }
 
         storage_nodes.sort_by_key(|(key, _)| *key);
-        let _guard = self.write_lock.lock();
+        let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
         self.persist_history_batch::<StorageTrieHistory, _, _>(
             &mut batch,
@@ -1654,7 +1721,7 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         }
 
         accounts.sort_by_key(|(key, _)| *key);
-        let _guard = self.write_lock.lock();
+        let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
         self.persist_history_batch::<HashedAccountHistory, _, _>(
             &mut batch,
@@ -1677,7 +1744,7 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
         }
 
         storages.sort_by_key(|(key, _)| *key);
-        let _guard = self.write_lock.lock();
+        let _guard = self.history_gate.write();
         let mut batch = WriteBatch::default();
         self.persist_history_batch::<HashedStorageHistory, _, _>(
             &mut batch,
@@ -1692,8 +1759,9 @@ impl BaseProofsInitialStateStore for RocksdbProofsStorage {
     }
 
     fn commit_initial_state(&self) -> BaseProofsStorageResult<BlockNumHash> {
+        let _guard = self.history_gate.write();
         let anchor = self.get_initial_state_anchor()?.ok_or(NoBlocksFound)?;
-        self.set_earliest_block_number(anchor.number, anchor.hash)?;
+        self.set_earliest_block_number_hash_unlocked(anchor.number, anchor.hash)?;
         Ok(anchor)
     }
 }
@@ -2355,7 +2423,57 @@ fn flatten_and_sort<K: Ord>(map: HashMap<K, u64>) -> Vec<(K, u64)> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{Arc, mpsc},
+        thread,
+        time::Duration,
+    };
+
+    use tempfile::TempDir;
+
     use super::*;
+
+    fn temp_storage() -> (Arc<RocksdbProofsStorage>, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let storage = Arc::new(RocksdbProofsStorage::new(dir.path()).unwrap());
+        (storage, dir)
+    }
+
+    #[test]
+    fn max_total_wal_size_tracks_column_family_write_buffers() {
+        assert_eq!(
+            RocksdbProofsStorage::max_total_wal_size(),
+            RocksdbProofsStorage::column_families().len() as u64
+                * DEFAULT_WRITE_BUFFER_SIZE as u64
+                * DEFAULT_MAX_WRITE_BUFFER_NUMBER as u64
+        );
+    }
+
+    fn block(number: u64, parent: B256) -> BlockWithParent {
+        BlockWithParent {
+            parent,
+            block: BlockNumHash {
+                number,
+                hash: if number == 0 { B256::ZERO } else { B256::repeat_byte(number as u8) },
+            },
+        }
+    }
+
+    fn account_update(address: B256, nonce: u64) -> BlockStateDiff {
+        let mut post_state = HashedPostState::default();
+        post_state.accounts.insert(address, Some(Account { nonce, ..Default::default() }));
+
+        BlockStateDiff {
+            sorted_trie_updates: TrieUpdates::default().into_sorted(),
+            sorted_post_state: post_state.into_sorted(),
+        }
+    }
+
+    fn assert_completes(rx: mpsc::Receiver<BaseProofsStorageResult<()>>) {
+        rx.recv_timeout(Duration::from_secs(2))
+            .expect("operation should complete")
+            .expect("operation should succeed");
+    }
 
     #[test]
     fn packed_nibbles_round_trip() {
@@ -2417,5 +2535,159 @@ mod tests {
         let mut encoded = encode_packed_nibbles(&Nibbles::from_nibbles_unchecked([1]));
         encoded[0] |= 1;
         assert!(decode_packed_nibbles(&encoded).is_err());
+    }
+
+    #[test]
+    fn append_can_run_while_prune_holds_history_read_gate() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let _prune_guard = storage.prune_lock.lock();
+        let _history_guard = storage.history_gate.read();
+        let (tx, rx) = mpsc::channel();
+        let task_storage = Arc::clone(&storage);
+
+        thread::spawn(move || {
+            let result = task_storage
+                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
+                .map(|_| ());
+            tx.send(result).unwrap();
+        });
+
+        assert_completes(rx);
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
+    }
+
+    #[test]
+    fn exclusive_history_gate_blocks_append() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let history_guard = storage.history_gate.write();
+        let (tx, rx) = mpsc::channel();
+        let task_storage = Arc::clone(&storage);
+
+        thread::spawn(move || {
+            let result = task_storage
+                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
+                .map(|_| ());
+            tx.send(result).unwrap();
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(history_guard);
+        assert_completes(rx);
+    }
+
+    #[test]
+    fn append_lock_serializes_append_writers() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let append_guard = storage.append_lock.lock();
+        let (tx, rx) = mpsc::channel();
+        let task_storage = Arc::clone(&storage);
+
+        thread::spawn(move || {
+            let result = task_storage
+                .store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default())
+                .map(|_| ());
+            tx.send(result).unwrap();
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(append_guard);
+        assert_completes(rx);
+    }
+
+    #[test]
+    fn prune_history_read_gate_blocks_history_rewrite() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let _prune_guard = storage.prune_lock.lock();
+        let history_guard = storage.history_gate.read();
+        let (tx, rx) = mpsc::channel();
+        let task_storage = Arc::clone(&storage);
+
+        thread::spawn(move || {
+            let result = task_storage.replace_updates(BlockNumHash::new(0, B256::ZERO), vec![]);
+            tx.send(result).unwrap();
+        });
+
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(history_guard);
+        assert_completes(rx);
+    }
+
+    #[test]
+    fn append_during_prepared_prune_preserves_latest_block() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+        storage.store_trie_updates(block(1, B256::ZERO), BlockStateDiff::default()).unwrap();
+        storage
+            .store_trie_updates(block(2, B256::repeat_byte(1)), BlockStateDiff::default())
+            .unwrap();
+
+        let _prune_guard = storage.prune_lock.lock();
+        let _history_guard = storage.history_gate.read();
+        let prepared =
+            storage.prepare_prune(block(1, B256::ZERO)).unwrap().expect("prepared prune");
+
+        storage
+            .store_trie_updates(block(3, B256::repeat_byte(2)), BlockStateDiff::default())
+            .unwrap();
+        storage.commit_prepared_prune(prepared).unwrap();
+
+        assert_eq!(storage.get_earliest_block_number().unwrap(), Some((1, B256::repeat_byte(1))));
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((3, B256::repeat_byte(3))));
+        let latest_diff = storage.fetch_trie_updates(3).unwrap();
+        assert!(latest_diff.sorted_trie_updates.account_nodes_ref().is_empty());
+        assert!(latest_diff.sorted_trie_updates.storage_tries_ref().is_empty());
+        assert!(latest_diff.sorted_post_state.accounts.is_empty());
+        assert!(latest_diff.sorted_post_state.storages.is_empty());
+    }
+
+    #[test]
+    fn append_inside_requested_prune_range_survives() {
+        let (storage, _dir) = temp_storage();
+        storage.set_earliest_block_number_hash(0, B256::ZERO).unwrap();
+
+        let address = B256::repeat_byte(0xAA);
+        storage.store_trie_updates(block(1, B256::ZERO), account_update(address, 1)).unwrap();
+        storage
+            .store_trie_updates(block(2, B256::repeat_byte(1)), account_update(address, 2))
+            .unwrap();
+
+        let _prune_guard = storage.prune_lock.lock();
+        let _history_guard = storage.history_gate.read();
+        let prepared = storage
+            .prepare_prune(block(10, B256::repeat_byte(2)))
+            .unwrap()
+            .expect("prepared prune");
+
+        storage
+            .store_trie_updates(block(3, B256::repeat_byte(2)), account_update(address, 3))
+            .unwrap();
+        let counts = storage.commit_prepared_prune(prepared).unwrap();
+
+        assert_eq!(counts.hashed_accounts_written_total, 1);
+        assert_eq!(counts.account_trie_updates_written_total, 0);
+        assert_eq!(counts.storage_trie_updates_written_total, 0);
+        assert_eq!(counts.hashed_storages_written_total, 0);
+        assert_eq!(storage.get_earliest_block_number().unwrap(), Some((2, B256::repeat_byte(2))));
+        assert_eq!(storage.get_latest_block_number().unwrap(), Some((3, B256::repeat_byte(3))));
+
+        let latest_diff = storage.fetch_trie_updates(3).unwrap();
+        assert_eq!(
+            &latest_diff.sorted_post_state.accounts[..],
+            &[(address, Some(Account { nonce: 3, ..Default::default() }))]
+        );
+
+        let mut cursor = storage.account_hashed_cursor(3).unwrap();
+        assert_eq!(
+            cursor.seek(address).unwrap(),
+            Some((address, Account { nonce: 3, ..Default::default() }))
+        );
     }
 }
