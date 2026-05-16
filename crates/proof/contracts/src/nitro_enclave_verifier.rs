@@ -62,10 +62,10 @@ impl NitroEnclaveVerifierClient for NitroEnclaveVerifierContractClient {
     }
 
     async fn is_revoked(&self, cert_hash: FixedBytes<32>) -> Result<bool, ContractError> {
-        self.contract.revokedCerts(cert_hash).call().await.map_err(|e| ContractError::Call {
-            context: format!("revokedCerts({cert_hash})"),
-            source: e,
-        })
+        contract_call!(
+            self.contract.revokedCerts(cert_hash).call(),
+            format!("revokedCerts({cert_hash})")
+        )
     }
 }
 
