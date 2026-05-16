@@ -17,6 +17,7 @@ workspace = true
 alloy-evm.workspace = true
 alloy-sol-types.workspace = true
 alloy-primitives.workspace = true
+
 # base
 base-common-chains.workspace = true
 base-precompile-macros.workspace = true
@@ -39,6 +40,7 @@ required-features = ["test-utils"]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [
 	"alloy-evm/std",
+	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"base-common-chains/std",
 	"base-precompile-storage/std",

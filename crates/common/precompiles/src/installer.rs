@@ -4,6 +4,9 @@ use base_common_chains::BaseUpgrade;
 
 use crate::{BasePrecompileSpec, BasePrecompiles};
 
+#[cfg(feature = "std")]
+use crate::{ACTIVATION_REGISTRY_ADDRESS, ActivationRegistry};
+
 /// Installs the full Base precompile set for a given spec.
 #[derive(Debug, Clone, Copy)]
 pub struct BasePrecompileInstaller<S = BaseUpgrade> {
@@ -38,6 +41,12 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
                 crate::token::POLICY_REGISTRY_ADDRESS,
                 crate::token::PolicyRegistryEvm::precompile(),
             )));
+
+            #[cfg(feature = "std")]
+            precompiles.extend_precompiles(core::iter::once((
+                ACTIVATION_REGISTRY_ADDRESS,
+                ActivationRegistry::create_precompile(),
+            )));
         }
     }
 }
@@ -53,6 +62,12 @@ fn b20_lookup(address: &Address) -> Option<DynPrecompile> {
                 crate::token::B20TokenPrecompile::create_precompile(*address)
             }
         })
+    }
+}
+
+impl<S: BasePrecompileSpec> Default for BasePrecompileInstaller<S> {
+    fn default() -> Self {
+        Self::new(S::default_precompile_spec())
     }
 }
 
@@ -94,5 +109,21 @@ mod tests {
         assert_eq!(precompiles.get(&TokenFactory::ADDRESS).is_some(), expected);
         assert_eq!(precompiles.get(&token).is_some(), expected);
         assert!(precompiles.get(&Address::repeat_byte(0x42)).is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn activation_registry_is_not_installed_before_beryl() {
+        let precompiles = BasePrecompileInstaller::new(BaseUpgrade::Azul).install();
+
+        assert!(precompiles.get(&ACTIVATION_REGISTRY_ADDRESS).is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn activation_registry_is_installed_at_beryl() {
+        let precompiles = BasePrecompileInstaller::new(BaseUpgrade::Beryl).install();
+
+        assert!(precompiles.get(&ACTIVATION_REGISTRY_ADDRESS).is_some());
     }
 }
