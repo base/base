@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -8,7 +8,9 @@ use std::{
 };
 
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, TxHash, U256, utils::format_ether};
+use alloy_primitives::{
+    Address, B256, Bytes, Signed, TxHash, U160, U256, Uint, utils::format_ether,
+};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
@@ -33,6 +35,8 @@ const FUNDING_CONCURRENCY: usize = 32;
 /// Kept below typical per-sender txpool limits (e.g. reth default is 16) to
 /// avoid "txpool is full" rejections when all TXs originate from one funder.
 const BATCH_SIZE: usize = 16;
+type U24 = Uint<24, 1>;
+type I24 = Signed<24, 1>;
 
 use super::{
     BlockWatcher, DisplaySnapshot, FlashblockWatcher, LoadConfig, LoadTestDisplay, PreparedBatch,
@@ -643,7 +647,7 @@ impl LoadRunner {
 
     /// Collects unique token addresses from configured swap transaction types.
     pub fn collect_swap_tokens(&self) -> Vec<Address> {
-        let mut tokens = std::collections::HashSet::new();
+        let mut tokens = HashSet::new();
         for tx_config in &self.config.transactions {
             match &tx_config.tx_type {
                 TxType::UniswapV3 { token_in, token_out, .. }
@@ -660,6 +664,38 @@ impl LoadRunner {
             }
         }
         tokens.into_iter().collect()
+    }
+
+    /// Collects unique router addresses from configured swap transaction types.
+    pub fn collect_swap_routers(&self) -> Vec<Address> {
+        let mut routers = HashSet::new();
+        for tx_config in &self.config.transactions {
+            match &tx_config.tx_type {
+                TxType::UniswapV3 { router, .. } | TxType::AerodromeCl { router, .. } => {
+                    routers.insert(*router);
+                }
+                TxType::Transfer
+                | TxType::Calldata { .. }
+                | TxType::Erc20 { .. }
+                | TxType::B20 { .. }
+                | TxType::Precompile { .. }
+                | TxType::Osaka { .. } => {}
+            }
+        }
+        routers.into_iter().collect()
+    }
+
+    fn collect_real_token_setup_approvals(
+        &self,
+        setup: &RealTokenSetup,
+    ) -> Vec<(Address, Address)> {
+        let mut approvals = HashSet::new();
+        for router in self.collect_swap_routers() {
+            approvals.insert((setup.weth, router));
+            approvals.insert((setup.pair_token.token, router));
+        }
+        approvals.insert((setup.weth, setup.pair_token.acquisition.router()));
+        approvals.into_iter().collect()
     }
 
     /// Clears pending transactions from all configured txpool nodes for every test sender.
@@ -1400,6 +1436,387 @@ impl LoadRunner {
 
         info!(burned = burn_count, failed = burn_failed, "B-20 teardown complete");
         Ok(())
+    }
+
+    pub async fn setup_real_tokens(&mut self, setup: &RealTokenSetup) -> Result<()> {
+        if self.config.chain_id == 8453 && !setup.allow_chain_id_8453 {
+            return Err(BaselineError::Config(
+                "real-token setup on chain_id 8453 requires allow_chain_id_8453".into(),
+            ));
+        }
+
+        let swap_routers = self.collect_swap_routers();
+        if swap_routers.is_empty() {
+            return Err(BaselineError::Config(
+                "real-token setup requires at least one swap router".into(),
+            ));
+        }
+        let approval_targets = self.collect_real_token_setup_approvals(setup);
+
+        let gas_price = self.client.get_gas_price().await.rpc("get gas price")?;
+        let max_priority_fee = (gas_price / 10).max(1);
+        let max_fee =
+            gas_price.saturating_mul(2).max(max_priority_fee).min(self.config.max_gas_price);
+
+        let account_data: Vec<_> =
+            self.accounts.accounts().iter().map(|a| (a.address, a.signer.clone())).collect();
+        let client = self.client.clone();
+        let primary_submission_rpc = self.config.primary_submission_rpc().clone();
+        let chain_id = self.config.chain_id;
+        let setup = setup.clone();
+        let total_accounts = account_data.len();
+
+        info!(
+            accounts = total_accounts,
+            weth = %setup.weth,
+            pair_token = %setup.pair_token.token,
+            measured_routers = swap_routers.len(),
+            approval_targets = approval_targets.len(),
+            "setting up real-token swap balances"
+        );
+
+        let pb_setup = self.progress_bar(total_accounts as u64, "Setting up real tokens");
+        let setup_futs = account_data.into_iter().map(|(sender, signer)| {
+            let client = client.clone();
+            let primary_submission_rpc = primary_submission_rpc.clone();
+            let setup = setup.clone();
+            let approval_targets = approval_targets.clone();
+            async move {
+                let weth_balance = Self::read_erc20_balance(&client, setup.weth, sender).await?;
+                let pair_balance =
+                    Self::read_erc20_balance(&client, setup.pair_token.token, sender).await?;
+                let needs_pair_token = pair_balance < setup.pair_token.amount_per_sender;
+                let acquisition_amount = if needs_pair_token {
+                    setup.pair_token.acquisition.amount_in()
+                } else {
+                    U256::ZERO
+                };
+                let required_weth =
+                    setup.weth_amount_per_sender.saturating_add(acquisition_amount);
+                let deposit_deficit = required_weth.saturating_sub(weth_balance);
+
+                let mut approvals = Vec::new();
+                for (token, router) in &approval_targets {
+                    let allowance =
+                        Self::read_erc20_allowance(&client, *token, sender, *router).await?;
+                    if allowance < setup.approval_amount {
+                        approvals.push((*token, *router));
+                    }
+                }
+
+                let mut setup_gas_limit = approvals
+                    .len()
+                    .saturating_mul(ERC20_APPROVE_GAS_LIMIT as usize)
+                    as u64;
+                if deposit_deficit > U256::ZERO {
+                    setup_gas_limit = setup_gas_limit.saturating_add(WETH_DEPOSIT_GAS_LIMIT);
+                }
+                if needs_pair_token {
+                    setup_gas_limit = setup_gas_limit.saturating_add(SETUP_SWAP_GAS_LIMIT);
+                }
+
+                let native_balance = client
+                    .get_balance(sender)
+                    .block_id(BlockNumberOrTag::Pending.into())
+                    .await
+                    .rpc("get pending balance")?;
+                let setup_gas_cost = U256::from(setup_gas_limit).saturating_mul(U256::from(max_fee));
+                let total_setup_cost = deposit_deficit.saturating_add(setup_gas_cost);
+                if native_balance < total_setup_cost {
+                    return Err(BaselineError::Transaction(format!(
+                        "sender {} has insufficient balance for real-token setup: has {} ETH, needs {} ETH (deposit {} ETH + setup gas {} ETH)",
+                        sender,
+                        format_ether(native_balance),
+                        format_ether(total_setup_cost),
+                        format_ether(deposit_deficit),
+                        format_ether(setup_gas_cost),
+                    )));
+                }
+
+                let wallet = EthereumWallet::from(signer);
+                let provider = create_wallet_provider(primary_submission_rpc, wallet);
+                let mut nonce = provider
+                    .get_transaction_count(sender)
+                    .pending()
+                    .await
+                    .rpc("get pending transaction count")?;
+                let mut sent = 0usize;
+
+                if deposit_deficit > U256::ZERO {
+                    let tx = TransactionRequest::default()
+                        .with_to(setup.weth)
+                        .with_value(deposit_deficit)
+                        .with_input(Self::encode_weth_deposit())
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(WETH_DEPOSIT_GAS_LIMIT)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+                    let pending = provider.send_transaction(tx).await.rpc("send WETH deposit")?;
+                    debug!(
+                        sender = %sender,
+                        tx_hash = %pending.tx_hash(),
+                        amount = %deposit_deficit,
+                        "WETH deposit sent"
+                    );
+                    nonce += 1;
+                    sent += 1;
+                }
+
+                for (token, router) in approvals {
+                    let tx = TransactionRequest::default()
+                        .with_to(token)
+                        .with_input(Self::encode_erc20_approve(router, setup.approval_amount))
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(ERC20_APPROVE_GAS_LIMIT)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+                    let pending = provider.send_transaction(tx).await.rpc("send ERC20 approval")?;
+                    debug!(
+                        sender = %sender,
+                        token = %token,
+                        router = %router,
+                        tx_hash = %pending.tx_hash(),
+                        "router approval sent"
+                    );
+                    nonce += 1;
+                    sent += 1;
+                }
+
+                if needs_pair_token {
+                    let (router, data) = Self::encode_pair_token_acquisition(&setup, sender)?;
+                    let tx = TransactionRequest::default()
+                        .with_to(router)
+                        .with_input(data)
+                        .with_nonce(nonce)
+                        .with_chain_id(chain_id)
+                        .with_gas_limit(SETUP_SWAP_GAS_LIMIT)
+                        .with_max_fee_per_gas(max_fee)
+                        .with_max_priority_fee_per_gas(max_priority_fee);
+                    let pending = provider.send_transaction(tx).await.rpc("send setup swap")?;
+                    debug!(
+                        sender = %sender,
+                        router = %router,
+                        tx_hash = %pending.tx_hash(),
+                        "pair-token acquisition swap sent"
+                    );
+                    sent += 1;
+                }
+
+                Ok::<_, BaselineError>((sender, sent))
+            }
+        });
+
+        let setup_results: Vec<_> = stream::iter(setup_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_setup.inc(1))
+            .collect()
+            .await;
+        pb_setup.finish_and_clear();
+
+        let mut sent_total = 0usize;
+        for result in setup_results {
+            let (_, sent) = result?;
+            sent_total += sent;
+        }
+
+        let sender_addresses: Vec<Address> =
+            self.accounts.accounts().iter().map(|a| a.address).collect();
+
+        let mut weth_pending: Vec<_> =
+            sender_addresses.iter().map(|sender| (setup.weth, *sender)).collect();
+        let pb_weth = self.progress_bar(weth_pending.len() as u64, "Waiting for WETH balances");
+        Self::await_token_balances(
+            &self.client,
+            &mut weth_pending,
+            setup.weth_amount_per_sender,
+            &pb_weth,
+        )
+        .await?;
+        pb_weth.finish_and_clear();
+
+        let mut pair_pending: Vec<_> =
+            sender_addresses.iter().map(|sender| (setup.pair_token.token, *sender)).collect();
+        let pb_pair =
+            self.progress_bar(pair_pending.len() as u64, "Waiting for pair-token balances");
+        Self::await_token_balances(
+            &self.client,
+            &mut pair_pending,
+            setup.pair_token.amount_per_sender,
+            &pb_pair,
+        )
+        .await?;
+        pb_pair.finish_and_clear();
+
+        let mut allowance_pending = Vec::new();
+        for sender in &sender_addresses {
+            for (token, router) in &approval_targets {
+                allowance_pending.push((*token, *sender, *router));
+            }
+        }
+        let pb_allowance =
+            self.progress_bar(allowance_pending.len() as u64, "Waiting for router allowances");
+        Self::await_erc20_allowances(
+            &self.client,
+            &mut allowance_pending,
+            setup.approval_amount,
+            &pb_allowance,
+        )
+        .await?;
+        pb_allowance.finish_and_clear();
+
+        self.refresh_sender_state().await?;
+
+        info!(
+            accounts = total_accounts,
+            setup_transactions = sent_total,
+            "real-token setup complete"
+        );
+        Ok(())
+    }
+
+    async fn read_erc20_balance(
+        client: &QueryProvider,
+        token: Address,
+        owner: Address,
+    ) -> Result<U256> {
+        client
+            .call(
+                TransactionRequest::default()
+                    .with_to(token)
+                    .with_input(Self::encode_erc20_balance_of(owner))
+                    .into(),
+            )
+            .await
+            .rpc("eth_call balanceOf")
+            .map(|bytes| U256::from_be_slice(bytes.as_ref()))
+    }
+
+    async fn read_erc20_allowance(
+        client: &QueryProvider,
+        token: Address,
+        owner: Address,
+        spender: Address,
+    ) -> Result<U256> {
+        client
+            .call(
+                TransactionRequest::default()
+                    .with_to(token)
+                    .with_input(Self::encode_erc20_allowance(owner, spender))
+                    .into(),
+            )
+            .await
+            .rpc("eth_call allowance")
+            .map(|bytes| U256::from_be_slice(bytes.as_ref()))
+    }
+
+    fn encode_weth_deposit() -> Bytes {
+        sol! {
+            function deposit() external payable;
+        }
+        Bytes::from(depositCall {}.abi_encode())
+    }
+
+    fn encode_erc20_approve(spender: Address, amount: U256) -> Bytes {
+        sol! {
+            function approve(address spender, uint256 amount) external returns (bool);
+        }
+        Bytes::from(approveCall { spender, amount }.abi_encode())
+    }
+
+    fn encode_erc20_allowance(owner: Address, spender: Address) -> Bytes {
+        sol! {
+            function allowance(address owner, address spender) external view returns (uint256);
+        }
+        Bytes::from(allowanceCall { owner, spender }.abi_encode())
+    }
+
+    fn encode_pair_token_acquisition(
+        setup: &RealTokenSetup,
+        recipient: Address,
+    ) -> Result<(Address, Bytes)> {
+        match &setup.pair_token.acquisition {
+            RealTokenAcquisition::UniswapV3ExactInput {
+                router,
+                fee,
+                amount_in,
+                min_amount_out,
+            } => {
+                sol! {
+                    interface ISetupUniswapV3Router {
+                        struct ExactInputSingleParams {
+                            address tokenIn;
+                            address tokenOut;
+                            uint24 fee;
+                            address recipient;
+                            uint256 amountIn;
+                            uint256 amountOutMinimum;
+                            uint160 sqrtPriceLimitX96;
+                        }
+
+                        function exactInputSingle(
+                            ExactInputSingleParams calldata params
+                        ) external payable returns (uint256 amountOut);
+                    }
+                }
+                let call = ISetupUniswapV3Router::exactInputSingleCall {
+                    params: ISetupUniswapV3Router::ExactInputSingleParams {
+                        tokenIn: setup.weth,
+                        tokenOut: setup.pair_token.token,
+                        fee: U24::from(*fee),
+                        recipient,
+                        amountIn: *amount_in,
+                        amountOutMinimum: *min_amount_out,
+                        sqrtPriceLimitX96: U160::ZERO,
+                    },
+                };
+                Ok((*router, Bytes::from(call.abi_encode())))
+            }
+            RealTokenAcquisition::AerodromeClExactInput {
+                router,
+                tick_spacing,
+                amount_in,
+                min_amount_out,
+            } => {
+                sol! {
+                    interface ISetupAerodromeClRouter {
+                        struct ExactInputSingleParams {
+                            address tokenIn;
+                            address tokenOut;
+                            int24 tickSpacing;
+                            address recipient;
+                            uint256 deadline;
+                            uint256 amountIn;
+                            uint256 amountOutMinimum;
+                            uint160 sqrtPriceLimitX96;
+                        }
+
+                        function exactInputSingle(
+                            ExactInputSingleParams calldata params
+                        ) external payable returns (uint256 amountOut);
+                    }
+                }
+                let tick_spacing = I24::try_from(*tick_spacing).map_err(|e| {
+                    BaselineError::Config(format!(
+                        "real-token setup tick spacing does not fit i24: {e}"
+                    ))
+                })?;
+                let call = ISetupAerodromeClRouter::exactInputSingleCall {
+                    params: ISetupAerodromeClRouter::ExactInputSingleParams {
+                        tokenIn: setup.weth,
+                        tokenOut: setup.pair_token.token,
+                        tickSpacing: tick_spacing,
+                        recipient,
+                        deadline: U256::from(u64::MAX),
+                        amountIn: *amount_in,
+                        amountOutMinimum: *min_amount_out,
+                        sqrtPriceLimitX96: U160::ZERO,
+                    },
+                };
+                Ok((*router, Bytes::from(call.abi_encode())))
+            }
+        }
     }
 
     /// Runs the load test and returns metrics summary.
@@ -2154,6 +2571,105 @@ impl LoadRunner {
         }
 
         Ok(settled)
+    }
+
+    /// Waits for ERC20 allowances to reach a target.
+    async fn await_erc20_allowances(
+        client: &QueryProvider,
+        pending_allowances: &mut Vec<(Address, Address, Address)>,
+        target_allowance: U256,
+        pb: &ProgressBar,
+    ) -> Result<usize> {
+        let timeout = Duration::from_secs(60);
+        let poll_interval = Duration::from_millis(500);
+        let start = Instant::now();
+        let mut settled = 0usize;
+
+        while !pending_allowances.is_empty() && start.elapsed() < timeout {
+            tokio::time::sleep(poll_interval).await;
+
+            let mut still_pending = Vec::new();
+            for (token, owner, spender) in pending_allowances.drain(..) {
+                match Self::read_erc20_allowance(client, token, owner, spender).await {
+                    Ok(allowance) if allowance >= target_allowance => {
+                        debug!(token = %token, owner = %owner, spender = %spender, "allowance settled");
+                        settled += 1;
+                        pb.inc(1);
+                    }
+                    Ok(_) => {
+                        still_pending.push((token, owner, spender));
+                    }
+                    Err(e) => {
+                        warn!(
+                            token = %token,
+                            owner = %owner,
+                            spender = %spender,
+                            error = %e,
+                            "failed to check allowance"
+                        );
+                        still_pending.push((token, owner, spender));
+                    }
+                }
+            }
+            *pending_allowances = still_pending;
+        }
+
+        if !pending_allowances.is_empty() {
+            return Err(BaselineError::Transaction(format!(
+                "allowances did not reach target within timeout: {pending_allowances:?}"
+            )));
+        }
+
+        Ok(settled)
+    }
+
+    async fn refresh_sender_state(&mut self) -> Result<()> {
+        let total_accounts = self.accounts.len();
+        let client = self.client.clone();
+        let pb_refresh = self.progress_bar(total_accounts as u64, "Refreshing account state");
+
+        let refresh_futs: Vec<_> = self
+            .accounts
+            .accounts()
+            .iter()
+            .map(|a| {
+                let client = client.clone();
+                let addr = a.address;
+                async move {
+                    let balance = client.get_balance(addr).await.rpc("get balance")?;
+                    let nonce =
+                        client.get_transaction_count(addr).await.rpc("get transaction count")?;
+                    Ok::<_, BaselineError>((addr, balance, nonce))
+                }
+            })
+            .collect();
+
+        let refresh_results: Vec<_> = stream::iter(refresh_futs)
+            .buffer_unordered(FUNDING_CONCURRENCY)
+            .inspect(|_| pb_refresh.inc(1))
+            .collect()
+            .await;
+        pb_refresh.finish_and_clear();
+
+        let addr_to_idx: HashMap<Address, usize> =
+            self.accounts.accounts().iter().enumerate().map(|(i, a)| (a.address, i)).collect();
+
+        for result in refresh_results {
+            let (addr, balance, account_nonce) = result?;
+            let idx = addr_to_idx[&addr];
+            let account = &mut self.accounts.accounts_mut()[idx];
+            account.balance = balance;
+            account.nonce = account_nonce;
+
+            let provider = RootProvider::<Ethereum>::new_http(self.config.query_rpc.clone());
+            let nonce_manager =
+                NonceManager::new(provider, addr, NONCE_RPC_TIMEOUT).with_pending_tag();
+            Arc::make_mut(&mut self.nonce_managers).insert(addr, nonce_manager);
+
+            debug!(address = %addr, balance = %balance, nonce = account_nonce, "account state refreshed");
+        }
+
+        Ok(())
     }
 
     /// Waits for source account balances to drop to the post-drain dust threshold.
