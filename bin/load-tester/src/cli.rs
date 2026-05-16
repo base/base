@@ -17,7 +17,7 @@ use alloy_signer_local::PrivateKeySigner;
 use base_cli_utils::RuntimeManager;
 use base_load_tests::{
     AccountPool, BaselineError, FundedAccount, LoadRunner, LoadTestDisplay, MetricsSummary,
-    QueryProvider, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
+    QueryProvider, RealTokenSetup, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
     create_wallet_provider,
 };
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -118,6 +118,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         let cfg = test_config.to_load_config(rpc_chain_id)?;
         if args.continuous { cfg.with_continuous() } else { cfg }
     };
+    let real_token_setup = test_config.parse_real_token_setup(load_config.chain_id)?;
 
     let funding_key = TestConfig::funder_key()?;
 
@@ -176,6 +177,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
         &funding_key,
         funding_amount,
         swap_token_amount,
+        real_token_setup.as_ref(),
         &mp,
         load_config.duration,
     )
@@ -290,6 +292,7 @@ async fn run_test_phases(
     funding_key: &PrivateKeySigner,
     funding_amount: U256,
     swap_token_amount: U256,
+    real_token_setup: Option<&RealTokenSetup>,
     mp: &indicatif::MultiProgress,
     duration: Option<Duration>,
 ) -> LoadResult<MetricsSummary> {
@@ -303,7 +306,11 @@ async fn run_test_phases(
     runner.fund_accounts(funding_key.clone(), funding_amount).await?;
     println!("Accounts funded.");
 
-    if !runner.collect_swap_tokens().is_empty() {
+    if let Some(setup) = real_token_setup {
+        println!("Preparing real-token swap balances...");
+        runner.setup_real_tokens(setup).await?;
+        println!("Real-token swap balances prepared.");
+    } else if !runner.collect_swap_tokens().is_empty() {
         println!("Distributing swap tokens...");
         runner.setup_swap_tokens(funding_key.clone(), swap_token_amount).await?;
         println!("Swap tokens distributed.");

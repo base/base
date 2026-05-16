@@ -211,4 +211,7 @@ pub struct ConfigSummary {
     pub looper_contract: Option<String>,
     /// Amount of each swap token per sender (in wei, as string).
     pub swap_token_amount: String,
+    /// Real-token setup configuration, when enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub real_token_setup: Option<serde_json::Value>,
 }
