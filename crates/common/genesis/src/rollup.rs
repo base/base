@@ -158,145 +158,98 @@ impl EthereumHardforks for RollupConfig {
     }
 }
 
+macro_rules! rollup_fork_methods {
+    ($(
+        $active:ident,
+        $first:ident,
+        [$($timestamp:tt)+],
+        $name:literal
+        $(, implies $next:ident)?;
+    )*) => {
+        $(
+            #[doc = concat!("Returns true if ", $name, " is active at the given timestamp.")]
+            pub fn $active(&self, timestamp: u64) -> bool {
+                self.$($timestamp)+.is_some_and(|t| timestamp >= t) $(|| self.$next(timestamp))?
+            }
+
+            #[doc = concat!("Returns true if the timestamp marks the first ", $name, " block.")]
+            pub fn $first(&self, timestamp: u64) -> bool {
+                self.$active(timestamp)
+                    && !self.$active(timestamp.saturating_sub(self.block_time))
+            }
+        )*
+    };
+}
+
 impl RollupConfig {
-    /// Returns true if Regolith is active at the given timestamp.
-    pub fn is_regolith_active(&self, timestamp: u64) -> bool {
-        self.hardforks.regolith_time.is_some_and(|t| timestamp >= t)
-            || self.is_canyon_active(timestamp)
-    }
+    rollup_fork_methods! {
+        is_regolith_active,
+        is_first_regolith_block,
+        [hardforks.regolith_time],
+        "Regolith",
+        implies is_canyon_active;
 
-    /// Returns true if the timestamp marks the first Regolith block.
-    pub fn is_first_regolith_block(&self, timestamp: u64) -> bool {
-        self.is_regolith_active(timestamp)
-            && !self.is_regolith_active(timestamp.saturating_sub(self.block_time))
-    }
+        is_canyon_active,
+        is_first_canyon_block,
+        [hardforks.canyon_time],
+        "Canyon",
+        implies is_delta_active;
 
-    /// Returns true if Canyon is active at the given timestamp.
-    pub fn is_canyon_active(&self, timestamp: u64) -> bool {
-        self.hardforks.canyon_time.is_some_and(|t| timestamp >= t)
-            || self.is_delta_active(timestamp)
-    }
+        is_delta_active,
+        is_first_delta_block,
+        [hardforks.delta_time],
+        "Delta",
+        implies is_ecotone_active;
 
-    /// Returns true if the timestamp marks the first Canyon block.
-    pub fn is_first_canyon_block(&self, timestamp: u64) -> bool {
-        self.is_canyon_active(timestamp)
-            && !self.is_canyon_active(timestamp.saturating_sub(self.block_time))
-    }
+        is_ecotone_active,
+        is_first_ecotone_block,
+        [hardforks.ecotone_time],
+        "Ecotone",
+        implies is_fjord_active;
 
-    /// Returns true if Delta is active at the given timestamp.
-    pub fn is_delta_active(&self, timestamp: u64) -> bool {
-        self.hardforks.delta_time.is_some_and(|t| timestamp >= t)
-            || self.is_ecotone_active(timestamp)
-    }
+        is_fjord_active,
+        is_first_fjord_block,
+        [hardforks.fjord_time],
+        "Fjord",
+        implies is_granite_active;
 
-    /// Returns true if the timestamp marks the first Delta block.
-    pub fn is_first_delta_block(&self, timestamp: u64) -> bool {
-        self.is_delta_active(timestamp)
-            && !self.is_delta_active(timestamp.saturating_sub(self.block_time))
-    }
+        is_granite_active,
+        is_first_granite_block,
+        [hardforks.granite_time],
+        "Granite",
+        implies is_holocene_active;
 
-    /// Returns true if Ecotone is active at the given timestamp.
-    pub fn is_ecotone_active(&self, timestamp: u64) -> bool {
-        self.hardforks.ecotone_time.is_some_and(|t| timestamp >= t)
-            || self.is_fjord_active(timestamp)
-    }
+        is_holocene_active,
+        is_first_holocene_block,
+        [hardforks.holocene_time],
+        "Holocene",
+        implies is_isthmus_active;
 
-    /// Returns true if the timestamp marks the first Ecotone block.
-    pub fn is_first_ecotone_block(&self, timestamp: u64) -> bool {
-        self.is_ecotone_active(timestamp)
-            && !self.is_ecotone_active(timestamp.saturating_sub(self.block_time))
-    }
+        is_pectra_blob_schedule_active,
+        is_first_pectra_blob_schedule_block,
+        [hardforks.pectra_blob_schedule_time],
+        "pectra blob schedule";
 
-    /// Returns true if Fjord is active at the given timestamp.
-    pub fn is_fjord_active(&self, timestamp: u64) -> bool {
-        self.hardforks.fjord_time.is_some_and(|t| timestamp >= t)
-            || self.is_granite_active(timestamp)
-    }
+        is_isthmus_active,
+        is_first_isthmus_block,
+        [hardforks.isthmus_time],
+        "Isthmus",
+        implies is_jovian_active;
 
-    /// Returns true if the timestamp marks the first Fjord block.
-    pub fn is_first_fjord_block(&self, timestamp: u64) -> bool {
-        self.is_fjord_active(timestamp)
-            && !self.is_fjord_active(timestamp.saturating_sub(self.block_time))
-    }
+        is_jovian_active,
+        is_first_jovian_block,
+        [hardforks.jovian_time],
+        "Jovian";
 
-    /// Returns true if Granite is active at the given timestamp.
-    pub fn is_granite_active(&self, timestamp: u64) -> bool {
-        self.hardforks.granite_time.is_some_and(|t| timestamp >= t)
-            || self.is_holocene_active(timestamp)
-    }
+        is_base_azul_active,
+        is_first_base_azul_block,
+        [hardforks.base.azul],
+        "Base Azul";
 
-    /// Returns true if the timestamp marks the first Granite block.
-    pub fn is_first_granite_block(&self, timestamp: u64) -> bool {
-        self.is_granite_active(timestamp)
-            && !self.is_granite_active(timestamp.saturating_sub(self.block_time))
-    }
-
-    /// Returns true if Holocene is active at the given timestamp.
-    pub fn is_holocene_active(&self, timestamp: u64) -> bool {
-        self.hardforks.holocene_time.is_some_and(|t| timestamp >= t)
-            || self.is_isthmus_active(timestamp)
-    }
-
-    /// Returns true if the timestamp marks the first Holocene block.
-    pub fn is_first_holocene_block(&self, timestamp: u64) -> bool {
-        self.is_holocene_active(timestamp)
-            && !self.is_holocene_active(timestamp.saturating_sub(self.block_time))
-    }
-
-    /// Returns true if the pectra blob schedule is active at the given timestamp.
-    pub fn is_pectra_blob_schedule_active(&self, timestamp: u64) -> bool {
-        self.hardforks.pectra_blob_schedule_time.is_some_and(|t| timestamp >= t)
-    }
-
-    /// Returns true if the timestamp marks the first pectra blob schedule block.
-    pub fn is_first_pectra_blob_schedule_block(&self, timestamp: u64) -> bool {
-        self.is_pectra_blob_schedule_active(timestamp)
-            && !self.is_pectra_blob_schedule_active(timestamp.saturating_sub(self.block_time))
-    }
-
-    /// Returns true if Isthmus is active at the given timestamp.
-    pub fn is_isthmus_active(&self, timestamp: u64) -> bool {
-        self.hardforks.isthmus_time.is_some_and(|t| timestamp >= t)
-            || self.is_jovian_active(timestamp)
-    }
-
-    /// Returns true if the timestamp marks the first Isthmus block.
-    pub fn is_first_isthmus_block(&self, timestamp: u64) -> bool {
-        self.is_isthmus_active(timestamp)
-            && !self.is_isthmus_active(timestamp.saturating_sub(self.block_time))
-    }
-
-    /// Returns true if Jovian is active at the given timestamp.
-    pub fn is_jovian_active(&self, timestamp: u64) -> bool {
-        self.hardforks.jovian_time.is_some_and(|t| timestamp >= t)
-    }
-
-    /// Returns true if the timestamp marks the first Jovian block.
-    pub fn is_first_jovian_block(&self, timestamp: u64) -> bool {
-        self.is_jovian_active(timestamp)
-            && !self.is_jovian_active(timestamp.saturating_sub(self.block_time))
-    }
-
-    /// Returns true if Base Azul is active at the given timestamp.
-    pub fn is_base_azul_active(&self, timestamp: u64) -> bool {
-        self.hardforks.base.azul.is_some_and(|t| timestamp >= t)
-    }
-
-    /// Returns true if the timestamp marks the first Base Azul block.
-    pub fn is_first_base_azul_block(&self, timestamp: u64) -> bool {
-        self.is_base_azul_active(timestamp)
-            && !self.is_base_azul_active(timestamp.saturating_sub(self.block_time))
-    }
-
-    /// Returns true if Beryl is active at the given timestamp.
-    pub fn is_beryl_active(&self, timestamp: u64) -> bool {
-        self.hardforks.base.beryl.is_some_and(|t| timestamp >= t)
-    }
-
-    /// Returns true if the timestamp marks the first Beryl block.
-    pub fn is_first_beryl_block(&self, timestamp: u64) -> bool {
-        self.is_beryl_active(timestamp)
-            && !self.is_beryl_active(timestamp.saturating_sub(self.block_time))
+        is_beryl_active,
+        is_first_beryl_block,
+        [hardforks.base.beryl],
+        "Beryl";
     }
 
     /// Returns the max sequencer drift for the given timestamp.

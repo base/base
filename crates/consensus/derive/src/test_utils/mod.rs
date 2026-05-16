@@ -39,8 +39,7 @@ pub use channel_reader::TestChannelReaderProvider;
 mod frame_queue;
 pub use frame_queue::TestFrameQueueProvider;
 
-mod tracing;
-pub use tracing::{CollectingLayer, TraceStorage};
+pub use base_protocol::test_utils::{CollectingLayer, TraceStorage};
 
 mod sys_config_fetcher;
 pub use sys_config_fetcher::{TestSystemConfigL2Fetcher, TestSystemConfigL2FetcherError};
