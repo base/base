@@ -1,4 +1,4 @@
-//! SP1 cluster proof utilities.
+#![doc = include_str!("../README.md")]
 
 #![recursion_limit = "256"]
 
