@@ -13,8 +13,8 @@ use reth_db_api as _;
 /// CLI argument parsing for the Base node.
 pub mod args;
 pub use args::{
-    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, TWELVE_HOURS_IN_BLOCKS,
-    TxpoolOrdering,
+    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs,
+    ProofsHistoryRocksdbCompression, TWELVE_HOURS_IN_BLOCKS, TxpoolOrdering,
 };
 
 /// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
