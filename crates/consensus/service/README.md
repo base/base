@@ -65,7 +65,9 @@ The engine actor is the hub of the service. All other actors that need to affect
 
 `SealRequest` is similar to `GetPayloadRequest` but used in the sequencer path where the result will be gossiped and then inserted.
 
-`ProcessUnsafeL2BlockRequest` is fire-and-forget. It takes a `BaseExecutionPayloadEnvelope` received from the P2P network or from the sequencer's insert step, calls `engine_api::new_payload`, then calls `engine_api::forkchoice_updated` to make the block the new unsafe head.
+`ProcessUnsafeL2BlockRequest` is fire-and-forget. It takes a `BaseExecutionPayloadEnvelope` received from the P2P network, calls `engine_api::new_payload`, then calls `engine_api::forkchoice_updated` to make the block the new unsafe head.
+
+`ProcessLocalUnsafeL2BlockRequest` uses the same unsafe payload insert path with an optional result channel. Sequencer and follow-mode callers use that result channel when they must wait for `engine_api::new_payload` and `engine_api::forkchoice_updated` to finish before continuing.
 
 `ProcessSafeL2SignalRequest` takes a `ConsolidateInput` from the derivation actor — either a derived set of `AttributesWithParent` or a delegated `L2BlockInfo` — and runs the safe-head consolidation path: attributes are forwarded to `engine_api::forkchoice_updated`, and the resulting safe head is sent back to the derivation actor via the `QueuedEngineDerivationClient`.
 
@@ -89,7 +91,7 @@ The `AwaitingSafeHeadConfirmation` state persists until the engine actor confirm
 
 The `L2Finalizer` struct tracks finalization by maintaining a `BTreeMap<u64, u64>` from L1 block number to the highest L2 block number derived in that epoch. When the L1 watcher reports a new finalized L1 block, the actor calls `L2Finalizer::try_finalize_next()`, which scans the map for all entries at or below the finalized L1 number, drains them, and returns the highest L2 block number. That number is forwarded to the engine as a `ProcessFinalizedL2BlockNumberRequest`.
 
-The delegation variants differ significantly. `DelegateDerivationActor` polls an external sync-status endpoint every 4 seconds, validates the reported safe and finalized L2 blocks' L1 origins against its local L1 provider for hash consistency, and then forwards the safe and finalized L2 heads to the engine. It does not run a pipeline at all. `DelegateL2DerivationActor` is used by `FollowNode`; it polls the source L2 node's head by block number every 2 seconds, fetches each missing payload, sends them to the engine as `ProcessUnsafeL2BlockRequest` one at a time, and then issues a delegated forkchoice update after the batch is complete.
+The delegation variants differ significantly. `DelegateDerivationActor` polls an external sync-status endpoint every 4 seconds, validates the reported safe and finalized L2 blocks' L1 origins against its local L1 provider for hash consistency, and then forwards the safe and finalized L2 heads to the engine. It does not run a pipeline at all. `DelegateL2DerivationActor` is used by `FollowNode`; it polls the source L2 node's head by block number every 2 seconds, fetches each missing payload, sends it to the engine through the acknowledged unsafe insert path, waits for the result, and then issues a delegated forkchoice update after the batch is complete.
 
 ## Sequencer Actor
 

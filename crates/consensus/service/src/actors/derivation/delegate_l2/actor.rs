@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     CancellableContext, DerivationActorRequest, DerivationEngineClient, EngineActorRequest,
-    NodeActor,
+    InsertUnsafePayloadRequest, NodeActor,
     actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
 };
 
@@ -28,8 +28,8 @@ struct ProofsSyncStatus {
 /// The [`NodeActor`] for the L2 delegate derivation sub-routine.
 ///
 /// Polls a source L2 execution layer node for new blocks and drives the local
-/// engine via `ProcessUnsafeL2BlockRequest` (`NewPayload` + FCU) rather than
-/// running the full derivation pipeline.
+/// engine through an acknowledged unsafe payload insert (`NewPayload` + FCU)
+/// rather than running the full derivation pipeline.
 ///
 /// Safe and finalized head updates are forwarded together as delegated labels.
 #[derive(Debug)]
@@ -361,8 +361,13 @@ where
                 "Inserting block from L2 source"
             );
 
+            let expected_hash = payload.execution_payload.block_hash();
+            let (result_tx, mut result_rx) = mpsc::channel(1);
+
             self.engine_actor_request_tx
-                .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload)))
+                .send(EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(
+                    InsertUnsafePayloadRequest { envelope: payload, result_tx: Some(result_tx) },
+                )))
                 .await
                 .map_err(|_| {
                     DerivationError::Sender(Box::new(std::io::Error::new(
@@ -370,6 +375,29 @@ where
                         "engine actor request channel closed",
                     )))
                 })?;
+
+            let inserted_head = match result_rx.recv().await {
+                Some(Ok(inserted_head)) => inserted_head,
+                Some(Err(err)) => return Err(DerivationError::Sender(Box::new(err))),
+                None => {
+                    return Err(DerivationError::Sender(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "engine insert result channel closed",
+                    ))));
+                }
+            };
+
+            if inserted_head.block_info.number != block_num
+                || inserted_head.block_info.hash != expected_hash
+            {
+                return Err(DerivationError::Sender(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "engine inserted unexpected block: expected {block_num} {expected_hash}, got {} {}",
+                        inserted_head.block_info.number, inserted_head.block_info.hash
+                    ),
+                ))));
+            }
 
             self.sent_head = block_num;
         }
@@ -438,13 +466,16 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_consensus_engine::InsertTaskError;
     use base_protocol::{BlockInfo, L2BlockInfo};
     use mockall::{Sequence, predicate::*};
-    use tokio::sync::mpsc;
+    use tokio::{sync::mpsc, time::timeout};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -544,6 +575,35 @@ mod tests {
         (task, engine_rx, cancel)
     }
 
+    async fn recv_follow_insert(
+        engine_rx: &mut mpsc::Receiver<EngineActorRequest>,
+        expected_num: u64,
+    ) -> mpsc::Sender<Result<L2BlockInfo, InsertTaskError>> {
+        let req = engine_rx.recv().await.unwrap();
+        match req {
+            EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(request) => {
+                assert_eq!(request.envelope.execution_payload.block_number(), expected_num);
+                assert_eq!(
+                    request.envelope.execution_payload.block_hash(),
+                    dummy_l2_block_info(expected_num).block_info.hash
+                );
+                request.result_tx.unwrap()
+            }
+            other => panic!("Expected ProcessLocalUnsafeL2BlockRequest, got {other:?}"),
+        }
+    }
+
+    async fn ack_follow_insert(
+        engine_rx: &mut mpsc::Receiver<EngineActorRequest>,
+        expected_num: u64,
+    ) {
+        recv_follow_insert(engine_rx, expected_num)
+            .await
+            .send(Ok(dummy_l2_block_info(expected_num)))
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn handle_sync_completion_enables_sync() {
         let engine_client = MockDerivationEngineClient::new();
@@ -637,19 +697,102 @@ mod tests {
         });
 
         let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 3);
-
-        let new_head = task.sync_from_source().await.unwrap();
-        assert_eq!(new_head, 3);
+        let sync_handle = tokio::spawn(async move { task.sync_from_source().await });
 
         for expected_num in 1..=3 {
-            let req = engine_rx.try_recv().unwrap();
-            match req {
-                EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
-                    assert_eq!(envelope.execution_payload.block_number(), expected_num);
-                }
-                other => panic!("Expected ProcessUnsafeL2BlockRequest, got {other:?}"),
-            }
+            ack_follow_insert(&mut engine_rx, expected_num).await;
         }
+
+        let new_head = sync_handle.await.unwrap();
+        assert_eq!(new_head.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn sync_waits_for_insert_ack_before_next_block() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(2))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(2));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(2))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(1));
+
+        engine_client.expect_send_delegated_forkchoice_update().returning(|update| {
+            assert_eq!(update.safe_l2.block_info.number, 2);
+            assert_eq!(update.finalized_l2_number, Some(1));
+            Ok(())
+        });
+
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 2);
+        let sync_handle = tokio::spawn(async move { task.sync_from_source().await });
+
+        let first_result_tx = recv_follow_insert(&mut engine_rx, 1).await;
+        assert!(
+            timeout(Duration::from_millis(20), engine_rx.recv()).await.is_err(),
+            "follow mode sent another insert before the prior insert was acknowledged"
+        );
+
+        first_result_tx.send(Ok(dummy_l2_block_info(1))).await.unwrap();
+        ack_follow_insert(&mut engine_rx, 2).await;
+
+        let new_head = sync_handle.await.unwrap();
+        assert_eq!(new_head.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn sync_errors_when_insert_fails() {
+        let engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 1);
+        let sync_handle = tokio::spawn(async move { task.sync_from_source().await });
+
+        recv_follow_insert(&mut engine_rx, 1)
+            .await
+            .send(Err(InsertTaskError::ForkchoiceUpdateDidNotAdvance))
+            .await
+            .unwrap();
+
+        let result = sync_handle.await.unwrap();
+        assert!(matches!(result, Err(DerivationError::Sender(_))));
+    }
+
+    #[tokio::test]
+    async fn sync_errors_when_insert_ack_returns_unexpected_block() {
+        let engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 1);
+        let sync_handle = tokio::spawn(async move { task.sync_from_source().await });
+
+        recv_follow_insert(&mut engine_rx, 1).await.send(Ok(dummy_l2_block_info(2))).await.unwrap();
+
+        let result = sync_handle.await.unwrap();
+        assert!(matches!(result, Err(DerivationError::Sender(_))));
     }
 
     #[tokio::test]
@@ -686,10 +829,15 @@ mod tests {
             Ok(())
         });
 
-        let (mut task, _engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 3);
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 3);
+        let sync_handle = tokio::spawn(async move { task.sync_from_source().await });
 
-        let new_head = task.sync_from_source().await.unwrap();
-        assert_eq!(new_head, 3);
+        for expected_num in 1..=3 {
+            ack_follow_insert(&mut engine_rx, expected_num).await;
+        }
+
+        let new_head = sync_handle.await.unwrap();
+        assert_eq!(new_head.unwrap(), 3);
     }
 
     #[tokio::test]
@@ -718,15 +866,12 @@ mod tests {
         engine_client.expect_send_finalized_l2_block().times(0);
 
         let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 1);
+        let sync_handle = tokio::spawn(async move { task.sync_from_source().await });
 
-        let new_head = task.sync_from_source().await.unwrap();
-        assert_eq!(new_head, 1);
+        ack_follow_insert(&mut engine_rx, 1).await;
 
-        let req = engine_rx.try_recv().unwrap();
-        assert!(
-            matches!(req, EngineActorRequest::ProcessUnsafeL2BlockRequest(_)),
-            "expected ProcessUnsafeL2BlockRequest, got {req:?}"
-        );
+        let new_head = sync_handle.await.unwrap();
+        assert_eq!(new_head.unwrap(), 1);
         assert!(engine_rx.is_empty(), "unexpected extra engine requests");
     }
 
