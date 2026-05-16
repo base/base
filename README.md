@@ -29,3 +29,4 @@ curl -fsSL https://raw.githubusercontent.com/base/base/main/baseup/install | bas
 ## License
 
 Licensed under [MIT](LICENSE).
+base is awesoma
