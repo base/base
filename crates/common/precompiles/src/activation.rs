@@ -1,6 +1,8 @@
+use alloc::string::ToString;
+
 use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, B256, Bytes, address, b256};
-use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, sol};
+use alloy_sol_types::{SolCall, SolError as _, SolEvent as _, sol};
 use base_precompile_macros::contract;
 use base_precompile_storage::{
     BasePrecompileError, EvmPrecompileStorageProvider, Handler, Mapping, Result, StorageCtx,
@@ -78,6 +80,7 @@ impl ActivationRegistry {
     /// Executes the activation registry precompile.
     pub fn run(input: PrecompileInput<'_>) -> PrecompileResult {
         if !input.is_direct_call() {
+            // No gas charged: the call type is invalid before any work is performed.
             return Ok(PrecompileOutput::new_reverted(
                 0,
                 IActivationRegistry::DelegateCallNotAllowed {}.abi_encode().into(),
@@ -103,6 +106,9 @@ impl ActivationRegistry {
     }
 
     /// Reverts unless the feature is enabled.
+    ///
+    /// Both the enabled and disabled paths return `Ok`; callers must inspect
+    /// [`PrecompileOutput::reverted`] to distinguish an enabled feature from an ABI revert.
     pub fn assert_enabled(self, ctx: StorageCtx<'_>, feature: B256) -> PrecompileResult {
         match self.is_enabled(ctx, feature) {
             Ok(true) => Ok(ctx.success_output(Bytes::new())),
@@ -157,15 +163,53 @@ impl ActivationRegistry {
         ACTIVATION_ADMIN_ADDRESS
     }
 
-    /// Runs the decoded activation registry call.
-    pub fn inner(self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<PrecompileOutput> {
+    /// Returns the calldata selector, padding short calldata with zeroes.
+    pub fn calldata_selector(calldata: &[u8]) -> [u8; 4] {
+        let mut selector = [0u8; 4];
+        let len = calldata.len().min(selector.len());
+        selector[..len].copy_from_slice(&calldata[..len]);
+        selector
+    }
+
+    /// Decodes an activation registry call.
+    pub fn decode_call(calldata: &[u8]) -> Result<IActivationRegistry::IActivationRegistryCalls> {
+        let selector = Self::calldata_selector(calldata);
         if calldata.len() < 4 {
-            return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
+            return Err(BasePrecompileError::UnknownFunctionSelector(selector));
         }
 
-        let selector: [u8; 4] = calldata[..4].try_into().expect("selector length checked above");
-        let call = IActivationRegistry::IActivationRegistryCalls::abi_decode(calldata)
-            .map_err(|_| BasePrecompileError::UnknownFunctionSelector(selector))?;
+        match selector {
+            IActivationRegistry::isEnabledCall::SELECTOR => {
+                IActivationRegistry::isEnabledCall::abi_decode(calldata)
+                    .map(IActivationRegistry::IActivationRegistryCalls::isEnabled)
+                    .map_err(|error| BasePrecompileError::AbiDecodeFailed {
+                        selector,
+                        error: error.to_string(),
+                    })
+            }
+            IActivationRegistry::enableCall::SELECTOR => {
+                IActivationRegistry::enableCall::abi_decode(calldata)
+                    .map(IActivationRegistry::IActivationRegistryCalls::enable)
+                    .map_err(|error| BasePrecompileError::AbiDecodeFailed {
+                        selector,
+                        error: error.to_string(),
+                    })
+            }
+            IActivationRegistry::activationAdminCall::SELECTOR => {
+                IActivationRegistry::activationAdminCall::abi_decode(calldata)
+                    .map(IActivationRegistry::IActivationRegistryCalls::activationAdmin)
+                    .map_err(|error| BasePrecompileError::AbiDecodeFailed {
+                        selector,
+                        error: error.to_string(),
+                    })
+            }
+            _ => Err(BasePrecompileError::UnknownFunctionSelector(selector)),
+        }
+    }
+
+    /// Runs the decoded activation registry call.
+    pub fn inner(self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<PrecompileOutput> {
+        let call = Self::decode_call(calldata)?;
 
         match call {
             IActivationRegistry::IActivationRegistryCalls::isEnabled(call) => {
@@ -289,5 +333,31 @@ mod tests {
 
         assert!(!output.reverted);
         assert!(!enabled);
+    }
+
+    #[test]
+    fn short_calldata_preserves_partial_selector() {
+        let Err(error) = ActivationRegistry::decode_call(&[0xab, 0xcd]) else {
+            panic!("selector is short");
+        };
+
+        assert_eq!(error, BasePrecompileError::UnknownFunctionSelector([0xab, 0xcd, 0, 0]));
+    }
+
+    #[test]
+    fn malformed_known_selector_returns_decode_error() {
+        let Err(error) =
+            ActivationRegistry::decode_call(&IActivationRegistry::isEnabledCall::SELECTOR)
+        else {
+            panic!("arguments are missing");
+        };
+
+        assert!(matches!(
+            error,
+            BasePrecompileError::AbiDecodeFailed {
+                selector: IActivationRegistry::isEnabledCall::SELECTOR,
+                ..
+            }
+        ));
     }
 }
