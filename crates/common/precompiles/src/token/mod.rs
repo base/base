@@ -5,7 +5,8 @@ pub use abi::IDefaultToken;
 
 mod common;
 pub use common::{
-    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, ITokenCoreAccounting, TokenBase,
+    CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, IToken, ITokenCoreAccounting,
+    Burnable, Mintable, Pausable, Permittable, Redeemable, TokenAdmin, Transferable,
 };
 
 mod default_token;
