@@ -8,7 +8,7 @@ use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
     MdbxProofsStorage, RocksdbProofsStorage,
 };
-use base_node_core::args::ProofsHistoryDbBackend;
+use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_chainspec::ChainInfo;
 use reth_cli::chainspec::ChainSpecParser;
@@ -40,6 +40,10 @@ pub struct InitCommand<C: ChainSpecParser> {
     /// The on-disk database backend for proofs history.
     #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "rocksdb")]
     pub proofs_history_db: ProofsHistoryDbBackend,
+
+    /// Runtime tuning options for the `RocksDB` proofs history backend.
+    #[command(flatten)]
+    pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
 }
 
 impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
@@ -48,7 +52,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         self,
         runtime: reth_tasks::Runtime,
     ) -> eyre::Result<()> {
-        let Self { env, storage_path, proofs_history_db } = self;
+        let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
         info!(
@@ -64,8 +68,11 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> InitCommand<C> {
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {
                 let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
-                    RocksdbProofsStorage::new(&storage_path)
-                        .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+                    RocksdbProofsStorage::new_with_options(
+                        &storage_path,
+                        proofs_history_rocksdb.storage_options(),
+                    )
+                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
                 )
                 .into();
                 Self::initialize_storage(storage, &provider_factory)?;

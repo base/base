@@ -9,7 +9,8 @@ use base_execution_trie::{
     RocksdbProofsStorage,
 };
 use base_node_core::{
-    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, TWELVE_HOURS_IN_BLOCKS,
+    DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs,
+    TWELVE_HOURS_IN_BLOCKS,
 };
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
@@ -34,6 +35,10 @@ pub struct PruneCommand<C: ChainSpecParser> {
     /// The on-disk database backend for proofs history.
     #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "rocksdb")]
     pub proofs_history_db: ProofsHistoryDbBackend,
+
+    /// Runtime tuning options for the `RocksDB` proofs history backend.
+    #[command(flatten)]
+    pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
 
     /// The window to span blocks for proofs history. Value is the number of blocks.
     /// Default is 1 month of blocks based on 2 seconds block time.
@@ -71,6 +76,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
             env,
             storage_path,
             proofs_history_db,
+            proofs_history_rocksdb,
             proofs_history_window,
             proofs_history_prune_batch_size,
         } = self;
@@ -89,8 +95,11 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> PruneCommand<C> {
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {
                 let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
-                    RocksdbProofsStorage::new(&storage_path)
-                        .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+                    RocksdbProofsStorage::new_with_options(
+                        &storage_path,
+                        proofs_history_rocksdb.storage_options(),
+                    )
+                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
                 )
                 .into();
                 Self::prune_storage(

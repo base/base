@@ -46,18 +46,20 @@ pub async fn launch_node_with_proof_history(
 ) -> eyre::Result<(), ErrReport> {
     let RollupArgs {
         proofs_history,
+        proofs_history_storage_path,
         proofs_history_db,
+        proofs_history_rocksdb,
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
         ..
-    } = args;
+    } = args.clone();
 
     // Start from a plain BaseNode builder
-    let mut node_builder = builder.node(BaseNode::new(args.clone()));
+    let mut node_builder = builder.node(BaseNode::new(args));
 
     if proofs_history {
-        let path = args.proofs_history_storage_path.clone().ok_or_else(|| {
+        let path = proofs_history_storage_path.ok_or_else(|| {
             eyre::eyre!("--proofs-history requires --proofs-history.storage-path")
         })?;
         info!(target: "reth::cli", "Using on-disk storage for proofs history");
@@ -65,8 +67,11 @@ pub async fn launch_node_with_proof_history(
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {
                 let rocksdb = Arc::new(
-                    RocksdbProofsStorage::new(&path)
-                        .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+                    RocksdbProofsStorage::new_with_options(
+                        &path,
+                        proofs_history_rocksdb.storage_options(),
+                    )
+                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
                 );
                 node_builder = install_proofs_history(
                     node_builder,
