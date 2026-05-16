@@ -15,10 +15,15 @@ use tracing::{debug, error, info, warn};
 use crate::{
     CancellableContext, DerivationActorRequest, DerivationEngineClient, EngineActorRequest,
     InsertUnsafePayloadRequest, NodeActor,
-    actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
+    actors::derivation::{
+        DerivationError,
+        delegate_l2::L2SourceClient,
+        delegate_l2::prefetcher::{L2PayloadPrefetch, L2PayloadPrefetcher},
+    },
 };
 
 const DEFAULT_PROOFS_MAX_BLOCKS_AHEAD: u64 = 512;
+const DEFAULT_L2_SOURCE_PREFETCH_DEPTH: usize = 16;
 
 #[derive(Debug, Deserialize)]
 struct ProofsSyncStatus {
@@ -308,12 +313,13 @@ pub(super) struct SyncFromSourceTask<DerivationEngineClient_, L2Source> {
     sent_head: u64,
     target_block: u64,
     l2_source: Arc<L2Source>,
+    prefetch_depth: usize,
 }
 
 impl<DerivationEngineClient_, L2Source> SyncFromSourceTask<DerivationEngineClient_, L2Source>
 where
     DerivationEngineClient_: DerivationEngineClient,
-    L2Source: L2SourceClient,
+    L2Source: L2SourceClient + 'static,
 {
     pub(super) const fn new(
         engine_client: Arc<DerivationEngineClient_>,
@@ -332,6 +338,7 @@ where
             sent_head,
             target_block,
             l2_source,
+            prefetch_depth: DEFAULT_L2_SOURCE_PREFETCH_DEPTH,
         }
     }
 
@@ -343,17 +350,36 @@ where
             return Ok(self.sent_head);
         }
 
-        for block_num in (self.sent_head + 1)..=self.target_block {
-            if self.cancellation_token.is_cancelled() {
-                info!(target: "derivation", block = block_num, "Sync interrupted by shutdown");
-                return Ok(self.sent_head);
-            }
+        let mut prefetch = L2PayloadPrefetcher::new(
+            Arc::clone(&self.l2_source),
+            self.cancellation_token.clone(),
+            self.sent_head + 1,
+            self.target_block,
+            self.prefetch_depth,
+        )
+        .spawn();
 
-            let payload = self
-                .l2_source
-                .get_payload_by_number(block_num)
-                .await
-                .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+        let completed = self.insert_prefetched_payloads(&mut prefetch).await?;
+
+        if !completed {
+            return Ok(self.sent_head);
+        }
+
+        prefetch.finish().await;
+        self.update_safe_and_finalized().await?;
+
+        Ok(self.sent_head)
+    }
+
+    async fn insert_prefetched_payloads(
+        &mut self,
+        prefetch: &mut L2PayloadPrefetch,
+    ) -> Result<bool, DerivationError> {
+        for block_num in (self.sent_head + 1)..=self.target_block {
+            let Some(payload) = prefetch.next_payload(block_num, &self.cancellation_token).await?
+            else {
+                return Ok(false);
+            };
 
             debug!(
                 target: "derivation",
@@ -402,9 +428,7 @@ where
             self.sent_head = block_num;
         }
 
-        self.update_safe_and_finalized().await?;
-
-        Ok(self.sent_head)
+        Ok(true)
     }
 
     async fn update_safe_and_finalized(&self) -> Result<(), DerivationError> {
@@ -741,6 +765,56 @@ mod tests {
         let sync_handle = tokio::spawn(async move { task.sync_from_source().await });
 
         let first_result_tx = recv_follow_insert(&mut engine_rx, 1).await;
+        assert!(
+            timeout(Duration::from_millis(20), engine_rx.recv()).await.is_err(),
+            "follow mode sent another insert before the prior insert was acknowledged"
+        );
+
+        first_result_tx.send(Ok(dummy_l2_block_info(1))).await.unwrap();
+        ack_follow_insert(&mut engine_rx, 2).await;
+
+        let new_head = sync_handle.await.unwrap();
+        assert_eq!(new_head.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn sync_prefetches_next_payload_before_insert_ack() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+        let (prefetch_tx, mut prefetch_rx) = mpsc::channel(1);
+
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(1))
+            .times(1)
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source.expect_get_payload_by_number().with(eq(2)).times(1).return_once(move |n| {
+            prefetch_tx.try_send(()).unwrap();
+            Ok(dummy_payload_envelope(n))
+        });
+
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(2));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(2))
+            .times(1)
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Finalized))
+            .returning(|_| Ok(1));
+
+        engine_client.expect_send_delegated_forkchoice_update().returning(|update| {
+            assert_eq!(update.safe_l2.block_info.number, 2);
+            assert_eq!(update.finalized_l2_number, Some(1));
+            Ok(())
+        });
+
+        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 2);
+        let sync_handle = tokio::spawn(async move { task.sync_from_source().await });
+
+        let first_result_tx = recv_follow_insert(&mut engine_rx, 1).await;
+        timeout(Duration::from_secs(1), prefetch_rx.recv()).await.unwrap().unwrap();
         assert!(
             timeout(Duration::from_millis(20), engine_rx.recv()).await.is_err(),
             "follow mode sent another insert before the prior insert was acknowledged"
