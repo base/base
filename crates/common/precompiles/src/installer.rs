@@ -1,11 +1,7 @@
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::Address;
 use base_common_chains::BaseUpgrade;
-
-use crate::{BasePrecompileSpec, BasePrecompiles};
-
-#[cfg(feature = "std")]
-use crate::{ACTIVATION_REGISTRY_ADDRESS, ActivationRegistry};
+use crate::{ACTIVATION_REGISTRY_ADDRESS, ActivationRegistry, BasePrecompileSpec, BasePrecompiles};
 
 /// Installs the full Base precompile set for a given spec.
 #[derive(Debug, Clone, Copy)]
@@ -42,7 +38,6 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
                 crate::token::PolicyRegistryEvm::precompile(),
             )));
 
-            #[cfg(feature = "std")]
             precompiles.extend_precompiles(core::iter::once((
                 ACTIVATION_REGISTRY_ADDRESS,
                 ActivationRegistry::create_precompile(),
@@ -112,7 +107,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn activation_registry_is_not_installed_before_beryl() {
         let precompiles = BasePrecompileInstaller::new(BaseUpgrade::Azul).install();
 
@@ -120,7 +114,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn activation_registry_is_installed_at_beryl() {
         let precompiles = BasePrecompileInstaller::new(BaseUpgrade::Beryl).install();
 

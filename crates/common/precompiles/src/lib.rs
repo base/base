@@ -16,9 +16,7 @@ pub use installer::BasePrecompileInstaller;
 mod spec;
 pub use spec::BasePrecompileSpec;
 
-#[cfg(feature = "std")]
 mod activation;
-#[cfg(feature = "std")]
 pub use activation::{
     ACTIVATION_ADMIN_ADDRESS, ACTIVATION_REGISTRY_ADDRESS, ActivationRegistry,
     ActivationRegistryStorage, IActivationRegistry, SECURITIES_TOKEN_CREATION,
