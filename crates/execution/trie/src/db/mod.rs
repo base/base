@@ -11,8 +11,8 @@ pub use store::MdbxProofsStorage;
 
 mod rocksdb;
 pub use rocksdb::{
-    RocksdbAccountCursor, RocksdbProofsStorage, RocksdbReadSnapshot, RocksdbStorageCursor,
-    RocksdbTrieCursor,
+    RocksdbAccountCursor, RocksdbProofsCompression, RocksdbProofsStorage,
+    RocksdbProofsStorageOptions, RocksdbReadSnapshot, RocksdbStorageCursor, RocksdbTrieCursor,
 };
 
 mod cursor;

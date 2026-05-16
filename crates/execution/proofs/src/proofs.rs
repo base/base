@@ -40,6 +40,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let args = self.config;
         let proofs_history_enabled = args.proofs_history;
         let proofs_history_db = args.proofs_history_db;
+        let proofs_history_rocksdb = args.proofs_history_rocksdb;
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
@@ -58,8 +59,11 @@ impl BaseNodeExtension for ProofsHistoryExtension {
 
             match proofs_history_db {
                 ProofsHistoryDbBackend::Rocksdb => {
-                    let rocksdb = match RocksdbProofsStorage::new(&path)
-                        .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))
+                    let rocksdb = match RocksdbProofsStorage::new_with_options(
+                        &path,
+                        proofs_history_rocksdb.storage_options(),
+                    )
+                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))
                     {
                         Ok(rocksdb) => rocksdb,
                         Err(e) => {

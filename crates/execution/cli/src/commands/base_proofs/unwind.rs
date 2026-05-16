@@ -7,7 +7,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_trie::{
     BaseProofsStorage, BaseProofsStore, MdbxProofsStorage, RocksdbProofsStorage,
 };
-use base_node_core::args::ProofsHistoryDbBackend;
+use base_node_core::args::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, CliNodeTypes, Environment, EnvironmentArgs};
@@ -35,6 +35,10 @@ pub struct UnwindCommand<C: ChainSpecParser> {
     #[arg(long = "proofs-history.db", value_name = "PROOFS_HISTORY_DB", default_value = "rocksdb")]
     pub proofs_history_db: ProofsHistoryDbBackend,
 
+    /// Runtime tuning options for the `RocksDB` proofs history backend.
+    #[command(flatten)]
+    pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
+
     /// The target block number to unwind to.
     ///
     /// All history *after* this block will be removed.
@@ -47,7 +51,7 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
     pub async fn execute<N: CliNodeTypes<ChainSpec = C::ChainSpec, Primitives = BasePrimitives>>(
         self,
     ) -> eyre::Result<()> {
-        let Self { env, storage_path, proofs_history_db, target } = self;
+        let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb, target } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");
         info!(
@@ -63,8 +67,11 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> UnwindCommand<C> {
         match proofs_history_db {
             ProofsHistoryDbBackend::Rocksdb => {
                 let storage: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::new(
-                    RocksdbProofsStorage::new(&storage_path)
-                        .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
+                    RocksdbProofsStorage::new_with_options(
+                        &storage_path,
+                        proofs_history_rocksdb.storage_options(),
+                    )
+                    .map_err(|e| eyre::eyre!("Failed to create RocksdbProofsStorage: {e}"))?,
                 )
                 .into();
                 Self::unwind_storage(target, &provider_factory, storage)?;

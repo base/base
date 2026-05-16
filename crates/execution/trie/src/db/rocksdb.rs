@@ -58,12 +58,118 @@ const BLOCK_NUMBER_KEY_LEN: usize = 8;
 const DEFAULT_BLOCK_CACHE_SIZE: usize = 128 << 20;
 const DEFAULT_BLOCK_SIZE: usize = 16 * 1024;
 const DEFAULT_BYTES_PER_SYNC: u64 = 1_048_576;
+const DEFAULT_COMPACTION_READAHEAD_SIZE: usize = 0;
+const DEFAULT_DIRECT_IO_FOR_FLUSH_AND_COMPACTION: bool = true;
+const DEFAULT_LEVEL_ZERO_FILE_NUM_COMPACTION_TRIGGER: i32 = 4;
+const DEFAULT_LEVEL_ZERO_SLOWDOWN_WRITES_TRIGGER: i32 = 20;
+const DEFAULT_LEVEL_ZERO_STOP_WRITES_TRIGGER: i32 = 36;
+const DEFAULT_RATE_LIMITER_FAIRNESS: i32 = 10;
+const DEFAULT_RATE_LIMITER_REFILL_PERIOD_US: i64 = 100_000;
+const DEFAULT_MAX_BACKGROUND_JOBS: i32 = 4;
+const DEFAULT_MAX_SUBCOMPACTIONS: u32 = 1;
 const DEFAULT_MAX_OPEN_FILES: i32 = -1;
-const DEFAULT_MIN_BACKGROUND_JOBS: i32 = 8;
-const DEFAULT_MAX_BACKGROUND_JOBS: i32 = 32;
-const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 6;
+const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 3;
 const DEFAULT_TARGET_FILE_SIZE_BASE: u64 = 256 * 1024 * 1024;
-const DEFAULT_WRITE_BUFFER_SIZE: usize = 128 * 1024 * 1024;
+const DEFAULT_WRITE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
+
+/// Compression policy for `RocksDB` proof-history column families.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RocksdbProofsCompression {
+    /// Disable compression for new files.
+    None,
+    /// Use LZ4 compression for new files.
+    #[default]
+    Lz4,
+    /// Use ZSTD compression for new files.
+    Zstd,
+}
+
+impl RocksdbProofsCompression {
+    /// Returns the corresponding `RocksDB` compression type.
+    pub const fn db_compression_type(self) -> DBCompressionType {
+        match self {
+            Self::None => DBCompressionType::None,
+            Self::Lz4 => DBCompressionType::Lz4,
+            Self::Zstd => DBCompressionType::Zstd,
+        }
+    }
+}
+
+/// Options for opening [`RocksdbProofsStorage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RocksdbProofsStorageOptions {
+    /// Compression for non-bottommost proof-history files.
+    pub compression: RocksdbProofsCompression,
+    /// Compression for bottommost proof-history files.
+    pub bottommost_compression: RocksdbProofsCompression,
+    /// LRU block cache size in bytes.
+    pub block_cache_size: usize,
+    /// Number of bytes RocksDB should write before asking the OS to start syncing.
+    pub bytes_per_sync: u64,
+    /// Readahead size in bytes for compaction input reads.
+    pub compaction_readahead_size: usize,
+    /// Number of L0 files that triggers compaction.
+    pub level_zero_file_num_compaction_trigger: i32,
+    /// Number of L0 files that triggers write slowdown.
+    pub level_zero_slowdown_writes_trigger: i32,
+    /// Number of L0 files that stops writes.
+    pub level_zero_stop_writes_trigger: i32,
+    /// Maximum number of RocksDB background jobs.
+    pub max_background_jobs: i32,
+    /// Maximum number of subcompactions per compaction.
+    pub max_subcompactions: u32,
+    /// Maximum total WAL size in bytes.
+    pub max_total_wal_size: Option<u64>,
+    /// Maximum number of write buffers per column family.
+    pub max_write_buffer_number: i32,
+    /// Write buffer size per column family in bytes.
+    pub write_buffer_size: usize,
+    /// Base target file size in bytes.
+    pub target_file_size_base: u64,
+    /// Whether flush and compaction files should use direct I/O.
+    pub use_direct_io_for_flush_and_compaction: bool,
+    /// Optional RocksDB write rate limit in bytes per second.
+    pub rate_limit_bytes_per_sec: Option<i64>,
+    /// Rate limiter refill period in microseconds.
+    pub rate_limiter_refill_period_us: i64,
+    /// Rate limiter fairness.
+    pub rate_limiter_fairness: i32,
+}
+
+impl Default for RocksdbProofsStorageOptions {
+    fn default() -> Self {
+        Self {
+            compression: RocksdbProofsCompression::Lz4,
+            bottommost_compression: RocksdbProofsCompression::Lz4,
+            block_cache_size: DEFAULT_BLOCK_CACHE_SIZE,
+            bytes_per_sync: DEFAULT_BYTES_PER_SYNC,
+            compaction_readahead_size: DEFAULT_COMPACTION_READAHEAD_SIZE,
+            level_zero_file_num_compaction_trigger: DEFAULT_LEVEL_ZERO_FILE_NUM_COMPACTION_TRIGGER,
+            level_zero_slowdown_writes_trigger: DEFAULT_LEVEL_ZERO_SLOWDOWN_WRITES_TRIGGER,
+            level_zero_stop_writes_trigger: DEFAULT_LEVEL_ZERO_STOP_WRITES_TRIGGER,
+            max_background_jobs: DEFAULT_MAX_BACKGROUND_JOBS,
+            max_subcompactions: DEFAULT_MAX_SUBCOMPACTIONS,
+            max_total_wal_size: None,
+            max_write_buffer_number: DEFAULT_MAX_WRITE_BUFFER_NUMBER,
+            write_buffer_size: DEFAULT_WRITE_BUFFER_SIZE,
+            target_file_size_base: DEFAULT_TARGET_FILE_SIZE_BASE,
+            use_direct_io_for_flush_and_compaction: DEFAULT_DIRECT_IO_FOR_FLUSH_AND_COMPACTION,
+            rate_limit_bytes_per_sec: None,
+            rate_limiter_refill_period_us: DEFAULT_RATE_LIMITER_REFILL_PERIOD_US,
+            rate_limiter_fairness: DEFAULT_RATE_LIMITER_FAIRNESS,
+        }
+    }
+}
+
+impl RocksdbProofsStorageOptions {
+    fn max_total_wal_size(self, column_family_count: usize) -> u64 {
+        self.max_total_wal_size.unwrap_or_else(|| {
+            column_family_count as u64
+                * self.write_buffer_size as u64
+                * self.max_write_buffer_number.max(1) as u64
+        })
+    }
+}
 
 trait RocksDbHistoryTable: Table + DupSort<SubKey = u64> {
     /// Fixed encoded table-key length before the block-number suffix.
@@ -354,11 +460,19 @@ impl RocksdbReplacementState {
 impl RocksdbProofsStorage {
     /// Creates a new [`RocksdbProofsStorage`] instance with the given path.
     pub fn new(path: &Path) -> Result<Self, BaseProofsStorageError> {
-        let block_cache = Cache::new_lru_cache(DEFAULT_BLOCK_CACHE_SIZE);
-        let db_options = Self::db_options(&block_cache);
-        let descriptors = Self::column_families()
-            .into_iter()
-            .map(|name| ColumnFamilyDescriptor::new(name, Self::cf_options(name, &block_cache)));
+        Self::new_with_options(path, RocksdbProofsStorageOptions::default())
+    }
+
+    /// Creates a new [`RocksdbProofsStorage`] instance with the given path and options.
+    pub fn new_with_options(
+        path: &Path,
+        storage_options: RocksdbProofsStorageOptions,
+    ) -> Result<Self, BaseProofsStorageError> {
+        let block_cache = Cache::new_lru_cache(storage_options.block_cache_size);
+        let db_options = Self::db_options(&block_cache, storage_options);
+        let descriptors = Self::column_families().into_iter().map(|name| {
+            ColumnFamilyDescriptor::new(name, Self::cf_options(name, &block_cache, storage_options))
+        });
         let db = RocksDb::open_cf_descriptors(&db_options, path, descriptors)
             .map_err(|e| DatabaseError::Other(format!("failed to open RocksDB database: {e}")))?;
 
@@ -376,36 +490,36 @@ impl RocksdbProofsStorage {
         })
     }
 
-    fn db_options(block_cache: &Cache) -> Options {
+    fn db_options(block_cache: &Cache, storage_options: RocksdbProofsStorageOptions) -> Options {
         let table_options = Self::table_options(block_cache);
         let mut options = Options::default();
         options.set_block_based_table_factory(&table_options);
         options.create_if_missing(true);
         options.create_missing_column_families(true);
-        options.set_max_background_jobs(Self::max_background_jobs());
-        options.set_bytes_per_sync(DEFAULT_BYTES_PER_SYNC);
+        options.set_max_background_jobs(storage_options.max_background_jobs);
+        options.set_max_subcompactions(storage_options.max_subcompactions);
+        options.set_bytes_per_sync(storage_options.bytes_per_sync);
+        options.set_compaction_readahead_size(storage_options.compaction_readahead_size);
         options.set_compaction_pri(CompactionPri::MinOverlappingRatio);
         options.set_max_open_files(DEFAULT_MAX_OPEN_FILES);
-        options.set_max_total_wal_size(Self::max_total_wal_size());
+        options.set_max_total_wal_size(Self::max_total_wal_size(storage_options));
+        options.set_use_direct_io_for_flush_and_compaction(
+            storage_options.use_direct_io_for_flush_and_compaction,
+        );
+        if let Some(rate_limit_bytes_per_sec) = storage_options.rate_limit_bytes_per_sec {
+            options.set_ratelimiter(
+                rate_limit_bytes_per_sec,
+                storage_options.rate_limiter_refill_period_us,
+                storage_options.rate_limiter_fairness,
+            );
+        }
         options.set_wal_ttl_seconds(0);
         options.set_wal_size_limit_mb(0);
         options
     }
 
-    const fn max_total_wal_size() -> u64 {
-        Self::column_families().len() as u64
-            * DEFAULT_WRITE_BUFFER_SIZE as u64
-            * DEFAULT_MAX_WRITE_BUFFER_NUMBER as u64
-    }
-
-    fn max_background_jobs() -> i32 {
-        let available_parallelism = std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(DEFAULT_MIN_BACKGROUND_JOBS as usize);
-
-        available_parallelism
-            .clamp(DEFAULT_MIN_BACKGROUND_JOBS as usize, DEFAULT_MAX_BACKGROUND_JOBS as usize)
-            as i32
+    fn max_total_wal_size(storage_options: RocksdbProofsStorageOptions) -> u64 {
+        storage_options.max_total_wal_size(Self::column_families().len())
     }
 
     fn table_options(block_cache: &Cache) -> BlockBasedOptions {
@@ -417,21 +531,33 @@ impl RocksdbProofsStorage {
         table_options
     }
 
-    fn cf_options(name: &'static str, block_cache: &Cache) -> Options {
+    fn cf_options(
+        name: &'static str,
+        block_cache: &Cache,
+        storage_options: RocksdbProofsStorageOptions,
+    ) -> Options {
         let table_options = Self::table_options(block_cache);
         let mut options = Options::default();
         options.set_block_based_table_factory(&table_options);
         options.set_level_compaction_dynamic_level_bytes(true);
-        options.set_max_write_buffer_number(DEFAULT_MAX_WRITE_BUFFER_NUMBER);
-        options.set_target_file_size_base(DEFAULT_TARGET_FILE_SIZE_BASE);
-        options.set_write_buffer_size(DEFAULT_WRITE_BUFFER_SIZE);
+        options.set_level_zero_file_num_compaction_trigger(
+            storage_options.level_zero_file_num_compaction_trigger,
+        );
+        options.set_level_zero_slowdown_writes_trigger(
+            storage_options.level_zero_slowdown_writes_trigger,
+        );
+        options.set_level_zero_stop_writes_trigger(storage_options.level_zero_stop_writes_trigger);
+        options.set_max_write_buffer_number(storage_options.max_write_buffer_number);
+        options.set_target_file_size_base(storage_options.target_file_size_base);
+        options.set_write_buffer_size(storage_options.write_buffer_size);
         if name == <ProofWindow as Table>::NAME {
             options.set_compression_type(DBCompressionType::None);
             options.set_bottommost_compression_type(DBCompressionType::None);
         } else {
-            options.set_compression_type(DBCompressionType::Lz4);
-            options.set_bottommost_compression_type(DBCompressionType::Zstd);
-            options.set_bottommost_zstd_max_train_bytes(0, true);
+            options.set_compression_type(storage_options.compression.db_compression_type());
+            options.set_bottommost_compression_type(
+                storage_options.bottommost_compression.db_compression_type(),
+            );
         }
         options
     }
@@ -2634,12 +2760,50 @@ mod tests {
 
     #[test]
     fn max_total_wal_size_tracks_column_family_write_buffers() {
+        let options = RocksdbProofsStorageOptions::default();
         assert_eq!(
-            RocksdbProofsStorage::max_total_wal_size(),
+            RocksdbProofsStorage::max_total_wal_size(options),
             RocksdbProofsStorage::column_families().len() as u64
-                * DEFAULT_WRITE_BUFFER_SIZE as u64
-                * DEFAULT_MAX_WRITE_BUFFER_NUMBER as u64
+                * options.write_buffer_size as u64
+                * options.max_write_buffer_number as u64
         );
+    }
+
+    #[test]
+    fn max_total_wal_size_uses_explicit_override() {
+        let options = RocksdbProofsStorageOptions {
+            max_total_wal_size: Some(512 * 1024 * 1024),
+            ..Default::default()
+        };
+        assert_eq!(RocksdbProofsStorage::max_total_wal_size(options), 512 * 1024 * 1024);
+    }
+
+    #[test]
+    fn default_options_use_sync_friendly_settings() {
+        let options = RocksdbProofsStorageOptions::default();
+        assert_eq!(options.compression, RocksdbProofsCompression::Lz4);
+        assert_eq!(options.bottommost_compression, RocksdbProofsCompression::Lz4);
+        assert_eq!(options.compression.db_compression_type(), DBCompressionType::Lz4);
+        assert_eq!(options.bottommost_compression.db_compression_type(), DBCompressionType::Lz4);
+        assert_eq!(options.block_cache_size, DEFAULT_BLOCK_CACHE_SIZE);
+        assert_eq!(options.bytes_per_sync, DEFAULT_BYTES_PER_SYNC);
+        assert_eq!(options.compaction_readahead_size, DEFAULT_COMPACTION_READAHEAD_SIZE);
+        assert_eq!(
+            options.level_zero_file_num_compaction_trigger,
+            DEFAULT_LEVEL_ZERO_FILE_NUM_COMPACTION_TRIGGER
+        );
+        assert_eq!(
+            options.level_zero_slowdown_writes_trigger,
+            DEFAULT_LEVEL_ZERO_SLOWDOWN_WRITES_TRIGGER
+        );
+        assert_eq!(options.level_zero_stop_writes_trigger, DEFAULT_LEVEL_ZERO_STOP_WRITES_TRIGGER);
+        assert_eq!(options.max_background_jobs, DEFAULT_MAX_BACKGROUND_JOBS);
+        assert_eq!(options.max_subcompactions, DEFAULT_MAX_SUBCOMPACTIONS);
+        assert_eq!(options.max_write_buffer_number, DEFAULT_MAX_WRITE_BUFFER_NUMBER);
+        assert_eq!(options.target_file_size_base, DEFAULT_TARGET_FILE_SIZE_BASE);
+        assert_eq!(options.write_buffer_size, DEFAULT_WRITE_BUFFER_SIZE);
+        assert!(options.use_direct_io_for_flush_and_compaction);
+        assert_eq!(options.rate_limit_bytes_per_sec, None);
     }
 
     fn block(number: u64, parent: B256) -> BlockWithParent {
