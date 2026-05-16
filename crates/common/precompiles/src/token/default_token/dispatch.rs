@@ -6,14 +6,14 @@ use revm::precompile::PrecompileResult;
 use crate::token::abi::IDefaultToken;
 use crate::token::abi::IDefaultToken::IDefaultTokenCalls as C;
 use crate::token::common::ops::{
-    Burnable, Mintable, Pausable, Permittable, Redeemable, TokenAdmin, Transferable,
+    Burnable, Mintable, Pausable, Permittable, Redeemable, Configurable, Transferable,
 };
 
-use crate::token::common::ITokenCoreAccounting;
+use crate::token::common::TokenAccounting;
 
 use super::DefaultToken;
 
-impl<S: ITokenCoreAccounting> DefaultToken<S> {
+impl<S: TokenAccounting> DefaultToken<S> {
     /// ABI-dispatches `calldata` to the appropriate `IDefaultToken` handler.
     pub fn dispatch(&mut self, calldata: &[u8]) -> PrecompileResult {
         let ctx = StorageCtx;
@@ -137,22 +137,22 @@ impl<S: ITokenCoreAccounting> DefaultToken<S> {
             // --- Admin ---
             C::setSupplyCap(c) => {
                 let caller = StorageCtx.caller();
-                TokenAdmin::set_supply_cap(self, caller, c.newSupplyCap)?;
+                Configurable::set_supply_cap(self, caller, c.newSupplyCap)?;
                 Bytes::new()
             }
             C::setName(c) => {
                 let caller = StorageCtx.caller();
-                TokenAdmin::set_name(self, caller, c.newName)?;
+                Configurable::set_name(self, caller, c.newName)?;
                 Bytes::new()
             }
             C::setSymbol(c) => {
                 let caller = StorageCtx.caller();
-                TokenAdmin::set_symbol(self, caller, c.newSymbol)?;
+                Configurable::set_symbol(self, caller, c.newSymbol)?;
                 Bytes::new()
             }
             C::setContractURI(c) => {
                 let caller = StorageCtx.caller();
-                TokenAdmin::set_contract_uri(self, caller, c.newURI)?;
+                Configurable::set_contract_uri(self, caller, c.newURI)?;
                 Bytes::new()
             }
 

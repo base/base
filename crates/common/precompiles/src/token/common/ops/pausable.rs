@@ -2,13 +2,13 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{IDefaultToken, common::{CAPABILITY_PAUSABLE, IToken}};
+use crate::token::{IDefaultToken, common::{CAPABILITY_PAUSABLE, Token}};
 
 /// Pause and unpause operations.
 ///
-/// All methods have default implementations that go through [`IToken::accounting`].
+/// All methods have default implementations that go through [`Token::accounting`].
 /// Implement this trait with an empty body to opt in.
-pub trait Pausable: IToken {
+pub trait Pausable: Token {
     /// Returns whether the given pause `vector` bit is currently set.
     fn is_paused(&self, vector: U256) -> Result<bool> {
         Ok((self.accounting().paused()? & vector) != U256::ZERO)

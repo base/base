@@ -2,7 +2,7 @@ use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
 use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
 
-use crate::token::common::ITokenCoreAccounting;
+use crate::token::common::TokenAccounting;
 
 /// Canonical precompile address for the DefaultToken (placeholder — replace before deployment).
 pub const DEFAULT_TOKEN_ADDRESS: Address = address!("0000000000000000000000000000000000000900");
@@ -23,7 +23,7 @@ pub struct DefaultTokenStorage {
     pub capabilities: U256,                                     // slot 11
 }
 
-impl ITokenCoreAccounting for DefaultTokenStorage {
+impl TokenAccounting for DefaultTokenStorage {
     fn balance_of(&self, account: Address) -> Result<U256> {
         self.balances.at(&account).read()
     }

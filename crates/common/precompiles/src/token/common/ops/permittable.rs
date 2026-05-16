@@ -13,7 +13,7 @@ const PERMIT_TYPEHASH: B256 =
 /// EIP-2612 permit and EIP-712 domain operations.
 ///
 /// Requires [`Transferable`] since `permit` internally calls [`Transferable::approve`].
-/// `token_address()` is inherited via `Permittable: Transferable: IToken`.
+/// `token_address()` is inherited via `Permittable: Transferable: Token`.
 pub trait Permittable: Transferable {
     /// Computes the EIP-712 domain separator for this token.
     ///

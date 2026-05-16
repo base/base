@@ -1,4 +1,4 @@
-//! `ITokenCoreAccounting` — the driven port all token storage adapters implement.
+//! `TokenAccounting` — the driven port all token storage adapters implement.
 
 use alloy_primitives::{Address, LogData, U256};
 use base_precompile_storage::Result;
@@ -8,7 +8,7 @@ use base_precompile_storage::Result;
 /// Each token variant's `#[contract]` storage struct implements this trait.
 /// The domain logic in [`super::TokenBase`] only depends on this interface,
 /// never on EVM storage directly.
-pub trait ITokenCoreAccounting {
+pub trait TokenAccounting {
     // --- Balances ---
 
     /// Returns the token balance of `account`.

@@ -2,14 +2,14 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::common::IToken;
+use crate::token::common::Token;
 use crate::token::IDefaultToken;
 
 /// Token burn operations.
 ///
-/// All methods have default implementations that go through [`IToken::accounting`].
+/// All methods have default implementations that go through [`Token::accounting`].
 /// Implement this trait with an empty body to opt in.
-pub trait Burnable: IToken {
+pub trait Burnable: Token {
     /// Destroys `amount` tokens from `from`. Emits `Transfer(from, 0x0, amount)`.
     fn burn(&mut self, from: Address, amount: U256) -> Result<()> {
         let balance = self.accounting().balance_of(from)?;

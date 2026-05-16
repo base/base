@@ -1,12 +1,12 @@
 //! Shared business logic for all Base-native token variants.
 
-mod itoken;
-mod repository;
+mod token;
+mod token_accounting;
 pub mod ops;
 
-pub use itoken::IToken;
-pub use repository::ITokenCoreAccounting;
-pub use ops::{Burnable, Mintable, Pausable, Permittable, Redeemable, TokenAdmin, Transferable};
+pub use token::Token;
+pub use token_accounting::TokenAccounting;
+pub use ops::{Burnable, Mintable, Pausable, Permittable, Redeemable, Configurable, Transferable};
 
 use alloy_primitives::U256;
 

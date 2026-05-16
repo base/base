@@ -2,14 +2,14 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::common::IToken;
+use crate::token::common::Token;
 use crate::token::IDefaultToken;
 
 /// ERC-20 transfer, approval, and memo-decorated transfer operations.
 ///
-/// All methods have default implementations that go through [`IToken::accounting`].
+/// All methods have default implementations that go through [`Token::accounting`].
 /// Implement this trait with an empty body to opt in.
-pub trait Transferable: IToken {
+pub trait Transferable: Token {
     /// Moves `amount` tokens from `from` to `to`. Emits `Transfer`.
     fn transfer(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
         if from == Address::ZERO {

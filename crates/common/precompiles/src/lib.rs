@@ -21,6 +21,6 @@ mod bls12_381;
 pub mod token;
 pub use token::{
     CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, DEFAULT_TOKEN_ADDRESS, DefaultToken,
-    DefaultTokenStorage, IDefaultToken, IToken, ITokenCoreAccounting,
-    Burnable, Mintable, Pausable, Permittable, Redeemable, TokenAdmin, Transferable,
+    DefaultTokenStorage, IDefaultToken, Token, TokenAccounting,
+    Burnable, Mintable, Pausable, Permittable, Redeemable, Configurable, Transferable,
 };

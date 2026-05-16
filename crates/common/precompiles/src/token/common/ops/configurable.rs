@@ -2,13 +2,13 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{IDefaultToken, common::{CAPABILITY_CAP_MUTABLE, IToken}};
+use crate::token::{IDefaultToken, common::{CAPABILITY_CAP_MUTABLE, Token}};
 
-/// Administrative operations: supply cap, metadata, and contract URI updates.
+/// Mutable configuration operations: supply cap, metadata, and contract URI updates.
 ///
-/// All methods have default implementations that go through [`IToken::accounting`].
+/// All methods have default implementations that go through [`Token::accounting`].
 /// Implement with an empty body to opt in.
-pub trait TokenAdmin: IToken {
+pub trait Configurable: Token {
     /// Returns whether the `CAP_MUTABLE` capability bit is set on this token.
     fn is_cap_mutable(&self) -> Result<bool> {
         Ok((self.accounting().capabilities()? & CAPABILITY_CAP_MUTABLE) != U256::ZERO)
