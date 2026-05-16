@@ -254,7 +254,7 @@ pub struct P2PNetworkArgs {
 
     /// An optional unsafe block signer address.
     ///
-    /// By default, this is fetched from the chain config in the superchain-registry using the
+    /// By default, this is fetched from the built-in chain config using the
     /// specified L2 chain ID.
     #[arg(long = "p2p.unsafe.block.signer", env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER")]
     pub unsafe_block_signer: Option<alloy_primitives::Address>,
@@ -461,7 +461,7 @@ impl P2PArgs {
 
             // If storage returns zero (e.g. L1 is still early in sync and the SystemConfig
             // contract hadn't been deployed at the queried block), fall through to the
-            // genesis/registry signer rather than using the zero address.
+            // genesis/built-in signer rather than using the zero address.
             if !signer.is_zero() {
                 return Ok(signer);
             }
@@ -470,7 +470,7 @@ impl P2PArgs {
                 target: "p2p::flags",
                 block_number = block_info.number,
                 "L1 SystemConfig returned zero unsafe block signer (L1 may still be syncing), \
-                 falling back to registry/genesis signer"
+                 falling back to built-in/genesis signer"
             );
         }
 
@@ -478,7 +478,7 @@ impl P2PArgs {
         genesis_signer.or(self.unsafe_block_signer).ok_or_else(|| {
             eyre::eyre!(
                 "Unsafe block signer not provided for chain ID {}. \
-                 Provide --p2p.unsafe.block.signer or ensure the chain is in the superchain registry.",
+                 Provide --p2p.unsafe.block.signer or ensure the chain is supported by the built-in chain config.",
                 l2_chain_id
             )
         })

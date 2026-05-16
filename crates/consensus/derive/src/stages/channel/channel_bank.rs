@@ -566,8 +566,8 @@ mod tests {
         let _guard = tracing::subscriber::set_default(subscriber);
 
         let configs: [RollupConfig; 2] = [
-            base_common_chains::Registry::rollup_config(8453).cloned().unwrap(),
-            base_common_chains::Registry::rollup_config(84532).cloned().unwrap(),
+            base_common_chains::rollup_config!(base_common_chains::ChainConfig::MAINNET),
+            base_common_chains::rollup_config!(base_common_chains::ChainConfig::SEPOLIA),
         ];
 
         for cfg in configs {

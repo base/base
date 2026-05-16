@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
-use base_common_chains::Registry;
+use base_common_chains::{ChainConfig, rollup_config};
 use base_common_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -186,8 +186,7 @@ impl MonitoringConfig {
 
     /// Returns the default Base mainnet configuration.
     pub fn mainnet() -> Self {
-        let rollup =
-            Registry::rollup_config(8453).expect("Base mainnet config missing from registry");
+        let rollup = rollup_config!(ChainConfig::MAINNET);
         Self {
             name: "mainnet".to_string(),
             rpc: Url::parse("https://mainnet.base.org").unwrap(),
@@ -205,8 +204,7 @@ impl MonitoringConfig {
 
     /// Returns the default Base Sepolia configuration.
     pub fn sepolia() -> Self {
-        let rollup =
-            Registry::rollup_config(84532).expect("Base Sepolia config missing from registry");
+        let rollup = rollup_config!(ChainConfig::SEPOLIA);
         Self {
             name: "sepolia".to_string(),
             rpc: Url::parse("https://sepolia.base.org").unwrap(),

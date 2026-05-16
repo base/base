@@ -3,7 +3,6 @@
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256, uint};
-use base_common_chains::Registry;
 use base_common_genesis::RollupConfig;
 use base_proof_preimage::{PreimageKey, PreimageOracleClient};
 use serde::{Deserialize, Serialize};
@@ -148,11 +147,11 @@ pub struct BootInfo {
     /// derivation, including genesis configuration, system addresses, gas limits,
     /// and hard fork activation heights.
     ///
-    /// **Security**: Loaded from registry (secure) or oracle (requires validation).
+    /// **Security**: Loaded from built-in config (secure) or oracle (requires validation).
     pub rollup_config: RollupConfig,
     /// An optional configuration for the l1 chain associated with the l2 chain.
     ///
-    /// **Security**: Loaded from registry (secure) or oracle (requires validation).
+    /// **Security**: Loaded from built-in config (secure) or oracle (requires validation).
     pub l1_config: ChainConfig,
     /// The proposer address that will submit the proof transaction on-chain.
     ///
@@ -240,13 +239,13 @@ impl BootInfo {
 
         // Attempt to load the rollup config from the chain ID. If there is no config for the chain,
         // fall back to loading the config from the preimage oracle.
-        let rollup_config = if let Some(config) = Registry::rollup_config(chain_id) {
-            config.clone()
+        let rollup_config = if let Some(config) = base_common_chains::rollup_config!(chain_id) {
+            config
         } else {
             warn!(
                 target: "boot_loader",
-                "No rollup config found for chain ID {}, falling back to preimage oracle. This is insecure in production without additional validation!",
-                chain_id
+                chain_id,
+                "no built-in rollup config found for chain ID, falling back to preimage oracle; this is insecure in production without additional validation"
             );
             let ser_cfg = oracle
                 .get(PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()))
@@ -255,7 +254,7 @@ impl BootInfo {
             serde_json::from_slice(&ser_cfg).map_err(OracleProviderError::Serde)?
         };
 
-        // Registry configs should already match, but oracle-provided configs must be bound to the
+        // Built-in configs should already match, but oracle-provided configs must be bound to the
         // committed boot chain ID before any config-derived chain parameters are trusted.
         let rollup_config_chain_id = rollup_config.l2_chain_id.id();
         if chain_id != rollup_config_chain_id {
@@ -363,7 +362,7 @@ mod tests {
 
     use alloy_primitives::B256;
     use async_trait::async_trait;
-    use base_common_chains::Registry;
+    use base_common_chains::ChainConfig as BaseChainConfig;
     use base_proof_preimage::{
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
@@ -407,8 +406,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_oracle_rollup_config_with_mismatched_chain_id() {
-        let rollup_config =
-            Registry::rollup_config(84532).expect("Base Sepolia config should exist").clone();
+        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
@@ -435,8 +433,7 @@ mod tests {
     async fn accepts_oracle_rollup_config_with_matching_chain_id() {
         const ORACLE_CHAIN_ID: u64 = 999_999_999;
 
-        let rollup_config =
-            Registry::rollup_config(84532).expect("Base Sepolia config should exist").clone();
+        let rollup_config = base_common_chains::rollup_config!(BaseChainConfig::SEPOLIA);
         let mut rollup_config_value =
             serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
         rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);

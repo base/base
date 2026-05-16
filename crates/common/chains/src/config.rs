@@ -157,6 +157,15 @@ impl ChainConfig {
     ];
 
     /// Base Mainnet chain configuration.
+    pub const MAINNET: &'static Self = Self::mainnet();
+    /// Base Sepolia chain configuration.
+    pub const SEPOLIA: &'static Self = Self::sepolia();
+    /// Local dev chain configuration (all forks active at genesis).
+    pub const DEVNET: &'static Self = Self::devnet();
+    /// Base Zeronet chain configuration.
+    pub const ZERONET: &'static Self = Self::zeronet();
+
+    /// Base Mainnet chain configuration.
     pub const fn mainnet() -> &'static Self {
         &MAINNET
     }
@@ -197,9 +206,20 @@ impl ChainConfig {
         match id {
             8453 => Some(&MAINNET),
             84532 => Some(&SEPOLIA),
+            1337 => Some(&DEVNET),
             763360 => Some(&ZERONET),
             _ => None,
         }
+    }
+
+    /// Returns the full [`RollupConfig`] for the given L2 chain ID.
+    pub fn rollup_config_by_chain_id(id: u64) -> Option<RollupConfig> {
+        Self::by_chain_id(id).map(Self::rollup_config)
+    }
+
+    /// Returns the full [`RollupConfig`] for the given [`Chain`] identifier.
+    pub fn rollup_config_by_chain(chain: &Chain) -> Option<RollupConfig> {
+        Self::rollup_config_by_chain_id(chain.id())
     }
 
     /// Returns the EIP-1559 [`FeeConfig`] for this chain.
@@ -564,5 +584,18 @@ mod tests {
             assert!(ChainConfig::by_name(name).is_some(), "{name} should resolve");
         }
         assert_eq!(ChainConfig::by_name(ChainConfig::SEPOLIA_ALIAS), Some(ChainConfig::sepolia()));
+        assert_eq!(
+            ChainConfig::by_chain_id(ChainConfig::devnet().chain_id),
+            Some(ChainConfig::devnet())
+        );
+        assert_eq!(
+            ChainConfig::rollup_config_by_chain_id(ChainConfig::devnet().chain_id)
+                .map(|cfg| cfg.l2_chain_id.id()),
+            Some(ChainConfig::devnet().chain_id)
+        );
+        assert_eq!(ChainConfig::MAINNET, ChainConfig::mainnet());
+        assert_eq!(ChainConfig::SEPOLIA, ChainConfig::sepolia());
+        assert_eq!(ChainConfig::DEVNET, ChainConfig::devnet());
+        assert_eq!(ChainConfig::ZERONET, ChainConfig::zeronet());
     }
 }

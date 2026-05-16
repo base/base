@@ -5,7 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 use alloy_primitives::Address;
 use alloy_rpc_types_engine::JwtSecret;
 use base_cli_utils::{LogConfig, RuntimeManager};
-use base_common_chains::Registry;
+use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder};
 use clap::Args;
@@ -333,7 +333,8 @@ impl ConsensusNodeArgs {
     /// Returns the configured genesis signer address for the selected L2 chain.
     pub fn genesis_signer(&self) -> eyre::Result<Address> {
         let id = self.chain.l2_chain_id;
-        Registry::unsafe_block_signer(id.id())
+        ChainConfig::by_chain_id(id.id())
+            .and_then(|cfg| cfg.unsafe_block_signer)
             .ok_or_else(|| eyre::eyre!("No unsafe block signer found for chain ID: {id}"))
     }
 }
