@@ -23,9 +23,17 @@ impl DerivationFixtureReplayer {
     pub async fn derive_payloads(
         fixture: &ActionFixture,
     ) -> Result<Vec<AttributesWithParent>, FixtureReplayError> {
+        Self::derive_payloads_with_rollup_config(fixture, Self::rollup_config(fixture)?).await
+    }
+
+    /// Derive payload attributes using an explicit rollup config.
+    pub async fn derive_payloads_with_rollup_config(
+        fixture: &ActionFixture,
+        rollup_config: RollupConfig,
+    ) -> Result<Vec<AttributesWithParent>, FixtureReplayError> {
         let derivation =
             fixture.derivation.as_ref().ok_or(FixtureReplayError::MissingDerivationFixture)?;
-        let rollup_config = Arc::new(Self::rollup_config(fixture)?);
+        let rollup_config = Arc::new(rollup_config);
         let shared_l1 = ActionFixtureAdapter::shared_l1_chain(fixture)?;
         let l2_provider = Self::seed_l2_provider(fixture, rollup_config.as_ref())?;
         let mut cursor = derivation.safe_head;

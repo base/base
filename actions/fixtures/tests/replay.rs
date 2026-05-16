@@ -1,18 +1,45 @@
 //! Harness replay tests for checked-in action fixtures.
 
-use base_action_fixtures::{ActionFixtureAdapter, ActionFixtureCatalog, DerivationFixtureReplayer};
+use base_action_fixtures::{
+    ActionFixture, ActionFixtureAdapter, ActionFixtureCatalog, DerivationFixtureReplayer,
+};
 use base_action_harness::{
     ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };
+use base_protocol::AttributesWithParent;
 
 #[tokio::test]
 async fn captured_l1_data_derives_expected_l2_payloads() {
     let fixture =
         ActionFixtureCatalog::load("base-mainnet", "base-mainnet-derivation-window-l2-1-1")
             .expect("fixture must load");
-    let derivation = fixture.derivation.as_ref().expect("fixture records derivation anchor");
+    let mut rollup_config =
+        DerivationFixtureReplayer::rollup_config(&fixture).expect("fixture has rollup config");
+
+    rollup_config.seq_window_size = 2;
+
+    assert_fixture_payloads(
+        &fixture,
+        DerivationFixtureReplayer::derive_payloads_with_rollup_config(&fixture, rollup_config)
+            .await
+            .expect("fixture derives with shortened sequence window"),
+    );
+}
+
+#[tokio::test]
+#[ignore = "exact Base mainnet genesis replay advances through the 3600-block sequence window"]
+async fn captured_l1_data_derives_expected_l2_payloads_exact_mainnet() {
+    let fixture =
+        ActionFixtureCatalog::load("base-mainnet", "base-mainnet-derivation-window-l2-1-1")
+            .expect("fixture must load");
     let payloads =
         DerivationFixtureReplayer::derive_payloads(&fixture).await.expect("fixture derives");
+
+    assert_fixture_payloads(&fixture, payloads);
+}
+
+fn assert_fixture_payloads(fixture: &ActionFixture, payloads: Vec<AttributesWithParent>) {
+    let derivation = fixture.derivation.as_ref().expect("fixture records derivation anchor");
 
     assert_eq!(payloads.len(), fixture.l2_blocks.len());
     for (payload, fixture_block) in payloads.iter().zip(&fixture.l2_blocks) {
