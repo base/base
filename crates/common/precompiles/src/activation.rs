@@ -86,38 +86,37 @@ impl ActivationRegistry {
 
         let data = input.data;
         let mut storage = EvmPrecompileStorageProvider::new(input);
-        StorageCtx::enter(&mut storage, || Self::new().dispatch(data))
+        StorageCtx::enter(&mut storage, |ctx| Self::new().dispatch(ctx, data))
     }
 
     /// ABI-dispatches activation registry calldata.
-    pub fn dispatch(self, calldata: &[u8]) -> PrecompileResult {
-        match self.inner(calldata) {
+    pub fn dispatch(self, ctx: StorageCtx<'_>, calldata: &[u8]) -> PrecompileResult {
+        match self.inner(ctx, calldata) {
             Ok(output) => Ok(output),
-            Err(error) => StorageCtx.error_result(error),
+            Err(error) => ctx.error_result(error),
         }
     }
 
     /// Returns true when the feature is enabled.
-    pub fn is_enabled(self, feature: B256) -> Result<bool> {
-        ActivationRegistryStorage::new().features.at(&feature).read()
+    pub fn is_enabled(self, ctx: StorageCtx<'_>, feature: B256) -> Result<bool> {
+        ActivationRegistryStorage::new(ctx).features.at(&feature).read()
     }
 
     /// Reverts unless the feature is enabled.
-    pub fn assert_enabled(self, feature: B256) -> PrecompileResult {
-        match self.is_enabled(feature) {
-            Ok(true) => Ok(StorageCtx.success_output(Bytes::new())),
-            Ok(false) => Ok(StorageCtx.abi_revert(
+    pub fn assert_enabled(self, ctx: StorageCtx<'_>, feature: B256) -> PrecompileResult {
+        match self.is_enabled(ctx, feature) {
+            Ok(true) => Ok(ctx.success_output(Bytes::new())),
+            Ok(false) => Ok(ctx.abi_revert(
                 IActivationRegistry::IActivationRegistryErrors::FeatureNotEnabled(
                     IActivationRegistry::FeatureNotEnabled { feature },
                 ),
             )),
-            Err(error) => StorageCtx.error_result(error),
+            Err(error) => ctx.error_result(error),
         }
     }
 
     /// Enables the feature.
-    pub fn enable(self, feature: B256) -> Result<PrecompileOutput> {
-        let mut ctx = StorageCtx;
+    pub fn enable(self, ctx: StorageCtx<'_>, feature: B256) -> Result<PrecompileOutput> {
         if ctx.is_static() {
             return Ok(ctx.abi_revert(
                 IActivationRegistry::IActivationRegistryErrors::StaticCallNotAllowed(
@@ -135,7 +134,7 @@ impl ActivationRegistry {
             ));
         }
 
-        let mut storage = ActivationRegistryStorage::new();
+        let mut storage = ActivationRegistryStorage::new(ctx);
         if storage.features.at(&feature).read()? {
             return Ok(ctx.abi_revert(
                 IActivationRegistry::IActivationRegistryErrors::AlreadyEnabled(
@@ -159,7 +158,7 @@ impl ActivationRegistry {
     }
 
     /// Runs the decoded activation registry call.
-    pub fn inner(self, calldata: &[u8]) -> Result<PrecompileOutput> {
+    pub fn inner(self, ctx: StorageCtx<'_>, calldata: &[u8]) -> Result<PrecompileOutput> {
         if calldata.len() < 4 {
             return Err(BasePrecompileError::UnknownFunctionSelector([0u8; 4]));
         }
@@ -170,15 +169,15 @@ impl ActivationRegistry {
 
         match call {
             IActivationRegistry::IActivationRegistryCalls::isEnabled(call) => {
-                let enabled = self.is_enabled(call.feature)?;
-                Ok(StorageCtx.success_output(
+                let enabled = self.is_enabled(ctx, call.feature)?;
+                Ok(ctx.success_output(
                     IActivationRegistry::isEnabledCall::abi_encode_returns(&enabled).into(),
                 ))
             }
             IActivationRegistry::IActivationRegistryCalls::enable(call) => {
-                self.enable(call.feature)
+                self.enable(ctx, call.feature)
             }
-            IActivationRegistry::IActivationRegistryCalls::activationAdmin(_) => Ok(StorageCtx
+            IActivationRegistry::IActivationRegistryCalls::activationAdmin(_) => Ok(ctx
                 .success_output(
                     IActivationRegistry::activationAdminCall::abi_encode_returns(
                         &self.activation_admin(),
@@ -201,15 +200,15 @@ mod tests {
         calldata: Bytes,
     ) -> PrecompileOutput {
         storage.set_caller(caller);
-        StorageCtx::enter(storage, || ActivationRegistry::new().dispatch(&calldata))
+        StorageCtx::enter(storage, |ctx| ActivationRegistry::new().dispatch(ctx, &calldata))
             .expect("precompile execution should not fail fatally")
     }
 
     fn assert_enabled(storage: &mut HashMapStorageProvider, expected: bool) {
-        StorageCtx::enter(storage, || {
+        StorageCtx::enter(storage, |ctx| {
             assert_eq!(
                 ActivationRegistry::new()
-                    .is_enabled(SECURITIES_TOKEN_CREATION)
+                    .is_enabled(ctx, SECURITIES_TOKEN_CREATION)
                     .expect("storage read succeeds"),
                 expected
             );
