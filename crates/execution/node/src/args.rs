@@ -102,7 +102,7 @@ pub struct ProofsHistoryRocksdbArgs {
     )]
     pub bottommost_compression: ProofsHistoryRocksdbCompression,
 
-    /// `RocksDB` block cache size in MiB.
+    /// `RocksDB` block cache size in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.block-cache-size-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_BLOCK_CACHE_SIZE_MIB",
@@ -112,7 +112,7 @@ pub struct ProofsHistoryRocksdbArgs {
     )]
     pub block_cache_size_mib: u64,
 
-    /// Bytes-per-sync threshold in MiB. Set 0 to disable.
+    /// Bytes-per-sync threshold in `MiB`. Set 0 to disable.
     #[arg(
         long = "proofs-history.rocksdb.bytes-per-sync-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_BYTES_PER_SYNC_MIB",
@@ -121,7 +121,7 @@ pub struct ProofsHistoryRocksdbArgs {
     )]
     pub bytes_per_sync_mib: u64,
 
-    /// Readahead size in MiB for compaction input reads. Set 0 to disable.
+    /// Readahead size in `MiB` for compaction input reads. Set 0 to disable.
     #[arg(
         long = "proofs-history.rocksdb.compaction-readahead-size-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_COMPACTION_READAHEAD_SIZE_MIB",
@@ -180,7 +180,7 @@ pub struct ProofsHistoryRocksdbArgs {
     )]
     pub max_subcompactions: u32,
 
-    /// Maximum total WAL size in MiB. Defaults to write-buffer-size * max-write-buffers * CFs.
+    /// Maximum total WAL size in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.max-total-wal-size-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_MAX_TOTAL_WAL_SIZE_MIB",
@@ -199,7 +199,7 @@ pub struct ProofsHistoryRocksdbArgs {
     )]
     pub max_write_buffer_number: i32,
 
-    /// Base target SST file size in MiB.
+    /// Base target SST file size in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.target-file-size-base-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_TARGET_FILE_SIZE_BASE_MIB",
@@ -209,7 +209,7 @@ pub struct ProofsHistoryRocksdbArgs {
     )]
     pub target_file_size_base_mib: u64,
 
-    /// Write buffer size per proof-history column family in MiB.
+    /// Write buffer size per proof-history column family in `MiB`.
     #[arg(
         long = "proofs-history.rocksdb.write-buffer-size-mib",
         value_name = "PROOFS_HISTORY_ROCKSDB_WRITE_BUFFER_SIZE_MIB",
@@ -228,7 +228,7 @@ pub struct ProofsHistoryRocksdbArgs {
     )]
     pub direct_io_for_flush_and_compaction: bool,
 
-    /// Optional `RocksDB` write rate limit in MiB per second for flush and compaction.
+    /// Optional `RocksDB` write rate limit in `MiB` per second for flush and compaction.
     #[arg(
         long = "proofs-history.rocksdb.rate-limit-mib-per-sec",
         value_name = "PROOFS_HISTORY_ROCKSDB_RATE_LIMIT_MIB_PER_SEC",
