@@ -23,18 +23,18 @@ pub trait L1HeadSubscription: Send {
 
 impl L1HeadSubscription for StreamSubscription<u64> {
     fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
-        StreamSubscription::take_stream(self)
+        Self::take_stream(self)
     }
 }
 
 impl L1HeadSubscription for KeepAliveSubscription<u64> {
     fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
-        KeepAliveSubscription::take_stream(self)
+        Self::take_stream(self)
     }
 }
 
 impl L1HeadSubscription for PendingSubscription<u64> {
     fn take_stream(&mut self) -> BoxStream<'static, Result<u64, SourceError>> {
-        PendingSubscription::take_stream(self)
+        Self::take_stream(self)
     }
 }

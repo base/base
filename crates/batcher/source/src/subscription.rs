@@ -24,18 +24,18 @@ pub trait BlockSubscription: Send {
 
 impl BlockSubscription for StreamSubscription<BaseBlock> {
     fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
-        StreamSubscription::take_stream(self)
+        Self::take_stream(self)
     }
 }
 
 impl BlockSubscription for KeepAliveSubscription<BaseBlock> {
     fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
-        KeepAliveSubscription::take_stream(self)
+        Self::take_stream(self)
     }
 }
 
 impl BlockSubscription for PendingSubscription<BaseBlock> {
     fn take_stream(&mut self) -> BoxStream<'static, Result<BaseBlock, SourceError>> {
-        PendingSubscription::take_stream(self)
+        Self::take_stream(self)
     }
 }
