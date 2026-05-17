@@ -104,7 +104,7 @@ pub struct RocksdbProofsStorageOptions {
     pub bottommost_compression: RocksdbProofsCompression,
     /// LRU block cache size in bytes.
     pub block_cache_size: usize,
-    /// Number of bytes RocksDB should write before asking the OS to start syncing.
+    /// Number of bytes `RocksDB` should write before asking the OS to start syncing.
     pub bytes_per_sync: u64,
     /// Readahead size in bytes for compaction input reads.
     pub compaction_readahead_size: usize,
@@ -114,7 +114,7 @@ pub struct RocksdbProofsStorageOptions {
     pub level_zero_slowdown_writes_trigger: i32,
     /// Number of L0 files that stops writes.
     pub level_zero_stop_writes_trigger: i32,
-    /// Maximum number of RocksDB background jobs.
+    /// Maximum number of `RocksDB` background jobs.
     pub max_background_jobs: i32,
     /// Maximum number of subcompactions per compaction.
     pub max_subcompactions: u32,
@@ -128,7 +128,7 @@ pub struct RocksdbProofsStorageOptions {
     pub target_file_size_base: u64,
     /// Whether flush and compaction files should use direct I/O.
     pub use_direct_io_for_flush_and_compaction: bool,
-    /// Optional RocksDB write rate limit in bytes per second.
+    /// Optional `RocksDB` write rate limit in bytes per second.
     pub rate_limit_bytes_per_sec: Option<i64>,
     /// Rate limiter refill period in microseconds.
     pub rate_limiter_refill_period_us: i64,
