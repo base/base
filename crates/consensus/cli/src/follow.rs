@@ -114,8 +114,9 @@ pub struct ConsensusFollowNodeConfigArgs {
     /// `ExEx` head. Only effective when `--proofs` is enabled.
     #[arg(
         long = "proofs.max-blocks-ahead",
-        default_value_t = 512,
-        env = "BASE_NODE_PROOFS_MAX_BLOCKS_AHEAD"
+        default_value_t = 8,
+        env = "BASE_NODE_PROOFS_MAX_BLOCKS_AHEAD",
+        value_parser = clap::value_parser!(u64).range(1..32),
     )]
     pub proofs_max_blocks_ahead: u64,
 

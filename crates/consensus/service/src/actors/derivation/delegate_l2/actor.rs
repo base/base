@@ -18,7 +18,7 @@ use crate::{
     actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
 };
 
-const DEFAULT_PROOFS_MAX_BLOCKS_AHEAD: u64 = 512;
+const DEFAULT_PROOFS_MAX_BLOCKS_AHEAD: u64 = 8;
 
 #[derive(Debug, Deserialize)]
 struct ProofsSyncStatus {

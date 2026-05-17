@@ -57,7 +57,7 @@ impl FollowNode {
             rpc_builder,
             l1_config,
             proofs_enabled: false,
-            proofs_max_blocks_ahead: 512,
+            proofs_max_blocks_ahead: 8,
         }
     }
 
