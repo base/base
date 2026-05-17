@@ -16,13 +16,16 @@ on:
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/node-reth-dev
   RELEASE_BINS: |
+    base
     base-reth-node
-    basectl
     base-consensus
+    basectl
 
 permissions:
   contents: write
   packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   # Build native binaries for release artifacts
@@ -105,6 +108,31 @@ jobs:
             fi
           done <<< "${RELEASE_BINS}"
 
+      - name: Sign archives
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [[ -z "$GPG_SIGNING_KEY" || -z "$GPG_PASSPHRASE" ]]; then
+            echo "::error::GPG_SIGNING_KEY and GPG_PASSPHRASE secrets are required to sign release binaries"
+            exit 1
+          fi
+
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+
+          echo -n "$GPG_SIGNING_KEY" | base64 --decode | gpg --batch --import
+          for archive in *.tar.gz; do
+            printf '%s' "$GPG_PASSPHRASE" | \
+              gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --armor --detach-sign "$archive"
+          done
+
+      - name: Attest build provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: "*.tar.gz"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -112,6 +140,7 @@ jobs:
           path: |
             *.tar.gz
             *.tar.gz.sha256
+            *.tar.gz.asc
           if-no-files-found: error
           retention-days: 1
 
@@ -287,7 +316,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ inputs.tag }}"
-          gh release upload "$TAG" ${{ runner.temp }}/binaries/*.tar.gz ${{ runner.temp }}/binaries/*.tar.gz.sha256
+          gh release upload "$TAG" ${{ runner.temp }}/binaries/*.tar.gz ${{ runner.temp }}/binaries/*.tar.gz.sha256 ${{ runner.temp }}/binaries/*.tar.gz.asc
 
       - name: Summary
         run: |

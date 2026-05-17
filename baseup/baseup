@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.3"
+BASEUP_INSTALLER_VERSION="0.1.4"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -14,11 +14,14 @@ BIN_DIR="${BASE_BIN_DIR:-$BASEUP_HOME/bin}"
 BASEUP_HOST_BASE_URL="${BASEUP_HOST_BASE_URL:-https://raw.githubusercontent.com/${BASEUP_REPO}/${BASEUP_REPO_REF}/baseup}"
 BASEUP_BIN_URL="${BASEUP_BIN_URL:-${BASEUP_HOST_BASE_URL}/baseup}"
 BASEUP_BIN_PATH="$BIN_DIR/baseup"
+BASEUP_RELEASE_GPG_FINGERPRINT="${BASEUP_RELEASE_GPG_FINGERPRINT:-}"
+BASEUP_RELEASE_GPG_KEY_URL="${BASEUP_RELEASE_GPG_KEY_URL:-}"
 
-DEFAULT_BINS=("base-reth-node" "basectl")
+DEFAULT_BINS=("base" "base-reth-node" "base-consensus" "basectl")
 SELECTED_BINS=()
 VERSION=""
 VERSION_EXPLICIT=0
+UNSAFE_SKIP_VERIFY=0
 UPDATE_TMP_FILE=""
 MAIN_TMP_DIR=""
 UPDATE_CHECK_CACHE_FILE="$BASEUP_HOME/baseup-update-check"
@@ -199,6 +202,96 @@ compute_sha256() {
     fi
 }
 
+normalize_fingerprint() {
+    printf '%s' "$1" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]'
+}
+
+ensure_gpg_key() {
+    local fingerprint
+    fingerprint="$(normalize_fingerprint "$BASEUP_RELEASE_GPG_FINGERPRINT")"
+
+    [[ -n "$fingerprint" ]] || return 0
+
+    if gpg --batch --list-keys "$fingerprint" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [[ -z "$BASEUP_RELEASE_GPG_KEY_URL" ]]; then
+        error "Base release signing key $fingerprint is not in your keyring. Set BASEUP_RELEASE_GPG_KEY_URL or import the key before installing."
+    fi
+
+    info "Fetching Base release signing key..."
+    if ! fetch_text "$BASEUP_RELEASE_GPG_KEY_URL" | gpg --batch --import >/dev/null 2>&1; then
+        error "Failed to import Base release signing key"
+    fi
+
+    if ! gpg --batch --list-keys "$fingerprint" >/dev/null 2>&1; then
+        error "Imported key does not match Base release signing fingerprint $fingerprint"
+    fi
+}
+
+verify_gpg_signature() {
+    local archive_name="$1"
+    local archive_path="$2"
+    local signature_path="$3"
+    local expected_fingerprint
+    local actual_fingerprint
+    local status_output
+
+    if [[ "$UNSAFE_SKIP_VERIFY" -eq 1 ]]; then
+        warn "Skipping GPG signature verification for $archive_name (--unsafe-skip-verify)."
+        return
+    fi
+
+    if ! command -v gpg >/dev/null 2>&1; then
+        error "gpg not found. Install gpg, or re-run with --unsafe-skip-verify to bypass signature verification."
+    fi
+
+    ensure_gpg_key
+
+    if ! status_output="$(gpg --batch --status-fd 1 --verify "$signature_path" "$archive_path" 2>/dev/null)"; then
+        error "GPG signature verification failed for $archive_name"
+    fi
+
+    expected_fingerprint="$(normalize_fingerprint "$BASEUP_RELEASE_GPG_FINGERPRINT")"
+    if [[ -n "$expected_fingerprint" ]]; then
+        actual_fingerprint="$(printf '%s\n' "$status_output" | awk '/^\[GNUPG:\] VALIDSIG / { print $3; exit }')"
+        actual_fingerprint="$(normalize_fingerprint "$actual_fingerprint")"
+
+        if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            error "GPG signature for $archive_name was made by $actual_fingerprint, expected $expected_fingerprint"
+        fi
+    else
+        warn "BASEUP_RELEASE_GPG_FINGERPRINT is not set; accepted any locally available GPG signing key."
+    fi
+
+    info "GPG signature verified for $archive_name"
+}
+
+verify_attestation() {
+    local archive_name="$1"
+    local archive_path="$2"
+
+    if [[ "$UNSAFE_SKIP_VERIFY" -eq 1 ]]; then
+        warn "Skipping SLSA attestation verification for $archive_name (--unsafe-skip-verify)."
+        return
+    fi
+
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        info "Verifying SLSA build provenance for $archive_name..."
+        if gh attestation verify "$archive_path" --repo "$BASEUP_REPO" \
+            --predicate-type https://slsa.dev/provenance/v1 >/dev/null 2>&1; then
+            info "SLSA provenance verified for $archive_name"
+        else
+            warn "SLSA provenance attestation not found or failed verification for $archive_name."
+        fi
+    elif command -v gh >/dev/null 2>&1; then
+        warn "gh is not authenticated; skipping optional SLSA attestation verification for $archive_name."
+    else
+        info "gh not found; skipping optional SLSA attestation verification for $archive_name."
+    fi
+}
+
 validate_archive() {
     local archive_path="$1"
     local archive_listing
@@ -375,8 +468,14 @@ normalize_bin_name() {
         all)
             echo "all"
             ;;
+        base)
+            echo "base"
+            ;;
         node | reth-node | base-reth-node)
             echo "base-reth-node"
+            ;;
+        consensus | base-consensus)
+            echo "base-consensus"
             ;;
         ctl | basectl)
             echo "basectl"
@@ -389,7 +488,7 @@ normalize_bin_name() {
 
 add_selected_bin() {
     local normalized
-    normalized="$(normalize_bin_name "$1")" || error "Unknown binary '$1'. Valid values: base-reth-node, basectl, all."
+    normalized="$(normalize_bin_name "$1")" || error "Unknown binary '$1'. Valid values: base, base-reth-node, base-consensus, basectl, all."
 
     if [[ "$normalized" == "all" ]]; then
         local item
@@ -553,13 +652,16 @@ Usage: baseup [OPTIONS]
 Options:
   -v, --version         Print the baseup installer version
   -i, --install <VER>   Install a specific release tag (for example: v0.6.0)
-  -b, --bin <NAME>      Install only one binary (base-reth-node, basectl, all)
+  -b, --bin <NAME>      Install only one binary (base, base-reth-node, base-consensus, basectl, all)
   -U, --update          Update baseup itself
+      --unsafe-skip-verify
+                         Skip GPG signature and SLSA attestation verification
   -h, --help            Show this help message
 
 Examples:
   baseup
   baseup -i v0.6.0
+  baseup --bin base
   baseup --bin base-reth-node
   baseup --bin basectl
   baseup --update
@@ -585,6 +687,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -U | --update)
             update_baseup
+            ;;
+        --unsafe-skip-verify)
+            UNSAFE_SKIP_VERIFY=1
+            shift
             ;;
         -h | --help)
             usage
@@ -628,6 +734,7 @@ main() {
         local archive_name
         local archive_path
         local checksum_path
+        local signature_path
         local expected_checksum
         local actual_checksum
         local extract_dir
@@ -636,10 +743,14 @@ main() {
         archive_name="${binary_name}-${VERSION}-${target}.tar.gz"
         archive_path="$MAIN_TMP_DIR/$archive_name"
         checksum_path="${archive_path}.sha256"
+        signature_path="${archive_path}.asc"
         extract_dir="$MAIN_TMP_DIR/${binary_name}-extract"
 
         download_file "$VERSION" "$archive_name" "$MAIN_TMP_DIR"
         download_file "$VERSION" "${archive_name}.sha256" "$MAIN_TMP_DIR"
+        if [[ "$UNSAFE_SKIP_VERIFY" -eq 0 ]]; then
+            download_file "$VERSION" "${archive_name}.asc" "$MAIN_TMP_DIR"
+        fi
 
         expected_checksum="$(head -n 1 "$checksum_path" | awk '{print $1}')"
         actual_checksum="$(compute_sha256 "$archive_path")"
@@ -649,6 +760,8 @@ main() {
         fi
 
         info "Checksum verified for $archive_name"
+        verify_gpg_signature "$archive_name" "$archive_path" "$signature_path"
+        verify_attestation "$archive_name" "$archive_path"
 
         mkdir -p "$extract_dir"
         extract_archive "$archive_path" "$extract_dir"
