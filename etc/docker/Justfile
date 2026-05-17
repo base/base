@@ -74,12 +74,12 @@ transfer-leader to='':
 conductor:
     cargo run --quiet -p basectl -- conductor
 
-# Vibenet: public devnet - single sequencer + nginx
-# gateway + faucet + contract deployer. Requires etc/vibenet/vibenet-env
-# (copy from vibenet-env.example and fill in secrets before running).
+# Vibenet: public devnet — single sequencer + Caddy gateway + Next.js UI
+# + faucet + contract deployer. Requires etc/vibenet/vibenet-env (copy
+# from vibenet-env.example and fill in secrets before running).
 #
 # On production hosts that have had a Cloudflare Origin CA certificate
-# installed at /etc/vibenet/tls/origin.{crt,key}, the `public` overlay is
+# installed at /etc/vibenet/tls/origin.{crt,key}, the Caddy overlay is
 # auto-included to expose the :443 TLS listener that Cloudflare connects
 # to. Laptops without that cert get the local-dev stack only (loopback ports):
 #   http://localhost:18080  UI (landing / faucet / explorer)
@@ -87,8 +87,8 @@ conductor:
 #   http://localhost:18082  HTTP RPC (proxyd)
 #
 # The UI is served by the base/ui Next.js app. Either clone that repo as a
-# sibling of this one (so `../ui` exists), or set VIBENET_UI_IMAGE to pull
-# a pre-built image:
+# sibling of this one (so `../ui` exists) and we'll build the image from
+# source, or set VIBENET_UI_IMAGE to pull a pre-built image instead:
 #   VIBENET_UI_IMAGE=ghcr.io/base/ui:main just vibe
 vibe: vibe-down _build-setup-image (_build-rust-images "devnet" "dev")
     #!/usr/bin/env bash
@@ -98,7 +98,13 @@ vibe: vibe-down _build-setup-image (_build-rust-images "devnet" "dev")
       exit 1
     fi
     # Verify sibling base/ui repo exists unless a pre-built image is specified.
-    if [ -z "${VIBENET_UI_IMAGE:-}" ] && [ ! -f "$(pwd)/../ui/package.json" ]; then
+    # When VIBENET_UI_IMAGE is set we skip `--build` so docker compose doesn't
+    # try to resolve the next-app `build.context` path that may not exist on
+    # disk; it pulls/uses the pinned image instead.
+    build_flag="--build"
+    if [ -n "${VIBENET_UI_IMAGE:-}" ]; then
+      build_flag="--pull missing"
+    elif [ ! -f "$(pwd)/../ui/package.json" ]; then
       echo "ERROR: base/ui repo not found at $(pwd)/../ui" >&2
       echo "  Clone it: git clone git@github.com:base/ui.git $(pwd)/../ui" >&2
       echo "  Or use a pre-built image: VIBENET_UI_IMAGE=ghcr.io/base/ui:main just vibe" >&2
@@ -117,7 +123,7 @@ vibe: vibe-down _build-setup-image (_build-rust-images "devnet" "dev")
       -f etc/docker/docker-compose.yml \
       -f etc/vibenet/docker-compose.vibenet.yml \
       $caddy_overlay \
-      up -d --build
+      up -d $build_flag
 
 # Stops vibenet and deletes all data. `-v` wipes the named volumes so the
 # vibescan SQLite DB and shared contracts.json don't survive a chain reset.

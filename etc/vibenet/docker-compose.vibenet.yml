@@ -75,9 +75,11 @@ services:
       - VIBENET_FAUCET_DRIP_WEI=${VIBENET_FAUCET_DRIP_WEI:-100000000000000000}
       - VIBENET_FAUCET_IP_COOLDOWN_SECS=${VIBENET_FAUCET_IP_COOLDOWN_SECS:-3600}
       - VIBENET_FAUCET_ADDR_COOLDOWN_SECS=${VIBENET_FAUCET_ADDR_COOLDOWN_SECS:-3600}
-      - VIBENET_FAUCET_CONTRACTS_PATH=/shared/contracts.json
       - VIBENET_FAUCET_USDV_DRIP_UNITS=${VIBENET_FAUCET_USDV_DRIP_UNITS:-1000000000}
-      # Rendered config + contract addresses (written by renderer/setup containers)
+      # Rendered config + contract addresses (written by renderer/setup containers).
+      # VIBENET_CONTRACTS_PATH is read by both the faucet (to resolve the USDV
+      # token address before calling mint) and the /api/vibenet/contracts API
+      # route (to surface the deployed addresses on the landing page).
       - VIBENET_CONFIG_PATH=/config/config.json
       - VIBENET_CONTRACTS_PATH=/shared/contracts.json
       # Branch/commit info surfaced in the landing page footer
