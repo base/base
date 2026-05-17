@@ -10,7 +10,9 @@ pub use delegated::{
 
 mod delegate_l2;
 pub use delegate_l2::{
-    DelegateL2Client, DelegateL2ClientError, DelegateL2DerivationActor, L2SourceClient,
+    DEFAULT_SOURCE_PREFETCH_BUFFER_BLOCKS, DelegateL2Client, DelegateL2ClientError,
+    DelegateL2DerivationActor, L2SourceClient, PrefetchedL2Block, SourceBlockFetcher,
+    SourceBlockFetcherConfig,
 };
 
 mod engine_client;

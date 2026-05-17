@@ -22,11 +22,13 @@ pub use rpc::{
 
 mod derivation;
 pub use derivation::{
-    DelegateDerivationActor, DelegateL2Client, DelegateL2ClientError, DelegateL2DerivationActor,
-    DerivationActor, DerivationActorRequest, DerivationClientError, DerivationClientResult,
-    DerivationDelegateClient, DerivationDelegateClientError, DerivationEngineClient,
-    DerivationError, DerivationState, DerivationStateMachine, DerivationStateTransitionError,
-    DerivationStateUpdate, L2Finalizer, L2SourceClient, QueuedDerivationEngineClient,
+    DEFAULT_SOURCE_PREFETCH_BUFFER_BLOCKS, DelegateDerivationActor, DelegateL2Client,
+    DelegateL2ClientError, DelegateL2DerivationActor, DerivationActor, DerivationActorRequest,
+    DerivationClientError, DerivationClientResult, DerivationDelegateClient,
+    DerivationDelegateClientError, DerivationEngineClient, DerivationError, DerivationState,
+    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, L2Finalizer,
+    L2SourceClient, PrefetchedL2Block, QueuedDerivationEngineClient, SourceBlockFetcher,
+    SourceBlockFetcherConfig,
 };
 
 mod l1_watcher;

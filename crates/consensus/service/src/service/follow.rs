@@ -18,7 +18,7 @@ use crate::{
     EngineActorRequest, EngineConfig, EngineProcessor, EngineProcessorOptions, EngineRpcProcessor,
     L1Config, L1WatcherActor, L1WatcherQueryProcessor, NodeActor, NodeMode,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, RpcActor, RpcContext,
+    QueuedL1WatcherDerivationClient, RpcActor, RpcContext, SourceBlockFetcherConfig,
     service::node::HEAD_STREAM_POLL_INTERVAL,
 };
 
@@ -35,6 +35,7 @@ pub struct FollowNode {
     l2_source: DelegateL2Client,
     proofs_enabled: bool,
     proofs_max_blocks_ahead: u64,
+    source_prefetch_config: SourceBlockFetcherConfig,
     l1_config: L1Config,
     rpc_builder: Option<RpcBuilder>,
 }
@@ -58,6 +59,7 @@ impl FollowNode {
             l1_config,
             proofs_enabled: false,
             proofs_max_blocks_ahead: 512,
+            source_prefetch_config: SourceBlockFetcherConfig::DEFAULT,
         }
     }
 
@@ -71,6 +73,12 @@ impl FollowNode {
     /// proofs `ExEx` head.
     pub const fn with_proofs_max_blocks_ahead(mut self, max_blocks_ahead: u64) -> Self {
         self.proofs_max_blocks_ahead = max_blocks_ahead;
+        self
+    }
+
+    /// Sets source block prefetching configuration.
+    pub const fn with_source_prefetch_config(mut self, config: SourceBlockFetcherConfig) -> Self {
+        self.source_prefetch_config = config;
         self
     }
 
@@ -159,7 +167,8 @@ impl FollowNode {
             self.l2_source.clone(),
         )
         .with_proofs(self.proofs_enabled)
-        .with_proofs_max_blocks_ahead(self.proofs_max_blocks_ahead);
+        .with_proofs_max_blocks_ahead(self.proofs_max_blocks_ahead)
+        .with_source_prefetch_config(self.source_prefetch_config);
 
         // Create the RPC server actor if configured.
         let rpc_builder = self.rpc_builder.clone();

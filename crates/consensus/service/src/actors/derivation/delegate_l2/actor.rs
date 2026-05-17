@@ -1,26 +1,32 @@
-use std::sync::Arc;
+use std::{io, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_common_network::Base;
-use base_consensus_engine::DelegatedForkchoiceUpdate;
+use base_consensus_engine::{DelegatedForkchoiceUpdate, InsertTaskError};
 use base_protocol::L2BlockInfo;
 use futures::future::OptionFuture;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::{select, sync::mpsc, task::JoinHandle, time};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, error, info, warn};
 
 use crate::{
     CancellableContext, DerivationActorRequest, DerivationEngineClient, EngineActorRequest,
-    NodeActor,
-    actors::derivation::{DerivationError, delegate_l2::L2SourceClient},
+    InsertUnsafePayloadRequest, NodeActor,
+    actors::derivation::{
+        DerivationError,
+        delegate_l2::{
+            L2SourceClient, PrefetchedL2Block, SourceBlockFetcher, SourceBlockFetcherConfig,
+        },
+    },
 };
 
 const DEFAULT_PROOFS_MAX_BLOCKS_AHEAD: u64 = 512;
+const PROOFS_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ProofsSyncStatus {
     latest: Option<u64>,
 }
@@ -28,8 +34,8 @@ struct ProofsSyncStatus {
 /// The [`NodeActor`] for the L2 delegate derivation sub-routine.
 ///
 /// Polls a source L2 execution layer node for new blocks and drives the local
-/// engine via `ProcessUnsafeL2BlockRequest` (`NewPayload` + FCU) rather than
-/// running the full derivation pipeline.
+/// engine through an acknowledged unsafe payload insert (`NewPayload` + FCU)
+/// rather than running the full derivation pipeline.
 ///
 /// Safe and finalized head updates are forwarded together as delegated labels.
 #[derive(Debug)]
@@ -47,6 +53,7 @@ where
     sent_head: u64,
     proofs_enabled: bool,
     proofs_max_blocks_ahead: u64,
+    source_prefetch_config: SourceBlockFetcherConfig,
 }
 
 impl<DerivationEngineClient_, L2Source> CancellableContext
@@ -84,6 +91,7 @@ where
             sent_head: 0,
             proofs_enabled: false,
             proofs_max_blocks_ahead: DEFAULT_PROOFS_MAX_BLOCKS_AHEAD,
+            source_prefetch_config: SourceBlockFetcherConfig::default(),
         }
     }
 
@@ -99,6 +107,12 @@ where
     /// proofs `ExEx` head.
     pub const fn with_proofs_max_blocks_ahead(mut self, max_blocks_ahead: u64) -> Self {
         self.proofs_max_blocks_ahead = max_blocks_ahead;
+        self
+    }
+
+    /// Sets the source block prefetcher configuration.
+    pub const fn with_source_prefetch_config(mut self, config: SourceBlockFetcherConfig) -> Self {
+        self.source_prefetch_config = config;
         self
     }
 }
@@ -136,10 +150,16 @@ where
         }
 
         info!(target: "derivation", head = self.sent_head, "Starting L2 delegate derivation");
-        let mut ticker = time::interval(Self::POLL_INTERVAL);
-        ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
-        let mut sync_task: Option<JoinHandle<Result<u64, DerivationError>>> = None;
+        let mut source_prefetcher = self.start_source_prefetcher(self.sent_head.saturating_add(1));
+        let mut pending_block: Option<PrefetchedL2Block> = None;
+        let mut insert_limit = if self.proofs_enabled { 0 } else { u64::MAX };
+        let mut proofs_ticker =
+            time::interval_at(time::Instant::now() + PROOFS_POLL_INTERVAL, PROOFS_POLL_INTERVAL);
+        proofs_ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+        let mut delegated_forkchoice_ticker =
+            time::interval_at(time::Instant::now() + Self::POLL_INTERVAL, Self::POLL_INTERVAL);
+        delegated_forkchoice_ticker.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
         loop {
             select! {
@@ -157,118 +177,94 @@ where
                     };
                     self.handle_request(request_type).await?;
                 }
-                // Poll the sync task for completion without blocking.
-                // `OptionFuture<&mut JoinHandle>` resolves immediately to
-                // `None` when no task is in flight, letting us fall through
-                // to spawn a new one.
-                Some(result) = OptionFuture::from(sync_task.as_mut()) => {
-                    sync_task = None;
+                Some(result) = OptionFuture::from(source_prefetcher.task.as_mut()) => {
+                    source_prefetcher.task = None;
                     match result {
                         Err(join_error) => {
-                            error!(target: "derivation", error = %join_error, "Sync task panicked or was cancelled");
+                            warn!(target: "derivation", error = %join_error, "Source block prefetcher stopped unexpectedly");
                         }
                         Ok(Err(derivation_error)) => {
-                            warn!(target: "derivation", error = %derivation_error, "Sync from source failed");
+                            warn!(target: "derivation", error = %derivation_error, "Source block prefetcher failed");
                         }
-                        Ok(Ok(new_sent_head)) => {
-                            self.sent_head = new_sent_head;
+                        Ok(Ok(())) => {
+                            warn!(target: "derivation", sent_head = self.sent_head, "Source block prefetcher exited");
                         }
+                    }
+                    self.restart_source_prefetcher(&mut source_prefetcher, &mut pending_block).await?;
+                }
+                _ = delegated_forkchoice_ticker.tick() => {
+                    self.update_safe_and_finalized().await?;
+                }
+                _ = proofs_ticker.tick(), if pending_block.is_some() => {
+                    if matches!(
+                        self.try_insert_pending_block(&mut pending_block, &mut insert_limit).await?,
+                        PendingInsertOutcome::Restart
+                    ) {
+                        self.restart_source_prefetcher(&mut source_prefetcher, &mut pending_block).await?;
                     }
                 }
-                _ = ticker.tick() => {
-                    if sync_task.is_some() {
-                        debug!(target: "derivation", "Sync already in progress, skipping tick");
+                prefetched = source_prefetcher.rx.recv(), if pending_block.is_none() => {
+                    let Some(prefetched) = prefetched else {
+                        warn!(target: "derivation", sent_head = self.sent_head, "Source block prefetch queue closed");
+                        self.restart_source_prefetcher(&mut source_prefetcher, &mut pending_block).await?;
                         continue;
-                    }
-
-                    let target_block = match self.determine_target_block().await {
-                        Ok(Some(target)) => target,
-                        Ok(None) => {
-                            warn!(target: "derivation", sent_head = self.sent_head, "Target is behind already sent head, skipping sync");
-                            continue;
-                        },
-                        Err(e) => {
-                            warn!(target: "derivation", error = %e, "Failed to determine target block");
-                            continue;
-                        }
                     };
-                    info!(target: "derivation", target_block, sent_head = self.sent_head, "Starting sync from L2 source");
-
-                    let cancellation_token = self.cancellation_token.clone();
-                    let l2_source = Arc::clone(&self.l2_source);
-                    let engine_client = Arc::clone(&self.engine_client);
-                    let engine_actor_request_tx = self.engine_actor_request_tx.clone();
-                    let local_l2_provider = self.local_l2_provider.clone();
-                    let sent_head = self.sent_head;
-
-                    sync_task = Some(tokio::spawn(async move {
-                        SyncFromSourceTask::new(
-                            engine_client,
-                            engine_actor_request_tx,
-                            cancellation_token,
-                            local_l2_provider,
-                            sent_head,
-                            target_block,
-                            l2_source,
-                        )
-                        .sync_from_source()
-                        .await
-                    }));
+                    pending_block = Some(prefetched);
+                    if matches!(
+                        self.try_insert_pending_block(&mut pending_block, &mut insert_limit).await?,
+                        PendingInsertOutcome::Restart
+                    ) {
+                        self.restart_source_prefetcher(&mut source_prefetcher, &mut pending_block).await?;
+                    }
                 }
             }
         }
     }
 
-    async fn determine_target_block(&self) -> Result<Option<u64>, DerivationError> {
-        let remote_head = self
-            .l2_source
-            .get_block_number(BlockNumberOrTag::Latest)
+    fn start_source_prefetcher(&self, start_number: u64) -> SourcePrefetcher {
+        let buffer_blocks = self.source_prefetch_config.buffer_blocks.max(1);
+        let (tx, rx) = mpsc::channel(buffer_blocks);
+        let cancellation_token = self.cancellation_token.child_token();
+        let fetcher = SourceBlockFetcher::new(
+            Arc::clone(&self.l2_source),
+            start_number,
+            tx,
+            cancellation_token.clone(),
+            self.source_prefetch_config,
+        );
+        let task = Some(tokio::spawn(async move { fetcher.run().await }));
+
+        SourcePrefetcher { cancellation_token, rx, task }
+    }
+
+    async fn restart_source_prefetcher(
+        &mut self,
+        source_prefetcher: &mut SourcePrefetcher,
+        pending_block: &mut Option<PrefetchedL2Block>,
+    ) -> Result<(), DerivationError> {
+        source_prefetcher.cancellation_token.cancel();
+        if let Some(task) = source_prefetcher.task.take() {
+            task.abort();
+        }
+        while source_prefetcher.rx.try_recv().is_ok() {}
+        *pending_block = None;
+
+        let local_head = self
+            .local_l2_provider
+            .get_block_number()
             .await
             .map_err(|e| DerivationError::Sender(Box::new(e)))?;
+        self.sent_head = local_head;
+        let start_number = self.sent_head.saturating_add(1);
+        info!(
+            target: "derivation",
+            sent_head = self.sent_head,
+            start_number,
+            "Restarting source block prefetcher"
+        );
+        *source_prefetcher = self.start_source_prefetcher(start_number);
 
-        let sync_limit = if self.proofs_enabled {
-            match self
-                .local_l2_provider
-                .raw_request::<_, ProofsSyncStatus>("debug_proofsSyncStatus".into(), ())
-                .await
-            {
-                Ok(status) => {
-                    // default to 0 if proofs not available since user intends to avoid syncing past proofs head which is unknown
-                    let latest = status.latest.unwrap_or(0);
-                    let cap = latest + self.proofs_max_blocks_ahead;
-                    debug!(
-                        target: "derivation",
-                        proofs_latest = latest,
-                        cap,
-                        "Proofs sync gate active"
-                    );
-                    cap
-                }
-                Err(e) => {
-                    warn!(target: "derivation", error = %e, "Failed to fetch proofs sync status, skipping sync");
-                    return Ok(None);
-                }
-            }
-        } else {
-            u64::MAX
-        };
-
-        let target = remote_head.min(sync_limit);
-
-        if target != remote_head {
-            info!(
-                target: "derivation",
-                sync_limit,
-                remote_head,
-                "Remote head is ahead of proofs sync limit, capping sync"
-            );
-        }
-
-        if target <= self.sent_head {
-            return Ok(None);
-        }
-
-        Ok(Some(target))
+        Ok(())
     }
 
     async fn handle_request(
@@ -298,85 +294,40 @@ where
         }
         Ok(())
     }
-}
 
-pub(super) struct SyncFromSourceTask<DerivationEngineClient_, L2Source> {
-    engine_client: Arc<DerivationEngineClient_>,
-    engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
-    cancellation_token: CancellationToken,
-    local_l2_provider: RootProvider<Base>,
-    sent_head: u64,
-    target_block: u64,
-    l2_source: Arc<L2Source>,
-}
+    async fn try_insert_pending_block(
+        &mut self,
+        pending_block: &mut Option<PrefetchedL2Block>,
+        insert_limit: &mut u64,
+    ) -> Result<PendingInsertOutcome, DerivationError> {
+        let Some(block) = pending_block.as_ref() else {
+            return Ok(PendingInsertOutcome::Idle);
+        };
 
-impl<DerivationEngineClient_, L2Source> SyncFromSourceTask<DerivationEngineClient_, L2Source>
-where
-    DerivationEngineClient_: DerivationEngineClient,
-    L2Source: L2SourceClient,
-{
-    pub(super) const fn new(
-        engine_client: Arc<DerivationEngineClient_>,
-        engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
-        cancellation_token: CancellationToken,
-        local_l2_provider: RootProvider<Base>,
-        sent_head: u64,
-        target_block: u64,
-        l2_source: Arc<L2Source>,
-    ) -> Self {
-        Self {
-            engine_client,
-            engine_actor_request_tx,
-            cancellation_token,
-            local_l2_provider,
-            sent_head,
-            target_block,
-            l2_source,
-        }
-    }
-
-    /// Syncs blocks from the L2 source up to the pre-determined `target_block`.
-    ///
-    /// Returns the updated `sent_head` on success.
-    async fn sync_from_source(&mut self) -> Result<u64, DerivationError> {
-        if self.target_block <= self.sent_head {
-            return Ok(self.sent_head);
+        let expected_number = self.sent_head.saturating_add(1);
+        if block.number != expected_number {
+            warn!(
+                target: "derivation",
+                expected_number,
+                actual_number = block.number,
+                sent_head = self.sent_head,
+                "Discarding stale prefetched source block"
+            );
+            return Ok(PendingInsertOutcome::Restart);
         }
 
-        for block_num in (self.sent_head + 1)..=self.target_block {
-            if self.cancellation_token.is_cancelled() {
-                info!(target: "derivation", block = block_num, "Sync interrupted by shutdown");
-                return Ok(self.sent_head);
-            }
-
-            let payload = self
-                .l2_source
-                .get_payload_by_number(block_num)
-                .await
-                .map_err(|e| DerivationError::Sender(Box::new(e)))?;
-
+        if !self.block_allowed_by_proofs(block.number, insert_limit).await {
             debug!(
                 target: "derivation",
-                block = block_num,
-                "Inserting block from L2 source"
+                block_number = block.number,
+                insert_limit = *insert_limit,
+                "Waiting for proofs gate before inserting source block"
             );
-
-            self.engine_actor_request_tx
-                .send(EngineActorRequest::ProcessUnsafeL2BlockRequest(Box::new(payload)))
-                .await
-                .map_err(|_| {
-                    DerivationError::Sender(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "engine actor request channel closed",
-                    )))
-                })?;
-
-            self.sent_head = block_num;
+            return Ok(PendingInsertOutcome::Blocked);
         }
 
-        self.update_safe_and_finalized().await?;
-
-        Ok(self.sent_head)
+        let block = pending_block.take().expect("pending block exists");
+        self.insert_prefetched_block(block).await
     }
 
     async fn update_safe_and_finalized(&self) -> Result<(), DerivationError> {
@@ -434,23 +385,144 @@ where
 
         Ok(())
     }
+
+    async fn block_allowed_by_proofs(&self, block_number: u64, insert_limit: &mut u64) -> bool {
+        if !self.proofs_enabled {
+            return true;
+        }
+
+        if block_number <= *insert_limit {
+            return true;
+        }
+
+        match self
+            .local_l2_provider
+            .raw_request::<_, ProofsSyncStatus>("debug_proofsSyncStatus".into(), ())
+            .await
+        {
+            Ok(status) => {
+                let proofs_latest = status.latest.unwrap_or(0);
+                *insert_limit = proofs_latest.saturating_add(self.proofs_max_blocks_ahead);
+                debug!(
+                    target: "derivation",
+                    proofs_latest,
+                    insert_limit = *insert_limit,
+                    "Proofs sync gate refreshed"
+                );
+                block_number <= *insert_limit
+            }
+            Err(err) => {
+                warn!(
+                    target: "derivation",
+                    block_number,
+                    error = %err,
+                    "Failed to fetch proofs sync status"
+                );
+                false
+            }
+        }
+    }
+
+    async fn insert_prefetched_block(
+        &mut self,
+        block: PrefetchedL2Block,
+    ) -> Result<PendingInsertOutcome, DerivationError> {
+        debug!(
+            target: "derivation",
+            block_number = block.number,
+            block_hash = %block.hash(),
+            "Inserting prefetched block from L2 source"
+        );
+
+        let expected_number = block.number;
+        let expected_hash = block.hash();
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+
+        self.engine_actor_request_tx
+            .send(EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(
+                InsertUnsafePayloadRequest { envelope: block.envelope, result_tx: Some(result_tx) },
+            )))
+            .await
+            .map_err(|_| {
+                DerivationError::Sender(Box::new(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "engine actor request channel closed",
+                )))
+            })?;
+
+        let inserted_head = match result_rx.recv().await {
+            Some(Ok(inserted_head)) => inserted_head,
+            Some(Err(err)) => return Ok(self.handle_insert_error(expected_number, err)),
+            None => {
+                return Err(DerivationError::Sender(Box::new(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "engine insert result channel closed",
+                ))));
+            }
+        };
+
+        if inserted_head.block_info.number != expected_number
+            || inserted_head.block_info.hash != expected_hash
+        {
+            warn!(
+                target: "derivation",
+                expected_number,
+                expected_hash = %expected_hash,
+                actual_number = inserted_head.block_info.number,
+                actual_hash = %inserted_head.block_info.hash,
+                "Engine inserted unexpected source block"
+            );
+            return Ok(PendingInsertOutcome::Restart);
+        }
+
+        self.sent_head = expected_number;
+        Ok(PendingInsertOutcome::Inserted)
+    }
+
+    fn handle_insert_error(&self, block_number: u64, err: InsertTaskError) -> PendingInsertOutcome {
+        warn!(
+            target: "derivation",
+            block_number,
+            error = %err,
+            "Engine failed to insert prefetched source block"
+        );
+        PendingInsertOutcome::Restart
+    }
+}
+
+#[derive(Debug)]
+struct SourcePrefetcher {
+    cancellation_token: CancellationToken,
+    rx: mpsc::Receiver<PrefetchedL2Block>,
+    task: Option<JoinHandle<Result<(), DerivationError>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingInsertOutcome {
+    Idle,
+    Blocked,
+    Inserted,
+    Restart,
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{net::SocketAddr, time::Duration};
+
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_consensus_engine::InsertTaskError;
     use base_protocol::{BlockInfo, L2BlockInfo};
-    use mockall::{Sequence, predicate::*};
-    use tokio::sync::mpsc;
+    use jsonrpsee::{RpcModule, core::to_json_value, server::ServerHandle};
+    use mockall::predicate::*;
+    use tokio::{sync::mpsc, time::timeout};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
     use crate::actors::derivation::{
-        delegate_l2::client::{DelegateL2ClientError, MockL2SourceClient},
-        engine_client::MockDerivationEngineClient,
+        delegate_l2::client::MockL2SourceClient, engine_client::MockDerivationEngineClient,
     };
 
     fn dummy_l2_block_info(number: u64) -> L2BlockInfo {
@@ -515,33 +587,49 @@ mod tests {
         (actor, deriv_tx, engine_rx, cancel)
     }
 
-    fn make_sync_task(
-        engine_client: MockDerivationEngineClient,
-        l2_source: MockL2SourceClient,
-        sent_head: u64,
-        target_block: u64,
-    ) -> (
-        SyncFromSourceTask<MockDerivationEngineClient, MockL2SourceClient>,
-        mpsc::Receiver<EngineActorRequest>,
-        CancellationToken,
+    async fn recv_follow_insert(
+        engine_rx: &mut mpsc::Receiver<EngineActorRequest>,
+        expected_num: u64,
+    ) -> mpsc::Sender<Result<L2BlockInfo, InsertTaskError>> {
+        let req = engine_rx.recv().await.unwrap();
+        match req {
+            EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(request) => {
+                assert_eq!(request.envelope.execution_payload.block_number(), expected_num);
+                assert_eq!(
+                    request.envelope.execution_payload.block_hash(),
+                    dummy_l2_block_info(expected_num).block_info.hash
+                );
+                request.result_tx.unwrap()
+            }
+            other => panic!("Expected ProcessLocalUnsafeL2BlockRequest, got {other:?}"),
+        }
+    }
+
+    async fn ack_follow_insert(
+        engine_rx: &mut mpsc::Receiver<EngineActorRequest>,
+        expected_num: u64,
     ) {
-        let cancel = CancellationToken::new();
-        let (engine_tx, engine_rx) = mpsc::channel(16);
+        recv_follow_insert(engine_rx, expected_num)
+            .await
+            .send(Ok(dummy_l2_block_info(expected_num)))
+            .await
+            .unwrap();
+    }
 
-        let local_l2_provider =
-            RootProvider::<Base>::new_http("http://localhost:1234".parse().unwrap());
+    async fn proofs_status_provider(latest: u64) -> (RootProvider<Base>, ServerHandle) {
+        let mut module = RpcModule::new(());
+        let status = to_json_value(ProofsSyncStatus { latest: Some(latest) }).unwrap();
+        module.register_method("debug_proofsSyncStatus", move |_, _, _| status.clone()).unwrap();
 
-        let task = SyncFromSourceTask::new(
-            Arc::new(engine_client),
-            engine_tx,
-            cancel.clone(),
-            local_l2_provider,
-            sent_head,
-            target_block,
-            Arc::new(l2_source),
-        );
+        let server = jsonrpsee::server::Server::builder()
+            .build(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .unwrap();
+        let addr = server.local_addr().unwrap();
+        let handle = server.start(module);
+        let provider = RootProvider::<Base>::new_http(format!("http://{addr}").parse().unwrap());
 
-        (task, engine_rx, cancel)
+        (provider, handle)
     }
 
     #[tokio::test]
@@ -592,64 +680,180 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_noop_when_target_behind() {
-        let engine_client = MockDerivationEngineClient::new();
-        let l2_source = MockL2SourceClient::new();
+    async fn source_fetcher_emits_ordered_blocks_until_remote_head() {
+        let mut l2_source = MockL2SourceClient::new();
 
-        let (mut task, _, _) = make_sync_task(engine_client, l2_source, 10, 5);
+        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Latest)).returning(|_| Ok(3));
+        l2_source.expect_get_payload_by_number().returning(|n| Ok(dummy_payload_envelope(n)));
 
-        let new_head = task.sync_from_source().await.unwrap();
-        assert_eq!(new_head, 10);
+        let cancel = CancellationToken::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let fetcher = SourceBlockFetcher::new(
+            Arc::new(l2_source),
+            1,
+            tx,
+            cancel.clone(),
+            SourceBlockFetcherConfig {
+                head_poll_interval: Duration::from_secs(60),
+                ..SourceBlockFetcherConfig::default()
+            },
+        );
+        let handle = tokio::spawn(async move { fetcher.run().await });
+
+        for expected in 1..=3 {
+            let block = timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .expect("timed out waiting for prefetched block")
+                .expect("prefetch channel closed");
+            assert_eq!(block.number, expected);
+            assert_eq!(block.envelope.execution_payload.block_number(), expected);
+        }
+
+        cancel.cancel();
+        assert!(handle.await.unwrap().is_ok());
     }
 
     #[tokio::test]
-    async fn sync_fetches_and_inserts_blocks() {
+    async fn follow_prefetches_next_block_before_prior_insert_ack() {
         let mut engine_client = MockDerivationEngineClient::new();
         let mut l2_source = MockL2SourceClient::new();
+        let (fetched_12_tx, mut fetched_12_rx) = mpsc::unbounded_channel();
 
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(1))
-            .returning(|n| Ok(dummy_payload_envelope(n)));
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(2))
-            .returning(|n| Ok(dummy_payload_envelope(n)));
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(3))
-            .returning(|n| Ok(dummy_payload_envelope(n)));
-
-        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(2));
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(2))
-            .returning(|n| Ok(dummy_payload_envelope(n)));
         l2_source
             .expect_get_block_number()
-            .with(eq(BlockNumberOrTag::Finalized))
-            .returning(|_| Ok(1));
-
-        engine_client.expect_send_delegated_forkchoice_update().returning(|update| {
-            assert_eq!(update.safe_l2.block_info.number, 2);
-            assert_eq!(update.finalized_l2_number, Some(1));
-            Ok(())
+            .with(eq(BlockNumberOrTag::Latest))
+            .returning(|_| Ok(12));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(11))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source.expect_get_payload_by_number().with(eq(12)).returning(move |n| {
+            let _ = fetched_12_tx.send(());
+            Ok(dummy_payload_envelope(n))
         });
 
-        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 3);
+        engine_client.expect_send_delegated_forkchoice_update().times(0);
+        engine_client.expect_send_safe_l2_signal().times(0);
+        engine_client.expect_send_finalized_l2_block().times(0);
 
-        let new_head = task.sync_from_source().await.unwrap();
-        assert_eq!(new_head, 3);
+        let (mut actor, _deriv_tx, mut engine_rx, cancel) = make_actor(engine_client, l2_source);
+        actor.sent_head = 10;
+        actor.source_prefetch_config = SourceBlockFetcherConfig {
+            head_poll_interval: Duration::from_secs(60),
+            ..SourceBlockFetcherConfig::default()
+        };
+        let actor_handle = tokio::spawn(async move { actor.run().await });
 
-        for expected_num in 1..=3 {
-            let req = engine_rx.try_recv().unwrap();
-            match req {
-                EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
-                    assert_eq!(envelope.execution_payload.block_number(), expected_num);
-                }
-                other => panic!("Expected ProcessUnsafeL2BlockRequest, got {other:?}"),
-            }
-        }
+        let first_result_tx = recv_follow_insert(&mut engine_rx, 11).await;
+        timeout(Duration::from_millis(100), fetched_12_rx.recv())
+            .await
+            .expect("block 12 was not prefetched before block 11 ack")
+            .expect("fetch signal channel closed");
+        assert!(
+            timeout(Duration::from_millis(20), engine_rx.recv()).await.is_err(),
+            "follow mode sent another insert before the prior insert was acknowledged"
+        );
+
+        first_result_tx.send(Ok(dummy_l2_block_info(11))).await.unwrap();
+        ack_follow_insert(&mut engine_rx, 12).await;
+        cancel.cancel();
+
+        assert!(actor_handle.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn proofs_gate_blocks_insertion_without_stopping_source_prefetch() {
+        let mut engine_client = MockDerivationEngineClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+        let (fetched_12_tx, mut fetched_12_rx) = mpsc::unbounded_channel();
+        let (local_l2_provider, _proofs_server) = proofs_status_provider(10).await;
+
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Latest))
+            .returning(|_| Ok(12));
+        l2_source
+            .expect_get_payload_by_number()
+            .with(eq(11))
+            .returning(|n| Ok(dummy_payload_envelope(n)));
+        l2_source.expect_get_payload_by_number().with(eq(12)).returning(move |n| {
+            let _ = fetched_12_tx.send(());
+            Ok(dummy_payload_envelope(n))
+        });
+
+        engine_client.expect_send_delegated_forkchoice_update().times(0);
+        engine_client.expect_send_safe_l2_signal().times(0);
+        engine_client.expect_send_finalized_l2_block().times(0);
+
+        let (mut actor, _deriv_tx, mut engine_rx, cancel) = make_actor(engine_client, l2_source);
+        actor.local_l2_provider = local_l2_provider;
+        actor.sent_head = 10;
+        actor.proofs_enabled = true;
+        actor.proofs_max_blocks_ahead = 0;
+        actor.source_prefetch_config = SourceBlockFetcherConfig {
+            head_poll_interval: Duration::from_secs(60),
+            ..SourceBlockFetcherConfig::default()
+        };
+        let actor_handle = tokio::spawn(async move { actor.run().await });
+
+        timeout(Duration::from_millis(100), fetched_12_rx.recv())
+            .await
+            .expect("block 12 was not prefetched while block 11 was proofs-gated")
+            .expect("fetch signal channel closed");
+        assert!(
+            timeout(Duration::from_millis(20), engine_rx.recv()).await.is_err(),
+            "proofs-gated block was sent to the engine before proofs advanced"
+        );
+
+        cancel.cancel();
+        assert!(timeout(Duration::from_secs(1), actor_handle).await.unwrap().unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn controller_holds_block_until_previous_insert_ack() {
+        let engine_client = MockDerivationEngineClient::new();
+        let l2_source = MockL2SourceClient::new();
+        let (mut actor, _, mut engine_rx, _) = make_actor(engine_client, l2_source);
+        let mut insert_limit = u64::MAX;
+        actor.sent_head = 10;
+
+        let mut pending_block =
+            Some(PrefetchedL2Block { number: 11, envelope: dummy_payload_envelope(11) });
+        let insert = tokio::spawn(async move {
+            actor.try_insert_pending_block(&mut pending_block, &mut insert_limit).await
+        });
+
+        let first_result_tx = recv_follow_insert(&mut engine_rx, 11).await;
+        assert!(
+            timeout(Duration::from_millis(20), insert).await.is_err(),
+            "insert completed before engine ack"
+        );
+
+        first_result_tx.send(Ok(dummy_l2_block_info(11))).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn insert_failure_requests_prefetch_restart() {
+        let engine_client = MockDerivationEngineClient::new();
+        let l2_source = MockL2SourceClient::new();
+        let (mut actor, _, mut engine_rx, _) = make_actor(engine_client, l2_source);
+        let mut insert_limit = u64::MAX;
+        actor.sent_head = 10;
+
+        let mut pending_block =
+            Some(PrefetchedL2Block { number: 11, envelope: dummy_payload_envelope(11) });
+        let insert = tokio::spawn(async move {
+            actor.try_insert_pending_block(&mut pending_block, &mut insert_limit).await
+        });
+
+        recv_follow_insert(&mut engine_rx, 11)
+            .await
+            .send(Err(InsertTaskError::ForkchoiceUpdateDidNotAdvance))
+            .await
+            .unwrap();
+
+        let outcome = insert.await.unwrap().unwrap();
+        assert_eq!(outcome, PendingInsertOutcome::Restart);
     }
 
     #[tokio::test]
@@ -657,19 +861,6 @@ mod tests {
         let mut engine_client = MockDerivationEngineClient::new();
         let mut l2_source = MockL2SourceClient::new();
 
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(1))
-            .returning(|n| Ok(dummy_payload_envelope(n)));
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(2))
-            .returning(|n| Ok(dummy_payload_envelope(n)));
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(3))
-            .returning(|n| Ok(dummy_payload_envelope(n)));
-
         l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(2));
         l2_source
             .expect_get_payload_by_number()
@@ -686,62 +877,10 @@ mod tests {
             Ok(())
         });
 
-        let (mut task, _engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 3);
-
-        let new_head = task.sync_from_source().await.unwrap();
-        assert_eq!(new_head, 3);
-    }
-
-    #[tokio::test]
-    async fn delegated_forkchoice_not_sent_when_safe_payload_unavailable() {
-        let mut engine_client = MockDerivationEngineClient::new();
-        let mut l2_source = MockL2SourceClient::new();
-        let mut sequence = Sequence::new();
-
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(1))
-            .times(1)
-            .in_sequence(&mut sequence)
-            .returning(|n| Ok(dummy_payload_envelope(n)));
-
-        l2_source.expect_get_block_number().with(eq(BlockNumberOrTag::Safe)).returning(|_| Ok(1));
-        l2_source
-            .expect_get_payload_by_number()
-            .with(eq(1))
-            .times(1)
-            .in_sequence(&mut sequence)
-            .returning(|n| Err(DelegateL2ClientError::BlockNotFound(format!("{n}"))));
-
-        engine_client.expect_send_delegated_forkchoice_update().times(0);
-        engine_client.expect_send_safe_l2_signal().times(0);
-        engine_client.expect_send_finalized_l2_block().times(0);
-
-        let (mut task, mut engine_rx, _) = make_sync_task(engine_client, l2_source, 0, 1);
-
-        let new_head = task.sync_from_source().await.unwrap();
-        assert_eq!(new_head, 1);
-
-        let req = engine_rx.try_recv().unwrap();
-        assert!(
-            matches!(req, EngineActorRequest::ProcessUnsafeL2BlockRequest(_)),
-            "expected ProcessUnsafeL2BlockRequest, got {req:?}"
-        );
-        assert!(engine_rx.is_empty(), "unexpected extra engine requests");
-    }
-
-    #[tokio::test]
-    async fn sync_aborts_on_cancellation() {
-        let engine_client = MockDerivationEngineClient::new();
-        let l2_source = MockL2SourceClient::new();
-
-        let (mut task, engine_rx, cancel) = make_sync_task(engine_client, l2_source, 0, 100);
-
-        cancel.cancel();
-        let new_head = task.sync_from_source().await.unwrap();
-
-        assert_eq!(new_head, 0);
-        assert!(engine_rx.is_empty());
+        let (actor, _, _, _) = make_actor(engine_client, l2_source);
+        let mut actor = actor;
+        actor.sent_head = 3;
+        actor.update_safe_and_finalized().await.unwrap();
     }
 
     #[tokio::test]
@@ -760,7 +899,11 @@ mod tests {
     #[tokio::test]
     async fn run_loop_errors_on_channel_close() {
         let engine_client = MockDerivationEngineClient::new();
-        let l2_source = MockL2SourceClient::new();
+        let mut l2_source = MockL2SourceClient::new();
+        l2_source
+            .expect_get_block_number()
+            .with(eq(BlockNumberOrTag::Latest))
+            .returning(|_| Ok(10));
         let (mut actor, deriv_tx, _engine_rx, _cancel) = make_actor(engine_client, l2_source);
 
         actor.sent_head = 10;
