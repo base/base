@@ -19,39 +19,9 @@ use url::Url;
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
 pub struct StandardNodeArgs {
-    /// Rollup arguments.
+    /// Shared execution node arguments.
     #[command(flatten)]
-    pub rollup_args: RollupArgs,
-
-    /// A URL pointing to a secure websocket subscription that streams out flashblocks.
-    ///
-    /// If given, the flashblocks are received to build pending block. All request with "pending"
-    /// block tag will use the pending state based on flashblocks.
-    #[arg(long, alias = "websocket-url")]
-    pub flashblocks_url: Option<Url>,
-
-    /// The max pending blocks depth.
-    #[arg(
-        long = "max-pending-blocks-depth",
-        value_name = "MAX_PENDING_BLOCKS_DEPTH",
-        default_value = "3"
-    )]
-    pub max_pending_blocks_depth: u64,
-
-    /// Enable cached execution via the flashblocks-aware engine validator.
-    #[arg(long = "flashblocks.cached-execution", requires = "flashblocks_url")]
-    pub flashblocks_cached_execution: bool,
-
-    /// Enable transaction tracing for mempool-to-block timing analysis
-    #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
-    pub enable_transaction_tracing: bool,
-
-    /// Enable `info` logs for transaction tracing
-    #[arg(
-        long = "enable-transaction-tracing-logs",
-        value_name = "ENABLE_TRANSACTION_TRACING_LOGS"
-    )]
-    pub enable_transaction_tracing_logs: bool,
+    pub rpc: RpcStandardNodeArgs,
 
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
@@ -139,11 +109,70 @@ pub struct StandardNodeArgs {
     pub tx_forwarding_max_rps: u32,
 }
 
+/// CLI arguments for a Base execution node embedded by the unified RPC command.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+#[command(next_help_heading = "Rollup")]
+pub struct RpcStandardNodeArgs {
+    /// Rollup arguments.
+    #[command(flatten)]
+    pub rollup_args: RollupArgs,
+
+    /// A URL pointing to a secure websocket subscription that streams out flashblocks.
+    ///
+    /// If given, the flashblocks are received to build pending block. All request with "pending"
+    /// block tag will use the pending state based on flashblocks.
+    #[arg(long, alias = "websocket-url")]
+    pub flashblocks_url: Option<Url>,
+
+    /// The max pending blocks depth.
+    #[arg(
+        long = "max-pending-blocks-depth",
+        value_name = "MAX_PENDING_BLOCKS_DEPTH",
+        default_value = "3"
+    )]
+    pub max_pending_blocks_depth: u64,
+
+    /// Enable cached execution via the flashblocks-aware engine validator.
+    #[arg(long = "flashblocks.cached-execution", requires = "flashblocks_url")]
+    pub flashblocks_cached_execution: bool,
+
+    /// Enable transaction tracing for mempool-to-block timing analysis
+    #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
+    pub enable_transaction_tracing: bool,
+
+    /// Enable `info` logs for transaction tracing
+    #[arg(
+        long = "enable-transaction-tracing-logs",
+        value_name = "ENABLE_TRANSACTION_TRACING_LOGS"
+    )]
+    pub enable_transaction_tracing_logs: bool,
+}
+
+impl From<RpcStandardNodeArgs> for StandardNodeArgs {
+    fn from(args: RpcStandardNodeArgs) -> Self {
+        Self {
+            rpc: args,
+            enable_metering: false,
+            metering_gas_limit: None,
+            metering_execution_time_us: None,
+            metering_state_root_time_us: None,
+            metering_da_bytes: None,
+            metering_target_flashblocks_per_block: None,
+            metering_metered_opcodes: Vec::new(),
+            enable_tx_forwarding: false,
+            builder_rpc_urls: Vec::new(),
+            tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
+            tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
+            tx_forwarding_max_rps: DEFAULT_MAX_RPS,
+        }
+    }
+}
+
 impl From<&StandardNodeArgs> for Option<FlashblocksConfig> {
     fn from(args: &StandardNodeArgs) -> Self {
-        args.flashblocks_url.clone().map(|url| {
-            let mut config = FlashblocksConfig::new(url, args.max_pending_blocks_depth);
-            config.cached_execution = args.flashblocks_cached_execution;
+        args.rpc.flashblocks_url.clone().map(|url| {
+            let mut config = FlashblocksConfig::new(url, args.rpc.max_pending_blocks_depth);
+            config.cached_execution = args.rpc.flashblocks_cached_execution;
             config
         })
     }
@@ -169,18 +198,18 @@ pub struct StandardBaseRethNode;
 impl StandardBaseRethNode {
     /// Builds a runner with the standard Base execution-node extensions installed.
     pub fn runner(args: StandardNodeArgs) -> eyre::Result<BaseNodeRunner> {
-        let mut runner = BaseNodeRunner::new(args.rollup_args.clone());
+        let mut runner = BaseNodeRunner::new(args.rpc.rollup_args.clone());
 
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
 
         // Feature extensions (FlashblocksExtension must be last - uses replace_configured).
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
-            sequencer_rpc: args.rollup_args.sequencer.clone(),
+            sequencer_rpc: args.rpc.rollup_args.sequencer.clone(),
         });
         runner.install_ext::<TxPoolExtension>(TxpoolConfig {
-            tracing_enabled: args.enable_transaction_tracing,
-            tracing_logs_enabled: args.enable_transaction_tracing_logs,
+            tracing_enabled: args.rpc.enable_transaction_tracing,
+            tracing_logs_enabled: args.rpc.enable_transaction_tracing_logs,
             flashblocks_config: flashblocks_config.clone(),
         });
 
@@ -214,7 +243,7 @@ impl StandardBaseRethNode {
         runner.install_ext::<BundleExtension>(());
         runner.install_ext::<TxForwardingExtension>((&args).into());
         runner.install_ext::<FlashblocksExtension>(flashblocks_config);
-        runner.install_ext::<ProofsHistoryExtension>(args.rollup_args);
+        runner.install_ext::<ProofsHistoryExtension>(args.rpc.rollup_args);
 
         Ok(runner)
     }

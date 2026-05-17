@@ -7,15 +7,14 @@ use revm::{
 };
 
 use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, BasePrecompiles, BaseSpecId, BaseTransaction,
+    BaseContext, BaseEvm, BaseHaltReason, BasePrecompileInstaller, BaseSpecId, BaseTransaction,
     BaseTransactionError, Builder, DefaultBase,
 };
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
 ///
-/// [`BasePrecompiles`] are eagerly flattened into a [`PrecompilesMap`] on construction
-/// so that precompile dispatch is a single hash-map lookup rather than a spec-aware
-/// branch on every call.
+/// Base precompiles are eagerly flattened into a [`PrecompilesMap`] on construction so that
+/// precompile dispatch is a single hash-map lookup rather than a spec-aware branch on every call.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct BaseEvmFactory;
@@ -43,9 +42,7 @@ impl EvmFactory for BaseEvmFactory {
             .with_cfg(input.cfg_env)
             .build_base()
             .with_inspector(NoOpInspector {})
-            .with_precompiles(PrecompilesMap::from_static(
-                BasePrecompiles::new_with_spec(spec_id).precompiles(),
-            ))
+            .with_precompiles(BasePrecompileInstaller::new(spec_id).install())
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
@@ -60,8 +57,6 @@ impl EvmFactory for BaseEvmFactory {
             .with_block(input.block_env)
             .with_cfg(input.cfg_env)
             .build_with_inspector(inspector)
-            .with_precompiles(PrecompilesMap::from_static(
-                BasePrecompiles::new_with_spec(spec_id).precompiles(),
-            ))
+            .with_precompiles(BasePrecompileInstaller::new(spec_id).install())
     }
 }

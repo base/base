@@ -99,7 +99,8 @@ fn each_hardfork_activates_at_its_mainnet_timestamp() {
 /// trips at a different second, so there is never a spurious simultaneous cascade.
 #[test]
 fn mainnet_hardfork_timestamps_are_strictly_ordered() {
-    let h = &TestRollupConfigBuilder::mainnet().hardforks;
+    let rc = TestRollupConfigBuilder::mainnet();
+    let h = &rc.hardforks;
 
     let ordered: &[(&str, u64)] = &[
         ("canyon", h.canyon_time.expect("canyon_time")),

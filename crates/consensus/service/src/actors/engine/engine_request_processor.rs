@@ -5,10 +5,9 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    BuildTask, ConsolidateInput, ConsolidateTask, DelegatedForkchoiceTask,
-    DelegatedForkchoiceUpdate, Engine, EngineClient, EngineSyncStateUpdate, EngineTask,
-    EngineTaskError, EngineTaskErrorSeverity, FinalizeTask, GetPayloadTask, InsertPayloadSafety,
-    InsertTask, Metrics as EngineMetrics, SealTask,
+    ConsolidateTask, DelegatedForkchoiceTask, Engine, EngineClient, EngineSyncStateUpdate,
+    EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask,
+    InsertTask, InsertTaskResult, Metrics as EngineMetrics, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -17,42 +16,19 @@ use tokio::{
 };
 
 use crate::{
-    BuildRequest, Conductor, EngineClientError, EngineDerivationClient, EngineError,
-    GetPayloadRequest, NodeMode, ResetRequest, SealRequest,
+    BuildRequest, Conductor, EngineActorRequest, EngineClientError, EngineDerivationClient,
+    EngineError, GetPayloadRequest, InsertUnsafePayloadRequest, NodeMode,
 };
 
-/// Requires that the implementor handles [`EngineProcessingRequest`]s via the provided channel.
+/// Requires that the implementor handles engine requests via the provided channel.
 /// Note: this exists to facilitate unit testing rather than consolidate multiple implementations
 /// under a well-thought-out interface.
 pub trait EngineRequestReceiver: Send + Sync {
     /// Starts a task to handle engine processing requests.
     fn start(
         self,
-        request_channel: mpsc::Receiver<EngineProcessingRequest>,
+        request_channel: mpsc::Receiver<EngineActorRequest>,
     ) -> JoinHandle<Result<(), EngineError>>;
-}
-
-/// A request to process engine tasks.
-#[derive(Debug)]
-pub enum EngineProcessingRequest {
-    /// Request to start building a block.
-    Build(Box<BuildRequest>),
-    /// Request to fetch a sealed payload without inserting it.
-    GetPayload(Box<GetPayloadRequest>),
-    /// Request to process a Safe signal, which can be derived attributes or delegated block info.
-    ProcessSafeL2Signal(ConsolidateInput),
-    /// Request to apply delegated safe/finalized labels together for follow mode.
-    ProcessDelegatedForkchoiceUpdate(Box<DelegatedForkchoiceUpdate>),
-    /// Request to process the finalized L2 block with the provided block number.
-    ProcessFinalizedL2BlockNumber(Box<u64>),
-    /// Request to process a received unsafe L2 block.
-    ProcessUnsafeL2Block(Box<BaseExecutionPayloadEnvelope>),
-    /// Request to process a locally produced sequencer unsafe L2 block.
-    ProcessLocalUnsafeL2Block(Box<BaseExecutionPayloadEnvelope>),
-    /// Request to reset the forkchoice.
-    Reset(Box<ResetRequest>),
-    /// Request to seal a block.
-    Seal(Box<SealRequest>),
 }
 
 /// Classifies the bootstrap behavior for the [`EngineProcessor`].
@@ -195,6 +171,55 @@ where
         Ok(())
     }
 
+    /// Handles an [`EngineTaskErrors`] according to its severity.
+    async fn handle_engine_task_error(&mut self, err: EngineTaskErrors) -> Result<(), EngineError> {
+        let severity = err.severity();
+        if severity == EngineTaskErrorSeverity::Critical {
+            error!(target: "engine", ?err, "Critical engine task error");
+            return Err(err.into());
+        }
+
+        self.handle_engine_task_error_severity(severity, format!("{err:?}")).await
+    }
+
+    async fn handle_engine_task_error_severity(
+        &mut self,
+        severity: EngineTaskErrorSeverity,
+        error: String,
+    ) -> Result<(), EngineError> {
+        match severity {
+            EngineTaskErrorSeverity::Critical => {
+                error!(target: "engine", %error, "Critical engine task error");
+                Err(EngineError::CriticalEngineTask(error))
+            }
+            EngineTaskErrorSeverity::Reset => {
+                warn!(target: "engine", %error, "Received reset request");
+                self.reset().await
+            }
+            EngineTaskErrorSeverity::Flush => {
+                // This error is encountered when the payload is marked INVALID
+                // by the engine api. Post-holocene, the payload is replaced by
+                // a "deposits-only" block and re-executed. At the same time,
+                // the channel and any remaining buffered batches are flushed.
+                warn!(target: "engine", %error, "Invalid payload, Flushing derivation pipeline.");
+                match self.derivation_client.send_signal(Signal::FlushChannel).await {
+                    Ok(_) => {
+                        debug!(target: "engine", "Sent flush signal to derivation actor");
+                        Ok(())
+                    }
+                    Err(err) => {
+                        error!(target: "engine", ?err, "Failed to send flush signal to the derivation actor.");
+                        Err(EngineError::ChannelClosed)
+                    }
+                }
+            }
+            EngineTaskErrorSeverity::Temporary => {
+                trace!(target: "engine", %error, "Temporary engine task error");
+                Ok(())
+            }
+        }
+    }
+
     /// Drains the inner [`Engine`] task queue and attempts to update the safe head.
     async fn drain(&mut self) -> Result<(), EngineError> {
         match self.engine.drain().await {
@@ -202,35 +227,7 @@ where
                 trace!(target: "engine", "[ENGINE] tasks drained");
             }
             Err(err) => {
-                match err.severity() {
-                    EngineTaskErrorSeverity::Critical => {
-                        error!(target: "engine", ?err, "Critical error draining engine tasks");
-                        return Err(err.into());
-                    }
-                    EngineTaskErrorSeverity::Reset => {
-                        warn!(target: "engine", ?err, "Received reset request");
-                        self.reset().await?;
-                    }
-                    EngineTaskErrorSeverity::Flush => {
-                        // This error is encountered when the payload is marked INVALID
-                        // by the engine api. Post-holocene, the payload is replaced by
-                        // a "deposits-only" block and re-executed. At the same time,
-                        // the channel and any remaining buffered batches are flushed.
-                        warn!(target: "engine", ?err, "Invalid payload, Flushing derivation pipeline.");
-                        match self.derivation_client.send_signal(Signal::FlushChannel).await {
-                            Ok(_) => {
-                                debug!(target: "engine", "Sent flush signal to derivation actor")
-                            }
-                            Err(err) => {
-                                error!(target: "engine", ?err, "Failed to send flush signal to the derivation actor.");
-                                return Err(EngineError::ChannelClosed);
-                            }
-                        }
-                    }
-                    EngineTaskErrorSeverity::Temporary => {
-                        trace!(target: "engine", ?err, "Temporary error draining engine tasks");
-                    }
-                }
+                self.handle_engine_task_error(err).await?;
             }
         }
 
@@ -243,13 +240,27 @@ where
         Ok(())
     }
 
-    fn enqueue_unsafe_payload_insert(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+    fn enqueue_unsafe_payload_insert(
+        &mut self,
+        envelope: BaseExecutionPayloadEnvelope,
+        result_tx: Option<mpsc::Sender<InsertTaskResult>>,
+    ) {
         self.log_follower_upgrade_activation(&envelope);
-        let task = EngineTask::Insert(Box::new(InsertTask::unsafe_payload(
-            Arc::clone(&self.client),
-            Arc::clone(&self.rollup),
-            envelope,
-        )));
+        let task = match result_tx {
+            Some(result_tx) => {
+                EngineTask::Insert(Box::new(InsertTask::unsafe_payload_with_result(
+                    Arc::clone(&self.client),
+                    Arc::clone(&self.rollup),
+                    envelope,
+                    result_tx,
+                )))
+            }
+            None => EngineTask::Insert(Box::new(InsertTask::unsafe_payload(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup),
+                envelope,
+            ))),
+        };
         self.engine.enqueue(task);
     }
 
@@ -266,7 +277,7 @@ where
                 parent_hash = %envelope.execution_payload.parent_hash(),
                 "Validator enqueuing external unsafe payload"
             );
-            self.enqueue_unsafe_payload_insert(envelope);
+            self.enqueue_unsafe_payload_insert(envelope, None);
             return;
         }
 
@@ -283,7 +294,7 @@ where
                 max_external_unsafe_gap = EngineProcessorOptions::MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP,
                 "Sequencer enqueuing external unsafe payload within gap limit"
             );
-            self.enqueue_unsafe_payload_insert(envelope);
+            self.enqueue_unsafe_payload_insert(envelope, None);
             return;
         }
 
@@ -300,7 +311,8 @@ where
         );
     }
 
-    fn handle_local_unsafe_l2_block(&mut self, envelope: BaseExecutionPayloadEnvelope) {
+    fn handle_local_unsafe_l2_block(&mut self, request: InsertUnsafePayloadRequest) {
+        let InsertUnsafePayloadRequest { envelope, result_tx } = request;
         debug!(
             target: "engine",
             block_number = envelope.execution_payload.block_number(),
@@ -308,7 +320,7 @@ where
             parent_hash = %envelope.execution_payload.parent_hash(),
             "Enqueuing local sequencer unsafe payload"
         );
-        self.enqueue_unsafe_payload_insert(envelope);
+        self.enqueue_unsafe_payload_insert(envelope, result_tx);
     }
 
     async fn mark_el_sync_complete_and_notify_derivation_actor(
@@ -572,7 +584,7 @@ where
 {
     fn start(
         mut self,
-        mut request_channel: mpsc::Receiver<EngineProcessingRequest>,
+        mut request_channel: mpsc::Receiver<EngineActorRequest>,
     ) -> JoinHandle<Result<(), EngineError>> {
         tokio::spawn(async move {
             // Bootstrap: pre-populate the unsafe_head_tx watch channel so that external callers
@@ -646,29 +658,53 @@ where
                 };
 
                 match request {
-                    EngineProcessingRequest::Build(build_request) => {
+                    EngineActorRequest::BuildRequest(build_request) => {
                         let BuildRequest { attributes, result_tx } = *build_request;
-                        let task = EngineTask::Build(Box::new(BuildTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            attributes,
-                            Some(result_tx),
-                        )));
-                        self.engine.enqueue(task);
+                        match self
+                            .engine
+                            .build(Arc::clone(&self.client), Arc::clone(&self.rollup), attributes)
+                            .await
+                        {
+                            Ok(payload_id) => {
+                                result_tx
+                                    .send(Ok(payload_id))
+                                    .await
+                                    .map_err(|_| EngineError::ChannelClosed)?;
+                            }
+                            Err(err) => {
+                                let severity = err.severity();
+                                let error = format!("{err:?}");
+                                result_tx
+                                    .send(Err(err))
+                                    .await
+                                    .map_err(|_| EngineError::ChannelClosed)?;
+                                self.handle_engine_task_error_severity(severity, error).await?;
+                            }
+                        }
                     }
-                    EngineProcessingRequest::GetPayload(get_payload_request) => {
+                    EngineActorRequest::GetPayloadRequest(get_payload_request) => {
                         let GetPayloadRequest { payload_id, attributes, result_tx } =
                             *get_payload_request;
-                        let task = EngineTask::GetPayload(Box::new(GetPayloadTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            payload_id,
-                            attributes,
-                            Some(result_tx),
-                        )));
-                        self.engine.enqueue(task);
+                        let result = self
+                            .engine
+                            .get_payload(
+                                Arc::clone(&self.client),
+                                Arc::clone(&self.rollup),
+                                payload_id,
+                                attributes,
+                            )
+                            .await;
+
+                        let error =
+                            result.as_ref().err().map(|err| (err.severity(), format!("{err:?}")));
+                        result_tx.send(result).await.map_err(|err| {
+                            EngineTaskErrors::Seal(SealTaskError::MpscSend(Box::new(err)))
+                        })?;
+                        if let Some((severity, error)) = error {
+                            self.handle_engine_task_error_severity(severity, error).await?;
+                        }
                     }
-                    EngineProcessingRequest::ProcessSafeL2Signal(safe_signal) => {
+                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
                         let task = EngineTask::Consolidate(Box::new(ConsolidateTask::new(
                             Arc::clone(&self.client),
                             Arc::clone(&self.rollup),
@@ -676,7 +712,7 @@ where
                         )));
                         self.engine.enqueue(task);
                     }
-                    EngineProcessingRequest::ProcessDelegatedForkchoiceUpdate(update) => {
+                    EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(update) => {
                         let task = EngineTask::DelegatedForkchoice(Box::new(
                             DelegatedForkchoiceTask::new(
                                 Arc::clone(&self.client),
@@ -686,7 +722,7 @@ where
                         ));
                         self.engine.enqueue(task);
                     }
-                    EngineProcessingRequest::ProcessFinalizedL2BlockNumber(
+                    EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
                         finalized_l2_block_number,
                     ) => {
                         // Finalize the L2 block at the provided block number.
@@ -697,13 +733,13 @@ where
                         )));
                         self.engine.enqueue(task);
                     }
-                    EngineProcessingRequest::ProcessUnsafeL2Block(envelope) => {
+                    EngineActorRequest::ProcessUnsafeL2BlockRequest(envelope) => {
                         self.handle_external_unsafe_l2_block(*envelope);
                     }
-                    EngineProcessingRequest::ProcessLocalUnsafeL2Block(envelope) => {
+                    EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(envelope) => {
                         self.handle_local_unsafe_l2_block(*envelope);
                     }
-                    EngineProcessingRequest::Reset(reset_request) => {
+                    EngineActorRequest::ResetRequest(reset_request) => {
                         // Do not reset the engine while the EL is still syncing. A Reset sends a
                         // forkchoice_updated to reth pointing at the sync-start block, which will
                         // return Valid and cause reth to set that stale block as canonical,
@@ -737,18 +773,6 @@ where
                             reset_res?;
                         }
                     }
-                    EngineProcessingRequest::Seal(seal_request) => {
-                        let SealRequest { payload_id, attributes, result_tx } = *seal_request;
-                        let task = EngineTask::Seal(Box::new(SealTask::new(
-                            Arc::clone(&self.client),
-                            Arc::clone(&self.rollup),
-                            payload_id,
-                            attributes,
-                            InsertPayloadSafety::Unsafe,
-                            Some(result_tx),
-                        )));
-                        self.engine.enqueue(task);
-                    }
                 }
             }
         })
@@ -770,7 +794,7 @@ mod tests {
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_consensus_derive::Signal;
     use base_consensus_engine::{
-        Engine, EngineState,
+        Engine, EngineState, EngineTaskError, EngineTaskErrorSeverity,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
@@ -781,9 +805,9 @@ mod tests {
     use tokio::sync::{mpsc, watch};
 
     use crate::{
-        BuildRequest, EngineClientError, EngineProcessingRequest, EngineProcessor,
-        EngineProcessorOptions, EngineRequestReceiver, MockConductor, NodeMode, ResetRequest,
-        actors::engine::client::MockEngineDerivationClient,
+        BuildRequest, EngineActorRequest, EngineClientError, EngineProcessor,
+        EngineProcessorOptions, EngineRequestReceiver, InsertUnsafePayloadRequest, MockConductor,
+        NodeMode, ResetRequest, actors::engine::client::MockEngineDerivationClient,
     };
 
     /// Returns a default all-zero L2 block and its canonical hash.
@@ -1019,7 +1043,10 @@ mod tests {
             unsafe_payload_processor(node_mode, el_sync_finished, unsafe_head, safe_head);
 
         if local_payload {
-            processor.handle_local_unsafe_l2_block(envelope);
+            processor.handle_local_unsafe_l2_block(InsertUnsafePayloadRequest {
+                envelope,
+                result_tx: None,
+            });
         } else {
             processor.handle_external_unsafe_l2_block(envelope);
         }
@@ -1156,7 +1183,7 @@ mod tests {
         // Send a Reset — the ELSyncing guard must fire and return ELSyncing.
         let (result_tx, mut result_rx) = mpsc::channel(1);
         req_tx
-            .send(EngineProcessingRequest::Reset(Box::new(ResetRequest { result_tx })))
+            .send(EngineActorRequest::ResetRequest(Box::new(ResetRequest { result_tx })))
             .await
             .expect("failed to send reset request");
 
@@ -1693,14 +1720,24 @@ mod tests {
             .with_parent(parent_block)
             .with_timestamp(attributes_timestamp)
             .build();
-        let (build_result_tx, _build_result_rx) = mpsc::channel(1);
+        let (build_result_tx, mut build_result_rx) = mpsc::channel(1);
         req_tx
-            .send(EngineProcessingRequest::Build(Box::new(BuildRequest {
+            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
                 attributes,
                 result_tx: build_result_tx,
             })))
             .await
             .expect("failed to send build request");
+
+        let build_result =
+            tokio::time::timeout(std::time::Duration::from_secs(5), build_result_rx.recv())
+                .await
+                .expect("timed out waiting for build result")
+                .expect("build result channel closed before response");
+        assert!(matches!(
+            build_result,
+            Err(err) if err.severity() == EngineTaskErrorSeverity::Flush
+        ));
 
         let received = tokio::time::timeout(std::time::Duration::from_secs(5), signal_rx.recv())
             .await

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
-use base_common_chains::Registry;
+use base_common_chains::{ChainConfig, rollup_config};
 use base_common_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -22,6 +22,9 @@ pub struct ProofsConfig {
 pub struct ValidatorNodeConfig {
     /// Human-readable name for this node (e.g. "base-client").
     pub name: String,
+    /// Human-readable binary/process description shown in the TUI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<String>,
     /// Consensus-layer JSON-RPC endpoint (serves `optimism_*` and `opp2p_*` methods).
     pub cl_rpc: Url,
     /// Execution-layer JSON-RPC endpoint for this node.
@@ -183,8 +186,7 @@ impl MonitoringConfig {
 
     /// Returns the default Base mainnet configuration.
     pub fn mainnet() -> Self {
-        let rollup =
-            Registry::rollup_config(8453).expect("Base mainnet config missing from registry");
+        let rollup = rollup_config!(ChainConfig::MAINNET);
         Self {
             name: "mainnet".to_string(),
             rpc: Url::parse("https://mainnet.base.org").unwrap(),
@@ -202,8 +204,7 @@ impl MonitoringConfig {
 
     /// Returns the default Base Sepolia configuration.
     pub fn sepolia() -> Self {
-        let rollup =
-            Registry::rollup_config(84532).expect("Base Sepolia config missing from registry");
+        let rollup = rollup_config!(ChainConfig::SEPOLIA);
         Self {
             name: "sepolia".to_string(),
             rpc: Url::parse("https://sepolia.base.org").unwrap(),
@@ -276,13 +277,24 @@ impl MonitoringConfig {
                     flashblocks_ws: Some(Url::parse("ws://localhost:11111").unwrap()),
                 },
             ]),
-            validators: Some(vec![ValidatorNodeConfig {
-                name: "base-client".to_string(),
-                cl_rpc: Url::parse("http://localhost:8549").unwrap(),
-                el_rpc: Some(Url::parse("http://localhost:8545").unwrap()),
-                docker_el: Some("base-client".to_string()),
-                docker_cl: Some("base-client-cl".to_string()),
-            }]),
+            validators: Some(vec![
+                ValidatorNodeConfig {
+                    name: "base-client".to_string(),
+                    binary: Some("/app/base-client + /app/base-consensus".to_string()),
+                    cl_rpc: Url::parse("http://localhost:8549").unwrap(),
+                    el_rpc: Some(Url::parse("http://localhost:8545").unwrap()),
+                    docker_el: Some("base-client".to_string()),
+                    docker_cl: Some("base-client-cl".to_string()),
+                },
+                ValidatorNodeConfig {
+                    name: "base-rpc".to_string(),
+                    binary: Some("/app/base".to_string()),
+                    cl_rpc: Url::parse("http://localhost:8649").unwrap(),
+                    el_rpc: Some(Url::parse("http://localhost:8645").unwrap()),
+                    docker_el: Some("base-rpc".to_string()),
+                    docker_cl: Some("base-rpc".to_string()),
+                },
+            ]),
             proofs: None,
         }
     }
@@ -433,6 +445,20 @@ mod tests {
         assert_eq!(devnet.l1_rpc.as_str(), "http://localhost:4545/");
         assert!(devnet.consensus_node_rpc.is_some());
         assert_eq!(devnet.consensus_node_rpc.unwrap().as_str(), "http://localhost:7549/");
+        let validators = devnet.validators.expect("devnet should include validator/RPC node");
+        assert_eq!(validators.len(), 2);
+        assert_eq!(validators[0].name, "base-client");
+        assert_eq!(validators[0].binary.as_deref(), Some("/app/base-client + /app/base-consensus"));
+        assert_eq!(validators[0].cl_rpc.as_str(), "http://localhost:8549/");
+        assert_eq!(validators[0].el_rpc.as_ref().unwrap().as_str(), "http://localhost:8545/");
+        assert_eq!(validators[0].docker_el.as_deref(), Some("base-client"));
+        assert_eq!(validators[0].docker_cl.as_deref(), Some("base-client-cl"));
+        assert_eq!(validators[1].name, "base-rpc");
+        assert_eq!(validators[1].binary.as_deref(), Some("/app/base"));
+        assert_eq!(validators[1].cl_rpc.as_str(), "http://localhost:8649/");
+        assert_eq!(validators[1].el_rpc.as_ref().unwrap().as_str(), "http://localhost:8645/");
+        assert_eq!(validators[1].docker_el.as_deref(), Some("base-rpc"));
+        assert_eq!(validators[1].docker_cl.as_deref(), Some("base-rpc"));
     }
 
     #[tokio::test]

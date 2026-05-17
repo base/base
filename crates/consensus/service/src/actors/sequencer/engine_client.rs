@@ -9,7 +9,10 @@ use tokio::sync::{mpsc, watch};
 
 use crate::{
     EngineClientError, EngineClientResult,
-    actors::engine::{BuildRequest, EngineActorRequest, GetPayloadRequest, ResetRequest},
+    actors::engine::{
+        BuildRequest, EngineActorRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
+        ResetRequest,
+    },
 };
 
 /// Trait to be used by the Sequencer to interact with the engine, abstracting communication
@@ -37,12 +40,12 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
         attributes: AttributesWithParent,
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope>;
 
-    /// Fire-and-forget: submits the sealed payload to the engine for insertion (`new_payload` + FCU).
-    /// Call this after a successful conductor commit.
+    /// Submits the sealed payload to the engine for insertion (`new_payload` + FCU), returning the
+    /// inserted unsafe head after the engine acknowledges insertion.
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
-    ) -> EngineClientResult<()>;
+    ) -> EngineClientResult<L2BlockInfo>;
 
     /// Returns the current unsafe head [`L2BlockInfo`].
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo>;
@@ -77,7 +80,7 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
-    ) -> EngineClientResult<()> {
+    ) -> EngineClientResult<L2BlockInfo> {
         (**self).insert_unsafe_payload(payload).await
     }
 
@@ -140,13 +143,20 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
             return Err(EngineClientError::RequestError("request channel closed.".to_string()));
         }
 
-        payload_id_rx.recv()
-            .await
-            .inspect(|payload_id| trace!(target: "sequencer", ?payload_id, "Start build request successfully."))
-            .ok_or_else(|| {
-            error!(target: "block_engine", "Failed to receive payload for initiated block build");
-            EngineClientError::ResponseError("response channel closed.".to_string())
-        })
+        match payload_id_rx.recv().await {
+            Some(Ok(payload_id)) => {
+                trace!(target: "sequencer", ?payload_id, "Start build request successfully.");
+                Ok(payload_id)
+            }
+            Some(Err(err)) => {
+                info!(target: "sequencer", ?err, "Start build request failed.");
+                Err(EngineClientError::StartBuildError(err))
+            }
+            None => {
+                error!(target: "block_engine", "Failed to receive payload for initiated block build");
+                Err(EngineClientError::ResponseError("response channel closed.".to_string()))
+            }
+        }
     }
 
     async fn get_sealed_payload(
@@ -185,11 +195,101 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
-    ) -> EngineClientResult<()> {
+    ) -> EngineClientResult<L2BlockInfo> {
+        let (result_tx, mut result_rx) = mpsc::channel(1);
+
         trace!(target: "sequencer", "Sending insert unsafe payload request to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(payload)))
+            .send(EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(Box::new(
+                InsertUnsafePayloadRequest { envelope: payload, result_tx: Some(result_tx) },
+            )))
             .await
-            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))
+            .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
+
+        let inserted_head = match result_rx.recv().await {
+            Some(Ok(inserted_head)) => inserted_head,
+            Some(Err(err)) => {
+                info!(target: "sequencer", error = ?err, "Insert unsafe payload failed");
+                return Err(EngineClientError::InsertError(err));
+            }
+            None => {
+                error!(target: "block_engine", "Failed to receive insert unsafe payload result");
+                return Err(EngineClientError::ResponseError(
+                    "response channel closed.".to_string(),
+                ));
+            }
+        };
+
+        trace!(
+            target: "sequencer",
+            block_number = inserted_head.block_info.number,
+            block_hash = %inserted_head.block_info.hash,
+            "Insert unsafe payload acknowledged"
+        );
+
+        Ok(inserted_head)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, B256, Bloom, U256};
+    use alloy_rpc_types_engine::ExecutionPayloadV1;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
+    use base_protocol::{BlockInfo, L2BlockInfo};
+    use tokio::sync::{mpsc, watch};
+
+    use super::{QueuedSequencerEngineClient, SequencerEngineClient};
+    use crate::EngineActorRequest;
+
+    fn dummy_envelope() -> BaseExecutionPayloadEnvelope {
+        BaseExecutionPayloadEnvelope {
+            parent_beacon_block_root: None,
+            execution_payload: BaseExecutionPayload::V1(ExecutionPayloadV1 {
+                parent_hash: B256::ZERO,
+                fee_recipient: Address::ZERO,
+                state_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Bloom::ZERO,
+                prev_randao: B256::ZERO,
+                block_number: 1,
+                gas_limit: 30_000_000,
+                gas_used: 0,
+                timestamp: 1,
+                extra_data: Default::default(),
+                base_fee_per_gas: U256::ZERO,
+                block_hash: B256::with_last_byte(1),
+                transactions: vec![],
+            }),
+        }
+    }
+
+    fn l2_head(number: u64) -> L2BlockInfo {
+        L2BlockInfo {
+            block_info: BlockInfo::new(B256::with_last_byte(number as u8), number, B256::ZERO, 1),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_unsafe_payload_returns_engine_ack() {
+        let (request_tx, mut request_rx) = mpsc::channel(1);
+        let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
+        let inserted_head = l2_head(1);
+        let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx);
+
+        let insert_handle =
+            tokio::spawn(async move { client.insert_unsafe_payload(dummy_envelope()).await });
+
+        let request = request_rx.recv().await.expect("insert request");
+        let EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(request) = request else {
+            panic!("expected local unsafe insert request");
+        };
+        let result_tx = request.result_tx.expect("insert result sender");
+        result_tx.send(Ok(inserted_head)).await.expect("send insert result");
+
+        let result = insert_handle.await.expect("insert task");
+
+        assert_eq!(result.expect("insert result"), inserted_head);
     }
 }

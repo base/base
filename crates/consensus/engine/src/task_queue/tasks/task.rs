@@ -9,9 +9,7 @@ use derive_more::Display;
 use thiserror::Error;
 use tokio::task::yield_now;
 
-use super::{
-    BuildTask, ConsolidateTask, DelegatedForkchoiceTask, FinalizeTask, GetPayloadTask, InsertTask,
-};
+use super::{ConsolidateTask, DelegatedForkchoiceTask, FinalizeTask, InsertTask};
 use crate::{
     BuildTaskError, ConsolidateTaskError, DelegatedForkchoiceTaskError, EngineClient, EngineState,
     FinalizeTaskError, InsertTaskError, Metrics,
@@ -114,15 +112,11 @@ impl EngineTaskError for EngineTaskErrors {
 pub enum EngineTask<EngineClient_: EngineClient> {
     /// Inserts a payload into the execution engine.
     Insert(Box<InsertTask<EngineClient_>>),
-    /// Begins building a new block with the given attributes, producing a new payload ID.
-    Build(Box<BuildTask<EngineClient_>>),
     /// Seals the block with the given payload ID and attributes, inserting it into the execution
     /// engine.
     Seal(Box<SealTask<EngineClient_>>),
-    /// Fetches a sealed payload from the engine without inserting it.
-    GetPayload(Box<GetPayloadTask<EngineClient_>>),
     /// Performs consolidation on the engine state, reverting to payload attribute processing
-    /// via the [`BuildTask`] if consolidation fails.
+    /// via the direct build-and-seal fallback if consolidation fails.
     Consolidate(Box<ConsolidateTask<EngineClient_>>),
     /// Applies delegated safe and finalized labels for follow mode.
     DelegatedForkchoice(Box<DelegatedForkchoiceTask<EngineClient_>>),
@@ -136,13 +130,9 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
         match self {
             Self::Insert(task) => task.execute(state).await?,
             Self::Seal(task) => task.execute(state).await?,
-            Self::GetPayload(task) => task.execute(state).await?,
             Self::Consolidate(task) => task.execute(state).await?,
             Self::DelegatedForkchoice(task) => task.execute(state).await?,
             Self::Finalize(task) => task.execute(state).await?,
-            Self::Build(task) => {
-                task.execute(state).await?;
-            }
         };
 
         Ok(())
@@ -153,9 +143,7 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
             Self::Insert(_) => Metrics::INSERT_TASK_LABEL,
             Self::Consolidate(_) => Metrics::CONSOLIDATE_TASK_LABEL,
             Self::DelegatedForkchoice(_) => Metrics::DELEGATED_FORKCHOICE_TASK_LABEL,
-            Self::Build(_) => Metrics::BUILD_TASK_LABEL,
             Self::Seal(_) => Metrics::SEAL_TASK_LABEL,
-            Self::GetPayload(_) => Metrics::GET_PAYLOAD_TASK_LABEL,
             Self::Finalize(_) => Metrics::FINALIZE_TASK_LABEL,
         }
     }
@@ -166,9 +154,7 @@ impl<EngineClient_: EngineClient> PartialEq for EngineTask<EngineClient_> {
         matches!(
             (self, other),
             (Self::Insert(_), Self::Insert(_))
-                | (Self::Build(_), Self::Build(_))
                 | (Self::Seal(_), Self::Seal(_))
-                | (Self::GetPayload(_), Self::GetPayload(_))
                 | (Self::Consolidate(_), Self::Consolidate(_))
                 | (Self::DelegatedForkchoice(_), Self::DelegatedForkchoice(_))
                 | (Self::Finalize(_), Self::Finalize(_))
@@ -186,12 +172,11 @@ impl<EngineClient_: EngineClient> PartialOrd for EngineTask<EngineClient_> {
 
 impl<EngineClient_: EngineClient> Ord for EngineTask<EngineClient_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Order (descending): BuildBlock -> Insert -> Consolidate -> Finalize
+        // Order (descending): Seal -> Insert -> Consolidate -> Finalize
         //
         // https://specs.base.org/protocol/consensus/derivation#forkchoice-synchronization
         //
-        // - Block building jobs are prioritized above all other tasks, to give priority to the
-        //   sequencer. BuildTask handles forkchoice updates automatically.
+        // - Seal tasks are prioritized above all queued tasks to give priority to the sequencer.
         // - Insert tasks are prioritized over Consolidate tasks, to ensure direct payload imports
         //   are handled promptly.
         // - Consolidate tasks are prioritized over Finalize tasks, as they advance the safe chain
@@ -202,24 +187,12 @@ impl<EngineClient_: EngineClient> Ord for EngineTask<EngineClient_> {
             (Self::Insert(_), Self::Insert(_))
             | (Self::Consolidate(_), Self::Consolidate(_))
             | (Self::DelegatedForkchoice(_), Self::DelegatedForkchoice(_))
-            | (Self::Build(_), Self::Build(_))
             | (Self::Seal(_), Self::Seal(_))
-            | (Self::GetPayload(_), Self::GetPayload(_))
             | (Self::Finalize(_), Self::Finalize(_)) => Ordering::Equal,
 
-            // Seal and GetPayload share equal priority (sequencer critical path); must be checked
-            // before the wildcard arms below to satisfy Ord antisymmetry.
-            (Self::Seal(_) | Self::GetPayload(_), Self::Seal(_) | Self::GetPayload(_)) => {
-                Ordering::Equal
-            }
-
-            // Seal and GetPayload tasks are prioritized over all others (sequencer critical path)
-            (Self::Seal(_) | Self::GetPayload(_), _) => Ordering::Greater,
-            (_, Self::Seal(_) | Self::GetPayload(_)) => Ordering::Less,
-
-            // BuildBlock tasks are prioritized over Insert and Consolidate tasks
-            (Self::Build(_), _) => Ordering::Greater,
-            (_, Self::Build(_)) => Ordering::Less,
+            // Seal tasks are prioritized over all other queued tasks.
+            (Self::Seal(_), _) => Ordering::Greater,
+            (_, Self::Seal(_)) => Ordering::Less,
 
             // Insert tasks are prioritized over Consolidate and Finalize tasks
             (Self::Insert(_), _) => Ordering::Greater,

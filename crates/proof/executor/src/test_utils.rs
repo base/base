@@ -9,7 +9,6 @@ use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::PayloadAttributes;
 use alloy_transport_http::{Client, Http};
-use base_common_chains::Registry;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -111,7 +110,8 @@ impl ExecutorTestFixtureCreator {
     /// Create a static test fixture with the configuration provided.
     pub async fn create_static_fixture(self) {
         let chain_id = self.provider.get_chain_id().await.expect("Failed to get chain ID");
-        let rollup_config = Registry::rollup_config(chain_id).expect("Rollup config not found");
+        let rollup_config =
+            base_common_chains::rollup_config!(chain_id).expect("Rollup config not found");
 
         let executing_block = self
             .provider
@@ -182,7 +182,7 @@ impl ExecutorTestFixtureCreator {
         };
 
         let mut executor = StatelessL2Builder::new(
-            rollup_config,
+            &rollup_config,
             BaseEvmFactory::default(),
             self,
             NoopTrieHinter,

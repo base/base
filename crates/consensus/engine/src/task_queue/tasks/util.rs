@@ -5,8 +5,8 @@ use std::sync::Arc;
 use base_common_genesis::RollupConfig;
 use base_protocol::AttributesWithParent;
 
-use super::{BuildTask, BuildTaskError, EngineTaskExt, SealTask, SealTaskError};
-use crate::{EngineClient, EngineState, InsertPayloadSafety};
+use super::{BuildTaskError, EngineTaskExt, SealTask, SealTaskError};
+use crate::{Engine, EngineClient, EngineState, InsertPayloadSafety};
 
 /// Error type for build and seal operations.
 #[derive(Debug, thiserror::Error)]
@@ -22,7 +22,7 @@ pub(in crate::task_queue) enum BuildAndSealError {
 /// Builds and seals a payload in sequence.
 ///
 /// This is a utility function that:
-/// 1. Creates and executes a [`BuildTask`] to initiate block building
+/// 1. Starts an execution-layer build
 /// 2. Creates and executes a [`SealTask`] to seal the block, referencing the initiated payload
 ///
 /// This pattern is commonly used for Holocene deposits-only fallback and other scenarios
@@ -42,14 +42,12 @@ pub(in crate::task_queue) async fn build_and_seal<EngineClient_: EngineClient>(
     attributes: AttributesWithParent,
     payload_safety: InsertPayloadSafety,
 ) -> Result<(), BuildAndSealError> {
-    // Execute the build task
-    let payload_id = BuildTask::new(
-        Arc::clone(&engine),
-        Arc::clone(&cfg),
+    let payload_id = Engine::<EngineClient_>::build_with_state(
+        state,
+        engine.as_ref(),
+        cfg.as_ref(),
         attributes.clone(),
-        None, // Build task doesn't send the payload yet
     )
-    .execute(state)
     .await?;
 
     // Execute the seal task with the payload ID from the build

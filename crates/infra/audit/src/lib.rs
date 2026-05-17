@@ -10,19 +10,14 @@
 mod archiver;
 pub use archiver::AuditArchiver;
 
-mod kafka_config;
-pub use kafka_config::load_kafka_config_from_file;
-
 mod metrics;
 pub use metrics::Metrics;
 
 mod publisher;
-pub use publisher::{BundleEventPublisher, KafkaBundleEventPublisher, LoggingBundleEventPublisher};
+pub use publisher::{BundleEventPublisher, LoggingBundleEventPublisher};
 
 mod reader;
-pub use reader::{
-    Event, EventReader, KafkaAuditLogReader, assign_topic_partition, create_kafka_consumer,
-};
+pub use reader::{Event, EventReader};
 
 mod rpc;
 pub use rpc::{AuditArchiverApiServer, AuditArchiverRpc};

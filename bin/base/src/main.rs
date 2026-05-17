@@ -5,17 +5,14 @@
 
 use clap::Parser;
 
-mod app;
 mod cli;
+mod commands;
 mod config;
-
-use app::BaseApp;
-use cli::BaseCli;
 
 fn main() {
     base_cli_utils::init_common!();
 
-    if let Err(err) = BaseApp::new(BaseCli::parse()).run() {
+    if let Err(err) = cli::BaseCli::parse().run() {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }

@@ -16,7 +16,7 @@ use reth_provider::{CanonStateNotification, Chain};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{FullTransactionEvent, PoolTransaction};
 
-use crate::{EventLog, Pool, TxEvent, metrics::Metrics};
+use crate::{EventLog, NonceSlot, NonceSummary, Pool, TxEvent, metrics::Metrics};
 
 /// Tracks transactions as they move through the mempool and into blocks.
 #[derive(Debug, Clone)]
@@ -25,6 +25,10 @@ pub struct Tracker {
     txs: LruCache<TxHash, EventLog>,
     /// Map of transaction hash to current state.
     tx_states: LruCache<TxHash, Pool>,
+    /// Map of tx hash to its nonce slot for reverse lookup on inclusion.
+    tx_nonce_slots: LruCache<TxHash, NonceSlot>,
+    /// Tracks end-to-end lifecycle per `(sender, nonce)` across replacements.
+    nonce_summaries: LruCache<NonceSlot, NonceSummary>,
     /// Enable `info` logs for transaction tracing.
     enable_logs: bool,
 }
@@ -33,36 +37,61 @@ impl Tracker {
     /// Max size of the LRU caches.
     pub const MAX_SIZE: usize = 20_000;
 
+    /// Block inclusion duration above this threshold increments the slow counter.
+    const SLOW_BLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_secs(3);
+    /// Flashblock inclusion duration above this threshold increments the slow counter.
+    const SLOW_FLASHBLOCK_INCLUSION_THRESHOLD: Duration = Duration::from_millis(1000);
+
     /// Create a new tracker.
     pub fn new(enable_logs: bool) -> Self {
+        let cache_size = NonZeroUsize::new(Self::MAX_SIZE).expect("non zero");
         Self {
-            txs: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
-            tx_states: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
+            txs: LruCache::new(cache_size),
+            tx_states: LruCache::new(cache_size),
+            tx_nonce_slots: LruCache::new(cache_size),
+            nonce_summaries: LruCache::new(cache_size),
             enable_logs,
         }
     }
 
     /// Parse [`FullTransactionEvent`]s and update the tracker.
-    pub fn handle_event<T: PoolTransaction>(&mut self, event: FullTransactionEvent<T>) {
+    ///
+    /// `nonce_slot` is populated by the subscription layer for events that only
+    /// carry a [`TxHash`] (Pending, Queued) by looking up the pool.
+    pub fn handle_event<T: PoolTransaction>(
+        &mut self,
+        event: FullTransactionEvent<T>,
+        nonce_slot: Option<NonceSlot>,
+    ) {
         match event {
             FullTransactionEvent::Pending(tx_hash) => {
                 self.transaction_inserted(tx_hash, TxEvent::Pending);
                 self.transaction_moved(tx_hash, Pool::Pending);
+                if let Some(slot) = nonce_slot {
+                    self.track_nonce_slot(tx_hash, slot);
+                }
             }
             FullTransactionEvent::Queued(tx_hash, _) => {
                 self.transaction_inserted(tx_hash, TxEvent::Queued);
                 self.transaction_moved(tx_hash, Pool::Queued);
+                if let Some(slot) = nonce_slot {
+                    self.track_nonce_slot(tx_hash, slot);
+                }
             }
             FullTransactionEvent::Discarded(tx_hash) => {
                 self.transaction_completed(tx_hash, TxEvent::Dropped, Instant::now());
             }
             FullTransactionEvent::Replaced { transaction, replaced_by } => {
-                let tx_hash = transaction.hash();
-                self.transaction_replaced(*tx_hash, TxHash::from(replaced_by));
+                let sender = transaction.sender();
+                let nonce = transaction.nonce();
+                let tx_hash = *transaction.hash();
+                let replaced_by = TxHash::from(replaced_by);
+                self.transaction_replaced(tx_hash, replaced_by);
+                let slot = NonceSlot::new(sender, nonce);
+                self.nonce_replacement(slot);
+                self.track_nonce_slot(replaced_by, slot);
             }
-            _ => {
-                // Other events.
-            }
+            _ => {}
         }
     }
 
@@ -148,9 +177,12 @@ impl Tracker {
                     return;
                 }
 
-                // Set pending_time if transitioning to pending
-                if event == TxEvent::QueuedToPending && event_log.pending_time.is_none() {
+                // Reset pending_time when transitioning to pending so that
+                // inclusion duration only measures time actually spent in the
+                // pending subpool, not time spent in queued/basefee.
+                if event == TxEvent::QueuedToPending {
                     event_log.pending_time = Some(Instant::now());
+                    event_log.fb_included = false;
                 }
 
                 event_log.push(Local::now(), event);
@@ -178,15 +210,20 @@ impl Tracker {
             // but do update the event log with the final event (i.e., included/dropped).
             event_log.push(Local::now(), event);
 
-            // Record `inclusion_duration` metric if transaction was pending and is now included
             if event == TxEvent::BlockInclusion
                 && let Some(pending_time) = event_log.pending_time
             {
                 let time_pending_to_inclusion = received_at.duration_since(pending_time);
                 Metrics::inclusion_duration().record(time_pending_to_inclusion.as_millis() as f64);
+
+                if time_pending_to_inclusion > Self::SLOW_BLOCK_INCLUSION_THRESHOLD {
+                    Metrics::slow_inclusions().increment(1);
+                } else {
+                    Metrics::healthy_inclusions().increment(1);
+                }
             }
 
-            // If a tx is included/dropped, log it now.
+            self.nonce_completed(&tx_hash, &event, received_at);
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
             Self::record_histogram(time_in_mempool, event);
         }
@@ -206,11 +243,16 @@ impl Tracker {
                 return;
             }
 
-            // Record `fb_inclusion_duration` metric if transaction was pending
             if let Some(pending_time) = event_log.pending_time {
                 let time_pending_to_fb_inclusion = received_at.duration_since(pending_time);
                 Metrics::fb_inclusion_duration()
                     .record(time_pending_to_fb_inclusion.as_millis() as f64);
+
+                if time_pending_to_fb_inclusion > Self::SLOW_FLASHBLOCK_INCLUSION_THRESHOLD {
+                    Metrics::fb_slow_inclusions().increment(1);
+                } else {
+                    Metrics::fb_healthy_inclusions().increment(1);
+                }
 
                 debug!(
                     target: "tracex",
@@ -234,11 +276,43 @@ impl Tracker {
             if self.is_overflowed(&tx_hash, &event_log) {
                 return;
             }
-            // Keep the event log and update the tx hash.
             event_log.push(Local::now(), TxEvent::Replaced);
+            // Reset pending_time so the replacement tx measures its own
+            // inclusion duration rather than inheriting from the original.
+            event_log.pending_time = Some(Instant::now());
+            event_log.fb_included = false;
+            self.tx_nonce_slots.pop(&tx_hash);
             self.txs.put(replaced_by, event_log);
 
             Self::record_histogram(time_in_mempool, TxEvent::Replaced);
+        }
+    }
+
+    fn track_nonce_slot(&mut self, tx_hash: TxHash, slot: NonceSlot) {
+        self.tx_nonce_slots.put(tx_hash, slot);
+        if !self.nonce_summaries.contains(&slot) {
+            self.nonce_summaries.put(slot, NonceSummary::new());
+        }
+    }
+
+    fn nonce_replacement(&mut self, slot: NonceSlot) {
+        if let Some(summary) = self.nonce_summaries.get_mut(&slot) {
+            summary.replacement_count += 1;
+            Metrics::nonce_replacements().increment(1);
+        }
+    }
+
+    fn nonce_completed(&mut self, tx_hash: &TxHash, event: &TxEvent, received_at: Instant) {
+        let Some(slot) = self.tx_nonce_slots.pop(tx_hash) else {
+            return;
+        };
+        let Some(summary) = self.nonce_summaries.pop(&slot) else {
+            return;
+        };
+        if *event == TxEvent::BlockInclusion {
+            let e2e_duration = received_at.duration_since(summary.first_seen);
+            Metrics::e2e_inclusion_duration().record(e2e_duration.as_millis() as f64);
+            Metrics::replacement_count().record(summary.replacement_count as f64);
         }
     }
 
@@ -277,6 +351,7 @@ impl Tracker {
 mod tests {
     use std::ops::Deref;
 
+    use alloy_primitives::Address;
     use base_flashblocks::FlashblocksAPI;
     use base_flashblocks_node::test_harness::{FlashblockBuilder, FlashblocksBuilderTestHarness};
     use base_test_utils::Account;
@@ -442,7 +517,10 @@ mod tests {
 
         // Insert original transaction
         tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        let original_pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
         assert_eq!(tracker.txs.len(), 1);
+
+        std::thread::sleep(Duration::from_millis(1));
 
         // Replace transaction
         tracker.transaction_replaced(tx_hash, replacement_hash);
@@ -451,11 +529,14 @@ mod tests {
         assert!(tracker.txs.get(&tx_hash).is_none());
         assert!(tracker.txs.get(&replacement_hash).is_some());
 
-        // Event log should be preserved with replacement event
         let event_log = tracker.txs.get(&replacement_hash).unwrap();
         assert_eq!(event_log.events.len(), 2);
         assert_eq!(event_log.events[0].1, TxEvent::Pending);
         assert_eq!(event_log.events[1].1, TxEvent::Replaced);
+
+        // pending_time should be reset, not inherited from original
+        assert!(event_log.pending_time.unwrap() > original_pending_time.unwrap());
+        assert!(!event_log.fb_included);
     }
 
     #[test]
@@ -499,7 +580,7 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_time_set_only_once() {
+    fn test_pending_time_resets_on_re_promotion() {
         let mut tracker = Tracker::new(false);
         let tx_hash = TxHash::random();
 
@@ -516,12 +597,12 @@ mod tests {
         // Move back to queued
         tracker.transaction_moved(tx_hash, Pool::Queued);
 
-        // Move to pending again (should NOT reset pending_time)
+        std::thread::sleep(Duration::from_millis(1));
+
         tracker.transaction_moved(tx_hash, Pool::Pending);
         let second_pending_time = tracker.txs.get(&tx_hash).unwrap().pending_time;
 
-        // pending_time should be the same as the first time
-        assert_eq!(first_pending_time, second_pending_time);
+        assert!(second_pending_time.unwrap() > first_pending_time.unwrap());
     }
 
     #[test]
@@ -587,6 +668,72 @@ mod tests {
         // Only one should remain
         assert_eq!(tracker.txs.len(), 1);
         assert!(tracker.txs.get(&tx_hash2).is_some());
+    }
+
+    #[test]
+    fn test_fb_included_resets_on_re_promotion() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // Mark as fb-included
+        tracker.transaction_fb_included(tx_hash, Instant::now());
+        assert!(tracker.txs.get(&tx_hash).unwrap().fb_included);
+
+        // Demote to queued, then re-promote
+        tracker.transaction_moved(tx_hash, Pool::Queued);
+        tracker.transaction_moved(tx_hash, Pool::Pending);
+
+        // fb_included should be reset so the new pending stint gets measured
+        assert!(!tracker.txs.get(&tx_hash).unwrap().fb_included);
+    }
+
+    #[test]
+    fn test_nonce_tracking_simple_inclusion() {
+        let mut tracker = Tracker::new(false);
+        let tx_hash = TxHash::random();
+        let sender = Address::random();
+        let nonce = 42u64;
+        let slot = NonceSlot::new(sender, nonce);
+
+        tracker.transaction_inserted(tx_hash, TxEvent::Pending);
+        tracker.track_nonce_slot(tx_hash, slot);
+
+        assert!(tracker.nonce_summaries.contains(&slot));
+        assert!(tracker.tx_nonce_slots.contains(&tx_hash));
+
+        tracker.nonce_completed(&tx_hash, &TxEvent::BlockInclusion, Instant::now());
+
+        assert!(!tracker.nonce_summaries.contains(&slot));
+        assert!(!tracker.tx_nonce_slots.contains(&tx_hash));
+    }
+
+    #[test]
+    fn test_nonce_tracking_with_replacement() {
+        let mut tracker = Tracker::new(false);
+        let original_hash = TxHash::random();
+        let replacement_hash = TxHash::random();
+        let sender = Address::random();
+        let nonce = 7u64;
+        let slot = NonceSlot::new(sender, nonce);
+
+        tracker.transaction_inserted(original_hash, TxEvent::Pending);
+        tracker.track_nonce_slot(original_hash, slot);
+
+        tracker.transaction_replaced(original_hash, replacement_hash);
+        tracker.nonce_replacement(slot);
+        tracker.track_nonce_slot(replacement_hash, slot);
+
+        let summary = tracker.nonce_summaries.get(&slot).unwrap();
+        assert_eq!(summary.replacement_count, 1);
+
+        // Original hash slot mapping should be gone (overwritten by replacement)
+        assert_eq!(*tracker.tx_nonce_slots.get(&replacement_hash).unwrap(), slot);
+
+        tracker.nonce_completed(&replacement_hash, &TxEvent::BlockInclusion, Instant::now());
+        assert!(!tracker.nonce_summaries.contains(&slot));
     }
 
     #[test]

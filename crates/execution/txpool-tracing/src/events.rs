@@ -2,6 +2,7 @@
 
 use std::time::Instant;
 
+use alloy_primitives::Address;
 use chrono::{DateTime, Local};
 use derive_more::Display;
 
@@ -41,6 +42,45 @@ pub enum Pool {
     Pending,
     /// Queued pool.
     Queued,
+}
+
+/// Key for tracking a unique nonce slot: `(sender, nonce)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NonceSlot {
+    /// Transaction sender address.
+    pub sender: Address,
+    /// Transaction nonce.
+    pub nonce: u64,
+}
+
+impl NonceSlot {
+    /// Creates a new nonce slot key.
+    pub const fn new(sender: Address, nonce: u64) -> Self {
+        Self { sender, nonce }
+    }
+}
+
+/// Tracks the end-to-end lifecycle of a `(sender, nonce)` pair across
+/// replacements until final inclusion.
+#[derive(Debug, Clone)]
+pub struct NonceSummary {
+    /// When the first transaction for this nonce slot entered the mempool.
+    pub first_seen: Instant,
+    /// Number of replacement transactions observed for this nonce slot.
+    pub replacement_count: u32,
+}
+
+impl NonceSummary {
+    /// Creates a new nonce summary starting from now.
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for NonceSummary {
+    fn default() -> Self {
+        Self { first_seen: Instant::now(), replacement_count: 0 }
+    }
 }
 
 /// History of events for a transaction.

@@ -26,15 +26,15 @@ alias c := clean
 alias h := hack
 alias wt := watch-test
 alias wc := watch-check
-alias ldc := load-test-devnet-continuous
+alias ldc := load-test-continuous
 
 # Default to display help menu
 default:
     @just --list
 
-# Load test devnet in continuous mode (Ctrl-C to stop)
-load-test-devnet-continuous:
-    just load-test devnet-continuous
+# Load test a network in continuous mode (Ctrl-C to stop)
+load-test-continuous network='devnet':
+    just load-test continuous {{network}}
 
 # Runs the specs docs locally
 specs:

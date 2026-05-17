@@ -43,6 +43,7 @@ macro_rules! define_metrics_args {
         pub struct MetricsArgs {
             /// Controls whether Prometheus metrics are enabled. Disabled by default.
             #[arg(
+                id = "metrics_enabled",
                 long = "metrics.enabled",
                 global = true,
                 default_value_t = false,
@@ -52,6 +53,7 @@ macro_rules! define_metrics_args {
 
             /// The interval for prometheus metrics collection in seconds.
             #[arg(
+                id = "metrics_interval",
                 long = "metrics.interval",
                 global = true,
                 default_value = "30",

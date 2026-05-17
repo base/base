@@ -34,6 +34,10 @@ pub enum ProposerError {
     #[error("invalid parent game")]
     InvalidParentGame,
 
+    /// The proof signer is not valid on-chain (`TEEVerifier.InvalidSigner(address)`).
+    #[error("invalid signer")]
+    InvalidSigner,
+
     /// Configuration error.
     #[error("config error: {0}")]
     Config(String),
@@ -68,6 +72,8 @@ impl ProposerError {
     pub const ERROR_TYPE_L1_ORIGIN_TOO_OLD: &str = "l1_origin_too_old";
     /// Metric label for invalid parent game rejections.
     pub const ERROR_TYPE_INVALID_PARENT_GAME: &str = "invalid_parent_game";
+    /// Metric label for invalid proof signer rejections.
+    pub const ERROR_TYPE_INVALID_SIGNER: &str = "invalid_signer";
 
     /// Returns true if this error indicates the game already exists.
     pub const fn is_game_already_exists(&self) -> bool {
@@ -84,6 +90,11 @@ impl ProposerError {
         matches!(self, Self::InvalidParentGame)
     }
 
+    /// Returns true if this error indicates the proof signer is not valid on-chain.
+    pub const fn is_invalid_signer(&self) -> bool {
+        matches!(self, Self::InvalidSigner)
+    }
+
     /// Returns the metrics label for this error variant.
     pub const fn metric_label(&self) -> &'static str {
         match self {
@@ -94,6 +105,7 @@ impl ProposerError {
             Self::GameAlreadyExists => Self::ERROR_TYPE_GAME_ALREADY_EXISTS,
             Self::L1OriginTooOld => Self::ERROR_TYPE_L1_ORIGIN_TOO_OLD,
             Self::InvalidParentGame => Self::ERROR_TYPE_INVALID_PARENT_GAME,
+            Self::InvalidSigner => Self::ERROR_TYPE_INVALID_SIGNER,
             Self::Config(_) => Self::ERROR_TYPE_CONFIG,
             Self::Internal(_) => Self::ERROR_TYPE_INTERNAL,
             Self::TxManager(_) => Self::ERROR_TYPE_TX_MANAGER,

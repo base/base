@@ -71,10 +71,9 @@ services:
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
       - "4"
-      - --rpc.addr
-      - "0.0.0.0"
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
+      - --rpc.enable-admin
       - --p2p.listen.tcp
       - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.listen.udp
@@ -86,8 +85,6 @@ services:
       - --p2p.bootnodes-file
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
       - --metrics.port
       - "${L2_BUILDER_CL_METRICS_PORT}"
       - --mode
@@ -235,10 +232,9 @@ services:
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
       - "4"
-      - --rpc.addr
-      - "0.0.0.0"
       - --rpc.port
       - "${L2_SEQ1_CL_RPC_PORT}"
+      - --rpc.enable-admin
       - --p2p.listen.tcp
       - "${L2_SEQ1_CL_P2P_PORT}"
       - --p2p.listen.udp
@@ -248,8 +244,6 @@ services:
       - --p2p.priv.path
       - /genesis/l2/sequencer-1-p2p-key.txt
       - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
       - --metrics.port
       - "${L2_SEQ1_CL_METRICS_PORT}"
       - --mode
@@ -376,10 +370,9 @@ services:
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
       - "4"
-      - --rpc.addr
-      - "0.0.0.0"
       - --rpc.port
       - "${L2_SEQ2_CL_RPC_PORT}"
+      - --rpc.enable-admin
       - --p2p.listen.tcp
       - "${L2_SEQ2_CL_P2P_PORT}"
       - --p2p.listen.udp
@@ -389,8 +382,6 @@ services:
       - --p2p.priv.path
       - /genesis/l2/sequencer-2-p2p-key.txt
       - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
       - --metrics.port
       - "${L2_SEQ2_CL_METRICS_PORT}"
       - --mode

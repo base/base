@@ -102,6 +102,7 @@ dev = [
 
 serde = [
 	"alloy-eips/serde",
+	"base-common-chains/serde",
 	"base-common-consensus/serde",
 	"base-execution-chainspec/serde",
 	"reth-network/serde",

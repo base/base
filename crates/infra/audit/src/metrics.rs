@@ -1,4 +1,4 @@
-//! Metrics for audit operations including Kafka reads, S3 writes, and event processing.
+//! Metrics for audit operations including event reads, S3 writes, and event processing.
 
 base_metrics::define_metrics! {
     tips_audit
@@ -6,10 +6,10 @@ base_metrics::define_metrics! {
     archive_event_duration: histogram,
     #[describe("Age of event when processed (now - event timestamp)")]
     event_age: histogram,
-    #[describe("Duration of Kafka read_event")]
-    kafka_read_duration: histogram,
-    #[describe("Duration of Kafka commit")]
-    kafka_commit_duration: histogram,
+    #[describe("Duration of read_event")]
+    read_duration: histogram,
+    #[describe("Duration of event commit")]
+    commit_duration: histogram,
     #[describe("Duration of update_bundle_history")]
     update_bundle_history_duration: histogram,
     #[describe("Duration of update all transaction indexes")]

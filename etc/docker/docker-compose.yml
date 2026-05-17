@@ -152,6 +152,7 @@ services:
       - L1_CHAIN_ID=${L1_CHAIN_ID}
       - L2_CHAIN_ID=${L2_CHAIN_ID}
       - L2_BASE_AZUL_BLOCK=${L2_BASE_AZUL_BLOCK-}
+      - L2_BASE_BERYL_BLOCK=${L2_BASE_BERYL_BLOCK-}
       - OUTPUT_DIR=/devnet/l2/configs
       - L2_DATA_DIR=/data
       - DEPLOYER_ADDR=${DEPLOYER_ADDR}
@@ -226,8 +227,6 @@ services:
       - ${L2_CHAIN_ID}
       - --l2-config-file
       - /genesis/l2/rollup.json
-      - --p2p.listen.ip
-      - 0.0.0.0
       - --p2p.listen.tcp
       - "${L2_CL_BOOTNODE_P2P_PORT}"
       - --p2p.listen.udp
@@ -377,10 +376,9 @@ services:
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
       - "4"
-      - --rpc.addr
-      - "0.0.0.0"
       - --rpc.port
       - "${L2_BUILDER_CL_RPC_PORT}"
+      - --rpc.enable-admin
       - --p2p.listen.tcp
       - "${L2_BUILDER_CL_P2P_PORT}"
       - --p2p.listen.udp
@@ -392,8 +390,6 @@ services:
       - --p2p.bootnodes-file
       - "${L2_CL_BOOTNODE_ENR_PATH}"
       - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
       - --metrics.port
       - "${L2_BUILDER_CL_METRICS_PORT}"
       - --mode
@@ -575,8 +571,6 @@ services:
       - /genesis/el/chain-config.json
       - --l1-slot-duration-override
       - "4"
-      - --rpc.addr
-      - "0.0.0.0"
       - --rpc.port
       - "${L2_CLIENT_CL_RPC_PORT}"
       - --p2p.listen.tcp
@@ -586,8 +580,6 @@ services:
       - --p2p.advertise.ip
       - base-client-cl
       - --metrics.enabled
-      - --metrics.addr
-      - "0.0.0.0"
       - --metrics.port
       - "${L2_CLIENT_CL_METRICS_PORT}"
       - --p2p.bootnodes-file
@@ -604,6 +596,108 @@ services:
       start_period: 250ms
     restart: unless-stopped
 
+  base-rpc:
+    image: base:local
+    build:
+      <<: *rust-service-build
+      target: base
+    container_name: base-rpc
+    depends_on:
+      setup-l2:
+        condition: service_completed_successfully
+      base-el-bootnode:
+        condition: service_started
+      base-builder-cl:
+        condition: service_healthy
+    ports:
+      - "${L2_BASE_RPC_HTTP_PORT}:${L2_BASE_RPC_HTTP_PORT}"     # HTTP RPC
+      - "${L2_BASE_RPC_WS_PORT}:${L2_BASE_RPC_WS_PORT}"         # WebSocket
+      - "${L2_BASE_RPC_AUTH_PORT}:${L2_BASE_RPC_AUTH_PORT}"     # Auth RPC (Engine API)
+      - "${L2_BASE_RPC_P2P_PORT}:${L2_BASE_RPC_P2P_PORT}"       # P2P
+      - "${L2_BASE_RPC_P2P_PORT}:${L2_BASE_RPC_P2P_PORT}/udp"   # Discovery
+      - "${L2_BASE_RPC_METRICS_PORT}:${L2_BASE_RPC_METRICS_PORT}"  # Metrics
+      - "${L2_BASE_RPC_CL_RPC_PORT}:${L2_BASE_RPC_CL_RPC_PORT}"     # Consensus RPC
+      - "${L2_BASE_RPC_CL_P2P_PORT}:${L2_BASE_RPC_CL_P2P_PORT}"     # Consensus P2P TCP
+      - "${L2_BASE_RPC_CL_P2P_PORT}:${L2_BASE_RPC_CL_P2P_PORT}/udp" # Consensus P2P UDP
+    volumes:
+      - ../../.devnet/l2/base-rpc:/data
+      - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
+      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/l2/configs:/genesis/l2:ro
+    environment:
+      - OTEL_SERVICE_NAME=base-rpc
+    entrypoint: /app/base
+    command:
+      - rpc
+      - --chain
+      - dev
+      - --execution-chain=/genesis/l2/genesis.json
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=${L2_BASE_RPC_HTTP_PORT}
+      # Devnet keeps `miner` on HTTP so local services can read and update
+      # the dynamic DA and gas-limit knobs end-to-end.
+      - --http.api=admin,eth,web3,net,rpc,debug,txpool,miner
+      - --http.corsdomain=*
+      - --ws
+      - --ws.addr=0.0.0.0
+      - --ws.port=${L2_BASE_RPC_WS_PORT}
+      - --ws.api=eth,web3,net,txpool,debug
+      - --ws.origins=*
+      - --authrpc.port=${L2_BASE_RPC_AUTH_PORT}
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.jwtsecret=/genesis/jwt.hex
+      - --auth-ipc.path=/tmp/base-engine.ipc
+      - --port=${L2_BASE_RPC_P2P_PORT}
+      - --discovery.port=${L2_BASE_RPC_P2P_PORT}
+      - --nat=extip:${L2_BASE_RPC_ADVERTISE_IP}
+      - --metrics=0.0.0.0:${L2_BASE_RPC_METRICS_PORT}
+      - --txpool.nolocals
+      - --rpc.txfeecap=0
+      - --rpc.gascap=600000000
+      - --rpc.eth-proof-window=1209600
+      - --bootnodes=${L2_EL_BOOTNODE_ENODE}
+      - --rollup.discovery.v4
+      - --l1-eth-rpc
+      - http://l1-el:${L1_HTTP_PORT}
+      - --l1-beacon
+      - http://l1-cl:${L1_CL_HTTP_PORT}
+      - --l2-config-file
+      - /genesis/l2/rollup.json
+      - --l1-config-file
+      - /genesis/el/chain-config.json
+      - --l1-slot-duration-override
+      - "4"
+      - --rpc.port
+      - "${L2_BASE_RPC_CL_RPC_PORT}"
+      - --rpc.enable-admin
+      - --p2p.listen.tcp
+      - "${L2_BASE_RPC_CL_P2P_PORT}"
+      - --p2p.listen.udp
+      - "${L2_BASE_RPC_CL_P2P_PORT}"
+      - --p2p.advertise.ip
+      - base-rpc-cl
+      - --p2p.bootnodes-file
+      - "${L2_CL_BOOTNODE_ENR_PATH}"
+      - --p2p.scoring
+      - Off
+      - --l1.verifier-confs
+      - "${BASE_NODE_VERIFIER_L1_CONFS}"
+      - -vvv
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/${L2_BASE_RPC_HTTP_PORT}"]
+      interval: 250ms
+      timeout: 1s
+      retries: 240
+      start_period: 250ms
+    networks:
+      default:
+        ipv4_address: ${L2_BASE_RPC_ADVERTISE_IP}
+        aliases:
+          - base-rpc-cl
+    restart: unless-stopped
+
   jaeger:
     image: jaegertracing/all-in-one:1.56
     container_name: jaeger
@@ -611,6 +705,7 @@ services:
       - "3001:16686"  # Jaeger UI
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+      - MEMORY_MAX_TRACES=1000
     restart: unless-stopped
 
   pyroscope:

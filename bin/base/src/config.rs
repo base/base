@@ -2,9 +2,13 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
+use alloy_chains::Chain;
 use base_common_chains::ChainConfig as BuiltInChainConfig;
+use base_consensus_cli::ConsensusChainArgs;
+use base_execution_chainspec::BaseChainSpec;
 use eyre::WrapErr;
 use figment::{
     Figment,
@@ -146,6 +150,20 @@ impl ResolvedChainConfig {
             l1_chain_id: values.l1_chain_id,
             source,
         }
+    }
+
+    /// Returns the execution chainspec for this chain.
+    pub(crate) fn execution_chain_spec(&self) -> eyre::Result<Arc<BaseChainSpec>> {
+        let config =
+            base_common_chains::ChainConfig::by_chain_id(self.l2_chain_id).ok_or_else(|| {
+                eyre::eyre!("no built-in execution chainspec for L2 chain ID {}", self.l2_chain_id)
+            })?;
+        Ok(Arc::new(BaseChainSpec::try_from(config)?))
+    }
+
+    /// Returns the consensus chain arguments for this chain.
+    pub(crate) fn consensus_chain_args(&self) -> ConsensusChainArgs {
+        ConsensusChainArgs { l2_chain_id: Chain::from(self.l2_chain_id) }
     }
 }
 

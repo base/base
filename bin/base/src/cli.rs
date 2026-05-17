@@ -1,7 +1,11 @@
-use clap::{Args, Parser, Subcommand};
-use tracing::info;
+use base_cli_utils::{LogConfig, MetricsConfig};
+use clap::Parser;
+use eyre::WrapErr;
 
-use crate::config::{ChainArg, ResolvedChainConfig};
+use crate::{
+    commands::BaseCommand,
+    config::{ChainArg, ChainResolver},
+};
 
 base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
@@ -33,61 +37,25 @@ pub(crate) struct BaseCli {
     pub(crate) command: BaseCommand,
 }
 
-/// Top-level commands for `base`.
-#[derive(Subcommand, Clone, Debug)]
-#[non_exhaustive]
-pub(crate) enum BaseCommand {
-    /// Start the integrated Base node.
-    #[command(name = "node")]
-    Node(NodeArgs),
-}
+impl BaseCli {
+    /// Runs the selected command with shared process initialization.
+    pub(crate) fn run(self) -> eyre::Result<()> {
+        let Self { chain, logging, metrics, command } = self;
 
-impl BaseCommand {
-    /// Runs the selected top-level command.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        match self {
-            Self::Node(node) => node.run(resolved_chain),
-        }
+        LogConfig::from(logging)
+            .init_tracing_subscriber()
+            .wrap_err("failed to initialize tracing")?;
+
+        MetricsConfig::from(metrics)
+            .init_with(|| {
+                base_cli_utils::register_version_metrics!();
+            })
+            .wrap_err("failed to install Prometheus recorder")?;
+
+        let resolved_chain = ChainResolver::new(chain).resolve()?;
+        command.run(resolved_chain)
     }
 }
-
-/// Arguments for `base node`.
-#[derive(Args, Clone, Debug)]
-pub(crate) struct NodeArgs {
-    /// The node flavor to run.
-    #[command(subcommand)]
-    pub(crate) command: NodeSubcommand,
-}
-
-impl NodeArgs {
-    /// Runs the selected `node` subcommand.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        match self.command {
-            NodeSubcommand::Rpc(rpc) => rpc.run(resolved_chain),
-        }
-    }
-}
-
-/// Subcommands for `base node`.
-#[derive(Subcommand, Clone, Debug)]
-pub(crate) enum NodeSubcommand {
-    /// Run the integrated node in RPC mode.
-    #[command(name = "rpc")]
-    Rpc(RpcCommand),
-}
-
-/// Arguments for `base node rpc`.
-#[derive(Args, Clone, Debug, Default)]
-pub(crate) struct RpcCommand;
-
-impl RpcCommand {
-    /// Runs the `rpc` flavor.
-    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
-        info!(chain = ?resolved_chain, "Hello, I'm running this chain");
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -98,23 +66,37 @@ mod tests {
     use crate::config::BuiltInChain;
 
     #[test]
-    fn parses_default_chain_for_node_rpc() {
-        let cli = BaseCli::parse_from(["base", "node", "rpc"]);
+    fn parses_default_chain_for_rpc() {
+        let cli = BaseCli::parse_from([
+            "base",
+            "rpc",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+        ]);
 
         assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Mainnet)));
-        assert!(matches!(cli.command, BaseCommand::Node(_)));
+        assert!(matches!(cli.command, BaseCommand::Rpc(_)));
     }
 
     #[test]
     fn parses_named_chain_selector() {
-        let cli = BaseCli::parse_from(["base", "-c", "sepolia", "node", "rpc"]);
+        let cli = BaseCli::parse_from(["base", "-c", "sepolia", "bootnode"]);
+
+        assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
+    }
+
+    #[test]
+    fn parses_global_chain_after_subcommand() {
+        let cli = BaseCli::parse_from(["base", "bootnode", "--chain", "sepolia"]);
 
         assert!(matches!(cli.chain, ChainArg::BuiltIn(BuiltInChain::Sepolia)));
     }
 
     #[test]
     fn parses_path_chain_selector() {
-        let cli = BaseCli::parse_from(["base", "--chain", "./chain.toml", "node", "rpc"]);
+        let cli = BaseCli::parse_from(["base", "--chain", "./chain.toml", "bootnode"]);
 
         assert!(matches!(cli.chain, ChainArg::File(_)));
     }
@@ -131,7 +113,7 @@ mod tests {
     #[test]
     fn rejects_multiple_chain_selectors() {
         let err =
-            BaseCli::try_parse_from(["base", "-c", "mainnet", "--chain", "sepolia", "node", "rpc"])
+            BaseCli::try_parse_from(["base", "-c", "mainnet", "--chain", "sepolia", "bootnode"])
                 .unwrap_err();
 
         let rendered = err.to_string();

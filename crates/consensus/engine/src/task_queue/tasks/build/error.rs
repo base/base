@@ -1,16 +1,15 @@
-//! Contains error types for the [`crate::SynchronizeTask`].
+//! Contains error types for direct engine build operations.
 
-use alloy_rpc_types_engine::{PayloadId, PayloadStatusEnum};
+use alloy_rpc_types_engine::PayloadStatusEnum;
 use alloy_transport::{RpcError, TransportErrorKind};
 use thiserror::Error;
-use tokio::sync::mpsc;
 
 use crate::{EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
 
 /// An error that occurs during payload building within the engine.
 ///
 /// This error type is specific to the block building process and represents failures
-/// that can occur during the automatic forkchoice update phase of [`BuildTask`].
+/// that can occur during the automatic forkchoice update phase of [`crate::Engine::build`].
 /// Unlike [`BuildTaskError`], which handles higher-level build orchestration errors,
 /// `EngineBuildError` focuses on low-level engine API communication failures.
 ///
@@ -20,7 +19,6 @@ use crate::{EngineTaskError, task_queue::tasks::task::EngineTaskErrorSeverity};
 /// - **Engine Communication**: RPC failures during forkchoice updates
 /// - **Payload Validation**: Invalid payload status responses from the execution layer
 ///
-/// [`BuildTask`]: crate::BuildTask
 #[derive(Debug, Error)]
 pub enum EngineBuildError {
     /// The finalized head is ahead of the unsafe head.
@@ -46,15 +44,12 @@ pub enum EngineBuildError {
     EngineSyncing,
 }
 
-/// An error that occurs when running the [`crate::BuildTask`].
+/// An error that occurs when starting an execution-layer build.
 #[derive(Debug, Error)]
 pub enum BuildTaskError {
     /// An error occurred when building the payload attributes in the engine.
     #[error("An error occurred when building the payload attributes to the engine.")]
     EngineBuildError(EngineBuildError),
-    /// Error sending the built payload envelope.
-    #[error(transparent)]
-    MpscSend(#[from] Box<mpsc::error::SendError<PayloadId>>),
 }
 
 impl EngineTaskError for BuildTaskError {
@@ -84,7 +79,6 @@ impl EngineTaskError for BuildTaskError {
             Self::EngineBuildError(EngineBuildError::ForkchoiceStateInvalid) => {
                 EngineTaskErrorSeverity::Reset
             }
-            Self::MpscSend(_) => EngineTaskErrorSeverity::Critical,
         }
     }
 }

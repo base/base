@@ -1921,7 +1921,6 @@ dependencies = [
  "jsonrpsee-types",
  "metrics",
  "moka",
- "rdkafka",
  "serde",
  "serde_json",
  "testcontainers",
@@ -2726,13 +2725,21 @@ dependencies = [
 name = "base"
 version = "0.0.0"
 dependencies = [
+ "alloy-chains",
  "base-cli-utils",
  "base-common-chains",
+ "base-consensus-cli",
+ "base-execution-chainspec",
+ "base-execution-cli",
  "clap",
  "eyre",
  "figment",
+ "reth-cli-runner",
  "serde",
+ "tokio",
+ "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3392,6 +3399,7 @@ dependencies = [
 name = "base-common-precompiles"
 version = "0.0.0"
 dependencies = [
+ "alloy-evm",
  "base-common-chains",
  "revm",
 ]
@@ -3536,6 +3544,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]
@@ -3558,6 +3567,7 @@ dependencies = [
  "base-consensus-upgrades",
  "base-metrics",
  "base-protocol",
+ "criterion",
  "metrics",
  "proptest",
  "serde",
@@ -4669,6 +4679,31 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.23",
  "url",
+]
+
+[[package]]
+name = "base-precompile-macros"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "base-precompile-storage"
+version = "0.0.0"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-precompile-macros",
+ "derive_more 2.1.1",
+ "proptest",
+ "revm",
+ "scoped-tls",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8035,8 +8070,10 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-client",
  "alloy-rpc-types-engine",
+ "alloy-rpc-types-eth",
  "alloy-signer",
  "alloy-signer-local",
+ "alloy-sol-types",
  "base-batcher-service",
  "base-builder-core",
  "base-bundle-extension",
@@ -10724,7 +10761,6 @@ dependencies = [
  "dotenvy",
  "ingress-rpc-lib",
  "jsonrpsee",
- "rdkafka",
  "serde",
  "tokio",
  "tracing",
@@ -10744,7 +10780,6 @@ dependencies = [
  "async-trait",
  "audit-archiver-lib",
  "axum 0.8.9",
- "backon",
  "base-bundles",
  "base-common-consensus",
  "base-common-evm",
@@ -10755,7 +10790,6 @@ dependencies = [
  "jsonrpsee",
  "metrics",
  "moka",
- "rdkafka",
  "reth-rpc-eth-types",
  "serde",
  "serde_json",
@@ -15454,38 +15488,6 @@ dependencies = [
  "rustls-pki-types",
  "time",
  "yasna",
-]
-
-[[package]]
-name = "rdkafka"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7956f9ac12b5712e50372d9749a3102f4810a8d42481c5eae3748d36d585bcf"
-dependencies = [
- "futures-channel",
- "futures-util",
- "libc",
- "log",
- "rdkafka-sys",
- "serde",
- "serde_derive",
- "serde_json",
- "slab",
- "tokio",
-]
-
-[[package]]
-name = "rdkafka-sys"
-version = "4.10.0+2.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e234cf318915c1059d4921ef7f75616b5219b10b46e9f3a511a15eb4b56a3f77"
-dependencies = [
- "libc",
- "libz-sys",
- "num_enum 0.7.6",
- "openssl-sys",
- "pkg-config",
- "zstd-sys",
 ]
 
 [[package]]
@@ -25380,7 +25382,6 @@ version = "2.0.16+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
 dependencies = [
- "bindgen 0.72.1",
  "cc",
  "pkg-config",
 ]
