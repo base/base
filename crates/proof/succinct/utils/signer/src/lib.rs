@@ -1,4 +1,4 @@
-//! Transaction signing utilities supporting `Web3Signer`, local private keys, and Google Cloud HSM.
+#![doc = include_str!("../README.md")]
 
 use std::{str::FromStr, sync::Arc};
 
