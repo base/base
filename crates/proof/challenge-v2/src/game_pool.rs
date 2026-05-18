@@ -40,7 +40,7 @@ impl GamePool {
                 biased;
                 () = cancel.cancelled() => return,
                 game = rx.recv() => match game {
-                    Some(g) => self.maybe_spawn(g),
+                    Some(g) => self.maybe_spawn(g, &cancel),
                     None => return,
                 },
             }
@@ -49,7 +49,7 @@ impl GamePool {
 
     /// Spawns a worker for `game` unless one is already in flight
     /// for the same address.
-    fn maybe_spawn(&mut self, game: GameInfo) {
+    fn maybe_spawn(&mut self, game: GameInfo, cancel: &CancellationToken) {
         let address = game.address;
 
         // A worker is already running for this address.
@@ -62,8 +62,12 @@ impl GamePool {
 
         // No live worker: spawn one. `insert` overwrites and drops any
         // finished handle still sitting in the slot.
-        let worker =
-            tokio::spawn(run_game_worker(game, Arc::clone(&self.deps), self.handle.clone()));
+        let worker = tokio::spawn(run_game_worker(
+            game,
+            Arc::clone(&self.deps),
+            self.handle.clone(),
+            cancel.clone(),
+        ));
         self.workers.insert(address, worker);
 
         // GC finished workers to keep the map bounded.

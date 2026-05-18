@@ -10,6 +10,7 @@ use base_proof_contracts::AggregateVerifierClient;
 use base_zk_client::ZkProofProvider;
 use derive_more::Debug;
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{GameInfo, OutputValidator, Submission, SubmissionHandle, TeeProofProvider, Violation};
@@ -78,16 +79,29 @@ pub struct GameWorkerConfig {
     pub max_proof_duration: Duration,
 }
 
+/// Cancel wrapper around the worker body.
+pub async fn run_game_worker(
+    game: GameInfo,
+    deps: Arc<GameWorkerDeps>,
+    handle: SubmissionHandle,
+    cancel: CancellationToken,
+) {
+    let address = game.address;
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => debug!(game = %address, "game worker cancelled"),
+        () = run_inner(game, deps, handle) => {}
+    }
+}
+
 /// Runs one detect / dispute / submit pass for `game` and exits.
-/// The worker stays alive until the submitted transaction confirms,
-/// reverts or fails; the pool uses that lifetime to deduplicate
-/// re-emissions from the scanner.
-pub async fn run_game_worker(game: GameInfo, deps: Arc<GameWorkerDeps>, handle: SubmissionHandle) {
+/// The worker stays alive until the submitted transaction (if any)
+/// confirms, reverts or fails.
+async fn run_inner(game: GameInfo, deps: Arc<GameWorkerDeps>, handle: SubmissionHandle) {
     let address = game.address;
 
     // Acquire a permit for the detect phase only: detect is RPC-heavy
-    // (status + prover tuple + per-checkpoint output roots), and the
-    // pool can spawn many workers at once.
+    // (status + prover tuple + per-checkpoint output roots).
     let violation = {
         let _permit =
             deps.detect_semaphore.acquire().await.expect("detect_semaphore is never closed");
@@ -242,7 +256,7 @@ mod tests {
         let tx_manager = MockTxManager::new(addr(0xB2));
         let (handle, cancel, join) = spawn_submission_task(tx_manager.clone());
 
-        run_game_worker(game, mocks.deps(), handle).await;
+        run_game_worker(game, mocks.deps(), handle, CancellationToken::new()).await;
 
         assert!(tx_manager.calls().is_empty());
 
@@ -259,7 +273,7 @@ mod tests {
         tx_manager.push_success(TX_HASH);
         let (handle, cancel, join) = spawn_submission_task(tx_manager.clone());
 
-        run_game_worker(game.clone(), mocks.deps(), handle).await;
+        run_game_worker(game.clone(), mocks.deps(), handle, CancellationToken::new()).await;
 
         let calls = tx_manager.calls();
         assert_eq!(calls.len(), 1);
@@ -278,7 +292,7 @@ mod tests {
         let tx_manager = MockTxManager::new(addr(0xB2));
         let (handle, cancel, join) = spawn_submission_task(tx_manager.clone());
 
-        run_game_worker(game, mocks.deps(), handle).await;
+        run_game_worker(game, mocks.deps(), handle, CancellationToken::new()).await;
 
         assert!(tx_manager.calls().is_empty());
 
@@ -301,7 +315,7 @@ mod tests {
         let tx_manager = MockTxManager::new(addr(0xB2));
         let (handle, cancel, join) = spawn_submission_task(tx_manager.clone());
 
-        run_game_worker(game, mocks.deps(), handle).await;
+        run_game_worker(game, mocks.deps(), handle, CancellationToken::new()).await;
 
         assert!(tx_manager.calls().is_empty());
 
@@ -323,6 +337,52 @@ mod tests {
         join.await.unwrap();
 
         // No panic, returns cleanly after logging the failure.
-        run_game_worker(game, mocks.deps(), handle).await;
+        run_game_worker(game, mocks.deps(), handle, CancellationToken::new()).await;
+    }
+
+    #[tokio::test]
+    async fn cancel_token_preempts_worker() {
+        let validator = Arc::new(BlockingValidator::new());
+        let verifier = Arc::new(MockAggregateVerifier::new());
+        verifier.set_game(addr(42), MockGameState::in_progress(Address::ZERO, addr(2), 0));
+        let deps = Arc::new(GameWorkerDeps::new(
+            Arc::clone(&validator) as Arc<dyn OutputValidator>,
+            verifier as Arc<dyn AggregateVerifierClient>,
+            Arc::new(MockZkProofProvider::new()),
+            Arc::new(MockTeeProofProvider::new()),
+            Arc::new(Semaphore::new(8)),
+            config(),
+        ));
+        let game = game_info(vec![root(10)], ProvingState::ZkOnly);
+        let (handle, _submit_cancel, _submit_join) =
+            spawn_submission_task(MockTxManager::new(addr(0xB2)));
+        let cancel = CancellationToken::new();
+        let started = Arc::clone(&validator.started);
+
+        let task = tokio::spawn(run_game_worker(game, deps, handle, cancel.clone()));
+        started.notified().await;
+        cancel.cancel();
+        task.await.expect("worker must exit on cancel");
+    }
+
+    /// Validator that parks forever inside `compute_output_root`,
+    /// notifying `started` so a test can fire cancel at a known point.
+    struct BlockingValidator {
+        started: Arc<tokio::sync::Notify>,
+    }
+
+    impl BlockingValidator {
+        fn new() -> Self {
+            Self { started: Arc::new(tokio::sync::Notify::new()) }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl OutputValidator for BlockingValidator {
+        async fn compute_output_root(&self, _block: u64) -> Result<B256, crate::OutputRootError> {
+            self.started.notify_one();
+            std::future::pending::<()>().await;
+            unreachable!()
+        }
     }
 }
