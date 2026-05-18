@@ -17,8 +17,6 @@ workspace = true
 alloy-evm.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types = { workspace = true, features = ["std"] }
-alloy-genesis = { workspace = true, optional = true }
-
 # base
 base-common-chains.workspace = true
 base-precompile-macros  = { path = "../precompile-macros" }
@@ -30,7 +28,6 @@ revm.workspace = true
 [features]
 default = [ "blst", "c-kzg", "portable", "secp256k1", "std" ]
 std = [ "alloy-evm/std", "base-common-chains/std", "base-precompile-storage/std", "revm/std" ]
-genesis = [ "std", "alloy-genesis", "base-precompile-storage/test-utils" ]
 bn = [ "revm/bn" ]
 blst = [ "revm/blst" ]
 c-kzg = [ "revm/c-kzg" ]

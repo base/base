@@ -11,8 +11,3 @@ pub use common::{
 
 mod default_token;
 pub use default_token::{DEFAULT_TOKEN_ADDRESS, DefaultToken, DefaultTokenEvm, DefaultTokenStorage};
-
-#[cfg(feature = "genesis")]
-mod genesis;
-#[cfg(feature = "genesis")]
-pub use genesis::TokenGenesisBuilder;
