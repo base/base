@@ -10,7 +10,10 @@ use ratatui::{
 use tokio::sync::oneshot;
 use url::Url;
 
-use super::{Action, Resources, Router, View, ViewId, runner::start_background_services};
+use super::{
+    Action, Resources, Router, View, ViewId,
+    runner::{detect_rpc_for, start_background_services},
+};
 use crate::{
     commands::{COLOR_BASE_BLUE, EVENT_POLL_TIMEOUT},
     config::MonitoringConfig,
@@ -247,11 +250,13 @@ impl App {
         self.resources.toasts.push(Toast::info(format!("Connecting to {name}…")));
         let (tx, rx) = oneshot::channel();
         self.pending_network = Some(rx);
+        let conductor_rpc = self.conductor_rpc.clone();
         tokio::spawn(async move {
             let result = match MonitoringConfig::load(&name).await {
                 Ok(mut config) => {
+                    let detect_rpc = detect_rpc_for(&config, conductor_rpc.as_ref());
                     if let Some(detected) =
-                        MonitoringConfig::detect_name_from_rpc(&config.rpc).await
+                        MonitoringConfig::detect_name_from_rpc(&detect_rpc).await
                     {
                         config.name = detected;
                     }

@@ -5,8 +5,8 @@ pub use app::{
     Action, ActionMenuItem, App, CommandCenterView, ConductorState, ConductorView, ConfigView,
     ConfirmButton, DaMonitorView, DaState, FlashState, FlashblocksView, HomeView, Overlay,
     PendingAction, ProofsState, ProofsView, Resources, Router, SourceLabel, TransactionPane,
-    UpgradesView, ValidatorState, View, ViewId, create_view, run_app, run_flashblocks_json,
-    start_background_services,
+    UpgradesView, ValidatorState, View, ViewId, create_view, detect_rpc_for, run_app,
+    run_flashblocks_json, start_background_services,
 };
 
 mod commands;
