@@ -28,6 +28,10 @@ base_metrics::define_metrics! {
     get_proof_successful_responses: counter,
     #[describe("Total number of failures handling eth_getProof requests")]
     get_proof_failures: counter,
+    #[describe("How long eth_getProof requests wait for a concurrency permit")]
+    get_proof_semaphore_wait_duration: histogram,
+    #[describe("Currently available eth_getProof concurrency permits")]
+    get_proof_semaphore_available_permits: gauge,
 }
 
 /// Types of debug apis

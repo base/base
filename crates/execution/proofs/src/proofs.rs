@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use base_execution_exex::BaseProofsExEx;
 use base_execution_rpc::{
@@ -44,6 +44,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
         let proofs_history_window = args.proofs_history_window;
         let proofs_history_prune_interval = args.proofs_history_prune_interval;
         let proofs_history_verification_interval = args.proofs_history_verification_interval;
+        let proofs_get_proof_permits = args.proofs_get_proof_permits;
 
         if proofs_history_enabled {
             let Some(path) = args.proofs_history_storage_path else {
@@ -81,6 +82,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         proofs_history_window,
                         proofs_history_prune_interval,
                         proofs_history_verification_interval,
+                        proofs_get_proof_permits,
                     );
                 }
                 ProofsHistoryDbBackend::Mdbx => {
@@ -103,6 +105,7 @@ impl BaseNodeExtension for ProofsHistoryExtension {
                         proofs_history_window,
                         proofs_history_prune_interval,
                         proofs_history_verification_interval,
+                        proofs_get_proof_permits,
                     );
                 }
             }
@@ -125,6 +128,7 @@ fn install_proofs_history<S>(
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     proofs_history_verification_interval: u64,
+    proofs_get_proof_permits: NonZeroUsize,
 ) -> NodeHooks
 where
     S: BaseProofsStore + DatabaseMetrics + Send + Sync + 'static,
@@ -151,7 +155,11 @@ where
                 .run())
         })
         .add_rpc_module(move |ctx| {
-            let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
+            let api_ext = EthApiExt::new(
+                ctx.registry.eth_api().clone(),
+                storage.clone(),
+                proofs_get_proof_permits,
+            );
             let debug_ext = DebugApiExt::new(
                 ctx.node().provider().clone(),
                 ctx.registry.eth_api().clone(),

@@ -1,6 +1,6 @@
 //! Node launcher with proof history support.
 
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_exex::BaseProofsExEx;
@@ -52,6 +52,7 @@ pub async fn launch_node_with_proof_history(
         proofs_history_window,
         proofs_history_prune_interval,
         proofs_history_verification_interval,
+        proofs_get_proof_permits,
         ..
     } = args.clone();
 
@@ -79,6 +80,7 @@ pub async fn launch_node_with_proof_history(
                     proofs_history_window,
                     proofs_history_prune_interval,
                     proofs_history_verification_interval,
+                    proofs_get_proof_permits,
                 );
             }
             ProofsHistoryDbBackend::Mdbx => {
@@ -92,6 +94,7 @@ pub async fn launch_node_with_proof_history(
                     proofs_history_window,
                     proofs_history_prune_interval,
                     proofs_history_verification_interval,
+                    proofs_get_proof_permits,
                 );
             }
         }
@@ -108,6 +111,7 @@ fn install_proofs_history<S>(
     proofs_history_window: u64,
     proofs_history_prune_interval: Duration,
     proofs_history_verification_interval: u64,
+    proofs_get_proof_permits: NonZeroUsize,
 ) -> ProofHistoryNodeBuilder
 where
     S: BaseProofsStore + DatabaseMetrics + Send + Sync + 'static,
@@ -134,7 +138,11 @@ where
                 .boxed())
         })
         .extend_rpc_modules(move |ctx| {
-            let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), storage.clone());
+            let api_ext = EthApiExt::new(
+                ctx.registry.eth_api().clone(),
+                storage.clone(),
+                proofs_get_proof_permits,
+            );
             let debug_ext = DebugApiExt::new(
                 ctx.node().provider().clone(),
                 ctx.registry.eth_api().clone(),

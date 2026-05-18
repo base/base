@@ -2,10 +2,11 @@
 
 //! clap [Args](clap::Args) for Base rollup configuration
 
-use std::{path::PathBuf, time::Duration};
+use std::{num::NonZeroUsize, path::PathBuf, time::Duration};
 
 use base_execution_trie::{RocksdbProofsCompression, RocksdbProofsStorageOptions};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
+use tokio::sync::Semaphore;
 
 /// Default proofs history window: 1 month of blocks at 2s block time.
 pub const DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS: u64 = 1_296_000;
@@ -27,6 +28,25 @@ const DEFAULT_ROCKSDB_RATE_LIMITER_FAIRNESS: i32 = 10;
 const DEFAULT_ROCKSDB_RATE_LIMITER_REFILL_PERIOD_MS: i64 = 100;
 const DEFAULT_ROCKSDB_TARGET_FILE_SIZE_BASE_MIB: u64 = 256;
 const DEFAULT_ROCKSDB_WRITE_BUFFER_SIZE_MIB: u64 = 64;
+
+/// Default maximum concurrent `eth_getProof` requests served by the Base proofs override.
+pub const DEFAULT_PROOFS_GET_PROOF_PERMITS: NonZeroUsize =
+    NonZeroUsize::new(32).expect("default getProof permits must be non-zero");
+
+/// Parser for the `eth_getProof` concurrency-limit CLI flag.
+#[derive(Debug)]
+pub struct GetProofPermitsParser;
+
+impl GetProofPermitsParser {
+    /// Parses a positive permit count and rejects values that exceed [`Semaphore::MAX_PERMITS`].
+    pub fn parse(value: &str) -> Result<NonZeroUsize, String> {
+        let permits = value.parse::<NonZeroUsize>().map_err(|err| err.to_string())?;
+        if permits.get() > Semaphore::MAX_PERMITS {
+            return Err(format!("value must be less than or equal to {}", Semaphore::MAX_PERMITS));
+        }
+        Ok(permits)
+    }
+}
 
 /// Transaction ordering strategy for the mempool.
 ///
@@ -437,6 +457,18 @@ pub struct RollupArgs {
     )]
     pub proofs_history_verification_interval: u64,
 
+    /// Maximum concurrent `eth_getProof` requests served by the Base proofs override.
+    /// Start at 32 and watch `base_rpc.eth_api_ext.get_proof_semaphore_wait_duration` before
+    /// raising; scale up only after the shared-MDBX-read-tx proof path is deployed and MDBX lock
+    /// contention is healthy.
+    #[arg(
+        long = "proofs.get-proof-permits",
+        value_name = "PROOFS_GET_PROOF_PERMITS",
+        default_value_t = DEFAULT_PROOFS_GET_PROOF_PERMITS,
+        value_parser = GetProofPermitsParser::parse
+    )]
+    pub proofs_get_proof_permits: NonZeroUsize,
+
     /// Enable the Base discv5 protocol identity.
     ///
     /// When enabled, the node advertises itself with the `basev0` protocol ID in discv5,
@@ -463,6 +495,7 @@ impl Default for RollupArgs {
             proofs_history_window: DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS,
             proofs_history_prune_interval: Duration::from_secs(15),
             proofs_history_verification_interval: 0,
+            proofs_get_proof_permits: DEFAULT_PROOFS_GET_PROOF_PERMITS,
             base_protocol: true,
         }
     }
@@ -471,6 +504,7 @@ impl Default for RollupArgs {
 #[cfg(test)]
 mod tests {
     use clap::{Args, CommandFactory, Parser};
+    use rstest::rstest;
 
     use super::*;
 
@@ -752,5 +786,34 @@ mod tests {
         ])
         .args;
         assert!(!args.base_protocol);
+    }
+
+    #[rstest]
+    #[case::default(vec!["reth"], DEFAULT_PROOFS_GET_PROOF_PERMITS)]
+    #[case::explicit(
+        vec!["reth", "--proofs.get-proof-permits", "64"],
+        NonZeroUsize::new(64).expect("non-zero")
+    )]
+    fn test_parse_proofs_get_proof_permits(
+        #[case] args: Vec<&str>,
+        #[case] expected_permits: NonZeroUsize,
+    ) {
+        let args = CommandParser::<RollupArgs>::parse_from(args).args;
+        assert_eq!(args.proofs_get_proof_permits, expected_permits);
+    }
+
+    #[rstest]
+    #[case::zero("0".to_string())]
+    #[case::too_large((Semaphore::MAX_PERMITS + 1).to_string())]
+    fn test_parse_proofs_get_proof_permits_rejects_invalid(#[case] permits: String) {
+        let err = match CommandParser::<RollupArgs>::try_parse_from([
+            "reth",
+            "--proofs.get-proof-permits",
+            permits.as_str(),
+        ]) {
+            Ok(_) => panic!("invalid permits should be rejected"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
     }
 }
