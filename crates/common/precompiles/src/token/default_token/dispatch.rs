@@ -7,8 +7,8 @@ use super::DefaultToken;
 use crate::token::{
     abi::{IDefaultToken, IDefaultToken::IDefaultTokenCalls as C},
     common::{
-        TokenAccounting,
-        ops::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Transferable},
+        Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, TokenAccounting,
+        Transferable,
     },
 };
 

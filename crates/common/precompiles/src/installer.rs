@@ -38,6 +38,7 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use revm::precompile::{bn254, secp256r1};

@@ -5,8 +5,8 @@ use base_precompile_storage::StorageCtx;
 
 use super::storage::{DEFAULT_TOKEN_ADDRESS, DefaultTokenStorage};
 use crate::token::common::{
-    Token, TokenAccounting,
-    ops::{Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Transferable},
+    Burnable, Configurable, Mintable, Pausable, Permittable, Redeemable, Token, TokenAccounting,
+    Transferable,
 };
 
 /// EVM precompile for the Default B-20 token variant.

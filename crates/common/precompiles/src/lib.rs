@@ -18,9 +18,9 @@ mod bn254_pair;
 
 mod bls12_381;
 
-pub mod token;
+mod token;
 pub use token::{
     Burnable, CAPABILITY_CAP_MUTABLE, CAPABILITY_PAUSABLE, Configurable, DEFAULT_TOKEN_ADDRESS,
-    DefaultToken, DefaultTokenStorage, IDefaultToken, Mintable, Pausable, Permittable, Redeemable,
-    Token, TokenAccounting, Transferable,
+    DefaultToken, DefaultTokenEvm, DefaultTokenStorage, IDefaultToken, Mintable, Pausable,
+    Permittable, Redeemable, Token, TokenAccounting, Transferable,
 };

@@ -1,6 +1,6 @@
 //! Shared business logic for all Base-native token variants.
 
-pub(super) mod ops;
+mod ops;
 mod token;
 mod token_accounting;
 
