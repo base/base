@@ -20,11 +20,6 @@ pub use seal::{SealTask, SealTaskError};
 mod consolidate;
 pub use consolidate::{ConsolidateInput, ConsolidateTask, ConsolidateTaskError};
 
-mod delegated_forkchoice;
-pub use delegated_forkchoice::{
-    DelegatedForkchoiceTask, DelegatedForkchoiceTaskError, DelegatedForkchoiceUpdate,
-};
-
 mod finalize;
 pub use finalize::{FinalizeTask, FinalizeTaskError};
 

@@ -5,9 +5,9 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_consensus_derive::{ResetSignal, Signal};
 use base_consensus_engine::{
-    ConsolidateTask, DelegatedForkchoiceTask, Engine, EngineClient, EngineSyncStateUpdate,
-    EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask,
-    InsertTask, InsertTaskResult, Metrics as EngineMetrics, SealTaskError,
+    ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
+    EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, InsertTask, InsertTaskResult,
+    Metrics as EngineMetrics, SealTaskError,
 };
 use base_protocol::L2BlockInfo;
 use tokio::{
@@ -710,16 +710,6 @@ where
                             Arc::clone(&self.rollup),
                             safe_signal,
                         )));
-                        self.engine.enqueue(task);
-                    }
-                    EngineActorRequest::ProcessDelegatedForkchoiceUpdateRequest(update) => {
-                        let task = EngineTask::DelegatedForkchoice(Box::new(
-                            DelegatedForkchoiceTask::new(
-                                Arc::clone(&self.client),
-                                Arc::clone(&self.rollup),
-                                *update,
-                            ),
-                        ));
                         self.engine.enqueue(task);
                     }
                     EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
