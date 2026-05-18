@@ -5,10 +5,11 @@ use base_action_harness::{
     ActionBlobProvider, ActionL1ChainProvider, ActionL2ChainProvider, SharedL1Chain,
     block_info_from,
 };
-use base_common_chains::Registry;
+use base_common_chains::ChainConfig as BaseChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::{
-    EthereumDataSource, Pipeline, PipelineBuilder, StatefulAttributesBuilder, StepResult,
+    EthereumDataSource, Pipeline, PipelineBuilder, PipelineError, PipelineErrorKind,
+    StatefulAttributesBuilder, StepResult,
 };
 use base_protocol::{AttributesWithParent, L2BlockInfo};
 
@@ -66,9 +67,9 @@ impl DerivationFixtureReplayer {
                 return Err(FixtureReplayError::UnsupportedNetwork { network: other.to_owned() });
             }
         };
-        let mut config = Registry::rollup_config(chain_id)
-            .ok_or(FixtureReplayError::MissingRollupConfig { chain_id })?
-            .clone();
+        let mut config = BaseChainConfig::by_chain_id(chain_id)
+            .map(BaseChainConfig::rollup_config)
+            .ok_or(FixtureReplayError::MissingRollupConfig { chain_id })?;
         if let Some(derivation) = &fixture.derivation {
             config.genesis.system_config = Some(derivation.system_config);
         }
@@ -148,19 +149,21 @@ impl DerivationFixtureReplayer {
                 StepResult::PreparedAttributes => {
                     return pipeline.next().ok_or(FixtureReplayError::PreparedPayloadMissing);
                 }
-                StepResult::AdvancedOrigin => {}
+                StepResult::AdvancedOrigin
+                | StepResult::StepFailed(PipelineErrorKind::Temporary(
+                    PipelineError::NotEnoughData | PipelineError::ChannelReaderEmpty,
+                )) => {}
                 StepResult::OriginAdvanceErr(error) => {
                     return Err(FixtureReplayError::Pipeline {
                         stage: "origin advance",
-                        error: error.to_string(),
+                        source: Box::new(error),
                     });
                 }
                 StepResult::StepFailed(error) => {
-                    let error = error.to_string();
-                    if error.contains("Not enough data") || error.contains("Channel reader empty") {
-                        continue;
-                    }
-                    return Err(FixtureReplayError::Pipeline { stage: "step", error });
+                    return Err(FixtureReplayError::Pipeline {
+                        stage: "step",
+                        source: Box::new(error),
+                    });
                 }
             }
         }
@@ -202,11 +205,11 @@ pub enum FixtureReplayError {
     #[error(transparent)]
     Adapter(#[from] FixtureAdapterError),
     /// Pipeline stepping failed.
-    #[error("pipeline {stage} failed: {error}")]
+    #[error("pipeline {stage} failed: {source}")]
     Pipeline {
         /// Pipeline stage label.
         stage: &'static str,
-        /// Error text.
-        error: String,
+        /// Pipeline error.
+        source: Box<PipelineErrorKind>,
     },
 }

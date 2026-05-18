@@ -25,12 +25,12 @@ alloy-rpc-types-eth = { workspace = true, features = ["serde", "std"] }
 
 # base
 base-action-harness.workspace = true
+base-consensus-derive.workspace = true
 base-common-chains = { workspace = true, features = ["std"] }
+base-protocol = { workspace = true, features = ["serde", "std"] }
 base-common-consensus = { workspace = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
-base-consensus-derive.workspace = true
-base-protocol = { workspace = true, features = ["serde", "std"] }
 
 # chain config
 alloy-genesis = { workspace = true, features = ["std"] }
@@ -47,13 +47,13 @@ reqwest = { workspace = true, features = ["json"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 # misc
-toml = { workspace = true, features = ["display", "parse", "serde"] }
-tracing = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
+snap.workspace = true
 dotenvy.workspace = true
 futures = { workspace = true }
-snap.workspace = true
+tracing = { workspace = true, features = ["std"] }
 bincode = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true, features = ["std"] }
+toml = { workspace = true, features = ["display", "parse", "serde"] }
 
 [dev-dependencies]
 tempfile.workspace = true

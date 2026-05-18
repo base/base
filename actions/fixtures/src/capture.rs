@@ -8,10 +8,11 @@ use alloy_consensus::{Receipt, Transaction as _, TxEnvelope, constants::EMPTY_TR
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
-use base_common_chains::Registry;
+use base_common_chains::ChainConfig as BaseChainConfig;
 use base_common_consensus::{BaseBlock, BaseReceiptEnvelope};
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types::{BaseTransactionReceipt, Transaction};
+use base_consensus_derive::{PipelineError, PipelineErrorKind, ResetError};
 use base_protocol::{BlockInfo, L2BlockInfo, to_system_config};
 use clap::Parser;
 use futures::{StreamExt, stream};
@@ -310,8 +311,8 @@ impl RpcFixtureCapture {
             "base-sepolia" => 84532,
             _ => return Err(CaptureError::UnsupportedNetwork { network: network.to_owned() }),
         };
-        Registry::rollup_config(chain_id)
-            .cloned()
+        BaseChainConfig::by_chain_id(chain_id)
+            .map(BaseChainConfig::rollup_config)
             .ok_or(CaptureError::MissingRollupConfig { chain_id })
     }
 
@@ -491,12 +492,15 @@ impl RpcFixtureCapture {
     /// Return whether a replay error means the scanner has not captured enough L1 blocks yet.
     pub fn replay_needs_more_l1(error: &FixtureReplayError) -> bool {
         match error {
-            FixtureReplayError::Pipeline { error, .. } => {
-                let error = error.to_ascii_lowercase();
-                error.contains("eof")
-                    || error.contains("not enough data")
-                    || error.contains("block not found")
-            }
+            FixtureReplayError::Pipeline { source, .. } => matches!(
+                source.as_ref(),
+                PipelineErrorKind::Temporary(
+                    PipelineError::Eof
+                        | PipelineError::NotEnoughData
+                        | PipelineError::ChannelReaderEmpty
+                        | PipelineError::Provider(_)
+                ) | PipelineErrorKind::Reset(ResetError::BlockNotFound(_))
+            ),
             _ => false,
         }
     }

@@ -50,7 +50,8 @@ impl SharedL1Chain {
         self.0.lock().expect("chain lock poisoned").iter().find(|b| b.hash() == hash).cloned()
     }
 
-    fn with<R>(&self, f: impl FnOnce(&[L1Block]) -> R) -> R {
+    /// Borrow the current block view while holding the chain lock.
+    pub fn with<R>(&self, f: impl FnOnce(&[L1Block]) -> R) -> R {
         let g = self.0.lock().expect("chain lock poisoned");
         f(&g)
     }
