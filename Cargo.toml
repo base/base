@@ -9,7 +9,10 @@ exclude = [".github/"]
 
 [workspace]
 resolver = "2"
-exclude = ["bin/prover", "crates/proof/succinct/programs", "actions/fixtures"]
+exclude = [
+  "bin/prover",
+  "crates/proof/succinct/programs",
+]
 members = [
   "bin/*",
   "bin/prover/nitro-host",
@@ -57,6 +60,7 @@ members = [
   "crates/execution/*",
   "etc/tools/*",
   "devnet",
+  "actions/fixtures",
   "actions/*",
 ]
 default-members = [
