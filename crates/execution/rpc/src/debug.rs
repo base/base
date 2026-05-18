@@ -41,7 +41,7 @@ use crate::{
 };
 
 /// Default maximum number of concurrent Base debug RPC requests.
-pub const DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS: NonZeroUsize = match NonZeroUsize::new(3) {
+pub const DEFAULT_DEBUG_MAX_CONCURRENT_REQUESTS: NonZeroUsize = match NonZeroUsize::new(24) {
     Some(value) => value,
     None => panic!("default debug max concurrent requests must be non-zero"),
 };
