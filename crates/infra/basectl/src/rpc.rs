@@ -1311,9 +1311,7 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
                 if tx.send(ConductorPollUpdate::Membership(membership.clone())).await.is_err() {
                     break;
                 }
-                if let ConductorSource::Discover { bootstrap, ports } = &source {
-                    let synthesized =
-                        crate::config::synthesize_nodes(bootstrap, ports, &membership);
+                if let Some(synthesized) = source.synthesize_nodes(&membership) {
                     let server_ids_changed = synthesized
                         .iter()
                         .map(|n| &n.server_id)

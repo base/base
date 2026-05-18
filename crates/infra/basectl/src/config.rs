@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use base_common_chains::{ChainConfig, rollup_config};
 use base_common_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 use url::Url;
 
 /// Configuration for proof system monitoring (proposer + dispute games).
@@ -170,8 +171,9 @@ impl ConductorSource {
         match self {
             Self::Static(_) => None,
             Self::Discover { bootstrap, ports } => {
-                let cl_rpc = swap_port(bootstrap, ports.cl_rpc);
-                let el_rpc = ports.el_rpc.map(|p| swap_port(bootstrap, p));
+                let host = bootstrap.host_str().unwrap_or("localhost");
+                let cl_rpc = peer_url(bootstrap, host, ports.cl_rpc);
+                let el_rpc = ports.el_rpc.map(|p| peer_url(bootstrap, host, p));
                 Some(ConductorNodeConfig {
                     name: "local".to_string(),
                     conductor_rpc: bootstrap.clone(),
@@ -187,56 +189,59 @@ impl ConductorSource {
             }
         }
     }
+
+    /// Synthesises per-peer `ConductorNodeConfig` entries from raft membership.
+    ///
+    /// Returns `None` for [`ConductorSource::Static`] (those nodes are already
+    /// fully configured). For [`ConductorSource::Discover`], each `ServerInfo`
+    /// in `membership` has an `addr` field that is the raft binary protocol
+    /// address (e.g. `op-conductor-1:5051`); the host is extracted and the
+    /// JSON-RPC URLs are rebuilt from the supplied port templates. Docker
+    /// container names are hardcoded to the production deployment convention.
+    pub fn synthesize_nodes(
+        &self,
+        membership: &base_consensus_rpc::ClusterMembership,
+    ) -> Option<Vec<ConductorNodeConfig>> {
+        let Self::Discover { bootstrap, ports } = self else { return None };
+        let nodes = membership
+            .servers
+            .iter()
+            .map(|srv| {
+                let host = srv.addr.split(':').next().unwrap_or(srv.addr.as_str());
+                ConductorNodeConfig {
+                    name: srv.id.clone(),
+                    conductor_rpc: peer_url(bootstrap, host, ports.conductor_rpc),
+                    cl_rpc: peer_url(bootstrap, host, ports.cl_rpc),
+                    server_id: srv.id.clone(),
+                    raft_addr: srv.addr.clone(),
+                    el_rpc: ports.el_rpc.map(|p| peer_url(bootstrap, host, p)),
+                    docker_conductor: Some("conductor".to_string()),
+                    docker_el: Some("execution".to_string()),
+                    docker_cl: Some("consensus".to_string()),
+                    flashblocks_ws: None,
+                }
+            })
+            .collect();
+        Some(nodes)
+    }
 }
 
-fn swap_port(url: &Url, port: u16) -> Url {
-    let mut out = url.clone();
-    let _ = out.set_port(Some(port));
-    out
-}
-
-/// Synthesises per-peer `ConductorNodeConfig` entries from raft membership.
+/// Builds a peer JSON-RPC URL by string interpolation against `bootstrap`'s scheme.
 ///
-/// `addr` on each `ServerInfo` is the raft binary protocol address (e.g.
-/// `op-conductor-1:5051`). We extract the host and rebuild JSON-RPC URLs via
-/// the supplied port templates. Docker container names are hardcoded to the
-/// production deployment convention.
-pub fn synthesize_nodes(
-    bootstrap: &Url,
-    ports: &DiscoveryPorts,
-    membership: &base_consensus_rpc::ClusterMembership,
-) -> Vec<ConductorNodeConfig> {
-    membership
-        .servers
-        .iter()
-        .map(|srv| {
-            let host = srv.addr.split(':').next().unwrap_or(srv.addr.as_str());
-            let mut conductor_rpc = bootstrap.clone();
-            let _ = conductor_rpc.set_host(Some(host));
-            let _ = conductor_rpc.set_port(Some(ports.conductor_rpc));
-            let mut cl_rpc = bootstrap.clone();
-            let _ = cl_rpc.set_host(Some(host));
-            let _ = cl_rpc.set_port(Some(ports.cl_rpc));
-            let el_rpc = ports.el_rpc.map(|p| {
-                let mut u = bootstrap.clone();
-                let _ = u.set_host(Some(host));
-                let _ = u.set_port(Some(p));
-                u
-            });
-            ConductorNodeConfig {
-                name: srv.id.clone(),
-                conductor_rpc,
-                cl_rpc,
-                server_id: srv.id.clone(),
-                raft_addr: srv.addr.clone(),
-                el_rpc,
-                docker_conductor: Some("conductor".to_string()),
-                docker_el: Some("execution".to_string()),
-                docker_cl: Some("consensus".to_string()),
-                flashblocks_ws: None,
-            }
-        })
-        .collect()
+/// Falls back to a clone of `bootstrap` and logs a warning if the resulting
+/// URL fails to parse (e.g. an unexpected host shape coming back from raft).
+/// Returning `bootstrap` is a safer default than panicking — the poll will
+/// just hit the bootstrap node twice, which is visible to the operator.
+fn peer_url(bootstrap: &Url, host: &str, port: u16) -> Url {
+    let scheme = bootstrap.scheme();
+    let candidate = format!("{scheme}://{host}:{port}");
+    match Url::parse(&candidate) {
+        Ok(url) => url,
+        Err(error) => {
+            warn!(host = %host, port = port, error = %error, "discovered peer host failed url parse; falling back to bootstrap");
+            bootstrap.clone()
+        }
+    }
 }
 
 /// Monitoring configuration for a chain watched by basectl.

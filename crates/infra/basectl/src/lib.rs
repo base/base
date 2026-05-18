@@ -24,7 +24,7 @@ pub use commands::{
 mod config;
 pub use config::{
     ConductorNodeConfig, ConductorSource, DiscoveryConfig, DiscoveryPorts, MonitoringConfig,
-    ProofsConfig, ValidatorNodeConfig, synthesize_nodes,
+    ProofsConfig, ValidatorNodeConfig,
 };
 
 mod l1_client;
