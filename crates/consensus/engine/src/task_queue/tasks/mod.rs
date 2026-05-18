@@ -12,13 +12,10 @@ mod insert;
 pub use insert::{InsertPayloadSafety, InsertTask, InsertTaskError, InsertTaskResult};
 
 mod build;
-pub use build::{BuildTask, BuildTaskError, EngineBuildError};
+pub use build::{BuildTaskError, EngineBuildError};
 
 mod seal;
 pub use seal::{SealTask, SealTaskError};
-
-mod get_payload;
-pub use get_payload::GetPayloadTask;
 
 mod consolidate;
 pub use consolidate::{ConsolidateInput, ConsolidateTask, ConsolidateTaskError};

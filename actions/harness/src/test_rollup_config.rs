@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use base_common_chains::Registry;
+use base_common_chains::{ChainConfig, rollup_config};
 use base_common_genesis::{HardForkConfig, RollupConfig};
 
 use crate::BatcherConfig;
@@ -11,9 +11,9 @@ pub struct TestRollupConfigBuilder {
 }
 
 impl TestRollupConfigBuilder {
-    /// Returns the Base mainnet [`RollupConfig`] from the chain registry.
-    pub fn mainnet() -> &'static RollupConfig {
-        Registry::rollup_config(8453).expect("Base mainnet config must exist in the registry")
+    /// Returns the Base mainnet [`RollupConfig`] from [`ChainConfig::MAINNET`].
+    pub fn mainnet() -> RollupConfig {
+        rollup_config!(ChainConfig::MAINNET)
     }
 
     /// Starts from the Base mainnet config and applies the common harness overrides.
@@ -22,9 +22,7 @@ impl TestRollupConfigBuilder {
     /// addresses, zeroing genesis for the in-memory L1 miner, and activating the
     /// Canyon-through-Fjord path from genesis.
     pub fn base_mainnet(batcher: &BatcherConfig) -> Self {
-        let mut config = Registry::rollup_config(8453)
-            .expect("Base mainnet config must exist in the registry")
-            .clone();
+        let mut config = rollup_config!(ChainConfig::MAINNET);
 
         config.batch_inbox_address = batcher.inbox_address;
         config

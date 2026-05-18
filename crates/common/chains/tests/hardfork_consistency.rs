@@ -1,4 +1,4 @@
-//! Integration tests verifying that the registry's rollup configs agree with chain hardfork
+//! Integration tests verifying that the derived rollup configs agree with chain hardfork
 //! schedules for every [`BaseUpgrade`] variant.
 
 use base_common_chains::{

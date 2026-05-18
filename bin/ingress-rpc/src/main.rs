@@ -3,21 +3,17 @@
 use std::time::Duration;
 
 use alloy_provider::ProviderBuilder;
-use audit_archiver_lib::{
-    AuditConnector, BundleEvent, RpcBundleEventPublisher, load_kafka_config_from_file,
-};
+use audit_archiver_lib::{AuditConnector, BundleEvent, RpcBundleEventPublisher};
 use base_bundles::MeterBundleResponse;
 use base_cli_utils::LogConfig;
 use base_common_network::Base;
 use clap::Parser;
 use ingress_rpc_lib::{
-    BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, KafkaMessageQueue,
-    Providers,
+    BuilderConnector, Config, HealthServer, IngressApiServer, IngressService, Providers,
 };
 use jsonrpsee::server::Server;
-use rdkafka::{ClientConfig, producer::FutureProducer};
 use tokio::sync::{broadcast, mpsc};
-use tracing::{info, warn};
+use tracing::info;
 
 base_cli_utils::define_log_args!("TIPS_INGRESS");
 base_cli_utils::define_metrics_args!("TIPS_INGRESS", 9002);
@@ -77,20 +73,6 @@ async fn main() -> anyhow::Result<()> {
         }),
     };
 
-    let ingress_client_config =
-        ClientConfig::from_iter(load_kafka_config_from_file(&config.ingress_kafka_properties)?);
-
-    let queue_producer: FutureProducer = ingress_client_config.create()?;
-
-    let queue = KafkaMessageQueue::new(queue_producer);
-
-    if config.audit_kafka_properties.is_some() || config.audit_topic.is_some() {
-        warn!(
-            "audit_kafka_properties / audit_topic CLI args are deprecated and ignored; \
-             audit events are now published over RPC via --audit-rpc-url"
-        );
-    }
-
     let audit_publisher = RpcBundleEventPublisher::new(
         config.audit_rpc_url.as_str(),
         Duration::from_secs(config.audit_rpc_timeout_secs),
@@ -123,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let bind_addr = format!("{}:{}", config.address, config.port);
-    let service = IngressService::new(providers, queue, audit_tx, builder_tx, cli.config);
+    let service = IngressService::new(providers, audit_tx, builder_tx, cli.config);
 
     let server = Server::builder().build(&bind_addr).await?;
     let addr = server.local_addr()?;

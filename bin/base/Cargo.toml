@@ -36,6 +36,7 @@ clap = { workspace = true, features = ["env"] }
 url.workspace = true
 eyre.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 tokio-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 figment = { workspace = true, features = ["env", "toml"] }

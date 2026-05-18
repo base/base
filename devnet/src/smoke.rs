@@ -127,6 +127,8 @@ pub struct DevnetBuilder {
     l1_chain_id: Option<u64>,
     l2_chain_id: Option<u64>,
     slot_duration: Option<u64>,
+    base_azul_activation_block: Option<u64>,
+    base_beryl_activation_block: Option<u64>,
     output_dir: Option<PathBuf>,
     stable_config: Option<StableDevnetConfig>,
     tx_forwarding_config: Option<TxForwardingConfig>,
@@ -154,6 +156,18 @@ impl DevnetBuilder {
     /// Sets the slot duration.
     pub const fn with_slot_duration(mut self, slot_duration: u64) -> Self {
         self.slot_duration = Some(slot_duration);
+        self
+    }
+
+    /// Sets the L2 block number at which Base Azul activates.
+    pub const fn with_base_azul_activation_block(mut self, block: u64) -> Self {
+        self.base_azul_activation_block = Some(block);
+        self
+    }
+
+    /// Sets the L2 block number at which Base Beryl activates.
+    pub const fn with_base_beryl_activation_block(mut self, block: u64) -> Self {
+        self.base_beryl_activation_block = Some(block);
         self
     }
 
@@ -197,6 +211,14 @@ impl DevnetBuilder {
             .with_chain_id(l1_chain_id)
             .with_l2_chain_id(l2_chain_id)
             .with_slot_duration(slot_duration);
+
+        if let Some(block) = self.base_azul_activation_block {
+            setup = setup.with_base_azul_activation_block(block);
+        }
+
+        if let Some(block) = self.base_beryl_activation_block {
+            setup = setup.with_base_beryl_activation_block(block);
+        }
 
         if let Some(ref config) = self.stable_config {
             setup = setup.with_network_name(&config.network_name);

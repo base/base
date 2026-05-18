@@ -266,10 +266,9 @@ mod tests {
     use alloy_eips::BlockNumHash;
     use base_common_genesis::{HardForkConfig, SystemConfig};
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
-    use crate::test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage};
+    use crate::test_utils::TestNextFrameProvider;
 
     #[test]
     fn test_try_read_channel_at_index_missing_channel() {
@@ -472,10 +471,7 @@ mod tests {
 
     #[test]
     fn test_ingest_invalid_frame() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let mock = TestNextFrameProvider::new(vec![]);
         let mut channel_bank = ChannelBank::new(Arc::new(RollupConfig::default()), mock);
@@ -560,14 +556,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_channel_timeout() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let configs: [RollupConfig; 2] = [
-            base_common_chains::Registry::rollup_config(8453).cloned().unwrap(),
-            base_common_chains::Registry::rollup_config(84532).cloned().unwrap(),
+            base_common_chains::rollup_config!(base_common_chains::ChainConfig::MAINNET),
+            base_common_chains::rollup_config!(base_common_chains::ChainConfig::SEPOLIA),
         ];
 
         for cfg in configs {

@@ -45,7 +45,7 @@ fn rpc_transaction(tx: BaseTxEnvelope, block_number: u64) -> BaseTransaction {
 /// Previously, `SealTask` compared `state.sync_state.unsafe_head()` (the chain
 /// tip, e.g. block 76) against `attributes.parent` (the safe head, e.g. block 34)
 /// and returned `UnsafeHeadChangedSinceBuild` with Critical severity, crashing the
-/// engine.  Op-node has no such check — the `BuildTask` already FCU'd the EL to the
+/// engine. Op-node has no such check; the build step already FCU'd the EL to the
 /// correct parent, so the comparison is invalid.
 ///
 /// After the fix the reconcile path proceeds to `seal_and_canonicalize_block`
@@ -78,7 +78,7 @@ async fn consolidate_does_not_crash_when_safe_behind_unsafe_and_attributes_misma
         b256!("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
 
     // Mock client: return the mismatched block at number 35, and a Valid FCU
-    // with a payload_id (needed by BuildTask inside the reconcile path).
+    // with a payload_id needed by the build step inside the reconcile path.
     let valid_fcu = ForkchoiceUpdated {
         payload_status: PayloadStatus {
             status: PayloadStatusEnum::Valid,

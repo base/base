@@ -14,7 +14,7 @@ mod build;
 pub use build::BaseBlockAssembler;
 
 mod config;
-pub use config::{BaseEvmConfig, BaseNextBlockEnvAttributes};
+pub use config::{BaseEvmConfig, BaseExecutorProvider, BaseNextBlockEnvAttributes};
 
 mod env;
 pub use env::BaseEvmEnvBuilder;
@@ -22,11 +22,12 @@ pub use env::BaseEvmEnvBuilder;
 mod error;
 pub use error::{BaseBlockExecutionError, L1BlockInfoError};
 
-mod execute;
-pub use execute::*;
-
 mod l1;
-pub use l1::*;
+pub use l1::{
+    RethL1BlockInfo, extract_l1_info, extract_l1_info_from_tx, parse_l1_info,
+    parse_l1_info_tx_bedrock, parse_l1_info_tx_ecotone, parse_l1_info_tx_isthmus,
+    parse_l1_info_tx_jovian,
+};
 
 mod receipts;
-pub use receipts::*;
+pub use receipts::BaseRethReceiptBuilder;

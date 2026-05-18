@@ -4,7 +4,7 @@ mod command_center;
 pub use command_center::CommandCenterView;
 
 mod conductor;
-pub use conductor::ConductorView;
+pub use conductor::{ActionMenuItem, ConductorView, ConfirmButton, Overlay, PendingAction};
 
 mod config;
 pub use config::ConfigView;

@@ -26,7 +26,6 @@ serde = { workspace = true, features = ["std", "derive"] }
 alloy-consensus = { workspace = true, features = ["std"] }
 base-metrics = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
-rdkafka = { workspace = true, features = ["tokio", "libz", "zstd", "ssl-vendored"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 moka = { workspace = true, features = ["sync"] }
 jsonrpsee-types.workspace = true
@@ -35,7 +34,7 @@ jsonrpsee-types.workspace = true
 base-bundles = { workspace = true, features = ["test-utils"] }
 testcontainers = { workspace = true, features = ["blocking"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
-testcontainers-modules = { workspace = true, features = ["postgres", "kafka", "minio"] }
+testcontainers-modules = { workspace = true, features = ["postgres", "minio"] }
 
 [features]
 default = [ "metrics" ]

@@ -234,20 +234,13 @@ mod tests {
     use base_common_genesis::{HardForkConfig, RollupConfig};
     use base_protocol::BlockInfo;
     use tracing::Level;
-    use tracing_subscriber::layer::SubscriberExt;
 
     use super::ChannelAssembler;
-    use crate::{
-        ChannelReaderProvider, PipelineError,
-        test_utils::{CollectingLayer, TestNextFrameProvider, TraceStorage},
-    };
+    use crate::{ChannelReaderProvider, PipelineError, test_utils::TestNextFrameProvider};
 
     #[tokio::test]
     async fn test_assembler_channel_timeout() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let frames = [
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
@@ -307,10 +300,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_assembler_already_built() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let frames = [
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
@@ -373,10 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_assembler_size_limit_exceeded_bedrock() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let mut frames = [
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
@@ -408,10 +395,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_assembler_size_limit_exceeded_fjord() {
-        let trace_store: TraceStorage = Default::default();
-        let layer = CollectingLayer::new(trace_store.clone());
-        let subscriber = tracing_subscriber::Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let (trace_store, _guard) = base_protocol::capture_traces!();
 
         let mut frames = [
             crate::frame!(0xFF, 0, vec![0xDD; 50], false),
