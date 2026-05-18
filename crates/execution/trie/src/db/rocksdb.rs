@@ -1755,7 +1755,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
             Arc::clone(tx),
             max_block_number,
         );
-        let Some((_, value)) = cursor.latest_version_for_key(hashed_key)? else {
+        let Some(value) = cursor.latest_value_for_key(hashed_key)? else {
             return Ok(None);
         };
         Ok(value.value.0)
@@ -1777,7 +1777,7 @@ impl BaseProofsStore for RocksdbProofsStorage {
             max_block_number,
         );
         let key = HashedStorageKey::new(hashed_address, hashed_storage_key);
-        let Some((_, value)) = cursor.latest_version_for_key(key)? else {
+        let Some(value) = cursor.latest_value_for_key(key)? else {
             return Ok(None);
         };
         Ok(value.value.0.and_then(|value| (!value.0.is_zero()).then_some(value.0)))
@@ -2301,6 +2301,27 @@ where
         let raw_value = iter.value().ok_or(DatabaseError::Decode)?;
         let value = T::Value::decompress(raw_value)?;
         Ok(Some((decoded_key, value)))
+    }
+
+    fn latest_value_for_key(&self, key: T::Key) -> Result<Option<T::Value>, DatabaseError> {
+        let cf = self.cf()?;
+        let prefix = encode_history_key_prefix::<T>(&key);
+        let target = encode_history_key::<T>(&key, self.max_block_number);
+        let read_options = exact_prefix_read_options(&prefix);
+        let mut iter = self.snapshot.snapshot().raw_iterator_cf_opt(&cf, read_options);
+        iter.seek_for_prev(&target);
+        if !iter.valid() {
+            iter.status().map_err(rocksdb_error)?;
+            return Ok(None);
+        }
+
+        let raw_key = iter.key().ok_or(DatabaseError::Decode)?;
+        if !raw_key.starts_with(&prefix) {
+            return Ok(None);
+        }
+
+        let raw_value = iter.value().ok_or(DatabaseError::Decode)?;
+        T::Value::decompress(raw_value).map(Some)
     }
 
     fn seek_exact(&mut self, key: T::Key) -> Result<Option<(T::Key, V)>, DatabaseError> {
