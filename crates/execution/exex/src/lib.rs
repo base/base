@@ -36,8 +36,12 @@ use tracing::{debug, error, info};
 /// [`BaseProofsExExBuilder::with_max_prune_blocks_startup`].
 const DEFAULT_MAX_PRUNE_BLOCKS_STARTUP: u64 = 100_000;
 
-/// How many blocks to process in a single batch before yielding. Default is 50 blocks.
-const SYNC_BLOCKS_BATCH_SIZE: usize = 50;
+/// How many blocks to process in a single sync turn before yielding.
+const SYNC_BLOCKS_PER_TURN: usize = 1;
+
+fn sync_turn_end(latest: u64, target: u64) -> u64 {
+    latest.saturating_add(SYNC_BLOCKS_PER_TURN as u64).min(target)
+}
 
 /// Default proofs history window: 1 month of blocks at 2s block time
 const DEFAULT_PROOFS_HISTORY_WINDOW: u64 = 1_296_000;
@@ -459,14 +463,14 @@ where
                 return;
             }
 
-            let end = (latest + SYNC_BLOCKS_BATCH_SIZE as u64).min(target);
+            let end = sync_turn_end(latest, target);
             info!(
                 target: "base::exex",
                 start = latest + 1,
                 end,
                 target,
-                batch_size = end - latest,
-                "Processing proofs storage sync batch"
+                blocks = end - latest,
+                "Processing proofs storage sync turn"
             );
 
             let mut batch: Vec<BatchBlock<Primitives>> =
@@ -487,7 +491,7 @@ where
                 return;
             }
 
-            info!(target: "base::exex", latest_stored = latest, target, "Batch processed, yielding");
+            info!(target: "base::exex", latest_stored = end, target, "Sync turn processed, yielding");
             task::yield_now().await;
         }
     }
@@ -816,6 +820,13 @@ mod tests {
             .with_verification_interval(1000)
             .with_max_prune_blocks_startup(1000)
             .build()
+    }
+
+    #[test]
+    fn sync_turn_end_advances_one_block_at_a_time() {
+        assert_eq!(sync_turn_end(0, 10), 1);
+        assert_eq!(sync_turn_end(9, 10), 10);
+        assert_eq!(sync_turn_end(10, 10), 10);
     }
 
     #[tokio::test]
