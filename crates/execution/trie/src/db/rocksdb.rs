@@ -463,6 +463,17 @@ impl RocksdbProofsStorage {
         Self::new_with_options(path, RocksdbProofsStorageOptions::default())
     }
 
+    /// Flushes and compacts every proofs-history column family.
+    pub fn flush_and_compact(&self) -> BaseProofsStorageResult<()> {
+        for name in Self::column_families() {
+            let cf = self.cf(name)?;
+            self.db.flush_cf(&cf).map_err(rocksdb_error)?;
+            self.db.compact_range_cf::<&[u8], &[u8]>(&cf, None, None);
+        }
+
+        Ok(())
+    }
+
     /// Creates a new [`RocksdbProofsStorage`] instance with the given path and options.
     pub fn new_with_options(
         path: &Path,
