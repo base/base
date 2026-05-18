@@ -78,8 +78,15 @@ reth-db-api = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"] }
 
+# bench
+criterion = { workspace = true, features = ["html_reports"] }
+
 # misc
 serial_test.workspace = true
+
+[[bench]]
+name = "witness_reads"
+harness = false
 
 [features]
 serde-bincode-compat = [
