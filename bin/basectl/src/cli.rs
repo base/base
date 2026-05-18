@@ -16,6 +16,10 @@ pub(crate) struct Cli {
     /// When set, basectl ignores any hardcoded conductor list in the chain
     /// config and instead asks this URL for the live raft membership, then
     /// polls all discovered peers via templated ports.
+    ///
+    /// Only applies to the conductor view (and views that embed it, like the
+    /// command center). Ignored by `flashblocks --json` and other non-TUI
+    /// subcommands.
     #[arg(
         long = "conductor-rpc",
         env = "BASECTL_CONDUCTOR_RPC",
