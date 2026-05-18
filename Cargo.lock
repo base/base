@@ -3239,6 +3239,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rlp",
  "alloy-rpc-types-eth",
+ "alloy-signer-local",
  "alloy-trie",
  "async-trait",
  "base-balance-monitor",

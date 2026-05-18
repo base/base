@@ -81,16 +81,16 @@ mod tests {
     };
 
     use alloy_primitives::B256;
-    use base_proof_contracts::{AggregateVerifierClient, DelayedWETHClient};
+    use base_proof_contracts::AggregateVerifierClient;
     use base_tx_manager::{SendHandle, SendResponse, TxCandidate, TxManager};
     use tokio::sync::Notify;
 
     use super::*;
     use crate::{
-        SubmissionHandle, SubmissionTask,
+        DelayedWETHResolver, SubmissionHandle, SubmissionTask,
         test_utils::{
-            MockAggregateVerifier, MockDelayedWETH, MockGameState, MockTxManager, addr,
-            receipt_with_status,
+            MockAggregateVerifier, MockDelayedWETH, MockDelayedWETHResolver, MockGameState,
+            MockTxManager, addr, receipt_with_status,
         },
     };
 
@@ -126,9 +126,10 @@ mod tests {
     }
 
     fn deps(verifier: Arc<MockAggregateVerifier>, handle: SubmissionHandle) -> Arc<BondWorkerDeps> {
+        let weth = Arc::new(MockDelayedWETH::new(WETH_DELAY));
         Arc::new(BondWorkerDeps::new(
             verifier as Arc<dyn AggregateVerifierClient>,
-            Arc::new(MockDelayedWETH::new(WETH_DELAY)) as Arc<dyn DelayedWETHClient>,
+            Arc::new(MockDelayedWETHResolver::new(weth)) as Arc<dyn DelayedWETHResolver>,
             handle,
             std::iter::once(RECIPIENT).collect(),
         ))

@@ -12,13 +12,16 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_proof_contracts::{AggregateVerifierClient, ContractError, DelayedWETHClient, GameStatus};
+use base_proof_contracts::{AggregateVerifierClient, ContractError, GameStatus};
 use derive_more::Debug;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::{BondAction, BondCandidate, BondRequest, Submission, SubmissionHandle, SubmitError};
+use crate::{
+    BondAction, BondCandidate, BondRequest, DelayedWETHResolver, Submission, SubmissionHandle,
+    SubmitError,
+};
 
 /// Shared deps for every bond-worker task.
 #[derive(Debug)]
@@ -26,9 +29,9 @@ pub struct BondWorkerDeps {
     /// Aggregate verifier client.
     #[debug(skip)]
     pub verifier: Arc<dyn AggregateVerifierClient>,
-    /// `DelayedWETH` client.
+    /// Per-game `DelayedWETH` client resolver.
     #[debug(skip)]
-    pub weth: Arc<dyn DelayedWETHClient>,
+    pub delayed_weth_resolver: Arc<dyn DelayedWETHResolver>,
     /// Submission entry point.
     pub handle: SubmissionHandle,
     /// Recipient addresses the worker spends gas for.
@@ -39,11 +42,11 @@ impl BondWorkerDeps {
     /// Builds a [`BondWorkerDeps`].
     pub fn new(
         verifier: Arc<dyn AggregateVerifierClient>,
-        weth: Arc<dyn DelayedWETHClient>,
+        delayed_weth_resolver: Arc<dyn DelayedWETHResolver>,
         handle: SubmissionHandle,
         claim_addresses: HashSet<Address>,
     ) -> Self {
-        Self { verifier, weth, handle, claim_addresses }
+        Self { verifier, delayed_weth_resolver, handle, claim_addresses }
     }
 }
 
@@ -157,18 +160,19 @@ async fn wait_weth_delay(
     now_secs: u64,
     deps: &BondWorkerDeps,
 ) -> Result<(), BondError> {
+    let delayed_weth = deps.delayed_weth_resolver.resolve(game).await?;
     // `ensure_unlocked` returns only after `bondUnlocked == true`, and
     // `claimCredit()` atomically calls `DELAYED_WETH.unlock` (which
     // sets `timestamp = block.timestamp`, always non-zero) before
     // flipping the flag, so `unlock_ts > 0` here.
-    let (_, unlock_ts) = deps.weth.withdrawals(game, recipient).await?;
-    let delay = deps.weth.delay().await?;
+    let (_, unlock_ts) = delayed_weth.withdrawals(game, recipient).await?;
+    let delay = delayed_weth.delay().await?;
     let ready_at = unlock_ts.saturating_add(delay.as_secs());
     if now_secs >= ready_at {
         return Ok(());
     }
 
-    debug!(%game, ready_at, now_secs, "waiting WETH unlock delay");
+    debug!(%game, ready_at, now_secs, "waiting DelayedWETH unlock delay");
     tokio::time::sleep(Duration::from_secs(ready_at - now_secs)).await;
     Ok(())
 }
@@ -216,8 +220,8 @@ mod tests {
     use crate::{
         SubmissionTask,
         test_utils::{
-            MockAggregateVerifier, MockDelayedWETH, MockGameState, MockTxManager,
-            receipt_with_status,
+            MockAggregateVerifier, MockDelayedWETH, MockDelayedWETHResolver, MockGameState,
+            MockTxManager, receipt_with_status,
         },
     };
 
@@ -254,9 +258,11 @@ mod tests {
             let submit_cancel = CancellationToken::new();
             let submit_join = tokio::spawn(task.run(submit_cancel.clone()));
             let claim = addrs.into_iter().collect::<HashSet<_>>();
+            let delayed_weth_resolver =
+                Arc::new(MockDelayedWETHResolver::new(Arc::<MockDelayedWETH>::clone(&weth)));
             let deps = Arc::new(BondWorkerDeps::new(
                 Arc::<MockAggregateVerifier>::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-                Arc::<MockDelayedWETH>::clone(&weth) as Arc<dyn DelayedWETHClient>,
+                delayed_weth_resolver as Arc<dyn DelayedWETHResolver>,
                 handle,
                 claim,
             ));
@@ -378,9 +384,10 @@ mod tests {
         let (task, handle) = SubmissionTask::new(tx_manager, 8);
         let submit_cancel = CancellationToken::new();
         let submit_join = tokio::spawn(task.run(submit_cancel.clone()));
+        let weth = Arc::new(MockDelayedWETH::new(Duration::from_secs(WETH_DELAY_SECS)));
         let deps = Arc::new(BondWorkerDeps::new(
             Arc::<MockAggregateVerifier>::clone(&verifier) as Arc<dyn AggregateVerifierClient>,
-            Arc::new(MockDelayedWETH::new(Duration::from_secs(WETH_DELAY_SECS))),
+            Arc::new(MockDelayedWETHResolver::new(weth)) as Arc<dyn DelayedWETHResolver>,
             handle,
             HashSet::from([RECIPIENT]),
         ));

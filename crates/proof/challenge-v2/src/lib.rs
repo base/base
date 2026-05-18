@@ -42,11 +42,20 @@ pub use game_pool::GamePool;
 mod bond_discovery;
 pub use bond_discovery::{BondCandidate, BondDiscovery};
 
+mod delayed_weth_resolver;
+pub use delayed_weth_resolver::{DelayedWETHResolver, L1DelayedWETHResolver};
+
 mod bond_worker;
 pub use bond_worker::{BondError, BondWorkerDeps, run_bond_worker};
 
 mod bond_pool;
 pub use bond_pool::BondPool;
+
+mod cli;
+pub use cli::{ChallengerArgs, Cli};
+
+mod config;
+pub use config::{ChallengerConfig, ConfigError};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

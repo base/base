@@ -30,7 +30,10 @@ use base_zk_client::{
     ZkProofError, ZkProofProvider,
 };
 
-use crate::{OutputRootError, OutputValidator, TeeProofError, TeeProofProvider, TeeProofResult};
+use crate::{
+    DelayedWETHResolver, OutputRootError, OutputValidator, TeeProofError, TeeProofProvider,
+    TeeProofResult,
+};
 
 /// Mock [`L2Provider`] backed by in-memory hashmaps.
 ///
@@ -608,6 +611,27 @@ impl DelayedWETHClient for MockDelayedWETH {
             .get(&(holder, recipient))
             .copied()
             .unwrap_or((U256::ZERO, 0)))
+    }
+}
+
+/// Mock [`DelayedWETHResolver`] returning the same [`MockDelayedWETH`]
+/// for every game address.
+#[derive(Debug)]
+pub struct MockDelayedWETHResolver {
+    inner: Arc<MockDelayedWETH>,
+}
+
+impl MockDelayedWETHResolver {
+    /// Wraps `inner` so every `resolve` call returns it.
+    pub const fn new(inner: Arc<MockDelayedWETH>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait]
+impl DelayedWETHResolver for MockDelayedWETHResolver {
+    async fn resolve(&self, _game: Address) -> Result<Arc<dyn DelayedWETHClient>, ContractError> {
+        Ok(Arc::<MockDelayedWETH>::clone(&self.inner))
     }
 }
 
