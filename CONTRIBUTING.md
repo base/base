@@ -114,4 +114,4 @@ If you have questions:
 
 - Open a discussion in the repository
 - Comment on the relevant issue
-- Check existing [documentation](https://docs.base.org/base-chain/quickstart/why-base) and issues first
+- Check existing [documentation](https://docs.base.org) and issues first
