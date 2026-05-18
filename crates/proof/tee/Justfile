@@ -31,14 +31,25 @@ nitro-local *args:
         --logs.stdout.format json \
         {{ args }}
 
-# Build the nitro host binary
-build-host profile='maxperf':
-    cargo build --profile {{ profile }} --locked --package base-prover-nitro-host --bin base-prover-nitro-host
+# Build the nitro host Docker image
+build-host *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd ../../..
+    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-host -t base-prover-nitro-host .
 
-# Build the nitro enclave binary (static musl target for x86_64)
-build-enclave:
-    cargo build --release --locked --target x86_64-unknown-linux-musl \
-        --package base-prover-nitro-enclave --bin base-prover-nitro-enclave
+# Build the nitro enclave Docker image and extract EIF
+build-enclave *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd ../../..
+    DOCKER_BUILDKIT=1 docker build --platform linux/amd64 {{ args }} -f etc/docker/Dockerfile.nitro-enclave --target describe -t base-prover-nitro-enclave-describe .
+    docker rm -f enclave-extract 2>/dev/null || true
+    docker create --name enclave-extract base-prover-nitro-enclave-describe
+    docker cp enclave-extract:/app/eif.bin crates/proof/tee/eif.bin
+    docker rm enclave-extract
+    echo "Enclave built successfully: crates/proof/tee/eif.bin"
+    ls -lh crates/proof/tee/eif.bin
 
 # Print config hashes for all supported chains
 config-hashes:
