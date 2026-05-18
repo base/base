@@ -1,0 +1,21 @@
+schema-version = 1
+name = "base-mainnet-derivation-batch"
+network = "base-mainnet"
+kind = "derivation"
+source = "rpc-capture"
+
+[l1-start]
+number = 18307500
+hash = "0x5914ab038a7141bf04b3c02b43878e9775dfd0e1d05e9c089d7e410d4c3b3e26"
+
+[l1-end]
+number = 18307517
+hash = "0x17dd334eef6d8a3dc34da6964551b276349705785d1ab1546de10f9188d44182"
+
+[l2-start]
+number = 4999983
+hash = "0xaa6741346f8f812a3cf24f68193bd8d784618a57c782908534c97b37d345a5cc"
+
+[l2-end]
+number = 4999983
+hash = "0xaa6741346f8f812a3cf24f68193bd8d784618a57c782908534c97b37d345a5cc"

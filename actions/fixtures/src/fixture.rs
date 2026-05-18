@@ -151,7 +151,7 @@ pub struct FixtureL1DiskBlock {
     pub transactions: Vec<Vec<u8>>,
     /// Consensus receipts, in transaction order.
     #[serde(default)]
-    pub receipts: Vec<Receipt>,
+    pub receipts: Vec<Vec<u8>>,
     /// Blob sidecars needed by the block's blob transactions.
     #[serde(default)]
     pub blobs: Vec<FixtureBlob>,
@@ -181,7 +181,11 @@ impl FixtureL1DiskCodec {
         FixtureL1DiskBlock {
             header,
             transactions: block.transactions.iter().map(|tx| tx.to_vec()).collect(),
-            receipts: block.receipts.clone(),
+            receipts: block
+                .receipts
+                .iter()
+                .map(|receipt| serde_json::to_vec(receipt).expect("receipt serializes to JSON"))
+                .collect(),
             blobs: block.blobs.clone(),
         }
     }
@@ -193,10 +197,20 @@ impl FixtureL1DiskCodec {
         let mut header = block.header.as_slice();
         let header = Header::decode(&mut header)
             .map_err(|source| FixtureL1DiskBlockError::Header { error: source.to_string() })?;
+        let receipts = block
+            .receipts
+            .into_iter()
+            .map(|receipt| {
+                serde_json::from_slice(&receipt).map_err(|source| {
+                    FixtureL1DiskBlockError::ReceiptJson { error: source.to_string() }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(FixtureL1Block {
             header,
             transactions: block.transactions.into_iter().map(Bytes::from).collect(),
-            receipts: block.receipts,
+            receipts,
             blobs: block.blobs,
         })
     }
@@ -208,6 +222,12 @@ pub enum FixtureL1DiskBlockError {
     /// Header RLP could not be decoded.
     #[error("failed to decode L1 header RLP: {error}")]
     Header {
+        /// Decode error text.
+        error: String,
+    },
+    /// Receipt JSON could not be decoded.
+    #[error("failed to decode L1 receipt JSON: {error}")]
+    ReceiptJson {
         /// Decode error text.
         error: String,
     },

@@ -46,19 +46,19 @@ ignored by git and should contain local RPC URLs, for example:
 BASE_ACTION_FIXTURE_L1_RPC_URL=...
 BASE_ACTION_FIXTURE_L2_RPC_URL=...
 BASE_ACTION_FIXTURE_NETWORK=base-mainnet
-BASE_ACTION_FIXTURE_NAME=base-mainnet-derivation-window
+BASE_ACTION_FIXTURE_NAME=base-mainnet-derivation-batch
 ```
 
 From the workspace root, run capture through the top-level Just modules:
 
 ```sh
-just actions fixtures --l2-start 1 --l2-end 1 --overwrite
+just actions fixtures --l2-start 4999983 --l2-end 4999983 --overwrite
 ```
 
 Derivation fixtures include the safe-head anchor, active system config, captured
-L2 outputs, and a continuous L1 header window large enough for the derivation
-pipeline to advance through the sequence window when no batch data is available.
-The library also exposes a derivation L1 scanner that can retain full bodies for
-blocks containing transactions to the batch inbox, deposit contract, or system
-config contract, but the default capture path keeps the checked-in genesis
-fixture compact and fast to regenerate.
+L2 outputs, and the L1 headers needed to advance to the actual inclusion block
+that derives the requested L2 range. The capture path scans L1 in bounded chunks,
+probes replay, and trims the fixture at the last L1 block consumed by successful
+derivation. Blocks without derivation inputs keep headers only; blocks with
+batch inbox, deposit contract, or system config transactions retain only those
+transactions and matching receipts.

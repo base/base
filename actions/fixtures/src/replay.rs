@@ -156,10 +156,11 @@ impl DerivationFixtureReplayer {
                     });
                 }
                 StepResult::StepFailed(error) => {
-                    return Err(FixtureReplayError::Pipeline {
-                        stage: "step",
-                        error: error.to_string(),
-                    });
+                    let error = error.to_string();
+                    if error.contains("Not enough data") || error.contains("Channel reader empty") {
+                        continue;
+                    }
+                    return Err(FixtureReplayError::Pipeline { stage: "step", error });
                 }
             }
         }

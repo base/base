@@ -31,6 +31,6 @@ pub use replay::{DerivationFixtureReplayer, FixtureReplayError};
 
 mod capture;
 pub use capture::{
-    CaptureCommand, CaptureError, CaptureInput, CaptureOutput, L1_DERIVATION_CAPTURE_CONCURRENCY,
-    RpcFixtureCapture,
+    CaptureCommand, CaptureError, CaptureInput, CaptureOutput, FIXTURE_CAPTURE_RPC_TIMEOUT,
+    L1_DERIVATION_CAPTURE_CHUNK_SIZE, L1_DERIVATION_CAPTURE_CONCURRENCY, RpcFixtureCapture,
 };

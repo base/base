@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use alloy_consensus::{Receipt, Transaction as _, TxEnvelope, constants::EMPTY_TRANSACTIONS};
@@ -21,11 +22,17 @@ use tracing::info;
 use crate::{
     ActionFixture, DerivationFixture, ExpectedOutcome, ExpectedPayload, FixtureKind,
     FixtureKindParseError, FixtureL1Block, FixtureL1DiskCodec, FixtureL2Block, FixtureLoader,
-    FixtureLoaderError, FixtureManifest, FixturePaths, StateRoot,
+    FixtureLoaderError, FixtureManifest, FixturePaths, FixtureReplayError, StateRoot,
 };
 
 /// Concurrent L1 requests used while scanning derivation windows.
 pub const L1_DERIVATION_CAPTURE_CONCURRENCY: usize = 16;
+
+/// L1 blocks to fetch before probing whether derivation can complete.
+pub const L1_DERIVATION_CAPTURE_CHUNK_SIZE: u64 = 512;
+
+/// JSON-RPC request timeout used during fixture capture.
+pub const FIXTURE_CAPTURE_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// CLI input options for fixture capture.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,17 +262,20 @@ impl RpcFixtureCapture {
             .ok_or(CaptureError::MissingRpcUrl { chain: "l2" })?;
         let (l2_start, l2_end) = Self::required_range("l2", input.l2_start, input.l2_end)?;
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(FIXTURE_CAPTURE_RPC_TIMEOUT)
+            .build()
+            .map_err(|source| CaptureError::RpcClient { error: source.to_string() })?;
         let rollup_config = Self::rollup_config_for_network(&input.network)?;
         let mut l2_blocks = Self::capture_l2_range(&client, l2_rpc_url, l2_start, l2_end).await?;
-        let l2_infos = Self::populate_l2_origins(&mut l2_blocks, &rollup_config)?;
+        Self::populate_l2_origins(&mut l2_blocks, &rollup_config)?;
         let derivation =
             Self::capture_derivation_anchor(&client, l2_rpc_url, l2_start, &rollup_config).await?;
         let l1_blocks = Self::capture_l1_blocks_for_derivation(
             &client,
             input,
             &derivation,
-            &l2_infos,
+            &l2_blocks,
             &rollup_config,
         )
         .await?;
@@ -370,12 +380,12 @@ impl RpcFixtureCapture {
         Ok(DerivationFixture { safe_head, system_config, l2_history: vec![parent] })
     }
 
-    /// Capture the L1 block range needed by the derivation anchor and expected L2 origins.
+    /// Capture the L1 block range needed to derive the expected L2 blocks.
     pub async fn capture_l1_blocks_for_derivation(
         client: &reqwest::Client,
         input: &CaptureInput,
         derivation: &DerivationFixture,
-        l2_infos: &[L2BlockInfo],
+        l2_blocks: &[FixtureL2Block],
         rollup_config: &RollupConfig,
     ) -> Result<Vec<FixtureL1Block>, CaptureError> {
         let l1_rpc_url = input
@@ -384,15 +394,111 @@ impl RpcFixtureCapture {
             .filter(|url| !url.trim().is_empty())
             .ok_or(CaptureError::MissingRpcUrl { chain: "l1" })?;
         let default_start = derivation.safe_head.l1_origin.number;
-        let default_end = l2_infos
-            .iter()
-            .map(|info| info.l1_origin.number)
-            .max()
-            .unwrap_or(default_start)
-            .max(default_start + rollup_config.seq_window_size + 1);
         let start = input.l1_start.unwrap_or(default_start);
-        let end = input.l1_end.unwrap_or(default_end);
-        Self::capture_l1_header_range(client, l1_rpc_url, start, end).await
+        if let Some(end) = input.l1_end {
+            return Self::capture_l1_derivation_range(
+                client,
+                l1_rpc_url,
+                start,
+                end,
+                rollup_config,
+            )
+            .await;
+        }
+
+        let scan_end = default_start + rollup_config.seq_window_size + 1;
+        let mut blocks = Vec::new();
+        let mut next_start = start;
+        while next_start <= scan_end {
+            let next_end = (next_start + L1_DERIVATION_CAPTURE_CHUNK_SIZE - 1).min(scan_end);
+            blocks.extend(
+                Self::capture_l1_derivation_range(
+                    client,
+                    l1_rpc_url,
+                    next_start,
+                    next_end,
+                    rollup_config,
+                )
+                .await?,
+            );
+
+            if let Some(required_end) =
+                Self::derived_l1_end(input, derivation, l2_blocks, &blocks, rollup_config).await?
+            {
+                blocks.retain(|block| block.header.number <= required_end);
+                return Ok(blocks);
+            }
+
+            next_start = next_end + 1;
+        }
+
+        Err(CaptureError::DerivationReplayIncomplete {
+            start,
+            end: scan_end,
+            l2_start: l2_blocks.first().map(|block| block.header.number),
+            l2_end: l2_blocks.last().map(|block| block.header.number),
+        })
+    }
+
+    /// Return the highest L1 block needed by a successful replay, or `None` if more L1 data is needed.
+    pub async fn derived_l1_end(
+        input: &CaptureInput,
+        derivation: &DerivationFixture,
+        l2_blocks: &[FixtureL2Block],
+        l1_blocks: &[FixtureL1Block],
+        rollup_config: &RollupConfig,
+    ) -> Result<Option<u64>, CaptureError> {
+        let mut manifest =
+            FixtureManifest::new(input.name.clone(), input.network.clone(), input.kind);
+        manifest.source = "rpc-capture-probe".to_owned();
+        manifest.l1_start = l1_blocks.first().map(FixtureL1Block::id);
+        manifest.l1_end = l1_blocks.last().map(FixtureL1Block::id);
+        manifest.l2_start = l2_blocks.first().map(FixtureL2Block::id);
+        manifest.l2_end = l2_blocks.last().map(FixtureL2Block::id);
+
+        let fixture = ActionFixture::new(
+            manifest,
+            l1_blocks.to_vec(),
+            l2_blocks.to_vec(),
+            Self::expected_outcome(l2_blocks),
+        )
+        .with_derivation(derivation.clone());
+
+        match crate::DerivationFixtureReplayer::derive_payloads_with_rollup_config(
+            &fixture,
+            rollup_config.clone(),
+        )
+        .await
+        {
+            Ok(payloads) => {
+                let end = payloads
+                    .iter()
+                    .filter_map(|payload| payload.derived_from())
+                    .map(|block| block.number)
+                    .max()
+                    .unwrap_or_else(|| {
+                        l1_blocks.last().map_or(derivation.safe_head.l1_origin.number, |block| {
+                            block.header.number
+                        })
+                    });
+                Ok(Some(end))
+            }
+            Err(error) if Self::replay_needs_more_l1(&error) => Ok(None),
+            Err(error) => Err(CaptureError::DerivationReplay { error }),
+        }
+    }
+
+    /// Return whether a replay error means the scanner has not captured enough L1 blocks yet.
+    pub fn replay_needs_more_l1(error: &FixtureReplayError) -> bool {
+        match error {
+            FixtureReplayError::Pipeline { error, .. } => {
+                let error = error.to_ascii_lowercase();
+                error.contains("eof")
+                    || error.contains("not enough data")
+                    || error.contains("block not found")
+            }
+            _ => false,
+        }
     }
 
     /// Capture an inclusive L2 block range.
@@ -549,7 +655,14 @@ impl RpcFixtureCapture {
             });
         }
 
-        Self::capture_l1_block_from_parts(client, rpc_url, header, transactions).await
+        Self::capture_l1_derivation_block_from_parts(
+            client,
+            rpc_url,
+            header,
+            transactions,
+            rollup_config,
+        )
+        .await
     }
 
     /// Capture an inclusive L1 header range without transaction or receipt bodies.
@@ -616,19 +729,51 @@ impl RpcFixtureCapture {
         Ok(FixtureL1Block { header, transactions: raw_transactions, receipts, blobs: vec![] })
     }
 
+    /// Build a derivation fixture L1 block from only derivation-relevant transactions and receipts.
+    pub async fn capture_l1_derivation_block_from_parts(
+        client: &reqwest::Client,
+        rpc_url: &str,
+        header: alloy_consensus::Header,
+        transactions: Vec<alloy_rpc_types_eth::Transaction<TxEnvelope>>,
+        rollup_config: &RollupConfig,
+    ) -> Result<FixtureL1Block, CaptureError> {
+        let relevant = transactions
+            .into_iter()
+            .filter(|transaction| Self::is_derivation_l1_transaction(transaction, rollup_config));
+        let mut raw_transactions = Vec::new();
+        let mut receipts = Vec::new();
+        for transaction in relevant {
+            let tx_hash = *transaction.as_ref().tx_hash();
+            let raw = transaction.as_ref().encoded_2718();
+            let receipt = Self::fetch_l1_receipt(client, rpc_url, tx_hash).await?;
+            raw_transactions.push(Bytes::from(raw));
+            receipts.push(receipt);
+        }
+
+        Ok(FixtureL1Block { header, transactions: raw_transactions, receipts, blobs: vec![] })
+    }
+
     /// Return whether any L1 transaction can affect derivation.
     pub fn contains_derivation_l1_transaction(
         transactions: &[alloy_rpc_types_eth::Transaction<TxEnvelope>],
         rollup_config: &RollupConfig,
     ) -> bool {
-        transactions.iter().any(|transaction| {
-            let Some(to) = transaction.as_ref().to() else {
-                return false;
-            };
-            to == rollup_config.batch_inbox_address
-                || to == rollup_config.deposit_contract_address
-                || to == rollup_config.l1_system_config_address
-        })
+        transactions
+            .iter()
+            .any(|transaction| Self::is_derivation_l1_transaction(transaction, rollup_config))
+    }
+
+    /// Return whether an L1 transaction can affect derivation.
+    pub fn is_derivation_l1_transaction(
+        transaction: &alloy_rpc_types_eth::Transaction<TxEnvelope>,
+        rollup_config: &RollupConfig,
+    ) -> bool {
+        let Some(to) = transaction.as_ref().to() else {
+            return false;
+        };
+        to == rollup_config.batch_inbox_address
+            || to == rollup_config.deposit_contract_address
+            || to == rollup_config.l1_system_config_address
     }
 
     /// Resolve full L1 transaction objects from a block response.
@@ -974,6 +1119,26 @@ pub enum CaptureError {
     /// The selected rollup config does not contain a genesis system config.
     #[error("rollup config is missing genesis system config")]
     MissingGenesisSystemConfig,
+    /// Scanned the maximum derivation window without deriving the requested L2 range.
+    #[error(
+        "captured L1 blocks {start}..={end} did not derive requested L2 range {l2_start:?}..={l2_end:?}"
+    )]
+    DerivationReplayIncomplete {
+        /// First scanned L1 block.
+        start: u64,
+        /// Last scanned L1 block.
+        end: u64,
+        /// First requested L2 block.
+        l2_start: Option<u64>,
+        /// Last requested L2 block.
+        l2_end: Option<u64>,
+    },
+    /// Captured L1 data failed derivation replay for a non-retryable reason.
+    #[error(transparent)]
+    DerivationReplay {
+        /// Replay failure.
+        error: FixtureReplayError,
+    },
     /// Output path could not be represented as UTF-8.
     #[error("fixture output path must be UTF-8 when it contains placeholders")]
     NonUtf8OutputPath,
@@ -1029,6 +1194,12 @@ pub enum CaptureError {
         /// RPC method.
         method: &'static str,
         /// Redacted request error.
+        error: String,
+    },
+    /// RPC client construction failed.
+    #[error("failed to construct RPC client: {error}")]
+    RpcClient {
+        /// Client construction error.
         error: String,
     },
     /// RPC returned a non-success status.

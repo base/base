@@ -1,0 +1,19 @@
+{
+  "safeHead": {
+    "number": 4999983,
+    "hash": "0xaa6741346f8f812a3cf24f68193bd8d784618a57c782908534c97b37d345a5cc"
+  },
+  "derivedPayloads": [
+    {
+      "number": 4999983,
+      "blockHash": "0xaa6741346f8f812a3cf24f68193bd8d784618a57c782908534c97b37d345a5cc",
+      "stateRoot": "0x9f7ec4493dff1ffa34c5ed78f155e6c611365b606d533e0b0ff831bb1458c7c2"
+    }
+  ],
+  "stateRoots": [
+    {
+      "number": 4999983,
+      "stateRoot": "0x9f7ec4493dff1ffa34c5ed78f155e6c611365b606d533e0b0ff831bb1458c7c2"
+    }
+  ]
+}
