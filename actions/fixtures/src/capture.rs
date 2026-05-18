@@ -446,7 +446,7 @@ impl RpcFixtureCapture {
                 return Ok(blocks);
             }
 
-            next_start = next_end + 1;
+            next_start = next_end.saturating_add(1);
         }
 
         Err(CaptureError::DerivationReplayIncomplete {

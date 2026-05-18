@@ -218,7 +218,7 @@ impl FixtureValidator {
         child_number: u64,
         child_parent_hash: B256,
     ) -> Result<(), FixtureValidationError> {
-        if child_number != parent.number + 1 {
+        if child_number != parent.number.saturating_add(1) {
             return Err(FixtureValidationError::NonContiguousBlocks {
                 chain,
                 parent_number: parent.number,
