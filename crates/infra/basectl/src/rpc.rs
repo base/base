@@ -1114,8 +1114,10 @@ pub enum ConductorPollUpdate {
     /// Latest per-node status snapshot.
     Status(Vec<ConductorNodeStatus>),
     /// Raft cluster membership reported by one of the polled nodes. Emitted
-    /// only when the membership `version` advances.
-    Membership(ClusterMembership),
+    /// only when the membership `version` advances. Wrapped in `Arc` so the
+    /// poller and the UI state share the snapshot without deep-copying the
+    /// server list on every change.
+    Membership(Arc<ClusterMembership>),
     /// New peer list synthesised from a `Discover` source after a membership
     /// change. Subscribers may use this to update displayed config (e.g.
     /// flashblocks URL routing) without restarting the poller.
@@ -1194,7 +1196,7 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
         ConductorSource::Discover { .. } => source.bootstrap_node().into_iter().collect(),
     };
     let mut clients = build_conductor_clients(&current_nodes, RPC_TIMEOUT);
-    let mut last_membership: Option<ClusterMembership> = None;
+    let mut last_membership: Option<Arc<ClusterMembership>> = None;
     let mut membership_round_robin: usize = 0;
 
     let mut interval = tokio::time::interval(POLL_INTERVAL);
@@ -1313,7 +1315,9 @@ pub async fn run_conductor_poller(source: ConductorSource, tx: mpsc::Sender<Cond
             let changed =
                 last_membership.as_ref().is_none_or(|prev| prev.version != membership.version);
             if changed {
-                if tx.send(ConductorPollUpdate::Membership(membership.clone())).await.is_err() {
+                let membership = Arc::new(membership);
+                if tx.send(ConductorPollUpdate::Membership(Arc::clone(&membership))).await.is_err()
+                {
                     break;
                 }
                 if let Some(synthesized) = source.synthesize_nodes(&membership) {

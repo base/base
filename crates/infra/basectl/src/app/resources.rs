@@ -1,5 +1,6 @@
 use std::{
     collections::{HashSet, VecDeque},
+    sync::Arc,
     time::Instant,
 };
 
@@ -53,8 +54,9 @@ pub struct ConductorState {
     /// removes the need for a separate `run_conductor_leader_url_tracker`
     /// task that would duplicate the `conductor_leader` RPC calls.
     fb_url_tx: Option<watch::Sender<String>>,
-    /// Most recent raft cluster membership snapshot.
-    pub cluster_membership: Option<ClusterMembership>,
+    /// Most recent raft cluster membership snapshot. Shared by `Arc` with the
+    /// poller so a membership change is a single allocation, not a deep copy.
+    pub cluster_membership: Option<Arc<ClusterMembership>>,
     /// Whether the active node list comes from a static config or live discovery.
     pub source_label: SourceLabel,
 }
