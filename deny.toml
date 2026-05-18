@@ -104,12 +104,6 @@ skip = [
     "socket2",
     "bitflags",
     "redox_users",
-    "windows",
-    "windows-core",
-    "windows-implement",
-    "windows-link",
-    "windows-result",
-    "windows-strings",
 
     # Network crates
     "tungstenite",
