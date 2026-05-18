@@ -69,4 +69,3 @@ impl<S: TokenAccounting> Redeemable for DefaultToken<S> {}
 impl<S: TokenAccounting> Pausable for DefaultToken<S> {}
 impl<S: TokenAccounting> Configurable for DefaultToken<S> {}
 impl<S: TokenAccounting> Permittable for DefaultToken<S> {}
-
