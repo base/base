@@ -32,8 +32,8 @@ nitro-local *args:
         {{ args }}
 
 # Build the nitro host binary
-build-host profile='release':
-    cargo build --profile {{ profile }} --package base-prover-nitro-host --bin base-prover-nitro-host
+build-host profile='maxperf':
+    cargo build --profile {{ profile }} --locked --package base-prover-nitro-host --bin base-prover-nitro-host
 
 # Build the nitro enclave binary (static musl target for x86_64)
 build-enclave:
