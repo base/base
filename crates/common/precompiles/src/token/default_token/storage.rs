@@ -25,6 +25,15 @@ pub struct DefaultTokenStorage {
     pub capabilities: U256,                                   // slot 11
 }
 
+impl<'a> DefaultTokenStorage<'a> {
+    /// Creates a `DefaultTokenStorage` instance targeting `addr`.
+    ///
+    /// Used by the factory to initialize token storage at a dynamically computed address.
+    pub fn from_address(addr: Address, storage: base_precompile_storage::StorageCtx<'a>) -> Self {
+        Self::__new(addr, storage)
+    }
+}
+
 impl TokenAccounting for DefaultTokenStorage<'_> {
     fn balance_of(&self, account: Address) -> Result<U256> {
         self.balances.at(&account).read()

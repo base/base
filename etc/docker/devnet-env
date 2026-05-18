@@ -183,7 +183,7 @@ L2_CHAIN_ID=84538453
 L2_BASE_AZUL_BLOCK=20
 # Optional: set to a non-negative block number to schedule Base Beryl in devnet.
 # Leave unset to avoid setting base.beryl during genesis generation.
-L2_BASE_BERYL_BLOCK=
+L2_BASE_BERYL_BLOCK=21
 
 # Metering Resource Limits
 # Whole-block budgets for gas/state-root/DA, plus a per-flashblock execution budget.

@@ -2,3 +2,6 @@
 
 mod default_token;
 pub use default_token::IDefaultToken;
+
+mod factory;
+pub use factory::ITokenFactory;

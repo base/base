@@ -1,4 +1,5 @@
-use alloy_evm::precompiles::PrecompilesMap;
+use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
+use alloy_primitives::Address;
 use base_common_chains::BaseUpgrade;
 
 use crate::{BasePrecompileSpec, BasePrecompiles};
@@ -32,10 +33,20 @@ impl<S: BasePrecompileSpec> BasePrecompileInstaller<S> {
     /// Installs Base-specific dynamic precompiles into an existing [`PrecompilesMap`].
     pub fn install_into(self, precompiles: &mut PrecompilesMap) {
         if self.spec.upgrade() >= BaseUpgrade::Beryl {
-            precompiles.apply_precompile(&crate::token::DEFAULT_TOKEN_ADDRESS, |_| {
-                Some(crate::token::DefaultTokenEvm::precompile())
-            });
+            precompiles.set_precompile_lookup(b20_lookup);
         }
+    }
+}
+
+// Function pointer (not a closure) satisfies the HRTB `for<'a> Fn(&'a Address) -> Option<DynPrecompile>`
+// required by `set_precompile_lookup`.
+fn b20_lookup(address: &Address) -> Option<DynPrecompile> {
+    if crate::token::has_b20_prefix(address) {
+        Some(crate::token::DefaultTokenEvm::create_precompile(*address))
+    } else if *address == crate::token::FACTORY_ADDRESS {
+        Some(crate::token::TokenFactoryEvm::precompile())
+    } else {
+        None
     }
 }
 
