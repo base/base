@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, LogData, U256, address};
 use base_precompile_macros::contract;
-use base_precompile_storage::{Handler, Mapping, Result, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, Handler, Mapping, Result, StorageCtx};
 
 use crate::token::common::TokenAccounting;
 
@@ -90,7 +90,9 @@ impl TokenAccounting for DefaultTokenStorage {
 
     fn increment_nonce(&mut self, owner: Address) -> Result<()> {
         let current = self.nonces.at(&owner).read()?;
-        self.nonces.at_mut(&owner).write(current + U256::ONE)
+        let next =
+            current.checked_add(U256::ONE).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.nonces.at_mut(&owner).write(next)
     }
 
     fn minimum_redeemable(&self) -> Result<U256> {

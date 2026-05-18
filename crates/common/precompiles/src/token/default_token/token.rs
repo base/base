@@ -45,11 +45,13 @@ impl Default for DefaultToken {
 // ---------------------------------------------------------------------------
 
 impl<S: TokenAccounting> Token for DefaultToken<S> {
-    fn accounting(&self) -> &dyn TokenAccounting {
+    type Accounting = S;
+
+    fn accounting(&self) -> &S {
         &self.accounting
     }
 
-    fn accounting_mut(&mut self) -> &mut dyn TokenAccounting {
+    fn accounting_mut(&mut self) -> &mut S {
         &mut self.accounting
     }
 

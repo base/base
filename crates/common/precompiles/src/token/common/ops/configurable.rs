@@ -4,7 +4,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::token::{
     IDefaultToken,
-    common::{CAPABILITY_CAP_MUTABLE, Token},
+    common::{CAPABILITY_CAP_MUTABLE, Token, TokenAccounting},
 };
 
 /// Mutable configuration operations: supply cap, metadata, and contract URI updates.

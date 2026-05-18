@@ -4,7 +4,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::token::{
     IDefaultToken,
-    common::{CAPABILITY_PAUSABLE, Token},
+    common::{CAPABILITY_PAUSABLE, Token, TokenAccounting},
 };
 
 /// Pause and unpause operations.

@@ -12,11 +12,18 @@ use super::TokenAccounting;
 ///
 /// All capability traits extend `Token`. Implement it on a token struct by
 /// wiring the `accounting` field and providing the precompile address.
+///
+/// The associated type `Accounting` is resolved at compile time, so all
+/// storage calls in the capability traits are monomorphized — no vtable
+/// overhead on the hot path.
 pub trait Token {
+    /// The concrete storage adapter backing this token.
+    type Accounting: TokenAccounting;
+
     /// Returns a shared reference to this token's storage adapter.
-    fn accounting(&self) -> &dyn TokenAccounting;
+    fn accounting(&self) -> &Self::Accounting;
     /// Returns an exclusive reference to this token's storage adapter.
-    fn accounting_mut(&mut self) -> &mut dyn TokenAccounting;
+    fn accounting_mut(&mut self) -> &mut Self::Accounting;
     /// Returns the on-chain address of this token contract.
     fn token_address(&self) -> Address;
 }

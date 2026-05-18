@@ -2,7 +2,10 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use base_precompile_storage::{BasePrecompileError, Result};
 
-use crate::token::{IDefaultToken, common::Token};
+use crate::token::{
+    IDefaultToken,
+    common::{Token, TokenAccounting},
+};
 
 /// Token burn operations.
 ///
@@ -21,7 +24,9 @@ pub trait Burnable: Token {
         }
         self.accounting_mut().set_balance(from, balance - amount)?;
         let supply = self.accounting().total_supply()?;
-        self.accounting_mut().set_total_supply(supply - amount)?;
+        let new_supply =
+            supply.checked_sub(amount).ok_or_else(BasePrecompileError::under_overflow)?;
+        self.accounting_mut().set_total_supply(new_supply)?;
         self.accounting_mut().emit_event(
             IDefaultToken::Transfer { from, to: Address::ZERO, amount }.encode_log_data(),
         )
