@@ -162,7 +162,7 @@ impl<'a> TokenFactory<'a> {
                 return Err(BasePrecompileError::revert(ITokenFactory::ZeroAddress {}));
             }
             token.total_supply.write(p.initialSupply)?;
-            // TODO: Check if should emit a Transfer event 
+            // TODO: Check if should emit a Transfer event
             token.set_balance(p.initialSupplyRecipient, p.initialSupply)?;
         }
 
